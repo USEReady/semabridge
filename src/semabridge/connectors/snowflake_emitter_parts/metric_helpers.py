@@ -520,6 +520,7 @@ def normalize_date_part_arguments(metric_sql: str) -> str:
         return match.group(0)
 
     normalized = re.sub(r'\bEXTRACT\s*\(\s*([A-Z_]+)\s+FROM\s+([^\)]+)\)', _wrap_extract, normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bDATE_PART\s*\(\s*['\"]*([A-Za-z_]+)['\"]*\s*,", lambda m: "DATE_PART('" + m.group(1).strip("\"'").lower() + "', ", normalized, flags=re.IGNORECASE)
     return normalized
 
 

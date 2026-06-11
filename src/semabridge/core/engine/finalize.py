@@ -108,6 +108,46 @@ def _step7_persist_artifacts(
             except Exception as osi_err:
                 logger.warning(f"OSI snapshot persist failed (non-fatal): {osi_err}")
 
+        # --- DUMP MODELS TO FILESYSTEM FOR INSPECTION ---
+        try:
+            import json as _json
+            import yaml as _yaml
+            from pathlib import Path
+            
+            # Create a dedicated directory for the project's models
+            dump_dir = Path("output") / "models" / context.project_id
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save OSI (Open Semantic Interchange) format
+            if context.osi_model:
+                osi_dict = context.osi_model.model_dump(mode="json")
+                # JSON
+                osi_json_path = dump_dir / "1_extracted_osi.json"
+                with open(osi_json_path, "w", encoding="utf-8") as f:
+                    _json.dump(osi_dict, f, indent=2, default=str)
+                # YAML
+                osi_yaml_path = dump_dir / "1_extracted_osi.yaml"
+                with open(osi_yaml_path, "w", encoding="utf-8") as f:
+                    _yaml.safe_dump(osi_dict, f, sort_keys=False, default_flow_style=False)
+                logger.info(f"OSI Model saved to: {osi_json_path} and {osi_yaml_path}")
+                    
+            # Save SML (Canonical Semantic Model) format
+            if context.sml_model:
+                sml_dict = context.sml_model.model_dump(mode="json")
+                # JSON
+                sml_json_path = dump_dir / "2_converted_sml.json"
+                with open(sml_json_path, "w", encoding="utf-8") as f:
+                    _json.dump(sml_dict, f, indent=2, default=str)
+                # YAML
+                sml_yaml_path = dump_dir / "2_converted_sml.yaml"
+                with open(sml_yaml_path, "w", encoding="utf-8") as f:
+                    _yaml.safe_dump(sml_dict, f, sort_keys=False, default_flow_style=False)
+                logger.info(f"SML Model saved to: {sml_json_path} and {sml_yaml_path}")
+                
+        except Exception as e:
+            logger.error(f"Failed to dump intermediate models to filesystem: {e}")
+        # ------------------------------------------------
+
         # Persist source artifact
         source_artifact_id = self.db_manager.persist_source_artifact(
             run_id=context.run_id,

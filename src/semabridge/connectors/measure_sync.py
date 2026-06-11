@@ -829,7 +829,10 @@ class MeasureSynchronizer:
         try:
             from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
             if is_simple_metric(dax_expression):
-                local_expr = rule_based_translation(dax_expression, table_alias.lower())
+                behavior_config = None
+                if hasattr(self, 'sf_behavior') and getattr(self.sf_behavior, 'dynamic', None):
+                    behavior_config = self.sf_behavior.dynamic.model_dump()
+                local_expr = rule_based_translation(dax_expression, table_alias.lower(), behavior_config=behavior_config)
                 if local_expr:
                     candidate_expressions.append(local_expr)
         except Exception as ex:

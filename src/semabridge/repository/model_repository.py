@@ -92,7 +92,7 @@ def _serialize_sml_blob(sml_json: Optional[Dict[str, Any]]) -> Optional[str]:
         return json.dumps(sml_json) if sml_json else None
 
 
-def _payload_for_snapshot(status: str, sml_json: Optional[Dict[str, Any]]) -> Optional[str]:
+def _payload_for_snapshot(status: str, sml_json: Optional[Dict[str, Any]], format_type: str = "sml") -> Optional[str]:
     """Return the stored payload for a snapshot row.
 
     Failed snapshots intentionally persist metadata only, so the semantic
@@ -100,6 +100,8 @@ def _payload_for_snapshot(status: str, sml_json: Optional[Dict[str, Any]]) -> Op
     """
     if str(status or "").strip().lower() == "failed":
         return None
+    if format_type == "osi":
+        return json.dumps(sml_json) if sml_json else None
     return _serialize_sml_blob(sml_json)
 
 
@@ -250,6 +252,8 @@ class ModelRepository:
                             snapshot_columns.discard("trigger")
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
+                        if "format_type" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN format_type VARCHAR(20) NOT NULL DEFAULT 'sml'")
                     if "runs" in inspector.get_table_names():
                         run_columns = {col["name"] for col in inspector.get_columns("runs")}
                         if "sync_mode" not in run_columns:
@@ -325,6 +329,7 @@ class ModelRepository:
             error_message=row.error_message,
             run_id=row.run_id,
             sync_mode=getattr(row, 'sync_mode', 'copy'),
+            format_type=getattr(row, 'format_type', 'sml'),
         )
 
     # ------------------------------------------------------------------
@@ -457,6 +462,7 @@ class ModelRepository:
         run_id: Optional[str] = None,
         sync_mode: str = "copy",
         error_message: Optional[str] = None,
+        format_type: str = "sml",
     ) -> Tuple[bool, str]:
         """Commit a new version of the model.
 
@@ -488,12 +494,13 @@ class ModelRepository:
                     project_id=project_id,
                     timestamp=timestamp,
                     version_tag=tag,
-                    sml_blob=_payload_for_snapshot(status, sml_json),
+                    sml_blob=_payload_for_snapshot(status, sml_json, format_type),
                     status=status,
                     duration_ms=duration_ms,
                     error_message=error_message,
                     run_id=run_id,
                     sync_mode=sync_mode,
+                    format_type=format_type,
                 )
             )
 

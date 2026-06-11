@@ -416,6 +416,12 @@ class SyncConfig(BaseModel):
         description="Maximum rows to extract per table when include_data is True",
     )
 
+    # CSM Pipeline Architecture
+    use_csm: bool = Field(
+        default=False,
+        description="Use the new Canonical Semantic Model (CSM) intermediate layer",
+    )
+
     model_config = {"extra": "forbid"}
 
     @model_validator(mode="after")

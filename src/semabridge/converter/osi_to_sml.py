@@ -43,10 +43,13 @@ from semabridge.sml.models import (
     SourcePlatform,
 )
 from semabridge.converter.dax_translator import DAXTranslator
+from semabridge.converter.prompt_generator import DynamicPromptGenerator, ConversionValidator
 from semabridge.connectors.inference_engine import SmlInferenceEngine
 from semabridge.connectors.measure_detector import MeasureDetector
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
+from semabridge.converter.adapters.osi_to_csm import OSIToCSMConverter
+from semabridge.converter.adapters.csm_to_sml import CSMToSMLConverter
 
 logger = get_logger(__name__)
 
@@ -56,8 +59,12 @@ class OSIToSMLConverter(BaseConverter):
     Transforms OSI Model into SML Model with semantic enrichment.
     """
 
-    def __init__(self):
+    def __init__(self, translator=None, skip_csm: bool = True):
         self.dax_translator = DAXTranslator()
+        self.translator = translator or self.dax_translator
+        self.skip_csm = skip_csm
+        self.osi_to_csm = OSIToCSMConverter()
+        self.csm_to_sml = CSMToSMLConverter(self.translator)
 
     def to_osi(self, sml_model: SMLModel) -> OSIModel:
         """
@@ -81,6 +88,22 @@ class OSIToSMLConverter(BaseConverter):
         osi_model: OSIModel,
         row_counts: Optional[Dict[str, int]] = None,
     ) -> SMLModel:
+        """Convert OSI to SML via CSM (lossless) or direct (lossy)."""
+        
+        if self.skip_csm:
+            logger.warning("Skipping CSM - using direct conversion (may lose metadata)")
+            return self._convert_direct(osi_model, row_counts)
+        
+        # CSM path - lossless
+        logger.info("Converting via CSM for lossless preservation")
+        csm_model = self.osi_to_csm.convert(osi_model)
+        return self.csm_to_sml.convert(csm_model)
+
+    def _convert_direct(
+        self,
+        osi_model: OSIModel,
+        row_counts: Optional[Dict[str, int]] = None,
+    ) -> SMLModel:
         """
         Convert OSIModel object to SMLModel object.
 
@@ -91,6 +114,21 @@ class OSIToSMLConverter(BaseConverter):
             SMLModel object
         """
         try:
+            # Generate Dynamic Conversion Prompt (for reference/LLM pipeline)
+            try:
+                # Convert OSIModel object to dict for the generator
+                osi_dict = {
+                    "datasets": [{"unique_name": ds.unique_name, "description": ds.description} for ds in osi_model.datasets],
+                    "columns": [{"unique_name": col.unique_name, "source_expression": getattr(col, "source_expression", None), "default_aggregation": getattr(col, "default_aggregation", None)} for ds in osi_model.datasets for col in ds.columns],
+                    "metrics": [{"unique_name": m.unique_name, "default_aggregation": getattr(m, "aggregation", None)} for m in osi_model.metrics],
+                    "relationships": [{"unique_name": r.unique_name} for r in osi_model.relationships]
+                }
+                generator = DynamicPromptGenerator()
+                dynamic_prompt = generator.generate_conversion_prompt(osi_dict)
+                logger.info(f"Generated Dynamic Conversion Prompt:\\n{dynamic_prompt}")
+            except Exception as e:
+                logger.warning(f"Could not generate dynamic prompt: {e}")
+                
             sml = SMLModel(
                 unique_name=osi_model.unique_name,
                 label=osi_model.label,
@@ -112,7 +150,7 @@ class OSIToSMLConverter(BaseConverter):
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
             
             for osi_metric in osi_model.metrics:
-                sml_metric = self._convert_metric(osi_metric)
+                sml_metric = self._convert_metric(osi_metric, sml.metrics)
                 sml.metrics.append(sml_metric)
 
             # Step 3b: Resolve inter-measure dependencies now that all metrics are loaded.
@@ -199,6 +237,8 @@ class OSIToSMLConverter(BaseConverter):
             is_hidden=osi_col.is_hidden,
             is_key=osi_col.is_key,
             is_measure_candidate=getattr(osi_col, "is_measure_candidate", False),
+            source_expression=getattr(osi_col, "source_expression", None),
+            default_aggregation=getattr(osi_col, "default_aggregation", None),
             format_string=osi_col.format_string,
             # Cortex AI metadata (propagated from OSI)
             synonyms=list(osi_col.synonyms),
@@ -227,9 +267,14 @@ class OSIToSMLConverter(BaseConverter):
             is_hidden=osi_dim.is_hidden
         )
 
-    def _convert_metric(self, osi_metric: OSIMetric) -> SMLMetric:
+    def _convert_metric(self, osi_metric: OSIMetric, metrics_context: List[Any] = None) -> SMLMetric:
         # DAX Translation Logic
         expression = osi_metric.expression or ""
+
+        # If expression is missing but we have enough info to reconstruct it:
+        if not expression and getattr(osi_metric, "source_column", None) and getattr(osi_metric, "aggregation", None):
+            agg = osi_metric.aggregation.value.upper()
+            expression = f"{agg}([{osi_metric.source_column}])"
 
         # Analyze Complexity
         complexity = self.dax_translator.analyze_complexity(expression)
@@ -259,12 +304,15 @@ class OSIToSMLConverter(BaseConverter):
         if expression:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
-            translation = self.dax_translator.translate(
-                expression,
-                safe_alias,
-                osi_metric.dataset,
-                metric_name=metric.unique_name
-            )
+            from semabridge.translator.rule_based_dax_translator import HybridTranslator
+            hybrid = HybridTranslator(llm_translator=self.dax_translator)
+            sql, method = hybrid.translate(expression, metric.unique_name, safe_alias, metrics_context)
+            class DummyTranslation:
+                def __init__(self, s, m):
+                    self.sql = s
+                    self.is_success = True
+                    self.tier = 5 if m == 'llm' else 1 if m == 'rule_based' else 6
+            translation = DummyTranslation(sql, method)
             
             if translation.is_success:
                 metric.sql_expression = translation.sql
@@ -295,13 +343,15 @@ class OSIToSMLConverter(BaseConverter):
                     continue
 
                 safe_alias = to_alias(metric.dataset)
-                translation = self.dax_translator.translate(
-                    metric.expression,
-                    safe_alias,
-                    metric.dataset,
-                    metric_name=metric.unique_name,
-                    metrics_context=sml.metrics,
-                )
+                from semabridge.translator.rule_based_dax_translator import HybridTranslator
+                hybrid = HybridTranslator(llm_translator=self.dax_translator)
+                sql, method = hybrid.translate(metric.expression, metric.unique_name, safe_alias, sml.metrics)
+                class DummyTranslation:
+                    def __init__(self, s, m):
+                        self.sql = s
+                        self.is_success = True
+                        self.tier = 5 if m == 'llm' else 1 if m == 'rule_based' else 6
+                translation = DummyTranslation(sql, method)
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql
                     metric.complexity_tier = translation.tier
@@ -339,7 +389,8 @@ class OSIToSMLConverter(BaseConverter):
 
     def _inject_calendar_dimension(self, sml: SMLModel) -> None:
         # Same logic as TMSLTransformer
-        if any("DATE" in ds.unique_name.upper() or "CALENDAR" in ds.unique_name.upper() for ds in sml.datasets):
+        from semabridge.converter.date_resolution import DateResolutionConfig
+        if DateResolutionConfig().resolve(sml):
             return
             
         # Create standard Date column definitions

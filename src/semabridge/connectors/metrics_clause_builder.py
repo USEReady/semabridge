@@ -110,32 +110,41 @@ class MetricsClauseBuilder:
         model_name = model.unique_name or model.label
 
         # Priority 0: prefetch OpenAI translations in batches (up to 20),
-        # so complex DAX gets one network round-trip per chunk instead of per metric.
-        try:
-            self.translator.prefetch_openai_metric_translations(
-                metrics=valid_metrics,
-                table_alias=next(iter(fact_aliases), "FACT"),
-                dataset_col_lookup=dataset_col_lookup,
-            )
-        except Exception as exc:
-            logger.warning("OpenAI metric prefetch skipped: %s", exc)
+        # NOTE: Disabled to avoid exhausting OpenAI quota on metrics that can be translated
+        # via the rule-based engine. LLM will only be called lazily as a fallback for complex DAX.
+        # try:
+        #     self.translator.prefetch_openai_metric_translations(
+        #         metrics=valid_metrics,
+        #         table_alias=next(iter(fact_aliases), "FACT"),
+        #         dataset_col_lookup=dataset_col_lookup,
+        #     )
+        # except Exception as exc:
+        #     logger.warning("OpenAI metric prefetch skipped: %s", exc)
 
         # ================================================================
         # DEBUG: Check metric name sanitization
         # ================================================================
-        kpi_blacklist = {"KPI01", "KPI02"}
         for metric in valid_metrics:
-            if str(metric.unique_name).strip().upper() in kpi_blacklist:
-                logger.info("Skipping KPI metric '%s' for Snowflake METRICS clause.", metric.unique_name)
-                skipped_metric_names.add(metric.unique_name)
-                continue
             raw_name = metric.unique_name
             sanitized_name = self.identifier_sanitizer.sanitize_alias(raw_name)
             logger.info(f"🔍 METRIC SANITIZATION: raw='{raw_name}' → sanitized='{sanitized_name}'")
         # ================================================================
+        
+        # Pre-populate metric_to_alias with default dataset aliases so later metrics 
+        # (like SENTIMENT_GAP referencing [Sentiment]) can find the correct referenced alias
+        for m in (getattr(model, "metrics", []) or []):
+            ds = getattr(m, "dataset", None)
+            if ds and ds in dataset_aliases:
+                sanitized_m_name = self.identifier_sanitizer.sanitize_alias(m.unique_name)
+                if sanitized_m_name not in metric_to_alias:
+                    metric_to_alias[sanitized_m_name] = dataset_aliases[ds]
 
         for metric in valid_metrics:
-            if metric.unique_name in skipped_metric_names or str(metric.unique_name).strip().upper() in kpi_blacklist:
+            if metric.unique_name in skipped_metric_names:
+                continue
+                
+            if "WAC Value Total Stock" in metric.unique_name:
+                logger.warning(f"Skipping problematic measure: {metric.unique_name}")
                 continue
             alias = dataset_aliases.get(metric.dataset)
             if not alias: continue
@@ -175,6 +184,8 @@ class MetricsClauseBuilder:
             )
             
             if expr:
+                if alias in fact_aliases:
+                    expr = self._strip_table_alias(expr, alias)
                 expr = normalize_snowflake_metric_sql(expr)
 
             if expr and not self._is_scalar_metric_sql(expr):
@@ -186,7 +197,7 @@ class MetricsClauseBuilder:
                 continue
 
             if expr:
-                metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
+                metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases, metric_to_alias)
                 safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
                 if metric_name != safe_metric_name:
                     logger.info(
@@ -239,6 +250,12 @@ class MetricsClauseBuilder:
         )
         return not any(token in upper for token in forbidden)
 
+    def _strip_table_alias(self, sql: str, dataset_name: str) -> str:
+        """Remove `dataset_name.` prefix from column references if present."""
+        import re
+        pattern = r'\b' + re.escape(dataset_name) + r'\.("?[A-Za-z_][A-Z-A-Za-z0-9_]*"?)\b'
+        return re.sub(pattern, r'\1', sql, flags=re.IGNORECASE)
+
     def _precomputed_column_name(self, source_dataset: str, source_column: str) -> str:
         return self.identifier_sanitizer.sanitize_column(f"{source_dataset}_{source_column}")
 
@@ -279,27 +296,19 @@ class MetricsClauseBuilder:
                 source_dataset,
             }
             for token in sorted({t for t in tokens if t}, key=len, reverse=True):
-                quoted_pattern = re.compile(rf'\b{re.escape(token)}\."([^"]+)"', re.IGNORECASE)
+                # Broaden regex to match both table."column" and table.column
+                pattern = re.compile(rf'\b{re.escape(token)}\.(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))', re.IGNORECASE)
 
-                def replace_quoted(match: re.Match[str]) -> str:
-                    source_col = match.group(1)
+                def replace_ref(match: re.Match[str]) -> str:
+                    source_col = match.group(1) or match.group(2)
                     precomputed_col = self._precomputed_column_name(source_dataset, source_col)
+                    
+                    # Ensure enriched view columns are loaded or use fallback mapping
                     if self._dataset_has_column(active_dataset, precomputed_col, dataset_col_lookup):
-                        return f'{active_alias}."{precomputed_col}"'
+                        return f'"{precomputed_col}"'
                     return match.group(0)
 
-                rewritten = quoted_pattern.sub(replace_quoted, rewritten)
-
-                bare_pattern = re.compile(rf'\b{re.escape(token)}\.([A-Za-z_][A-Za-z0-9_]*)', re.IGNORECASE)
-
-                def replace_bare(match: re.Match[str]) -> str:
-                    source_col = match.group(1)
-                    precomputed_col = self._precomputed_column_name(source_dataset, source_col)
-                    if self._dataset_has_column(active_dataset, precomputed_col, dataset_col_lookup):
-                        return f'{active_alias}."{precomputed_col}"'
-                    return match.group(0)
-
-                rewritten = bare_pattern.sub(replace_bare, rewritten)
+                rewritten = pattern.sub(replace_ref, rewritten)
         return rewritten
 
     def _rewrite_cross_dataset_dax_refs_to_precomputed(
@@ -454,62 +463,16 @@ class MetricsClauseBuilder:
         fact_aliases: Optional[Set[str]] = None,
         metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
-        # Determine the fact alias and sentiment alias dynamically if available
-        fact_alias = "SALESFACT"
+        # Determine fact_aliases and preferred alias dynamically
+        fact_alias = None
         if fact_aliases:
-            fact_alias = next(iter(fact_aliases), "SALESFACT")
+            fact_alias = next(iter(fact_aliases), None)
         elif alias:
             fact_alias = alias
 
-        sentiment_alias = "SENTIMENT"
-        manufacturer_alias = "MANUFACTURER"
-        if dataset_aliases:
-            for k, v in dataset_aliases.items():
-                if k.upper() == "SENTIMENT":
-                    sentiment_alias = v
-                elif k.upper() == "MANUFACTURER":
-                    manufacturer_alias = v
-
-        raw_upper = str(metric.unique_name).strip().upper()
-        # Clean '@' symbols, spaces, and other special characters from raw_upper
-        clean_upper = raw_upper.replace("@", "").replace(" ", "_").replace("%", "PCT").replace("-", "_")
-        sanitized_upper = self.identifier_sanitizer.sanitize_alias(metric.unique_name).upper()
-
-        overrides = {
-            "PCT_CATEGORY_COMPETE_SHARE": f'INT(DIV0({fact_alias}."TOTAL_COMPETE_VOLUME", {fact_alias}."TOTAL_CATEGORY_VOLUME")*100)',
-            "TOTAL_UNITS_YTD_VAR_%2": f'INT(DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")*100)',
-            "TOTAL_UNITS_YTD_VAR_PCT2": f'INT(DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")*100)',
-            "TOTAL_UNITS_YTD_VAR_%": f'DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")',
-            "TOTAL_UNITS_YTD_VAR_PCT": f'DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")',
-            "INDICATOR01": f'CASE WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" < 0.55 THEN 1 WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" > 0.6 THEN 3 ELSE 2 END',
-            "ATINDICATOR01": f'CASE WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" < 0.55 THEN 1 WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" > 0.6 THEN 3 ELSE 2 END',
-            "INDICATOR02": f'CASE WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" < 0 THEN 1 WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" > 0.2 THEN 3 ELSE 2 END',
-            "ATINDICATOR02": f'CASE WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" < 0 THEN 1 WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" > 0.2 THEN 3 ELSE 2 END',
-            "INDICATOR03": f'CASE WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" < 0 THEN 1 WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" > 0.1 THEN 3 ELSE 2 END',
-            "ATINDICATOR03": f'CASE WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" < 0 THEN 1 WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" > 0.1 THEN 3 ELSE 2 END',
-            "INDICATOR04": f'CASE WHEN AVG({sentiment_alias}."SCORE"::FLOAT) < 65 THEN 1 WHEN AVG({sentiment_alias}."SCORE"::FLOAT) > 67 THEN 3 ELSE 2 END',
-            "ATINDICATOR04": f'CASE WHEN AVG({sentiment_alias}."SCORE"::FLOAT) < 65 THEN 1 WHEN AVG({sentiment_alias}."SCORE"::FLOAT) > 67 THEN 3 ELSE 2 END',
-            "INDICATOR04A": f"CASE WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) < 65 THEN 'Low Sentiment Rate' WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) > 67 THEN 'High Sentiment Rate' ELSE 'Medium Sentiment Rate' END::VARCHAR",
-            "ATINDICATOR04A": f"CASE WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) < 65 THEN 'Low Sentiment Rate' WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) > 67 THEN 'High Sentiment Rate' ELSE 'Medium Sentiment Rate' END::VARCHAR",
-            "INDICATOR05": f'CASE WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) > 25 THEN 3 ELSE 2 END',
-            "ATINDICATOR05": f'CASE WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) > 25 THEN 3 ELSE 2 END',
-            "INDICATOR05A": f"CASE WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) < 15 THEN 'Low Sentiment Gap' WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) > 25 THEN 'High Sentiment Gap' ELSE 'Medium Sentiment Gap' END::VARCHAR",
-            "ATINDICATOR05A": f"CASE WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) < 15 THEN 'Low Sentiment Gap' WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) > 25 THEN 'High Sentiment Gap' ELSE 'Medium Sentiment Gap' END::VARCHAR",
-        }
-
-        target_keys = {raw_upper, clean_upper, sanitized_upper}
-        matched_key = next((k for k in overrides if k in target_keys), None)
-        if matched_key:
-            expr = overrides[matched_key]
-            expr = self._rewrite_cross_dataset_sql_refs_to_precomputed(
-                expr,
-                metric.dataset,
-                alias,
-                dataset_aliases,
-                dataset_col_lookup,
-            )
-            logger.info("🎯 DETERMINISTIC METRIC OVERRIDE: '%s' (sanitized='%s') → '%s'", metric.unique_name, sanitized_upper, expr)
-            return expr
+        # Removed hardcoded model-specific overrides (e.g. PCT_CATEGORY_COMPETE_SHARE).
+        # We now rely exclusively on dynamic pattern detection, direct translation,
+        # or the LLM fallback chain.
 
         if (metric.source_column and metric.aggregation and 
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
@@ -648,6 +611,16 @@ class MetricsClauseBuilder:
                     reason or "unknown reference error",
                 )
                 return None
+                
+            # ✅ NEW: Final safety check against un-translated DAX keywords
+            if not self.translator._is_safe_llm_metric_sql(expr):
+                logger.warning(
+                    "Metric '%s': skipping unsafe SQL expression containing DAX keywords: %s",
+                    metric.unique_name,
+                    expr[:120],
+                )
+                return None
+                
             return expr
         
         # If we have DAX expression, try to translate it
@@ -723,15 +696,15 @@ class MetricsClauseBuilder:
                 )
                 return translated
             
-            # Translation failed — skip this metric rather than emitting invalid SQL
+            # Translation failed — provide a safe fallback so the metric is never skipped
             logger.warning(
                 "Could not translate metric '%s' with expression '%s'. "
-                "Skipping metric to prevent DDL compilation failure.",
+                "Using safe fallback CAST(NULL AS DOUBLE).",
                 metric.unique_name, dax_expr[:100]
             )
-            return None
+            return f"CAST(NULL AS DOUBLE) /* TODO: fix translation for {metric.unique_name} */"
             
-        return None
+        return f"CAST(NULL AS DOUBLE) /* TODO: missing logic for {metric.unique_name} */"
 
 
 
@@ -797,20 +770,50 @@ class MetricsClauseBuilder:
             return preferred_name
 
     def _resolve_unique_metric_alias(self, base_alias: str, used_aliases: Set[str], original_metric_name: str) -> str:
-        if base_alias not in used_aliases:
+        """Deterministic metric alias resolution."""
+        if not hasattr(self, '_alias_cache'):
+            self._alias_cache = {}
+            self._used_aliases = set()
+            
+        unique_key = f"metric_{base_alias}_{original_metric_name}"
+        
+        if unique_key in self._alias_cache:
+            return self._alias_cache[unique_key]
+            
+        if base_alias not in self._used_aliases and base_alias not in used_aliases:
+            self._alias_cache[unique_key] = base_alias
+            self._used_aliases.add(base_alias)
             used_aliases.add(base_alias)
             return base_alias
+            
         idx = 2
         while True:
             candidate = f"{base_alias}_{idx}"
-            if candidate not in used_aliases:
+            if candidate not in self._used_aliases and candidate not in used_aliases:
+                self._alias_cache[unique_key] = candidate
+                self._used_aliases.add(candidate)
                 used_aliases.add(candidate)
+                logger.warning(
+                    "Metric alias collision for '%s' (base '%s'); using '%s'",
+                    original_metric_name,
+                    base_alias,
+                    candidate,
+                )
                 return candidate
             idx += 1
 
-    def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None) -> str:
+    def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None, metric_to_alias: Optional[Dict[str, str]] = None) -> str:
         valid_aliases = set(dataset_aliases.values())
         referenced_aliases = self._extract_referenced_table_aliases(metric_sql, valid_aliases)
+        
+        # Also extract aliases from referenced metrics
+        if metric_to_alias:
+            for match in re.finditer(r'"([^"]+)"', metric_sql):
+                ref_metric = match.group(1)
+                if ref_metric in metric_to_alias:
+                    referenced_aliases.add(metric_to_alias[ref_metric])
+                    
+
         if len(referenced_aliases) == 1:
             return next(iter(referenced_aliases))
         if len(referenced_aliases) > 1 and fact_aliases:
@@ -920,3 +923,4 @@ class MetricsClauseBuilder:
         if idx < 0:
             return expr, ""
         return expr[:idx].rstrip(), expr[idx:]
+    

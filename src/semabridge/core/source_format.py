@@ -77,6 +77,7 @@ class SourceFormat(BaseModel):
     
     # For Fabric source
     tmsl_definition: Optional[Dict[str, Any]] = None
+    tmdl_definition: Optional[Dict[str, str]] = None
     workspace_id: Optional[str] = None
     dataset_id: Optional[str] = None
     dataset_name: Optional[str] = None

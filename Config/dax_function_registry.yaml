@@ -26,12 +26,23 @@ TOTALQTD:
         ORDER BY {date_alias}."DATE"
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     )
-DIVIDE:
-  type: scalar
-  template: "DIV0({arg0}, {arg1})"
+
 IF:
   type: expr
   template: "CASE WHEN {arg0} THEN {arg1} ELSE {arg2} END"
 ISBLANK:
   type: expr
   template: "({arg0} IS NULL)"
+
+TOPN:
+  type: expr
+  template: "CAST(NULL AS DOUBLE)"
+
+RANKX:
+  type: expr
+  template: "CAST(NULL AS DOUBLE)"
+
+USERELATIONSHIP:
+  type: expr
+  template: "CAST(NULL AS DOUBLE)"
+

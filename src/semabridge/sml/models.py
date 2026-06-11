@@ -143,6 +143,8 @@ class SMLColumn(BaseModel):
     is_hidden: bool = Field(default=False, description="Whether column is hidden")
     is_key: bool = Field(default=False, description="Whether column is a primary key")
     is_measure_candidate: bool = Field(default=False, description="Whether this numeric column should be a metric (not dimension)")
+    source_expression: Optional[str] = Field(default=None, description="Source SQL expression if computed")
+    default_aggregation: Optional[AggregationType] = Field(default=None, description="Default aggregation behavior")
     format_string: Optional[str] = Field(default=None, description="Display format")
     folder: Optional[str] = Field(default=None, description="Display folder")
     # Cortex Analyst advanced AI metadata

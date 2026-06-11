@@ -1,0 +1,29 @@
+# Pattern-based metric overrides
+- pattern: "^(AT)?INDICATOR\\d+$"
+  template: |
+    CASE 
+      WHEN {{fact_alias}}."{{compare_metric}}" < {{threshold_low}} THEN 1
+      WHEN {{fact_alias}}."{{compare_metric}}" > {{threshold_high}} THEN 3
+      ELSE 2
+    END
+
+- pattern: ".*_SHARE$"
+  template: |
+    DIV0({{fact_alias}}."{{numerator}}", {{fact_alias}}."{{denominator}}") * 100
+
+- pattern: ".*_YTD_VAR.*"
+  template: |
+    DIV0({{fact_alias}}."{{numerator}}", {{fact_alias}}."{{denominator}}")
+
+- pattern: ".*_YTD$"
+  template: |
+    SUM({{fact_alias}}."{{base_column}}")
+
+- pattern: "SUM\s*\(\s*\[([^\]]+)\]\s*\)"
+  template: 'SUM({{fact_alias}}."{{column}}")'
+
+- pattern: "COUNTROWS\s*\(\s*([^)]+)\s*\)"
+  template: 'COUNT(*)'
+
+- pattern: "DISTINCTCOUNT\s*\(\s*\[([^\]]+)\]\s*\)"
+  template: 'COUNT(DISTINCT {{fact_alias}}."{{column}}")'

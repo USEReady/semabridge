@@ -14,6 +14,18 @@ def normalize_snowflake_metric_sql(expr: str) -> str:
     """Normalize a scalar metric expression for Snowflake semantic views."""
     if not expr:
         return expr
+        
+    # Pre-pass regex: strip TO_DOUBLE(CAST(x AS FLOAT/DOUBLE))
+    # Snowflake doesn't accept a pre-CAST value as argument to TO_DOUBLE.
+    expr = re.sub(
+        r'\bTO_DOUBLE\s*\(\s*CAST\s*\(\s*(.+?)\s+AS\s+(?:FLOAT|DOUBLE)\s*\)\s*\)',
+        r'TRY_CAST(\1 AS DOUBLE)',
+        expr,
+        flags=re.IGNORECASE,
+    )
+    # Strip remaining bare TO_DOUBLE(x) -> x
+    expr = re.sub(r'\bTO_DOUBLE\s*\(\s*(.+?)\s*\)', r'\1', expr, flags=re.IGNORECASE)
+
     normalized = _rewrite_function(expr, "INT", lambda inner: f"CAST(({inner}) AS INT)")
     return normalized
 

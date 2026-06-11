@@ -463,9 +463,9 @@ class FabricExtractor:
             "Accept": "application/json"
         }
     
-    def get_model_definition(self, dataset_id: str) -> dict[str, Any]:
+    def get_model_definition(self, dataset_id: str, format: str = "TMSL") -> dict[str, Any]:
         """
-        Get the TMSL definition of a semantic model.
+        Get the definition of a semantic model.
         
         This handles the long-running async operation:
         1. POST /getDefinition
@@ -484,7 +484,7 @@ class FabricExtractor:
             logger.info(f"Resolved '{dataset_id}' -> '{resolved_id}'")
         
         # 1. Initiate Export
-        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format=TMSL"
+        api_url = f"{self.config.api_base_url}/workspaces/{workspace_id}/semanticModels/{resolved_id}/getDefinition?format={format}"
         
         result = {}
         try:
@@ -732,30 +732,39 @@ class FabricExtractor:
 
     def _parse_definition_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
-        Parse the definition response and extract model.bim.
-        
-        Response -> definition -> parts -> [path="model.bim", payload="base64...", payloadType="InlineBase64"]
+        Parse the definition response and extract model.bim or TMDL files.
         """
         definition = payload.get("definition", payload) # Handle if passed 'definition' sub-object or full payload
         parts = definition.get("parts", [])
         
-        for part in parts:
-            if part.get("path") == "model.bim":
-                encoded_payload = part.get("payload")
-                payload_type = part.get("payloadType")
-                
-                if payload_type == "InlineBase64":
-                    try:
-                        decoded_bytes = base64.b64decode(encoded_payload)
-                        # BOM handling: Microsoft often adds UTF-8 BOM
-                        decoded_str = decoded_bytes.decode("utf-8-sig")
-                        return json.loads(decoded_str)
-                    except Exception as e:
-                        raise FabricExtractionError(f"Failed to decode model.bim: {e}")
-                else:
-                    raise FabricExtractionError(f"Unsupported payload type: {payload_type}")
+        result_files = {}
+        found_tmdl = False
         
-        raise FabricExtractionError("model.bim not found in definition parts")
+        for part in parts:
+            path = part.get("path")
+            encoded_payload = part.get("payload")
+            payload_type = part.get("payloadType")
+            
+            if payload_type == "InlineBase64":
+                try:
+                    decoded_bytes = base64.b64decode(encoded_payload)
+                    # BOM handling: Microsoft often adds UTF-8 BOM
+                    decoded_str = decoded_bytes.decode("utf-8-sig")
+                    
+                    if path == "model.bim":
+                        return json.loads(decoded_str)
+                    elif path.endswith(".tmdl"):
+                        found_tmdl = True
+                        result_files[path] = decoded_str
+                except Exception as e:
+                    raise FabricExtractionError(f"Failed to decode part {path}: {e}")
+            else:
+                raise FabricExtractionError(f"Unsupported payload type: {payload_type}")
+        
+        if found_tmdl:
+            return {"tmdl_files": result_files}
+            
+        raise FabricExtractionError("No model.bim or .tmdl files found in definition parts")
 
     def execute_dax_query(self, dataset_id: str, dax_query: str, silent: bool = False) -> list[dict[str, Any]]:
         """

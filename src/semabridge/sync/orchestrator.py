@@ -921,7 +921,8 @@ class SyncOrchestrator:
         settings = get_settings()
 
         # Convert OSI → SML
-        converter = OSIToSMLConverter()
+        skip_csm = not getattr(config, "use_csm", False)
+        converter = OSIToSMLConverter(skip_csm=skip_csm)
         sml_model = converter.from_osi(osi_model)
 
         # Deploy via SnowflakeEmitter
@@ -944,7 +945,8 @@ class SyncOrchestrator:
         settings = get_settings()
 
         # Convert OSI → SML → TMSL → Fabric
-        converter = OSIToSMLConverter()
+        skip_csm = not getattr(config, "use_csm", False)
+        converter = OSIToSMLConverter(skip_csm=skip_csm)
         sml_model = converter.from_osi(osi_model)
 
         from semabridge.connectors.fabric_publisher import FabricPublisher

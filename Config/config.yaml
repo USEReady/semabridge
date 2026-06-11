@@ -8,11 +8,18 @@ database:
   connection_url_env: SEMABRIDGE_DATABASE_URL
   writer_thread_queue: true
 llm:
-  enabled: false
+  enabled: true
   model: gpt-4o-mini
   timeout_seconds: 30
   max_retries: 3
   api_key_env: OPENAI_API_KEY
+  fallback_chain:
+    - type: ollama
+      host: http://localhost:11434
+      model: llama3
+    - type: openai
+    - type: featherless
+    - type: gemini
 logging:
   level: DEBUG
   format: text

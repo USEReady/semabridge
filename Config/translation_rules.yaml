@@ -1,0 +1,140 @@
+# config/translation_rules.yaml
+# Zero hardcoding — all patterns are configurable
+
+version: "2.0"
+
+# Basic aggregation functions (Tier 1)
+tier1_functions:
+  - "SUM"
+  - "AVERAGE"
+  - "AVG"
+  - "MIN"
+  - "MAX"
+  - "COUNT"
+  - "COUNTA"
+  - "DISTINCTCOUNT"
+
+# Time Intelligence functions (Tier 3)
+time_intelligence_functions:
+  - "TOTALYTD"
+  - "TOTALMTD"
+  - "TOTALQTD"
+  - "SAMEPERIODLASTYEAR"
+  - "PREVIOUSYEAR"
+  - "PREVIOUSMONTH"
+  - "PREVIOUSQUARTER"
+  - "DATEADD"
+  - "DATESYTD"
+  - "DATESMTD"
+  - "DATESQTD"
+  - "PARALLELPERIOD"
+
+# Functions that should be blocked (cannot translate)
+blocked_functions:
+  - "ALL"
+  - "ALLEXCEPT"
+  - "CROSSFILTER"
+  - "USERELATIONSHIP"
+  - "EARLIER"
+  - "RANKX"
+
+# Date dimension defaults (null = auto-discover)
+date_defaults:
+  default_date_table: null
+  default_date_column: null
+
+# SQL generation templates
+sql_templates:
+  case_when_sum: "SUM(CASE WHEN {condition} THEN {value} ELSE 0 END)"
+  case_when_count: "COUNT(CASE WHEN {condition} THEN {value} END)"
+  case_when_count_distinct: "COUNT(DISTINCT CASE WHEN {condition} THEN {value} END)"
+  case_when_avg: "AVG(CASE WHEN {condition} THEN {value} END)"
+  case_when_min: "MIN(CASE WHEN {condition} THEN {value} END)"
+  case_when_max: "MAX(CASE WHEN {condition} THEN {value} END)"
+  case_when_default: "{agg_func}(CASE WHEN {condition} THEN {value} ELSE 0 END)"
+  
+  window_ytd: "{agg_func}({value}) OVER (PARTITION BY {year_col} ORDER BY {date_col} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+  window_mtd: "{agg_func}({value}) OVER (PARTITION BY {year_col}, {month_col} ORDER BY {date_col} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+  window_qtd: "{agg_func}({value}) OVER (PARTITION BY {year_col}, {quarter_col} ORDER BY {date_col} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+
+# Date part mapping (DAX to Snowflake)
+date_part_mapping:
+  source_format: "UPPERCASE"
+  target_format: "lowercase"
+  auto_discover: true
+
+function_mappings:
+  SUM: "SUM"
+  AVERAGE: "AVG"
+  MIN: "MIN"
+  MAX: "MAX"
+  COUNT: "COUNT"
+  DISTINCTCOUNT: "COUNT(DISTINCT {col})"
+
+dax_only_keywords:
+  - "CALCULATE"
+  - "SAMEPERIODLASTYEAR"
+  - "DATEADD"
+  - "DATESYTD"
+  - "TOTALYTD"
+  - "IF("
+  - "BLANK("
+
+aggregation_mappings:
+  SUM: "SUM"
+  AVERAGE: "AVG"
+  COUNT: "COUNT"
+  MIN: "MIN"
+  MAX: "MAX"
+
+measure_column_patterns:
+  - "AMOUNT"
+  - "SALES"
+  - "REVENUE"
+  - "PRICE"
+  - "COST"
+  - "QTY"
+
+# Dynamic anchor names used in enriched views and METRICS expressions.
+# These are ANCHOR NAMES (not business column names) — they identify computed
+# columns that the enriched view builder creates. Override per-project if needed.
+dynamic_anchors:
+  max_date_anchor: "MAX_DATE"
+  min_date_anchor: "MIN_DATE"
+  max_monthindex_anchor: "MAX_MONTHINDEX"
+  fiscal_period_anchor: "_CURRENT_FISCAL_PERIOD"
+  fiscal_period_column: "FISCAL_YR_PERIOD"
+  month_index_column: "MONTHINDEX"
+  date_column: "COL_DATE"
+
+# Runtime column detection patterns.
+# These are KEYWORD PATTERNS (not actual column names) used to scan the model's
+# schema and discover which physical columns serve each role.
+# The system scans every dataset's columns at runtime and picks the first match.
+# If no column matches, that translator is silently skipped (falls through to LLM).
+#
+# Add your model-specific keywords here instead of hardcoding column names.
+detection_patterns:
+  # Binary flag column — identifies manufacturer/product flag columns
+  vanarsdel_flag:
+    column_keywords: ["vanarsdel", "isvanarsdel", "van_arsdel"]
+    table_keywords:  ["product", "prod", "item"]
+    value_set:       ["Yes", "No", "YES", "NO", "1", "0", "True", "False"]
+
+  # Sentiment/rating score column
+  sentiment_score:
+    column_keywords: ["score", "sentiment", "rating", "sentiment_score"]
+    table_keywords:  ["sentiment", "review", "rating", "feedback"]
+    value_set:       []   # numeric — no value set check
+
+  # Manufacturer brand/owner flag column
+  manufacturer_flag:
+    column_keywords: ["mfg", "manufacturer", "brand", "mfgisvanarsdel"]
+    table_keywords:  ["manufacturer", "brand", "mfr"]
+    value_set:       ["Yes", "No", "YES", "NO", "1", "0"]
+
+  # Primary numeric measure fallback (units/quantity)
+  units_fallback:
+    column_keywords: ["units", "qty", "quantity", "count", "amount"]
+    table_keywords:  []   # any table
+    value_set:       []   # numeric

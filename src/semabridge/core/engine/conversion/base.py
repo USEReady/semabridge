@@ -104,6 +104,9 @@ def _step6_convert_to_sml(
         else:
             raise ConversionError(f"Unknown source type: {context.source_type}")
 
+        if sml_model is None:
+            return None
+
         # Normalize relationship names/deduplication here so all downstream
         # target conversions and deployments operate on the same final model.
         self._normalize_relationships_for_target(sml_model)

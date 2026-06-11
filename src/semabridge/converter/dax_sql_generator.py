@@ -234,7 +234,7 @@ class DeterministicSQLGenerator:
         
         # Find numerator and denominator measures/columns
         # Pattern: DIVIDE( [MeasureA], [MeasureB] )
-        pattern = r'DIVIDE\s*\(\s*([^,]+?)\s*,\s*([^,)]+?)\s*(?:,\s*[^)]+?)?\s*\)'
+        pattern = r'DIVIDE\s*\(\s*([^,]+?)\s*,\s*([^,)]+?)\s*(?:,\s*([^)]+?))?\s*\)'
         match = re.search(pattern, dax, re.IGNORECASE)
         
         if not match:
@@ -243,16 +243,18 @@ class DeterministicSQLGenerator:
         
         numerator_ref = match.group(1).strip()
         denominator_ref = match.group(2).strip()
+        alt_ref = match.group(3).strip() if match.group(3) else "0"
         
         # Resolve references
         num_sql = self._resolve_reference(numerator_ref, context, table_alias)
         denom_sql = self._resolve_reference(denominator_ref, context, table_alias)
+        alt_sql = self._resolve_reference(alt_ref, context, table_alias) or alt_ref
         
         if not num_sql or not denom_sql:
             logger.warning(f"Could not resolve DIVIDE operands")
             return None
         
-        sql = f"DIV0({num_sql}, {denom_sql})"
+        sql = f"COALESCE(({num_sql}) / NULLIF(({denom_sql}), 0), {alt_sql})"
         logger.debug(f"Generated DIVIDE SQL: {sql}")
         return sql
     

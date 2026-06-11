@@ -59,3 +59,50 @@ options:
   generate_descriptions: true
 project_id: proj-ffdf
 display_name: ffdf
+
+snowflake:
+  dynamic:
+    # Enriched view naming patterns
+    enriched_view_patterns:
+      - "{table}_ENRICHED"
+      - "ENRICHED_{table}"
+      - "{table}_VW"
+    
+    # Date table detection
+    date_table_indicators:
+      - "date"
+      - "calendar"
+      - "time"
+      - "period"
+      - "fiscal"
+    
+    # Date column patterns
+    date_column_patterns:
+      - "date"
+      - "cal_date"
+      - "posting_date"
+      - "transaction_date"
+    
+    # Join key patterns
+    join_key_patterns:
+      - "{table1}ID"
+      - "{table2}ID"
+      - "ID"
+      - "{table1}_ID"
+      - "{singular}ID"
+    
+    # Physical column resolution patterns
+    physical_column_patterns:
+      - "{name}"
+      - "COL_{name}"
+      - "{name}_ID"
+      - "{name}_KEY"
+    
+    # Max precomputed numeric columns
+    max_precomputed_numeric_columns: 5
+    
+    # Fiscal period CTE
+    use_fiscal_period_cte: false
+    date_table_name: null  # Auto-detect if null
+    date_column_name: null  # Auto-detect if null
+    month_index_column: "MONTHINDEX"

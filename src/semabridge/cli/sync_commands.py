@@ -72,6 +72,10 @@ def sync_run(
         False, "--include-data",
         help="Sync table data (best-effort, small tables only)",
     ),
+    use_csm: bool = typer.Option(
+        False, "--use-csm",
+        help="Use the new Canonical Semantic Model (CSM) intermediate layer",
+    ),
 ) -> None:
     """Run a synchronization job."""
     from semabridge.sync.models import (
@@ -111,6 +115,7 @@ def sync_run(
         enable_parallel=max_workers > 1,
         incremental=incremental,
         include_data=include_data,
+        use_csm=use_csm,
     )
 
     repo = SyncRepository()

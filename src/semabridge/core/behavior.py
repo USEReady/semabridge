@@ -12,6 +12,115 @@ from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
+from typing import List, Dict, Optional
+
+class SnowflakeDynamicConfig(BaseModel):
+    """Dynamic configuration for Snowflake emitter."""
+    
+    # Enriched view naming patterns (order matters)
+    enriched_view_patterns: List[str] = Field(
+        default=["{table}_ENRICHED", "ENRICHED_{table}", "{table}_VW", "VW_{table}"],
+        description="Patterns to check for enriched views"
+    )
+    
+    # Date table detection patterns
+    date_table_indicators: List[str] = Field(
+        default=["date", "calendar", "time", "period", "cal", "fiscal"],
+        description="Keywords to identify date tables"
+    )
+    
+    # Date column detection patterns
+    date_column_patterns: List[str] = Field(
+        default=["date", "cal_date", "calendar_date", "transaction_date", "posting_date", "col_date"],
+        description="Column name patterns for date columns"
+    )
+    
+    # Fiscal column patterns
+    fiscal_column_patterns: List[str] = Field(
+        default=["fiscal", "period", "quarter", "year", "month", "week"],
+        description="Column name patterns for fiscal periods"
+    )
+    
+    # Join key fallback patterns
+    join_key_patterns: List[str] = Field(
+        default=["{table1}ID", "{table2}ID", "ID", "{table1}_ID", "{table2}_ID", "{singular}ID"],
+        description="Patterns to try for join keys"
+    )
+    
+    # Physical column name resolution patterns
+    physical_column_patterns: List[str] = Field(
+        default=["{name}", "COL_{name}", "{name}_ID", "{name}_KEY", "{name}_SK"],
+        description="Patterns to resolve physical column names"
+    )
+    
+    # Columns to ignore when finding common join keys
+    excluded_common_keys: List[str] = Field(
+        default=["CREATED_AT", "UPDATED_AT", "LOAD_DATE", "ETL_TIMESTAMP", "MODIFIED_AT"],
+        description="Columns to ignore in common join key detection"
+    )
+    
+    # Max pre-computed numeric columns
+    max_precomputed_numeric_columns: int = Field(default=5, ge=0, le=20)
+    
+    # Type mapping overrides (empty = use inference)
+    type_mapping_overrides: Dict[str, str] = Field(default_factory=dict)
+    
+    # Use CTE for current fiscal period
+    use_fiscal_period_cte: bool = Field(default=False)
+    
+    # Date table name for fiscal period CTE (empty = auto-detect)
+    date_table_name: Optional[str] = Field(default=None)
+    
+    # Date column name for fiscal period CTE (empty = auto-detect)
+    date_column_name: Optional[str] = Field(default=None)
+    
+    # Month index column name for fiscal period CTE
+    month_index_column: str = Field(default="MONTHINDEX")
+
+    # Enriched view anchor column names
+    max_date_anchor_name: str = Field(
+        default="MAX_DATE",
+        description="Column name for max date anchor in enriched views"
+    )
+    min_date_anchor_name: str = Field(
+        default="MIN_DATE",
+        description="Column name for min date anchor in enriched views"
+    )
+    fiscal_period_anchor_name: str = Field(
+        default="_CURRENT_FISCAL_PERIOD",
+        description="Column name for current fiscal period anchor in enriched views"
+    )
+    max_monthindex_anchor_name: str = Field(
+        default="MAX_MONTHINDEX",
+        description="Column name for max month index anchor in enriched views"
+    )
+
+    # Fiscal period column name (in date/calendar table)
+    fiscal_period_column: str = Field(
+        default="FISCAL_YR_PERIOD",
+        description="Physical column name for fiscal year period in the date table"
+    )
+
+    # Date column name used as the primary date column in fact/enriched views
+    date_column: str = Field(
+        default="COL_DATE",
+        description="Physical column name for the primary date column"
+    )
+
+    # Runtime column detection patterns.
+    # Used to dynamically scan the model schema for columns serving specific roles
+    # (e.g. finding the VanArsdel flag column without hardcoding its name).
+    detection_patterns: Dict[str, Dict] = Field(
+        default_factory=dict,
+        description="Keyword patterns for dynamic column discovery"
+    )
+
+    # Resolved model-specific column name mappings.
+    # These are populated at runtime by RuntimeColumnDiscovery.
+    column_mappings: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Resolved column/table name mappings (populated at runtime)"
+    )
 
 
 class SnowflakeBehavior(BaseModel):
@@ -65,6 +174,10 @@ class SnowflakeBehavior(BaseModel):
     source_table_mapping: dict[str, str] = Field(
         default_factory=dict,
         description="Map fact table name to enriched view name"
+    )
+    dynamic: SnowflakeDynamicConfig = Field(
+        default_factory=SnowflakeDynamicConfig,
+        description="Dynamic configuration for Snowflake emitter"
     )
 
 class FabricBehavior(BaseModel):
@@ -445,3 +558,8 @@ class ConnectorBehavior(BaseModel):
             raw = yaml.safe_load(f) or {}
 
         return cls(**raw)
+
+# Rebuild all models to resolve forward references due to `from __future__ import annotations`
+SnowflakeDynamicConfig.model_rebuild()
+SnowflakeBehavior.model_rebuild()
+ConnectorBehavior.model_rebuild()

@@ -23,6 +23,44 @@ from semabridge.core.config_loader import get_project_file_path
 _IN_PROCESS_DIALECTS: frozenset[str] = frozenset({"sqlite", "duckdb"})
 
 
+class ConversionConfig(BaseSettings):
+    """Conversion flow configuration."""
+    
+    model_config = SettingsConfigDict(
+        env_prefix="CONVERSION_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+    
+    tmdl_direct_to_csm: bool = Field(
+        default=False,
+        description="Convert TMDL directly to CSM without OSI overhead"
+    )
+    tmdl_fallback_to_osi: bool = Field(
+        default=True,
+        description="Fallback to OSI if direct TMDL->CSM conversion fails"
+    )
+
+class CSMConfig(BaseSettings):
+    """CSM architecture configuration."""
+    
+    model_config = SettingsConfigDict(
+        env_prefix="CSM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+    
+    enabled: bool = Field(
+        default=False,
+        description="Enable canonical semantic model (CSM) intermediate layer"
+    )
+    store_translations: bool = Field(
+        default=True,
+        description="Store original DAX and translated SQL side-by-side"
+    )
+
 class SnowflakeConfig(BaseSettings):
     """Snowflake connection configuration."""
     
@@ -570,6 +608,8 @@ class Settings(BaseSettings):
     _database: Optional[DatabaseConfig] = None
     _llm: Optional[LLMConfig] = None
     _network: Optional[NetworkConfig] = None
+    _conversion: Optional[ConversionConfig] = None
+    _csm: Optional[CSMConfig] = None
     _behavior: Optional[object] = None  # ConnectorBehavior (lazy, avoids circular import)
 
     @property
@@ -646,6 +686,20 @@ class Settings(BaseSettings):
         if self._network is None:
             self._network = NetworkConfig()
         return self._network
+
+    @property
+    def conversion(self) -> ConversionConfig:
+        """Get conversion configuration (lazy loaded)."""
+        if self._conversion is None:
+            self._conversion = ConversionConfig()
+        return self._conversion
+
+    @property
+    def csm(self) -> CSMConfig:
+        """Get CSM configuration (lazy loaded)."""
+        if self._csm is None:
+            self._csm = CSMConfig()
+        return self._csm
 
     @property
     def behavior(self):

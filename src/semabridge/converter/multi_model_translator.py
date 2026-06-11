@@ -20,6 +20,9 @@ class MultiModelDAXTranslator:
 
     def _initialize_clients(self) -> None:
         """Initialize all model clients."""
+        from dotenv import load_dotenv
+        load_dotenv()
+        
         # 1. Initialize Featherless DeepSeek-V4-Pro Client
         featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("Feather-Api-Key")
         if featherless_key:
@@ -27,15 +30,15 @@ class MultiModelDAXTranslator:
                 from langchain_openai import ChatOpenAI
                 self.clients["deepseek-v4"] = ChatOpenAI(
                     api_key=featherless_key,
-                    model=os.getenv("FEATHERLESS_MODEL", "deepseek-ai/DeepSeek-V4-Pro"),
+                    model=os.getenv("FEATHERLESS_MODEL", "meta-llama/Llama-3.3-70B-Instruct"),
                     base_url=os.getenv("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1"),
                     temperature=float(os.getenv("FEATHERLESS_TEMPERATURE", "0.1")),
                     max_tokens=int(os.getenv("FEATHERLESS_MAX_TOKENS", "500")),
                     timeout=float(os.getenv("FEATHERLESS_TIMEOUT", "60")),
                 )
-                logger.info("Initialized deepseek-v4 via Featherless")
+                logger.info("Initialized Featherless client")
             except Exception as e:
-                logger.warning("Failed to initialize deepseek-v4 via Featherless: %s", e)
+                logger.warning("Failed to initialize Featherless client: %s", e)
 
         # 2. Initialize Groq LangChain Client (if API key exists)
         groq_key = os.getenv("GROQ_API_KEY")
@@ -67,13 +70,16 @@ class MultiModelDAXTranslator:
         # 1. Try Featherless DeepSeek-V4-Pro
         if "deepseek-v4" in self.clients:
             try:
-                logger.info("Attempting translation for '%s' using DeepSeek-V4 (Featherless)...", metric_name)
+                logger.info("Attempting translation for '%s' using Featherless...", metric_name)
                 result = self._translate_with_deepseek(prompt, metric_name)
                 if result:
-                    logger.info("DeepSeek-V4 successfully translated '%s'", metric_name)
+                    logger.info("Featherless successfully translated '%s'", metric_name)
                     return result
             except Exception as e:
-                logger.warning("DeepSeek-V4 failed for '%s': %s", metric_name, e)
+                err_msg = str(e)
+                logger.warning("Featherless failed for '%s': %s", metric_name, err_msg)
+                if "insufficient_quota" in err_msg or "403" in err_msg or "429" in err_msg or "upgrade_required" in err_msg:
+                    raise Exception(err_msg)
 
         # 2. Try Fallback to OpenAI (existing logic)
         try:
@@ -89,7 +95,10 @@ class MultiModelDAXTranslator:
                 logger.info("OpenAI successfully translated '%s'", metric_name)
                 return result
         except Exception as e:
-            logger.warning("OpenAI fallback failed for '%s': %s", metric_name, e)
+            err_msg = str(e)
+            logger.warning("OpenAI fallback failed for '%s': %s", metric_name, err_msg)
+            if "insufficient_quota" in err_msg or "403" in err_msg or "429" in err_msg:
+                raise Exception(err_msg)
 
         # 3. Try Fallback to Groq
         try:
@@ -99,7 +108,10 @@ class MultiModelDAXTranslator:
                 logger.info("Groq successfully translated '%s'", metric_name)
                 return result
         except Exception as e:
-            logger.warning("Groq fallback failed for '%s': %s", metric_name, e)
+            err_msg = str(e)
+            logger.warning("Groq fallback failed for '%s': %s", metric_name, err_msg)
+            if "decommissioned" in err_msg or "400" in err_msg or "insufficient_quota" in err_msg or "429" in err_msg:
+                raise Exception(err_msg)
 
         return None
 
@@ -113,13 +125,15 @@ class MultiModelDAXTranslator:
         )
         sql = response.content.strip()
 
-        # Clean up markdown block wraps
+        # Clean reasoning tags and markdown block wraps
+        sql = re.sub(r"<think>.*?</think>", "", sql, flags=re.IGNORECASE | re.DOTALL)
         sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
         sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
+        sql = sql.strip()
 
         if self._is_valid_metric_sql(sql):
             return sql
-        logger.warning("DeepSeek-V4 generated invalid or unsafe SQL for '%s': %s", metric_name, sql)
+        logger.warning("Featherless generated invalid or unsafe SQL for '%s': %s", metric_name, sql)
         return None
 
     def _translate_with_openai(
@@ -151,8 +165,10 @@ class MultiModelDAXTranslator:
                     ]
                 )
                 sql = response.content.strip()
+                sql = re.sub(r"<think>.*?</think>", "", sql, flags=re.IGNORECASE | re.DOTALL)
                 sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
                 sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
+                sql = sql.strip()
                 if self._is_valid_metric_sql(sql):
                     return sql
             except Exception as e:
@@ -180,8 +196,10 @@ class MultiModelDAXTranslator:
                 timeout=30.0,
             )
             sql = (response.choices[0].message.content or "").strip()
+            sql = re.sub(r"<think>.*?</think>", "", sql, flags=re.IGNORECASE | re.DOTALL)
             sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
             sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
+            sql = sql.strip()
             if self._is_valid_metric_sql(sql):
                 return sql
         except Exception as exc:

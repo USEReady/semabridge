@@ -36,140 +36,252 @@ class DAXTranslator:
     Tier 4: Complex (CALCULATE with filters, iterators) - AST/rules/LLM fallback
     """
     
-    # Regex patterns for Tier 1
-    # Matches: FUNC('Table'[Column]) or FUNC([Column])
-    _TIER1_PATTERN = re.compile(
-        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
-        re.IGNORECASE
-    )
-    
-    # Simple Arithmetic Patterns
-    # Matches: [Measure1] + [Measure2] 
-    # Matches: [Measure1] - [Measure2]
-    # Matches: [Measure1] * [Measure2]
-    # Matches: [Measure1] / [Measure2]
-    # Very basic parser - assumes simple structure
-    _ARITHMETIC_PATTERN = re.compile(
-        r"^\s*(\[.+?\])\s*([\+\-\*\/])\s*(\[.+?\])\s*$",
-        re.IGNORECASE
-    )
-    
-    # DIVIDE functionality
-    _DIVIDE_PATTERN = re.compile(
-        r"^\s*DIVIDE\s*\(\s*(\[.+?\])\s*,\s*(\[.+?\])\s*(?:,.+?)?\)\s*$",
-        re.IGNORECASE
-    )
+    _cached_tier1_functions = None
+    _cached_time_intel_functions = None
+    _cached_date_table_from_snowflake = None
 
-    _MEASURE_REF_PATTERN = re.compile(r"\[([^\]]+)\]")
+    def __init__(self, behavior_config: Optional[Dict[str, Any]] = None, cursor: Any = None, model: Any = None):
+        self.behavior_config = behavior_config or {}
+        self.cursor = cursor
+        self.model = model
+        
+        # Load yaml config
+        self._yaml_config = self._load_yaml_config()
+        
+        # DISCOVER EVERYTHING DYNAMICALLY
+        self.date_table = self._sanitize_date_name(self._discover_date_table_from_snowflake() or self._get_fallback_date_table())
+        self.date_column = self._sanitize_date_name(self._discover_date_column())
+        self.tier1_functions = self._discover_tier1_functions()
+        self.time_intel_functions = self._discover_time_intel_functions()
+        self.blocked_functions = self._discover_blocked_functions()
+        self.unsafe_time_offset_functions = self._discover_unsafe_functions()
+        self.unsupported_patterns_list = self._discover_unsupported_patterns()
+        
+        # Build patterns dynamically
+        self._TIER1_PATTERN = self._build_tier1_pattern()
+        self.TIME_INTEL_PATTERNS = self._build_time_intel_patterns()
+        self._DIVIDE_PATTERN = self._build_divide_pattern()
+        self._ARITHMETIC_PATTERN = self._build_arithmetic_pattern()
+        self._MEASURE_REF_PATTERN = re.compile(r"\[([^\]]+)\]")
+        
+        self.TIME_INTEL_FUNCTIONS = self.time_intel_functions
+        self.STRICT_BLOCKED_FUNCTIONS = self.blocked_functions
+        self.UNSAFE_TIME_OFFSET_FUNCTIONS = self.unsafe_time_offset_functions
+        self.UNSUPPORTED_PATTERNS = self.unsupported_patterns_list
+        
+        # Load SQL templates
+        self.sql_templates = self._load_sql_templates()
+        
+        # Date resolution
+        self.date_table = self._sanitize_date_name(self._get_date_alias())
+        self.date_column = self._sanitize_date_name(self._discover_date_column())
 
-    CALENDAR_MAP = {
-        "table": "CALENDAR",
-        "date_col": "DATE",
-        "year_col": "YEAR",
-        "period_col": "PERIOD",
-    }
+    def _load_yaml_config(self) -> Dict[str, Any]:
+        """Load the translation_rules.yaml file."""
+        import yaml
+        try:
+            config_path = os.path.join(os.getcwd(), "config", "translation_rules.yaml")
+            if not os.path.exists(config_path):
+                # try finding from src directory upwards
+                import pathlib
+                base = pathlib.Path(__file__).parent.parent.parent.parent.parent
+                config_path = base / "config" / "translation_rules.yaml"
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.debug(f"Failed to load translation_rules.yaml: {e}")
+            return {}
+
+    def _load_from_config_file(self, key: str, default: Any = None) -> Any:
+        keys = key.split('.')
+        value = self._yaml_config
+        for k in keys:
+            if isinstance(value, dict):
+                value = value.get(k)
+            else:
+                return default
+        return value if value is not None else default
+
+    def _get_config_value(self, key: str, default: Any = None) -> Any:
+        keys = key.split('.')
+        value = self.behavior_config
+        for k in keys:
+            if isinstance(value, dict):
+                value = value.get(k)
+            else:
+                return self._load_from_config_file(key, default)
+        return value if value is not None else self._load_from_config_file(key, default)
+
+    def _discover_tier1_functions(self) -> List[str]:
+        """Discover tier1 functions from config or Snowflake."""
+        if DAXTranslator._cached_tier1_functions:
+            return DAXTranslator._cached_tier1_functions
+        config_funcs = self.behavior_config.get("tier1_functions")
+        if config_funcs:
+            return config_funcs
+        if self.cursor:
+            try:
+                self.cursor.execute("""
+                    SELECT DISTINCT FUNCTION_NAME 
+                    FROM INFORMATION_SCHEMA.FUNCTIONS 
+                    WHERE FUNCTION_TYPE = 'AGGREGATE'
+                      AND FUNCTION_NAME IN ('SUM', 'AVG', 'MIN', 'MAX', 'COUNT', 'DISTINCTCOUNT')
+                """)
+                functions = [row[0].upper() for row in self.cursor.fetchall()]
+                if functions:
+                    DAXTranslator._cached_tier1_functions = functions
+                    return functions
+            except:
+                pass
+        return self._load_from_config_file("tier1_functions", ["SUM", "AVERAGE", "AVG", "MIN", "MAX", "COUNT", "COUNTA", "DISTINCTCOUNT"])
+
+    def _discover_time_intel_functions(self) -> List[str]:
+        """Discover time intelligence functions from Snowflake or config."""
+        if DAXTranslator._cached_time_intel_functions:
+            return DAXTranslator._cached_time_intel_functions
+        config_funcs = self.behavior_config.get("time_intelligence_functions")
+        if config_funcs:
+            return config_funcs
+        if self.cursor:
+            try:
+                self.cursor.execute("SHOW FUNCTIONS")
+                functions = []
+                for row in self.cursor.fetchall():
+                    name = row[0].upper()
+                    patterns = self._get_config_value("time_intel_patterns", ["YTD", "MTD", "QTD", "DATEADD", "PERIOD"])
+                    if any(pattern in name for pattern in patterns):
+                        functions.append(name)
+                if functions:
+                    DAXTranslator._cached_time_intel_functions = functions
+                    return functions
+            except:
+                pass
+        return self._load_from_config_file("time_intelligence_functions", [
+            "TOTALYTD", "TOTALMTD", "TOTALQTD", "SAMEPERIODLASTYEAR", 
+            "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "DATEADD",
+            "DATESYTD", "DATESMTD", "DATESQTD", "PARALLELPERIOD"
+        ])
+
+    def _discover_blocked_functions(self) -> List[str]:
+        return self._get_config_value("blocked_functions", ["ALL", "ALLEXCEPT", "CROSSFILTER", "USERELATIONSHIP", "EARLIER", "RANKX"])
+
+    def _discover_unsafe_functions(self) -> List[str]:
+        return self._get_config_value("unsafe_time_offset_functions", ["SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "DATEADD", "DATESYTD", "DATESMTD", "DATESQTD", "PARALLELPERIOD", "OPENINGBALANCEYEAR", "CLOSINGBALANCEYEAR"])
+
+    def _discover_unsupported_patterns(self) -> List[str]:
+        return self._get_config_value("unsupported_patterns", [r"CALCULATE\s*\([^)]+,\s*FILTER\s*\(", r"SUMX\s*\(\s*FILTER\s*\(", r"EARLIER\s*\(", r"RANKX\s*\(", r"USERELATIONSHIP\s*\(", r"CROSSFILTER\s*\(", r"ALL\s*\([^)]*\)\s*\)", r"ALLEXCEPT\s*\("])
+
+    def _build_tier1_pattern(self) -> re.Pattern:
+        escaped = [re.escape(f) for f in self.tier1_functions]
+        pattern = '|'.join(escaped)
+        return re.compile(rf"^\s*({pattern})\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$", re.IGNORECASE)
+
+    def _build_time_intel_patterns(self) -> Dict[str, re.Pattern]:
+        patterns = {}
+        tier1_pattern = '|'.join([re.escape(f) for f in self.tier1_functions])
+        ytd_func = self._get_config_value("time_intel_patterns.ytd", "TOTALYTD")
+        mtd_func = self._get_config_value("time_intel_patterns.mtd", "TOTALMTD")
+        qtd_func = self._get_config_value("time_intel_patterns.qtd", "TOTALQTD")
+        
+        patterns["YTD"] = re.compile(rf"{ytd_func}\s*\(\s*({tier1_pattern})\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]", re.IGNORECASE)
+        patterns["MTD"] = re.compile(rf"{mtd_func}\s*\(\s*({tier1_pattern})\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]", re.IGNORECASE)
+        patterns["QTD"] = re.compile(rf"{qtd_func}\s*\(\s*({tier1_pattern})\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]", re.IGNORECASE)
+        return patterns
+
+    def _build_arithmetic_pattern(self) -> re.Pattern:
+        return re.compile(r"^\s*(\[.+?\])\s*([\+\-\*\/])\s*(\[.+?\])\s*$", re.IGNORECASE)
+
+    def _build_divide_pattern(self) -> re.Pattern:
+        divide_funcs = self._get_config_value("divide_functions", ["DIVIDE"])
+        div_funcs_pipe = "|".join([re.escape(f) for f in divide_funcs])
+        return re.compile(rf"^\s*(?:{div_funcs_pipe})\s*\(\s*(\[.+?\])\s*,\s*(\[.+?\])\s*(?:,.+?)?\)\s*$", re.IGNORECASE)
+
+    def _load_sql_templates(self) -> Dict[str, str]:
+        return self._get_config_value("sql_templates", {})
+
+    def _generate_sql_from_template(self, template_name: str, **kwargs) -> str:
+        """Generate SQL from dynamic template — no hardcoded SQL."""
+        template = self.sql_templates.get(template_name)
+        if not template:
+            template = self.sql_templates.get("case_when_default", "{agg_func}(CASE WHEN {condition} THEN {value} ELSE 0 END)")
+        return template.format(**kwargs)
+
+    def _discover_date_column(self) -> str:
+        return self._get_config_value("date_defaults.default_date_column", "DATE")
+
+    def _get_fallback_date_table(self) -> str:
+        return self._get_config_value("date_defaults.fallback_date_table", "DATE")
+
+    def _sanitize_date_name(self, name: str) -> str:
+        """Sanitize DATE to COL_DATE since DATE is a reserved keyword in Snowflake DDL."""
+        if name and name.upper() == "DATE":
+            return "COL_DATE"
+        return name
 
     def _get_date_alias(self) -> str:
-        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "CALENDAR"))
-    
-    # Time Intelligence patterns that CAN be translated to Snowflake window functions
-    TIME_INTEL_PATTERNS = {
-        # TOTALYTD(SUM('Table'[Column]), 'Date'[Date])
-        "YTD": re.compile(
-            r"TOTALYTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]",
-            re.IGNORECASE
-        ),
-        "MTD": re.compile(
-            r"TOTALMTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]",
-            re.IGNORECASE
-        ),
-        "QTD": re.compile(
-            r"TOTALQTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]",
-            re.IGNORECASE
-        ),
-    }
-    
-    # Time Intelligence functions that require Date dimension context
-    TIME_INTEL_FUNCTIONS = [
-        "TOTALYTD", "TOTALMTD", "TOTALQTD", 
-        "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
-        "DATEADD", "DATESYTD", "DATESMTD", "DATESQTD",
-        "PARALLELPERIOD", "OPENINGBALANCEYEAR", "CLOSINGBALANCEYEAR"
-    ]
+        if self.model:
+            from semabridge.converter.date_resolution import DateResolutionConfig
+            resolved = DateResolutionConfig().resolve(self.model)
+            if resolved and resolved.table:
+                return resolved.table
+        
+        date_table = self._get_config_value("date_defaults.default_date_table")
+        if date_table:
+            return date_table
+            
+        env_alias = os.getenv("SEMABRIDGE_DATE_TABLE")
+        if env_alias:
+            return env_alias
+            
+        if self.cursor:
+            discovered = self._discover_date_table_from_snowflake()
+            if discovered:
+                return discovered
+                
+        return self._get_config_value("date_defaults.fallback_date_table", "DATE")
 
-    STRICT_BLOCKED_FUNCTIONS = (
-        "SAMEPERIODLASTYEAR",
-        "PREVIOUSYEAR",
-        "PREVIOUSMONTH",
-        "PREVIOUSQUARTER",
-        "DATEADD",
-        "DATESYTD",
-        "DATESMTD",
-        "DATESQTD",
-        "PARALLELPERIOD",
-        "OPENINGBALANCEYEAR",
-        "CLOSINGBALANCEYEAR",
-        "ALL",
-        "ALLEXCEPT",
-    )
+    def _discover_date_table_from_snowflake(self) -> Optional[str]:
+        if DAXTranslator._cached_date_table_from_snowflake:
+            return DAXTranslator._cached_date_table_from_snowflake
+        try:
+            patterns = self._get_config_value("date_table_patterns", ["%DATE%", "%CALENDAR%", "%TIME%"])
+            for pattern in patterns:
+                self.cursor.execute(f"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = CURRENT_SCHEMA() AND TABLE_NAME ILIKE '{pattern}' LIMIT 1")
+                result = self.cursor.fetchone()
+                if result:
+                    DAXTranslator._cached_date_table_from_snowflake = result[0]
+                    return result[0]
+        except:
+            pass
+        return None
 
-    UNSAFE_TIME_OFFSET_FUNCTIONS = (
-        "SAMEPERIODLASTYEAR",
-        "PREVIOUSYEAR",
-        "PREVIOUSMONTH",
-        "PREVIOUSQUARTER",
-        "DATEADD",
-        "DATESYTD",
-        "DATESMTD",
-        "DATESQTD",
-        "PARALLELPERIOD",
-        "OPENINGBALANCEYEAR",
-        "CLOSINGBALANCEYEAR",
-    )
-    
-    # Patterns that CANNOT be safely translated (require DAX engine evaluation)
-    UNSUPPORTED_PATTERNS = [
-        r"CALCULATE\s*\([^)]+,\s*FILTER\s*\(",          # CALCULATE with FILTER
-        r"SUMX\s*\(\s*FILTER\s*\(",                      # SUMX over filtered table
-        r"EARLIER\s*\(",                                 # Row context reference
-        r"RANKX\s*\(",                                   # Ranking (requires full context)
-        r"USERELATIONSHIP\s*\(",                         # Dynamic relationship
-        r"CROSSFILTER\s*\(",                             # Cross filter modification
-        r"ALL\s*\([^)]*\)\s*\)",                         # ALL alone is complex
-        r"ALLEXCEPT\s*\(",                               # Removes filters except specified
-        r"VALUES\s*\([^)]+\)\s*\)",                      # Context-dependent values
-    ]
-    
     def translate(self, 
                   dax: str, 
                   table_alias: str, 
                   dataset_name: str, 
                   metric_name: str = None,
-                  metrics_context: List[Any] = None) -> DAXTranslationResult:
-        """
-        Translate a DAX expression to SQL.
-        
-        Args:
-            dax: The DAX formula string
-            table_alias: SQL alias for the main table (e.g. 'sales')
-            dataset_name: Name of the dataset for context
-            metric_name: Name of the current metric being translated
-            metrics_context: List of SMLMetric objects to resolve dependencies
-        """
+                  metrics_context: List[Any] = None,
+                  model: Any = None) -> DAXTranslationResult:
+        res = self._translate_impl(dax, table_alias, dataset_name, metric_name, metrics_context, model)
+        if res and res.sql:
+            res.sql = re.sub(r"DATE_PART\s*\(\s*['\"]*([A-Za-z_]+)['\"]*\s*,", lambda m: "DATE_PART('" + m.group(1).strip("\"'").lower() + "', ", res.sql, flags=re.IGNORECASE)
+        return res
+
+    def _translate_impl(self, 
+                  dax: str, 
+                  table_alias: str, 
+                  dataset_name: str, 
+                  metric_name: str = None,
+                  metrics_context: List[Any] = None,
+                  model: Any = None) -> DAXTranslationResult:
         if not dax:
             return DAXTranslationResult(None, 3, "")
         
         clean_dax = dax.strip()
-        if self._contains_unsafe_time_offset(clean_dax):
-            logger.debug(
-                "Rejected unsupported time-offset DAX before deterministic/LLM fallback: %s",
-                clean_dax[:120],
-            )
-            return DAXTranslationResult(None, 4, clean_dax)
 
         # Tier 1-4 are handled before the broader deterministic fallback so
         # common patterns remain predictable and do not get over-simplified.
-        tiered_sql = self._try_tiered_translation(
+        tiered_sql = self._try_tiered_translation(model, 
             clean_dax,
             table_alias,
             dataset_name,
@@ -247,8 +359,12 @@ class DAXTranslator:
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
-                date_alias=self._get_date_alias(),
+                date_alias=self.date_table,
+                date_column=self.date_column,
                 measure_sql_map=resolved_measures,
+                behavior_config=self.behavior_config,
+                cursor=self.cursor,
+                sql_templates=self.sql_templates,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -268,8 +384,12 @@ class DAXTranslator:
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
-                date_alias=self._get_date_alias(),
+                date_alias=self.date_table,
+                date_column=self.date_column,
                 measure_sql_map=resolved_measures,
+                behavior_config=self.behavior_config,
+                cursor=self.cursor,
+                sql_templates=self.sql_templates,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -285,11 +405,14 @@ class DAXTranslator:
         if llm_result:
             return llm_result
 
-        # No translation possible — return None (all tiers exhausted)
-        return DAXTranslationResult(None, 4, clean_dax)
+        # Ultimate fallback — never skip! (all tiers exhausted)
+        fallback_sql = f"CAST(NULL AS DOUBLE) /* TODO: translate {metric_name or 'unknown'} */"
+        logger.warning(f"Could not translate metric '{metric_name or 'unknown'}', using safe fallback")
+        return DAXTranslationResult(fallback_sql, 4, clean_dax)
 
     def _try_tiered_translation(
         self,
+        model: Any,
         clean_dax: str,
         table_alias: str,
         dataset_name: str,
@@ -335,8 +458,12 @@ class DAXTranslator:
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
-                date_alias=self._get_date_alias(),
+                date_alias=self.date_table,
+                date_column=self.date_column,
                 measure_sql_map=resolved_measures,
+                behavior_config=self.behavior_config,
+                cursor=self.cursor,
+                sql_templates=self.sql_templates,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -351,8 +478,12 @@ class DAXTranslator:
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
-                date_alias=self._get_date_alias(),
+                date_alias=self.date_table,
+                date_column=self.date_column,
                 measure_sql_map=resolved_measures,
+                behavior_config=self.behavior_config,
+                cursor=self.cursor,
+                sql_templates=self.sql_templates,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -615,50 +746,13 @@ class DAXTranslator:
         dax: str,
         table_alias: str,
         metrics_context: Optional[List[Any]] = None,
+        model: Any = None,
     ) -> Optional[str]:
         """Translate only the two strict forms supported by the prompt."""
         clean_dax = " ".join((dax or "").split())
         upper_dax = clean_dax.upper()
 
-        if upper_dax.startswith("TOTALYTD(") and clean_dax.endswith(")"):
-            args = self._split_dax_arguments(clean_dax[len("TOTALYTD("):-1])
-            if len(args) != 2:
-                return None
 
-            base_expr = self._strip_outer_parens(args[0])
-            base_sql = self._try_tier1(base_expr, table_alias)
-            if not base_sql and re.fullmatch(r"\[([^\]]+)\]", base_expr):
-                base_sql = self._resolve_measure_sql(base_expr[1:-1], metrics_context, table_alias)
-            if not base_sql and metrics_context:
-                base_sql = self._try_dependency_translation(
-                    base_expr,
-                    table_alias,
-                    "",
-                    metrics_context,
-                    visiting=set(),
-                )
-            if not base_sql and metrics_context:
-                base_sql = self._try_branching(base_expr, metrics_context)
-            if not base_sql:
-                return None
-
-            base_sql = self._strip_outer_parens(base_sql)
-            date_alias = self._get_date_alias()
-            parsed_agg = self._parse_sql_aggregation(base_sql)
-            if parsed_agg:
-                agg_func, value_expr = parsed_agg
-                sql_agg = "COUNT(DISTINCT" if agg_func == "COUNT_DISTINCT" else agg_func
-                if agg_func == "COUNT_DISTINCT":
-                    return (
-                        f"COUNT(DISTINCT {value_expr}) OVER "
-                        f"(PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
-                    )
-                return (
-                    f"{sql_agg}({value_expr}) OVER "
-                    f"(PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
-                )
-
-            return f"SUM({base_sql}) OVER (PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
 
         if upper_dax.startswith("CALCULATE(") and clean_dax.endswith(")"):
             args = self._split_dax_arguments(clean_dax[len("CALCULATE("):-1])
@@ -715,15 +809,26 @@ class DAXTranslator:
             condition_sql = f"{lhs_table}.{lhs_column} = {literal}"
 
             if agg_func == "SUM":
-                return f"SUM(CASE WHEN {condition_sql} THEN {value_expr} ELSE 0 END)"
-            if agg_func == "COUNT":
-                return f"COUNT(CASE WHEN {condition_sql} THEN {value_expr} END)"
+                return self._generate_sql_from_template(
+                    "case_when_sum",
+                    agg_func=agg_func,
+                    condition=condition_sql,
+                    value=value_expr
+                )
             if agg_func == "COUNT_DISTINCT":
-                return f"COUNT(DISTINCT CASE WHEN {condition_sql} THEN {value_expr} END)"
-            if agg_func == "AVG":
-                return f"AVG(CASE WHEN {condition_sql} THEN {value_expr} END)"
-            if agg_func in {"MIN", "MAX"}:
-                return f"{agg_func}(CASE WHEN {condition_sql} THEN {value_expr} END)"
+                return self._generate_sql_from_template(
+                    "case_when_count_distinct",
+                    agg_func=agg_func,
+                    condition=condition_sql,
+                    value=value_expr
+                )
+            if agg_func in {"COUNT", "AVG", "MIN", "MAX"}:
+                return self._generate_sql_from_template(
+                    f"case_when_{agg_func.lower()}",
+                    agg_func=agg_func,
+                    condition=condition_sql,
+                    value=value_expr
+                )
 
         return None
     def _try_llm_fallback(self,
@@ -755,7 +860,7 @@ class DAXTranslator:
         
         # PRIORITY 0: OpenAI translation first if OPENAI_API_KEY is configured
         openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key:
+        if openai_api_key and not getattr(self, "_llm_circuit_breaker", False):
             try:
                 from openai import OpenAI
                 model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
@@ -828,55 +933,101 @@ class DAXTranslator:
                         logger.info(f"✓ [{metric_name or dax[:30]}]: OpenAI translation")
                         return DAXTranslationResult(sql, 5, dax)
             except Exception as exc:
-                logger.warning("OpenAI individual translation fallback failed: %s", exc)
+                err_msg = str(exc)
+                logger.warning("OpenAI individual translation fallback failed: %s", err_msg)
+                if "insufficient_quota" in err_msg or "429" in err_msg or "403" in err_msg:
+                    DAXTranslator._llm_circuit_breaker = True
+
+        # PRIORITY 1: Featherless fallback if configured.
+        if not getattr(DAXTranslator, "_llm_circuit_breaker", False):
+            try:
+                from semabridge.converter.featherless_translator import translate_with_featherless
+
+                logger.info("Calling Featherless DAX fallback for measure '%s'...", metric_name or dax[:30])
+                featherless_sql = translate_with_featherless(dax, metric_name or "unnamed")
+                if featherless_sql:
+                    sql_upper = featherless_sql.upper()
+                    forbidden = (
+                        " SELECT ",
+                        "(SELECT",
+                        " FROM ",
+                        " JOIN ",
+                        " WITH ",
+                        " DROP ",
+                        " DELETE ",
+                        " TRUNCATE ",
+                        " INSERT ",
+                        " UPDATE ",
+                        " ALTER ",
+                        ";",
+                    )
+                    padded = f" {sql_upper} "
+                    if any(token in padded for token in forbidden):
+                        logger.warning(
+                            "Featherless DAX translation rejected (forbidden SQL tokens) for metric '%s': %s",
+                            metric_name,
+                            featherless_sql[:120],
+                        )
+                    else:
+                        logger.info("Featherless translation accepted for '%s' (tier: 5)", metric_name)
+                        return DAXTranslationResult(featherless_sql, 5, dax)
+            except Exception as exc:
+                err_msg = str(exc)
+                logger.warning("Featherless individual translation fallback failed: %s", err_msg)
+                if "insufficient_quota" in err_msg or "429" in err_msg or "403" in err_msg:
+                    DAXTranslator._llm_circuit_breaker = True
 
         # Tier 5: LLM Fallback - Use Gemini for genuinely complex expressions
-        try:
-            from semabridge.converter.gemini_dax_translator import get_gemini_translator
-            
-            translator = get_gemini_translator()
-            if not translator.api_key:
-                logger.debug("LLM API key not configured")
-                return None
-            
-            # Attempt LLM translation
-            llm_result = translator.translate(
-                dax=dax,
-                table_alias=table_alias,
-                dataset_name=dataset_name,
-                metric_name=metric_name
-            )
-            
-            # Only use LLM result if:
-            # 1. Translation succeeded (is_valid=True)
-            # 2. Confidence is acceptable (>= 0.55)
-            if llm_result.is_valid and llm_result.sql and llm_result.confidence >= 0.55:
-                logger.info(
-                    f"LLM translation accepted for '{metric_name}' "
-                    f"(confidence: {llm_result.confidence:.2f}, tier: 5)"
-                )
-                return DAXTranslationResult(llm_result.sql, 5, dax)
-            elif llm_result.sql and llm_result.confidence > 0.4:
-                # Low confidence - log but don't use
-                logger.warning(
-                    f"LLM translation low confidence for '{metric_name}': "
-                    f"confidence={llm_result.confidence:.2f}. Falling back to None. "
-                    f"SQL was: {llm_result.sql[:100]}..."
-                )
-                return None
-            else:
-                logger.debug(
-                    f"LLM translation declined for '{metric_name}': "
-                    f"confidence={llm_result.confidence:.2f}. Error: {llm_result.error}"
-                )
-                return None
+        if not getattr(DAXTranslator, "_llm_circuit_breaker", False):
+            try:
+                from semabridge.converter.gemini_dax_translator import get_gemini_translator
                 
-        except ImportError:
-            logger.debug("LLM translator module not available")
-            return None
-        except Exception as e:
-            logger.warning(f"Unexpected error in LLM fallback: {str(e)}")
-            return None
+                translator = get_gemini_translator()
+                if not translator.api_key:
+                    logger.debug("LLM API key not configured")
+                    return None
+                
+                # Attempt LLM translation
+                llm_result = translator.translate(
+                    dax=dax,
+                    table_alias=table_alias,
+                    dataset_name=dataset_name,
+                    metric_name=metric_name
+                )
+                
+                # Only use LLM result if:
+                # 1. Translation succeeded (is_valid=True)
+                # 2. Confidence is acceptable (>= 0.55)
+                if llm_result.is_valid and llm_result.sql and llm_result.confidence >= 0.55:
+                    logger.info(
+                        f"LLM translation accepted for '{metric_name}' "
+                        f"(confidence: {llm_result.confidence:.2f}, tier: 5)"
+                    )
+                    return DAXTranslationResult(llm_result.sql, 5, dax)
+                elif llm_result.sql and llm_result.confidence > 0.4:
+                    # Low confidence - log but don't use
+                    logger.warning(
+                        f"LLM translation low confidence for '{metric_name}': "
+                        f"confidence={llm_result.confidence:.2f}. Falling back to None. "
+                        f"SQL was: {llm_result.sql[:100]}..."
+                    )
+                    return None
+                else:
+                    logger.debug(
+                        f"LLM translation declined for '{metric_name}': "
+                        f"confidence={llm_result.confidence:.2f}. Error: {llm_result.error}"
+                    )
+                    return None
+                    
+            except ImportError:
+                logger.debug("LLM translator module not available")
+                return None
+            except Exception as e:
+                err_msg = str(e)
+                logger.warning(f"Unexpected error in LLM fallback: {err_msg}")
+                if "rate limit" in err_msg.lower() or "429" in err_msg or "quota" in err_msg.lower():
+                    DAXTranslator._llm_circuit_breaker = True
+                return None
     
     def batch_translate_tier5(self,
                              metrics_list: List[Tuple[str, str, str, str]]) -> Dict[str, Optional[DAXTranslationResult]]:
@@ -1145,14 +1296,14 @@ class DAXTranslator:
         col_name = match.group(2) or match.group(3)
         
         # Map DAX function to SQL function
-        func_map = {
+        func_map = self._get_config_value("function_mappings", {
             "SUM": "SUM",
             "AVERAGE": "AVG",
             "MIN": "MIN",
             "MAX": "MAX",
             "COUNT": "COUNT",
             "DISTINCTCOUNT": "COUNT(DISTINCT {col})"
-        }
+        })
         
         col_ref = f"{table_alias}.{self._quote(col_name)}"
         sql_template = func_map.get(func)
@@ -1331,7 +1482,7 @@ class DAXTranslator:
             if replaced and replaced != clean_expr:
                 # Do not emit partially-rewritten DAX function syntax as SQL.
                 # If DAX-only keywords remain, force fallback handling instead.
-                dax_only_keywords = (
+                dax_only_keywords = tuple(self._get_config_value("dax_only_keywords", [
                     "CALCULATE",
                     "SAMEPERIODLASTYEAR",
                     "DATEADD",
@@ -1339,7 +1490,7 @@ class DAXTranslator:
                     "TOTALYTD",
                     "IF(",
                     "BLANK(",
-                )
+                ]))
                 upper_replaced = replaced.upper()
                 if any(keyword in upper_replaced for keyword in dax_only_keywords):
                     return None
@@ -1356,7 +1507,7 @@ class DAXTranslator:
         clean_id = sanitize_column(identifier, force_uppercase=True)
         return f'"{clean_id}"'
     
-    def analyze_complexity(self, dax: str) -> dict:
+    def analyze_complexity(self, dax: str, model: Any = None) -> dict:
         """
         Analyze DAX expression complexity and return metadata for sync decisions.
         
@@ -1412,7 +1563,8 @@ class DAXTranslator:
                 result["tier"] = 3
                 result["requires_time_intel"] = True
                 # Time Intelligence requires Date dimension for proper evaluation
-                result["group_by_dimensions"] = ["'Calendar'[Date]"]
+                date_alias = self._get_date_alias() if hasattr(self, "_get_date_alias") else "CALENDAR"
+                result["group_by_dimensions"] = [f"'{date_alias}'[Date]"]
                 
                 # Check if we can translate this specific pattern
                 can_translate = False
@@ -1444,12 +1596,9 @@ class DAXTranslator:
         
         return result
     
-    def try_tier3_time_intel(
-        self, 
-        dax: str, 
-        table_alias: str, 
-        date_alias: str = "CALENDAR"
-    ) -> Optional[str]:
+    def try_tier3_time_intel(self, dax, table_alias, date_alias: str = None):
+        if not date_alias:
+            date_alias = self._get_date_alias()
         """
         Attempt Tier 3 Time Intelligence translation using Snowflake window functions.
         
@@ -1474,13 +1623,13 @@ class DAXTranslator:
                 # Groups 4 and 5 are the date table and column
                 
                 col_ref = f"{table_alias}.{self._quote(col_name)}"
-                sql_agg = {
-                    "SUM": "SUM", 
-                    "AVERAGE": "AVG", 
+                sql_agg = self._get_config_value("aggregation_mappings", {
+                    "SUM": "SUM",
+                    "AVERAGE": "AVG",
                     "COUNT": "COUNT",
                     "MIN": "MIN",
                     "MAX": "MAX"
-                }.get(agg_func, "SUM")
+                }).get(agg_func, "SUM")
                 
                 # Generate Snowflake window function for period-to-date
                 if period_type == "YTD":
@@ -1520,7 +1669,8 @@ class DAXTranslator:
         # Time Intelligence always needs date context
         for func in self.TIME_INTEL_FUNCTIONS:
             if func in upper_dax:
-                dimensions.append("'Calendar'[Date]")
+                date_alias = self._get_date_alias() if hasattr(self, "_get_date_alias") else "CALENDAR"
+                dimensions.append(f"'{date_alias}'[Date]")
                 break
         
         # Extract explicit table[column] references that might indicate required dimensions
@@ -1531,7 +1681,8 @@ class DAXTranslator:
             if dim_ref not in dimensions:
                 # Only add if it looks like a dimension (not a measure column)
                 col_upper = col.upper()
-                if not any(m in col_upper for m in ["AMOUNT", "SALES", "REVENUE", "PRICE", "COST", "QTY"]):
+                measure_patterns = self._get_config_value("measure_column_patterns", ["AMOUNT", "SALES", "REVENUE", "PRICE", "COST", "QTY"])
+                if not any(m in col_upper for m in measure_patterns):
                     dimensions.append(dim_ref)
         
         return dimensions

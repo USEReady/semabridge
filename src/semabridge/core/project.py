@@ -181,6 +181,7 @@ class ProjectOptions(BaseModel):
     exclude_model: List[str] = Field(default_factory=list)
     exclude_semantics: List[str] = Field(default_factory=list)
     structural_dedup: bool = False
+    skip_sml_conversion: bool = False
     
     def get_semantic_exclusions(self) -> List[SemanticExclusion]:
         """Parse exclude_semantics strings into SemanticExclusion objects."""

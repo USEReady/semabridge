@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Tuple, Set, Optional
 
 from semabridge.converter.date_resolution import DateResolutionConfig
+
+logger = logging.getLogger(__name__)
 
 
 class TablesClauseBuilder:
@@ -21,6 +24,7 @@ class TablesClauseBuilder:
         self.config = config
         self.behavior = behavior
         self.live_schema_metadata = live_schema_metadata
+        self._current_model = None
 
     def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
         """
@@ -35,45 +39,102 @@ class TablesClauseBuilder:
         # Use fiscal period column if it exists; otherwise fall back to date column
         return (resolution.table, resolution.date_col, resolution.monthindex_col or resolution.date_col)
 
+    def _get_date_table_name(self, model: Any) -> str:
+        """Return the actual date table/view, preferring the live enriched date view."""
+        if "DATE_ENRICHED" in {str(name).upper() for name in self.live_schema_metadata}:
+            return "DATE_ENRICHED"
+        if hasattr(self, "emitter") and self.emitter and hasattr(self.emitter, "_get_date_table_name"):
+            return self.emitter._get_date_table_name(model)
+        found = self._find_date_table(model)
+        return found[0] if found else "DATE"
+
+    @staticmethod
+    def _get_dynamic_attr(dynamic: Any, name: str, default: str) -> str:
+        if isinstance(dynamic, dict):
+            return dynamic.get(name, default)
+        return getattr(dynamic, name, default)
+
+    @staticmethod
+    def _resolve_live_column(live_cols: set[str], preferred: Optional[str], fallback: Optional[str] = None) -> Optional[str]:
+        by_upper = {str(col).strip('"').upper(): str(col).strip('"') for col in live_cols or set()}
+        for candidate in (preferred, fallback):
+            key = str(candidate or "").strip('"').upper()
+            if key in by_upper:
+                return by_upper[key]
+        return None
+
     def _build_source_query_with_anchors(self, source_fq: str, fact_table: str, model: Any) -> str:
         """
-        Automatically inject anchors using dynamically detected date table.
-        No hardcoded table names!
+        Add scalar anchors through a source subquery only when the mapped source does
+        not already expose them. This keeps anchor generation dynamic while avoiding
+        duplicate columns in enriched fact views.
         """
-        date_info = self._find_date_table(model)
-        
-        if not date_info:
+        dynamic = getattr(getattr(self.behavior, "snowflake", None), "dynamic", None)
+        fiscal_anchor = self._get_dynamic_attr(dynamic, "fiscal_period_anchor_name", "_CURRENT_FISCAL_PERIOD")
+        configured_month_index = self._get_dynamic_attr(dynamic, "month_index_column", "MONTHINDEX")
+        configured_date_col = self._get_dynamic_attr(dynamic, "date_column", "COL_DATE")
+
+        safe_fact_table = self.identifier_sanitizer.sanitize_table_name(fact_table).upper()
+        mapped_cols = {str(col).upper() for col in self.live_schema_metadata.get(safe_fact_table, set())}
+        source_match = source_fq.rsplit(".", 1)[-1].strip('"').upper() if source_fq else ""
+        source_cols = {str(col).upper() for col in self.live_schema_metadata.get(source_match, set())}
+        if fiscal_anchor.upper() in mapped_cols or fiscal_anchor.upper() in source_cols:
             return source_fq
 
-        date_table, date_col, fiscal_col = date_info
-        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+        found = self._find_date_table(model)
+        date_table = self._get_date_table_name(model)
+        if not date_table:
+            return source_fq
 
-        date_dataset = next(
-            (d for d in getattr(model, "datasets", []) or [] if d.unique_name == date_table),
-            None,
-        )
-
-        if date_dataset:
-            resolved_source_table = source_table_mapping.get(
-                date_dataset.unique_name,
-                date_dataset.source_table or date_dataset.unique_name,
+        safe_date_table = self.identifier_sanitizer.sanitize_table_name(date_table).upper()
+        date_cols = {str(col).upper() for col in self.live_schema_metadata.get(safe_date_table, set())}
+        fiscal_col = found[2] if found else configured_month_index
+        date_col = found[1] if found else configured_date_col
+        resolved_fiscal_col = self._resolve_live_column(date_cols, fiscal_col, configured_month_index)
+        resolved_date_col = self._resolve_live_column(date_cols, date_col, configured_date_col)
+        if not resolved_fiscal_col:
+            logger.warning(
+                "Skipping fiscal anchor injection: fiscal column '%s' not found in live schema for '%s'",
+                fiscal_col,
+                safe_date_table,
             )
-            safe_table = self.identifier_sanitizer.sanitize_table_name(resolved_source_table)
-            date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
-            resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
-            resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
-        else:
-            safe_table = self.identifier_sanitizer.sanitize_table_name(date_table)
-            date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
-            resolved_date_col = self.identifier_sanitizer.sanitize_column(date_col)
-            resolved_fiscal_col = self.identifier_sanitizer.sanitize_column(fiscal_col)
+            return source_fq
+        if not resolved_date_col:
+            logger.warning(
+                "Skipping fiscal anchor injection: date column '%s' not found in live schema for '%s'",
+                date_col,
+                safe_date_table,
+            )
+            return source_fq
 
-        return f"""(
-    SELECT 
-        f.*,
-        (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
-    FROM {source_fq} f
-)"""
+        schema_ref = f'"{self.config.database}"."{self.config.schema_name}"'
+        anchor_expr = (
+            f'(SELECT MAX("{resolved_fiscal_col}") FROM {schema_ref}."{safe_date_table}" '
+            f'WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "{fiscal_anchor}"'
+        )
+        return f'(SELECT f.*, {anchor_expr} FROM {source_fq} AS f)'
+
+    def _build_table_reference(self, dataset_name: str, source_table: str, model: Any = None) -> str:
+        """Build table reference with enriched view resolution."""
+        if str(dataset_name).upper() in {"COL_DATE", "DATE"}:
+            safe_table = self.identifier_sanitizer.sanitize_table_name(self._get_date_table_name(model or self._current_model))
+            return f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+        if hasattr(self, 'emitter') and self.emitter:
+            source_mapping = self.emitter._get_source_table_mapping()
+            mapped_source = (
+                source_mapping.get(dataset_name)
+                or source_mapping.get(str(dataset_name).upper())
+                or source_mapping.get(source_table)
+                or source_mapping.get(str(source_table).upper())
+            )
+            if mapped_source:
+                safe_table = self.identifier_sanitizer.sanitize_table_name(mapped_source)
+                return f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            return self.emitter.resolve_table_or_view(source_table)
+        safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
+        return f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+
+
 
     def build_for_sml(
         self,
@@ -81,7 +142,7 @@ class TablesClauseBuilder:
         registry: Any,
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         self._current_model = sml
         return self._build(sml.datasets, sml.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=False)
 
@@ -91,7 +152,7 @@ class TablesClauseBuilder:
         registry: Any,
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         self._current_model = osi
         return self._build(osi.datasets, osi.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=True)
 
@@ -103,7 +164,7 @@ class TablesClauseBuilder:
         metric_counts_by_dataset: dict[str, int],
         related_datasets: set[str],
         is_osi: bool
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any]]:
+    ) -> Tuple[List[str], Dict[str, List[str]], Dict[tuple, str], Dict[str, set[str]], Dict[str, Any], Dict[str, set[str]]]:
         tables_lines: List[str] = []
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
@@ -118,8 +179,11 @@ class TablesClauseBuilder:
                         relationship_pk_map[rel.to_dataset].append(col)
 
         dataset_col_lookup: dict[str, set[str]] = {}
+        live_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
         source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+        if hasattr(self, 'emitter') and self.emitter:
+            source_table_mapping = self.emitter._get_source_table_mapping()
         for dataset in datasets:
             if is_osi:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
@@ -129,12 +193,13 @@ class TablesClauseBuilder:
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
             source_key = self.identifier_sanitizer.sanitize_table_name(source_table).upper()
             live_cols = self.live_schema_metadata.get(source_key, set())
+            if live_cols:
+                live_col_lookup[dataset.unique_name] = set(live_cols)
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
 
         for dataset in datasets:
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
-            safe_table = self.identifier_sanitizer.sanitize_table_name(source_table)
-            full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            full_table = self._build_table_reference(dataset.unique_name, source_table, self._current_model)
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
 
@@ -171,7 +236,7 @@ class TablesClauseBuilder:
             # Verification
             verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]
             if not verified_pk and known_phys:
-                verified_pk = [f'"{sorted(list(known_phys))[0]}"']
+                verified_pk = [f'"{sorted(str(col) for col in known_phys)[0]}"']
 
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
@@ -190,7 +255,7 @@ class TablesClauseBuilder:
                 declared_pk_by_alias[rel_alias] = [rel_pk]
                 relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
 
-        return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name
+        return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
 
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)

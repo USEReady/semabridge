@@ -56,6 +56,7 @@ class SemanticViewBuilder:
         self.schema_manager = schema_manager
         self.dup_name_repo = dup_name_repo
         self.translator = translator
+        self.emitter: Optional[Any] = None
         
         # Modular components
         self.sanitizer = SemanticDDLSanitizer(identifier_sanitizer)
@@ -67,6 +68,79 @@ class SemanticViewBuilder:
         self.metrics_builder = MetricsClauseBuilder(
             identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo
         )
+
+    def _extract_all_column_refs(self, metric_sql: str, fact_dataset: str) -> set[tuple[str, str]]:
+        refs = set()
+        if not metric_sql:
+            return refs
+            
+        try:
+            import sqlglot
+            from sqlglot import exp
+            
+            # Clean up measure references before parsing so sqlglot doesn't choke
+            # e.g. [Total Units] -> "Total Units"
+            clean_sql = re.sub(r'\[([^\]]+)\]', r'"\1"', metric_sql)
+            
+            for parsed in sqlglot.parse(clean_sql, read="snowflake"):
+                if not parsed:
+                    continue
+                for col_node in parsed.find_all(exp.Column):
+                    table_name = col_node.table or fact_dataset
+                    col_name = col_node.name
+                    if table_name and col_name:
+                        if table_name.casefold() != fact_dataset.casefold():
+                            refs.add((table_name, col_name))
+        except Exception:
+            pass
+        return refs
+
+    def _collect_all_required_columns(self, metric: Any, fact_dataset: str, model: Any, visited: set[str] = None) -> set[tuple[str, str]]:
+        if visited is None:
+            visited = set()
+            
+        metric_name = getattr(metric, 'unique_name', None) or getattr(metric, 'name', '')
+        if metric_name in visited:
+            return set()
+        if metric_name:
+            visited.add(metric_name)
+            
+        refs = set()
+        
+        # 1. Regex on DAX for RELATED and cross-table
+        dax = getattr(metric, 'expression', '') or ''
+        related_pattern = r'RELATED\(\s*[\'"]?([^\'"\[\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
+        for table, column in re.findall(related_pattern, dax, re.IGNORECASE):
+            table = str(table or "").strip()
+            if table and table.casefold() != fact_dataset.casefold():
+                refs.add((table, column))
+
+        direct_pattern = r'[\'"]?([^\'"\[\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
+        for table, column in re.findall(direct_pattern, dax, re.IGNORECASE):
+            table = str(table or "").strip()
+            if table and table.casefold() != fact_dataset.casefold():
+                refs.add((table, column))
+                
+        # 2. Extract from SQL
+        sql_expr = getattr(metric, 'sql_expression', '') or ''
+        refs.update(self._extract_all_column_refs(sql_expr, fact_dataset))
+        
+        # 3. Find referenced measures in DAX and SQL
+        referenced_measures = set()
+        measure_pattern = r'\[([^\]]+)\]'
+        for m in re.findall(measure_pattern, dax):
+            referenced_measures.add(m)
+        for m in re.findall(measure_pattern, sql_expr):
+            referenced_measures.add(m)
+            
+        # Recursive resolution
+        for other_metric_name in referenced_measures:
+            # Find the other metric
+            other_metric = next((m for m in model.metrics if (getattr(m, 'name', '') == other_metric_name or getattr(m, 'unique_name', '') == other_metric_name)), None)
+            if other_metric:
+                refs.update(self._collect_all_required_columns(other_metric, fact_dataset, model, visited))
+                
+        return refs
 
     def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:
         """
@@ -81,10 +155,35 @@ class SemanticViewBuilder:
             for ds in getattr(model, "datasets", []) or []
             if getattr(ds, "unique_name", None)
         }
+        dataset_aliases: dict[str, str] = {}
+        try:
+            from semabridge.utils.naming import to_alias
+        except Exception:
+            to_alias = None
+        for ds in getattr(model, "datasets", []) or []:
+            unique_name = str(getattr(ds, "unique_name", "") or "").strip()
+            if not unique_name:
+                continue
+            source_table = str(getattr(ds, "source_table", "") or unique_name).strip()
+            candidates = {
+                unique_name,
+                source_table,
+                self.identifier_sanitizer.sanitize_alias(unique_name),
+                self.identifier_sanitizer.sanitize_alias(source_table),
+                self.identifier_sanitizer.sanitize_table_name(unique_name),
+                self.identifier_sanitizer.sanitize_table_name(source_table),
+            }
+            if to_alias:
+                candidates.add(to_alias(unique_name))
+                candidates.add(to_alias(source_table))
+            for candidate in candidates:
+                if candidate:
+                    dataset_aliases[str(candidate).strip().casefold()] = unique_name
 
         def resolve_dataset(name: str) -> str:
             clean = str(name or "").strip().strip("'\"")
-            return dataset_names.get(clean.casefold(), clean)
+            key = clean.casefold()
+            return dataset_names.get(key) or dataset_aliases.get(key) or ""
 
         def precomputed_name(source_table: str, column: str) -> str:
             return self.identifier_sanitizer.sanitize_column(f"{source_table}_{column}")
@@ -117,21 +216,13 @@ class SemanticViewBuilder:
                 )
 
         for metric in model.metrics:
-            dax = getattr(metric, 'expression', '') or ''
             metric_dataset = getattr(metric, "dataset", "") or ""
-
-            # Detect RELATED('Table'[Column]) and RELATED(Table[Column]) patterns.
-            related_pattern = r'RELATED\(\s*[\'"]?([^\'"\[\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
-            for table, column in re.findall(related_pattern, dax, re.IGNORECASE):
-                add_suggestion(metric_dataset, table, column)
-
-            # Detect direct 'Table'[Column] references (cross-table).
-            direct_pattern = r'[\'"]?([^\'"\[\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
-            for table, column in re.findall(direct_pattern, dax, re.IGNORECASE):
-                table = str(table or "").strip()
-                if not table:
-                    continue
-                add_suggestion(metric_dataset, table, column)
+            if not metric_dataset:
+                continue
+                
+            refs = self._collect_all_required_columns(metric, metric_dataset, model)
+            for table_name, col_name in refs:
+                add_suggestion(metric_dataset, table_name, col_name)
 
         self._precompute_details = details
         
@@ -261,7 +352,19 @@ class SemanticViewBuilder:
 
         # TABLES
         tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
-        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
+        if hasattr(self, 'emitter'):
+            tbuilder.emitter = self.emitter
+        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_col_lookup = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
+        
+        for detail in self.get_precompute_details():
+            tgt_ds = detail.get("target_dataset")
+            col_alias = detail.get("precomputed_column", "").upper()
+            if tgt_ds and col_alias:
+                tgt_key = next((k for k in ds_lookup.keys() if k.casefold() == tgt_ds.casefold()), tgt_ds)
+                if tgt_key not in ds_lookup:
+                    ds_lookup[tgt_key] = set()
+                ds_lookup[tgt_key].add(col_alias)
+        
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
         # RELATIONSHIPS
@@ -291,6 +394,8 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        with open(r'C:\Users\MANOJ\dev-test\semabridge\ddl_debug.sql', 'w', encoding='utf-8') as debug_f:
+            debug_f.write(final_ddl)
         return fix_global_sums(final_ddl, self.translator)
 
     def _generate_semantic_view_from_osi(self, osi: OSIModel) -> str:
@@ -314,7 +419,19 @@ class SemanticViewBuilder:
 
         # TABLES
         tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
-        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
+        if hasattr(self, 'emitter'):
+            tbuilder.emitter = self.emitter
+        tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_col_lookup = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
+        
+        for detail in self.get_precompute_details():
+            tgt_ds = detail.get("target_dataset")
+            col_alias = detail.get("precomputed_column", "").upper()
+            if tgt_ds and col_alias:
+                tgt_key = next((k for k in ds_lookup.keys() if k.casefold() == tgt_ds.casefold()), tgt_ds)
+                if tgt_key not in ds_lookup:
+                    ds_lookup[tgt_key] = set()
+                ds_lookup[tgt_key].add(col_alias)
+        
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
         # RELATIONSHIPS
@@ -343,6 +460,8 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
+        with open(r'C:\Users\MANOJ\dev-test\semabridge\ddl_debug.sql', 'w', encoding='utf-8') as debug_f:
+            debug_f.write(final_ddl)
         return fix_global_sums(final_ddl, self.translator)
 
     @staticmethod

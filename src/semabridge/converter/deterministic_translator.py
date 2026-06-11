@@ -322,6 +322,12 @@ class DeterministicTranslator:
         if 'SELECT' in sql_upper or 'FROM' in sql_upper:
             issues.append("SQL contains SELECT/FROM - must be expression only")
             return False, issues
+            
+        # Check for DAX keywords that shouldn't be in SQL
+        dax_keywords = ['CALCULATE(', 'FILTER(', 'ALL(', 'RELATED(', 'ISBLANK(']
+        if any(keyword in sql_upper for keyword in dax_keywords):
+            issues.append("SQL contains un-translated DAX keywords")
+            return False, issues
         
         return True, issues
     

@@ -365,6 +365,7 @@ class SnapshotRow(Base):
     run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
+    format_type: Mapped[str] = mapped_column(String(20), nullable=False, default="sml")
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="snapshots")

@@ -224,15 +224,29 @@ class DimensionsClauseBuilder:
         used_aliases: Set[str],
         original_dimension_name: str
     ) -> str:
-        """Ensure dimension alias is unique across a semantic view."""
-        if base_alias not in used_aliases:
+        """Deterministic dimension alias resolution."""
+        if not hasattr(self, '_alias_cache'):
+            self._alias_cache = {}
+            self._used_aliases = set()
+            
+        # Use semantic name + original name as unique key
+        unique_key = f"{base_alias}_{original_dimension_name}"
+        
+        if unique_key in self._alias_cache:
+            return self._alias_cache[unique_key]
+            
+        if base_alias not in self._used_aliases and base_alias not in used_aliases:
+            self._alias_cache[unique_key] = base_alias
+            self._used_aliases.add(base_alias)
             used_aliases.add(base_alias)
             return base_alias
 
         idx = 2
         while True:
             candidate = self.sanitizer.sanitize_semantic_name(f"{base_alias}_{idx}")
-            if candidate not in used_aliases:
+            if candidate not in self._used_aliases and candidate not in used_aliases:
+                self._alias_cache[unique_key] = candidate
+                self._used_aliases.add(candidate)
                 used_aliases.add(candidate)
                 logger.warning(
                     "Dimension alias collision for '%s' (base '%s'); using '%s'",

@@ -60,31 +60,66 @@ def _convert_fabric_to_sml(
     """
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
     from semabridge.converter.osi_to_sml import OSIToSMLConverter
+    from semabridge.core.settings import get_settings
 
     sf = context.source_format
     ws_id = workspace_id or sf.workspace_id
     ds_id = dataset_id or sf.dataset_id
 
-    # Phase 1: TMSL → OSI
-    source_data = {
-        "tmsl": sf.tmsl_definition,
-        "workspace_id": ws_id,
-        "dataset_id": ds_id,
-        "display_name": sf.dataset_name or None,
-        "project_id": context.project_id,
-    }
-    osi_model = TMSLToOSIConverter().to_osi(source_data)
-    context.osi_model = osi_model  # Store on context for step-7 persistence
-    logger.debug(
-        f"OSI intermediate: {len(osi_model.datasets)} datasets, "
-        f"{len(osi_model.metrics)} metrics, {len(osi_model.relationships)} relationships"
-    )
+    settings = get_settings()
+    use_tmdl_direct = settings.conversion.tmdl_direct_to_csm
 
-    # Phase 2: OSI → SML
-    sml_model = OSIToSMLConverter().from_osi(
-        osi_model,
-        row_counts=sf.row_counts,
-    )
+    if use_tmdl_direct and getattr(sf, 'tmdl_definition', None):
+        # Phase 3 Direct TMDL to CSM flow
+        from semabridge.converter.tmdl_to_csm import TmdlToCsmConverter
+        from semabridge.converter.adapters.csm_to_sml import CSMToSMLConverter
+        
+        logger.info("Using Direct TMDL -> CSM -> SML conversion flow")
+        csm_model = TmdlToCsmConverter().convert(sf.tmdl_definition)
+        sml_model = CSMToSMLConverter().convert(csm_model)
+        
+        self._record_step(
+            6, StepStatus.SUCCESS,
+            f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics (via CSM)"
+        )
+    else:
+        # Phase 1: TMSL → OSI
+        source_data = {
+            "tmsl": sf.tmsl_definition,
+            "workspace_id": ws_id,
+            "dataset_id": ds_id,
+            "display_name": sf.dataset_name or None,
+            "project_id": context.project_id,
+        }
+        osi_model = TMSLToOSIConverter().to_osi(source_data)
+        context.osi_model = osi_model  # Store on context for step-7 persistence
+        logger.debug(
+            f"OSI intermediate: {len(osi_model.datasets)} datasets, "
+            f"{len(osi_model.metrics)} metrics, {len(osi_model.relationships)} relationships"
+        )
+
+        options = getattr(context.config, "options", None)
+        skip_sml = getattr(options, "skip_sml_conversion", False) if options else False
+        if skip_sml:
+            logger.info(
+                "OSI conversion complete: %d measures, %d dimensions",
+                len(osi_model.metrics),
+                len(osi_model.datasets),
+            )
+            logger.info("Skipping SML conversion (osi_only mode enabled)")
+            return None
+
+        # Phase 2: OSI → SML
+        skip_csm = not get_settings().csm.enabled
+        sml_model = OSIToSMLConverter(skip_csm=skip_csm).from_osi(
+            osi_model,
+            row_counts=sf.row_counts,
+        )
+
+        self._record_step(
+            6, StepStatus.SUCCESS,
+            f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics (via OSI)"
+        )
 
     # Allow the project config's model_name / project_name to override the
     # SML model's unique_name.  This lets users control the Snowflake view

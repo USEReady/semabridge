@@ -7,6 +7,8 @@ from typing import Optional
 import os
 import logging
 import json
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -14,63 +16,13 @@ FEATHERLESS_KEY = os.getenv("FEATHERLESS_API_KEY") or os.getenv("Feather-Api-Key
 FEATHERLESS_URL = os.getenv("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1/chat/completions")
 
 
-def translate_with_featherless(dax: str, metric_name: str, prompt: Optional[str] = None) -> Optional[str]:
-    """Attempt to translate DAX using Featherless.
 
-    Returns SQL expression string or None.
-    """
-    try:
-        # Prefer multi_model_translator if available
-        from semabridge.converter.multi_model_translator import translate_with_featherless as mm_tf
-        return mm_tf(dax, metric_name)
-    except Exception:
-        pass
-
-    if not FEATHERLESS_KEY:
-        logger.debug("Featherless API key not configured")
-        return None
-
-    body = {
-        "model": os.getenv("FEATHERLESS_MODEL", "deepseek-ai/DeepSeek-V4-Pro"),
-        "messages": [
-            {"role": "system", "content": "Translate Power BI DAX to a single Snowflake METRICS SQL expression. Return only the expression."},
-            {"role": "user", "content": prompt or f"Metric: {metric_name}\nDAX: {dax}"},
-        ],
-        "max_tokens": int(os.getenv("FEATHERLESS_MAX_TOKENS", "500")),
-    }
-
-    try:
-        import requests
-
-        headers = {"Authorization": f"Bearer {FEATHERLESS_KEY}", "Content-Type": "application/json"}
-        resp = requests.post(FEATHERLESS_URL, json=body, headers=headers, timeout=60)
-        if resp.status_code != 200:
-            logger.debug("Featherless HTTP %s: %s", resp.status_code, resp.text[:200])
-            return None
-        data = resp.json()
-        # Try to extract text from common shapes
-        choice = None
-        if isinstance(data, dict):
-            # OpenAI-like shape
-            choices = data.get("choices") or data.get("outputs")
-            if choices and isinstance(choices, list) and len(choices) > 0:
-                first = choices[0]
-                if isinstance(first, dict):
-                    choice = first.get("message", {}).get("content") or first.get("text") or first.get("content")
-        text = (choice or "" ).strip()
-        if text:
-            # sanitize markdown
-            text = text.replace("```sql", "").replace("```", "").strip()
-            return text
-    except Exception as exc:
-        logger.debug("Featherless translate failed: %s", exc)
-    return None
 import os
 from typing import Optional
 from langchain_openai import ChatOpenAI
 from semabridge.utils.logger import get_logger
-
-logger = get_logger(__name__)
+from dotenv import load_dotenv
+load_dotenv()
 
 # Featherless API configuration
 FEATHERLESS_API_KEY = os.getenv("Feather-Api-Key") or os.getenv("FEATHERLESS_API_KEY")
@@ -78,11 +30,9 @@ FEATHERLESS_BASE_URL = "https://api.featherless.ai/v1"
 
 # List of models to try in order (priority)
 FEATHERLESS_MODELS = [
-    "deepseek-ai/DeepSeek-V4-Pro",
-    "Qwen/Qwen3-0.6B",
-    "Qwen/Qwen3.6-27B",
     "mistralai/Mistral-7B-Instruct-v0.3",
-    "meta-llama/Llama-3.2-3B-Instruct",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1"
 ]
 
 def get_featherless_llm(model: str = None) -> Optional[ChatOpenAI]:
@@ -100,7 +50,7 @@ def get_featherless_llm(model: str = None) -> Optional[ChatOpenAI]:
             base_url=FEATHERLESS_BASE_URL,
             temperature=0.1,
             max_tokens=500,
-            timeout=30,
+            timeout=10,
         )
         logger.info(f"✅ Featherless client initialized with model: {model_to_use}")
         return llm
@@ -138,10 +88,12 @@ SQL:"""
             response = llm.invoke(prompt_to_use)
             sql = response.content.strip()
             
-            # Clean markdown
+            # Clean markdown and reasoning tags
             import re
+            sql = re.sub(r"<think>.*?</think>", "", sql, flags=re.IGNORECASE | re.DOTALL)
             sql = re.sub(r"```sql\s*", "", sql, flags=re.IGNORECASE)
             sql = re.sub(r"```\s*", "", sql, flags=re.IGNORECASE)
+            sql = sql.strip()
             
             # Basic validation
             if sql and not any(x in sql.upper() for x in ["SELECT", "FROM", "JOIN", "WITH", "OVER"]):
@@ -150,7 +102,12 @@ SQL:"""
             else:
                 logger.warning(f"Featherless ({model}) returned invalid SQL for {metric_name}: {sql}")
         except Exception as e:
-            logger.warning(f"Featherless ({model}) failed for {metric_name}: {e}")
+            err_msg = str(e)
+            logger.warning(f"Featherless ({model}) failed for {metric_name}: {err_msg}")
+            if "upgrade_required" in err_msg or "model_gated" in err_msg or "403" in err_msg or "429" in err_msg:
+                break # Break on auth/rate limits
+            if "404" in err_msg or "not found" in err_msg.lower():
+                continue # Continue to next model if this specific model is missing
     
     return None
 

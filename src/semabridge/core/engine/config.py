@@ -207,6 +207,13 @@ def _step1_load_config(
                     if target_workspace_id:
                         config.fabric.workspace_id = target_workspace_id
 
+            # Inject project-level options (e.g. skip_sml_conversion) onto
+            # the Settings instance so downstream steps can read them via
+            # getattr(context.config, "options", None).
+            options_cfg = raw_config.get("options")
+            if isinstance(options_cfg, dict):
+                object.__setattr__(config, "options", SimpleNamespace(**options_cfg))
+
             # We intentionally DO NOT override the semantic view name with the project name.
             # This ensures that if a project has multiple models (e.g. continent, annual),
             # they are deployed as distinct views (e.g. CONTINENT_SF, ANNUAL_SF)

@@ -150,6 +150,9 @@ class SMLToOSIConverter(BaseConverter):
             description=sml_col.description or None,
             is_key=sml_col.is_key,
             is_hidden=sml_col.is_hidden,
+            is_measure_candidate=getattr(sml_col, "is_measure_candidate", False),
+            source_expression=getattr(sml_col, "source_expression", None),
+            default_aggregation=getattr(OSIAggregationType, sml_col.default_aggregation.name, None) if getattr(sml_col, "default_aggregation", None) else None,
             format_string=sml_col.format_string,
         )
 

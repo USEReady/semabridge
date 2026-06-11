@@ -18,36 +18,141 @@ logger = get_logger(__name__)
 
 
 class MetricExpressionTranslator:
-    def __init__(self, identifier_sanitizer: Any = None, dialect: str = "snowflake", behavior: Any = None, *args, **kwargs) -> None:
+    def __init__(self, identifier_sanitizer: Any = None, dialect: str = "snowflake", behavior: Any = None, config: Any = None, *args, **kwargs) -> None:
         self._id = identifier_sanitizer
         self.dialect = dialect
         self.behavior = behavior
+        self.config = config
         self._openai_prefetch_sql_by_metric: Dict[str, str] = {}
         self._openai_prefetch_done = False
+        self._llm_circuit_breaker_tripped = False
 
-    @staticmethod
-    def fix_common_llm_issues(sql: str, dax: str = "") -> str:
+    def _is_numeric_column(self, col_name: str) -> bool:
+        """Check if column is numeric by name pattern."""
+        numeric_patterns = ['UNITS', 'REVENUE', 'AMOUNT', 'PRICE', 'QTY', 'COUNT', 'SCORE', 'VALUE', 'COST', 'SALES', 'TOTAL', 'VOLUME']
+        return any(pattern in col_name.upper() for pattern in numeric_patterns)
+
+    def _find_fact_table_alias(self, dataset_aliases: Dict[str, str], dataset_col_lookup: Dict[str, set[str]]) -> Optional[str]:
+        """Dynamically determine the fact table alias."""
+        if not dataset_aliases or not dataset_col_lookup:
+            return None
+        for ds_name, alias in dataset_aliases.items():
+            cols = dataset_col_lookup.get(ds_name, set())
+            numeric_cols = sum(1 for col in cols if self._is_numeric_column(col))
+            if numeric_cols > 3 or "FACT" in ds_name.upper():
+                return alias
+        return None
+
+    def _find_date_column(self, dataset_col_lookup: Dict[str, set[str]]) -> str:
+        """Find date column dynamically from schema."""
+        if not dataset_col_lookup:
+            return "COL_DATE"
+        date_patterns = ['DATE', 'CAL_DATE', 'COL_DATE', 'TRANSACTION_DATE', 'ORDER_DATE', 'CREATED_DATE']
+        for ds_name, cols in dataset_col_lookup.items():
+            for col in cols:
+                col_upper = col.upper()
+                if any(pattern in col_upper for pattern in date_patterns):
+                    return col
+                if col_upper.endswith('_DATE') or col_upper.startswith('DATE_'):
+                    return col
+        return "COL_DATE"
+
+    def _find_date_table_alias(self, dataset_aliases: Dict[str, str], dataset_col_lookup: Dict[str, set[str]]) -> Optional[str]:
+        """Dynamically determine the date table alias."""
+        if not dataset_aliases or not dataset_col_lookup:
+            return None
+        
+        # Look for typical date table names first
+        for ds_name, alias in dataset_aliases.items():
+            ds_upper = ds_name.upper()
+            if 'DATE' in ds_upper or 'CALENDAR' in ds_upper:
+                return alias
+                
+        # Fallback to column contents
+        date_patterns = ['DATE', 'CAL_DATE', 'COL_DATE', 'TRANSACTION_DATE', 'ORDER_DATE', 'CREATED_DATE']
+        for ds_name, alias in dataset_aliases.items():
+            cols = dataset_col_lookup.get(ds_name, set())
+            for col in cols:
+                col_upper = col.upper()
+                if any(pattern in col_upper for pattern in date_patterns) or col_upper.endswith('_DATE'):
+                    # If this table has date-like columns and fewer numeric columns, it's likely the date table
+                    numeric_cols = sum(1 for c in cols if self._is_numeric_column(c))
+                    if numeric_cols <= 2:
+                        return alias
+        return None
+
+    def fix_common_llm_issues(self, sql: str, dax: str = "", dataset_aliases: Dict[str, str] = None, dataset_col_lookup: Dict[str, set[str]] = None) -> str:
         if not sql: return sql
         sql = sql.replace("CURRENT_DATE()", "MAX_DATE")
         sql = sql.replace("CURRENT_DATE", "MAX_DATE")
-        sql = re.sub(r"salesfact\.", "SALESFACT.", sql, flags=re.IGNORECASE)
 
-        # Normalize common LLM date-table alias errors: CALENDAR → COL_DATE
-        sql = re.sub(r'\bCALENDAR\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
-        # Normalize DATES alias (common LLM error) → COL_DATE
-        sql = re.sub(r'\bDATES\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
-        # Normalize DATE alias (common LLM error) → COL_DATE
-        sql = re.sub(r'\bDATE\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
+        # Dynamic fact table alias replacement
+        fact_alias = self._find_fact_table_alias(dataset_aliases, dataset_col_lookup) if dataset_aliases and dataset_col_lookup else "SALESFACT"
+        if fact_alias:
+            sql = re.sub(r"salesfact\.", f"{fact_alias}.", sql, flags=re.IGNORECASE)
+
+        # Dynamic date table alias replacement
+        date_alias = self._find_date_table_alias(dataset_aliases, dataset_col_lookup) if dataset_aliases and dataset_col_lookup else "COL_DATE"
+        if date_alias:
+            date_aliases_list = ['calendar', 'dates', 'date', 'dim_date', 'cal', 'col_date']
+            for d_alias in date_aliases_list:
+                sql = re.sub(rf'\b{d_alias}\.', f'{date_alias}.', sql, flags=re.IGNORECASE)
+
         # Remove bare ALIAS placeholders that LLMs occasionally emit
         sql = re.sub(r'\bALIAS\."?[A-Z_][A-Z0-9_]*"?', '', sql, flags=re.IGNORECASE).strip()
 
-        # Test compliance overrides for LLM flakiness
-        dax_upper = dax.upper()
-        if "TOTALYTD" in dax_upper and "MAX_DATE" not in sql.upper() and "SUM" in sql.upper():
-            return "SUM(CASE WHEN COL_DATE.\"YEAR\" = YEAR(MAX_DATE) AND COL_DATE.\"COL_DATE\" <= MAX_DATE THEN SALESFACT.UNITS ELSE 0 END)"
+        # Pre-pass regex: strip TO_DOUBLE(CAST(x AS FLOAT/DOUBLE)) - Snowflake doesn't accept
+        # a pre-CAST value as argument to TO_DOUBLE.
+        # Pattern handles: TO_DOUBLE(CAST(col AS FLOAT)) -> TRY_CAST(col AS DOUBLE)
+        sql = re.sub(
+            r'\bTO_DOUBLE\s*\(\s*CAST\s*\(\s*(.+?)\s+AS\s+(?:FLOAT|DOUBLE)\s*\)\s*\)',
+            r'TRY_CAST(\1 AS DOUBLE)',
+            sql,
+            flags=re.IGNORECASE,
+        )
+        # Strip remaining TO_DOUBLE(x) -> x (bare, no inner CAST)
+        sql = re.sub(r'\bTO_DOUBLE\s*\(\s*(.+?)\s*\)', r'\1', sql, flags=re.IGNORECASE)
 
-        if "DIVIDE" in dax_upper and "VANARSDEL" in dax_upper and "COALESCE" not in sql.upper():
-            return "COALESCE(SUM(CASE WHEN SALESFACT.ISVANARSDEL THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(SALESFACT.UNITS), 0), 0)"
+        # Robust AST-based stripping of CAST using sqlglot
+        try:
+            import sqlglot
+            from sqlglot import exp
+            
+            # Parse the SQL expression safely (handling various dialects gracefully)
+            ast = sqlglot.parse_one(sql, read="snowflake")
+            
+            # Find and replace CAST(x AS y) -> x ONLY for FLOAT/DOUBLE
+            for node in ast.find_all(exp.Cast):
+                to_type = node.args.get("to")
+                if to_type and hasattr(to_type, "this") and to_type.this.name.upper() in ("FLOAT", "DOUBLE"):
+                    node.replace(node.this)
+                    
+            # Find and replace TO_DOUBLE(x) -> x (belt-and-suspenders for any AST-level remnants)
+            for node in ast.find_all(exp.Anonymous):
+                if node.name.upper() == 'TO_DOUBLE' and node.expressions:
+                    node.replace(node.expressions[0])
+                    
+            if hasattr(exp, 'ToDouble'):
+                for node in ast.find_all(exp.ToDouble):
+                    if hasattr(node, 'this'):
+                        node.replace(node.this)
+                    
+            # Handle if the entire expression is a CAST or TO_DOUBLE (root replacement fallback)
+            if isinstance(ast, exp.Cast):
+                to_type = ast.args.get("to")
+                if to_type and hasattr(to_type, "this") and to_type.this.name.upper() in ("FLOAT", "DOUBLE"):
+                    ast = ast.this
+            elif isinstance(ast, exp.Anonymous) and ast.name.upper() == 'TO_DOUBLE' and ast.expressions:
+                ast = ast.expressions[0]
+            elif hasattr(exp, 'ToDouble') and isinstance(ast, exp.ToDouble) and hasattr(ast, 'this'):
+                ast = ast.this
+                    
+            sql = ast.sql(dialect="snowflake")
+        except Exception as e:
+            # Fallback to regex if parsing fails (e.g., due to invalid SQL fragments)
+            logger.debug(f"sqlglot AST parse failed for '{sql}': {e}, falling back to regex")
+            sql = re.sub(r'CAST\s*\(\s*(.+?)\s+AS\s+(?:FLOAT|DOUBLE)\s*\)', r'\1', sql, flags=re.IGNORECASE)
+            sql = re.sub(r'TO_DOUBLE\s*\(\s*(.+?)\s*\)', r'\1', sql, flags=re.IGNORECASE)
 
         return sql
 
@@ -149,16 +254,18 @@ class MetricExpressionTranslator:
             if model is None:
                 return None
 
+        date_column = self._find_date_column(dataset_col_lookup)
+
         if "SAMEPERIODLASTYEAR" in expr.upper():
             m_sum = re.search(r"(?i)SUM\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", expr)
             if m_sum:
                 col = self._id.sanitize_column(m_sum.group(1))
                 # Scalar CASE WHEN for prior year period (no OVER allowed in METRICS)
                 return (
-                    f'SUM(CASE WHEN YEAR({table_alias}."COL_DATE") = YEAR(MAX_DATE) - 1 '
-                    f'AND {table_alias}."COL_DATE" BETWEEN '
-                    f"DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) "
-                    f"AND DATEADD(YEAR, -1, MAX_DATE) "
+                    f'SUM(CASE WHEN YEAR({table_alias}."{date_column}") = YEAR(MAX_DATE) - 1 '
+                    f'AND {table_alias}."{date_column}" BETWEEN '
+                    f"DATEADD('year', -1, DATE_TRUNC('year', MAX_DATE)) "
+                    f"AND DATEADD('year', -1, MAX_DATE) "
                     f'THEN {table_alias}."{col}"::FLOAT END)'
                 )
 
@@ -168,8 +275,8 @@ class MetricExpressionTranslator:
                 col = self._id.sanitize_column(m_sum.group(1))
                 # Scalar CASE WHEN for YTD (no OVER allowed in METRICS)
                 return (
-                    f'SUM(CASE WHEN {table_alias}."COL_DATE" >= DATE_TRUNC(\'YEAR\', MAX_DATE) '
-                    f'AND {table_alias}."COL_DATE" <= MAX_DATE '
+                    f'SUM(CASE WHEN {table_alias}."{date_column}" >= DATE_TRUNC(\'year\', MAX_DATE) '
+                    f'AND {table_alias}."{date_column}" <= MAX_DATE '
                     f'THEN {table_alias}."{col}"::FLOAT END)'
                 )
 
@@ -181,16 +288,12 @@ class MetricExpressionTranslator:
         m_blank = re.match(r"(?i)^COUNTBLANK\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)$", expr)
         if m_blank:
             col_name = self._id.sanitize_column(m_blank.group(1))
-            if known_cols and col_name not in known_cols:
-                return None
             return f'COUNT_IF({table_alias}."{col_name}" IS NULL)'
 
         m_agg = re.match(r"(?i)^(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)$", expr)
         if m_agg:
             agg = m_agg.group(1).upper()
             col_name = self._id.sanitize_column(m_agg.group(2))
-            if known_cols and col_name not in known_cols:
-                return None
 
             if agg == "AVERAGE":
                 return f'AVG({table_alias}."{col_name}")'
@@ -231,6 +334,7 @@ class MetricExpressionTranslator:
                 metric.dataset,
                 metric_name=metric.unique_name,
                 metrics_context=metrics_list,
+                model=model,
             )
             if translated.is_success and translated.sql:
                 return translated.sql
@@ -277,7 +381,10 @@ class MetricExpressionTranslator:
                 dataset_col_lookup=dataset_col_lookup,
             )
         except Exception as e:
-            logger.debug(f"Multi-model translation failed: {e}")
+            err_msg = str(e)
+            logger.debug(f"Multi-model translation failed: {err_msg}")
+            if "insufficient_quota" in err_msg or "403" in err_msg or "429" in err_msg or "upgrade_required" in err_msg or "model_decommissioned" in err_msg or "400" in err_msg:
+                self._llm_circuit_breaker_tripped = True
             return None
 
     def _try_featherless_translation(
@@ -304,7 +411,10 @@ class MetricExpressionTranslator:
             from semabridge.converter.featherless_translator import translate_with_featherless
             return translate_with_featherless(dax_expression, str(getattr(metric, "unique_name", "") or ""), prompt)
         except Exception as e:
-            logger.debug(f"Featherless translation error: {e}")
+            err_msg = str(e)
+            logger.debug(f"Featherless translation error: {err_msg}")
+            if "insufficient_quota" in err_msg or "403" in err_msg or "429" in err_msg or "upgrade_required" in err_msg:
+                self._llm_circuit_breaker_tripped = True
             return None
 
     def _try_llm_metric_fallback_expression(
@@ -335,10 +445,16 @@ class MetricExpressionTranslator:
                 rule_based_translation,
             )
             metric_label = metric.name if hasattr(metric, "name") else metric_name
-            rule_based_sql = rule_based_translation(dax_expression, table_alias, metric_label)
+            
+            # Pass behavior_config so rule-based translator can access dynamically discovered columns
+            behavior_config = None
+            if hasattr(self, 'emitter') and self.emitter and hasattr(self.emitter, 'sf_behavior'):
+                behavior_config = self.emitter.sf_behavior.dynamic.model_dump()
+                
+            rule_based_sql = rule_based_translation(dax_expression, table_alias, metric_label, behavior_config=behavior_config)
 
             if rule_based_sql:
-                normalized_rule_sql = self.fix_common_llm_issues(rule_based_sql, dax_expression)
+                normalized_rule_sql = self.fix_common_llm_issues(rule_based_sql, dax_expression, dataset_aliases=dataset_aliases, dataset_col_lookup=dataset_col_lookup)
                 normalized_rule_sql = self._normalize_metric_column_references(
                     normalized_rule_sql,
                     metric.unique_name,
@@ -351,7 +467,7 @@ class MetricExpressionTranslator:
                 is_valid, issues = self._validate_metric_column_references(
                     normalized_rule_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_name_set
                 )
-                if is_valid and not issues:
+                if is_valid and not issues and self._is_safe_llm_metric_sql(normalized_rule_sql):
                     logger.info(f"Rule-based translation for '{metric_name}' is valid.")
                     return normalized_rule_sql
                 else:
@@ -366,45 +482,112 @@ class MetricExpressionTranslator:
         if prefetched_sql:
             candidate_expressions.append(prefetched_sql)
 
-        # 3. Call LLM services only if not already cached
-        if not prefetched_sql:
-            # Try Featherless first (cost-effective, multiple models)
-            featherless_result = self._try_featherless_translation(
-                dax_expression=dax_expression,
-                metric=metric,
-                table_alias=table_alias,
-                dataset_col_lookup=dataset_col_lookup,
-            )
-            if featherless_result:
-                candidate_expressions.append(featherless_result)
-
-            # Try multi-model (DeepSeek + failover) SECOND
-            multi_model_result = self._try_multi_model_translation(
-                dax_expression=dax_expression,
-                metric=metric,
-                table_alias=table_alias,
-                dataset_col_lookup=dataset_col_lookup,
-            )
-            if multi_model_result:
-                candidate_expressions.append(multi_model_result)
-
-            # Try OpenAI legacy single call
-            openai_expr = self._try_openai_dax_translation(
-                dax_expression=dax_expression,
-                metric=metric,
-                table_alias=table_alias,
-                dataset_col_lookup=dataset_col_lookup,
-            )
-            if openai_expr:
-                candidate_expressions.append(openai_expr)
-
-            # Try Gemini translation legacy fallback
-            try:
-                from semabridge.converter.gemini_dax_translator import get_gemini_translator
-                translator = get_gemini_translator()
-            except Exception as ex:
-                logger.debug(f"LLM fallback unavailable for metric '{metric_name}': {ex}")
+        # 3. Use configured fallback chain if available, else legacy hardcoded fallbacks
+        if not prefetched_sql and not self._llm_circuit_breaker_tripped:
+            fallback_chain = []
+            if isinstance(self.config, dict):
+                fallback_chain = self.config.get("llm", {}).get("fallback_chain", [])
+            elif hasattr(self.config, "llm") and hasattr(self.config.llm, "fallback_chain"):
+                fallback_chain = self.config.llm.fallback_chain
+            else:
+                try:
+                    from semabridge.core.settings import get_settings
+                    settings = get_settings()
+                    if hasattr(settings, "llm") and hasattr(settings.llm, "fallback_chain"):
+                        fallback_chain = settings.llm.fallback_chain
+                except Exception:
+                    pass
+            
+            if fallback_chain:
+                for fallback in fallback_chain:
+                    if self._llm_circuit_breaker_tripped:
+                        break
+                    llm_type = fallback.get("type")
+                    if llm_type == "ollama":
+                        host = fallback.get("host", "http://localhost:11434")
+                        model = fallback.get("model", "llama3")
+                        sql = self._try_ollama_dax_translation(
+                            dax_expression=dax_expression, metric=metric, table_alias=table_alias, 
+                            dataset_col_lookup=dataset_col_lookup, host=host, model=model
+                        )
+                        if sql:
+                            candidate_expressions.append(sql)
+                            break
+                    elif llm_type == "openai":
+                        sql = self._try_openai_dax_translation(
+                            dax_expression=dax_expression, metric=metric, table_alias=table_alias, 
+                            dataset_col_lookup=dataset_col_lookup
+                        )
+                        if sql:
+                            candidate_expressions.append(sql)
+                            break
+                    elif llm_type == "gemini":
+                        try:
+                            from semabridge.converter.gemini_dax_translator import get_gemini_translator
+                            translator = get_gemini_translator()
+                            if getattr(translator, "use_gemini", False) and getattr(translator, "api_key", None):
+                                schema_context = {ds_name: sorted(list(cols)) for ds_name, cols in dataset_col_lookup.items()}
+                                llm_result = translator.translate(
+                                    dax=dax_expression, table_alias=table_alias.lower(),
+                                    dataset_name=getattr(metric, "dataset", ""), metric_name=metric_name, schema_context=schema_context
+                                )
+                                if llm_result and llm_result.is_valid and llm_result.sql:
+                                    candidate_expressions.append(llm_result.sql)
+                                    break
+                        except Exception as ex:
+                            logger.debug(f"Gemini fallback unavailable: {ex}")
+                    elif llm_type == "featherless":
+                        sql = self._try_featherless_translation(
+                            dax_expression=dax_expression, metric=metric, table_alias=table_alias, 
+                            dataset_col_lookup=dataset_col_lookup
+                        )
+                        if sql:
+                            candidate_expressions.append(sql)
+                            break
+                    elif llm_type == "multi_model":
+                        sql = self._try_multi_model_translation(
+                            dax_expression=dax_expression, metric=metric, table_alias=table_alias, 
+                            dataset_col_lookup=dataset_col_lookup
+                        )
+                        if sql:
+                            candidate_expressions.append(sql)
+                            break
+            else:
                 translator = None
+                # Legacy fallback flow when no config provided
+                featherless_result = self._try_featherless_translation(
+                    dax_expression=dax_expression,
+                    metric=metric,
+                    table_alias=table_alias,
+                    dataset_col_lookup=dataset_col_lookup,
+                )
+                if featherless_result:
+                    candidate_expressions.append(featherless_result)
+                else:
+                    multi_model_result = self._try_multi_model_translation(
+                        dax_expression=dax_expression,
+                        metric=metric,
+                        table_alias=table_alias,
+                        dataset_col_lookup=dataset_col_lookup,
+                    )
+                    if multi_model_result:
+                        candidate_expressions.append(multi_model_result)
+                    else:
+                        openai_expr = self._try_openai_dax_translation(
+                            dax_expression=dax_expression,
+                            metric=metric,
+                            table_alias=table_alias,
+                            dataset_col_lookup=dataset_col_lookup,
+                        )
+                        if openai_expr:
+                            candidate_expressions.append(openai_expr)
+                        else:
+                            try:
+                                from semabridge.converter.gemini_dax_translator import get_gemini_translator
+                                translator = get_gemini_translator()
+                            except Exception as ex:
+                                logger.debug(f"LLM fallback unavailable for metric '{metric_name}': {ex}")
+                                translator = None
 
             if translator and getattr(translator, "use_gemini", False) and getattr(translator, "api_key", None):
                 schema_context = {ds_name: sorted(list(cols)) for ds_name, cols in dataset_col_lookup.items()}
@@ -429,8 +612,11 @@ class MetricExpressionTranslator:
 
             if not self._is_scalar_metric_sql(expr):
                 continue
+                
+            if not self._is_safe_llm_metric_sql(expr):
+                continue
 
-            expr = self.fix_common_llm_issues(expr, dax_expression)
+            expr = self.fix_common_llm_issues(expr, dax_expression, dataset_aliases=dataset_aliases, dataset_col_lookup=dataset_col_lookup)
             expr = self._id.resolve_dot_notation(
                 expr,
                 alias_by_raw,
@@ -476,7 +662,7 @@ class MetricExpressionTranslator:
                 continue
 
             logger.info(f"Recovered metric '{metric.unique_name}' via fallback translation")
-            return self.fix_common_llm_issues(expr, dax_expression)
+            return self.fix_common_llm_issues(expr, dax_expression, dataset_aliases=dataset_aliases, dataset_col_lookup=dataset_col_lookup)
 
         return None
 
@@ -609,6 +795,76 @@ class MetricExpressionTranslator:
             pass
         return {}
 
+    def _try_ollama_dax_translation(
+        self,
+        *,
+        dax_expression: str,
+        metric: Any,
+        table_alias: str,
+        dataset_col_lookup: Dict[str, set[str]],
+        host: str = "http://localhost:11434",
+        model: str = "llama3"
+    ) -> Optional[str]:
+        import urllib.request
+        import urllib.error
+
+        schema_context = {
+            ds_name: sorted(list(cols))
+            for ds_name, cols in dataset_col_lookup.items()
+            if cols
+        }
+        prompt = self._build_openai_dax_prompt(
+            dax_expression=dax_expression,
+            metric_name=str(getattr(metric, "unique_name", "") or ""),
+            dataset_name=str(getattr(metric, "dataset", "") or ""),
+            table_alias=table_alias,
+            schema_context=schema_context,
+        )
+
+        url = f"{host.rstrip('/')}/api/generate"
+        data = {
+            "model": model,
+            "prompt": (
+                "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
+                "Return only one SQL expression. Do not use markdown.\n\n"
+                f"{prompt}"
+            ),
+            "stream": False,
+            "options": {"temperature": 0.1}
+        }
+        req = urllib.request.Request(
+            url, 
+            data=json.dumps(data).encode("utf-8"), 
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                sql = (result.get("response") or "").strip()
+        except urllib.error.URLError as exc:
+            logger.warning(f"Ollama translation failed for metric '{getattr(metric, 'unique_name', '')}': {exc}")
+            return None
+        except Exception as exc:
+            logger.warning(f"Ollama unexpected error: {exc}")
+            return None
+
+        sql = self._sanitize_sql_markdown(sql)
+        if not self._is_safe_llm_metric_sql(sql):
+            logger.warning(
+                "Ollama DAX translation rejected for metric '%s': %s",
+                getattr(metric, "unique_name", ""),
+                sql[:120],
+            )
+            return None
+
+        logger.info(
+            "Ollama translated DAX for metric '%s': %s",
+            getattr(metric, "unique_name", ""),
+            sql[:160],
+        )
+        return sql
+
     def _try_openai_dax_translation(
         self,
         *,
@@ -666,13 +922,17 @@ class MetricExpressionTranslator:
                 sql = (response.choices[0].message.content or "").strip()
                 break
             except Exception as exc:
+                err_msg = str(exc)
                 logger.warning(
                     "OpenAI DAX translation attempt %d/%d failed for metric '%s': %s",
                     attempt,
                     max_retries,
                     getattr(metric, "unique_name", ""),
-                    exc,
+                    err_msg,
                 )
+                if "insufficient_quota" in err_msg or "403" in err_msg or "429" in err_msg:
+                    self._llm_circuit_breaker_tripped = True
+                    break
                 if attempt < max_retries:
                     import time
 
@@ -773,6 +1033,18 @@ class MetricExpressionTranslator:
             " UPDATE ",
             " ALTER ",
             ";",
+            "CALCULATE(",
+            " CALCULATE ",
+            "FILTER(",
+            " FILTER ",
+            "ALL(",
+            " ALL ",
+            "ISBLANK(",
+            " ISBLANK ",
+            "RELATED(",
+            " RELATED ",
+            "RELATEDTABLE(",
+            " RELATEDTABLE ",
         )
         padded = f" {upper} "
         if any(token in padded for token in forbidden):
@@ -1030,6 +1302,7 @@ class MetricExpressionTranslator:
             preferred_table_alias=preferred_table_alias,
         )
         normalized_sql = self._normalize_date_part_arguments(normalized_sql)
+        normalized_sql = self._normalize_dateadd_intervals(normalized_sql)
         normalized_sql = self._qualify_bare_partition_identifiers(normalized_sql, dataset_col_lookup, dataset_aliases, preferred_table_alias=preferred_table_alias)
         normalized_sql = self._dedupe_qualified_column_tokens(normalized_sql)
         normalized_sql = self._rewrite_window_metric_expression(normalized_sql, preferred_table_alias=preferred_table_alias)
@@ -1063,6 +1336,9 @@ class MetricExpressionTranslator:
         # 2. Date table keywords remapping
         date_keywords = {"date", "calendar", "dates", "dim_date", "cal", "col_date"}
         if table_alias_lower in date_keywords or re.fullmatch(r"(?:col_)?date(?:_\d+)?|dates(?:_\d+)?|calendar(?:_\d+)?|dim_date(?:_\d+)?|cal(?:_\d+)?", table_alias_lower):
+            env_alias = os.getenv("SEMABRIDGE_DATE_ALIAS")
+            if env_alias and env_alias in dataset_aliases:
+                return env_alias
             for ds_name in dataset_aliases:
                 if any(kw in ds_name.lower() for kw in ("date", "calendar", "dates")):
                     return ds_name
@@ -1092,10 +1368,11 @@ class MetricExpressionTranslator:
             "AND", "AS", "ASC", "AVG", "BETWEEN", "BY", "CASE", "CAST", "COALESCE",
             "CURRENT", "CURRENT_DATE", "DATEADD", "DATEDIFF", "DAY", "DESC",
             "DISTINCT", "DIVIDE", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT", "FROM",
-            "GROUP", "IFF", "IN", "INT", "IS", "LAG", "LEFT", "LIKE", "MAX",
-            "MIN", "MONTH", "NOT", "NULL", "NULLIF", "OR", "ORDER", "OVER",
-            "PARTITION", "ROWS", "SUM", "THEN", "TO_DATE", "TRUE",
-            "TRY_CAST", "TRY_TO_DATE", "VARCHAR", "WHEN", "WITH", "SYNONYMS", "YEAR",
+            "GROUP", "HOUR", "IFF", "IN", "INT", "IS", "LAG", "LEFT", "LIKE", "MAX",
+            "MAX_DATE", "MIN", "MINUTE", "MIN_DATE", "MONTH", "NOT", "NULL", "NULLIF",
+            "OR", "ORDER", "OVER", "PARTITION", "QUARTER", "ROWS", "SECOND", "SUM",
+            "THEN", "TO_DATE", "TRUE", "TRY_CAST", "TRY_TO_DATE", "VARCHAR", "WEEK",
+            "WHEN", "WITH", "SYNONYMS", "YEAR",
         }
 
         def _resolve_owner(token: str) -> Optional[tuple[str, str]]:
@@ -1159,7 +1436,7 @@ class MetricExpressionTranslator:
                 return match.group(0)
             return f'{alias}."{col}"'
 
-        pattern = re.compile(r'(?<![\w\."])\b([A-Za-z_][A-Za-z0-9_$]*)\b(?![\w\."])')
+        pattern = re.compile(r'(?<![\w\.\'"])\b([A-Za-z_][A-Za-z0-9_$]*)\b(?![\w\.\'"])')
         return pattern.sub(_replace, metric_sql)
 
     @staticmethod
@@ -1312,23 +1589,11 @@ class MetricExpressionTranslator:
         return f"SUM({expr_sql}::FLOAT)"
 
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
-        if not known_columns: return None
-        # Case-insensitive check
-        candidate_lower = candidate.lower()
+        # Strip any surrounding quotes and normalize case
+        clean = candidate.strip('"').strip("'").upper()
         for col in known_columns:
-            if col.lower() == candidate_lower:
-                return col
-        
-        compact = candidate.replace("_", "").lower()
-        for col in known_columns:
-            if col.replace("_", "").lower() == compact: return col
-            
-        if candidate.lower().startswith("total_"):
-            base = candidate[len("TOTAL_"):]
-            base_lower = base.lower()
-            for col in known_columns:
-                if col.lower() == base_lower:
-                    return col
+            if col.upper() == clean:
+                return col  # return the actual physical column name (as stored in Snowflake)
         return None
 
     def _resolve_metric_reference_name(self, metric_names: Optional[set[str]], candidate: str, *, allow_fuzzy: bool = True) -> Optional[str]:
@@ -1404,6 +1669,20 @@ class MetricExpressionTranslator:
             if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper(): return f"EXTRACT({part} FROM TRY_TO_DATE({arg}))"
             return match.group(0)
         normalized = re.sub(r'\bEXTRACT\s*\(\s*([A-Z_]+)\s+FROM\s+([^\)]+)\)', _wrap_extract, normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"\bDATE_PART\s*\(\s*['\"]*([A-Za-z_]+)['\"]*\s*,", lambda m: "DATE_PART('" + m.group(1).strip("\"'").lower() + "', ", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"\bDATE_PART\s*\(\s*['\"]*([A-Za-z_]+)['\"]*\s*,", lambda m: "DATE_PART('" + m.group(1).strip("\"'").lower() + "', ", normalized, flags=re.IGNORECASE)
+        return normalized
+
+    def _normalize_dateadd_intervals(self, metric_sql: str) -> str:
+        """Fix DATEADD interval arguments that were incorrectly generated as column references or quoted names."""
+        if not metric_sql: return metric_sql
+        normalized = metric_sql
+        # Handle cases like DATEADD("DATE_YEAR", ...) or DATEADD('DATE_YEAR', ...) or DATEADD(DATE_YEAR, ...)
+        # We rewrite it to DATEADD('year', ...)
+        normalized = re.sub(r"(?i)\bDATEADD\s*\(\s*['\"]?(?:DATE_)?YEAR['\"]?\s*,", "DATEADD('year',", normalized)
+        normalized = re.sub(r"(?i)\bDATEADD\s*\(\s*['\"]?(?:DATE_)?MONTH['\"]?\s*,", "DATEADD('month',", normalized)
+        normalized = re.sub(r"(?i)\bDATEADD\s*\(\s*['\"]?(?:DATE_)?QUARTER['\"]?\s*,", "DATEADD('quarter',", normalized)
+        normalized = re.sub(r"(?i)\bDATEADD\s*\(\s*['\"]?(?:DATE_)?DAY['\"]?\s*,", "DATEADD('day',", normalized)
         return normalized
 
     def _normalize_rolling_monthindex_max_predicates(self, metric_sql: str) -> str:
@@ -1486,17 +1765,17 @@ class MetricExpressionTranslator:
 
     @staticmethod
     def _resolve_year_partition_column(known_cols: set[str]) -> Optional[str]:
-        if not known_cols: return None
+        if not known_cols: return "YEAR"
         for candidate in ["YEAR", "CALENDAR_YEAR", "FISCAL_YEAR"]:
             if candidate in known_cols: return candidate
-        return None
+        return "YEAR"
 
     @staticmethod
     def _resolve_ytd_order_column(known_cols: set[str]) -> Optional[str]:
-        if not known_cols: return None
+        if not known_cols: return "DATE"
         for candidate in ["PERIOD", "MONTH", "MONTH_NUM", "YEARPERIOD", "DATE", "PRIMARY_DATE", "PRIMARYDATE"]:
             if candidate in known_cols: return candidate
-        return None
+        return "DATE"
 
     def _get_cached_or_translate(self, dax: str, metric_name: str) -> Optional[str]:
         """

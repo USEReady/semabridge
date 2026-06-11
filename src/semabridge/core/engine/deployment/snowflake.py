@@ -116,10 +116,23 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
 
     # DDL path
     if deployment_method in ("ddl", "both"):
-        deployed = emitter.deploy(
-            context.sml_model,
-            sync_mode=getattr(context, "sync_mode", "copy"),
-        )
+        options = getattr(context.config, "options", None)
+        skip_sml = getattr(options, "skip_sml_conversion", False) if options else False
+
+        if skip_sml:
+            logger.info("Deploying OSI directly to Snowflake...")
+            if not context.osi_model:
+                raise DeploymentError("OSI model is missing but skip_sml_conversion is enabled.")
+            deployed = emitter.deploy_from_osi(
+                context.osi_model,
+                sync_mode=getattr(context, "sync_mode", "copy"),
+            )
+        else:
+            deployed = emitter.deploy(
+                context.sml_model,
+                sync_mode=getattr(context, "sync_mode", "copy"),
+            )
+
         if not deployed:
             error_msg = emitter.last_deployment_error or "unknown deployment error"
 
@@ -139,7 +152,9 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             raise DeploymentError(
                 f"Snowflake DDL deployment returned unsuccessful status: {error_msg}"
             )
-        self._export_inferred_osi_artifacts(context)
+        
+        if not skip_sml:
+            self._export_inferred_osi_artifacts(context)
 
     # Stored-procedure / Cortex YAML path
     if deployment_method in ("yaml_stored_procedure", "both"):

@@ -3,16 +3,20 @@ version: "3.0"
 default:
   sync_mode: "copy"
   parallelism: 4
-  deterministic_translation_enabled: true
-  enable_llm_dax_translation: true
-  llm_provider: "openai"
+  translation:
+    use_llm: false
+    use_rule_based: true
+    fallback_to_null: true
+    skip_on_error: false
   translation_priority: "llm_first"
 
 snowflake:
   apply_inferred_types: true
-  deterministic_translation_enabled: true
-  enable_llm_dax_translation: true
-  llm_provider: "openai"
+  translation:
+    use_llm: false
+    use_rule_based: true
+    fallback_to_null: true
+    skip_on_error: false
   measure_view_type: "metric_view"
   dialect: "snowflake"
   
@@ -79,9 +83,11 @@ databricks:
   enable_auto_join_key_bridge: true # Auto-create/backfill missing physical relationship key columns during Databricks publish preflight
   enable_destructive_sync_operations: true # Allow DROP VIEW/TABLE before re-creating when an object-type conflict is detected at the target name
 
-  deterministic_translation_enabled: true
-  enable_llm_dax_translation: true
-  llm_provider: "openai"
+  translation:
+    use_llm: false
+    use_rule_based: true
+    fallback_to_null: true
+    skip_on_error: false
   catalog: "semabridge"
   schema: "public"
 

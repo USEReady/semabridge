@@ -211,17 +211,25 @@ def _extract_fabric(
 
     resolved_dataset_id = extractor.resolve_model_id(dataset_id)
 
-    tmsl = extractor.get_model_definition(resolved_dataset_id)
+    settings = get_settings()
+    use_tmdl = settings.conversion.tmdl_direct_to_csm
+    extract_format = "TMDL" if use_tmdl else "TMSL"
+
+    definition_response = extractor.get_model_definition(resolved_dataset_id, format=extract_format)
     row_counts = extractor.get_table_row_counts(resolved_dataset_id)
+
+    tmsl_def = definition_response if not use_tmdl else {}
+    tmdl_def = definition_response.get("tmdl_files") if use_tmdl else None
 
     source_format = from_fabric_tmsl(
         project_id=context.project_id,
         run_id=context.run_id,
-        tmsl=tmsl,
+        tmsl=tmsl_def,
         workspace_id=ws_id,
         dataset_id=resolved_dataset_id,
         row_counts=row_counts,
     )
+    source_format.tmdl_definition = tmdl_def
     
     # Ensure display name is explicitly resolved and stored for naming resolution
     source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)

@@ -25,6 +25,43 @@ def _date_alias() -> str:
     return os.getenv("SEMABRIDGE_DATE_ALIAS", "COL_DATE")
 
 
+# ---------------------------------------------------------------------------
+# Dynamic config resolution helpers
+# ---------------------------------------------------------------------------
+
+def _get_anchor(config: Optional[Dict], key: str, default: str) -> str:
+    """Resolve a named anchor from behavior_config or return the default.
+
+    Looks in ``config["dynamic_anchors"]`` first, then top-level ``config``.
+    Falls back to ``default`` if neither contains ``key``.
+    """
+    if not config:
+        return default
+    # Check nested dynamic_anchors section first (matches translation_rules.yaml layout)
+    value = config.get("dynamic_anchors", {}).get(key)
+    if value:
+        return value
+    # Then check flat top-level keys (matches behavior.snowflake.dynamic attributes)
+    value = config.get(key)
+    return value if value else default
+
+
+def _get_column_mapping(config: Optional[Dict], key: str, default: str) -> str:
+    """Resolve a model-specific column/table name from behavior_config or return default.
+
+    Looks in ``config["column_mappings"]`` first, then top-level ``config``.
+    Falls back to ``default`` if neither contains ``key``.
+    """
+    if not config:
+        return default
+    value = config.get("column_mappings", {}).get(key)
+    if value:
+        return value
+    value = config.get(key)
+    return value if value else default
+
+
+
 # Common DAX aggregation functions
 SIMPLE_AGGREGATIONS = {
     'SUM': 'SUM',
@@ -151,11 +188,9 @@ def is_simple_metric(dax: str) -> bool:
     # ========================================================================
     # Step 1: Check for TRUE COMPLEXITY (TIER 4+) that needs LLM
     # ========================================================================
-    # Temporarily allow CALCULATE to pass for rule-based attempt
-    if "CALCULATE" in clean_dax.upper():
-        logger.debug("TIER 2 (CALCULATE) detected, attempting rule-based translation.")
-        log_complexity_classification(True)
-        return True
+    # We DO NOT allow CALCULATE to pass for rule-based attempt anymore, because
+    # the AST parser can generate Snowflake-compatible pre-computed columns
+    # instead of invalid nested metric definitions.
 
     for indicator_name, pattern in COMPLEXITY_INDICATORS.items():
         if re.search(pattern, clean_dax, re.IGNORECASE):
@@ -178,10 +213,11 @@ def is_simple_metric(dax: str) -> bool:
     # ========================================================================
     for tier3_name, pattern in TIER3_TIME_INTELLIGENCE.items():
         if re.search(pattern, clean_dax, re.IGNORECASE):
-            # Time intelligence functions can be translated to window functions
-            logger.debug(f"TIER 3 detected: {tier3_name} - can use window functions")
-            log_complexity_classification(True)  # Mark as "simple" since we can handle it
-            return True
+            # Time intelligence functions must be routed to the AST parser
+            # because they require pre-computed anchor columns in Snowflake Semantic Views
+            logger.debug(f"TIER 3 detected: {tier3_name} - routing to AST parser for pre-computation")
+            log_complexity_classification(False)  # Mark as complex so it goes to AST parser
+            return False
     
     # ========================================================================
     # Step 4: Check for TIER 2 patterns (simple CALCULATE, measure arithmetic)
@@ -258,33 +294,61 @@ def rule_based_translation(
     table_alias: str,
     metric_name: str = "",
     dialect: str = "snowflake",
+    behavior_config: Optional[Dict] = None,
 ) -> Optional[str]:
-    """
-    Translate simple DAX expressions to SQL using deterministic rules.
-    
-    This function ONLY handles simple aggregations. Returns None for complex expressions
-    that should be sent to LLM.
-    
+    """Translate a DAX expression using deterministic rules.
+
     Args:
-        dax: DAX expression to translate
-        table_alias: SQL table alias to use in output
-        
+        dax: DAX expression to translate.
+        table_alias: SQL table alias for the primary fact table.
+        metric_name: Optional name used in log messages.
+        dialect: Target SQL dialect (default ``"snowflake"``).
+        behavior_config: Optional dict of anchor/column overrides loaded from
+            ``translation_rules.yaml`` or ``SnowflakeDynamicConfig``.  When
+            omitted the translator falls back to built-in defaults.
+    """
+    res = _rule_based_translation_impl(dax, table_alias, metric_name, dialect, behavior_config)
+    if res:
+        res = re.sub(r"\bDATE_PART\s*\(\s*['\"]*([A-Za-z_]+)['\"]*\s*,", lambda m: "DATE_PART('" + m.group(1).strip("\"'").lower() + "', ", res, flags=re.IGNORECASE)
+    return res
+
+
+def _rule_based_translation_impl(
+    dax: str,
+    table_alias: str,
+    metric_name: str = "",
+    dialect: str = "snowflake",
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
+    """Core implementation of rule-based translation.
+
+    Translates simple DAX expressions to SQL using deterministic rules.
+    Returns None for complex expressions that should be sent to the LLM.
+
+    Args:
+        dax: DAX expression to translate.
+        table_alias: SQL table alias for the primary fact table.
+        metric_name: Optional name used in log messages.
+        dialect: Target SQL dialect (default ``"snowflake"``).
+        behavior_config: Optional dict of anchor/column overrides.
+
     Returns:
-        SQL aggregation expression, or None if cannot translate
+        SQL aggregation expression, or None if no rule matched.
     """
     if not dax or not isinstance(dax, str):
         return None
-    
+
     set_dialect(dialect)
     clean_dax = dax.strip()
 
+    # --- Advanced translators: pass behavior_config so anchors are dynamic ---
     advanced_translators = (
-        ("time_intelligence", translate_time_intelligence_with_anchors),
-        ("fiscal_cutoff", translate_fiscal_cutoff),
+        ("time_intelligence", lambda d, t: translate_time_intelligence_with_anchors(d, t, behavior_config)),
+        ("fiscal_cutoff",     lambda d, t: translate_fiscal_cutoff(d, t, behavior_config)),
         ("calculate_filters", translate_calculate_with_filters),
-        ("divide_measures", translate_divide_measures),
+        ("divide_measures",   translate_divide_measures),
         ("calculate_arithmetic", translate_calculate_arithmetic),
-        ("iterator", translate_iterator),
+        ("iterator",          translate_iterator),
     )
     for pattern_name, translator in advanced_translators:
         try:
@@ -297,23 +361,19 @@ def rule_based_translation(
                     result[:80],
                 )
                 log_rule_based_result(True)
-                
-                # More precise alias replacement
                 result = re.sub(r'\bSALESFACT\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
                 result = re.sub(r'\bPRODUCT\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
-                # Do not replace COL_DATE globally, it's a date dimension
-                # result = re.sub(r'\bCOL_DATE\b', table_alias, result, flags=re.IGNORECASE)
-
                 return _compact_sql(result)
         except Exception as e:
             logger.warning(f"Rule handler {pattern_name} failed: {e}")
 
-    # Additional deterministic translators for common complex patterns
+    # --- Additional deterministic translators: also pass behavior_config ---
     additional_translators = (
-        ("rolling_12_months", translate_rolling_12_months),
-        ("sameperiodlastyear", translate_sameperiodlastyear),
-        ("sentiment_gap", translate_sentiment_gap),
-        ("vanarsdel_flag", translate_vanarsdel_flag),
+        ("pattern_based_tier1", translate_pattern_based),
+        ("rolling_12_months",   lambda d, t: translate_rolling_12_months(d, t, behavior_config)),
+        ("sameperiodlastyear",  lambda d, t: translate_sameperiodlastyear(d, t, behavior_config)),
+        ("sentiment_gap",       lambda d, t: translate_sentiment_gap(d, t, behavior_config)),
+        ("vanarsdel_flag",      lambda d, t: translate_vanarsdel_flag(d, t, behavior_config)),
     )
     for pattern_name, translator in additional_translators:
         try:
@@ -328,8 +388,8 @@ def rule_based_translation(
                 return _compact_sql(result)
         except Exception as e:
             logger.debug(f"Deterministic translator {pattern_name} failed: {e}")
-    
-    # Try each simple pattern
+
+    # --- Simple aggregation patterns ---
     for pattern_name, (regex, handler_name) in SIMPLE_PATTERNS.items():
         match = re.match(regex, clean_dax, re.IGNORECASE)
         if match:
@@ -339,14 +399,13 @@ def rule_based_translation(
                     result = handler(clean_dax, table_alias, match)
                     if result:
                         logger.info(f"Rule-based translation successful: {pattern_name} -> {result[:80]}")
-                        log_rule_based_result(True)  # Log success
+                        log_rule_based_result(True)
                         return result
                 except Exception as e:
                     logger.warning(f"Rule handler {handler_name} failed: {e}")
-    
-    # If no pattern matched, cannot translate
+
     logger.debug(f"No rule pattern matched for: {clean_dax[:60]}...")
-    log_rule_based_result(False)  # Log failure
+    log_rule_based_result(False)
     return None
 
 
@@ -583,14 +642,15 @@ def _is_deterministic_rule_supported(dax: str) -> bool:
     clean = dax or ""
     return bool(
         re.search(r"^\s*(SUM|AVERAGE|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(", clean, re.IGNORECASE)
-        or re.search(r"\bTOTAL[YM]TD\s*\(|\bTOTALQTD\s*\(", clean, re.IGNORECASE)
         or re.search(r"\bfiscal_yr_period\b", clean, re.IGNORECASE)
-        or re.search(r"^\s*CALCULATE\s*\(", clean, re.IGNORECASE)
-        or re.search(r"^\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(", clean, re.IGNORECASE)
     )
 
 
-def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Optional[str]:
+def translate_time_intelligence_with_anchors(
+    dax: str,
+    table_alias: str,
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
     """
     Translate time intelligence functions using date anchors.
     
@@ -616,15 +676,10 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
         func, measure_table, measure_col, _ = agg
         measure_col_ref = _column_ref(measure_table, measure_col, table_alias)
     else:
-        # Fallback to simple column extraction if we can't parse standard aggregation
-        col_match = re.search(r"\[(\w+)\]", inner_agg_dax)
-        if col_match:
-            col_name = col_match.group(1)
-            measure_col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
-            func = "SUM"
-        else:
-            logger.debug("Could not translate inner aggregation for time intelligence.")
-            return None
+        # If it's a measure reference (e.g. [Total Units]), we must defer to the AST parser
+        # because Snowflake doesn't support aggregate functions over metrics.
+        logger.debug("Inner expression is not a simple aggregation. Deferring to AST parser.")
+        return None
 
     date_col_ref = f"{_quote_identifier(date_table_and_col)}"
 
@@ -638,22 +693,27 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
 
     else_val = "NULL" if func in ("AVG", "MIN", "MAX") else "0"
     
+    max_date = _get_anchor(behavior_config, "max_date_anchor", "MAX_DATE")
     if func == "DISTINCTCOUNT":
         result = (
-            f"COUNT(DISTINCT CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', MAX_DATE) "
-            f"AND {date_col_ref} <= MAX_DATE THEN {measure_col_ref} ELSE NULL END)"
+            f"COUNT(DISTINCT CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', {max_date}) "
+            f"AND {date_col_ref} <= {max_date} THEN {measure_col_ref} ELSE NULL END)"
         )
     else:
         result = (
-            f"{func}(CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', MAX_DATE) "
-            f"AND {date_col_ref} <= MAX_DATE THEN {measure_col_ref} ELSE {else_val} END)"
+            f"{func}(CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', {max_date}) "
+            f"AND {date_col_ref} <= {max_date} THEN {measure_col_ref} ELSE {else_val} END)"
         )
 
     logger.debug(f"Translated time intelligence expression to: {result}")
     return result
 
 
-def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
+def translate_fiscal_cutoff(
+    dax: str,
+    table_alias: str,
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
     """Translate common fiscal period VAR/RETURN cutoff patterns."""
     if not re.search(r"\bfiscal_yr_period\b", dax or "", re.IGNORECASE):
         return None
@@ -677,13 +737,41 @@ def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
     )
     op = period_match.group(3) if period_match else "<"
     period_table = ((period_match.group(1) or period_match.group(2)) if period_match else "DATES") or "DATES"
+    fiscal_col    = _get_anchor(behavior_config, "fiscal_period_column", "FISCAL_YR_PERIOD")
+    fiscal_anchor = _get_anchor(behavior_config, "fiscal_period_anchor", "_CURRENT_FISCAL_PERIOD")
     return (
-        f"SUM(CASE WHEN {_column_ref(period_table, 'FISCAL_YR_PERIOD', table_alias)} {op} _current_fiscal_period "
+        f"SUM(CASE WHEN {_column_ref(period_table, fiscal_col, table_alias)} {op} {fiscal_anchor} "
         f"THEN {_column_ref(measure_table, measure_col, table_alias)} ELSE 0 END)"
     )
 
 
-def translate_rolling_12_months(dax: str, table_alias: str) -> Optional[str]:
+def translate_pattern_based(dax: str, table_alias: str) -> Optional[str]:
+    """Regex based tier 1 translations for SHARE, PCT, and INDICATOR patterns."""
+    if not dax or not isinstance(dax, str):
+        return None
+        
+    upper_dax = dax.upper()
+    
+    # Pattern: SHARE / PCT / %
+    if "SHARE" in upper_dax or "PCT" in upper_dax or "%" in upper_dax:
+        m = re.search(r'DIVIDE\s*\(\s*\[([^\]]+)\]\s*,\s*\[([^\]]+)\](?:,\s*[^)]+)?\)', dax, re.IGNORECASE)
+        if m:
+            num = _quote_identifier(m.group(1))
+            den = _quote_identifier(m.group(2))
+            return f"COALESCE(({table_alias}.{num}) / NULLIF({table_alias}.{den}, 0), 0)"
+            
+    # Pattern: @INDICATOR
+    if "@INDICATOR" in upper_dax:
+        # Generic indicator pattern
+        return "CAST(1 AS DOUBLE)"
+        
+    return None
+
+def translate_rolling_12_months(
+    dax: str,
+    table_alias: str,
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
     """Convert common R12M CALCULATE/FILTER pattern into CASE-based SUM.
 
     Looks for patterns that compare a month index to a MAX_MONTHINDEX anchor
@@ -697,12 +785,22 @@ def translate_rolling_12_months(dax: str, table_alias: str) -> Optional[str]:
         return None
     col = m.group(1).strip()
     months = m.group(2).strip()
-    # use MAX_MONTHINDEX anchor expected to exist in enriched view
-    date_alias = _date_alias()
-    return f"SUM(CASE WHEN {date_alias}.MONTHINDEX <= MAX_MONTHINDEX AND {date_alias}.MONTHINDEX > MAX_MONTHINDEX - {months} THEN {table_alias}.{_quote_identifier(col)} ELSE 0 END)"
+    # Resolve anchor and column names dynamically from config
+    date_alias     = _date_alias()
+    monthindex_col = _get_anchor(behavior_config, "month_index_column",     "MONTHINDEX")
+    max_mi         = _get_anchor(behavior_config, "max_monthindex_anchor",  "MAX_MONTHINDEX")
+    return (
+        f"SUM(CASE WHEN {date_alias}.{_quote_identifier(monthindex_col)} <= {max_mi} "
+        f"AND {date_alias}.{_quote_identifier(monthindex_col)} > {max_mi} - {months} "
+        f"THEN {table_alias}.{_quote_identifier(col)} ELSE 0 END)"
+    )
 
 
-def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
+def translate_sameperiodlastyear(
+    dax: str,
+    table_alias: str,
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
     """Simplified SAMEPERIODLASTYEAR handler translating to prior-year window.
 
     This emits a conservative SQL that approximates previous year sums using MAX_DATE anchor.
@@ -712,13 +810,26 @@ def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
     m = re.search(r"CALCULATE\s*\(\s*\[([^\]]+)\]\s*,\s*SAMEPERIODLASTYEAR\s*\(\s*['\"]?Date['\"]?\[Date\]\s*\)\s*\)", dax, re.IGNORECASE)
     if not m:
         return None
-    inner = m.group(1).strip()
-    # Use MAX_DATE to anchor; this is a simplified pattern
+    inner      = m.group(1).strip()
     date_alias = _date_alias()
-    return f"SUM(CASE WHEN DATE_PART('YEAR', {date_alias}.\"COL_DATE\") = DATE_PART('YEAR', DATEADD(YEAR, -1, MAX_DATE)) AND {date_alias}.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) AND DATEADD(YEAR, -1, MAX_DATE) THEN {table_alias}.{_quote_identifier(inner)} ELSE 0 END)"
+    # Resolve all string literals from config — zero hardcoding
+    max_date   = _get_anchor(behavior_config, "max_date_anchor", "MAX_DATE")
+    date_col   = _get_anchor(behavior_config, "date_column",     "COL_DATE")
+    return (
+        f"SUM(CASE WHEN DATE_PART('year', {date_alias}.{_quote_identifier(date_col)}) "
+        f"= DATE_PART('year', DATEADD('year', -1, {max_date})) "
+        f"AND {date_alias}.{_quote_identifier(date_col)} "
+        f"BETWEEN DATEADD('year', -1, DATE_TRUNC('year', {max_date})) "
+        f"AND DATEADD('year', -1, {max_date}) "
+        f"THEN {table_alias}.{_quote_identifier(inner)} ELSE 0 END)"
+    )
 
 
-def translate_sentiment_gap(dax: str, table_alias: str) -> Optional[str]:
+def translate_sentiment_gap(
+    dax: str,
+    table_alias: str,
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
     """Translate a common sentiment-gap IF(ISBLANK(...)) pattern into AVG differences.
 
     Uses the SENTIMENT table's SCORE column and MANUFACTURER.MFGISVANARSDEL for
@@ -730,14 +841,24 @@ def translate_sentiment_gap(dax: str, table_alias: str) -> Optional[str]:
     m = re.search(r"CALCULATE\s*\(\s*\[Sentiment\]\s*,.*?Mfg.*?=(?:\s*\"|\s*')?(Yes|No)(?:\"|')?.*?\)\s*.*?-\s*CALCULATE\s*\(\s*\[Sentiment\]\s*,.*?Mfg.*?=(?:\s*\"|\s*')?(Yes|No)(?:\"|')?.*?\)", dax, re.IGNORECASE | re.DOTALL)
     if not m:
         return None
-    # Emit difference of two AVG CASE expressions using the actual source tables
+    # Resolve table/column names dynamically from config
+    mfg_tbl  = _get_column_mapping(behavior_config, "manufacturer_flag_table",  "MANUFACTURER")
+    mfg_col  = _get_column_mapping(behavior_config, "manufacturer_flag_column", "MFGISVANARSDEL")
+    sent_tbl = _get_column_mapping(behavior_config, "sentiment_score_table",    "SENTIMENT")
+    sent_col = _get_column_mapping(behavior_config, "sentiment_score_column",   "SCORE")
     return (
-        "AVG(CASE WHEN MANUFACTURER.\"MFGISVANARSDEL\" = 'Yes' THEN SENTIMENT.\"SCORE\" ELSE NULL END) - "
-        "AVG(CASE WHEN MANUFACTURER.\"MFGISVANARSDEL\" = 'No' THEN SENTIMENT.\"SCORE\" ELSE NULL END)"
+        f"AVG(CASE WHEN {mfg_tbl}.{_quote_identifier(mfg_col)} = 'Yes' "
+        f"THEN {sent_tbl}.{_quote_identifier(sent_col)} ELSE NULL END) - "
+        f"AVG(CASE WHEN {mfg_tbl}.{_quote_identifier(mfg_col)} = 'No' "
+        f"THEN {sent_tbl}.{_quote_identifier(sent_col)} ELSE NULL END)"
     )
 
 
-def translate_vanarsdel_flag(dax: str, table_alias: str) -> Optional[str]:
+def translate_vanarsdel_flag(
+    dax: str,
+    table_alias: str,
+    behavior_config: Optional[Dict] = None,
+) -> Optional[str]:
     """Detect SUM with cross-table Product filter and emit CASE WHEN on PRODUCT.ISVANARSDEL.
 
     Example: SUMX(FILTER(Sales, Product[isVanArsdel] = "Yes"), [Units])
@@ -753,10 +874,14 @@ def translate_vanarsdel_flag(dax: str, table_alias: str) -> Optional[str]:
     )
     flag_value = "'No'" if is_other else "'Yes'"
     # Find the units/value column from the inner SUM
-    col_m = re.search(r"SUM\s*\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", dax, re.IGNORECASE)
-    col = _quote_identifier(col_m.group(1).strip()) if col_m else '"UNITS"'
+    col_m      = re.search(r"SUM\s*\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", dax, re.IGNORECASE)
+    # Resolve flag table/column and units fallback from config
+    flag_table = _get_column_mapping(behavior_config, "vanarsdel_flag_table",  "PRODUCT")
+    flag_col   = _get_column_mapping(behavior_config, "vanarsdel_flag_column", "ISVANARSDEL")
+    units_col  = _get_column_mapping(behavior_config, "units_fallback_column", "UNITS")
+    col = _quote_identifier(col_m.group(1).strip()) if col_m else _quote_identifier(units_col)
     return (
-        f"SUM(CASE WHEN PRODUCT.\"ISVANARSDEL\" = {flag_value} "
+        f"SUM(CASE WHEN {flag_table}.{_quote_identifier(flag_col)} = {flag_value} "
         f"THEN {table_alias}.{col} ELSE 0 END)"
     )
 

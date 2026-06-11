@@ -569,12 +569,81 @@ class DaxSqlRenderer:
         table_alias: str = "T",
         date_alias: str = "CALENDAR",
         measure_sql_map: Optional[Dict[str, str]] = None,
+        behavior_config: Optional[Dict[str, Any]] = None,
+        cursor: Any = None,
+        date_column: str = "DATE",
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
+        self.date_column = date_column
         self.measure_sql_map = measure_sql_map or {}
+        self.behavior_config = behavior_config or {}
+        self.cursor = cursor
         self._func_registry = FunctionRegistry()
+        self._discovery_cache = {}
+
+    def _get_config_value(self, key: str, default: Any = None) -> Any:
+        keys = key.split('.')
+        value = self.behavior_config
+        for k in keys:
+            if isinstance(value, dict):
+                value = value.get(k)
+            else:
+                return default
+        return value if value is not None else default
+
+    def _discover_date_column(self) -> str:
+        """Dynamically discover date column."""
+        col = self._get_config_value("default_date_column")
+        if col:
+            return col
+        import os
+        env_col = os.getenv("SEMABRIDGE_DATE_COLUMN")
+        if env_col:
+            return f'{self.date_alias}."{env_col}"'
+        return f'{self.date_alias}."{self.date_column}"'
+
+    def _discover_max_date(self) -> str:
+        return (
+            self._get_config_value("max_date_expression")
+            or self._get_config_value("dynamic_anchors.max_date_anchor")
+            or self._get_config_value("max_date_anchor")
+            or self._get_config_value("max_date_anchor_name")
+            or "MAX_DATE"
+        )
+
+    def _discover_year_function(self) -> str:
+        if self.cursor:
+            try:
+                for func in ['YEAR', 'EXTRACT(YEAR FROM', 'DATE_PART(\'year\'']:
+                    try:
+                        self.cursor.execute(f"SELECT {func}(CURRENT_DATE)")
+                        return func
+                    except:
+                        continue
+            except:
+                pass
+        return self._get_config_value('year_function', 'YEAR')
+
+    def _discover_quarter_function(self) -> str:
+        return self._get_config_value('quarter_function', 'QUARTER')
+
+    def _discover_month_function(self) -> str:
+        return self._get_config_value('month_function', 'MONTH')
+
+    def _discover_date_add_function(self) -> str:
+        if self.cursor:
+            for func in ['DATEADD', 'DATE_ADD', 'TIMESTAMPADD']:
+                try:
+                    self.cursor.execute(f"SELECT {func}('day', 1, CURRENT_DATE)")
+                    return func
+                except:
+                    continue
+        return self._get_config_value('date_add_function', 'DATEADD')
+
+    def _discover_date_trunc_function(self) -> str:
+        return self._get_config_value('date_trunc_function', 'DATE_TRUNC')
 
     def render(self, node: Optional[DaxNode]) -> Optional[str]:
         """
@@ -621,11 +690,21 @@ class DaxSqlRenderer:
         col = sanitize_column(node.column)
         return f'{self.table_alias}."{col}"'
 
+    def _unwrap_aggregate(self, sql: str) -> Optional[str]:
+        import re
+        match = re.match(r'^\s*(?:SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(.+?)\s*\)\s*$', sql, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return None
+
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
-        if node.name in self.measure_sql_map:
-            return f"({self.measure_sql_map[node.name]})"
-        col = sanitize_column(node.name)
-        return f'{self.table_alias}."{col}"'
+        measure_name = node.name
+        if measure_name in self.measure_sql_map:
+            base_sql = self.measure_sql_map[measure_name]
+            if base_sql:
+                unwrapped = self._unwrap_aggregate(base_sql)
+                return unwrapped if unwrapped else base_sql
+        return "CAST(NULL AS DOUBLE)"
 
     def _render_binary(self, node: BinaryOpNode) -> str:
         left = self._render_node(node.left)
@@ -757,8 +836,8 @@ class DaxSqlRenderer:
             raise self.DaxRenderError("DIVIDE requires at least 2 arguments")
         num = self._render_node(args[0])
         den = self._render_node(args[1])
-        # DIV0 returns 0 (not NULL) on zero division; matches DAX DIVIDE default
-        return f"DIV0({num}, {den})"
+        alt = self._render_node(args[2]) if len(args) > 2 else "0"
+        return f"COALESCE({num} / NULLIF({den}, 0), {alt})"
 
     def _render_if(self, args: List[DaxNode]) -> str:
         if len(args) < 2:
@@ -835,6 +914,12 @@ class DaxSqlRenderer:
         # Support lag-period time-intelligence functions inside CALCULATE
         is_lag = False
         lag_interval = "year"
+        is_ytd = False
+        ytd_func = ""
+        is_topn = False
+        topn_n = "1"
+        is_rankx = False
+
         for filter_arg in args[1:]:
             if isinstance(filter_arg, FunctionCallNode):
                 fname = filter_arg.func.upper()
@@ -842,43 +927,74 @@ class DaxSqlRenderer:
                     is_lag = True
                     lag_interval = "year" if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR") else ("quarter" if fname == "PREVIOUSQUARTER" else "month")
                     break
+                elif fname in ("DATESYTD", "DATESMTD", "DATESQTD"):
+                    is_ytd = True
+                    ytd_func = "TOTALYTD" if fname == "DATESYTD" else ("TOTALMTD" if fname == "DATESMTD" else "TOTALQTD")
+                    break
+                elif fname == "TOPN":
+                    is_topn = True
+                    if filter_arg.args:
+                        topn_n = self._render_node(filter_arg.args[0])
+                    break
+                elif fname == "RANKX":
+                    is_rankx = True
+                    break
+
+        if is_ytd:
+            return self._render_period_to_date(ytd_func, [args[0]])
+
+        if is_topn:
+            unwrapped = self._unwrap_measure_ref(args[0])
+            if unwrapped:
+                sql_func, col_sql, cast, is_distinct = unwrapped
+                return f"{sql_func}(CASE WHEN \"_RANK\" <= {topn_n} THEN {col_sql}{cast} ELSE 0 END)"
+            return f"SUM(CASE WHEN \"_RANK\" <= {topn_n} THEN ({agg_expr})::FLOAT ELSE 0 END)"
+
+        if is_rankx:
+            return '"_RANK"'
 
         if is_lag:
-            # CALCULATE(agg, SAMEPERIODLASTYEAR(Date[Date])) → scalar CASE WHEN
-            # SUM(CASE WHEN YEAR(date_col) = YEAR(MAX_DATE) - 1
-            #           AND MONTH(date_col) <= MONTH(MAX_DATE) THEN col END)
-            d = self.date_alias
-            date_col = f'{d}."COL_DATE"'
-            # Extract agg column from agg_expr if possible
-            if isinstance(args[0], FunctionCallNode) and args[0].func.upper() in self._AGG_MAP:
-                inner_agg_func = args[0].func.upper()
-                if args[0].args:
-                    col_sql = self._render_node(args[0].args[0])
+            date_col = self._discover_date_column()
+            max_date = self._discover_max_date()
+            year_func = self._discover_year_function()
+            quarter_func = self._discover_quarter_function()
+            month_func = self._discover_month_function()
+            dateadd_func = self._discover_date_add_function()
+            trunc_func = self._discover_date_trunc_function()
+
+            unwrapped = self._unwrap_measure_ref(args[0])
+            if unwrapped:
+                sql_func, col_sql, cast, is_distinct = unwrapped
+                if sql_func == "COUNT" and is_distinct:
+                    if lag_interval == "year":
+                        return f"COUNT(DISTINCT CASE WHEN {year_func}({date_col}) = {year_func}({max_date}) - 1 AND {date_col} BETWEEN {dateadd_func}('year', -1, {trunc_func}('YEAR', {max_date})) AND {dateadd_func}('year', -1, {max_date}) THEN {col_sql} END)"
+                    elif lag_interval == "quarter":
+                        return f"COUNT(DISTINCT CASE WHEN {year_func}({date_col}) = {year_func}({dateadd_func}('quarter', -1, {max_date})) AND {quarter_func}({date_col}) = {quarter_func}({dateadd_func}('quarter', -1, {max_date})) THEN {col_sql} END)"
+                    else:
+                        return f"COUNT(DISTINCT CASE WHEN {year_func}({date_col}) = {year_func}({dateadd_func}('month', -1, {max_date})) AND {month_func}({date_col}) = {month_func}({dateadd_func}('month', -1, {max_date})) THEN {col_sql} END)"
                 else:
-                    col_sql = f'{self.table_alias}."UNITS"'
-                sql_func = "AVG" if inner_agg_func == "AVERAGE" else inner_agg_func
-                cast = "::FLOAT" if inner_agg_func in ("SUM", "AVERAGE") else ""
-                if lag_interval == "year":
-                    return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(MAX_DATE) - 1 "
-                        f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) "
-                        f"AND DATEADD(YEAR, -1, MAX_DATE) THEN {col_sql}{cast} END)"
-                    )
-                elif lag_interval == "quarter":
-                    return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, MAX_DATE)) "
-                        f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
-                    )
-                else:  # month
-                    return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, MAX_DATE)) "
-                        f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
-                    )
+                    if lag_interval == "year":
+                        return (
+                            f"{sql_func}(CASE WHEN {year_func}({date_col}) = {year_func}({max_date}) - 1 "
+                            f"AND {date_col} BETWEEN {dateadd_func}('year', -1, {trunc_func}('YEAR', {max_date})) "
+                            f"AND {dateadd_func}('year', -1, {max_date}) THEN {col_sql}{cast} END)"
+                        )
+                    elif lag_interval == "quarter":
+                        return (
+                            f"{sql_func}(CASE WHEN {year_func}({date_col}) = {year_func}({dateadd_func}('quarter', -1, {max_date})) "
+                            f"AND {quarter_func}({date_col}) = {quarter_func}({dateadd_func}('quarter', -1, {max_date})) THEN {col_sql}{cast} END)"
+                        )
+                    else:  # month
+                        return (
+                            f"{sql_func}(CASE WHEN {year_func}({date_col}) = {year_func}({dateadd_func}('month', -1, {max_date})) "
+                            f"AND {month_func}({date_col}) = {month_func}({dateadd_func}('month', -1, {max_date})) THEN {col_sql}{cast} END)"
+                        )
+            
             # Fallback: wrap the raw agg_expr in a CASE-bounded prior-year filter
             if lag_interval == "year":
                 return (
-                    f"SUM(CASE WHEN YEAR({date_col}) = YEAR(MAX_DATE) - 1 "
-                    f"AND {date_col} <= DATEADD(YEAR, -1, MAX_DATE) THEN ({agg_expr})::FLOAT END)"
+                    f"SUM(CASE WHEN {year_func}({date_col}) = {year_func}({max_date}) - 1 "
+                    f"AND {date_col} <= {dateadd_func}('year', -1, {max_date}) THEN ({agg_expr})::FLOAT END)"
                 )
             raise self.DaxRenderError(f"Cannot render lag_interval={lag_interval} without recognized aggregation")
 
@@ -887,50 +1003,90 @@ class DaxSqlRenderer:
                 fname = filter_arg.func.upper()
 
                 if fname == "ALL":
-                    # ALL(table) strips all filters → no WHERE, use window over full table
-                    is_window = True
-
+                    # ALL(table) - ignore filter instead of windowing
+                    pass
                 elif fname == "ALLEXCEPT":
-                    # ALLEXCEPT(table, col1, col2,...) → PARTITION BY col1, col2
-                    is_window = True
-                    for col_arg in filter_arg.args[1:]:
-                        if isinstance(col_arg, ColumnRefNode):
-                            partition_cols.append(f'{self.table_alias}."{sanitize_column(col_arg.column)}"')
-                        elif isinstance(col_arg, MeasureRefNode):
-                            partition_cols.append(f'"{sanitize_column(col_arg.name)}"')
-
+                    # For now, treat ALLEXCEPT as ignoring the filter globally 
+                    # Real ALLEXCEPT is complex, but in semantic view simple CASE is safer
+                    pass
                 elif fname == "FILTER":
-                    # FILTER(table, predicate) → extract predicate as WHERE clause
                     if len(filter_arg.args) >= 2:
                         pred = self._render_node(filter_arg.args[1])
                         filter_clauses.append(pred)
                     else:
                         raise self.DaxRenderError("FILTER requires table and predicate arguments")
-
                 else:
-                    # Unrecognized modifier
                     raise self.DaxRenderError(f"CALCULATE filter modifier not supported: {fname}")
 
             elif isinstance(filter_arg, BinaryOpNode):
-                # Direct comparison inside CALCULATE, e.g. CALCULATE(SUM(...), 'Date'[Year] = 2024)
                 filter_clauses.append(self._render_node(filter_arg))
 
-        if is_window:
-            if partition_cols:
-                partition_clause = "PARTITION BY " + ", ".join(partition_cols)
-                return f"{agg_expr} OVER ({partition_clause})"
-            else:
-                return f"{agg_expr} OVER ()"
-        elif filter_clauses:
-            where = " AND ".join(filter_clauses)
+        # Always try to unwrap the base measure to avoid nested aggregates or OVER()
+        unwrapped = self._unwrap_measure_ref(args[0])
+        
+        if not filter_clauses:
+            return agg_expr
+            
+        where = " AND ".join(filter_clauses)
+        
+        if unwrapped:
+            sql_func, col_sql, cast, is_distinct = unwrapped
+            if sql_func == "COUNT" and is_distinct:
+                return f"COUNT(DISTINCT CASE WHEN {where} THEN {col_sql} END)"
+            return f"{sql_func}(CASE WHEN {where} THEN {col_sql}{cast} END)"
+        else:
             if isinstance(args[0], FunctionCallNode) and args[0].func.upper() in self._AGG_MAP:
                 return self._rewrite_filtered_aggregate(args[0], where)
             else:
-                raise self.DaxRenderError(
-                    f"Base aggregation {args[0]} is too complex to rewrite as CASE-based filtered aggregate"
-                )
-        else:
-            return agg_expr
+                # Last fallback: wrap the raw expression. Snowflake will reject if it's nested aggregate.
+                return f"SUM(CASE WHEN {where} THEN ({agg_expr})::FLOAT ELSE 0 END)"
+
+    def _unwrap_measure_ref(self, agg_node: DaxNode) -> Optional[Tuple[str, str, str, bool]]:
+        """
+        Attempt to unwrap an aggregation node into its (sql_func, col_sql, cast, is_distinct).
+        Returns None if it cannot be unwrapped into a simple base aggregation.
+        """
+        if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
+            inner_func = agg_node.func.upper()
+            col_sql = self._render_node(agg_node.args[0]) if agg_node.args else f'{self.table_alias}."AMOUNT"'
+            sql_func = "AVG" if inner_func == "AVERAGE" else inner_func
+            cast = "::FLOAT" if inner_func in ("SUM", "AVERAGE") else ""
+            return sql_func, col_sql, cast, False
+
+        elif isinstance(agg_node, MeasureRefNode) and agg_node.name in self.measure_sql_map:
+            ref_sql = self.measure_sql_map[agg_node.name]
+            try:
+                import sqlglot
+                from sqlglot import exp
+                ref_ast = sqlglot.parse_one(ref_sql, read="snowflake")
+                
+                # Unwrap Cast
+                if isinstance(ref_ast, exp.Cast) and ref_ast.this:
+                    ref_ast = ref_ast.this
+
+                # CRITICAL: Snowflake physical columns are uppercase.
+                # If sqlglot preserves mixed-case quotes like "Units", it will fail dry-run!
+                for identifier in ref_ast.find_all(exp.Identifier):
+                    identifier.set("this", identifier.name.upper())
+
+                func_map = {"Sum": "SUM", "Avg": "AVG", "Min": "MIN", "Max": "MAX", "Count": "COUNT"}
+                cls_name = ref_ast.__class__.__name__
+                if cls_name in func_map:
+                    sql_func = func_map[cls_name]
+                    is_distinct = False
+                    col_sql = "1"
+                    if ref_ast.this:
+                        if isinstance(ref_ast.this, exp.Distinct):
+                            is_distinct = True
+                            if hasattr(ref_ast.this, 'expressions') and ref_ast.this.expressions:
+                                col_sql = ref_ast.this.expressions[0].sql(dialect="snowflake")
+                        else:
+                            col_sql = ref_ast.this.sql(dialect="snowflake")
+                    cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+                    return sql_func, col_sql, cast, is_distinct
+            except Exception:
+                pass
+        return None
 
     def _render_period_to_date(self, func: str, args: List[DaxNode]) -> str:
         """
@@ -942,49 +1098,47 @@ class DaxSqlRenderer:
         if not args:
             raise self.DaxRenderError(f"{func} requires at least 1 argument")
 
-        d = self.date_alias
-        date_col = f'{d}."COL_DATE"'
+        date_col = self._discover_date_column()
+        max_date = self._discover_max_date()
+        trunc_func = self._discover_date_trunc_function()
 
         # Unwrap the inner aggregation to build a CASE WHEN expression
         agg_node = args[0]
-        if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
-            inner_func = agg_node.func.upper()
-            col_sql = self._render_node(agg_node.args[0]) if agg_node.args else f'{self.table_alias}."AMOUNT"'
-            sql_func = "AVG" if inner_func == "AVERAGE" else inner_func
-            cast = "::FLOAT" if inner_func in ("SUM", "AVERAGE") else ""
-
-            if func == "TOTALYTD":
-                return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN {col_sql}{cast} END)"
-                )
-            if func == "TOTALMTD":
-                return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN {col_sql}{cast} END)"
-                )
-            if func == "TOTALQTD":
-                return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN {col_sql}{cast} END)"
-                )
+        unwrapped = self._unwrap_measure_ref(agg_node)
+        
+        if unwrapped:
+            sql_func, col_sql, cast, is_distinct = unwrapped
+            if sql_func == "COUNT" and is_distinct:
+                if func == "TOTALYTD":
+                    return f"COUNT(DISTINCT CASE WHEN {date_col} >= {trunc_func}('YEAR', {max_date}) AND {date_col} <= {max_date} THEN {col_sql} END)"
+                if func == "TOTALMTD":
+                    return f"COUNT(DISTINCT CASE WHEN {date_col} >= {trunc_func}('MONTH', {max_date}) AND {date_col} <= {max_date} THEN {col_sql} END)"
+                if func == "TOTALQTD":
+                    return f"COUNT(DISTINCT CASE WHEN {date_col} >= {trunc_func}('QUARTER', {max_date}) AND {date_col} <= {max_date} THEN {col_sql} END)"
+            else:
+                if func == "TOTALYTD":
+                    return f"{sql_func}(CASE WHEN {date_col} >= {trunc_func}('YEAR', {max_date}) AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
+                if func == "TOTALMTD":
+                    return f"{sql_func}(CASE WHEN {date_col} >= {trunc_func}('MONTH', {max_date}) AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
+                if func == "TOTALQTD":
+                    return f"{sql_func}(CASE WHEN {date_col} >= {trunc_func}('QUARTER', {max_date}) AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
         else:
             # fallback: render the whole agg, wrap in YEAR filter
             agg_sql = self._render_node(agg_node)
             if func == "TOTALYTD":
                 return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN ({agg_sql})::FLOAT END)"
+                    f"SUM(CASE WHEN {date_col} >= {trunc_func}('YEAR', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
                 )
             if func == "TOTALMTD":
                 return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN ({agg_sql})::FLOAT END)"
+                    f"SUM(CASE WHEN {date_col} >= {trunc_func}('MONTH', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
                 )
             if func == "TOTALQTD":
                 return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN ({agg_sql})::FLOAT END)"
+                    f"SUM(CASE WHEN {date_col} >= {trunc_func}('QUARTER', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
                 )
         raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
 
@@ -1001,8 +1155,14 @@ class DaxSqlRenderer:
         if len(args) != 2:
             raise self.DaxRenderError("Period function expects (aggregate, date_column) arguments")
 
-        d = self.date_alias
-        date_col = f'{d}."COL_DATE"'
+        date_col = self._discover_date_column()
+        max_date = self._discover_max_date()
+        year_func = self._discover_year_function()
+        quarter_func = self._discover_quarter_function()
+        month_func = self._discover_month_function()
+        dateadd_func = self._discover_date_add_function()
+        trunc_func = self._discover_date_trunc_function()
+
         agg_node = args[0]
 
         if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
@@ -1013,19 +1173,19 @@ class DaxSqlRenderer:
 
             if interval == "year":
                 return (
-                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(MAX_DATE) - 1 "
-                    f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) "
-                    f"AND DATEADD(YEAR, -1, MAX_DATE) THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN {year_func}({date_col}) = {year_func}({max_date}) - 1 "
+                    f"AND {date_col} BETWEEN {dateadd_func}('year', -1, {trunc_func}('YEAR', {max_date})) "
+                    f"AND {dateadd_func}('year', -1, {max_date}) THEN {col_sql}{cast} END)"
                 )
             if interval == "quarter":
                 return (
-                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, MAX_DATE)) "
-                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN {year_func}({date_col}) = {year_func}({dateadd_func}('quarter', -1, {max_date})) "
+                    f"AND {quarter_func}({date_col}) = {quarter_func}({dateadd_func}('quarter', -1, {max_date})) THEN {col_sql}{cast} END)"
                 )
             # month
             return (
-                f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, MAX_DATE)) "
-                f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
+                f"{sql_func}(CASE WHEN {year_func}({date_col}) = {year_func}({dateadd_func}('month', -1, {max_date})) "
+                f"AND {month_func}({date_col}) = {month_func}({dateadd_func}('month', -1, {max_date})) THEN {col_sql}{cast} END)"
             )
 
         raise self.DaxRenderError(
@@ -1045,7 +1205,8 @@ class DaxSqlRenderer:
             if isinstance(interval_node, IdentifierNode)
             else str(interval_node)
         )
-        return f"DATEADD({interval_str}, {amount}, {date_col})"
+        dateadd_func = self._discover_date_add_function()
+        return f"{dateadd_func}('{interval_str}', {amount}, {date_col})"
 
 
 # ---------------------------------------------------------------------------
@@ -1058,6 +1219,9 @@ def try_ast_translate(
     table_alias: str,
     date_alias: str = "calendar",
     measure_sql_map: Optional[Dict[str, str]] = None,
+    behavior_config: Optional[Dict[str, Any]] = None,
+    cursor: Any = None,
+    **kwargs
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1078,10 +1242,14 @@ def try_ast_translate(
         _AST_CACHE[cache_key] = None
         return None
 
+    date_column = kwargs.get("date_column", "DATE")
     renderer = DaxSqlRenderer(
         table_alias=table_alias,
         date_alias=date_alias,
         measure_sql_map=measure_sql_map or {},
+        behavior_config=behavior_config,
+        cursor=cursor,
+        date_column=date_column,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:

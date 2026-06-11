@@ -36,6 +36,7 @@ class Snapshot(BaseModel):
     error_message: Optional[str] = None
     run_id: Optional[str] = None
     sync_mode: str = "copy"  # copy | upsert | etc. - v4.3 rollback metadata
+    format_type: str = "sml"
 
 
 class ModelChange(BaseModel):

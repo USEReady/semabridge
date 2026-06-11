@@ -463,8 +463,8 @@ class TMSLTransformer:
         Ensure a Calendar/Date dimension exists.
         If missing, inject a standard one.
         """
-        # Check if any date dimension exists
-        if any("DATE" in ds.unique_name.upper() or "CALENDAR" in ds.unique_name.upper() for ds in sml.datasets):
+        from semabridge.converter.date_resolution import DateResolutionConfig
+        if DateResolutionConfig().resolve(sml):
             return
             
         logger.info("Injecting missing Calendar/Date dimension")

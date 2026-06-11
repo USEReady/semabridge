@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from semabridge.core.interfaces import BaseConverter
+from semabridge.converter.fabric_utils import FabricModelUtils
 from semabridge.core.exceptions import ConversionError
 from semabridge.intermediate.models import (
     OSIModel,
@@ -321,7 +322,7 @@ class TMSLToOSIConverter(BaseConverter):
                     label=col.label or metric_name,
                     dataset=dataset.unique_name,
                     source_column=col.unique_name,
-                    expression=None,
+                    expression=f"SUM([{col.unique_name}])",
                     aggregation=aggregation,
                     description=col.description,
                     format_string=col.format_string,
@@ -863,6 +864,17 @@ class TMSLToOSIConverter(BaseConverter):
                 continue
             expr = measure_def.get(key)
             if expr is not None:
+                if isinstance(expr, list):
+                    expr = "\n".join(expr)
+                if isinstance(expr, str):
+                    if "Binary.Decompress" in expr:
+                        import re
+                        match = re.search(r"SUM\s*\(\s*'[^']+'([^)]+)\)", expr)
+                        if match:
+                            col_name = match.group(1).strip()
+                            if not col_name.startswith("["):
+                                col_name = f"[{col_name}]"
+                            expr = f"SUM({col_name})"
                 return expr
         return ""
 
