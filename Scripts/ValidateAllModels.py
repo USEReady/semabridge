@@ -123,29 +123,29 @@ def main():
         print(f"Failed to fetch CSRF token from {health_url}: {e}")
     csrf_token = session.cookies.get("csrf_token", "")
     
-    # If no models resolved yet, fetch all available models by doing a preliminary call
+    # If no models resolved yet, fetch all available models by querying the version history API
     if not models_to_validate:
         try:
+            versions_url = f"{api_url}/api/model-versions"
             headers = {}
             if access_token:
                 headers["Authorization"] = f"Bearer {access_token}"
-            if csrf_token:
-                headers["X-CSRF-Token"] = csrf_token
-            res = session.post(endpoint, json={}, headers=headers, timeout=60)
+            res = session.get(versions_url, headers=headers, timeout=10)
             if res.status_code == 200:
-                errors = res.json().get("errors", [])
-                warnings = res.json().get("warnings", [])
+                version_history = res.json()
                 model_names = set()
-                for e in errors + warnings:
-                    if e.get("model") and e.get("model") != "system":
-                        model_names.add(e.get("model"))
+                for v in version_history:
+                    model_id = v.get("model_id")
+                    if model_id and model_id.strip() and model_id.strip().lower() != "system":
+                        model_names.add(model_id.strip())
                 models_to_validate = sorted(list(model_names))
         except Exception as e:
-            print(f"Failed to fetch default models: {e}")
+            print(f"Failed to fetch models from version history: {e}")
             
     if not models_to_validate:
         print("No models found to validate.")
         sys.exit(0)
+
         
     print(f"Sequentially validating {len(models_to_validate)} models...")
     

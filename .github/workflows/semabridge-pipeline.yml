@@ -4,11 +4,6 @@ on:
   push:
     branches: [ main, develop ]
   workflow_dispatch:
-    inputs:
-      config_path:
-        description: 'Path to project YAML config file containing models'
-        required: false
-        default: 'Config/projects/proj-model10_snowflaketofabric.yaml'
 
 jobs:
   validate-models:
@@ -29,6 +24,7 @@ jobs:
           pip install requests python-dotenv pyyaml
 
       - name: Validate Models
-        run: python Scripts/ValidateAllModels.py --config "${{ github.event.inputs.config_path || 'Config/projects/proj-model10_snowflaketofabric.yaml' }}"
+        run: python Scripts/ValidateAllModels.py
         env:
           SEMABRIDGE_API_URL: "http://127.0.0.1:8001"
+
