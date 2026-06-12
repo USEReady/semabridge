@@ -2,8 +2,8 @@ name: Semabridge Model Validation Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
   workflow_dispatch:
+
 
 jobs:
   validate-models:
