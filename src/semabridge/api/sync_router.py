@@ -32,6 +32,7 @@ from semabridge.sync.models import (
 )
 from semabridge.sync.orchestrator import SyncOrchestrator
 from semabridge.sync.repository import SyncRepository
+from semabridge.sync.artifact_exporter import ArtifactExportService
 
 logger = logging.getLogger("semabridge.api.sync")
 
@@ -52,7 +53,9 @@ def _get_repo() -> SyncRepository:
 def _get_orchestrator() -> SyncOrchestrator:
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = SyncOrchestrator(repository=_get_repo())
+        repo = _get_repo()
+        exporter = ArtifactExportService(root_output_dir="output")
+        _orchestrator = SyncOrchestrator(repository=repo, artifact_exporter=exporter)
     return _orchestrator
 
 

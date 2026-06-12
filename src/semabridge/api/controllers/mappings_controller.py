@@ -378,10 +378,12 @@ async def dry_run_mapping(
                     source_table,
                     source_name,
                 ),
+                "target_expression": m.get("target_expression", ""),
+                "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
+                "sync_failure_reason": m.get("sync_failure_reason", ""),
+                "depends_on_measures": list(m.get("depends_on_measures") or []),
             })
 
-        # Apply collision handling on top of what the serializer already did
-        filtered_mappings = service.add_collision_handling(filtered_mappings)
 
         auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
         unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
@@ -469,8 +471,6 @@ async def rerun_auto_map(
         m for m in result.get("entity_mappings", [])
         if m.get("entity_kind") == "field" or m.get("entity_kind") == "column" or m.get("entity_kind") == "measure"
     ]
-    
-    filtered_mappings = service.add_collision_handling(filtered_mappings)
     
     return {"entity_mappings": filtered_mappings}
 

@@ -16,7 +16,7 @@ import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
-import { suggestCollisionResolutions, sanitizeMappingName } from '../utils/projectHelpers';
+import { suggestCollisionResolutions, sanitizeMappingName, shortDeterministicHash, buildSourceFingerprint } from '../utils/projectHelpers';
 
 // ─── Filter tab definitions ───────────────────────────────────────────────────
 const MAPPING_FILTERS = [
@@ -114,12 +114,14 @@ function TableHeader() {
 }
 
 // ─── Single mapping row ───────────────────────────────────────────────────────
+// ─── Single mapping row ───────────────────────────────────────────────────────
 function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename }) {
+  const [expandedMeasure, setExpandedMeasure] = useState(false);
   const badgeCfg = STATUS_BADGE_MAP[String(row.status || '').toLowerCase()]
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
-  const isPanelOpen = isCollision && expandedCollision === row.id;
+  const isPanelOpen = (isCollision && expandedCollision === row.id) || (isMeasure && expandedMeasure);
 
   return (
     <div style={{ borderBottom: '1px solid var(--border-main)' }}>
@@ -258,24 +260,24 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
       </div>
 
       {/* Action */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
         {isCollision ? (
           <button
             type="button"
-            onClick={() => setExpandedCollision(isPanelOpen ? null : row.id)}
+            onClick={() => setExpandedCollision(expandedCollision === row.id ? null : row.id)}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 5,
               padding: '4px 10px',
               borderRadius: 6,
-              border: isPanelOpen
+              border: expandedCollision === row.id
                 ? '1px solid rgba(251,191,36,0.55)'
                 : '1px solid rgba(239, 68, 68, 0.45)',
-              background: isPanelOpen
+              background: expandedCollision === row.id
                 ? 'rgba(251,191,36,0.12)'
                 : 'rgba(239, 68, 68, 0.10)',
-              color: isPanelOpen ? '#fbbf24' : 'var(--color-error)',
+              color: expandedCollision === row.id ? '#fbbf24' : 'var(--color-error)',
               fontSize: 11,
               fontWeight: 700,
               cursor: 'pointer',
@@ -283,36 +285,65 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
               transition: 'all 0.2s',
             }}
           >
-            {isPanelOpen ? <><X size={11} /> Close</> : <><ChevronRight size={11} /> Fix</>}
+            {expandedCollision === row.id ? <><X size={11} /> Close</> : <><ChevronRight size={11} /> Fix</>}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => onEdit?.(row.id)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 5,
-              padding: '4px 10px',
-              borderRadius: 6,
-              border: '1px solid var(--border-main)',
-              background: 'var(--bg-surface-raised)',
-              color: 'var(--text-secondary)',
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'all 0.2s',
-            }}
-          >
-            <Edit2 size={11} />
-            {row.target_field ? 'Edit' : 'Map'}
-          </button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {isMeasure && (
+              <button
+                type="button"
+                onClick={() => setExpandedMeasure(!expandedMeasure)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: expandedMeasure
+                    ? '1px solid rgba(56, 189, 248, 0.55)'
+                    : '1px solid rgba(56, 189, 248, 0.45)',
+                  background: expandedMeasure
+                    ? 'rgba(56, 189, 248, 0.15)'
+                    : 'rgba(56, 189, 248, 0.05)',
+                  color: '#7dd3fc',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {expandedMeasure ? 'Hide SQL' : 'View SQL'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onEdit?.(row.id)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-secondary)',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.2s',
+              }}
+            >
+              <Edit2 size={11} />
+              {row.target_field ? 'Edit' : 'Map'}
+            </button>
+          </div>
         )}
       </div>
     </div>
     {/* ── Inline collision fix panel ── */}
-    {isPanelOpen && (
+    {isCollision && expandedCollision === row.id && (
       <div style={{ padding: '0 14px 10px' }}>
         <CollisionPanel
           row={row}
@@ -324,6 +355,139 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
         />
       </div>
     )}
+    {/* ── Inline measure translation panel ── */}
+    {isMeasure && expandedMeasure && (
+      <div style={{ padding: '0 14px 10px' }}>
+        <MeasureTranslationPanel row={row} />
+      </div>
+    )}
+    </div>
+  );
+}
+
+// ─── Measure translation detail panel ─────────────────────────────────────────
+function MeasureTranslationPanel({ row }) {
+  const isFailed = row.sync_enabled === false || !!row.sync_failure_reason;
+  return (
+    <div style={{
+      gridColumn: '1 / -1',
+      margin: '0 0 4px',
+      padding: '14px 16px',
+      borderRadius: 8,
+      background: 'rgba(56, 189, 248, 0.03)',
+      border: '1px solid rgba(56, 189, 248, 0.15)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      {/* ── Status Banner ── */}
+      {isFailed ? (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 12px',
+          borderRadius: 6,
+          background: 'rgba(239, 68, 68, 0.08)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: 'var(--color-error)',
+          fontSize: 11,
+          fontWeight: 600,
+        }}>
+          <AlertTriangle size={13} style={{ flexShrink: 0 }} />
+          <span>Translation Warning: {row.sync_failure_reason || 'This measure is too complex to translate to SQL automatically.'}</span>
+        </div>
+      ) : (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 12px',
+          borderRadius: 6,
+          background: 'rgba(34, 197, 94, 0.08)',
+          border: '1px solid rgba(34, 197, 94, 0.25)',
+          color: 'var(--color-success)',
+          fontSize: 11,
+          fontWeight: 600,
+        }}>
+          <CheckCircle size={13} style={{ flexShrink: 0 }} />
+          <span>Translated successfully to Snowflake SQL</span>
+        </div>
+      )}
+
+      {/* ── Side-by-Side Code Blocks ── */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: '12px',
+      }}>
+        {/* Source DAX */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Source Expression (DAX)</span>
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: 11,
+            padding: '10px 12px',
+            borderRadius: 6,
+            background: 'var(--bg-main)',
+            border: '1px solid var(--border-main)',
+            color: '#a5f3fc',
+            minHeight: '48px',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            {row.measure_expression || '—'}
+          </div>
+        </div>
+
+        {/* Target SQL */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Snowflake Translation (SQL)</span>
+          <div style={{
+            fontFamily: 'monospace',
+            fontSize: 11,
+            padding: '10px 12px',
+            borderRadius: 6,
+            background: 'var(--bg-main)',
+            border: '1px solid var(--border-main)',
+            color: isFailed ? 'var(--text-tertiary)' : '#86efac',
+            minHeight: '48px',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            {isFailed ? '— Translation unavailable —' : (row.target_expression || '—')}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Dependencies ── */}
+      {Array.isArray(row.depends_on_measures) && row.depends_on_measures.length > 0 && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 11,
+          color: 'var(--text-secondary)',
+        }}>
+          <GitMerge size={12} style={{ color: 'var(--text-tertiary)' }} />
+          <span style={{ fontWeight: 600 }}>Depends on measures:</span>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {row.depends_on_measures.map(dep => (
+              <span key={dep} style={{
+                fontFamily: 'monospace',
+                fontSize: 10,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid var(--border-main)',
+                color: 'var(--text-primary)',
+              }}>
+                {dep}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -674,18 +838,49 @@ export default function DryRunMappingTable({
     setBulkToast(null);
 
     try {
-      // Compute table-prefix suggestions client-side — no API call needed
       const resolvedMap = {};
+      const assignedNames = new Set(
+        mappings
+          .filter(r => String(r?.status || '').toLowerCase() !== 'collision')
+          .map(r => String(r?.target_field || r?.target_name || '').trim().toUpperCase())
+          .filter(Boolean)
+      );
+
       collisionRows.forEach(row => {
         const { suggestions } = suggestCollisionResolutions(row, mappings);
-        // Pick the first suggestion (table_prefix when available, else kind_prefix, else hash)
-        resolvedMap[row.id] = suggestions[0]?.label || row.target_field;
+        let candidate = '';
+        let suggestionIdx = 0;
+
+        if (suggestions.length > 0) {
+          candidate = suggestions[0].label;
+          while (assignedNames.has(candidate.toUpperCase()) && suggestionIdx < suggestions.length - 1) {
+            suggestionIdx += 1;
+            candidate = suggestions[suggestionIdx].label;
+          }
+        } else {
+          candidate = row.target_field || row.source_field || '';
+        }
+
+        if (assignedNames.has(candidate.toUpperCase())) {
+          const base = candidate;
+          const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6).toUpperCase();
+          candidate = `${base}_${hash}`;
+          
+          let counter = 2;
+          while (assignedNames.has(candidate.toUpperCase())) {
+            candidate = `${base}_${hash}_${counter}`;
+            counter += 1;
+          }
+        }
+
+        resolvedMap[row.id] = candidate;
+        assignedNames.add(candidate.toUpperCase());
       });
 
       onBulkResolved?.(resolvedMap);
       setBulkToast({
         type: 'success',
-        msg: `${collisionRows.length} collision${collisionRows.length !== 1 ? 's' : ''} resolved — table-prefix names applied. Review each field to confirm.`,
+        msg: `${collisionRows.length} collision${collisionRows.length !== 1 ? 's' : ''} resolved — unique names applied. Review each field to confirm.`,
       });
     } catch (err) {
       setBulkToast({ type: 'error', msg: `Resolve failed: ${err.message}` });

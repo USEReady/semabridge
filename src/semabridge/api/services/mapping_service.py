@@ -452,6 +452,7 @@ def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[
             "validation_code": row.get("validation_code"),
             "validation_message": row.get("validation_message"),
             "suggested_target_name": row.get("suggested_target_name"),
+            "resolution_suggestions": list(row.get("resolution_suggestions") or []),
         })
 
     return list(grouped.values())
@@ -675,14 +676,25 @@ def _compat_serialize_auto_map_entity_mappings(
             collision_detected = True
         if validation_code == "OK" and validation_status == "valid":
             validation_message = ""
-
         if connector == "snowflake" and target_name.upper() in AUTO_MAP_SNOWFLAKE_RESERVED:
             suggested_target_name = f"COL_{target_name.upper()}"
-            target_name = suggested_target_name
             collision_detected = True
             validation_status = "invalid"
             validation_code = "RESERVED_KEYWORD"
             validation_message = f"'{source_name}' is a Snowflake reserved keyword."
+
+            import json
+            print(json.dumps({
+                "layer": "_compat_serialize_auto_map_entity_mappings",
+                "source_name": source_name,
+                "source_path": source_path,
+                "target_name": target_name,
+                "suggested_target_name": suggested_target_name,
+                "collision_reason": "RESERVED_KEYWORD",
+                "collision_group": "",
+                "validation_code": "RESERVED_KEYWORD",
+                "semantic_name": _semantic_name(source_name)
+            }))
 
         entity_mappings.append({
             "id": str(row.get("id") or f"mapping-{index + 1}"),
@@ -698,9 +710,14 @@ def _compat_serialize_auto_map_entity_mappings(
             "validation_message": validation_message,
             "collision_detected": collision_detected,
             "suggested_target_name": suggested_target_name,
+            "resolution_suggestions": list(row.get("resolution_suggestions") or []),
             "measure_source_tables": list(row.get("measure_source_tables") or []),
             "source_expression": str(row.get("source_expression") or ""),
             "status": str(row.get("status") or "auto").strip().lower() or "auto",
+            "target_expression": row.get("target_expression") or "",
+            "sync_enabled": bool(row.get("sync_enabled")) if row.get("sync_enabled") is not None else True,
+            "sync_failure_reason": row.get("sync_failure_reason") or "",
+            "depends_on_measures": list(row.get("depends_on_measures") or []),
         })
 
     seen: Dict[str, Dict[str, Any]] = {}
@@ -711,58 +728,21 @@ def _compat_serialize_auto_map_entity_mappings(
         if target_key in seen:
             first = seen[target_key]
             # Only flag as a real collision when the two source names are
-            # semantically different (e.g. "rev_total" vs "revenue_total" both
-            # producing REVENUE_TOTAL). If they are the same concept written
-            # differently (e.g. "Level" and "level" from two tables), the
-            # primary mapping engine already handles de-duplication; flagging
-            # here would produce a false-positive collision in the UI.
+            # semantically different.
             prior_semantic = _semantic_name(str(first.get("source_name") or ""))
             current_semantic = _semantic_name(str(mapping.get("source_name") or ""))
             if prior_semantic == current_semantic:
-                # Same concept — not a true collision; skip
                 seen[target_key] = mapping
                 continue
             first["collision_detected"] = True
             first["validation_status"] = "invalid"
             first["validation_code"] = "COLLISION"
             first["validation_message"] = "Duplicate target name detected."
-            # Apply table-prefix to the first mapping too
-            import re as _re_first
-            _fp_path = str(first.get("parent_source_path") or first.get("source_path") or "").strip()
-            _fp_table = ""
-            if _fp_path:
-                _fp_stripped = _re_first.sub(r"^datasets\.", "", _fp_path, flags=_re_first.IGNORECASE).split(".")[0]
-                _fp_table = sanitize_identifier(_fp_stripped)
-            _first_base = sanitize_identifier(str(first.get("target_name") or first.get("source_name") or "").strip())
-            if _fp_table and _fp_table.upper() != _first_base.upper():
-                first["target_name"] = f"{_fp_table}_{_first_base}".upper()
-                first["suggested_target_name"] = first["target_name"]
-            else:
-                first["suggested_target_name"] = (
-                    str(first.get("suggested_target_name") or first.get("target_name") or "").strip()
-                    or _compat_collision_fallback_name(str(first.get("source_name") or ""))
-                )
-            # Derive table name for prefix: "datasets.TERRITORY" → "TERRITORY"
-            _parent_path = str(mapping.get("parent_source_path") or mapping.get("source_path") or "").strip()
-            _table_name = ""
-            if _parent_path:
-                import re as _re
-                _stripped = _re.sub(r"^datasets\.", "", _parent_path, flags=_re.IGNORECASE).split(".")[0]
-                _table_name = sanitize_identifier(_stripped)
-            base_target = sanitize_identifier(str(mapping.get("target_name") or "").strip())
-            if _table_name and _table_name.upper() != base_target.upper():
-                resolved = f"{_table_name}_{base_target}".upper()
-            else:
-                entity_seed = str(mapping.get("parent_source_path") or mapping.get("source_table") or "").strip()
-                field_seed = str(mapping.get("source_name") or "").strip()
-                suffix = _compat_hash_suffix(f"{entity_seed}::{field_seed}")
-                resolved = f"{base_target}_{suffix}".upper()
-            mapping["target_name"] = resolved
+
             mapping["collision_detected"] = True
             mapping["validation_status"] = "invalid"
             mapping["validation_code"] = "COLLISION"
-            mapping["validation_message"] = "Duplicate target name resolved with table prefix."
-            mapping["suggested_target_name"] = resolved
+            mapping["validation_message"] = "Duplicate target name detected."
         else:
             seen[target_key] = mapping
 

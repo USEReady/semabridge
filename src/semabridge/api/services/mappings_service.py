@@ -1,6 +1,5 @@
 from typing import List, Dict, Any, Optional
 
-from semabridge.api.services.project_mapping_engine import deterministic_hash_suffix, sanitize_identifier
 
 from semabridge.api.services.project_domain_service import (
     auto_map_compat,
@@ -42,33 +41,6 @@ class MappingService:
                 self.id = id
         return StubProject("new_project_id")
 
-    def add_collision_handling(self, mappings: List[Dict]) -> List[Dict]:
-        """
-        Detect collisions and add hash suffixes to conflicting target names.
-        """
-        # Group by target_name (case-insensitive)
-        target_groups = {}
-        for mapping in mappings:
-            target_key = mapping.get("target_name", "").lower() if mapping.get("target_name") else ""
-            if not target_key:
-                continue
-            if target_key not in target_groups:
-                target_groups[target_key] = []
-            target_groups[target_key].append(mapping)
-        
-        # Mark collisions
-        for target_key, group in target_groups.items():
-            if len(group) > 1:
-                for mapping in group:
-                    mapping["mapping_status"] = "collision"
-                    entity_name = str(mapping.get("source_table") or mapping.get("parent_source_path") or "").strip()
-                    field_name = str(mapping.get("source_name") or "").strip()
-                    hash_suffix = deterministic_hash_suffix(entity_name, field_name, size=4)
-                    base_target = sanitize_identifier(mapping.get("target_name") or mapping.get("source_name") or "")
-                    mapping["suggested_target_name"] = f"{base_target}_{hash_suffix}".upper()
-                    mapping["target_name"] = mapping["suggested_target_name"]
-        
-        return mappings
 
 def get_mapping_service() -> MappingService:
     return MappingService()

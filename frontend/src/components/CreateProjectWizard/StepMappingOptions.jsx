@@ -132,6 +132,11 @@ export function StepMappingOptions({
     return `${totalFields} mapped fields`;
   }, [dryRunData, rows.length]);
 
+  const isLoading =
+    mappingLoading ||
+    dryRunStatus === "loading" ||
+    dryRunStatus === "running";
+
   // Real signals from the dry-run result — must be declared before readyToProceed / readiness / checkState
   const compatScore  = typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null;
   const schemaIssues = Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0;
@@ -447,22 +452,22 @@ export function StepMappingOptions({
                 <button
                   type="button"
                   onClick={runDryRun}
-                  disabled={mappingLoading}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 200, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
+                  disabled={isLoading}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 200, borderRadius: 8, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.65 : 1 }}
                 >
-                  {mappingLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
-                  {mappingLoading ? 'Running Check...' : 'Run Check'}
+                  {isLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
+                  {isLoading ? 'Running...' : 'Run Check'}
                 </button>
               ) : (
                 <>
                   <button
                     type="button"
                     onClick={runDryRun}
-                    disabled={mappingLoading}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 160, borderRadius: 8, border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: mappingLoading ? 'not-allowed' : 'pointer', opacity: mappingLoading ? 0.65 : 1 }}
+                    disabled={isLoading}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', minWidth: 160, borderRadius: 8, border: '1px solid var(--border-main)', background: 'transparent', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.65 : 1 }}
                   >
-                    <RefreshCw size={14} />
-                    Re-run Check
+                    {isLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={14} />}
+                    {isLoading ? 'Running...' : 'Re-run Check'}
                   </button>
                   <button
                     type="button"

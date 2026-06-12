@@ -119,34 +119,44 @@ export function suggestCollisionResolutions(row, allRows) {
 
   const suggestions = [];
 
-  // Option A: table_prefix — SALES_AMOUNT (most readable, preferred)
-  if (tbl && tbl !== baseTarget) {
+  if (Array.isArray(row?.resolution_suggestions) && row.resolution_suggestions.length > 0) {
+    row.resolution_suggestions.forEach((item, idx) => {
+      suggestions.push({
+        id: `backend_${idx}`,
+        label: sanitizeMappingName(item),
+        description: `Backend resolution option`,
+      });
+    });
+  } else {
+    // Option A: table_prefix — SALES_AMOUNT (most readable, preferred)
+    if (tbl && tbl !== baseTarget) {
+      suggestions.push({
+        id: 'table_prefix',
+        label: `${tbl}_${field}`,
+        description: `Prefix with source table "${tbl}"`,
+      });
+    }
+
+    // Option B: kind_prefix — COL_AMOUNT or MSR_AMOUNT
+    const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
+    const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
+    const kindLabel = `${kindPrefix}_${field}`;
+    if (kindLabel !== suggestions[0]?.label) {
+      suggestions.push({
+        id: 'kind_prefix',
+        label: kindLabel,
+        description: `Prefix with entity type (${kindPrefix})`,
+      });
+    }
+
+    // Option C: short hash fallback — always last
+    const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
     suggestions.push({
-      id: 'table_prefix',
-      label: `${tbl}_${field}`,
-      description: `Prefix with source table "${tbl}"`,
+      id: 'hash',
+      label: `${baseTarget}_${hash}`,
+      description: 'Append short unique hash (last resort)',
     });
   }
-
-  // Option B: kind_prefix — COL_AMOUNT or MSR_AMOUNT
-  const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
-  const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
-  const kindLabel = `${kindPrefix}_${field}`;
-  if (kindLabel !== suggestions[0]?.label) {
-    suggestions.push({
-      id: 'kind_prefix',
-      label: kindLabel,
-      description: `Prefix with entity type (${kindPrefix})`,
-    });
-  }
-
-  // Option C: short hash fallback — always last
-  const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
-  suggestions.push({
-    id: 'hash',
-    label: `${baseTarget}_${hash}`,
-    description: 'Append short unique hash (last resort)',
-  });
 
   return { suggestions, peers };
 }
@@ -343,6 +353,11 @@ export function normalizeRows(data) {
         validation_message: String(row?.validation_message || ''),
         suggested_target_name: String(row?.suggested_target_name || ''),
         collision_detected: Boolean(row?.collision_detected),
+        resolution_suggestions: Array.isArray(row?.resolution_suggestions) ? row.resolution_suggestions : [],
+        target_expression: row?.target_expression || '',
+        sync_enabled: row?.sync_enabled !== false,
+        sync_failure_reason: row?.sync_failure_reason || '',
+        depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
         isDirty: false,
       };
     });
@@ -380,6 +395,7 @@ export function normalizeRows(data) {
         validation_message: String(column?.validation_message || ''),
         suggested_target_name: String(column?.suggested_target_name || ''),
         collision_detected: Boolean(column?.collision_detected),
+        resolution_suggestions: Array.isArray(column?.resolution_suggestions) ? column.resolution_suggestions : [],
         parent_table: tableSource,
         isDirty: false,
       });
