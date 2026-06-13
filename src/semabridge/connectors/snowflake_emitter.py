@@ -9,8 +9,9 @@ import os
 import time
 import re
 import yaml
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior
@@ -28,6 +29,26 @@ from semabridge.connectors.measure_sync import MeasureSynchronizer
 from semabridge.connectors.ddl_builder import SemanticViewBuilder
 from semabridge.connectors.translator import MetricExpressionTranslator
 from semabridge.connectors.snowflake_emitter_parts import renderers as _renderers
+
+
+@dataclass
+class AliasState:
+    """Tracks globally unique join aliases across multi-path enriched-view generation."""
+    idx: int = 1
+    aliases: Dict[str, str] = field(default_factory=dict)
+    seen_join_pairs: Set[Tuple[str, str]] = field(default_factory=set)
+
+    def ensure_target(self, dataset_key: str, base_alias: str = "f") -> None:
+        """Register the root/fact table alias if not already present."""
+        if dataset_key not in self.aliases:
+            self.aliases[dataset_key] = base_alias
+
+    def get_or_create(self, key: str) -> str:
+        """Return existing alias for key, or allocate a new globally-unique one."""
+        if key not in self.aliases:
+            self.aliases[key] = f"j{self.idx}"
+            self.idx += 1
+        return self.aliases[key]
 from semabridge.extractor.dynamic_extractor import DynamicSchemaExtractor
 from typing import List
 
@@ -1036,15 +1057,16 @@ class SnowflakeEmitter(BaseEmitter):
                         return from_cols[0].upper()
                     if to_cols:
                         return to_cols[0].upper()
-        common_keys = ['PRODUCTID', 'ID', 'CUSTOMERID', 'BUSINESS_UNIT', 'FISCAL_YR_PERIOD']
+        common_keys = getattr(self.behavior.snowflake.dynamic, 'common_join_keys', ['PRODUCTID', 'ID', 'CUSTOMERID', 'BUSINESS_UNIT', 'FISCAL_YR_PERIOD'])
         for key in common_keys:
             if key in table1.upper() or key in table2.upper():
                 return key
         return "ID"
 
     def _find_date_table(self, model):
-        date_keywords = ['date', 'calendar', 'cal', 'dim_date', 'dates']
-        fiscal_keywords = ['fiscal_yr_period', 'fiscal_period', 'fiscal_year_period']
+        date_keywords = getattr(self.behavior.snowflake.dynamic, 'date_table_indicators', ['date', 'calendar', 'cal', 'dim_date', 'dates'])
+        fiscal_keywords = getattr(self.behavior.snowflake.dynamic, 'fiscal_column_patterns', ['fiscal_yr_period', 'fiscal_period', 'fiscal_year_period'])
+        date_column_patterns = getattr(self.behavior.snowflake.dynamic, 'date_column_patterns', ['cal_dt', 'date', 'calendar_date', 'cal_date'])
         for dataset in getattr(model, 'datasets', []):
             dataset_name = dataset.unique_name.lower()
             is_date_table = any(kw in dataset_name for kw in date_keywords)
@@ -1053,7 +1075,7 @@ class SnowflakeEmitter(BaseEmitter):
                 fiscal_col = None
                 for col in dataset.columns:
                     col_name = col.unique_name.lower()
-                    if col_name in ['cal_dt', 'date', 'calendar_date', 'cal_date']:
+                    if col_name in date_column_patterns:
                         date_col = col.unique_name
                     if any(fk in col_name for fk in fiscal_keywords):
                         fiscal_col = col.unique_name
@@ -1126,14 +1148,23 @@ class SnowflakeEmitter(BaseEmitter):
         logger.info("✅ Pre-compute suggestions executed successfully")
 
     def _resolve_physical_col_name(self, dax_col_name: str, existing_cols: set[str]) -> str:
-        candidates = [dax_col_name.upper(), f"COL_{dax_col_name.upper()}", dax_col_name.upper().replace(' ', '_')]
+        patterns = getattr(self.behavior.snowflake.dynamic, 'physical_column_patterns', ["{name}", "COL_{name}", "{name}_ID", "{name}_KEY", "{name}_SK"])
+        base_name = dax_col_name.upper()
+        base_name_nospace = base_name.replace(' ', '_')
+        
+        candidates = []
+        for p in patterns:
+            candidates.append(p.replace("{name}", base_name).upper())
+            if " " in base_name:
+                candidates.append(p.replace("{name}", base_name_nospace).upper())
+                
         for c in candidates:
             if c in existing_cols:
                 return c
         for existing in existing_cols:
-            if dax_col_name.upper() in existing:
+            if base_name in existing or base_name_nospace in existing:
                 return existing
-        return dax_col_name.upper().replace(' ', '_')
+        return base_name_nospace
 
     def _get_directional_join_key(self, table1: str, table2: str, from_side: str) -> str:
         if not hasattr(self, '_model') or not self._model:
@@ -1251,35 +1282,62 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as e:
             logger.warning(f"Failed to auto-execute precompute suggestions: {e}")
 
-    def _build_precomputed_column_select(self, model: Any, target_dataset: str, source_dataset: str, source_column: str, precomputed_column: str) -> tuple[Optional[str], Optional[str]]:
+    def _build_precomputed_column_select(self, model, target_dataset, source_dataset, source_column, precomputed_column, alias_state: Optional[AliasState] = None):
         path = self._find_relationship_path(model, target_dataset, source_dataset)
         if not path:
-            logger.warning("No active relationship path from %s to %s; cannot precompute %s.%s", target_dataset, source_dataset, source_dataset, source_column)
             return None, None
 
-        joins: list[str] = []
-        current_alias = "f"
-        for idx, edge in enumerate(path):
-            next_alias = f"j{idx + 1}"
+        if alias_state is None:
+            alias_state = AliasState()
+            alias_state.ensure_target(str(target_dataset).casefold(), "f")
+
+        final_alias = alias_state.aliases.get(str(target_dataset).casefold(), "f")
+
+        joins: List[str] = []
+        for edge in path:
+            # Extract join columns from edge
             from_dataset = edge.get("from_dataset") or edge.get("current_dataset")
             to_dataset = edge.get("to_dataset") or edge.get("next_dataset")
             from_columns = edge.get("from_columns") or edge.get("current_columns") or []
             to_columns = edge.get("to_columns") or edge.get("next_columns") or []
-            if not from_dataset or not to_dataset or not from_columns or not to_columns:
-                logger.warning("Invalid relationship edge at index %s for %s -> %s: %s", idx, target_dataset, source_dataset, edge)
-                return None, None
-            from_col = self._resolve_model_column_name(model, from_dataset, from_columns[0])
-            to_col = self._resolve_model_column_name(model, to_dataset, to_columns[0])
-            joins.append(
-                f'LEFT JOIN {self._dataset_source_ref(model, to_dataset)} AS {next_alias} '
-                f'ON {current_alias}."{from_col}" = {next_alias}."{to_col}"'
-            )
-            current_alias = next_alias
 
-        source_alias = f"j{len(path)}"
+            if not from_dataset or not to_dataset or not from_columns or not to_columns:
+                continue
+
+            from_key = str(from_dataset).casefold()
+            to_key = str(to_dataset).casefold()
+
+            # Bug 1 fix: always resolve from the shared alias_state; never mutate via get fallback
+            if from_key not in alias_state.aliases:
+                logger.warning("Alias not found for dataset %s – skipping join edge", from_dataset)
+                continue
+            current_alias = alias_state.aliases[from_key]
+
+            next_alias = alias_state.get_or_create(to_key)
+
+            # Bug 2 fix: dedupe by (from_key, to_key) pair, not by full SQL string
+            edge_pair = (from_key, to_key)
+            if edge_pair not in alias_state.seen_join_pairs:
+                from_col = self._resolve_model_column_name(model, from_dataset, from_columns[0])
+                to_col = self._resolve_model_column_name(model, to_dataset, to_columns[0])
+                join_sql = f'LEFT JOIN {self._dataset_source_ref(model, to_dataset)} AS {next_alias} ON {current_alias}."{from_col}" = {next_alias}."{to_col}"'
+                joins.append(join_sql)
+                alias_state.seen_join_pairs.add(edge_pair)
+
+            final_alias = next_alias
+
         source_col = self._resolve_model_column_name(model, source_dataset, source_column)
-        select_alias = f'{source_alias}."{source_col}" AS "{precomputed_column}"'
+        logger.info(
+            "PRECOMPUTE: source_dataset=%s source_column=%s resolved=%s alias=%s",
+            source_dataset,
+            source_column,
+            source_col,
+            final_alias,
+        )
+        select_alias = f'{final_alias}."{source_col}" AS "{precomputed_column}"'
+        logger.info("Alias State: %s", alias_state.aliases)
         return "\n".join(joins), select_alias
+
 
     def _get_date_table_name(self, model: Any) -> str:
         """Return the active date table/view, preferring a live enriched view."""
@@ -1318,14 +1376,34 @@ class SnowflakeEmitter(BaseEmitter):
                 return safe_candidate
         return safe_source
 
+    def _resolve_date_column(self, cursor, model) -> str:
+        """Return actual date column name without quotes."""
+        try:
+            cursor.execute("""
+                SELECT COLUMN_NAME 
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME = 'DATE' 
+                AND DATA_TYPE IN ('DATE', 'TIMESTAMP_NTZ')
+            """)
+            rows = cursor.fetchall()
+            if rows:
+                return rows[0][0].strip('"').strip("'")
+        except:
+            pass
+        return "COL_DATE"
+
     def _create_enriched_view_for_table(self, cursor, table_name: str, is_date_table: bool = False, date_column_physical: str = None, model: Any = None):
         schema_ref = f'"{self.config.database}"."{self.config.schema_name}"'
         safe_table = self._id.sanitize_table_name(table_name)
         base_query_table = safe_table
-        if base_query_table.upper().endswith("_ENRICHED"):
-            base_query_table = base_query_table[:-9]
-        elif base_query_table.upper().startswith("ENRICHED_"):
-            base_query_table = base_query_table[9:]
+        patterns = getattr(self.behavior.snowflake.dynamic, 'enriched_view_patterns', ["{table}_ENRICHED", "ENRICHED_{table}", "{table}_VW", "VW_{table}"])
+        for pattern in patterns:
+            import re
+            regex_str = '^' + re.escape(pattern).replace('\\{table\\}', '(.*)') + '$'
+            m = re.match(regex_str, base_query_table, re.IGNORECASE)
+            if m:
+                base_query_table = m.group(1)
+                break
         possible_names = self._get_possible_enriched_view_names(base_query_table)
         enriched_name = possible_names[0] if possible_names else f"{base_query_table}_ENRICHED"
         try:
@@ -1359,11 +1437,17 @@ class SnowflakeEmitter(BaseEmitter):
             for phys in sorted(all_physical_cols):
                 phys_upper = phys.upper()
                 logical = physical_to_logical.get(phys_upper, phys)
+                # Log the column projection decision
+                if phys_upper == logical.upper():
+                    logger.info('Projecting column %s without alias', phys)
+                else:
+                    logger.info('Projecting column %s as alias %s', phys, logical)
                 select_items.append(f'"{phys}"')
                 if phys_upper != logical.upper():
                     select_items.append(f'"{phys}" AS "{logical}"')
                 if date_column_physical and phys_upper == date_column_physical.upper():
                     if logical.upper() != "COL_DATE" and phys_upper != "COL_DATE":
+                        logger.info('Adding date column alias COL_DATE for physical %s', phys)
                         select_items.append(f'"{phys}" AS "COL_DATE"')
             month_index_col = getattr(self.behavior.snowflake.dynamic, 'month_index_column', 'MONTHINDEX')
             selected_aliases = {
@@ -1434,13 +1518,10 @@ class SnowflakeEmitter(BaseEmitter):
             # Determine the date column and table reference for anchor injection
             if is_date_table:
                 # If we are currently building the date table enriched view, use its physical column and table
-                date_col_phys = date_column_physical
+                date_col_phys = self._resolve_date_column(cursor, model)
                 if not date_col_phys:
-                    ds = self._get_dataset_by_name(model, table_name)
-                    if hasattr(self.schema_manager, '_find_date_column') and ds:
-                        date_col_phys = self.schema_manager._find_date_column({ds.unique_name: {c.name for c in ds.columns}})
-                if not date_col_phys:
-                    date_col_phys = "COL_DATE" # Fallback since we know it mapped to COL_DATE in the select_items
+                    date_col_phys = getattr(self.behavior.snowflake.dynamic, 'date_column', "COL_DATE")
+                date_col_phys = date_col_phys.strip('"').strip("'")
                 safe_date_table = safe_table
             else:
                 # If we are in a fact table, we still need to cross-join the anchors from the date table
@@ -1453,7 +1534,7 @@ class SnowflakeEmitter(BaseEmitter):
                     if hasattr(self.schema_manager, '_find_date_column'):
                         date_col_phys_raw = self.schema_manager._find_date_column({date_dataset.unique_name: {c.name for c in date_dataset.columns}})
                     else:
-                        date_col_phys_raw = "Date"
+                        date_col_phys_raw = getattr(self.behavior.snowflake.dynamic, 'date_column', "COL_DATE")
                     if date_col_phys_raw:
                         date_col_phys = self._id.sanitize_column(date_col_phys_raw)
                     live_date_cols = {
@@ -1468,10 +1549,14 @@ class SnowflakeEmitter(BaseEmitter):
                     normalized_date_col = str(date_col_phys or "").strip('"').upper()
                     if normalized_date_col in available_date_cols:
                         date_col_phys = available_date_cols[normalized_date_col]
-                    elif normalized_date_col in {"DATE", "CALENDAR_DATE"} and "COL_DATE" in available_date_cols:
-                        date_col_phys = available_date_cols["COL_DATE"]
+                    else:
+                        date_column_patterns = [p.upper() for p in getattr(self.behavior.snowflake.dynamic, 'date_column_patterns', ["DATE", "CAL_DATE", "CALENDAR_DATE", "COL_DATE"])]
+                        for fallback in date_column_patterns:
+                            if fallback in available_date_cols:
+                                date_col_phys = available_date_cols[fallback]
+                                break
                 if not date_col_phys:
-                    date_col_phys = "COL_DATE"
+                    date_col_phys = getattr(self.behavior.snowflake.dynamic, 'date_column', "COL_DATE")
                 safe_date_table = self._id.sanitize_table_name(str(date_table_name or "DATE")).upper()
 
             required_anchors = self._get_required_anchor_columns(model)
@@ -1519,63 +1604,31 @@ class SnowflakeEmitter(BaseEmitter):
                 base_alias = "f"
                 select_items = [f'{base_alias}.{item}' if item.startswith('"') else item for item in select_items]
                 from_clause = f'FROM {schema_ref}."{safe_table}" AS {base_alias}'
-                joined_aliases = {str(dataset_name).casefold(): base_alias}
-                joined_edges: set[tuple[str, str, str, str]] = set()
-                alias_idx = 1
 
+                seen_joins = set()
+                alias_state = AliasState()
+                alias_state.ensure_target(str(dataset_name).casefold(), base_alias)
                 for detail in precompute_details:
                     source_dataset = detail.get("source_dataset", "")
                     source_column = detail.get("source_column", "")
                     precomputed_column = detail.get("precomputed_column", "")
-                    path = self._find_relationship_path(model, dataset_name, source_dataset)
-                    if not path:
-                        logger.warning("No active relationship path from %s to %s; cannot enrich %s", dataset_name, source_dataset, precomputed_column)
-                        continue
-
-                    for edge in path:
-                        from_dataset = edge.get("from_dataset") or edge.get("current_dataset")
-                        to_dataset = edge.get("to_dataset") or edge.get("next_dataset")
-                        from_columns = edge.get("from_columns") or edge.get("current_columns") or []
-                        to_columns = edge.get("to_columns") or edge.get("next_columns") or []
-                        if not from_dataset or not to_dataset or not from_columns or not to_columns:
-                            logger.warning("Invalid join edge for %s: %s", precomputed_column, edge)
-                            break
-                        current_key = str(from_dataset).casefold()
-                        next_key = str(to_dataset).casefold()
-                        if current_key not in joined_aliases:
-                            logger.warning("Join path for %s lost alias at %s", precomputed_column, from_dataset)
-                            break
-                        edge_key = (
-                            current_key,
-                            next_key,
-                            str(from_columns[0]).casefold(),
-                            str(to_columns[0]).casefold(),
-                        )
-                        if next_key not in joined_aliases:
-                            next_alias = f"j{alias_idx}"
-                            alias_idx += 1
-                            joined_aliases[next_key] = next_alias
-                        if edge_key not in joined_edges:
-                            from_alias = joined_aliases[current_key]
-                            next_alias = joined_aliases[next_key]
-                            from_col = self._resolve_model_column_name(model, from_dataset, from_columns[0])
-                            to_col = self._resolve_model_column_name(model, to_dataset, to_columns[0])
-                            join_clauses.append(
-                                f'LEFT JOIN {self._dataset_source_ref(model, to_dataset)} AS {next_alias} '
-                                f'ON {from_alias}."{from_col}" = {next_alias}."{to_col}"'
-                            )
-                            joined_edges.add(edge_key)
-
-                    source_alias = joined_aliases.get(str(source_dataset).casefold())
-                    if not source_alias:
-                        continue
-                    source_col = self._resolve_model_column_name(model, source_dataset, source_column)
-                    select_items.append(f'{source_alias}."{source_col}" AS "{precomputed_column}"')
+                    
+                    joins_str, sel_alias = self._build_precomputed_column_select(
+                        model, dataset_name, source_dataset, source_column, precomputed_column, alias_state
+                    )
+                    
+                    if joins_str and sel_alias:
+                        for join_stmt in joins_str.split('\n'):
+                            if join_stmt and join_stmt not in seen_joins:
+                                seen_joins.add(join_stmt)
+                                join_clauses.append(join_stmt)
+                        select_items.append(sel_alias)
 
                 if join_clauses:
                     from_clause += "\n" + "\n".join(join_clauses)
         select_clause = "SELECT\n    " + ",\n    ".join(select_items)
         create_sql = f'CREATE OR REPLACE VIEW {schema_ref}."{enriched_name}" AS\n{select_clause}\n{from_clause}'
+        logger.info(f"Generated enriched view SQL for {enriched_name}:\n{create_sql}")
         logger.debug("Enriched view SQL for %s:\n%s", enriched_name, create_sql)
         try:
             cursor.execute(create_sql)
@@ -1721,6 +1774,8 @@ class SnowflakeEmitter(BaseEmitter):
             select_parts.append(f'        , (SELECT SUM("{col}") FROM {fact_source_ref}) AS "{agg_name}"')
         precompute_joins: list[str] = []
         if hasattr(self, 'semantic_view_builder'):
+            alias_state = AliasState()
+            alias_state.ensure_target(str(fact_table).casefold(), "f")
             for detail in self.semantic_view_builder.get_precompute_details():
                 if str(detail.get("target_dataset", "")).casefold() != str(fact_table).casefold():
                     continue
@@ -1730,6 +1785,7 @@ class SnowflakeEmitter(BaseEmitter):
                     detail["source_dataset"],
                     detail["source_column"],
                     detail["precomputed_column"],
+                    alias_state
                 )
                 if join_sql and select_sql:
                     for join_line in join_sql.splitlines():

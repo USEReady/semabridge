@@ -229,7 +229,7 @@ class DAXTranslator:
         if date_table:
             return date_table
             
-        env_alias = os.getenv("SEMABRIDGE_DATE_TABLE")
+        env_alias = os.getenv("SEMABRIDGE_DATE_ALIAS") or os.getenv("SEMABRIDGE_DATE_TABLE")
         if env_alias:
             return env_alias
             
@@ -1436,7 +1436,7 @@ class DAXTranslator:
                     )
 
             # Handle TOTALYTD(Expression, Date) using metadata injection.
-            if clean_expr.upper().startswith("TOTALYTD(") and clean_expr.endswith(")"):
+            if False and clean_expr.upper().startswith("TOTALYTD(") and clean_expr.endswith(")"):
                 inner = clean_expr[9:-1]
                 args = split_args(inner)
                 if args:

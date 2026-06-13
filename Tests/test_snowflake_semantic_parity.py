@@ -261,3 +261,75 @@ METRICS (
     assert 'SALESFACT."SENTIMENT"' not in normalized
     assert 'SENTIMENT."SENTIMENT"' in normalized
     assert 'SALESFACT."TOTAL_VANARSDEL_UNITS_YTD" AS CAST(NULL AS DOUBLE)' in normalized
+
+
+import os
+import pytest
+from semabridge.core.settings import get_settings
+
+@pytest.mark.skipif(
+    not os.environ.get('SNOWFLAKE_USER') and not get_settings().snowflake.user,
+    reason="Snowflake credentials not configured"
+)
+def test_enriched_view_ddl_compiles():
+    import snowflake.connector
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    settings = get_settings()
+    
+    conn = snowflake.connector.connect(
+        user=settings.snowflake.user,
+        password=settings.snowflake.password.get_secret_value() if hasattr(settings.snowflake.password, 'get_secret_value') else settings.snowflake.password,
+        account=settings.snowflake.account,
+        warehouse=settings.snowflake.warehouse,
+        database=settings.snowflake.database,
+        schema=settings.snowflake.schema_name,
+    )
+    cursor = conn.cursor()
+
+    # Create temporary tables for the test to ensure they exist and don't clash
+    cursor.execute(f'CREATE OR REPLACE TABLE {settings.snowflake.database}.{settings.snowflake.schema_name}."TEST_SALESFACT" ("ID" INT)')
+    cursor.execute(f'CREATE OR REPLACE TABLE {settings.snowflake.database}.{settings.snowflake.schema_name}."TEST_DATE" ("COL_DATE" DATE)')
+
+    date_ds = SimpleNamespace(
+        unique_name="TEST_DATE",
+        source_table="TEST_DATE",
+        is_date_table=True,
+        columns=[SimpleNamespace(unique_name="Date", source_column="Date", expression=None)]
+    )
+    fact_ds = SimpleNamespace(
+        unique_name="TEST_SALESFACT",
+        source_table="TEST_SALESFACT",
+        is_date_table=False,
+        columns=[SimpleNamespace(unique_name="ID", source_column="ID", expression=None)]
+    )
+    model = SimpleNamespace(
+        unique_name="test_model",
+        label="test_model",
+        datasets=[date_ds, fact_ds],
+        relationships=[],
+        metrics=[],
+        dimensions=[]
+    )
+    
+    emitter = SnowflakeEmitter(config=settings.snowflake)
+    emitter._live_schema_metadata = {
+        "TEST_DATE": {"COL_DATE"},
+        "TEST_SALESFACT": {"ID"}
+    }
+    view_name = "TEST_SALESFACT_ENRICHED"
+    
+    try:
+        view_name = emitter._create_enriched_view_for_table(
+            cursor=cursor,
+            table_name="TEST_SALESFACT",
+            is_date_table=False,
+            date_column_physical="Date",
+            model=model
+        )
+        cursor.execute(f'EXPLAIN SELECT * FROM {settings.snowflake.database}.{settings.snowflake.schema_name}."{view_name}"')
+    finally:
+        cursor.execute(f'DROP VIEW IF EXISTS {settings.snowflake.database}.{settings.snowflake.schema_name}."{view_name}"')
+        cursor.execute(f'DROP TABLE IF EXISTS {settings.snowflake.database}.{settings.snowflake.schema_name}."TEST_SALESFACT"')
+        cursor.execute(f'DROP TABLE IF EXISTS {settings.snowflake.database}.{settings.snowflake.schema_name}."TEST_DATE"')
+        cursor.close()
+        conn.close()

@@ -47,6 +47,12 @@ class SnowflakeDynamicConfig(BaseModel):
         description="Patterns to try for join keys"
     )
     
+    # Common join keys
+    common_join_keys: List[str] = Field(
+        default=['PRODUCTID', 'ID', 'CUSTOMERID', 'BUSINESS_UNIT', 'FISCAL_YR_PERIOD'],
+        description="Common static join keys to search for if no relations match"
+    )
+    
     # Physical column name resolution patterns
     physical_column_patterns: List[str] = Field(
         default=["{name}", "COL_{name}", "{name}_ID", "{name}_KEY", "{name}_SK"],

@@ -32,6 +32,7 @@ from semabridge.core.exceptions import ConnectorError
 logger = get_logger(__name__)
 
 
+
 class SemanticViewBuilder:
     """Facade for semantic-view DDL orchestration.
 
@@ -57,7 +58,10 @@ class SemanticViewBuilder:
         self.dup_name_repo = dup_name_repo
         self.translator = translator
         self.emitter: Optional[Any] = None
-        
+        # Maps base table names → their corresponding enriched view names.
+        # Populated externally by SnowflakeEmitter after enriched views are created.
+        self.enriched_view_mapping: Dict[str, str] = {}
+
         # Modular components
         self.sanitizer = SemanticDDLSanitizer(identifier_sanitizer)
         self.snapshot_orchestrator = HistorySnapshotOrchestrator(identifier_sanitizer, schema_manager, config)
@@ -70,18 +74,15 @@ class SemanticViewBuilder:
         )
 
     def _extract_all_column_refs(self, metric_sql: str, fact_dataset: str) -> set[tuple[str, str]]:
-        refs = set()
+        refs: set[tuple[str, str]] = set()
         if not metric_sql:
             return refs
-            
         try:
             import sqlglot
             from sqlglot import exp
-            
             # Clean up measure references before parsing so sqlglot doesn't choke
             # e.g. [Total Units] -> "Total Units"
             clean_sql = re.sub(r'\[([^\]]+)\]', r'"\1"', metric_sql)
-            
             for parsed in sqlglot.parse(clean_sql, read="snowflake"):
                 if not parsed:
                     continue
@@ -98,55 +99,57 @@ class SemanticViewBuilder:
     def _collect_all_required_columns(self, metric: Any, fact_dataset: str, model: Any, visited: set[str] = None) -> set[tuple[str, str]]:
         if visited is None:
             visited = set()
-            
+
         metric_name = getattr(metric, 'unique_name', None) or getattr(metric, 'name', '')
         if metric_name in visited:
             return set()
         if metric_name:
             visited.add(metric_name)
-            
-        refs = set()
-        
+
+        refs: set[tuple[str, str]] = set()
+
         # 1. Regex on DAX for RELATED and cross-table
         dax = getattr(metric, 'expression', '') or ''
-        related_pattern = r'RELATED\(\s*[\'"]?([^\'"\[\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
+        related_pattern = r'RELATED\(\s*[\'"]?([^\'"\\[\\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
         for table, column in re.findall(related_pattern, dax, re.IGNORECASE):
             table = str(table or "").strip()
             if table and table.casefold() != fact_dataset.casefold():
                 refs.add((table, column))
 
-        direct_pattern = r'[\'"]?([^\'"\[\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
+        direct_pattern = r'[\'"]?([^\'"\\[\\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
         for table, column in re.findall(direct_pattern, dax, re.IGNORECASE):
             table = str(table or "").strip()
             if table and table.casefold() != fact_dataset.casefold():
                 refs.add((table, column))
-                
+
         # 2. Extract from SQL
         sql_expr = getattr(metric, 'sql_expression', '') or ''
         refs.update(self._extract_all_column_refs(sql_expr, fact_dataset))
-        
+
         # 3. Find referenced measures in DAX and SQL
-        referenced_measures = set()
+        referenced_measures: set[str] = set()
         measure_pattern = r'\[([^\]]+)\]'
         for m in re.findall(measure_pattern, dax):
             referenced_measures.add(m)
         for m in re.findall(measure_pattern, sql_expr):
             referenced_measures.add(m)
-            
+
         # Recursive resolution
         for other_metric_name in referenced_measures:
-            # Find the other metric
-            other_metric = next((m for m in model.metrics if (getattr(m, 'name', '') == other_metric_name or getattr(m, 'unique_name', '') == other_metric_name)), None)
+            other_metric = next(
+                (m for m in model.metrics if getattr(m, 'name', '') == other_metric_name or getattr(m, 'unique_name', '') == other_metric_name),
+                None,
+            )
             if other_metric:
                 refs.update(self._collect_all_required_columns(other_metric, fact_dataset, model, visited))
-                
+
         return refs
 
     def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:
         """
         Analyze model and suggest pre-computed columns for cross-table references.
         This runs automatically and tells you what columns to add to fact table.
-        NO HARDCODING!
+
         """
         suggestions: dict[str, list[str]] = {}
         details: list[dict[str, str]] = []

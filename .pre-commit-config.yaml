@@ -1,0 +1,9 @@
+repos:
+-   repo: local
+    hooks:
+    -   id: check-unqualified-references
+        name: Check for unqualified column references
+        entry: python scripts/check_unqualified_references.py
+        language: system
+        types: [sql]
+        pass_filenames: true

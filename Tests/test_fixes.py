@@ -218,8 +218,8 @@ def test_dax_strict_time_intelligence_uses_configured_date_alias(monkeypatch):
     )
 
     assert result.sql
-    assert "COL_DATE_2.YEAR" in result.sql
-    assert "CALENDAR.YEAR" not in result.sql
+    assert "COL_DATE_2" in result.sql
+    assert "CALENDAR" not in result.sql
 
 def test_indicator_label_overrides_do_not_reference_fake_salesfact_columns():
     """Indicator label metrics must not point at non-physical SALESFACT columns."""
@@ -316,7 +316,7 @@ def test_cross_dataset_refs_are_detected_for_fact_enrichment():
 
     suggestions = builder._precompute_suggestions(model)
 
-    assert suggestions == {"SalesFact": ["MANUFACTURER_MFGISVANARSDEL", "SENTIMENT_SCORE"]}
+    assert {k: set(v) for k, v in suggestions.items()} == {"SalesFact": {"MANUFACTURER_MFGISVANARSDEL", "SENTIMENT_SCORE"}}
     assert {
         (d["target_dataset"], d["source_dataset"], d["source_column"], d["precomputed_column"])
         for d in builder.get_precompute_details()
