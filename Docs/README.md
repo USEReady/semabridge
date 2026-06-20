@@ -5,7 +5,9 @@ This folder contains human-facing documentation for the Semabridge project, orga
 ## Architecture
 High-level system design and core concepts:
 - [System Overview](architecture/overview.md)
+- [Codebase Guide (`src/semabridge` walkthrough)](architecture/codebase-guide.md)
 - [OSI-Centered Model](architecture/osi.md)
+- [Authentication](architecture/authentication.md)
 
 ## Development
 Setup, configuration, and contribution workflows:
