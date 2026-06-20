@@ -468,18 +468,24 @@ broadcasting + a logging handler that turns warn/error logs into live alerts).
 
 ### 9.4 Known rough edges (so the code matches what you'll see)
 
-These are real and worth knowing — they're the subject of a separate (paused)
-restructure plan; this guide only documents them:
+These are real and worth knowing:
 
-- `services/connection_domain_service.py` (~1.5k LOC) and `services/project_shared.py`
-  (~1k LOC) begin with `main.py`'s header and re-import FastAPI/CORS **and routers** —
-  vestigial code carved out of the old monolith (a layering violation: services should
-  not import routers).
 - A lazy-import cycle chain (`mapping_service → snapshot_service → run_service →
   schedule_service`, plus `version_service`) is worked around with in-function imports.
-- `connection_*` was never split into `_impl` modules the way `core_*`/`project_*` were.
 - `services/__init__.py` is empty; naming mixes singular/plural and
   `_service`/`_impl`/`_domain_service`/`_api_service`.
+
+**Recently resolved** (see `Docs/refactors/`):
+
+- The vestigial `main.py` boilerplate (FastAPI/CORS/router re-imports — a layering
+  violation) was removed from `services/project_shared.py` and the connection family.
+  → `Docs/refactors/2026-06-16-api-services-decruft.md`.
+- `connection_*` now follows the same `_shared` + `_impl` + `_domain_service` (thin
+  aggregator) pattern as `core_*`/`project_*`: `connection_domain_service.py` (~1.5k LOC)
+  was split into `connection_shared.py`, `connection_fabric_auth_impl.py`,
+  `connection_fabric_workspaces_impl.py`, and `connection_crud_impl.py`, leaving a ~95-line
+  aggregator. Pure relocation, no behavior change.
+  → `Docs/refactors/2026-06-16-connection-service-split.md`.
 
 ---
 
