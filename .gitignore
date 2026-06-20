@@ -226,3 +226,6 @@ frontend/.vite/
 # ============================================================================
 *.p12
 .claude/
+
+# Local Claude Code project guidance (not shared)
+CLAUDE.md
