@@ -1,11 +1,9 @@
-"""
-SemaBridge FastAPI Service
-Production-ready backend for React + PyQt parity
+"""Shared project state and helpers.
 
-- Real Fabric discovery
-- Real YAML generation
-- Real validation
-- No mocked data
+In-memory compatibility store (projects, snapshots, runs, schedules) plus the
+module-level singletons (``db_manager``, ``engine``, ``settings``,
+``scheduler_service``, ``version_control_service``) and helper functions reused by all
+``project_*_impl`` modules. This module contains no FastAPI app or routing.
 """
 # Load .env FIRST so SEMABRIDGE_DATABASE_URL, FABRIC_* and all other
 # env-vars are resolved before any module-level code reads os.environ.
@@ -21,21 +19,14 @@ except ImportError:
 
 from pathlib import Path
 from datetime import datetime
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional
 import asyncio
-from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, Query
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
 import hashlib
 import json
 import os
 import re
 import yaml
 import logging
-import time
 
 # Windows-specific asyncio stability:
 # use the selector loop instead of Proactor to avoid intermittent
@@ -48,31 +39,12 @@ if os.name == "nt":
         pass
 
 # Core imports
-from semabridge.core.settings import get_settings, reload_settings
+from semabridge.core.settings import get_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.core.execution_engine import ExecutionEngine
-from semabridge.utils.logger import setup_logging
-from semabridge.connectors.fabric_extractor import FabricExtractor
-from semabridge.auth.fabric_validator import fabric_validator
-from semabridge.api.repo_router import router as repo_router
-from semabridge.api.sync_router import router as sync_router
-from semabridge.api.account_router import router as account_router
-from semabridge.api.websocket_alerts import alert_router, install_websocket_alert_handler
-from semabridge.api.semantic_models import SemanticSyncRequest, SemanticRefreshRequest
+from semabridge.api.websocket_alerts import install_websocket_alert_handler
 from semabridge.api.services.scheduler_service import SchedulerService
-from semabridge.api.services.sync_execution_service import execute_sync_request
 from semabridge.api.services.version_control_service import VersionControlService
-from sqlalchemy.orm import Session
-from semabridge.api.deps import get_db
-
-try:
-    from semabridge.api.auth_router import router as auth_router
-    from semabridge.auth.middleware import AuthMiddleware
-    _AUTH_AVAILABLE = True
-except ImportError:
-    auth_router = None  # type: ignore[assignment]
-    AuthMiddleware = None  # type: ignore[assignment,misc]
-    _AUTH_AVAILABLE = False
 
 # -------------------------------------------------------
 # Initialize Core Services (module-level, before app creation)
