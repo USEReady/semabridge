@@ -7,9 +7,13 @@ import pytest
 
 def test_fabric_list_workspaces_returns_empty_list_on_network_error(monkeypatch):
     from semabridge.api.services import connection_domain_service as svc
+    from semabridge.api.services import connection_fabric_workspaces_impl as ws_impl
     import httpx
 
-    monkeypatch.setattr(svc, "_resolve_fabric_access_token", lambda bearer_token, identity_id=None: "token")
+    # After the connection-service split, `fabric_list_workspaces` lives in
+    # connection_fabric_workspaces_impl and looks up `_resolve_fabric_access_token`
+    # in that module, so patch it there rather than on the aggregator re-export.
+    monkeypatch.setattr(ws_impl, "_resolve_fabric_access_token", lambda bearer_token, identity_id=None: "token")
 
     class _FailingAsyncClient:
         def __init__(self, *args, **kwargs):
