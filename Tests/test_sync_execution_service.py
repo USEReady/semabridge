@@ -178,3 +178,52 @@ def test_build_sync_jobs_accepts_fabric_model_fallbacks(source_cfg, expected_mod
     assert resolved_source_cfg == source_cfg
     assert resolved_target_cfg == {"type": "snowflake"}
     assert [job["dataset_id"] for job in jobs] == expected_models
+
+
+def test_build_sync_jobs_accepts_pbix_path():
+    source_cfg = {"type": "pbix", "pbix_path": "C:/Sales.pbix"}
+    jobs, source_type, target_type, resolved_source_cfg, resolved_target_cfg = ses._build_sync_jobs(
+        {"source": source_cfg, "targets": [{"type": "snowflake"}]}
+    )
+    assert source_type == "pbix"
+    assert target_type == "snowflake"
+    assert len(jobs) == 1
+    assert jobs[0]["pbix_path"] == "C:/Sales.pbix"
+    assert jobs[0]["model_label"] == "Sales"
+
+
+def test_build_sync_jobs_raises_validation_error_on_missing_pbix_path():
+    from semabridge.domain.exceptions import ValidationError
+    source_cfg = {"type": "pbix"}
+    with pytest.raises(ValidationError, match="PBIX source requires source.pbix_path or source.models."):
+        ses._build_sync_jobs(
+            {"source": source_cfg, "targets": [{"type": "snowflake"}]}
+        )
+
+
+def test_build_config_yaml_from_request_propagates_pbix_path():
+    import yaml
+    from semabridge.api.controllers.mappings_controller import _build_config_yaml_from_request
+    
+    source_config = {
+        "type": "pbix",
+        "pbix_path": "C:/Reports/Sales.pbix",
+        "pbix_folder": "C:/Reports"
+    }
+    target_config = {
+        "type": "snowflake",
+        "database": "DB",
+        "schema": "SCH"
+    }
+    
+    config_yaml = _build_config_yaml_from_request(
+        source_config=source_config,
+        target_config=target_config,
+        selected_sources=[]
+    )
+    
+    config = yaml.safe_load(config_yaml)
+    assert config["source"]["type"] == "pbix"
+    assert config["source"]["pbix_path"] == "C:/Reports/Sales.pbix"
+    assert config["source"]["pbix_folder"] == "C:/Reports"
+

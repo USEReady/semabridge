@@ -310,6 +310,7 @@ class SMLSerializer:
             "is_key": column.is_key,
             "format_string": column.format_string,
             "folder": column.folder,
+            "synonyms": list(column.synonyms or []) if column.synonyms else [],
         }
     
     @staticmethod
@@ -325,6 +326,7 @@ class SMLSerializer:
             is_key=data.get("is_key", False),
             format_string=data.get("format_string"),
             folder=data.get("folder"),
+            synonyms=list(data.get("synonyms") or []),
         )
     
     @staticmethod
@@ -417,6 +419,7 @@ class SMLSerializer:
             "sync_enabled": metric.sync_enabled,
             "sync_failure_reason": metric.sync_failure_reason,
             "depends_on_measures": metric.depends_on_measures,
+            "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
         }
     
     @staticmethod
@@ -437,6 +440,7 @@ class SMLSerializer:
             sync_enabled=data.get("sync_enabled", True),
             sync_failure_reason=data.get("sync_failure_reason"),
             depends_on_measures=list(data.get("depends_on_measures") or []),
+            synonyms=list(data.get("synonyms") or []),
         )
     
     @staticmethod

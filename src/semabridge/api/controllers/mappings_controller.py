@@ -104,6 +104,10 @@ def _build_config_yaml_from_request(
         source_section["database"] = source_config["database"]
     if source_config.get("schema"):
         source_section["schema"] = source_config["schema"]
+    if source_config.get("pbix_path"):
+        source_section["pbix_path"] = source_config["pbix_path"]
+    if source_config.get("pbix_folder"):
+        source_section["pbix_folder"] = source_config["pbix_folder"]
     if selected_sources:
         source_section["models"] = selected_sources
 
@@ -382,6 +386,7 @@ async def dry_run_mapping(
                 "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
                 "sync_failure_reason": m.get("sync_failure_reason", ""),
                 "depends_on_measures": list(m.get("depends_on_measures") or []),
+                "synonyms": list(m.get("synonyms") or []),
             })
 
 

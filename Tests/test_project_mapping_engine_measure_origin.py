@@ -212,3 +212,72 @@ def test_collisions_remain_unresolved_until_user_action() -> None:
     assert col_ind_id["resolution_suggestions"][0] == "INDUSTRY_ID"
 
 
+def test_metric_and_column_rows_include_synonyms() -> None:
+    # 1. Model with synonyms
+    model_with_synonyms = {
+        "unique_name": "SalesModel",
+        "datasets": [
+            {
+                "unique_name": "SALES",
+                "columns": [
+                    {
+                        "unique_name": "REVENUE",
+                        "data_type": "number",
+                        "synonyms": ["Total Revenue", "Monthly Revenue"],
+                    }
+                ],
+            },
+        ],
+        "metrics": [
+            {
+                "unique_name": "REV_METRIC",
+                "expression": "SUM(SALES[REVENUE])",
+                "data_type": "number",
+                "synonyms": ["Sales Rev", "Rev KPI"],
+            },
+        ],
+    }
+
+    payload = build_entity_mappings(project_id="p1", model=model_with_synonyms)
+    mappings = payload["mappings"]
+
+    col_row = next(r for r in mappings if r.get("entity_kind") == "column")
+    metric_row = next(r for r in mappings if r.get("entity_kind") == "metric")
+
+    assert col_row["synonyms"] == ["Total Revenue", "Monthly Revenue"]
+    assert metric_row["synonyms"] == ["Sales Rev", "Rev KPI"]
+
+    # 2. Model without synonyms (backward compatibility / Fabric default)
+    model_without_synonyms = {
+        "unique_name": "FinanceModel",
+        "datasets": [
+            {
+                "unique_name": "COSTS",
+                "columns": [
+                    {
+                        "unique_name": "EXPENSE",
+                        "data_type": "number",
+                    }
+                ],
+            },
+        ],
+        "metrics": [
+            {
+                "unique_name": "EXP_METRIC",
+                "expression": "SUM(COSTS[EXPENSE])",
+                "data_type": "number",
+            },
+        ],
+    }
+
+    payload_empty = build_entity_mappings(project_id="p1", model=model_without_synonyms)
+    mappings_empty = payload_empty["mappings"]
+
+    col_empty = next(r for r in mappings_empty if r.get("entity_kind") == "column")
+    metric_empty = next(r for r in mappings_empty if r.get("entity_kind") == "metric")
+
+    assert col_empty["synonyms"] == []
+    assert metric_empty["synonyms"] == []
+
+
+

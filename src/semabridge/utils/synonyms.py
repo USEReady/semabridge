@@ -118,3 +118,33 @@ def lookup_synonym_override(
         if found:
             return list(found)
     return []
+
+
+def lookup_attribute_synonyms(attr: Any, dataset_obj: Any, phys_col: str | None = None) -> list[str]:
+    """Retrieve synonyms for a dimension attribute by looking up the backing column."""
+    if not dataset_obj:
+        return []
+
+    candidates = [
+        getattr(attr, "source_column", None),
+        getattr(attr, "dataset_column", None),
+        getattr(attr, "unique_name", None),
+        phys_col,
+    ]
+    columns = list(getattr(dataset_obj, "columns", []) or [])
+    for candidate in candidates:
+        if not candidate:
+            continue
+        col = dataset_obj.get_column(candidate) if hasattr(dataset_obj, "get_column") else None
+        if not col:
+            col = next(
+                (
+                    item for item in columns
+                    if str(getattr(item, "unique_name", "")).casefold() == str(candidate).casefold()
+                ),
+                None,
+            )
+        if col:
+            return list(getattr(col, "synonyms", []) or [])
+    return []
+

@@ -718,6 +718,7 @@ def _compat_serialize_auto_map_entity_mappings(
             "sync_enabled": bool(row.get("sync_enabled")) if row.get("sync_enabled") is not None else True,
             "sync_failure_reason": row.get("sync_failure_reason") or "",
             "depends_on_measures": list(row.get("depends_on_measures") or []),
+            "synonyms": list(row.get("synonyms") or []),
         })
 
     seen: Dict[str, Dict[str, Any]] = {}

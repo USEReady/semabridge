@@ -55,6 +55,7 @@ class TMSLToOSIConverter(BaseConverter):
     def __init__(self) -> None:
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
+        self._measure_alias_lookup: Optional[Dict[str, List[str]]] = None
 
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
@@ -97,6 +98,19 @@ class TMSLToOSIConverter(BaseConverter):
                 else load_synonym_overrides(project_id)
             )
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
+
+            # Initialize measure aliases if present in source_data (for PBIX)
+            measure_aliases = source_data.get("measure_aliases")
+            if measure_aliases is not None:
+                self._measure_alias_lookup = {}
+                for item in measure_aliases:
+                    if isinstance(item, dict):
+                        m_name = item.get("measure")
+                        aliases = item.get("aliases")
+                        if isinstance(m_name, str) and isinstance(aliases, list):
+                            self._measure_alias_lookup[m_name.lower()] = list(aliases)
+            else:
+                self._measure_alias_lookup = None
 
             # Guard: connector-type keywords used as model names produce misleading view names
             # (e.g. a dataset named "fabric" would generate a "fabric_SEMANTIC" view).
@@ -667,7 +681,7 @@ class TMSLToOSIConverter(BaseConverter):
                 name,
                 len(user_synonyms),
             )
-        synonyms = merge_synonyms(
+        existing_synonyms = merge_synonyms(
             ui_overrides=lookup_synonym_override(
                 self._synonym_overrides,
                 self._synonym_model_names,
@@ -677,6 +691,47 @@ class TMSLToOSIConverter(BaseConverter):
             user_defined=user_synonyms,
             auto_generated=TMSLToOSIConverter._auto_synonyms(display_name),
         )
+
+        if hasattr(self, "_measure_alias_lookup") and self._measure_alias_lookup is not None:
+            # Match aliases exactly (case-insensitive key comparison)
+            report_aliases = []
+            for key_candidate in (name, display_name):
+                if key_candidate and key_candidate.lower() in self._measure_alias_lookup:
+                    report_aliases = self._measure_alias_lookup[key_candidate.lower()]
+                    break
+
+            unique_name_lower = name.lower()
+            label_lower = display_name.lower()
+
+            merged = []
+            seen = set()
+
+            # Preserves discovery order: existing synonyms first
+            for syn in existing_synonyms:
+                if isinstance(syn, str) and syn.strip():
+                    s_strip = syn.strip()
+                    if s_strip not in seen:
+                        seen.add(s_strip)
+                        merged.append(s_strip)
+
+            # Append matched layout report aliases next
+            for alias in report_aliases:
+                if isinstance(alias, str) and alias.strip():
+                    a_strip = alias.strip()
+                    a_lower = a_strip.lower()
+                    if a_lower != unique_name_lower and a_lower != label_lower:
+                        if a_strip not in seen:
+                            seen.add(a_strip)
+                            merged.append(a_strip)
+
+            synonyms = merged
+            logger.debug(
+                "Applied %s report aliases to metric %s",
+                len(report_aliases),
+                name,
+            )
+        else:
+            synonyms = existing_synonyms
 
         return OSIMetric(
             unique_name=name,

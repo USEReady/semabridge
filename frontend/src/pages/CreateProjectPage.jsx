@@ -388,6 +388,7 @@ function normalizeRows(data) {
         sync_failure_reason: row?.sync_failure_reason || '',
         depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
         synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
+        synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
         isDirty: false,
       };
     });
@@ -1521,6 +1522,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setMappingLoading(true);
     try {
       const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+      const effectivePbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
       const { sourceConfig, targetConfig } = buildDryRunPayload({
         sourceConnector,
         targetConnectors,
@@ -1529,6 +1531,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         snowflakeDatabase,
         targetDatabase,
         selectedModelNames,
+        pbixPath: effectivePbixPath,
       });
 
       const payload = {
@@ -1582,7 +1585,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase]);
+  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase, pbixSourceMode, selectedPbixFilePath, pbixUploadPath]);
 
   // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
   const handleDryRun = useCallback(async () => {
@@ -1590,6 +1593,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setMappingError('');
 
     const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+    const effectivePbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
     const { sourceConfig, targetConfig } = buildDryRunPayload({
       sourceConnector,
       targetConnectors,
@@ -1598,6 +1602,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeDatabase,
       targetDatabase,
       selectedModelNames,
+      pbixPath: effectivePbixPath,
     });
 
     const selectedSources = selectedModelNames;
@@ -1644,6 +1649,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [
     createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
     targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
+    pbixSourceMode, selectedPbixFilePath, pbixUploadPath, fabricAccountId,
   ]);
 
   // ── handleFieldEdit — saves a single field mapping edit via the API ──────────

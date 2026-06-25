@@ -745,12 +745,14 @@ class SyncOrchestrator:
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
         connector = LocalPBIXConnector({"pbix_path": item.source_path})
-        raw_tmsl = connector.extract()
+        discovered = connector.discover()
+        raw_tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
         converter = TMSLToOSIConverter()
         tmsl_data = {
             "tmsl": raw_tmsl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
+            "measure_aliases": discovered.get("measure_aliases", []),
         }
 
         osi_model = converter.to_osi(tmsl_data)

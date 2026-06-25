@@ -263,6 +263,7 @@ def extract_model_entities(model: Dict[str, Any], target_connector: Optional[str
                 "source_path": f"{dataset_path}.columns.{path_name}",
                 "parent_source_path": dataset_path,
                 "data_type": column.get("data_type"),
+                "synonyms": list(column.get("synonyms") or []),
             })
 
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
@@ -283,6 +284,7 @@ def extract_model_entities(model: Dict[str, Any], target_connector: Optional[str
             "sync_enabled": metric.get("sync_enabled"),
             "sync_failure_reason": metric.get("sync_failure_reason"),
             "depends_on_measures": list(metric.get("depends_on_measures") or []),
+            "synonyms": list(metric.get("synonyms") or []),
         })
 
     return entities
@@ -644,6 +646,7 @@ def build_entity_mappings(
             "sync_enabled": bool(entity.get("sync_enabled")) if entity.get("sync_enabled") is not None else True,
             "sync_failure_reason": entity.get("sync_failure_reason") or "",
             "depends_on_measures": list(entity.get("depends_on_measures") or []),
+            "synonyms": list(entity.get("synonyms") or []),
         })
 
     # Pass 2: Declarative Validation (Option B)

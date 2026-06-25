@@ -121,7 +121,8 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
-  const isPanelOpen = (isCollision && expandedCollision === row.id) || (isMeasure && expandedMeasure);
+  const hasDetails = isMeasure || (Array.isArray(row.synonyms) && row.synonyms.length > 0);
+  const isPanelOpen = (isCollision && expandedCollision === row.id) || (hasDetails && expandedMeasure);
 
   return (
     <div style={{ borderBottom: '1px solid var(--border-main)' }}>
@@ -289,7 +290,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 6 }}>
-            {isMeasure && (
+            {hasDetails && (
               <button
                 type="button"
                 onClick={() => setExpandedMeasure(!expandedMeasure)}
@@ -313,7 +314,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
                   transition: 'all 0.2s',
                 }}
               >
-                {expandedMeasure ? 'Hide SQL' : 'View SQL'}
+                {expandedMeasure ? (isMeasure ? 'Hide SQL' : 'Hide Details') : (isMeasure ? 'View SQL' : 'View Details')}
               </button>
             )}
             <button
@@ -356,7 +357,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
       </div>
     )}
     {/* ── Inline measure translation panel ── */}
-    {isMeasure && expandedMeasure && (
+    {hasDetails && expandedMeasure && (
       <div style={{ padding: '0 14px 10px' }}>
         <MeasureTranslationPanel row={row} />
       </div>
@@ -368,6 +369,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
 // ─── Measure translation detail panel ─────────────────────────────────────────
 function MeasureTranslationPanel({ row }) {
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason;
+  const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   return (
     <div style={{
       gridColumn: '1 / -1',
@@ -380,88 +382,118 @@ function MeasureTranslationPanel({ row }) {
       flexDirection: 'column',
       gap: 12,
     }}>
-      {/* ── Status Banner ── */}
-      {isFailed ? (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          borderRadius: 6,
-          background: 'rgba(239, 68, 68, 0.08)',
-          border: '1px solid rgba(239, 68, 68, 0.25)',
-          color: 'var(--color-error)',
-          fontSize: 11,
-          fontWeight: 600,
-        }}>
-          <AlertTriangle size={13} style={{ flexShrink: 0 }} />
-          <span>Translation Warning: {row.sync_failure_reason || 'This measure is too complex to translate to SQL automatically.'}</span>
-        </div>
-      ) : (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          borderRadius: 6,
-          background: 'rgba(34, 197, 94, 0.08)',
-          border: '1px solid rgba(34, 197, 94, 0.25)',
-          color: 'var(--color-success)',
-          fontSize: 11,
-          fontWeight: 600,
-        }}>
-          <CheckCircle size={13} style={{ flexShrink: 0 }} />
-          <span>Translated successfully to Snowflake SQL</span>
+      {/* ── Status Banner (Measures only) ── */}
+      {isMeasure && (
+        isFailed ? (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            color: 'var(--color-error)',
+            fontSize: 11,
+            fontWeight: 600,
+          }}>
+            <AlertTriangle size={13} style={{ flexShrink: 0 }} />
+            <span>Translation Warning: {row.sync_failure_reason || 'This measure is too complex to translate to SQL automatically.'}</span>
+          </div>
+        ) : (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'rgba(34, 197, 94, 0.08)',
+            border: '1px solid rgba(34, 197, 94, 0.25)',
+            color: 'var(--color-success)',
+            fontSize: 11,
+            fontWeight: 600,
+          }}>
+            <CheckCircle size={13} style={{ flexShrink: 0 }} />
+            <span>Translated successfully to Snowflake SQL</span>
+          </div>
+        )
+      )}
+
+      {/* ── Report Aliases (Columns and Measures if present) ── */}
+      {Array.isArray(row.synonyms) && row.synonyms.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Report Aliases</span>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            padding: '10px 12px',
+            borderRadius: 6,
+            background: 'var(--bg-main)',
+            border: '1px solid var(--border-main)',
+            color: 'var(--text-secondary)',
+            fontSize: 12,
+          }}>
+            {row.synonyms.map((alias, index) => (
+              <div key={`${row.id}-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>•</span>
+                <span>{alias}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* ── Side-by-Side Code Blocks ── */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '12px',
-      }}>
-        {/* Source DAX */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Source Expression (DAX)</span>
-          <div style={{
-            fontFamily: 'monospace',
-            fontSize: 11,
-            padding: '10px 12px',
-            borderRadius: 6,
-            background: 'var(--bg-main)',
-            border: '1px solid var(--border-main)',
-            color: '#a5f3fc',
-            minHeight: '48px',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
-            {row.measure_expression || '—'}
+      {/* ── Side-by-Side Code Blocks (Measures only) ── */}
+      {isMeasure && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '12px',
+          marginTop: (Array.isArray(row.synonyms) && row.synonyms.length > 0) ? '6px' : '0',
+        }}>
+          {/* Source DAX */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Source Expression (DAX)</span>
+            <div style={{
+              fontFamily: 'monospace',
+              fontSize: 11,
+              padding: '10px 12px',
+              borderRadius: 6,
+              background: 'var(--bg-main)',
+              border: '1px solid var(--border-main)',
+              color: '#a5f3fc',
+              minHeight: '48px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+            }}>
+              {row.measure_expression || '—'}
+            </div>
+          </div>
+
+          {/* Target SQL */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Snowflake Translation (SQL)</span>
+            <div style={{
+              fontFamily: 'monospace',
+              fontSize: 11,
+              padding: '10px 12px',
+              borderRadius: 6,
+              background: 'var(--bg-main)',
+              border: '1px solid var(--border-main)',
+              color: isFailed ? 'var(--text-tertiary)' : '#86efac',
+              minHeight: '48px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+            }}>
+              {isFailed ? '— Translation unavailable —' : (row.target_expression || '—')}
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Target SQL */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Snowflake Translation (SQL)</span>
-          <div style={{
-            fontFamily: 'monospace',
-            fontSize: 11,
-            padding: '10px 12px',
-            borderRadius: 6,
-            background: 'var(--bg-main)',
-            border: '1px solid var(--border-main)',
-            color: isFailed ? 'var(--text-tertiary)' : '#86efac',
-            minHeight: '48px',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
-            {isFailed ? '— Translation unavailable —' : (row.target_expression || '—')}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Dependencies ── */}
-      {Array.isArray(row.depends_on_measures) && row.depends_on_measures.length > 0 && (
+      {/* ── Dependencies (Measures only) ── */}
+      {isMeasure && Array.isArray(row.depends_on_measures) && row.depends_on_measures.length > 0 && (
         <div style={{
           display: 'flex',
           alignItems: 'center',

@@ -150,6 +150,8 @@ class LocalPBIXConnector(BaseConnector):
             "raw_tmsl": None,
             "raw_tmsl_json": None,
             "raw_model": None,
+            "presentation_metadata": [],
+            "measure_aliases": [],
             "metadata": {
                 "source": "local_pbix",
                 "file_path": str(self._pbix_path),
@@ -204,6 +206,34 @@ class LocalPBIXConnector(BaseConnector):
         if connections:
             self._connections = connections
             result["connections"] = connections
+
+        # 3. Extract report layout and parse presentation metadata/aliases
+        layout = self._extract_report_layout()
+        if layout:
+            presentation_metadata = self._parse_presentation_metadata(layout)
+            result["presentation_metadata"] = presentation_metadata
+
+            aliases_by_measure: Dict[str, List[str]] = {}
+            for item in presentation_metadata:
+                m = item["measure"]
+                t = item["title"]
+                if m not in aliases_by_measure:
+                    aliases_by_measure[m] = []
+                if t and t.lower() != m.lower():
+                    if t not in aliases_by_measure[m]:
+                        aliases_by_measure[m].append(t)
+
+            measure_aliases = [
+                {"measure": m, "aliases": aliases}
+                for m, aliases in aliases_by_measure.items()
+            ]
+            result["measure_aliases"] = measure_aliases
+
+            if presentation_metadata:
+                logger.info(
+                    "PBIX presentation metadata extracted: %s aliases",
+                    len(presentation_metadata),
+                )
 
         self._close_archive()
         logger.info(
@@ -806,6 +836,217 @@ class LocalPBIXConnector(BaseConnector):
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             logger.warning(f"Failed to parse Connections.json: {exc}")
             return []
+
+    def _extract_report_layout(self) -> Optional[Dict[str, Any]]:
+        """Extract and parse the report layout JSON from the archive.
+
+        Returns:
+            Parsed JSON dictionary, or None if not found or malformed.
+        """
+        candidates = (
+            "Report/Layout",
+            "Report/layout",
+            "Report",
+        )
+        attempted: List[str] = []
+        for candidate in candidates:
+            data = self._read_archive_file(candidate)
+            if not data:
+                continue
+
+            attempted.append(candidate)
+            layout = self._parse_json_candidate(data)
+            if layout:
+                logger.info("Report layout extracted successfully from %s", candidate)
+                return layout
+            else:
+                logger.warning(
+                    "Failed to parse report layout JSON from archive member: %s",
+                    candidate,
+                )
+
+        if attempted:
+            logger.warning("Failed to parse report layout JSON from PBIX archive")
+        return None
+
+    def _extract_measure_references(self, visual: Dict[str, Any]) -> Set[str]:
+        """Recursively traverse a visual container's fields to extract measure names.
+
+        Args:
+            visual: Visual container dictionary.
+
+        Returns:
+            Set of unique normalized measure names.
+        """
+        measures: Set[str] = set()
+
+        def _clean_measure_name(name: str) -> str:
+            name = name.strip()
+            if "[" in name and name.endswith("]"):
+                start = name.rfind("[")
+                name = name[start + 1 : -1]
+            elif "." in name:
+                parts = name.split(".")
+                if parts:
+                    name = parts[-1]
+            return name.strip()
+
+        def _traverse(data: Any) -> None:
+            if isinstance(data, dict):
+                # Case 1: Measure -> Property
+                measure_node = data.get("Measure")
+                if isinstance(measure_node, dict):
+                    prop = measure_node.get("Property")
+                    if isinstance(prop, str) and prop.strip():
+                        cleaned = _clean_measure_name(prop)
+                        if cleaned:
+                            measures.add(cleaned)
+
+                # Case 2: queryRef
+                query_ref = data.get("queryRef")
+                if isinstance(query_ref, str) and query_ref.strip():
+                    cleaned = _clean_measure_name(query_ref)
+                    if cleaned:
+                        measures.add(cleaned)
+
+                for val in data.values():
+                    _traverse(val)
+            elif isinstance(data, list):
+                for item in data:
+                    _traverse(item)
+
+        # Parse and traverse the four visual container JSON properties
+        for field_name in ("config", "query", "filters", "dataTransforms"):
+            field_val = visual.get(field_name)
+            if not field_val:
+                continue
+
+            parsed_val = None
+            if isinstance(field_val, dict):
+                parsed_val = field_val
+            elif isinstance(field_val, str):
+                try:
+                    parsed_val = json.loads(field_val)
+                except Exception as exc:
+                    logger.warning(
+                        "Malformed JSON in visual container '%s' field: %s",
+                        field_name,
+                        exc,
+                    )
+                    continue
+
+            if parsed_val:
+                _traverse(parsed_val)
+
+        return measures
+
+    def _parse_presentation_metadata(self, layout: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse report layout sections and visual containers to extract presentation metadata.
+
+        Args:
+            layout: Parsed layout JSON dictionary.
+
+        Returns:
+            List of unique presentation metadata dictionaries.
+        """
+        presentation_metadata: List[Dict[str, Any]] = []
+        seen_tuples = set()
+
+        sections = layout.get("sections", [])
+        if not isinstance(sections, list):
+            return []
+
+        for section in sections:
+            if not isinstance(section, dict):
+                continue
+            page = section.get("displayName", "Unknown")
+            if not page or not isinstance(page, str):
+                page = "Unknown"
+
+            visual_containers = section.get("visualContainers", [])
+            if not isinstance(visual_containers, list):
+                continue
+
+            for visual in visual_containers:
+                if not isinstance(visual, dict):
+                    continue
+
+                # 1. Parse config JSON (which can be a string or already a dict)
+                config_val = visual.get("config")
+                config_dict = {}
+                if isinstance(config_val, dict):
+                    config_dict = config_val
+                elif isinstance(config_val, str) and config_val.strip():
+                    try:
+                        config_dict = json.loads(config_val)
+                    except Exception as exc:
+                        logger.warning("Malformed JSON in visual container config: %s", exc)
+                        continue
+
+                # 2. Extract visual type (first letter capitalized, rest unchanged)
+                visual_type = "Unknown"
+                single_visual = config_dict.get("singleVisual", {})
+                if isinstance(single_visual, dict):
+                    v_type = single_visual.get("visualType")
+                    if isinstance(v_type, str) and v_type.strip():
+                        v_type_strip = v_type.strip()
+                        visual_type = v_type_strip[0].upper() + v_type_strip[1:] if v_type_strip else "Unknown"
+
+                # 3. Extract title using title priority order
+                # Priority:
+                # 1) singleVisual.vcObjects.title
+                # 2) singleVisual.objects.title
+                # 3) Fallback text/value fields
+                title = None
+                if isinstance(single_visual, dict):
+                    for title_key in ("vcObjects", "objects"):
+                        key_val = single_visual.get(title_key)
+                        if isinstance(key_val, dict):
+                            title_section = key_val.get("title")
+                            if isinstance(title_section, list) and title_section:
+                                properties = title_section[0].get("properties")
+                                if isinstance(properties, dict):
+                                    text_prop = properties.get("text")
+                                    if isinstance(text_prop, dict):
+                                        expr = text_prop.get("expr")
+                                        if isinstance(expr, dict) and "Literal" in expr:
+                                            literal = expr["Literal"]
+                                            if isinstance(literal, dict) and "Value" in literal:
+                                                title = literal["Value"]
+                                        if not title and "value" in text_prop:
+                                            title = text_prop["value"]
+                        
+                        if title is not None:
+                            if isinstance(title, str):
+                                title = title.strip("'").strip()
+                                if title:
+                                    break
+                            else:
+                                title = None
+
+                # Skip visual if title is missing or empty
+                if not title:
+                    continue
+
+                # 4. Extract referenced measures using the linear recursive traversal helper
+                measures = self._extract_measure_references(visual)
+                if not measures:
+                    continue
+
+                # 5. Populate and deduplicate tuples
+                for measure in measures:
+                    # Deduplicate identical (measure, title, page, visual_type) tuples
+                    tpl = (measure, title, page, visual_type)
+                    if tpl not in seen_tuples:
+                        seen_tuples.add(tpl)
+                        presentation_metadata.append({
+                            "measure": measure,
+                            "title": title,
+                            "page": page,
+                            "visual_type": visual_type,
+                        })
+
+        return presentation_metadata
 
     @staticmethod
     def _classify_connection_type(conn_string: str) -> str:
