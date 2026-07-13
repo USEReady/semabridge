@@ -192,6 +192,11 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
 
     elif source_type == "pbix":
         explicit_pbix = source_cfg.get("pbix_path")
+        if not explicit_pbix and not source_cfg.get("models"):
+            raise ValidationError(
+                "PBIX source requires source.pbix_path or source.models."
+            )
+
         if explicit_pbix:
             sync_jobs.append(
                 {

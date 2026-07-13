@@ -72,12 +72,14 @@ class SyncOrchestrator:
         repository: SyncRepository,
         extractor_factory: Optional[Callable] = None,
         deployer_factory: Optional[Callable] = None,
+        artifact_exporter: Optional[ArtifactExportService] = None,
     ) -> None:
         self._repo = repository
         self._conflict_resolver = ConflictResolver(repository)
         self._schema_tracker = SchemaEvolutionTracker(repository)
         self._extractor_factory = extractor_factory
         self._deployer_factory = deployer_factory
+        self._artifact_exporter = artifact_exporter
 
     # -----------------------------------------------------------------
     # Public API
@@ -111,6 +113,9 @@ class SyncOrchestrator:
             job = self._resume_job(resume_job_id)
         else:
             job = self._create_job(config, initiated_by)
+
+        if self._artifact_exporter:
+            self._artifact_exporter.initialize_sync_export(job)
 
         job.status = SyncJobStatus.RUNNING
         job.started_at = _utc_now()
@@ -153,16 +158,24 @@ class SyncOrchestrator:
         except ConflictError as e:
             job.status = SyncJobStatus.CONFLICT
             job.error_message = str(e)
+            if self._artifact_exporter:
+                self._artifact_exporter.export_error_details(e)
             logger.warning(f"Sync job {job.job_id} paused: {e}")
         except Exception as e:
             job.status = SyncJobStatus.FAILED
             job.error_message = str(e)
+            if self._artifact_exporter:
+                self._artifact_exporter.export_error_details(e)
             logger.error(f"Sync job {job.job_id} failed: {e}")
 
         job.completed_at = _utc_now()
-        job.duration_ms = int((time.time() - start_time) * 1000)
+        duration = time.time() - start_time
+        job.duration_ms = int(duration * 1000)
         job.update_counts()
         self._repo.update_job(job)
+
+        if self._artifact_exporter:
+            self._artifact_exporter.finalize_sync(job.status.value, duration)
 
         logger.info(
             f"Sync job {job.job_id} finished: status={job.status.value} "
@@ -566,7 +579,12 @@ class SyncOrchestrator:
 
         try:
             # Step 1: Extract from source
-            osi_model = self._extract_to_osi(item, config, job)
+            # The _extract_to_osi method is a bit of a misnomer now, it returns raw and then we convert
+            raw_extracted_data, osi_model = self._extract_and_convert_to_osi(item, config, job)
+            if self._artifact_exporter:
+                self._artifact_exporter.export_extraction_artifacts(item, raw_extracted_data)
+                self._artifact_exporter.export_osi_artifacts(item, osi_model)
+
             item.osi_snapshot = osi_model.model_dump(mode="json")
 
             # Step 2: Check incremental skip
@@ -616,12 +634,25 @@ class SyncOrchestrator:
             # Step 4: Record schema version
             self._schema_tracker.record_version(osi_model, job_id=job.job_id)
 
+            # SML step placeholder for artifact export
+            if self._artifact_exporter:
+                # This part is conceptual, as there's no explicit SML stage in the orchestrator
+                # We'll just create a placeholder artifact.
+                self._artifact_exporter.export_sml_artifacts(item, {"placeholder": "SML data would go here"})
+
+
             # Step 5: Deploy to target
             item.status = SyncItemStatus.DEPLOYING
             self._repo.update_item(item)
 
-            target_id = self._deploy_to_target(osi_model, config, job)
+            target_artifacts = self._deploy_to_target(osi_model, config, job)
+            
+            # The deployer returns a dict of artifacts, the first value is the main identifier
+            target_id = next(iter(target_artifacts.values())) if target_artifacts else None
             item.target_artifact_id = target_id
+
+            if self._artifact_exporter:
+                self._artifact_exporter.export_target_artifacts(item, target_artifacts)
 
             # Step 6: Update mapping
             schema_hash = self._schema_tracker.compute_schema_hash(osi_model)
@@ -714,12 +745,14 @@ class SyncOrchestrator:
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
         connector = LocalPBIXConnector({"pbix_path": item.source_path})
-        raw_tmsl = connector.extract()
+        discovered = connector.discover()
+        raw_tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
         converter = TMSLToOSIConverter()
         tmsl_data = {
             "tmsl": raw_tmsl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
+            "measure_aliases": discovered.get("measure_aliases", []),
         }
 
         osi_model = converter.to_osi(tmsl_data)

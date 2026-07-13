@@ -196,3 +196,145 @@ class TestTMSLToOSI:
         osi = converter.to_osi(source)
 
         assert [ds.unique_name for ds in osi.datasets] == ["Sales"]
+
+
+class TestPBIXAliasOSIPropagation:
+    """Test suite for PBIX report aliases propagation to OSI metric synonyms."""
+
+    @pytest.fixture
+    def converter(self):
+        return TMSLToOSIConverter()
+
+    def test_existing_synonyms_and_pbix_aliases_merge(self, converter):
+        """Verify that PBIX report aliases augment existing synonyms, preserving order and removing duplicates."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "SalesModel",
+                    "tables": [{
+                        "name": "SalesTable",
+                        "measures": [{
+                            "name": "Revenue",
+                            "expression": "SUM(Sales[Amount])",
+                            "synonyms": ["Sales Revenue"]
+                        }],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-123",
+            "measure_aliases": [
+                {
+                    "measure": "Revenue",
+                    "aliases": [
+                        "Total Revenue",
+                        "Sales Revenue",   # Duplicate, should be deduplicated
+                        "revenue",         # Case-insensitive match to name, should be excluded
+                        "Monthly Revenue"
+                    ]
+                }
+            ]
+        }
+
+        osi = converter.to_osi(source)
+        assert len(osi.metrics) == 1
+        metric = osi.metrics[0]
+        # Auto-generated synonyms will be merged as well, but the matched report aliases
+        # must be appended following existing synonyms (UI/user/auto).
+        assert "Sales Revenue" in metric.synonyms
+        assert "Total Revenue" in metric.synonyms
+        assert "Monthly Revenue" in metric.synonyms
+        assert "revenue" not in metric.synonyms
+        assert "Revenue" not in metric.synonyms
+
+        # Discovery order preservation check: total revenue should precede monthly revenue
+        tr_idx = metric.synonyms.index("Total Revenue")
+        mr_idx = metric.synonyms.index("Monthly Revenue")
+        assert tr_idx < mr_idx
+
+    def test_exact_matching_only(self, converter):
+        """Verify that matching uses case-insensitive exact equality only, no substrings/fuzzy matching."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "SalesModel",
+                    "tables": [{
+                        "name": "SalesTable",
+                        "measures": [
+                            {"name": "Revenue", "expression": "1"},
+                            {"name": "Revenue Forecast", "expression": "2"}
+                        ],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-123",
+            "measure_aliases": [
+                {
+                    "measure": "Revenue",
+                    "aliases": ["Total Income"]
+                }
+            ]
+        }
+
+        osi = converter.to_osi(source)
+        metrics = {m.unique_name: m for m in osi.metrics}
+        assert "Total Income" in metrics["Revenue"].synonyms
+        assert "Total Income" not in metrics["Revenue Forecast"].synonyms
+
+    def test_empty_measure_aliases(self, converter):
+        """Verify legacy synonym generation is unaffected when no measure aliases are supplied."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "SalesModel",
+                    "tables": [{
+                        "name": "SalesTable",
+                        "measures": [{
+                            "name": "TotalRevenue",
+                            "expression": "1",
+                            "synonyms": ["Sales Revenue"]
+                        }],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-123",
+        }
+
+        osi = converter.to_osi(source)
+        metric = osi.metrics[0]
+        # Verify user synonym "Sales Revenue" and auto-generated "Total Revenue" are present
+        assert "Sales Revenue" in metric.synonyms
+        assert "Total Revenue" in metric.synonyms
+
+    def test_multiple_measures_mapping(self, converter):
+        """Verify report aliases are correctly mapped to their respective target measures."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "SalesModel",
+                    "tables": [{
+                        "name": "SalesTable",
+                        "measures": [
+                            {"name": "SalesCount", "expression": "1"},
+                            {"name": "Profit", "expression": "2"}
+                        ],
+                    }],
+                }
+            },
+            "workspace_id": "ws-123",
+            "dataset_id": "ds-123",
+            "measure_aliases": [
+                {"measure": "SalesCount", "aliases": ["Transaction Count"]},
+                {"measure": "Profit", "aliases": ["Net Profit"]}
+            ]
+        }
+
+        osi = converter.to_osi(source)
+        metrics = {m.unique_name: m for m in osi.metrics}
+        assert "Transaction Count" in metrics["SalesCount"].synonyms
+        assert "Net Profit" not in metrics["SalesCount"].synonyms
+        assert "Net Profit" in metrics["Profit"].synonyms
+        assert "Transaction Count" not in metrics["Profit"].synonyms
+

@@ -1,4 +1,4 @@
-﻿"""
+"""
 SML YAML Serializer.
 
 Handles reading and writing SML models to YAML files.
@@ -310,6 +310,7 @@ class SMLSerializer:
             "is_key": column.is_key,
             "format_string": column.format_string,
             "folder": column.folder,
+            "synonyms": list(column.synonyms or []) if column.synonyms else [],
         }
     
     @staticmethod
@@ -325,6 +326,7 @@ class SMLSerializer:
             is_key=data.get("is_key", False),
             format_string=data.get("format_string"),
             folder=data.get("folder"),
+            synonyms=list(data.get("synonyms") or []),
         )
     
     @staticmethod
@@ -408,11 +410,16 @@ class SMLSerializer:
             "description": metric.description,
             "dataset": metric.dataset,
             "expression": metric.expression,
+            "sql_expression": metric.sql_expression,
             "aggregation": metric.aggregation.value,
             "source_column": metric.source_column,
             "format_string": metric.format_string,
             "folder": metric.folder,
             "is_hidden": metric.is_hidden,
+            "sync_enabled": metric.sync_enabled,
+            "sync_failure_reason": metric.sync_failure_reason,
+            "depends_on_measures": metric.depends_on_measures,
+            "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
         }
     
     @staticmethod
@@ -424,11 +431,16 @@ class SMLSerializer:
             description=data.get("description", ""),
             dataset=data["dataset"],
             expression=data.get("expression", ""),
+            sql_expression=data.get("sql_expression"),
             aggregation=AggregationType(data.get("aggregation", "sum")),
             source_column=data.get("source_column"),
             format_string=data.get("format_string"),
             folder=data.get("folder"),
             is_hidden=data.get("is_hidden", False),
+            sync_enabled=data.get("sync_enabled", True),
+            sync_failure_reason=data.get("sync_failure_reason"),
+            depends_on_measures=list(data.get("depends_on_measures") or []),
+            synonyms=list(data.get("synonyms") or []),
         )
     
     @staticmethod

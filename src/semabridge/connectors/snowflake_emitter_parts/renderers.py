@@ -48,13 +48,16 @@ def generate_cortex_yaml(emitter, sml):
                     is_measure = any(m.dataset == ds.unique_name and m.source_column == attr_col for m in sml.metrics)
                     if is_measure and ds.is_fact:
                         continue
-                    table_def["dimensions"].append(
-                        {
-                            "name": attr.unique_name,
-                            "expr": getattr(attr, "dataset_column", None) or getattr(attr, "source_column", attr.unique_name),
-                            "description": getattr(attr, "description", "") or "",
-                        }
-                    )
+                    dim_def = {
+                        "name": attr.unique_name,
+                        "expr": getattr(attr, "dataset_column", None) or getattr(attr, "source_column", attr.unique_name),
+                        "description": getattr(attr, "description", "") or "",
+                    }
+                    from semabridge.utils.synonyms import lookup_attribute_synonyms
+                    dim_synonyms = lookup_attribute_synonyms(attr, ds, attr_col)
+                    if dim_synonyms:
+                        dim_def["synonyms"] = dim_synonyms
+                    table_def["dimensions"].append(dim_def)
         for metric in sml.metrics:
             if metric.dataset == ds.unique_name:
                 measure_def = {
@@ -74,6 +77,8 @@ def generate_cortex_yaml(emitter, sml):
                     continue
                 if metric.format_string:
                     measure_def["sample_values"] = f"Format: {metric.format_string}"
+                if getattr(metric, "synonyms", None):
+                    measure_def["synonyms"] = list(metric.synonyms)
                 table_def["measures"].append(measure_def)
         output["semantic_model"]["tables"].append(table_def)
     return yaml.dump(output, sort_keys=False, Dumper=IndentDumper, allow_unicode=True, width=200)
@@ -121,13 +126,16 @@ def generate_cortex_yaml_from_osi(emitter, osi):
                     )
                     if is_measure and ds.is_fact:
                         continue
-                    table_def["dimensions"].append(
-                        {
-                            "name": attr.unique_name,
-                            "expr": attr.source_column,
-                            "description": attr.label or "",
-                        }
-                    )
+                    dim_def = {
+                        "name": attr.unique_name,
+                        "expr": attr.source_column,
+                        "description": attr.label or "",
+                    }
+                    from semabridge.utils.synonyms import lookup_attribute_synonyms
+                    dim_synonyms = lookup_attribute_synonyms(attr, ds, attr.source_column)
+                    if dim_synonyms:
+                        dim_def["synonyms"] = dim_synonyms
+                    table_def["dimensions"].append(dim_def)
 
         for metric in osi.metrics:
             if metric.dataset == ds.unique_name:
@@ -148,6 +156,8 @@ def generate_cortex_yaml_from_osi(emitter, osi):
                     continue
                 if metric.format_string:
                     measure_def["sample_values"] = f"Format: {metric.format_string}"
+                if getattr(metric, "synonyms", None):
+                    measure_def["synonyms"] = list(metric.synonyms)
                 table_def["measures"].append(measure_def)
 
         output["semantic_model"]["tables"].append(table_def)

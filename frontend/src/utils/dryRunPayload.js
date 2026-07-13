@@ -6,6 +6,7 @@ export function buildDryRunPayload({
   snowflakeDatabase,
   targetDatabase,
   selectedModelNames,
+  pbixPath,
 }) {
   const sourceConfig = { type: sourceConnector };
 
@@ -16,6 +17,10 @@ export function buildDryRunPayload({
 
   if (sourceConnector === 'snowflake') {
     if (snowflakeDatabase) sourceConfig.database = snowflakeDatabase;
+  }
+
+  if (sourceConnector === 'pbix' && pbixPath) {
+    sourceConfig.pbix_path = pbixPath;
   }
 
   if (Array.isArray(selectedModelNames) && selectedModelNames.length > 0) {

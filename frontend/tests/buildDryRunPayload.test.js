@@ -50,3 +50,26 @@ test('buildDryRunPayload keeps snowflake fields unchanged', () => {
     database: 'REPORTING',
   });
 });
+
+test('buildDryRunPayload includes PBIX pbix_path in sourceConfig', () => {
+  const payload = buildDryRunPayload({
+    sourceConnector: 'pbix',
+    targetConnectors: new Set(['snowflake']),
+    fabricAccountId: '',
+    fabricWorkspaceId: '',
+    snowflakeDatabase: '',
+    targetDatabase: 'REPORTING',
+    selectedModelNames: [],
+    pbixPath: 'C:/Sales.pbix',
+  });
+
+  assert.deepEqual(payload.sourceConfig, {
+    type: 'pbix',
+    pbix_path: 'C:/Sales.pbix',
+  });
+
+  assert.deepEqual(payload.targetConfig, {
+    type: 'snowflake',
+    database: 'REPORTING',
+  });
+});

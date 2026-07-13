@@ -366,3 +366,497 @@ class TestConnectionClassification:
         """Should return None when no GUID is present."""
         result = LocalPBIXConnector._extract_model_guid("no-guid-here")
         assert result is None
+
+
+class TestPBIXPresentationMetadata:
+    """Test suite for report layout parsing and presentation metadata extraction."""
+
+    def test_discover_defaults_when_layout_missing(self, pbix_file: Path) -> None:
+        """Should return empty lists for new metadata keys if layout is absent."""
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_file)})
+        connector.authenticate()
+        result = connector.discover()
+        assert "presentation_metadata" in result
+        assert result["presentation_metadata"] == []
+        assert "measure_aliases" in result
+        assert result["measure_aliases"] == []
+
+    def test_discover_malformed_layout(self, tmp_path: Path) -> None:
+        """Should log a warning and continue if layout exists but is malformed."""
+        pbix_path = tmp_path / "malformed_layout.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", "not a JSON string{")
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+        assert result["presentation_metadata"] == []
+        assert result["measure_aliases"] == []
+
+    def test_multiple_visuals_same_measure_and_order(self, tmp_path: Path) -> None:
+        """Verify multiple visual aliases are extracted preserving discovery order."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Executive Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {
+                                        "title": [
+                                            {
+                                                "properties": {
+                                                    "text": {
+                                                        "expr": {"Literal": {"Value": "'Total Revenue'"}}
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "barChart",
+                                    "objects": {
+                                        "title": [
+                                            {
+                                                "properties": {
+                                                    "text": {
+                                                        "expr": {"Literal": {"Value": "'Monthly Revenue'"}}
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "lineChart",
+                                    "vcObjects": {
+                                        "title": [
+                                            {
+                                                "properties": {
+                                                    "text": {
+                                                        "value": "Revenue Trend"
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "multiple_visuals.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 3
+        assert pm[0] == {"measure": "Revenue", "title": "Total Revenue", "page": "Executive Dashboard", "visual_type": "Card"}
+        assert pm[1] == {"measure": "Revenue", "title": "Monthly Revenue", "page": "Executive Dashboard", "visual_type": "BarChart"}
+        assert pm[2] == {"measure": "Revenue", "title": "Revenue Trend", "page": "Executive Dashboard", "visual_type": "LineChart"}
+
+        ma = result["measure_aliases"]
+        assert len(ma) == 1
+        assert ma[0]["measure"] == "Revenue"
+        assert ma[0]["aliases"] == ["Total Revenue", "Monthly Revenue", "Revenue Trend"]
+
+    def test_deduplication_and_page_independence(self, tmp_path: Path) -> None:
+        """Verify page independence in presentation_metadata and deduplication in measure_aliases."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Page A",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        # Duplicate visual on same page
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        }
+                    ]
+                },
+                {
+                    "displayName": "Page B",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "dedup.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        # Duplicate on Page A is deduplicated, but Page B remains distinct
+        assert len(pm) == 2
+        assert pm[0] == {"measure": "Revenue", "title": "Total Revenue", "page": "Page A", "visual_type": "Card"}
+        assert pm[1] == {"measure": "Revenue", "title": "Total Revenue", "page": "Page B", "visual_type": "Card"}
+
+        ma = result["measure_aliases"]
+        assert len(ma) == 1
+        assert ma[0]["measure"] == "Revenue"
+        assert ma[0]["aliases"] == ["Total Revenue"]  # Deduplicated across pages
+
+    def test_exclude_measure_name_from_aliases(self, tmp_path: Path) -> None:
+        """Verify that visual titles matching the measure name are excluded from aliases."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "exclude_measure_name.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 3
+
+        ma = result["measure_aliases"]
+        assert len(ma) == 1
+        assert ma[0]["measure"] == "Revenue"
+        # Only "Total Revenue" remains, "Revenue" and "revenue" are excluded
+        assert ma[0]["aliases"] == ["Total Revenue"]
+
+    def test_normalization_formats(self, tmp_path: Path) -> None:
+        """Verify normalization of different measure reference structures."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Alias 1"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "[Revenue]"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Alias 2"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Sales[Revenue]"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Alias 3"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"queryRef": "Sales.Revenue"}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Alias 4"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"queryRef": "Model.Sales.Revenue"}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "normalization.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 4
+        for item in pm:
+            assert item["measure"] == "Revenue"
+
+        ma = result["measure_aliases"]
+        assert len(ma) == 1
+        assert ma[0]["aliases"] == ["Alias 1", "Alias 2", "Alias 3", "Alias 4"]
+
+    def test_optional_fields_and_empty_titles(self, tmp_path: Path) -> None:
+        """Verify that visuals with empty titles are skipped and optional fields default properly."""
+        layout_dict = {
+            "sections": [
+                {
+                    # Page name is empty/missing
+                    "visualContainers": [
+                        # Visual with empty title (should be skipped)
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": ""}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        # Visual with missing title key (should be skipped)
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card"
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        # Visual with missing type and page (should parse with defaults)
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Valid Title"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "optional.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 1
+        assert pm[0] == {
+            "measure": "Revenue",
+            "title": "Valid Title",
+            "page": "Unknown",
+            "visual_type": "Unknown"
+        }
+
+    def test_resiliency_malformed_json_fields(self, tmp_path: Path) -> None:
+        """Malformed JSON fields inside a visual container should not fail discovery."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Resiliency Page",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Partial Success"}}}]}
+                                }
+                            }),
+                            # query is malformed JSON, filters is valid
+                            "query": "malformed JSON {",
+                            "filters": json.dumps({
+                                "Measure": {"Property": "Revenue"}
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "resiliency.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 1
+        assert pm[0]["measure"] == "Revenue"
+        assert pm[0]["title"] == "Partial Success"
+
+    def test_large_layout_stress_test(self, tmp_path: Path) -> None:
+        """Verify performance and scaling characteristics with a layout of 100 visuals and 50 measures."""
+        import time
+
+        visuals = []
+        for i in range(100):
+            measure_index = i % 50
+            measure_name = f"Measure_{measure_index}"
+            alias_name = f"Alias_{i}"
+            visuals.append({
+                "config": json.dumps({
+                    "singleVisual": {
+                        "visualType": "card",
+                        "vcObjects": {"title": [{"properties": {"text": {"value": alias_name}}}]}
+                    }
+                }),
+                "query": json.dumps({
+                    "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": measure_name}}]}}]
+                })
+            })
+
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Stress Dashboard",
+                    "visualContainers": visuals
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "stress.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            # Create a model with these 50 measures
+            model_schema = _create_data_model_schema()
+            zf.writestr("DataModelSchema", json.dumps(model_schema))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+
+        start_time = time.perf_counter()
+        result = connector.discover()
+        end_time = time.perf_counter()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 100
+        for i, item in enumerate(pm):
+            measure_index = i % 50
+            assert item["measure"] == f"Measure_{measure_index}"
+            assert item["title"] == f"Alias_{i}"
+
+        ma = result["measure_aliases"]
+        assert len(ma) == 50
+        # Check that the aliases for each measure are collected correctly
+        for item in ma:
+            measure_num = int(item["measure"].split("_")[1])
+            expected_aliases = [f"Alias_{measure_num}", f"Alias_{measure_num + 50}"]
+            assert item["aliases"] == expected_aliases
+
+        elapsed = end_time - start_time
+        print(f"Stress test completed in {elapsed:.4f} seconds")
+

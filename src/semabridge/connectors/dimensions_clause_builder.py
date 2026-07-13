@@ -253,32 +253,10 @@ class DimensionsClauseBuilder:
         dataset_by_name: Dict[str, Any],
         phys_col: str,
     ) -> List[str]:
+        from semabridge.utils.synonyms import lookup_attribute_synonyms
         dataset_obj = dataset_by_name.get(attr.dataset)
-        if not dataset_obj:
-            return []
+        return lookup_attribute_synonyms(attr, dataset_obj, phys_col)
 
-        candidates = [
-            getattr(attr, "source_column", None),
-            getattr(attr, "dataset_column", None),
-            getattr(attr, "unique_name", None),
-            phys_col,
-        ]
-        columns = list(getattr(dataset_obj, "columns", []) or [])
-        for candidate in candidates:
-            if not candidate:
-                continue
-            col = dataset_obj.get_column(candidate) if hasattr(dataset_obj, "get_column") else None
-            if not col:
-                col = next(
-                    (
-                        item for item in columns
-                        if str(getattr(item, "unique_name", "")).casefold() == str(candidate).casefold()
-                    ),
-                    None,
-                )
-            if col:
-                return list(getattr(col, "synonyms", []) or [])
-        return []
 
     def _measure_key(self, dataset_name: Optional[str], column_name: Optional[str]) -> Tuple[str, str]:
         return (

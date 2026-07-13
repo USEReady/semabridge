@@ -1,61 +1,191 @@
-project_name: lan
-project_name: lan
+project_name: pbix-test
 source:
   type: pbix
-  pbix_path: C:/Users/Premasai/AppData/Local/Temp/semabridge/projects/proj-ffdf/ab788b2836cc481c9f3799dec4d864dd_continent.pbix
-  pbix_file_path: C:/Users/Premasai/AppData/Local/Temp/semabridge/projects/proj-ffdf/ab788b2836cc481c9f3799dec4d864dd_continent.pbix
+  pbix_path: C:/Users/chara/AppData/Local/Temp/semabridge/projects/proj-pbix-test/09287e5342bf461285d794cdc08340fc_Inventory
+    Semantic Model.pbix
+  pbix_file_path: C:/Users/chara/AppData/Local/Temp/semabridge/projects/proj-pbix-test/09287e5342bf461285d794cdc08340fc_Inventory
+    Semantic Model.pbix
 targets:
-  - type: snowflake
-mappings:
-  - source: annual
-    target: ANNUAL
-    type: table
-    columns:
-      - source: id
-        target: ID
-        type: integer
-        primary_key: true
-      - source: name
-        target: NAME
-        type: string
-      - source: created_at
-        target: CREATED_AT
-        type: timestamp
-      - source: updated_at
-        target: UPDATED_AT
-        type: timestamp
-  - type: snowflake
-mappings:
-  - source: annual
-    target: ANNUAL
-    type: table
-    columns:
-      - source: id
-        target: ID
-        type: integer
-        primary_key: true
-      - source: name
-        target: NAME
-        type: string
-      - source: created_at
-        target: CREATED_AT
-        type: timestamp
-      - source: updated_at
-        target: UPDATED_AT
-        type: timestamp
+- type: snowflake
+  database: SEMABRIDGE_DB
+  schema: PUBLIC
+  warehouse: COMPUTE_WH
+  identity_id: 1f7a76dd-283e-47cf-b261-4fab6413eaa0
+mappings_overrides:
+- source_path: datasets.Business Units.columns.Business Unit
+  target_name: BUSINESS_UNITS_BUSINESS_UNIT
+- source_path: datasets.Business Units.columns.Curated BU
+  target_name: CURATED_BU
+- source_path: datasets.Corporate DSI Aggregate.columns.FISCAL_YR_PERIOD
+  target_name: CORPORATE_DSI_AGGREGATE_FISCAL_YR_PERIOD
+- source_path: datasets.Corporate DSI Aggregate.columns.BUSINESS_UNIT
+  target_name: CORPORATE_DSI_AGGREGATE_BUSINESS_UNIT
+- source_path: datasets.Corporate DSI Aggregate.columns.COS_EXCLDNG_LIFO_AMT
+  target_name: COS_EXCLDNG_LIFO_AMT
+- source_path: datasets.Corporate DSI Aggregate.columns.IOH_EXCLDNG_LIFO_AMT
+  target_name: IOH_EXCLDNG_LIFO_AMT
+- source_path: datasets.Corporate DSI Aggregate.columns.DSI_MNTHLY
+  target_name: DSI_MNTHLY
+- source_path: datasets.Corporate DSI Aggregate.columns.DSI_QTD
+  target_name: DSI_QTD
+- source_path: datasets.Corporate DSI Aggregate.columns.DSI_YRLY
+  target_name: DSI_YRLY
+- source_path: datasets.Corporate DSI Aggregate.columns.Update Timestamp
+  target_name: CORPORATE_DSI_AGGREGATE_UPDATE_TIMESTAMP
+- source_path: datasets.Corporate DSI Last Refreshed.columns.GL Refresh Datetime
+  target_name: CORPORATE_DSI_LAST_REFRESHED_GL_REFRESH_DATETIME
+- source_path: datasets.Corporate DSI Last Refreshed.columns.PBI Refresh Datetime
+  target_name: CORPORATE_DSI_LAST_REFRESHED_PBI_REFRESH_DATETIME
+- source_path: datasets.Dates.columns.CAL_DT
+  target_name: CAL_DT
+- source_path: datasets.Dates.columns.QTR_YR
+  target_name: QTR_YR
+- source_path: datasets.Dates.columns.QTR_NAME
+  target_name: QTR_NAME
+- source_path: datasets.Dates.columns.FISCAL_YR
+  target_name: FISCAL_YR
+- source_path: datasets.Dates.columns.FISCAL_YR_PERIOD
+  target_name: DATES_FISCAL_YR_PERIOD
+- source_path: datasets.Dates.columns.MNTH_NAME
+  target_name: MNTH_NAME
+- source_path: datasets.Dates.columns.MNTH_ABRV
+  target_name: MNTH_ABRV
+- source_path: datasets.Dates.columns.MNTH_QTR_YR
+  target_name: MNTH_QTR_YR
+- source_path: datasets.Dates.columns.WEEK_DAY
+  target_name: WEEK_DAY
+- source_path: datasets.Dates.columns.WEEK_DAY_FLAG
+  target_name: WEEK_DAY_FLAG
+- source_path: datasets.Dates.columns.CAL_DAY_NUM
+  target_name: CAL_DAY_NUM
+- source_path: datasets.Dates.columns.FISCAL_MNTH
+  target_name: FISCAL_MNTH
+- source_path: datasets.Dates.columns.Day of Week Name
+  target_name: DAY_OF_WEEK_NAME
+- source_path: datasets.Dates.columns.Day of Week Short
+  target_name: DAY_OF_WEEK_SHORT
+- source_path: datasets.Dates.columns.MNTH_START
+  target_name: MNTH_START
+- source_path: datasets.Entity Hierarchy Dim.columns.CURR_FLG
+  target_name: ENTITY_HIERARCHY_DIM_CURR_FLG
+- source_path: datasets.Entity Hierarchy Dim.columns.MEMBER_NAME
+  target_name: MEMBER_NAME
+- source_path: datasets.Entity Hierarchy Dim.columns.ENTITY_CURR_SKEY
+  target_name: ENTITY_CURR_SKEY
+- source_path: datasets.Entity Hierarchy Dim.columns.DESCRIPTION
+  target_name: DESCRIPTION
+- source_path: datasets.Entity Hierarchy Dim.columns.BU
+  target_name: ENTITY_HIERARCHY_DIM_BU
+- source_path: datasets.Entity Hierarchy Dim.columns.Company Code - Description
+  target_name: COMPANY_CODE_DESCRIPTION
+- source_path: datasets.Inventory Fact.columns.Calendar Date
+  target_name: CALENDAR_DATE
+- source_path: datasets.Inventory Fact.columns.Company Code
+  target_name: COMPANY_CODE
+- source_path: datasets.Inventory Fact.columns.FISCAL_YR_PERIOD
+  target_name: INVENTORY_FACT_FISCAL_YR_PERIOD
+- source_path: datasets.Inventory Fact.columns.Business Unit
+  target_name: INVENTORY_FACT_BUSINESS_UNIT
+- source_path: datasets.Inventory Fact.columns.TPLANT_CURR_SKEY
+  target_name: INVENTORY_FACT_TPLANT_CURR_SKEY
+- source_path: datasets.Inventory Fact.columns.PLANT_BU_MAPPING_CURR_SKEY
+  target_name: INVENTORY_FACT_PLANT_BU_MAPPING_CURR_SKEY
+- source_path: datasets.Inventory Fact.columns.Total Stock Qty
+  target_name: TOTAL_STOCK_QTY
+- source_path: datasets.Inventory Fact.columns.WAC Value Total Stock
+  target_name: WAC_VALUE_TOTAL_STOCK
+- source_path: datasets.Inventory Fact.columns.ENTITY_HIER_CURR_SKEY
+  target_name: ENTITY_HIER_CURR_SKEY
+- source_path: datasets.Inventory Fact.columns.Source Value Total Stock
+  target_name: SOURCE_VALUE_TOTAL_STOCK
+- source_path: datasets.Inventory Fact.columns.Update Timestamp
+  target_name: INVENTORY_FACT_UPDATE_TIMESTAMP
+- source_path: datasets.Inventory Fact Last Refreshed.columns.GL Refresh Datetime
+  target_name: INVENTORY_FACT_LAST_REFRESHED_GL_REFRESH_DATETIME
+- source_path: datasets.Inventory Fact Last Refreshed.columns.PBI Refresh Datetime
+  target_name: INVENTORY_FACT_LAST_REFRESHED_PBI_REFRESH_DATETIME
+- source_path: datasets.Plant BU Mapping.columns.BUSINESS_UNIT
+  target_name: PLANT_BU_MAPPING_BUSINESS_UNIT
+- source_path: datasets.Plant BU Mapping.columns.SEGMENT_NAME
+  target_name: PLANT_BU_MAPPING_SEGMENT_NAME
+- source_path: datasets.Plant BU Mapping.columns.SOURCE_SYSTEM_NAME
+  target_name: PLANT_BU_MAPPING_SOURCE_SYSTEM_NAME
+- source_path: datasets.Plant BU Mapping.columns.PLANT_BU_MAPPING_HIST_SKEY
+  target_name: PLANT_BU_MAPPING_HIST_SKEY
+- source_path: datasets.Plant BU Mapping.columns.PLANT_BU_MAPPING_CURR_SKEY
+  target_name: PLANT_BU_MAPPING_PLANT_BU_MAPPING_CURR_SKEY
+- source_path: datasets.Plant BU Mapping.columns.CMPNY_CD
+  target_name: CMPNY_CD
+- source_path: datasets.Plant BU Mapping.columns.SRC_CMPNY_CD
+  target_name: SRC_CMPNY_CD
+- source_path: datasets.Plant BU Mapping.columns.PLANT
+  target_name: PLANT_BU_MAPPING_PLANT
+- source_path: datasets.Plant BU Mapping.columns.BU
+  target_name: PLANT_BU_MAPPING_BU
+- source_path: datasets.Plant BU Mapping.columns.CURR_FLG
+  target_name: PLANT_BU_MAPPING_CURR_FLG
+- source_path: datasets.Plant BU Mapping.columns.UPDATE_TS
+  target_name: PLANT_BU_MAPPING_UPDATE_TS
+- source_path: datasets.Plant Dim.columns.BUSINESS_UNIT
+  target_name: PLANT_DIM_BUSINESS_UNIT
+- source_path: datasets.Plant Dim.columns.SEGMENT_NAME
+  target_name: PLANT_DIM_SEGMENT_NAME
+- source_path: datasets.Plant Dim.columns.SOURCE_SYSTEM_NAME
+  target_name: PLANT_DIM_SOURCE_SYSTEM_NAME
+- source_path: datasets.Plant Dim.columns.TPLANT_HIST_SKEY
+  target_name: TPLANT_HIST_SKEY
+- source_path: datasets.Plant Dim.columns.TPLANT_CURR_SKEY
+  target_name: PLANT_DIM_TPLANT_CURR_SKEY
+- source_path: datasets.Plant Dim.columns.PLANT
+  target_name: PLANT_DIM_PLANT
+- source_path: datasets.Plant Dim.columns.VLD_TO
+  target_name: VLD_TO
+- source_path: datasets.Plant Dim.columns.VLD_FRM
+  target_name: VLD_FRM
+- source_path: datasets.Plant Dim.columns.SHORT_DSCR
+  target_name: SHORT_DSCR
+- source_path: datasets.Plant Dim.columns.Plant Description
+  target_name: PLANT_DESCRIPTION
+- source_path: datasets.Plant Dim.columns.CURR_FLG
+  target_name: PLANT_DIM_CURR_FLG
+- source_path: datasets.Plant Dim.columns.UPDATE_TS
+  target_name: PLANT_DIM_UPDATE_TS
+- source_path: datasets.Plant Dim.columns.DATE_PART
+  target_name: DATE_PART
+- source_path: datasets.Plant Dim.columns.HOUR_PART
+  target_name: HOUR_PART
+- source_path: metrics.Today
+  target_name: TODAY
+- source_path: metrics.Corporate IOH
+  target_name: CORPORATE_IOH
+- source_path: metrics.Corporate DSI Monthly
+  target_name: CORPORATE_DSI_MONTHLY
+- source_path: metrics.Corporate DSI Quarterly
+  target_name: CORPORATE_DSI_QUARTERLY
+- source_path: metrics.Corporate DSI Yearly
+  target_name: CORPORATE_DSI_YEARLY
+- source_path: metrics.Corporate COS
+  target_name: CORPORATE_COS
+- source_path: metrics.Source Value Total Stock
+  target_name: SOURCE_VALUE_TOTAL_STOCK
+- source_path: metrics.Corporate DSI Last Refreshed
+  target_name: CORPORATE_DSI_LAST_REFRESHED
+- source_path: metrics.Inventory Fact Last Refreshed
+  target_name: INVENTORY_FACT_LAST_REFRESHED
+- source_path: metrics.Subledger Business Unit Callout
+  target_name: SUBLEDGER_BUSINESS_UNIT_CALLOUT
+- source_path: metrics.GL Business Unit Callout
+  target_name: GL_BUSINESS_UNIT_CALLOUT
+- source_path: metrics.DSI Calculation Callout
+  target_name: DSI_CALCULATION_CALLOUT
+- source_path: metrics.WAC Value Total Stock
+  target_name: WAC_VALUE_TOTAL_STOCK
 ui:
   intermediate_format: osi
   editor_mode: form
-  output_format: osi
-selection:
-  model_ids:
-    - a3eb7be8-2df8-482b-872b-9d661659895a
-  output_format: osi
-selection:
-  model_ids:
-    - a3eb7be8-2df8-482b-872b-9d661659895a
 options:
   auto_relationships: true
   generate_descriptions: true
-project_id: proj-ffdf
-display_name: ffdf
+  write_strategy: copy
+project_id: proj-pbix-test
+display_name: pbix-test

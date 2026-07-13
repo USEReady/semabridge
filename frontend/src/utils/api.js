@@ -23,7 +23,6 @@ const apiCache = new Map();
 const inFlightApiCalls = new Map();
 // Prevent unbounded growth of in-memory caches. Keep a simple LRU-ish cap.
 const API_CACHE_MAX_ITEMS = Number(import.meta.env.VITE_CACHE_MAX_ITEMS) || 200;
-
 /**
  * Read the csrf_token cookie set by the backend CSRFMiddleware.
  * The cookie is httponly=false so JS can read it and echo it back
@@ -36,6 +35,14 @@ function getCsrfToken() {
     } catch {
         return '';
     }
+}
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+        return parts.pop().split(';').shift();
+    }
+    return null;
 }
 
 function ensureCacheSize() {
@@ -505,6 +512,21 @@ async function authFetch(url, options = {}) {
     const method = String(restOptions.method || 'GET').toUpperCase();
     const maxAttempts = method === 'GET' || method === 'HEAD' ? 2 : 1;
     const retryDelayMs = 250;
+
+    // Automatically inject CSRF token for unsafe methods
+    const unsafeMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
+    if (unsafeMethods.includes(method)) {
+        const csrfToken = getCookie('csrf_token');
+        if (csrfToken) {
+            restOptions.headers = {
+                ...restOptions.headers,
+                'x-csrf-token': csrfToken,
+            };
+        } else if (import.meta.env.DEV) {
+            console.warn('CSRF token cookie not found. Request may be rejected by the server.');
+        }
+    }
+
     // Inject X-Fabric-Context header if workspace ID is available
     let workspaceId = null;
     // tokenPresent is always true when using HttpOnly cookie auth (can't be read from JS)
