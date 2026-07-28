@@ -26,6 +26,7 @@ from semabridge.connectors.schema_manager import SnowflakeSchemaManager
 from semabridge.connectors.measure_sync import MeasureSynchronizer
 from semabridge.connectors.ddl_builder import SemanticViewBuilder
 from semabridge.connectors.translator import MetricExpressionTranslator
+from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.connectors.snowflake_emitter_parts import renderers as _renderers
 
 if TYPE_CHECKING:
@@ -101,6 +102,13 @@ class SnowflakeEmitter(BaseEmitter):
             connection_manager=self.connection_manager,
             translator=self.translator,
         )
+        # Shared with SemanticViewBuilder and every DDL sub-builder so all
+        # drop reasons (schema mismatch, DDL-emission skips, DDL-deployment
+        # rejections) land in one place. Cleared in place (not reassigned)
+        # at the start of each deploy so this object identity — and every
+        # sub-builder's reference to it — stays valid across reused emitter
+        # instances.
+        self.drop_ledger = DropLedger()
         self.semantic_view_builder = SemanticViewBuilder(
             config=self.config,
             behavior=self.behavior,
@@ -109,6 +117,7 @@ class SnowflakeEmitter(BaseEmitter):
             schema_manager=self.schema_manager,
             dup_name_repo=self._dup_name_repo,
             translator=self.translator,
+            drop_ledger=self.drop_ledger,
         )
 
     # =========================================================================
@@ -144,6 +153,13 @@ class SnowflakeEmitter(BaseEmitter):
         """Common orchestration for deploying SML or OSI models to Snowflake."""
         try:
             self.last_deployment_error = None
+            # Reset per-run tracking so a reused emitter instance doesn't carry
+            # stale dropped-metric/smoke-test warnings over from a prior deploy.
+            self._dropped_metrics = []
+            self._smoke_test_warnings = []
+            # Cleared in place (see __init__) so SemanticViewBuilder's shared
+            # reference to this same ledger stays valid.
+            self.drop_ledger.clear()
             deploy_started_at = time.perf_counter()
             model_name = getattr(model, "unique_name", None) or getattr(model, "label", None) or "<unnamed_model>"
             path_type = "OSI" if is_osi else "SML"
@@ -167,10 +183,9 @@ class SnowflakeEmitter(BaseEmitter):
                     self._auto_execute_precompute_suggestions(model, cur)
                     
                     if getattr(self.sf_behavior, 'auto_create_enriched_view', False):
-                        enriched_view = self._create_enriched_view(model, cur)
-                        if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
-                            fact_table = self._identify_fact_table(model)
-                            if fact_table:
+                        for fact_table in self._get_fact_tables_needing_enrichment(model):
+                            enriched_view = self._create_enriched_view(model, cur, fact_table=fact_table)
+                            if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
                                 mapping = getattr(self.sf_behavior, 'source_table_mapping', None)
                                 if mapping is None:
                                     # Keep mapping local to emitter instance
@@ -376,10 +391,19 @@ class SnowflakeEmitter(BaseEmitter):
                         if _en in _seen_enriched:
                             continue
                         _seen_enriched.add(_en)
+                        # Resolve which dataset this specific enriched view belongs to
+                        # (e.g. "SALESFACT_ENRICHED" -> "SalesFact") so the refresh
+                        # rebuilds the matching view instead of always guessing the
+                        # same single fact table.
+                        _candidate_name = _en[: -len("_ENRICHED")] if _en.endswith("_ENRICHED") else _en
+                        _candidate_dataset = self._get_dataset_by_name(model, _candidate_name)
+                        _refresh_fact_table = (
+                            getattr(_candidate_dataset, "unique_name", None) or _candidate_name
+                        )
                         # Recreate the enriched view so column count matches the current
                         # fact table regardless of when it was last created.
                         try:
-                            _refreshed = self._create_enriched_view(model, cur)
+                            _refreshed = self._create_enriched_view(model, cur, fact_table=_refresh_fact_table)
                             if _refreshed:
                                 logger.info(
                                     "Pre-refreshed enriched view '%s' to sync column count", _refreshed
@@ -452,6 +476,35 @@ class SnowflakeEmitter(BaseEmitter):
                                 "DDL[%d] pass %d: fixing invalid identifier '%s'",
                                 idx, _pass + 1, _invalid_id,
                             )
+                            # Track metric-definition drops (as opposed to anchor-column
+                            # substitutions like MAX_DATE/MAX_MONTHINDEX, which keep the
+                            # metric's real semantics) so the user gets a clear final
+                            # summary of which metrics didn't make it into the deployed
+                            # semantic view, instead of this being buried in these
+                            # pass-by-pass WARNING logs.
+                            _invalid_upper = _invalid_id.upper().replace('"', "")
+                            if "." in _invalid_id and _invalid_upper not in ("MAX_DATE", "MAX_MONTHINDEX"):
+                                # Resolve the raw rejected identifier (e.g. a
+                                # table.column reference inside a metric's SQL)
+                                # back to the METRICS-clause name that declares
+                                # it, so the ledger records the same metric
+                                # identity used everywhere else (the SML
+                                # snapshot's unique_name-derived name) instead
+                                # of an opaque SQL identifier no downstream
+                                # reconciliation can match against.
+                                _dropped_metric_name = self._resolve_metric_name_for_invalid_identifier(
+                                    _current_sql, _invalid_id
+                                )
+                                self._dropped_metrics.append(
+                                    {"metric": _dropped_metric_name, "reason": str(_current_exc)}
+                                )
+                                self.drop_ledger.record(
+                                    "metric", _dropped_metric_name, DropStage.DDL_DEPLOYMENT,
+                                    "Snowflake rejected this identifier when executing the "
+                                    "compiled semantic-view DDL, and it could not be "
+                                    "automatically remediated.",
+                                    detail=str(_current_exc)[:300],
+                                )
                             _current_sql = _fixed_sql
                             try:
                                 self.connection_manager._execute_sql(
@@ -480,7 +533,7 @@ class SnowflakeEmitter(BaseEmitter):
                     if not _m:
                         continue
                     _view_name = _m.group(1)
-                    _smoke_err = self._smoke_test_semantic_view(cur, _view_name)
+                    _smoke_err = self._smoke_test_semantic_view(cur, _view_name, _ddl_sql)
                     if _smoke_err:
                         logger.warning(
                             "[%s] Semantic view '%s' deployed but smoke test failed: %s",
@@ -488,11 +541,32 @@ class SnowflakeEmitter(BaseEmitter):
                         )
                         # Non-fatal: view was accepted by Snowflake DDL validation.
                         # Surface as a warning in the run log without rolling back.
-                        if not hasattr(self, "_smoke_test_warnings"):
-                            self._smoke_test_warnings = []
                         self._smoke_test_warnings.append(
                             {"view": _view_name, "error": _smoke_err}
                         )
+
+                # Final run summary: surface any metrics that were dropped during
+                # auto-remediation. These are non-fatal to deployment (Snowflake
+                # accepted the DDL after nulling them out) but the user needs a
+                # clear, un-missable record of which metrics didn't make it in.
+                if self._dropped_metrics:
+                    logger.warning("=" * 70)
+                    logger.warning(
+                        "⚠️  [%s] %d metric(s) DROPPED from '%s' — Snowflake rejected "
+                        "their definition, so they were replaced with "
+                        "CAST(NULL AS DOUBLE) to let deployment complete:",
+                        path_type, len(self._dropped_metrics), model_name,
+                    )
+                    for _dm in self._dropped_metrics:
+                        logger.warning("  - %s: %s", _dm["metric"], _dm["reason"])
+                    logger.warning(
+                        "These metrics will return NULL until translated manually. "
+                        "This commonly affects time-comparison metrics (SPLY/YoY) "
+                        "whose DAX references another metric inside CALCULATE(...), "
+                        "which Snowflake semantic views cannot express as a "
+                        "single-level aggregate."
+                    )
+                    logger.warning("=" * 70)
 
                 logger.info("[%s] success model=%s (%.2fs)", path_type, model_name, time.perf_counter() - deploy_started_at)
                 return True
@@ -506,21 +580,93 @@ class SnowflakeEmitter(BaseEmitter):
             logger.error("[%s] FAILED model=%s: %s", path_type, model_name, exc, exc_info=True)
             return False
 
-    def _smoke_test_semantic_view(self, cursor: Any, view_name: str) -> Optional[str]:
-        """Run a lightweight SELECT against the semantic view to catch runtime errors.
+    @staticmethod
+    def _first_semantic_view_ref(ddl: str) -> Optional[Tuple[str, str, str]]:
+        """
+        Find the first declared METRICS or DIMENSIONS entry in a semantic-view
+        DDL, e.g. '  SALES_FACT."TOTAL_REVENUE" AS SUM(...)' -> ("METRICS",
+        "SALES_FACT", "TOTAL_REVENUE"). Used to build a minimal, valid
+        SEMANTIC_VIEW() smoke-test query without hardcoding any dataset- or
+        model-specific names.
+        """
+        section: Optional[str] = None
+        for line in (ddl or "").splitlines():
+            stripped = line.strip()
+            upper = stripped.upper()
+            if upper.startswith("METRICS ("):
+                section = "METRICS"
+                continue
+            if upper.startswith("DIMENSIONS ("):
+                section = "DIMENSIONS"
+                continue
+            if stripped.startswith(")"):
+                section = None
+                continue
+            if section:
+                ref_match = re.match(r'^(\w+)\."?(\w+)"?\s+AS\s', stripped)
+                if ref_match:
+                    return section, ref_match.group(1), ref_match.group(2)
+        return None
+
+    @staticmethod
+    def _resolve_metric_name_for_invalid_identifier(ddl: str, invalid_id: str) -> str:
+        """Map a rejected SQL identifier back to the METRICS-clause name
+        whose expression contains it.
+
+        Best-effort and read-only: scans the METRICS( ... ) block for the
+        first line whose text contains the invalid identifier and returns
+        that line's declared name. Falls back to the raw identifier if no
+        owning METRICS line is found (e.g. the rejection came from
+        TABLES/DIMENSIONS/RELATIONSHIPS instead), so callers never regress
+        to worse-than-today behaviour.
+        """
+        invalid_norm = invalid_id.upper().replace('"', "")
+        in_metrics = False
+        for line in (ddl or "").splitlines():
+            stripped_upper = line.strip().upper()
+            if stripped_upper.startswith("METRICS ("):
+                in_metrics = True
+                continue
+            if in_metrics and re.match(r'^\s*\)\s*;?\s*$', line):
+                in_metrics = False
+                continue
+            if not in_metrics:
+                continue
+            if invalid_norm in line.upper().replace('"', ""):
+                m = re.search(r'\."([^"]+)"\s+AS\s+', line)
+                if m:
+                    return m.group(1)
+        return invalid_id
+
+    def _smoke_test_semantic_view(self, cursor: Any, view_name: str, ddl: str = "") -> Optional[str]:
+        """Run a lightweight query against the semantic view to catch runtime errors.
 
         Snowflake accepts some invalid DDL that only fails at query time
         (e.g., column referenced in DIMENSIONS that doesn't exist in the physical table).
 
+        Semantic views cannot be queried with a plain `SELECT * FROM view` — Snowflake
+        requires the `SEMANTIC_VIEW(view METRICS ... | DIMENSIONS ...)` table function.
+        A bare SELECT always fails with a false-negative "does not exist" error, so this
+        pulls one real METRICS or DIMENSIONS reference straight out of the generated DDL
+        (no hardcoded names) and queries through it.
+
         Args:
             cursor: Active Snowflake cursor.
             view_name: Name of the semantic view to test.
+            ddl: The CREATE SEMANTIC VIEW DDL that was just deployed, used to find a
+                real METRICS/DIMENSIONS reference to query through.
 
         Returns:
             None on success; error message string on failure.
         """
-        # Use SHOW COLUMNS to avoid scanning any data — much cheaper than SELECT *
-        test_sql = f'SELECT * FROM "{view_name}" LIMIT 0'
+        ref = self._first_semantic_view_ref(ddl)
+        if not ref:
+            logger.debug("Smoke test skipped for '%s': no METRICS/DIMENSIONS found in DDL", view_name)
+            return None
+        section, alias, name = ref
+        test_sql = (
+            f'SELECT * FROM SEMANTIC_VIEW("{view_name}" {section} {alias}.{name}) LIMIT 0'
+        )
         try:
             self.connection_manager._execute_sql(cursor, test_sql, context=f"smoke_test:{view_name}")
             return None
@@ -1243,6 +1389,28 @@ class SnowflakeEmitter(BaseEmitter):
 
 
 
+    _FACT_KEYWORDS = frozenset({"FACT", "FACTS", "SALES", "TRANSACTION", "TRANSACTIONS"})
+
+    @staticmethod
+    def _tokenize_dataset_name(name: str) -> list[str]:
+        """
+        Split a dataset name into whole "words" so keyword matching can't be
+        fooled by a keyword appearing mid-word (e.g. "Manufacturer" contains
+        "fact" as a substring, "Artifact" and "Satisfaction" do too, but none
+        of them are actual fact tables).
+
+        Splits on non-alphanumeric separators (underscores, spaces, hyphens)
+        and on camelCase/PascalCase boundaries, e.g. "SalesFact" -> ["Sales",
+        "Fact"], but "Manufacturer" stays a single token since it has no
+        internal case transition.
+        """
+        word_re = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+')
+        tokens: list[str] = []
+        for part in re.split(r'[^A-Za-z0-9]+', name or ""):
+            if part:
+                tokens.extend(word_re.findall(part))
+        return [t.upper() for t in tokens if t]
+
     def _identify_fact_table(self, model):
         """
         Automatically identify the fact table in the model.
@@ -1251,11 +1419,13 @@ class SnowflakeEmitter(BaseEmitter):
         datasets = getattr(model, 'datasets', [])
         if not datasets:
             return None
-        
-        # Strategy 1: Look for table with 'FACT' in name
+
+        # Strategy 1: Look for a table whose name contains 'FACT'/'SALES'/'TRANSACTION'
+        # as a whole word — not merely as a substring (e.g. "Manufacturer", "Artifact",
+        # and "Satisfaction" all contain "fact" mid-word but aren't fact tables).
         for dataset in datasets:
-            name_upper = dataset.unique_name.upper()
-            if 'FACT' in name_upper or 'SALES' in name_upper or 'TRANSACTION' in name_upper:
+            tokens = set(self._tokenize_dataset_name(dataset.unique_name))
+            if tokens & self._FACT_KEYWORDS:
                 logger.info(f"✅ Identified fact table: {dataset.unique_name} (keyword match)")
                 return dataset.unique_name
         
@@ -1288,6 +1458,30 @@ class SnowflakeEmitter(BaseEmitter):
         # Fallback: first dataset
         logger.warning(f"⚠️ Using first dataset as fact table: {datasets[0].unique_name}")
         return datasets[0].unique_name
+
+    def _get_fact_tables_needing_enrichment(self, model) -> list[str]:
+        """
+        Return every dataset that actually needs an enriched view, i.e. every
+        distinct target_dataset surfaced by the cross-table-reference pre-compute
+        analysis (the same data behind the "PRE-COMPUTE SUGGESTIONS FOR
+        CROSS-TABLE REFERENCES" log). Falls back to the single best-guess fact
+        table from _identify_fact_table() only when no pre-compute suggestions
+        exist at all.
+        """
+        self.semantic_view_builder._precompute_suggestions(model)
+        seen: set = set()
+        fact_tables: list[str] = []
+        for detail in self.semantic_view_builder.get_precompute_details():
+            target = detail.get("target_dataset")
+            if target and target.casefold() not in seen:
+                seen.add(target.casefold())
+                fact_tables.append(target)
+
+        if fact_tables:
+            return fact_tables
+
+        fallback = self._identify_fact_table(model)
+        return [fallback] if fallback else []
 
 
     def _find_source_table_for_precompute(self, target_table: str, column_name: str):
@@ -1672,12 +1866,19 @@ class SnowflakeEmitter(BaseEmitter):
         )
 
 
-    def _create_enriched_view(self, model, cursor):
+    def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None):
         """
         Automatically create an enriched view with pre-computed columns and anchors.
         This view can be used as the source for semantic model.
+
+        `fact_table` may be passed explicitly by callers that already know which
+        dataset needs enrichment (e.g. looping over every fact table identified by
+        the pre-compute analysis, or refreshing a specific *_ENRICHED view found in
+        generated DDL). When omitted, falls back to the single best-guess fact
+        table from _identify_fact_table().
         """
-        fact_table = self._identify_fact_table(model)
+        if not fact_table:
+            fact_table = self._identify_fact_table(model)
         if not fact_table:
             return None
         

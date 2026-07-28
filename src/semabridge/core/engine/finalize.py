@@ -157,6 +157,8 @@ def _step10_finalize(
     self._summary.sml_snapshot_id = context.sml_snapshot_id
     self._summary.target_artifact_path = context.target_artifact_path
     self._summary.routing_summary = context.routing_summary
+    if context.drop_ledger.records:
+        self._summary.dropped_entities = list(context.drop_ledger.records)
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

@@ -379,6 +379,7 @@ def _run_single_job(
             "console": _build_console_details(summary_data),
             "run_id": summary_data.get("run_id"),
             "missing_dims": summary_data.get("missing_dims") or {},
+            "dropped_entities": summary_data.get("dropped_entities") or [],
         }
     except Exception as exc:
         logger.error("Sync failed for model '%s': %s", model_label, exc)

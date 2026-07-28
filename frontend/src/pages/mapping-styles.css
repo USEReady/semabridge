@@ -124,6 +124,41 @@
   background: #da3633;
   border-color: #da3633;
 }
+
+/* ── Tier 2: status multi-select checkboxes ─────────────────────────────── */
+.filter-checks {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.filter-check {
+  padding: 0.35rem 0.75rem;
+  border: 1px solid #30363d;
+  border-radius: 14px;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.filter-check.active {
+  background: rgba(31, 110, 235, 0.18);
+  border-color: #1f6eeb;
+  color: #58a6ff;
+}
+
+.filter-check.collision-check.active {
+  background: rgba(218, 54, 51, 0.18);
+  border-color: #da3633;
+  color: #f87171;
+}
+
+.filter-check.needs-review.active {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
 /* Add to mapping-styles.css */
 
 .dry-run-panel {

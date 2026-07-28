@@ -752,7 +752,7 @@ class SyncOrchestrator:
             "tmsl": raw_tmsl,
             "workspace_id": "local",
             "dataset_id": item.model_name,
-            "measure_aliases": discovered.get("measure_aliases", []),
+            "field_aliases": discovered.get("field_aliases", []),
         }
 
         osi_model = converter.to_osi(tmsl_data)

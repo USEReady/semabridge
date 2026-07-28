@@ -278,19 +278,53 @@ def find_project_snapshot(project_id: str, snapshot_id: str) -> Optional[Dict[st
 def _compat_now_iso() -> str:
     return datetime.utcnow().isoformat()
 
+def _compat_store_write_path() -> Path:
+    """Stable, per-user location for the compat write-through cache.
+
+    This file is rewritten on nearly every mutation (see _compat_save_store)
+    and is already .gitignore'd — it's local runtime state, not shared
+    config. It must never live inside the repo's Config/ directory: in this
+    environment (and likely others) the repo sits inside a live-syncing
+    OneDrive folder, and Config/.semabridge_compat_store.json is managed by
+    OneDrive's cloud-file provider (confirmed via `fsutil reparsepoint
+    query` showing reparse tag 0x9000601a — Microsoft's cloud-files tag —
+    while OneDrive.exe was actively running). OneDrive can transiently hold
+    an exclusive lock on such a file mid-sync, which surfaces here as
+    `PermissionError: [Errno 13] Permission denied` on write — not a missing
+    directory, wrong relative path, or a file left read-only.
+
+    ~/.semabridge/ mirrors the location already used for the log file
+    (resolve_log_file_path) and the DuckDB fallback DB
+    (session_factory.fetch_latest_database_url), neither of which is
+    typically inside a cloud-sync folder.
+    """
+    stable_dir = Path.home() / ".semabridge"
+    stable_dir.mkdir(parents=True, exist_ok=True)
+    return stable_dir / ".semabridge_compat_store.json"
+
+
 def _compat_store_path() -> Path:
-    p = Path("config/.semabridge_compat_store.json")
-    if p.exists():
-        return p
-    legacy = Path(".semabridge_compat_store.json")
-    if legacy.exists():
-        return legacy
-    
-    # If config doesn't exist, write to current dir
-    if not Path("config").exists():
-        return legacy
-        
-    return p
+    """Resolve where to *load* the compat store from.
+
+    Prefers the stable per-user location. Falls back to the old
+    repo-relative locations only so a store from before this fix isn't
+    silently lost — those are read-only fallbacks; every save goes through
+    _compat_store_write_path(), so the data migrates to the stable location
+    on the very next write and the legacy path is never touched again.
+    """
+    stable_path = _compat_store_write_path()
+    if stable_path.exists():
+        return stable_path
+
+    for legacy_candidate in (
+        Path("config/.semabridge_compat_store.json"),
+        Path("Config/.semabridge_compat_store.json"),
+        Path(".semabridge_compat_store.json"),
+    ):
+        if legacy_candidate.exists():
+            return legacy_candidate
+
+    return stable_path
 
 
 def _compat_repo_root() -> Path:
@@ -569,7 +603,7 @@ def _compat_save_store() -> None:
         "job_config": _compat_job_config,
     }
     try:
-        _compat_store_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        _compat_store_write_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to persist compat store: %s", exc)
 

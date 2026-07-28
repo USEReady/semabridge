@@ -388,6 +388,7 @@ const SNOWFLAKE_FIELDS = [
     { key: 'user', label: 'Username', placeholder: 'your_username', secret: false, required: true },
     { key: 'password', label: 'Password', placeholder: 'Enter your Snowflake password', secret: true, passwordOnly: true },
     { key: 'private_key', label: 'Private Key (PEM)', placeholder: 'Paste your private key content', secret: true, keypairOnly: true, multiline: true },
+    { key: 'private_key_passphrase', label: 'Private Key Passphrase', placeholder: 'Optional — required if key is encrypted', secret: true, keypairOnly: true, hint: 'Leave blank if your private key is unencrypted. Required if it was generated with a passphrase (recommended and most common).' },
     { key: 'oauth_client_id', label: 'OAuth Client ID', placeholder: 'Enter your OAuth client ID', secret: false, oauthOnly: true },
     { key: 'oauth_client_secret', label: 'OAuth Client Secret', placeholder: 'Enter your OAuth client secret', secret: true, oauthOnly: true },
     { key: 'warehouse', label: 'Warehouse', placeholder: 'COMPUTE_WH', secret: false, required: true },
@@ -439,6 +440,7 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
             if (authMode === 'password') {
                 filtered.auth_type = 'password';
                 delete filtered.private_key;
+                delete filtered.private_key_passphrase;
                 delete filtered.oauth_client_id;
                 delete filtered.oauth_client_secret;
                 delete filtered.oauth_token_endpoint;
@@ -447,6 +449,7 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
                 filtered.auth_type = 'oauth';
                 delete filtered.password;
                 delete filtered.private_key;
+                delete filtered.private_key_passphrase;
             } else if (authMode === 'keypair') {
                 filtered.auth_type = 'keypair';
                 delete filtered.password;
@@ -626,6 +629,9 @@ function SnowflakeAccountForm({ initialTag, status, onSave, onCancel }) {
                                 </button>
                             )}
                         </div>
+                        {field.hint && (
+                            <p className="mt-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{field.hint}</p>
+                        )}
                     </div>
                 ))}
 

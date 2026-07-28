@@ -83,7 +83,7 @@ class SourceFormat(BaseModel):
     
     # For PBIX source
     pbix_path: Optional[str] = None
-    measure_aliases: List[Dict[str, Any]] = Field(default_factory=list)
+    field_aliases: List[Dict[str, Any]] = Field(default_factory=list)
     
     # Row counts for classification
     row_counts: Dict[str, int] = Field(default_factory=dict)
@@ -321,7 +321,7 @@ def from_pbix_tmsl(
     run_id: str,
     tmsl: Dict[str, Any],
     pbix_path: str,
-    measure_aliases: Optional[List[Dict[str, Any]]] = None,
+    field_aliases: Optional[List[Dict[str, Any]]] = None,
 ) -> SourceFormat:
     """
     Create SourceFormat from local PBIX DataModelSchema extraction.
@@ -334,7 +334,7 @@ def from_pbix_tmsl(
         run_id: Unique run identifier.
         tmsl: Raw DataModelSchema dict extracted from the .pbix archive.
         pbix_path: Absolute path to the source .pbix file.
-        measure_aliases: Optional list of report layout aliases.
+        field_aliases: Optional list of report layout aliases (measures and columns).
     """
     model = tmsl.get("model", {})
     dataset_name = model.get("name", "")
@@ -346,5 +346,5 @@ def from_pbix_tmsl(
         tmsl_definition=tmsl,
         dataset_name=dataset_name,
         pbix_path=pbix_path,
-        measure_aliases=measure_aliases or [],
+        field_aliases=field_aliases or [],
     )

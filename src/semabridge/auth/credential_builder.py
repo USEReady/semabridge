@@ -96,6 +96,11 @@ def build_snowflake_config(
     if base_config.oauth_client_secret:
         base_oauth_secret = base_config.oauth_client_secret.get_secret_value()
 
+    # Resolve base_config private_key_passphrase (SecretStr → str)
+    base_passphrase: Optional[str] = None
+    if base_config.private_key_passphrase:
+        base_passphrase = base_config.private_key_passphrase.get_secret_value()
+
     import os as _os
     sf_account = (
         env_map.get("SNOWFLAKE_ACCOUNT")
@@ -127,6 +132,7 @@ def build_snowflake_config(
         password=env_map.get("SNOWFLAKE_PASSWORD") or base_password,
         auth_type=env_map.get("SNOWFLAKE_AUTH_TYPE") or base_config.auth_type,
         private_key=env_map.get("SNOWFLAKE_PRIVATE_KEY") or base_config.private_key,
+        private_key_passphrase=env_map.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE") or base_passphrase,
         oauth_client_id=env_map.get("SNOWFLAKE_OAUTH_CLIENT_ID") or base_config.oauth_client_id,
         oauth_client_secret=env_map.get("SNOWFLAKE_OAUTH_CLIENT_SECRET") or base_oauth_secret,
         oauth_token_endpoint=env_map.get("SNOWFLAKE_OAUTH_TOKEN_ENDPOINT") or base_config.oauth_token_endpoint,

@@ -143,7 +143,8 @@ semantic_sync_output*.txt
 findstr_exec_output.txt
 SEARCH_RESULTS.md
 BACKEND_ERRORS_ANALYSIS.md
-
+rsa_key.p8
+rsa_key.pub
 # ============================================================================
 # OS Specific
 # ============================================================================

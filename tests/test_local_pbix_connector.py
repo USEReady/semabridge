@@ -378,8 +378,8 @@ class TestPBIXPresentationMetadata:
         result = connector.discover()
         assert "presentation_metadata" in result
         assert result["presentation_metadata"] == []
-        assert "measure_aliases" in result
-        assert result["measure_aliases"] == []
+        assert "field_aliases" in result
+        assert result["field_aliases"] == []
 
     def test_discover_malformed_layout(self, tmp_path: Path) -> None:
         """Should log a warning and continue if layout exists but is malformed."""
@@ -392,7 +392,7 @@ class TestPBIXPresentationMetadata:
         connector.authenticate()
         result = connector.discover()
         assert result["presentation_metadata"] == []
-        assert result["measure_aliases"] == []
+        assert result["field_aliases"] == []
 
     def test_multiple_visuals_same_measure_and_order(self, tmp_path: Path) -> None:
         """Verify multiple visual aliases are extracted preserving discovery order."""
@@ -480,13 +480,14 @@ class TestPBIXPresentationMetadata:
 
         pm = result["presentation_metadata"]
         assert len(pm) == 3
-        assert pm[0] == {"measure": "Revenue", "title": "Total Revenue", "page": "Executive Dashboard", "visual_type": "Card"}
-        assert pm[1] == {"measure": "Revenue", "title": "Monthly Revenue", "page": "Executive Dashboard", "visual_type": "BarChart"}
-        assert pm[2] == {"measure": "Revenue", "title": "Revenue Trend", "page": "Executive Dashboard", "visual_type": "LineChart"}
+        assert pm[0] == {"field": "Revenue", "field_type": "measure", "table": None, "title": "Total Revenue", "page": "Executive Dashboard", "visual_type": "Card"}
+        assert pm[1] == {"field": "Revenue", "field_type": "measure", "table": None, "title": "Monthly Revenue", "page": "Executive Dashboard", "visual_type": "BarChart"}
+        assert pm[2] == {"field": "Revenue", "field_type": "measure", "table": None, "title": "Revenue Trend", "page": "Executive Dashboard", "visual_type": "LineChart"}
 
-        ma = result["measure_aliases"]
+        ma = result["field_aliases"]
         assert len(ma) == 1
-        assert ma[0]["measure"] == "Revenue"
+        assert ma[0]["field"] == "Revenue"
+        assert ma[0]["field_type"] == "measure"
         assert ma[0]["aliases"] == ["Total Revenue", "Monthly Revenue", "Revenue Trend"]
 
     def test_deduplication_and_page_independence(self, tmp_path: Path) -> None:
@@ -552,12 +553,12 @@ class TestPBIXPresentationMetadata:
         pm = result["presentation_metadata"]
         # Duplicate on Page A is deduplicated, but Page B remains distinct
         assert len(pm) == 2
-        assert pm[0] == {"measure": "Revenue", "title": "Total Revenue", "page": "Page A", "visual_type": "Card"}
-        assert pm[1] == {"measure": "Revenue", "title": "Total Revenue", "page": "Page B", "visual_type": "Card"}
+        assert pm[0] == {"field": "Revenue", "field_type": "measure", "table": None, "title": "Total Revenue", "page": "Page A", "visual_type": "Card"}
+        assert pm[1] == {"field": "Revenue", "field_type": "measure", "table": None, "title": "Total Revenue", "page": "Page B", "visual_type": "Card"}
 
-        ma = result["measure_aliases"]
+        ma = result["field_aliases"]
         assert len(ma) == 1
-        assert ma[0]["measure"] == "Revenue"
+        assert ma[0]["field"] == "Revenue"
         assert ma[0]["aliases"] == ["Total Revenue"]  # Deduplicated across pages
 
     def test_exclude_measure_name_from_aliases(self, tmp_path: Path) -> None:
@@ -617,9 +618,9 @@ class TestPBIXPresentationMetadata:
         pm = result["presentation_metadata"]
         assert len(pm) == 3
 
-        ma = result["measure_aliases"]
+        ma = result["field_aliases"]
         assert len(ma) == 1
-        assert ma[0]["measure"] == "Revenue"
+        assert ma[0]["field"] == "Revenue"
         # Only "Total Revenue" remains, "Revenue" and "revenue" are excluded
         assert ma[0]["aliases"] == ["Total Revenue"]
 
@@ -689,10 +690,19 @@ class TestPBIXPresentationMetadata:
         pm = result["presentation_metadata"]
         assert len(pm) == 4
         for item in pm:
-            assert item["measure"] == "Revenue"
+            assert item["field"] == "Revenue"
+            # First two came from an explicit Measure node ("measure"); the
+            # last two are bare queryRef matches with no adjacent node to
+            # type them ("unknown") — both still resolve to the same
+            # field_aliases entry below since "unknown" is folded into the
+            # measure bucket (measure names are globally unique, so this is
+            # always safe).
+            assert item["field_type"] in ("measure", "unknown")
 
-        ma = result["measure_aliases"]
+        ma = result["field_aliases"]
         assert len(ma) == 1
+        assert ma[0]["field"] == "Revenue"
+        assert ma[0]["field_type"] == "measure"
         assert ma[0]["aliases"] == ["Alias 1", "Alias 2", "Alias 3", "Alias 4"]
 
     def test_optional_fields_and_empty_titles(self, tmp_path: Path) -> None:
@@ -753,7 +763,9 @@ class TestPBIXPresentationMetadata:
         pm = result["presentation_metadata"]
         assert len(pm) == 1
         assert pm[0] == {
-            "measure": "Revenue",
+            "field": "Revenue",
+            "field_type": "measure",
+            "table": None,
             "title": "Valid Title",
             "page": "Unknown",
             "visual_type": "Unknown"
@@ -795,7 +807,7 @@ class TestPBIXPresentationMetadata:
 
         pm = result["presentation_metadata"]
         assert len(pm) == 1
-        assert pm[0]["measure"] == "Revenue"
+        assert pm[0]["field"] == "Revenue"
         assert pm[0]["title"] == "Partial Success"
 
     def test_large_layout_stress_test(self, tmp_path: Path) -> None:
@@ -846,17 +858,266 @@ class TestPBIXPresentationMetadata:
         assert len(pm) == 100
         for i, item in enumerate(pm):
             measure_index = i % 50
-            assert item["measure"] == f"Measure_{measure_index}"
+            assert item["field"] == f"Measure_{measure_index}"
             assert item["title"] == f"Alias_{i}"
 
-        ma = result["measure_aliases"]
+        ma = result["field_aliases"]
         assert len(ma) == 50
         # Check that the aliases for each measure are collected correctly
         for item in ma:
-            measure_num = int(item["measure"].split("_")[1])
+            measure_num = int(item["field"].split("_")[1])
             expected_aliases = [f"Alias_{measure_num}", f"Alias_{measure_num + 50}"]
             assert item["aliases"] == expected_aliases
 
         elapsed = end_time - start_time
         print(f"Stress test completed in {elapsed:.4f} seconds")
+
+    def test_column_bound_visual_produces_table_scoped_field_alias(self, tmp_path: Path) -> None:
+        """A column-bound visual (Column node, not Measure) must produce a
+        field_aliases entry with field_type='column' and its resolved
+        source table, mirroring the real PBIX Select-item shape:
+        {"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isVanArsdel"}}
+        """
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Is Premium Product"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "p", "Entity": "Product", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isPremium"}}],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "column_alias.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 1
+        assert pm[0]["field"] == "isPremium"
+        assert pm[0]["field_type"] == "column"
+        assert pm[0]["table"] == "Product"
+
+        fa = result["field_aliases"]
+        assert len(fa) == 1
+        assert fa[0]["field"] == "isPremium"
+        assert fa[0]["field_type"] == "column"
+        assert fa[0]["table"] == "Product"
+        assert fa[0]["aliases"] == ["Is Premium Product"]
+
+    def test_zero_column_bound_visuals_yields_empty_result_no_error(self, tmp_path: Path) -> None:
+        """A layout with visuals present but none binding any column must
+        produce an empty result — no error, no spurious column entries."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Revenue"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "no_columns.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        fa = result["field_aliases"]
+        assert all(item["field_type"] != "column" for item in fa)
+
+    def test_same_name_measure_and_column_produce_distinct_field_alias_entries(self, tmp_path: Path) -> None:
+        """A measure and a column sharing a name (legal per TOM — measure
+        names are model-global, column names are per-table) must produce
+        two SEPARATE field_aliases entries, not one merged entry."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Column Alias Label"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "a", "Entity": "TableA", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "a"}}, "Property": "SharedName"}}],
+                                }}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Measure Alias Label"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "b", "Entity": "TableB", "Type": 0}],
+                                    "Select": [{"Measure": {"Expression": {"SourceRef": {"Source": "b"}}, "Property": "SharedName"}}],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "measure_column_collision.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        fa = result["field_aliases"]
+        assert len(fa) == 2
+        column_entry = next(f for f in fa if f["field_type"] == "column")
+        measure_entry = next(f for f in fa if f["field_type"] == "measure")
+        assert column_entry["table"] == "TableA"
+        assert column_entry["aliases"] == ["Column Alias Label"]
+        assert measure_entry["aliases"] == ["Measure Alias Label"]
+
+    def test_same_column_name_different_tables_produce_distinct_table_scoped_entries(self, tmp_path: Path) -> None:
+        """Two different tables each having a column with the same name
+        (legal — TMSL only requires column-name uniqueness within a table)
+        must produce two SEPARATE, table-scoped field_aliases entries."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Alias For A"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "a", "Entity": "TableA", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "a"}}, "Property": "SharedName"}}],
+                                }}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Alias For B"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "b", "Entity": "TableB", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "b"}}, "Property": "SharedName"}}],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "column_column_collision.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        fa = result["field_aliases"]
+        assert len(fa) == 2
+        by_table = {f["table"]: f["aliases"] for f in fa}
+        assert by_table["TableA"] == ["Alias For A"]
+        assert by_table["TableB"] == ["Alias For B"]
+
+    def test_column_with_unresolvable_table_still_extracted_with_none_table(self, tmp_path: Path) -> None:
+        """A column-bound visual whose SourceRef alias isn't defined in any
+        From entry must still be extracted (not dropped), with table=None —
+        matching behavior confirmed against real PBIX data, where bare
+        queryRef-style references never resolve a table either."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Unresolvable Alias"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "x", "Entity": "SomeOtherTable", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "z"}}, "Property": "OrphanColumn"}}],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "unresolvable_table.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        fa = result["field_aliases"]
+        assert len(fa) == 1
+        assert fa[0]["field"] == "OrphanColumn"
+        assert fa[0]["field_type"] == "column"
+        assert fa[0]["table"] is None
+        assert fa[0]["aliases"] == ["Unresolvable Alias"]
 

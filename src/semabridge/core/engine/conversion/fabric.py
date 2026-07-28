@@ -73,7 +73,7 @@ def _convert_fabric_to_sml(
         "display_name": sf.dataset_name or None,
         "project_id": context.project_id,
     }
-    osi_model = TMSLToOSIConverter().to_osi(source_data)
+    osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model  # Store on context for step-7 persistence
     logger.debug(
         f"OSI intermediate: {len(osi_model.datasets)} datasets, "

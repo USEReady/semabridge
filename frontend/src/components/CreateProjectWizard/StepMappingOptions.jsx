@@ -548,6 +548,7 @@ export function StepMappingOptions({
             schemaConflicts={dryRunData?.schema_conflicts || []}
             compatibilityScore={dryRunData?.compatibility_score ?? null}
             onReSync={onRunDryRun}
+            droppedEntities={dryRunData?.dropped_entities || []}
           />
         </div>
       )}

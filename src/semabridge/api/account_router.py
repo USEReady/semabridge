@@ -12,9 +12,47 @@ from pydantic import BaseModel
 from semabridge.api.deps import get_current_user, get_db
 from semabridge.repository.orm.models import Account, Project, User
 from semabridge.utils.logger import get_logger
-from semabridge.auth.encryption import encrypt_token
+from semabridge.auth.encryption import decrypt_token, encrypt_token
 
 logger = get_logger(__name__)
+
+
+def _merge_credential_bundle(prior_encrypted_token: Optional[str], new_credentials: dict) -> dict:
+    """Merge freshly submitted credentials on top of the previously stored bundle.
+
+    Without this, saving a partial update (e.g. editing the warehouse without
+    retyping a secret like private_key_passphrase, which the UI never
+    pre-fills) would silently erase every field the user didn't resubmit,
+    since the caller used to just re-encrypt ``new_credentials`` on its own.
+
+    If the submission declares an ``auth_type``, keys exclusive to other auth
+    modes are purged from the prior bundle first — otherwise switching e.g.
+    password auth to keypair auth would resurrect the stale password via the
+    merge instead of clearing it, mirroring the purge already performed by
+    ``CredentialManager.save_credentials``.
+    """
+    import json
+
+    from semabridge.repository.credential_manager import _AUTH_EXCLUSIVE_KEYS
+
+    merged: dict = {}
+    if prior_encrypted_token:
+        try:
+            decrypted = decrypt_token(prior_encrypted_token)
+            if decrypted:
+                prior = json.loads(decrypted)
+                if isinstance(prior, dict):
+                    merged.update(prior)
+        except Exception:
+            logger.debug("Could not decrypt prior credential bundle for merge", exc_info=True)
+
+    new_auth_type = new_credentials.get("auth_type")
+    if new_auth_type:
+        for stale_key in _AUTH_EXCLUSIVE_KEYS.get(new_auth_type, []):
+            merged.pop(stale_key, None)
+
+    merged.update({k: v for k, v in new_credentials.items() if v})
+    return merged
 
 
 def _try_get_user(request: Request, db: Session) -> Optional[User]:
@@ -85,12 +123,14 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
             if existing.connector_type == body.connector_type.upper():
                 connector = body.connector_type.upper()
                 safe_token = None
+                resolved_auth_type = None
 
                 if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS"):
                     import json
 
-                    clean_creds = {k: v for k, v in body.credentials.items() if v}
+                    clean_creds = _merge_credential_bundle(existing.encrypted_token, body.credentials)
                     safe_token = encrypt_token(json.dumps(clean_creds))
+                    resolved_auth_type = clean_creds.get("auth_type")
                     logger.info(
                         "Refreshed stored credential bundle for %s account %s (%d keys)",
                         connector,
@@ -116,6 +156,8 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
                 existing.identity_email = body.identity_email or existing.identity_email
                 if safe_token is not None:
                     existing.encrypted_token = safe_token
+                if resolved_auth_type is not None:
+                    existing.auth_type = resolved_auth_type
                 existing.status = "Active"
                 db.commit()
                 logger.info(
@@ -135,14 +177,17 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
         # Encrypt the credential bundle at rest
         safe_token = None
         connector = body.connector_type.upper()
+        resolved_auth_type = None
 
         if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS"):
             # New path: full credential bundle as JSON
             import json
-            # Strip empty values to keep the bundle clean
-            clean_creds = {k: v for k, v in body.credentials.items() if v}
+            # No prior row exists for this tag — merge is a no-op beyond
+            # stripping empty values, but reuses the same helper for symmetry.
+            clean_creds = _merge_credential_bundle(None, body.credentials)
             payload_str = json.dumps(clean_creds)
             safe_token = encrypt_token(payload_str)
+            resolved_auth_type = clean_creds.get("auth_type")
             logger.info(
                 "Stored full credential bundle for %s account %s (%d keys)",
                 connector, body.tag, len(clean_creds),
@@ -168,6 +213,7 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
             tag=body.tag,
             identity_email=body.identity_email,
             encrypted_token=safe_token,
+            auth_type=resolved_auth_type,
             status="Active",
             is_default=False,
             owner_id=user.id if user else None,  # Multi-user ownership

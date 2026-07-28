@@ -163,6 +163,11 @@ class OSIColumn(OSIBaseModel):
     )
     # Cortex Analyst advanced AI metadata
     synonyms: List[str] = Field(default_factory=list, description="Alternative names for NLP matching")
+    synonym_sources: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
+    )
+    has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
     is_enum: bool = Field(default=False, description="Exhaustive categorical values indicator")
     cortex_search_service: Optional[str] = Field(default=None, description="Linked Cortex Search Service name")
     sample_values: List[str] = Field(default_factory=list, description="Representative sample values")
@@ -308,6 +313,11 @@ class OSIMetric(OSIBaseModel):
         description="Cortex Analyst access: 'public_access' or 'private_access'"
     )
     synonyms: List[str] = Field(default_factory=list, description="Alternative names for NLP matching")
+    synonym_sources: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
+    )
+    has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
     sql_expression: Optional[str] = None          # Pre-translated SQL (from Snowflake extract)
     complexity_tier: int = 0                       # 0=unknown, 1-5 from DAX analysis
     depends_on_measures: List[str] = Field(default_factory=list)  # Dependency graph

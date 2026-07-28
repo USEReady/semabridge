@@ -61,6 +61,14 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     output_dir = self._model_output_dir("reverse", model_name=context.project_id)
 
     ddls = emitter.generate_ddls(context.sml_model)
+    # Surface DDL-emission-time drops (DAX translation failures, unresolved
+    # references, dropped relationships) on the shared context ledger so
+    # they reach RunSummary.dropped_entities even when Stage 9 (deploy) is
+    # skipped, e.g. for dry-run. getattr guards test doubles / stub emitters
+    # that don't carry a drop_ledger.
+    _emitter_ledger = getattr(emitter, "drop_ledger", None)
+    if _emitter_ledger is not None:
+        context.drop_ledger.extend(_emitter_ledger)
     full_ddl = "\n\n".join(ddls)
     yaml_out = emitter.generate_cortex_yaml(context.sml_model)
 

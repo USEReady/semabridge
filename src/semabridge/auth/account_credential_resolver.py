@@ -54,6 +54,7 @@ _CONNECTOR_ENV_MAP: Dict[str, Dict[str, str]] = {
         "password": "SNOWFLAKE_PASSWORD",
         "auth_type": "SNOWFLAKE_AUTH_TYPE",
         "private_key": "SNOWFLAKE_PRIVATE_KEY",
+        "private_key_passphrase": "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE",
         "oauth_client_id": "SNOWFLAKE_OAUTH_CLIENT_ID",
         "oauth_client_secret": "SNOWFLAKE_OAUTH_CLIENT_SECRET",
         "oauth_token_endpoint": "SNOWFLAKE_OAUTH_TOKEN_ENDPOINT",

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Set, Tuple, Optional
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
 
@@ -14,12 +15,21 @@ logger = get_logger(__name__)
 class DimensionsClauseBuilder:
     """Handles construction and validation of the DIMENSIONS clause."""
 
-    def __init__(self, identifier_sanitizer: Any, schema_manager: Any, sanitizer: Any, translator: Any, behavior: Any):
+    def __init__(
+        self,
+        identifier_sanitizer: Any,
+        schema_manager: Any,
+        sanitizer: Any,
+        translator: Any,
+        behavior: Any,
+        drop_ledger: Optional[DropLedger] = None,
+    ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
         self.sanitizer = sanitizer
         self.translator = translator
         self.behavior = behavior
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def build_for_sml(
         self,
@@ -106,10 +116,23 @@ class DimensionsClauseBuilder:
                         missing_dims.setdefault(attr.dataset, [])
                         if phys_col not in missing_dims[attr.dataset]:
                             missing_dims[attr.dataset].append(phys_col)
+                        self.drop_ledger.record(
+                            "column", attr.unique_name, DropStage.SCHEMA_VALIDATION,
+                            f"Column '{phys_col}' is present in the model but not found in the "
+                            f"live Snowflake schema for dataset '{attr.dataset}'",
+                            dataset=attr.dataset,
+                        )
                         continue
                 else:
                     known_phys = dataset_col_lookup.get(attr.dataset, set())
                     if known_phys and phys_col not in known_phys:
+                        self.drop_ledger.record(
+                            "column", attr.unique_name, DropStage.SCHEMA_VALIDATION,
+                            f"Column '{phys_col}' is present in the model but not found in the "
+                            f"known physical schema for dataset '{attr.dataset}' "
+                            "(no live Snowflake schema was fetched to confirm it)",
+                            dataset=attr.dataset,
+                        )
                         continue
 
                 semantic_name = self.sanitizer.sanitize_semantic_name(attr.unique_name)
@@ -170,25 +193,39 @@ class DimensionsClauseBuilder:
                     continue
                 if col.unique_name.upper() in _SYNTHETIC_COLS:
                     continue
+
+                # Compute phys_col up front so every skip branch below —
+                # including the _LIVE_ONLY_COLS check — reports the column
+                # that actually triggered it, not a stale value left over
+                # from the previous loop iteration (phys_col used to be
+                # computed further down, after this check already read it).
+                if is_osi:
+                    phys_col = self.identifier_sanitizer.sanitize_column(col.unique_name)
+                else:
+                    phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
+
                 # Synthetic date-intelligence columns (MONTHINDEX etc.) are only safe
                 # to emit when the live Snowflake schema confirms they exist.
                 if not _has_live and col.unique_name.upper() in _LIVE_ONLY_COLS:
                     missing_dims.setdefault(dataset.unique_name, [])
                     if phys_col not in missing_dims[dataset.unique_name]:
                         missing_dims[dataset.unique_name].append(phys_col)
+                    self.drop_ledger.record(
+                        "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
+                        f"Column '{phys_col}' is a date-intelligence anchor only safe to emit "
+                        f"when the live Snowflake schema confirms it exists; no live schema was "
+                        f"available for dataset '{dataset.unique_name}'",
+                        dataset=dataset.unique_name,
+                    )
                     continue
-                
+
                 source_expr = getattr(col, 'source_expression', None)
                 if source_expr and not IdentifierSanitizer.is_physical_source_column(source_expr):
                     continue
-                
+
                 semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
                 semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
-                if is_osi:
-                    phys_col = self.identifier_sanitizer.sanitize_column(col.unique_name)
-                else:
-                    phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
-                
+
                 # Prefer live (confirmed Snowflake) schema when available.
                 _live = (live_col_lookup or {}).get(dataset.unique_name)
                 if _live is not None:
@@ -196,10 +233,23 @@ class DimensionsClauseBuilder:
                         missing_dims.setdefault(dataset.unique_name, [])
                         if phys_col not in missing_dims[dataset.unique_name]:
                             missing_dims[dataset.unique_name].append(phys_col)
+                        self.drop_ledger.record(
+                            "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
+                            f"Column '{phys_col}' is present in the model but not found in the "
+                            f"live Snowflake schema for dataset '{dataset.unique_name}'",
+                            dataset=dataset.unique_name,
+                        )
                         continue
                 else:
                     known_phys = dataset_col_lookup.get(dataset.unique_name, set())
                     if known_phys and phys_col not in known_phys:
+                        self.drop_ledger.record(
+                            "column", col.unique_name, DropStage.SCHEMA_VALIDATION,
+                            f"Column '{phys_col}' is present in the model but not found in the "
+                            f"known physical schema for dataset '{dataset.unique_name}' "
+                            "(no live Snowflake schema was fetched to confirm it)",
+                            dataset=dataset.unique_name,
+                        )
                         continue
 
                 dim_key = (alias, semantic_name, phys_col)

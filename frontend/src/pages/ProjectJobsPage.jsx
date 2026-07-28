@@ -4,6 +4,7 @@ import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarCh
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
+import DroppedFieldsPanel from '../components/common/DroppedFieldsPanel';
 import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
@@ -551,6 +552,14 @@ export default function ProjectJobsPage() {
                         {run.status === 'success' && (
                           <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
+
+                        <div style={{ marginBottom: 14 }}>
+                          <DroppedFieldsPanel
+                            entries={(Array.isArray(run.results) ? run.results : []).flatMap(
+                              (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : [])
+                            )}
+                          />
+                        </div>
 
                         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
                           Execution Stages For Selected Run

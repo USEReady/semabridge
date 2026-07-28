@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
@@ -170,7 +171,12 @@ def _is_imported_physical_column(col: Dict[str, Any]) -> bool:
     return True
 
 
-def extract_model_entities(model: Dict[str, Any], target_connector: Optional[str] = None) -> List[Dict[str, Any]]:
+def extract_model_entities(
+    model: Dict[str, Any],
+    target_connector: Optional[str] = None,
+    drop_ledger: Optional[DropLedger] = None,
+) -> List[Dict[str, Any]]:
+    ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
     entities: List[Dict[str, Any]] = []
     model_name = str(model.get("unique_name") or model.get("name") or model.get("label") or "model").strip()
     dataset_lookup: Dict[str, str] = {}
@@ -237,6 +243,12 @@ def extract_model_entities(model: Dict[str, Any], target_connector: Optional[str
                     "normalized_identifier": normalized_identifier,
                     "action": "removed_duplicate_metadata"
                 }))
+                ledger.record(
+                    "column", rcname, DropStage.EXTRACTION,
+                    f"Duplicate physical-column metadata for target identifier "
+                    f"'{normalized_identifier}' — a differently-cased duplicate was kept instead.",
+                    dataset=dataset_name,
+                )
 
         # The final columns list preserves the deduplicated physical columns and keeps other columns untouched
         dedup_columns = list(dedup_cols.values()) + other_cols
@@ -264,6 +276,8 @@ def extract_model_entities(model: Dict[str, Any], target_connector: Optional[str
                 "parent_source_path": dataset_path,
                 "data_type": column.get("data_type"),
                 "synonyms": list(column.get("synonyms") or []),
+                "synonym_sources": dict(column.get("synonym_sources") or {}),
+                "has_report_alias": bool(column.get("has_report_alias")),
             })
 
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
@@ -285,6 +299,8 @@ def extract_model_entities(model: Dict[str, Any], target_connector: Optional[str
             "sync_failure_reason": metric.get("sync_failure_reason"),
             "depends_on_measures": list(metric.get("depends_on_measures") or []),
             "synonyms": list(metric.get("synonyms") or []),
+            "synonym_sources": dict(metric.get("synonym_sources") or {}),
+            "has_report_alias": bool(metric.get("has_report_alias")),
         })
 
     return entities
@@ -376,10 +392,15 @@ def build_entity_mappings(
     existing_mappings: Optional[Dict[str, Dict[str, Any]]] = None,
     session_key: Optional[str] = None,
     target_connector: Optional[str] = None,
+    drop_ledger: Optional[DropLedger] = None,
 ) -> Dict[str, Any]:
     existing = existing_mappings or {}
     normalized_target_connector = _normalize_connector_name(target_connector)
-    entities = extract_model_entities(model, target_connector)
+    # Own ledger by default so extraction-tier drops (metadata dedup, etc.)
+    # are always captured; callers that also want to fold in a trial
+    # DDL-build pass's drops (see mappings_controller.py) can pass their own.
+    ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+    entities = extract_model_entities(model, target_connector, drop_ledger=ledger)
     session = session_key or f"map-session-{uuid.uuid4().hex[:12]}"
     # claimed_names[scope][sanitized_key] = {"source_path": ..., "source_name": ...}
     # Stores both the path and the original source name so we can distinguish
@@ -647,6 +668,8 @@ def build_entity_mappings(
             "sync_failure_reason": entity.get("sync_failure_reason") or "",
             "depends_on_measures": list(entity.get("depends_on_measures") or []),
             "synonyms": list(entity.get("synonyms") or []),
+            "synonym_sources": dict(entity.get("synonym_sources") or {}),
+            "has_report_alias": bool(entity.get("has_report_alias")),
         })
 
     # Pass 2: Declarative Validation (Option B)
@@ -729,6 +752,7 @@ def build_entity_mappings(
         "model_name": str(model.get("unique_name") or model.get("name") or model.get("label") or "model"),
         "mappings": generated,
         "collisions": collisions,
+        "dropped_entities": ledger.to_json(),
         "source_fields": [
             {
                 "name": row["source_name"],

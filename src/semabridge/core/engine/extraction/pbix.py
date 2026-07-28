@@ -115,7 +115,7 @@ def _extract_pbix(
         run_id=context.run_id,
         tmsl=tmsl,
         pbix_path=pbix_path,
-        measure_aliases=discovered.get("measure_aliases", []),
+        field_aliases=discovered.get("field_aliases", []),
     )
 
     table_count = len(tmsl.get("model", {}).get("tables", []))

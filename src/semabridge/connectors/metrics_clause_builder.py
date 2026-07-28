@@ -15,6 +15,7 @@ from semabridge.connectors.ddl_helpers import (
 )
 from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metric_sql
 from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,8 @@ class MetricsClauseBuilder:
         sanitizer: Any,
         translator: Any,
         config: Any,
-        dup_name_repo: Any = None
+        dup_name_repo: Any = None,
+        drop_ledger: Optional[DropLedger] = None,
     ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -37,6 +39,7 @@ class MetricsClauseBuilder:
         self.translator = translator
         self.config = config
         self.dup_name_repo = dup_name_repo
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def build_for_sml(
         self,
@@ -85,8 +88,19 @@ class MetricsClauseBuilder:
         used_metric_names: Set[str] = set()
         skipped_metric_names: Set[str] = set()
         expected_metrics: List[Tuple[str, str, str]] = []
-        
-        valid_metrics = [m for m in model.metrics if "$" not in m.unique_name]
+
+        valid_metrics = []
+        for m in model.metrics:
+            if "$" in m.unique_name:
+                self.drop_ledger.record(
+                    "metric", m.unique_name, DropStage.DDL_EMISSION,
+                    "Metric name contains '$', which cannot be represented in a "
+                    "Snowflake semantic-view METRICS clause identifier. Rename the "
+                    "metric (or add a mapping override) to remove the character.",
+                    dataset=getattr(m, "dataset", None),
+                )
+                continue
+            valid_metrics.append(m)
         metric_name_set = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in valid_metrics}
 
         # Build metric name to table alias mapping dynamically as metrics are emitted
@@ -120,26 +134,25 @@ class MetricsClauseBuilder:
         except Exception as exc:
             logger.warning("OpenAI metric prefetch skipped: %s", exc)
 
-        # ================================================================
-        # DEBUG: Check metric name sanitization
-        # ================================================================
-        kpi_blacklist = {"KPI01", "KPI02"}
         for metric in valid_metrics:
-            if str(metric.unique_name).strip().upper() in kpi_blacklist:
-                logger.info("Skipping KPI metric '%s' for Snowflake METRICS clause.", metric.unique_name)
-                skipped_metric_names.add(metric.unique_name)
-                continue
             raw_name = metric.unique_name
             sanitized_name = self.identifier_sanitizer.sanitize_alias(raw_name)
             logger.info(f"🔍 METRIC SANITIZATION: raw='{raw_name}' → sanitized='{sanitized_name}'")
-        # ================================================================
 
         for metric in valid_metrics:
-            if metric.unique_name in skipped_metric_names or str(metric.unique_name).strip().upper() in kpi_blacklist:
+            if metric.unique_name in skipped_metric_names:
                 continue
             alias = dataset_aliases.get(metric.dataset)
-            if not alias: continue
-            
+            if not alias:
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    f"Metric's dataset '{metric.dataset}' has no TABLES alias in "
+                    "this semantic view, so the metric has no table to anchor "
+                    "against.",
+                    dataset=metric.dataset,
+                )
+                continue
+
             metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
             metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
             metric_base_seen[metric_base_alias] = metric_seen_idx
@@ -183,6 +196,12 @@ class MetricsClauseBuilder:
                     metric.unique_name,
                 )
                 skipped_metric_names.add(metric.unique_name)
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
+                    "which Snowflake's semantic-view METRICS clause does not support.",
+                    dataset=getattr(metric, "dataset", None), detail=expr[:200] if expr else None,
+                )
                 continue
 
             if expr:
@@ -201,26 +220,90 @@ class MetricsClauseBuilder:
                 metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
                 emittable_metric_name_set.add(self.identifier_sanitizer.sanitize_alias(metric.unique_name))
 
+        # Map every DDL-visible metric name back to its original unique_name +
+        # dataset, so drops detected below (line removed between before/after
+        # snapshots of metrics_lines) can be recorded against the same
+        # identity used everywhere else in this file, not the sanitized DDL
+        # alias. `expected_metrics` covers every metric that reached alias
+        # resolution, including ones later added by the OSI fallback loop.
+        metric_by_unique_name = {m.unique_name: m for m in valid_metrics}
+        ddl_name_to_unique: Dict[str, str] = {}
+        ddl_name_to_dataset: Dict[str, Optional[str]] = {}
+        for _alias, _metric_name, _orig_name in expected_metrics:
+            _safe = self.identifier_sanitizer.sanitize_column(_metric_name)
+            ddl_name_to_unique[_safe] = _orig_name
+            _owner = metric_by_unique_name.get(_orig_name)
+            ddl_name_to_dataset[_safe] = getattr(_owner, "dataset", None) if _owner else None
+
         # Pruning and Fallbacks...
+        pre_prune_lines = list(metrics_lines)
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
-        
+        self._record_removed_metric_lines(
+            pre_prune_lines, metrics_lines, ddl_name_to_unique, ddl_name_to_dataset,
+            "Metric's expression referenced another metric's name that was "
+            "never itself emitted (dropped earlier, or removed in this same "
+            "cascading pruning pass) — Snowflake's METRICS clause cannot "
+            "reference an undefined metric.",
+        )
+
         # OSI Fallback Loop
         if is_osi:
             metrics_lines = self._apply_osi_fallbacks(
-                metrics_lines, expected_metrics, model, dataset_aliases, dataset_col_lookup, 
-                alias_by_raw, metric_name_set, all_physical_col_names, emittable_metric_name_set, 
+                metrics_lines, expected_metrics, model, dataset_aliases, dataset_col_lookup,
+                alias_by_raw, metric_name_set, all_physical_col_names, emittable_metric_name_set,
                 skipped_metric_names
             )
+            pre_dedup_lines = list(metrics_lines)
             metrics_lines = deduplicate_metrics_lines_osi(metrics_lines)
         else:
+            pre_dedup_lines = list(metrics_lines)
             metrics_lines = deduplicate_metrics_lines(metrics_lines)
-            
+        self._record_removed_metric_lines(
+            pre_dedup_lines, metrics_lines, ddl_name_to_unique, ddl_name_to_dataset,
+            "Duplicate metric definition (same table alias + metric name as "
+            "an earlier-defined line) — the earlier line was kept and this "
+            "later duplicate was dropped.",
+        )
+
         final_metrics_lines = []
         for i, line in enumerate(metrics_lines):
             comma = "," if i < len(metrics_lines) - 1 else ""
             final_metrics_lines.append(f"{line}{comma}")
 
         return final_metrics_lines
+
+    @staticmethod
+    def _names_in_lines(lines: List[str]) -> Set[str]:
+        """Extract the declared metric name (the quoted part before ``AS``)
+        from each METRICS-clause line — used to diff a before/after pass of
+        ``metrics_lines`` and detect which metrics a pruning/dedup step
+        silently removed."""
+        names: Set[str] = set()
+        for line in lines:
+            m = re.search(r'\."([^"]+)"\s+AS\s+', line)
+            if m:
+                names.add(m.group(1))
+        return names
+
+    def _record_removed_metric_lines(
+        self,
+        before: List[str],
+        after: List[str],
+        ddl_name_to_unique: Dict[str, str],
+        ddl_name_to_dataset: Dict[str, Optional[str]],
+        reason: str,
+    ) -> None:
+        """Record a DropLedger entry for every metric name present in
+        ``before`` but missing from ``after`` — the generic hook that lets
+        any current or future line-removal step (pruning, dedup, ...) stay
+        reconciliation-safe without each one re-implementing its own
+        bookkeeping."""
+        removed = self._names_in_lines(before) - self._names_in_lines(after)
+        for name in removed:
+            self.drop_ledger.record(
+                "metric", ddl_name_to_unique.get(name, name), DropStage.DDL_EMISSION,
+                reason, dataset=ddl_name_to_dataset.get(name),
+            )
 
     @staticmethod
     def _is_scalar_metric_sql(expr: str) -> bool:
@@ -454,64 +537,7 @@ class MetricsClauseBuilder:
         fact_aliases: Optional[Set[str]] = None,
         metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
-        # Determine the fact alias and sentiment alias dynamically if available
-        fact_alias = "SALESFACT"
-        if fact_aliases:
-            fact_alias = next(iter(fact_aliases), "SALESFACT")
-        elif alias:
-            fact_alias = alias
-
-        sentiment_alias = "SENTIMENT"
-        manufacturer_alias = "MANUFACTURER"
-        if dataset_aliases:
-            for k, v in dataset_aliases.items():
-                if k.upper() == "SENTIMENT":
-                    sentiment_alias = v
-                elif k.upper() == "MANUFACTURER":
-                    manufacturer_alias = v
-
-        raw_upper = str(metric.unique_name).strip().upper()
-        # Clean '@' symbols, spaces, and other special characters from raw_upper
-        clean_upper = raw_upper.replace("@", "").replace(" ", "_").replace("%", "PCT").replace("-", "_")
-        sanitized_upper = self.identifier_sanitizer.sanitize_alias(metric.unique_name).upper()
-
-        overrides = {
-            "PCT_CATEGORY_COMPETE_SHARE": f'INT(DIV0({fact_alias}."TOTAL_COMPETE_VOLUME", {fact_alias}."TOTAL_CATEGORY_VOLUME")*100)',
-            "TOTAL_UNITS_YTD_VAR_%2": f'INT(DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")*100)',
-            "TOTAL_UNITS_YTD_VAR_PCT2": f'INT(DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")*100)',
-            "TOTAL_UNITS_YTD_VAR_%": f'DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")',
-            "TOTAL_UNITS_YTD_VAR_PCT": f'DIV0({fact_alias}."TOTAL_UNITS_YTD_VAR", {fact_alias}."TOTAL_UNITS_SPLY")',
-            "INDICATOR01": f'CASE WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" < 0.55 THEN 1 WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" > 0.6 THEN 3 ELSE 2 END',
-            "ATINDICATOR01": f'CASE WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" < 0.55 THEN 1 WHEN {fact_alias}."PCT_CATEGORY_COMPETE_SHARE" > 0.6 THEN 3 ELSE 2 END',
-            "INDICATOR02": f'CASE WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" < 0 THEN 1 WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" > 0.2 THEN 3 ELSE 2 END',
-            "ATINDICATOR02": f'CASE WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" < 0 THEN 1 WHEN {fact_alias}."PCT_UNIT_MARKET_SHARE_YOY_CHANGE" > 0.2 THEN 3 ELSE 2 END',
-            "INDICATOR03": f'CASE WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" < 0 THEN 1 WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" > 0.1 THEN 3 ELSE 2 END',
-            "ATINDICATOR03": f'CASE WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" < 0 THEN 1 WHEN {fact_alias}."TOTAL_UNITS_YTD_VAR_PCT" > 0.1 THEN 3 ELSE 2 END',
-            "INDICATOR04": f'CASE WHEN AVG({sentiment_alias}."SCORE"::FLOAT) < 65 THEN 1 WHEN AVG({sentiment_alias}."SCORE"::FLOAT) > 67 THEN 3 ELSE 2 END',
-            "ATINDICATOR04": f'CASE WHEN AVG({sentiment_alias}."SCORE"::FLOAT) < 65 THEN 1 WHEN AVG({sentiment_alias}."SCORE"::FLOAT) > 67 THEN 3 ELSE 2 END',
-            "INDICATOR04A": f"CASE WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) < 65 THEN 'Low Sentiment Rate' WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) > 67 THEN 'High Sentiment Rate' ELSE 'Medium Sentiment Rate' END::VARCHAR",
-            "ATINDICATOR04A": f"CASE WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) < 65 THEN 'Low Sentiment Rate' WHEN AVG({sentiment_alias}.\"SCORE\"::FLOAT) > 67 THEN 'High Sentiment Rate' ELSE 'Medium Sentiment Rate' END::VARCHAR",
-            "INDICATOR05": f'CASE WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) > 25 THEN 3 ELSE 2 END',
-            "ATINDICATOR05": f'CASE WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) < 15 THEN 1 WHEN (AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'No\' THEN {sentiment_alias}."SCORE" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}."MFGISVANARSDEL"=\'Yes\' THEN {sentiment_alias}."SCORE" END::FLOAT)) > 25 THEN 3 ELSE 2 END',
-            "INDICATOR05A": f"CASE WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) < 15 THEN 'Low Sentiment Gap' WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) > 25 THEN 'High Sentiment Gap' ELSE 'Medium Sentiment Gap' END::VARCHAR",
-            "ATINDICATOR05A": f"CASE WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) < 15 THEN 'Low Sentiment Gap' WHEN (AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='No' THEN {sentiment_alias}.\"SCORE\" END::FLOAT) - AVG(CASE WHEN {manufacturer_alias}.\"MFGISVANARSDEL\"='Yes' THEN {sentiment_alias}.\"SCORE\" END::FLOAT)) > 25 THEN 'High Sentiment Gap' ELSE 'Medium Sentiment Gap' END::VARCHAR",
-        }
-
-        target_keys = {raw_upper, clean_upper, sanitized_upper}
-        matched_key = next((k for k in overrides if k in target_keys), None)
-        if matched_key:
-            expr = overrides[matched_key]
-            expr = self._rewrite_cross_dataset_sql_refs_to_precomputed(
-                expr,
-                metric.dataset,
-                alias,
-                dataset_aliases,
-                dataset_col_lookup,
-            )
-            logger.info("🎯 DETERMINISTIC METRIC OVERRIDE: '%s' (sanitized='%s') → '%s'", metric.unique_name, sanitized_upper, expr)
-            return expr
-
-        if (metric.source_column and metric.aggregation and 
+        if (metric.source_column and metric.aggregation and
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
             
             col_name = (self.identifier_sanitizer.sanitize_column(metric.source_column) if is_osi 
@@ -560,6 +586,12 @@ class MetricsClauseBuilder:
                             "with no physical columns. Skipping to prevent DDL failure.",
                             metric.unique_name, metric.dataset
                         )
+                        self.drop_ledger.record(
+                            "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                            f"Dataset '{metric.dataset}' is a virtual Power BI measures table "
+                            "with no physical columns in Snowflake.",
+                            dataset=metric.dataset,
+                        )
                         return None
                     logger.debug(
                         "Metric '%s': column '%s' not found in schema metadata; "
@@ -585,6 +617,12 @@ class MetricsClauseBuilder:
                 # Continue to DAX translation
                 sql_expr = None
             else:
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    f"Dataset '{metric.dataset}' is a virtual Power BI measures table with no "
+                    "physical columns, and the metric has no DAX expression to fall back to.",
+                    dataset=metric.dataset,
+                )
                 return None
         
         # If we have SQL expression, use it directly
@@ -603,6 +641,12 @@ class MetricsClauseBuilder:
                     metric.unique_name,
                     sql_expr[:120],
                 )
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    "SQL expression contains a subquery (SELECT), which Snowflake's "
+                    "semantic-view METRICS clause does not support.",
+                    dataset=getattr(metric, "dataset", None), detail=sql_expr[:200],
+                )
                 return None
             # If the metric's dataset is a virtual measures table, try to remap
             # column references to the actual fact table that owns those columns.
@@ -614,6 +658,12 @@ class MetricsClauseBuilder:
                     logger.warning(
                         "Metric '%s': could not remap virtual measures table references. Skipping.",
                         metric.unique_name
+                    )
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        "Could not resolve all virtual measures-table column references to a "
+                        "real fact-table owner.",
+                        dataset=getattr(metric, "dataset", None),
                     )
                     return None
             expr = sql_expr
@@ -646,6 +696,12 @@ class MetricsClauseBuilder:
                     "Metric '%s': skipping invalid SQL expression after normalization: %s",
                     metric.unique_name,
                     reason or "unknown reference error",
+                )
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    f"SQL expression references a column that could not be resolved after "
+                    f"normalization: {reason or 'unknown reference error'}",
+                    dataset=getattr(metric, "dataset", None), detail=expr[:200] if expr else None,
                 )
                 return None
             return expr
@@ -729,8 +785,21 @@ class MetricsClauseBuilder:
                 "Skipping metric to prevent DDL compilation failure.",
                 metric.unique_name, dax_expr[:100]
             )
+            self.drop_ledger.record(
+                "metric", metric.unique_name, DropStage.DAX_TRANSLATION,
+                "DAX expression could not be translated to SQL at DDL-emission time "
+                "(deterministic, rule-based, and LLM translation tiers were all "
+                "unsuccessful or unavailable).",
+                dataset=getattr(metric, "dataset", None), detail=dax_expr[:200] if dax_expr else None,
+            )
             return None
-            
+
+        self.drop_ledger.record(
+            "metric", metric.unique_name, DropStage.DDL_EMISSION,
+            "Metric has no source_column+aggregation, no sql_expression, and no DAX "
+            "expression to translate — nothing to emit.",
+            dataset=getattr(metric, "dataset", None),
+        )
         return None
 
 
@@ -744,8 +813,15 @@ class MetricsClauseBuilder:
     ) -> List[str]:
         """OSI-specific metric fallbacks - generate from OSI structure."""
         metrics_list = getattr(osi, "metrics", None) or getattr(osi, "measures", [])
+        # Exact-name membership, not substring: `metric_name in line` would
+        # false-positive whenever a sibling metric's disambiguated name
+        # ("X_2") contains this metric's base name ("X") as a substring,
+        # wrongly concluding X already has a line and skipping its fallback
+        # attempt (X still has a DropLedger record from the primary attempt
+        # in _generate_metric_expression, but is denied a chance to recover).
+        already_emitted = self._names_in_lines(metrics_lines)
         for alias, metric_name, original_name in expected_metrics:
-            if not any(metric_name in line for line in metrics_lines):
+            if metric_name not in already_emitted:
                 # Find the OSI measure
                 for measure in metrics_list:
                     if measure.unique_name == original_name:
@@ -755,6 +831,7 @@ class MetricsClauseBuilder:
                             agg_val = agg_val.upper()
                             sql = f'{agg_val}({alias}."{measure.source_column}")'
                             metrics_lines.append(f'  {alias}."{metric_name}" AS {sql}')
+                            already_emitted.add(metric_name)
                         break
         return metrics_lines
 

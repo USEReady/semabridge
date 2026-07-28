@@ -28,8 +28,10 @@ def test_metric_filtering():
     with open(builder_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Check for the filtering fix
-    assert 'valid_metrics = [m for m in model.metrics if "$" not in m.unique_name]' in content
+    # Check for the filtering fix (now recorded to the DropLedger rather than
+    # silently discarded — see Tests/test_metric_drop_ledger_coverage.py for
+    # the behavioral test of this path)
+    assert 'if "$" in m.unique_name:' in content
     print("✅ PASS: Metric $ filtering is in place")
 
 def test_relationship_validation():
@@ -221,11 +223,20 @@ def test_dax_strict_time_intelligence_uses_configured_date_alias(monkeypatch):
     assert "COL_DATE_2.YEAR" in result.sql
     assert "CALENDAR.YEAR" not in result.sql
 
-def test_indicator_label_overrides_do_not_reference_fake_salesfact_columns():
-    """Indicator label metrics must not point at non-physical SALESFACT columns."""
+def test_indicator_metrics_with_no_expression_fall_through_to_general_pipeline():
+    """Indicator label metrics used to be covered by a hardcoded overrides
+    dict in _generate_metric_expression (metric-name -> SQL keyed on names
+    like 'ATINDICATOR04A', written for one specific dataset's shape and
+    referencing other metrics' names as if they were physical SALESFACT
+    columns). That dict has been removed -- these metrics now go through
+    the same general pipeline as any other metric. With no DAX/SQL/
+    source-column to translate, the correct general-pipeline behavior is:
+    no expression is fabricated (nothing references a non-existent physical
+    column), and the drop is recorded in the ledger with a real reason."""
     from types import SimpleNamespace
     from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
     from semabridge.connectors.translator import MetricExpressionTranslator
+    from semabridge.core.drop_ledger import DropStage
     from semabridge.utils.identifiers import IdentifierSanitizer
 
     ids = IdentifierSanitizer()
@@ -280,11 +291,21 @@ def test_indicator_label_overrides_do_not_reference_fake_salesfact_columns():
         fact_aliases={"SALESFACT"},
     )
 
-    assert 'SALESFACT."ATINDICATOR04"' not in expr_04a
-    assert 'SALESFACT."ATINDICATOR05"' not in expr_05a
-    assert 'SENTIMENT."SCORE"' in expr_04a
-    assert 'SENTIMENT."SCORE"' in expr_05a
-    assert 'MANUFACTURER."MFGISVANARSDEL"' in expr_05a
+    # No expression source at all (empty DAX, no sql_expression, no
+    # source_column) -- the general pipeline correctly declines to emit
+    # anything rather than fabricating a reference to a non-existent
+    # physical column, and records why.
+    assert expr_04a is None
+    assert expr_05a is None
+    records = builder.drop_ledger.to_json()
+    assert len(records) == 2
+    names = {r["entity_name"] for r in records}
+    assert names == {"@Indicator04A", "@Indicator05A"}
+    for record in records:
+        assert record["entity_kind"] == "metric"
+        assert record["stage"] == DropStage.DDL_EMISSION.value
+        assert 'SALESFACT."ATINDICATOR04"' not in (record.get("detail") or "")
+        assert 'SALESFACT."ATINDICATOR05"' not in (record.get("detail") or "")
 
 def test_cross_dataset_refs_are_detected_for_fact_enrichment():
     """Direct Table[Column] DAX refs should become fact enriched-view projections."""
@@ -324,6 +345,53 @@ def test_cross_dataset_refs_are_detected_for_fact_enrichment():
         ("SalesFact", "Manufacturer", "MfgIsVanArsDel", "MANUFACTURER_MFGISVANARSDEL"),
         ("SalesFact", "Sentiment", "Score", "SENTIMENT_SCORE"),
     }
+
+def test_identify_fact_table_ignores_substring_false_positives():
+    """
+    _identify_fact_table's keyword fallback must match 'Fact'/'Sales'/'Transaction'
+    as whole words, not as substrings — "Manufacturer" (manu-FACT-urer) and
+    "Artifact" (arti-FACT) both contain "fact" mid-word but are not fact tables.
+    With no cross-table DAX references present, get_precompute_details() is
+    empty, so the real fact table ("Orders") must be found via the structural
+    fallbacks (most relationships / most metrics) instead of a false keyword hit.
+    """
+    from types import SimpleNamespace
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.behavior import ConnectorBehavior
+    from semabridge.core.settings import SnowflakeConfig
+
+    model = SimpleNamespace(
+        datasets=[
+            SimpleNamespace(unique_name="Manufacturer"),
+            SimpleNamespace(unique_name="Artifact"),
+            SimpleNamespace(unique_name="Orders"),
+        ],
+        relationships=[
+            SimpleNamespace(from_dataset="Orders", to_dataset="Manufacturer"),
+            SimpleNamespace(from_dataset="Orders", to_dataset="Artifact"),
+        ],
+        metrics=[
+            SimpleNamespace(unique_name="Order Total", dataset="Orders", expression="SUM(Amount)"),
+            SimpleNamespace(unique_name="Order Count", dataset="Orders", expression="COUNT(OrderId)"),
+        ],
+    )
+
+    config = SnowflakeConfig(
+        account="test.local", user="test_user", password="test_password",
+        warehouse="test_wh", database="test_db", schema_name="test_schema",
+    )
+    emitter = SnowflakeEmitter(config, ConnectorBehavior())
+
+    # Neither false-positive substring match should win Strategy 1.
+    assert not (set(SnowflakeEmitter._tokenize_dataset_name("Manufacturer")) & SnowflakeEmitter._FACT_KEYWORDS)
+    assert not (set(SnowflakeEmitter._tokenize_dataset_name("Artifact")) & SnowflakeEmitter._FACT_KEYWORDS)
+
+    assert emitter._identify_fact_table(model) == "Orders"
+
+    # With no cross-table DAX references, the pre-compute step yields nothing,
+    # so the fan-out helper must fall back to the (now-correct) single guess.
+    assert emitter._get_fact_tables_needing_enrichment(model) == ["Orders"]
+
 
 def test_cross_dataset_metric_sql_rewrites_to_enriched_fact_columns():
     """When enriched columns exist, metric SQL should stay on the metric entity."""

@@ -627,6 +627,10 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
             return None
 
     date_col_ref = f"{_quote_identifier(date_table_and_col)}"
+    # Qualified reference to the fact table's enriched-view MAX_DATE anchor
+    # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
+    # identifier inside a semantic view's METRICS clause.
+    max_date_ref = _column_ref(None, "MAX_DATE", table_alias)
 
     period = ""
     if time_func == "TOTALYTD":
@@ -637,16 +641,16 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
         period = "QUARTER"
 
     else_val = "NULL" if func in ("AVG", "MIN", "MAX") else "0"
-    
+
     if func == "DISTINCTCOUNT":
         result = (
-            f"COUNT(DISTINCT CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', MAX_DATE) "
-            f"AND {date_col_ref} <= MAX_DATE THEN {measure_col_ref} ELSE NULL END)"
+            f"COUNT(DISTINCT CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) "
+            f"AND {date_col_ref} <= {max_date_ref} THEN {measure_col_ref} ELSE NULL END)"
         )
     else:
         result = (
-            f"{func}(CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', MAX_DATE) "
-            f"AND {date_col_ref} <= MAX_DATE THEN {measure_col_ref} ELSE {else_val} END)"
+            f"{func}(CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) "
+            f"AND {date_col_ref} <= {max_date_ref} THEN {measure_col_ref} ELSE {else_val} END)"
         )
 
     logger.debug(f"Translated time intelligence expression to: {result}")
@@ -713,9 +717,12 @@ def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
     if not m:
         return None
     inner = m.group(1).strip()
-    # Use MAX_DATE to anchor; this is a simplified pattern
+    # Use the fact table's enriched-view MAX_DATE anchor to bound the prior-year
+    # window; must be qualified with table_alias — a bare "MAX_DATE" is not a
+    # valid identifier inside a semantic view's METRICS clause.
     date_alias = _date_alias()
-    return f"SUM(CASE WHEN DATE_PART('YEAR', {date_alias}.\"COL_DATE\") = DATE_PART('YEAR', DATEADD(YEAR, -1, MAX_DATE)) AND {date_alias}.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) AND DATEADD(YEAR, -1, MAX_DATE) THEN {table_alias}.{_quote_identifier(inner)} ELSE 0 END)"
+    max_date_ref = _column_ref(None, "MAX_DATE", table_alias)
+    return f"SUM(CASE WHEN DATE_PART('YEAR', {date_alias}.\"COL_DATE\") = DATE_PART('YEAR', DATEADD(YEAR, -1, {max_date_ref})) AND {date_alias}.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date_ref})) AND DATEADD(YEAR, -1, {max_date_ref}) THEN {table_alias}.{_quote_identifier(inner)} ELSE 0 END)"
 
 
 def translate_sentiment_gap(dax: str, table_alias: str) -> Optional[str]:

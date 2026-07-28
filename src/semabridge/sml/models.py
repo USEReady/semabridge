@@ -147,6 +147,11 @@ class SMLColumn(BaseModel):
     folder: Optional[str] = Field(default=None, description="Display folder")
     # Cortex Analyst advanced AI metadata
     synonyms: list[str] = Field(default_factory=list, description="Alternative names for NLP matching (e.g. ['Client', 'Account'])")
+    synonym_sources: dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
+    )
+    has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
     is_enum: bool = Field(default=False, description="True when the column has a small, exhaustive set of values")
     cortex_search_service: Optional[str] = Field(default=None, description="Snowflake Cortex Search Service name linked to this text dimension")
     sample_values: list[str] = Field(default_factory=list, description="Representative sample values for NLP context")
@@ -299,7 +304,12 @@ class SMLMetric(BaseModel):
         description="Cortex access level: 'public_access' (visible to NL queries) or 'private_access' (internal helper)"
     )
     synonyms: list[str] = Field(default_factory=list, description="Alternative names for NLP matching")
-    
+    synonym_sources: dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
+    )
+    has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
+
     def model_post_init(self, __context: Any) -> None:
         """Set label and generate expression if not provided."""
         if not self.label:

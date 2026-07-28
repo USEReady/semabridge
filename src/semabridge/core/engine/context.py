@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as _dataclass_field
 from typing import Any, Literal, Optional
-from pydantic import Field
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import Settings
 from semabridge.core.source_format import SourceFormat
+from semabridge.core.drop_ledger import DropLedger
 from semabridge.intermediate.models import OSIModel
 from semabridge.sml.models import SMLModel
 
@@ -22,7 +22,7 @@ class RunContext:
     start_time: float
     source_type: Literal["snowflake", "fabric", "pbix"]
     target_type: Optional[Literal["snowflake", "fabric", "databricks"]] = None
-    behavior: ConnectorBehavior = Field(default_factory=ConnectorBehavior)
+    behavior: ConnectorBehavior = _dataclass_field(default_factory=ConnectorBehavior)
     account_id: Optional[str] = None  # Linked Account for multi-user credential scoping
 
     # Optional override for the Snowflake semantic view name.
@@ -40,3 +40,9 @@ class RunContext:
     target_artifact_path: Optional[str] = None
     routing_summary: Optional[dict[str, Any]] = None
     sync_mode: str = "copy"
+
+    # Uniform "what got dropped and why" collector for this run — shared by
+    # every DDL-building/extraction component so all drop reasons (DAX
+    # translation, schema mismatch, DDL-emission skips, DDL-deployment
+    # rejections) land in one place regardless of stage or cause.
+    drop_ledger: DropLedger = _dataclass_field(default_factory=DropLedger)

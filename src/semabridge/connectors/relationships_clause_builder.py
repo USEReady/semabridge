@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.utils.logger import get_logger
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
 
@@ -12,10 +13,17 @@ logger = get_logger(__name__)
 class RelationshipsClauseBuilder:
     """Handles construction and validation of the RELATIONSHIPS clause."""
 
-    def __init__(self, identifier_sanitizer: Any, schema_manager: Any, sanitizer: Any):
+    def __init__(
+        self,
+        identifier_sanitizer: Any,
+        schema_manager: Any,
+        sanitizer: Any,
+        drop_ledger: Optional[DropLedger] = None,
+    ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
         self.sanitizer = sanitizer
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def build_for_sml(
         self,
@@ -74,6 +82,12 @@ class RelationshipsClauseBuilder:
                     f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                     f"Unresolvable aliases (from={from_alias}, to={to_alias}) or missing from_columns."
                 )
+                self.drop_ledger.record(
+                    "relationship", f"{rel.from_dataset} -> {rel.to_dataset}", DropStage.DDL_EMISSION,
+                    f"Unresolvable dataset aliases (from={from_alias}, to={to_alias}) or "
+                    "missing from_columns.",
+                    dataset=rel.from_dataset,
+                )
                 continue
 
             from_ds = dataset_by_name.get(rel.from_dataset)
@@ -97,6 +111,12 @@ class RelationshipsClauseBuilder:
                 logger.warning(
                     f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                     f"from_col is empty after resolution."
+                )
+                self.drop_ledger.record(
+                    "relationship", f"{rel.from_dataset} -> {rel.to_dataset}", DropStage.DDL_EMISSION,
+                    "The relationship's from-column resolved to empty after physical "
+                    "column resolution.",
+                    dataset=rel.from_dataset,
                 )
                 continue
 

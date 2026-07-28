@@ -68,9 +68,9 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         "workspace_id": ws_id,
         "dataset_id": ds_id,
         "project_id": context.project_id,
-        "measure_aliases": getattr(sf, "measure_aliases", []),
+        "field_aliases": getattr(sf, "field_aliases", []),
     }
-    osi_model = TMSLToOSIConverter().to_osi(source_data)
+    osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model
     logger.debug(
         f"PBIX OSI intermediate: {len(osi_model.datasets)} datasets, "

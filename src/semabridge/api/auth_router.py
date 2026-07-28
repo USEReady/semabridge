@@ -59,6 +59,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 _REFRESH_COOKIE = "semabridge_refresh_token"
 
+# Single source of truth for the Secure cookie attribute across every
+# set_cookie() call in this router. Previously each call site read
+# COOKIE_SECURE independently with inconsistent defaults ("true" on
+# /auto-login and /refresh's refresh cookie, "false" everywhere else),
+# so on a plain-HTTP dev deployment the /auto-login refresh cookie was
+# silently dropped by the browser (Secure cookies require HTTPS) while
+# /login's cookies worked fine — forcing a fresh auto-login on every
+# access-token expiry or page reload.
+_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_BUCKETS: dict[Tuple[str, str], Deque[float]] = defaultdict(deque)
 
@@ -155,7 +165,7 @@ def auto_login(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=os.environ.get("COOKIE_SECURE", "true").lower() == "true",
+        secure=_COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 60 * 60,
         path="/auth",
@@ -292,7 +302,7 @@ def login(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        secure=_COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 60 * 60,  # 7 days
         path="/auth",
@@ -303,7 +313,7 @@ def login(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        secure=_COOKIE_SECURE,
         samesite="lax",
         max_age=int(os.getenv("ACCESS_TOKEN_EXPIRY_SECONDS", "900")),
         path="/",
@@ -382,7 +392,7 @@ def refresh(
         key=_REFRESH_COOKIE,
         value=raw_refresh,
         httponly=True,
-        secure=os.environ.get("COOKIE_SECURE", "true").lower() == "true",
+        secure=_COOKIE_SECURE,
         samesite="lax",
         max_age=7 * 24 * 60 * 60,
         path="/auth",
@@ -393,7 +403,7 @@ def refresh(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        secure=_COOKIE_SECURE,
         samesite="lax",
         max_age=int(os.getenv("ACCESS_TOKEN_EXPIRY_SECONDS", "900")),
         path="/",

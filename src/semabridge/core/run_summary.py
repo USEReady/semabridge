@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from semabridge.core.drop_ledger import DropRecord
+
 
 class RunStatus(str, Enum):
     """Final run status values."""
@@ -84,6 +86,14 @@ class RunSummary(BaseModel):
     missing_dims: Dict[str, List[str]] = Field(
         default_factory=dict,
         description="Columns absent from the Snowflake physical table but present in the model DIMENSIONS",
+    )
+
+    # Uniform "what got dropped and why" — every entity excluded from the
+    # final deployed DDL, from any stage (extraction, DAX translation,
+    # schema validation, DDL emission, DDL deployment), with a reason.
+    dropped_entities: List[DropRecord] = Field(
+        default_factory=list,
+        description="Entities excluded from the deployed DDL, with stage and reason (see DropLedger)",
     )
 
     # Error details for FAILED/PARTIAL

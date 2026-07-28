@@ -223,9 +223,10 @@ class TestPBIXAliasOSIPropagation:
             },
             "workspace_id": "ws-123",
             "dataset_id": "ds-123",
-            "measure_aliases": [
+            "field_aliases": [
                 {
-                    "measure": "Revenue",
+                    "field": "Revenue",
+                    "field_type": "measure",
                     "aliases": [
                         "Total Revenue",
                         "Sales Revenue",   # Duplicate, should be deduplicated
@@ -269,9 +270,10 @@ class TestPBIXAliasOSIPropagation:
             },
             "workspace_id": "ws-123",
             "dataset_id": "ds-123",
-            "measure_aliases": [
+            "field_aliases": [
                 {
-                    "measure": "Revenue",
+                    "field": "Revenue",
+                    "field_type": "measure",
                     "aliases": ["Total Income"]
                 }
             ]
@@ -281,9 +283,12 @@ class TestPBIXAliasOSIPropagation:
         metrics = {m.unique_name: m for m in osi.metrics}
         assert "Total Income" in metrics["Revenue"].synonyms
         assert "Total Income" not in metrics["Revenue Forecast"].synonyms
+        assert metrics["Revenue"].has_report_alias is True
+        assert metrics["Revenue"].synonym_sources["Total Income"] == "report_alias"
+        assert metrics["Revenue Forecast"].has_report_alias is False
 
-    def test_empty_measure_aliases(self, converter):
-        """Verify legacy synonym generation is unaffected when no measure aliases are supplied."""
+    def test_empty_field_aliases(self, converter):
+        """Verify legacy synonym generation is unaffected when no field aliases are supplied."""
         source = {
             "tmsl": {
                 "model": {
@@ -307,6 +312,9 @@ class TestPBIXAliasOSIPropagation:
         # Verify user synonym "Sales Revenue" and auto-generated "Total Revenue" are present
         assert "Sales Revenue" in metric.synonyms
         assert "Total Revenue" in metric.synonyms
+        assert metric.has_report_alias is False
+        assert metric.synonym_sources["Sales Revenue"] == "tmsl_authored"
+        assert metric.synonym_sources["Total Revenue"] == "auto_generated"
 
     def test_multiple_measures_mapping(self, converter):
         """Verify report aliases are correctly mapped to their respective target measures."""
@@ -325,9 +333,9 @@ class TestPBIXAliasOSIPropagation:
             },
             "workspace_id": "ws-123",
             "dataset_id": "ds-123",
-            "measure_aliases": [
-                {"measure": "SalesCount", "aliases": ["Transaction Count"]},
-                {"measure": "Profit", "aliases": ["Net Profit"]}
+            "field_aliases": [
+                {"field": "SalesCount", "field_type": "measure", "aliases": ["Transaction Count"]},
+                {"field": "Profit", "field_type": "measure", "aliases": ["Net Profit"]}
             ]
         }
 
@@ -337,4 +345,188 @@ class TestPBIXAliasOSIPropagation:
         assert "Net Profit" not in metrics["SalesCount"].synonyms
         assert "Net Profit" in metrics["Profit"].synonyms
         assert "Transaction Count" not in metrics["Profit"].synonyms
+
+    def test_column_exact_matching_only(self, converter):
+        """Verify column report-alias matching uses case-insensitive exact
+        equality only (no substrings/fuzzy matching), mirroring
+        test_exact_matching_only but for the column path."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "GenericModel",
+                    "tables": [{
+                        "name": "GenericTable",
+                        "columns": [
+                            {"name": "GenericField", "dataType": "string"},
+                            {"name": "GenericField Extended", "dataType": "string"},
+                        ],
+                    }],
+                }
+            },
+            "workspace_id": "ws-x", "dataset_id": "ds-x",
+            "field_aliases": [
+                {"field": "GenericField", "field_type": "column", "table": "GenericTable", "aliases": ["Generic Display Label"]}
+            ],
+        }
+
+        osi = converter.to_osi(source)
+        columns = {c.unique_name: c for ds in osi.datasets for c in ds.columns}
+        assert "Generic Display Label" in columns["GenericField"].synonyms
+        assert columns["GenericField"].has_report_alias is True
+        assert columns["GenericField"].synonym_sources["Generic Display Label"] == "report_alias"
+        assert "Generic Display Label" not in columns["GenericField Extended"].synonyms
+        assert columns["GenericField Extended"].has_report_alias is False
+
+    def test_column_no_alias_falls_back_cleanly(self, converter):
+        """A column never visualized (no field_aliases entry) gets
+        has_report_alias=False and synonyms unaffected — never null, never
+        an error. Uses a single-token lowercase name so the mechanical
+        auto-synonym generator (a separate, unrelated synonym source) has
+        no PascalCase/snake_case boundary to split, keeping this test
+        focused purely on report-alias fallback behavior."""
+        source = {
+            "tmsl": {
+                "model": {
+                    "name": "GenericModel",
+                    "tables": [{
+                        "name": "GenericTable",
+                        "columns": [{"name": "unvisualizedfield", "dataType": "string"}],
+                    }],
+                }
+            },
+            "workspace_id": "ws-x", "dataset_id": "ds-x",
+            "field_aliases": [],
+        }
+
+        osi = converter.to_osi(source)
+        col = osi.datasets[0].columns[0]
+        assert col.has_report_alias is False
+        assert col.synonyms == []
+        assert col.synonym_sources == {}
+
+    def test_same_name_measure_and_column_do_not_cross_contaminate(self, converter):
+        """A measure and a column sharing a name (legal per TOM — measure
+        names are global, column names are per-table) must each resolve
+        only their own report-layer aliases, never the other's, never a
+        merged union."""
+        source = {
+            "tmsl": {"model": {"name": "GenericModel", "tables": [
+                {
+                    "name": "TableA",
+                    "columns": [{"name": "sharedname", "dataType": "string"}],
+                },
+                {
+                    "name": "TableB",
+                    "measures": [{"name": "sharedname", "expression": "1"}],
+                },
+            ]}},
+            "workspace_id": "ws-x",
+            "dataset_id": "ds-x",
+            "field_aliases": [
+                {"field": "sharedname", "field_type": "column", "table": "TableA", "aliases": ["Column Alias Label"]},
+                {"field": "sharedname", "field_type": "measure", "aliases": ["Measure Alias Label"]},
+            ],
+        }
+        osi = converter.to_osi(source)
+
+        column = next(c for ds in osi.datasets for c in ds.columns if c.unique_name == "sharedname")
+        metric = next(m for m in osi.metrics if m.unique_name == "sharedname")
+
+        assert column.synonyms == ["Column Alias Label"]
+        assert column.has_report_alias is True
+        assert "Measure Alias Label" not in column.synonyms
+
+        assert metric.synonyms == ["Measure Alias Label"]
+        assert metric.has_report_alias is True
+        assert "Column Alias Label" not in metric.synonyms
+
+    def test_same_column_name_different_tables_do_not_cross_contaminate(self, converter):
+        """Two tables each with a column of the same name (legal — TMSL only
+        requires column-name uniqueness within a table) must each resolve
+        only their own table's report-layer aliases."""
+        source = {
+            "tmsl": {"model": {"name": "GenericModel", "tables": [
+                {"name": "TableA", "columns": [{"name": "sharedname", "dataType": "string"}]},
+                {"name": "TableB", "columns": [{"name": "sharedname", "dataType": "string"}]},
+            ]}},
+            "workspace_id": "ws-x", "dataset_id": "ds-x",
+            "field_aliases": [
+                {"field": "sharedname", "field_type": "column", "table": "TableA", "aliases": ["Alias For A"]},
+                {"field": "sharedname", "field_type": "column", "table": "TableB", "aliases": ["Alias For B"]},
+            ],
+        }
+        osi = converter.to_osi(source)
+        col_a = next(c for ds in osi.datasets if ds.unique_name == "TableA" for c in ds.columns)
+        col_b = next(c for ds in osi.datasets if ds.unique_name == "TableB" for c in ds.columns)
+
+        assert col_a.synonyms == ["Alias For A"] and "Alias For B" not in col_a.synonyms
+        assert col_b.synonyms == ["Alias For B"] and "Alias For A" not in col_b.synonyms
+
+
+class TestSynonymProvenance:
+    """Test suite for synonym_sources provenance tracking (distinguishing
+    genuine report-layer aliases from auto-generated/TMSL-authored/manual
+    synonyms that can coincidentally look similar)."""
+
+    @pytest.fixture
+    def converter(self):
+        return TMSLToOSIConverter()
+
+    def test_synonym_sources_distinguish_provenance(self, converter):
+        """A field with both an auto-generated guess and a genuine report
+        alias must have each synonym tagged with its true origin, not merged
+        into an indistinguishable flat list."""
+        source = {
+            "tmsl": {"model": {"name": "GenericModel", "tables": [{
+                "name": "GenericTable",
+                "measures": [{"name": "GenericCamelCaseMeasure", "expression": "1"}],
+            }]}},
+            "workspace_id": "ws-x", "dataset_id": "ds-x",
+            "field_aliases": [{"field": "GenericCamelCaseMeasure", "field_type": "measure",
+                                "aliases": ["Genuine Report Title"]}],
+        }
+        osi = converter.to_osi(source)
+        metric = osi.metrics[0]
+        assert "Genuine Report Title" in metric.synonyms
+        assert metric.synonym_sources["Genuine Report Title"] == "report_alias"
+        # Auto-generated split of "GenericCamelCaseMeasure" (if any) must be
+        # tagged distinctly from the genuine report alias.
+        for syn, tag in metric.synonym_sources.items():
+            if syn != "Genuine Report Title":
+                assert tag != "report_alias"
+
+    def test_auto_generated_only_synonym_not_labeled_as_report_alias(self, converter):
+        """A field with zero report-layer match must have has_report_alias=False
+        and every synonym tagged as something other than 'report_alias'."""
+        source = {
+            "tmsl": {"model": {"name": "GenericModel", "tables": [{
+                "name": "GenericTable",
+                "measures": [{"name": "SomeCamelCaseMeasure", "expression": "1"}],
+            }]}},
+            "workspace_id": "ws-x", "dataset_id": "ds-x",
+            "field_aliases": [],
+        }
+        osi = converter.to_osi(source)
+        metric = osi.metrics[0]
+        assert metric.has_report_alias is False
+        assert all(tag != "report_alias" for tag in metric.synonym_sources.values())
+
+    def test_manual_and_tmsl_authored_synonyms_tagged_distinctly(self, converter):
+        """UI-override and TMSL-authored synonyms must be tagged with their
+        own distinct provenance, not lumped together or mislabeled."""
+        source = {
+            "tmsl": {"model": {"name": "GenericModel", "tables": [{
+                "name": "GenericTable",
+                "measures": [{
+                    "name": "GenericMeasure",
+                    "expression": "1",
+                    "synonyms": ["Authored In TMSL"],
+                }],
+            }]}},
+            "workspace_id": "ws-x", "dataset_id": "ds-x",
+        }
+        osi = converter.to_osi(source)
+        metric = osi.metrics[0]
+        assert metric.synonym_sources["Authored In TMSL"] == "tmsl_authored"
+        assert metric.has_report_alias is False
 

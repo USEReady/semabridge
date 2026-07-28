@@ -845,10 +845,14 @@ class DaxSqlRenderer:
 
         if is_lag:
             # CALCULATE(agg, SAMEPERIODLASTYEAR(Date[Date])) → scalar CASE WHEN
-            # SUM(CASE WHEN YEAR(date_col) = YEAR(MAX_DATE) - 1
-            #           AND MONTH(date_col) <= MONTH(MAX_DATE) THEN col END)
+            # SUM(CASE WHEN YEAR(date_col) = YEAR(max_date) - 1
+            #           AND MONTH(date_col) <= MONTH(max_date) THEN col END)
             d = self.date_alias
             date_col = f'{d}."COL_DATE"'
+            # Qualified reference to the fact table's enriched-view MAX_DATE anchor
+            # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
+            # identifier inside a semantic view's METRICS clause.
+            max_date = f'{self.table_alias}."MAX_DATE"'
             # Extract agg column from agg_expr if possible
             if isinstance(args[0], FunctionCallNode) and args[0].func.upper() in self._AGG_MAP:
                 inner_agg_func = args[0].func.upper()
@@ -860,25 +864,25 @@ class DaxSqlRenderer:
                 cast = "::FLOAT" if inner_agg_func in ("SUM", "AVERAGE") else ""
                 if lag_interval == "year":
                     return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(MAX_DATE) - 1 "
-                        f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) "
-                        f"AND DATEADD(YEAR, -1, MAX_DATE) THEN {col_sql}{cast} END)"
+                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR({max_date}) - 1 "
+                        f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
+                        f"AND DATEADD(YEAR, -1, {max_date}) THEN {col_sql}{cast} END)"
                     )
                 elif lag_interval == "quarter":
                     return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, MAX_DATE)) "
-                        f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
+                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
+                        f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date})) THEN {col_sql}{cast} END)"
                     )
                 else:  # month
                     return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, MAX_DATE)) "
-                        f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
+                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
+                        f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date})) THEN {col_sql}{cast} END)"
                     )
             # Fallback: wrap the raw agg_expr in a CASE-bounded prior-year filter
             if lag_interval == "year":
                 return (
-                    f"SUM(CASE WHEN YEAR({date_col}) = YEAR(MAX_DATE) - 1 "
-                    f"AND {date_col} <= DATEADD(YEAR, -1, MAX_DATE) THEN ({agg_expr})::FLOAT END)"
+                    f"SUM(CASE WHEN YEAR({date_col}) = YEAR({max_date}) - 1 "
+                    f"AND {date_col} <= DATEADD(YEAR, -1, {max_date}) THEN ({agg_expr})::FLOAT END)"
                 )
             raise self.DaxRenderError(f"Cannot render lag_interval={lag_interval} without recognized aggregation")
 
@@ -944,6 +948,10 @@ class DaxSqlRenderer:
 
         d = self.date_alias
         date_col = f'{d}."COL_DATE"'
+        # Qualified reference to the fact table's enriched-view MAX_DATE anchor
+        # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
+        # identifier inside a semantic view's METRICS clause.
+        max_date = f'{self.table_alias}."MAX_DATE"'
 
         # Unwrap the inner aggregation to build a CASE WHEN expression
         agg_node = args[0]
@@ -955,36 +963,36 @@ class DaxSqlRenderer:
 
             if func == "TOTALYTD":
                 return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
                 )
             if func == "TOTALMTD":
                 return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
                 )
             if func == "TOTALQTD":
                 return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
                 )
         else:
             # fallback: render the whole agg, wrap in YEAR filter
             agg_sql = self._render_node(agg_node)
             if func == "TOTALYTD":
                 return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN ({agg_sql})::FLOAT END)"
+                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
                 )
             if func == "TOTALMTD":
                 return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN ({agg_sql})::FLOAT END)"
+                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
                 )
             if func == "TOTALQTD":
                 return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', MAX_DATE) "
-                    f"AND {date_col} <= MAX_DATE THEN ({agg_sql})::FLOAT END)"
+                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', {max_date}) "
+                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
                 )
         raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
 
@@ -1003,6 +1011,10 @@ class DaxSqlRenderer:
 
         d = self.date_alias
         date_col = f'{d}."COL_DATE"'
+        # Qualified reference to the fact table's enriched-view MAX_DATE anchor
+        # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
+        # identifier inside a semantic view's METRICS clause.
+        max_date = f'{self.table_alias}."MAX_DATE"'
         agg_node = args[0]
 
         if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
@@ -1013,19 +1025,19 @@ class DaxSqlRenderer:
 
             if interval == "year":
                 return (
-                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(MAX_DATE) - 1 "
-                    f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', MAX_DATE)) "
-                    f"AND DATEADD(YEAR, -1, MAX_DATE) THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR({max_date}) - 1 "
+                    f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
+                    f"AND DATEADD(YEAR, -1, {max_date}) THEN {col_sql}{cast} END)"
                 )
             if interval == "quarter":
                 return (
-                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, MAX_DATE)) "
-                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
+                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
+                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date})) THEN {col_sql}{cast} END)"
                 )
             # month
             return (
-                f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, MAX_DATE)) "
-                f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, MAX_DATE)) THEN {col_sql}{cast} END)"
+                f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
+                f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date})) THEN {col_sql}{cast} END)"
             )
 
         raise self.DaxRenderError(

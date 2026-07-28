@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.intermediate.models import OSIDataset, OSIModel
 from semabridge.sml.models import SMLDataset, SMLModel
+from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.utils.logger import get_logger
 from semabridge.connectors.ddl_helpers import (
@@ -47,7 +48,8 @@ class SemanticViewBuilder:
         live_schema_metadata: dict[str, set[str]],
         dup_name_repo: Any = None,
         schema_manager: Any = None,
-        translator: Any = None
+        translator: Any = None,
+        drop_ledger: Optional[DropLedger] = None,
     ) -> None:
         self.config = config
         self.behavior = behavior
@@ -60,16 +62,24 @@ class SemanticViewBuilder:
         # for columns present in the source model but absent from the Snowflake
         # physical schema.  Callers can surface these as warnings/conflicts.
         self.missing_dims: Dict[str, List[str]] = {}
-        
+        # Shared across every sub-builder so all drop reasons (schema
+        # mismatch, DDL-emission skips, unresolved references, dropped
+        # relationships) land in one place — see core/drop_ledger.py.
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+
         # Modular components
         self.sanitizer = SemanticDDLSanitizer(identifier_sanitizer)
         self.snapshot_orchestrator = HistorySnapshotOrchestrator(identifier_sanitizer, schema_manager, config)
-        self.relationships_builder = RelationshipsClauseBuilder(identifier_sanitizer, schema_manager, self.sanitizer)
+        self.relationships_builder = RelationshipsClauseBuilder(
+            identifier_sanitizer, schema_manager, self.sanitizer, drop_ledger=self.drop_ledger
+        )
         self.dimensions_builder = DimensionsClauseBuilder(
-            identifier_sanitizer, schema_manager, self.sanitizer, translator, behavior
+            identifier_sanitizer, schema_manager, self.sanitizer, translator, behavior,
+            drop_ledger=self.drop_ledger,
         )
         self.metrics_builder = MetricsClauseBuilder(
-            identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo
+            identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo,
+            drop_ledger=self.drop_ledger,
         )
 
     def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:

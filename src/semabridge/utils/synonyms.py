@@ -24,26 +24,25 @@ def _clean_items(values: Any) -> list[str]:
     return cleaned
 
 
-def merge_synonyms(
+def merge_synonyms_with_sources(
     ui_overrides: list[str] | None = None,
     user_defined: list[str] | None = None,
     auto_generated: list[str] | None = None,
     max_auto: int = 3,
-) -> list[str]:
-    """Merge synonyms as UI overrides > TMSL/user-defined > auto-generated.
+) -> tuple[list[str], dict[str, str]]:
+    """Merge synonyms as UI overrides > TMSL/user-defined > auto-generated,
+    also returning a {synonym: source} provenance map.
 
-    For backward compatibility with the earlier two-list design,
-    ``merge_synonyms(user_defined, auto_generated)`` is also accepted.
+    source is one of "manual_override", "tmsl_authored", "auto_generated".
+    Report-layer aliases are not a source this function knows about — callers
+    that also resolve report aliases (see tmsl_to_osi.py) tag those entries
+    themselves after merging, since only they have that information.
     """
-    if auto_generated is None and user_defined is not None:
-        auto_generated = user_defined
-        user_defined = ui_overrides
-        ui_overrides = []
-
     result: list[str] = []
+    sources: dict[str, str] = {}
     seen: set[str] = set()
 
-    def add_all(values: Iterable[str], cap: int | None = None) -> None:
+    def add_all(values: Iterable[str], source_tag: str, cap: int | None = None) -> None:
         added = 0
         for raw in values:
             text = str(raw or "").strip()
@@ -54,12 +53,36 @@ def merge_synonyms(
                 break
             seen.add(key)
             result.append(text)
+            sources[text] = source_tag
             added += 1
 
-    add_all(_clean_items(ui_overrides))
-    add_all(_clean_items(user_defined))
-    add_all(_clean_items(auto_generated), cap=max_auto)
-    return result
+    add_all(_clean_items(ui_overrides), "manual_override")
+    add_all(_clean_items(user_defined), "tmsl_authored")
+    add_all(_clean_items(auto_generated), "auto_generated", cap=max_auto)
+    return result, sources
+
+
+def merge_synonyms(
+    ui_overrides: list[str] | None = None,
+    user_defined: list[str] | None = None,
+    auto_generated: list[str] | None = None,
+    max_auto: int = 3,
+) -> list[str]:
+    """Merge synonyms as UI overrides > TMSL/user-defined > auto-generated.
+
+    For backward compatibility with the earlier two-list design,
+    ``merge_synonyms(user_defined, auto_generated)`` is also accepted.
+
+    Thin wrapper over merge_synonyms_with_sources() for callers that don't
+    need provenance — signature and behavior unchanged.
+    """
+    if auto_generated is None and user_defined is not None:
+        auto_generated = user_defined
+        user_defined = ui_overrides
+        ui_overrides = []
+
+    merged, _sources = merge_synonyms_with_sources(ui_overrides, user_defined, auto_generated, max_auto)
+    return merged
 
 
 def synonym_override_key(model_name: str, table_name: str, object_name: str) -> tuple[str, str, str]:

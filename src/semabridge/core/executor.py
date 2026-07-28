@@ -865,6 +865,14 @@ class CLIExecutor:
             _missing = dict(getattr(_builder, "missing_dims", {}) or {})
             if _missing:
                 self._missing_dims = _missing
+            # Same rationale as missing_dims: capture DDL-emission-time drops
+            # (unsupported SQL shapes, unresolved references, dropped
+            # relationships, DAX translation failures) right after DDL is
+            # built, so dry-run (which skips Stage 9) still surfaces them.
+            _ledger = getattr(_builder, "drop_ledger", None)
+            _dropped = list(getattr(_ledger, "records", []) or [])
+            if _dropped:
+                self._dropped_entities = _dropped
 
         logger.info(f"  Converted to {self.config.target.type} format")
 
@@ -964,6 +972,14 @@ class CLIExecutor:
         if _missing:
             self._missing_dims = _missing  # stored for _step_10_finalize
 
+        # Capture every entity dropped from this deploy's DDL build/execution
+        # (any stage — extraction, DAX translation, schema validation,
+        # DDL-emission, or DDL-deployment rejections) for _step_10_finalize.
+        _ledger = getattr(_builder, "drop_ledger", None)
+        _dropped = list(getattr(_ledger, "records", []) or [])
+        if _dropped:
+            self._dropped_entities = _dropped
+
         # Save DDL to output file
         output_path = Path("output/reverse/semantic_view.sql")
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1038,6 +1054,13 @@ class CLIExecutor:
         _missing = getattr(self, "_missing_dims", None)
         if _missing:
             self.summary.missing_dims = _missing
+
+        # Propagate every dropped-entity record captured during DDL
+        # build/deploy (see core/drop_ledger.py) — the uniform "what got
+        # dropped and why" list, covering every stage, not just DAX/measures.
+        _dropped = getattr(self, "_dropped_entities", None)
+        if _dropped:
+            self.summary.dropped_entities = _dropped
 
         # Finalize summary (calculate total duration)
         self.summary.finalize()

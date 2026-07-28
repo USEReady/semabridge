@@ -28,6 +28,7 @@ from semabridge.utils.synonyms import (
     lookup_synonym_override,
     merge_synonyms,
 )
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
 
@@ -47,11 +48,12 @@ class TMSLTransformer:
         "DateTableTemplate_",
     )
     
-    def __init__(self):
+    def __init__(self, drop_ledger: Optional[DropLedger] = None):
         self.dax_translator = DAXTranslator()
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
         self._current_table_name = ""
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def _sanitize_sql_identifier(self, value: str) -> str:
         """Normalize SQL identifiers for generated Databricks SQL fragments."""
@@ -164,9 +166,22 @@ class TMSLTransformer:
                 # Calculation Groups are not supported in V1
                 if table.get("calculationGroup"):
                     logger.info("Skipping calculation group table: %s", table_name or "<unnamed>")
+                    self.drop_ledger.record(
+                        "table", table_name or "<unnamed>", DropStage.EXTRACTION,
+                        "Calculation group tables are not supported in V1 — "
+                        "excluded from the semantic model by design.",
+                        by_design=True,
+                    )
                     continue
                 if self._is_auto_hidden_table_name(table_name):
                     logger.info("Skipping hidden auto-date table: %s", table_name or "<unnamed>")
+                    self.drop_ledger.record(
+                        "table", table_name or "<unnamed>", DropStage.EXTRACTION,
+                        "Auto-generated Power BI/Fabric date table "
+                        "(LocalDateTable_/DateTableTemplate_) — excluded from "
+                        "the semantic model by design.",
+                        by_design=True,
+                    )
                     continue
                 if "#ERROR" in json.dumps(table, ensure_ascii=False, default=str).upper():
                     logger.warning(

@@ -12,7 +12,7 @@ import json
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
@@ -36,8 +36,9 @@ from semabridge.utils.relationship_naming import generate_relationship_name
 from semabridge.utils.synonyms import (
     load_synonym_overrides,
     lookup_synonym_override,
-    merge_synonyms,
+    merge_synonyms_with_sources,
 )
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
 
@@ -52,10 +53,11 @@ class TMSLToOSIConverter(BaseConverter):
         "DateTableTemplate_",
     )
 
-    def __init__(self) -> None:
+    def __init__(self, drop_ledger: Optional[DropLedger] = None) -> None:
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
-        self._measure_alias_lookup: Optional[Dict[str, List[str]]] = None
+        self._field_alias_lookup: Optional[Dict[Tuple[str, str, Optional[str]], List[str]]] = None
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
@@ -99,18 +101,26 @@ class TMSLToOSIConverter(BaseConverter):
             )
             self._dump_measure_audit(model_obj, dataset_id, phase="tmsl_to_osi_pre")
 
-            # Initialize measure aliases if present in source_data (for PBIX)
-            measure_aliases = source_data.get("measure_aliases")
-            if measure_aliases is not None:
-                self._measure_alias_lookup = {}
-                for item in measure_aliases:
+            # Initialize field aliases if present in source_data (for PBIX)
+            field_aliases = source_data.get("field_aliases")
+            if field_aliases is not None:
+                self._field_alias_lookup = {}
+                for item in field_aliases:
                     if isinstance(item, dict):
-                        m_name = item.get("measure")
+                        f_name = item.get("field")
+                        f_type = item.get("field_type")
+                        table = item.get("table")
                         aliases = item.get("aliases")
-                        if isinstance(m_name, str) and isinstance(aliases, list):
-                            self._measure_alias_lookup[m_name.lower()] = list(aliases)
+                        if (
+                            isinstance(f_name, str)
+                            and isinstance(aliases, list)
+                            and f_type in ("measure", "column")
+                        ):
+                            table_key = table.lower() if isinstance(table, str) and table.strip() else None
+                            key = (f_name.lower(), f_type, table_key if f_type == "column" else None)
+                            self._field_alias_lookup[key] = list(aliases)
             else:
-                self._measure_alias_lookup = None
+                self._field_alias_lookup = None
 
             # Guard: connector-type keywords used as model names produce misleading view names
             # (e.g. a dataset named "fabric" would generate a "fabric_SEMANTIC" view).
@@ -159,6 +169,13 @@ class TMSLToOSIConverter(BaseConverter):
                         logger.info(
                             "Skipping hidden auto-date table during OSI conversion: %s",
                             t_name or "<unnamed>",
+                        )
+                        self.drop_ledger.record(
+                            "table", t_name or "<unnamed>", DropStage.EXTRACTION,
+                            "Auto-generated Power BI/Fabric date table "
+                            "(LocalDateTable_/DateTableTemplate_) — excluded from "
+                            "the semantic model by design.",
+                            by_design=True,
                         )
                         continue
                     dataset = self._parse_dataset(table)
@@ -455,7 +472,7 @@ class TMSLToOSIConverter(BaseConverter):
                 col_name,
                 len(user_synonyms),
             )
-        synonyms = merge_synonyms(
+        existing_synonyms, synonym_sources = merge_synonyms_with_sources(
             ui_overrides=lookup_synonym_override(
                 self._synonym_overrides,
                 self._synonym_model_names,
@@ -465,6 +482,14 @@ class TMSLToOSIConverter(BaseConverter):
             user_defined=user_synonyms,
             auto_generated=self._auto_synonyms(col_name),
         )
+        # Columns have no separate display-name heuristic distinct from
+        # col_name (unlike measures), so the same name is used for both
+        # lookup keys.
+        synonyms, has_report_alias, matched_aliases = self._resolve_report_aliases(
+            col_name, col_name, existing_synonyms, field_type="column", table_name=table_name
+        )
+        for alias in matched_aliases:
+            synonym_sources[alias] = "report_alias"
 
         # is_enum heuristic: TMSL dataCategory == "Category" or boolean type
         is_enum = (
@@ -498,8 +523,91 @@ class TMSLToOSIConverter(BaseConverter):
             is_key=is_key,
             source_expression=source_expr,
             synonyms=synonyms,
+            synonym_sources=synonym_sources,
+            has_report_alias=has_report_alias,
             is_enum=is_enum,
         )
+
+    def _resolve_report_aliases(
+        self,
+        name: str,
+        display_name: str,
+        existing_synonyms: List[str],
+        field_type: str,
+        table_name: Optional[str] = None,
+    ) -> Tuple[List[str], bool, List[str]]:
+        """Merge report-layer visual-title aliases into a field's synonym list.
+
+        Shared by _parse_metric and _parse_column. Matching is an exact,
+        case-insensitive lookup against the field's own name or display
+        name — no fuzzy/substring matching (see test_exact_matching_only /
+        test_column_exact_matching_only).
+
+        Measures are matched by (name, "measure") alone — measure names are
+        globally unique in valid TMSL, so no table scoping is needed or
+        attempted. Columns are matched by (name, "column", table) — column
+        names are only unique within their own table, so a same-named
+        column in a different table must not be able to match. There is
+        deliberately no unscoped fallback for columns whose table couldn't
+        be resolved at extraction time: two different same-named columns
+        that both fail to resolve a table would otherwise be merged into
+        the same lookup slot and cross-contaminate each other's aliases.
+        An unresolvable-table column simply gets no report alias
+        (has_report_alias=False) rather than a guess.
+
+        Returns:
+            (merged_synonyms, has_report_alias, matched_aliases) where
+            matched_aliases is the list of report-alias strings that were
+            actually attributed to this field — including ones that were
+            already present via another synonym source, so callers can
+            upgrade that entry's provenance tag to "report_alias" (a
+            confirmed genuine alias is strictly more informative than a
+            coincidental auto-generated/TMSL-authored match).
+        """
+        lookup = self._field_alias_lookup
+        if lookup is None:
+            return list(existing_synonyms), False, []
+
+        report_aliases: List[str] = []
+        for key_candidate in (name, display_name):
+            if not key_candidate:
+                continue
+            key_name = key_candidate.lower()
+            if field_type == "column":
+                match = lookup.get((key_name, "column", (table_name or "").lower() or None))
+            else:
+                match = lookup.get((key_name, field_type, None))
+            if match:
+                report_aliases = match
+                break
+
+        unique_name_lower = name.lower()
+        label_lower = display_name.lower()
+
+        merged: List[str] = []
+        seen: set = set()
+
+        # Preserves discovery order: existing synonyms first
+        for syn in existing_synonyms:
+            if isinstance(syn, str) and syn.strip():
+                s_strip = syn.strip()
+                if s_strip not in seen:
+                    seen.add(s_strip)
+                    merged.append(s_strip)
+
+        # Append matched layout report aliases next
+        matched_aliases: List[str] = []
+        for alias in report_aliases:
+            if isinstance(alias, str) and alias.strip():
+                a_strip = alias.strip()
+                a_lower = a_strip.lower()
+                if a_lower != unique_name_lower and a_lower != label_lower:
+                    if a_strip not in seen:
+                        seen.add(a_strip)
+                        merged.append(a_strip)
+                    matched_aliases.append(a_strip)
+
+        return merged, bool(report_aliases), matched_aliases
 
     @staticmethod
     def _map_summarize_by(summarize_by: str) -> Optional[OSIAggregationType]:
@@ -681,7 +789,7 @@ class TMSLToOSIConverter(BaseConverter):
                 name,
                 len(user_synonyms),
             )
-        existing_synonyms = merge_synonyms(
+        existing_synonyms, synonym_sources = merge_synonyms_with_sources(
             ui_overrides=lookup_synonym_override(
                 self._synonym_overrides,
                 self._synonym_model_names,
@@ -692,46 +800,17 @@ class TMSLToOSIConverter(BaseConverter):
             auto_generated=TMSLToOSIConverter._auto_synonyms(display_name),
         )
 
-        if hasattr(self, "_measure_alias_lookup") and self._measure_alias_lookup is not None:
-            # Match aliases exactly (case-insensitive key comparison)
-            report_aliases = []
-            for key_candidate in (name, display_name):
-                if key_candidate and key_candidate.lower() in self._measure_alias_lookup:
-                    report_aliases = self._measure_alias_lookup[key_candidate.lower()]
-                    break
-
-            unique_name_lower = name.lower()
-            label_lower = display_name.lower()
-
-            merged = []
-            seen = set()
-
-            # Preserves discovery order: existing synonyms first
-            for syn in existing_synonyms:
-                if isinstance(syn, str) and syn.strip():
-                    s_strip = syn.strip()
-                    if s_strip not in seen:
-                        seen.add(s_strip)
-                        merged.append(s_strip)
-
-            # Append matched layout report aliases next
-            for alias in report_aliases:
-                if isinstance(alias, str) and alias.strip():
-                    a_strip = alias.strip()
-                    a_lower = a_strip.lower()
-                    if a_lower != unique_name_lower and a_lower != label_lower:
-                        if a_strip not in seen:
-                            seen.add(a_strip)
-                            merged.append(a_strip)
-
-            synonyms = merged
+        synonyms, has_report_alias, matched_aliases = self._resolve_report_aliases(
+            name, display_name, existing_synonyms, field_type="measure"
+        )
+        for alias in matched_aliases:
+            synonym_sources[alias] = "report_alias"
+        if has_report_alias:
             logger.debug(
                 "Applied %s report aliases to metric %s",
-                len(report_aliases),
+                len(matched_aliases),
                 name,
             )
-        else:
-            synonyms = existing_synonyms
 
         return OSIMetric(
             unique_name=name,
@@ -744,6 +823,8 @@ class TMSLToOSIConverter(BaseConverter):
             is_hidden=measure_def.get("isHidden", False),
             access_modifier=access_modifier,
             synonyms=synonyms,
+            synonym_sources=synonym_sources,
+            has_report_alias=has_report_alias,
         )
 
     @staticmethod

@@ -120,6 +120,18 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             context.sml_model,
             sync_mode=getattr(context, "sync_mode", "copy"),
         )
+        # deploy() rebuilds DDL from scratch internally, so emitter.drop_ledger
+        # also re-contains every DDL-emission-stage drop Step 8 already merged
+        # into context.drop_ledger. Only merge the deployment-stage entries
+        # here (genuinely new — Snowflake-rejected identifiers etc.) to avoid
+        # duplicating the Step 8 entries. Runs even on failure — the ledger is
+        # populated incrementally as generate_ddls()/execute run, before any raise.
+        # getattr guards test doubles / stub emitters that don't carry a drop_ledger.
+        from semabridge.core.drop_ledger import DropStage as _DropStage
+        _emitter_ledger = getattr(emitter, "drop_ledger", None)
+        for _rec in getattr(_emitter_ledger, "records", None) or []:
+            if _rec.stage == _DropStage.DDL_DEPLOYMENT:
+                context.drop_ledger.records.append(_rec)
         if not deployed:
             error_msg = emitter.last_deployment_error or "unknown deployment error"
 

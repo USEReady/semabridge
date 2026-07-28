@@ -12,21 +12,21 @@
 import { useState, useMemo, useCallback } from 'react';
 import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
+import DroppedFieldsPanel from './common/DroppedFieldsPanel';
 import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
 import { suggestCollisionResolutions, sanitizeMappingName, shortDeterministicHash, buildSourceFingerprint } from '../utils/projectHelpers';
-
-// ─── Filter tab definitions ───────────────────────────────────────────────────
-const MAPPING_FILTERS = [
-  { id: 'all',            label: 'All' },
-  { id: 'auto',           label: 'Auto' },
-  { id: 'manual',         label: 'Manual' },
-  { id: 'unmapped',       label: 'Unmapped' },
-  { id: 'collision',      label: 'Collision' },
-  { id: 'schema_issues',  label: 'Schema Issues' },
-];
+import {
+  groupRowsByFieldType,
+  normalizeFieldTypeKey,
+  computeStatusFacets,
+  hasConversionData,
+  rowConversionOutcome,
+  rowNeedsReview,
+  CONVERSION_FACET_LABELS,
+} from '../utils/mappingFilterUtils';
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 export function isBlockingRow(row) {
@@ -367,9 +367,36 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
 }
 
 // ─── Measure translation detail panel ─────────────────────────────────────────
+const SYNONYM_SOURCE_LABELS = {
+  manual_override: 'Manual Override',
+  tmsl_authored: 'TMSL-Authored',
+  auto_generated: 'Auto-Generated',
+  report_alias: 'Report Alias',
+};
+
+function synonymSourceLabel(source) {
+  if (SYNONYM_SOURCE_LABELS[source]) return SYNONYM_SOURCE_LABELS[source];
+  const word = String(source || '').replace(/[_-]+/g, ' ').trim();
+  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unknown Source';
+}
+
 function MeasureTranslationPanel({ row }) {
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason;
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
+  const [showAllSynonymSources, setShowAllSynonymSources] = useState(false);
+
+  // A synonym only shows under "Report Aliases" when its source is confirmed
+  // as a genuine PBIX report-layer visual alias. Anything else (manual
+  // override, TMSL-authored, mechanically auto-generated) is a coincidental
+  // lookalike at best and must not be visually indistinguishable from a real
+  // report alias — it's hidden behind an explicit toggle instead, sub-labeled
+  // by its actual source. Driven entirely by row.synonym_sources; no
+  // hardcoded field or source names.
+  const allSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
+  const synonymSources = row.synonym_sources || {};
+  const reportAliases = allSynonyms.filter((s) => synonymSources[s] === 'report_alias');
+  const otherSynonyms = allSynonyms.filter((s) => synonymSources[s] !== 'report_alias');
+
   return (
     <div style={{
       gridColumn: '1 / -1',
@@ -419,8 +446,9 @@ function MeasureTranslationPanel({ row }) {
         )
       )}
 
-      {/* ── Report Aliases (Columns and Measures if present) ── */}
-      {Array.isArray(row.synonyms) && row.synonyms.length > 0 && (
+      {/* ── Report Aliases (Columns and Measures if present) — genuine
+          report-layer matches only; anything else is behind the toggle below ── */}
+      {reportAliases.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Report Aliases</span>
           <div style={{
@@ -434,7 +462,7 @@ function MeasureTranslationPanel({ row }) {
             color: 'var(--text-secondary)',
             fontSize: 12,
           }}>
-            {row.synonyms.map((alias, index) => (
+            {reportAliases.map((alias, index) => (
               <div key={`${row.id}-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ color: 'var(--text-tertiary)' }}>•</span>
                 <span>{alias}</span>
@@ -444,13 +472,78 @@ function MeasureTranslationPanel({ row }) {
         </div>
       )}
 
+      {/* ── Other synonym sources — hidden by default. This page has no
+          role gating (any authenticated user can reach it), so a
+          manual-override/TMSL-authored/auto-generated synonym must never be
+          shown next to genuine report aliases without an explicit,
+          deliberate action to reveal it. ── */}
+      {otherSynonyms.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => setShowAllSynonymSources((prev) => !prev)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              alignSelf: 'flex-start',
+              padding: '3px 8px',
+              borderRadius: 5,
+              border: '1px solid var(--border-main)',
+              background: 'transparent',
+              color: 'var(--text-tertiary)',
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            {showAllSynonymSources
+              ? 'Hide other synonym sources'
+              : `Show all synonym sources (${otherSynonyms.length})`}
+          </button>
+          {showAllSynonymSources && (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              padding: '10px 12px',
+              borderRadius: 6,
+              background: 'var(--bg-main)',
+              border: '1px solid var(--border-main)',
+              color: 'var(--text-secondary)',
+              fontSize: 12,
+            }}>
+              {otherSynonyms.map((alias, index) => (
+                <div key={`${row.id}-other-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: 'var(--text-tertiary)' }}>•</span>
+                  <span>{alias}</span>
+                  <span style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.03em',
+                    color: 'var(--text-tertiary)',
+                    border: '1px solid var(--border-main)',
+                    borderRadius: 4,
+                    padding: '1px 5px',
+                    marginLeft: 'auto',
+                  }}>
+                    {synonymSourceLabel(synonymSources[alias])}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Side-by-Side Code Blocks (Measures only) ── */}
       {isMeasure && (
         <div style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: '12px',
-          marginTop: (Array.isArray(row.synonyms) && row.synonyms.length > 0) ? '6px' : '0',
+          marginTop: (reportAliases.length > 0 || otherSynonyms.length > 0) ? '6px' : '0',
         }}>
           {/* Source DAX */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -776,8 +869,12 @@ export default function DryRunMappingTable({
   schemaConflicts = [],       // DIMENSION_MISSING conflicts from backend
   compatibilityScore = null,  // 0–100 float from backend
   onReSync,                   // () => void — trigger a re-sync after auto-add
+  droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
 }) {
-  const [activeFilter, setActiveFilter] = useState('all');
+  // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
+  const [activeFieldType, setActiveFieldType] = useState('all');
+  const [activeStatuses, setActiveStatuses] = useState(() => new Set());
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [bulkResolving, setBulkResolving] = useState(false);
@@ -790,20 +887,65 @@ export default function DryRunMappingTable({
   const [pendingRenames, setPendingRenames]       = useState({});   // { rowId: newName }
   const [applyingRename, setApplyingRename]       = useState(null); // rowId
 
-  // ── Split columns vs measures ───────────────────────────────────────────────
+  // ── Tier 1 groups: whatever field-type values are actually in the data ─────
+  const fieldGroups = useMemo(() => groupRowsByFieldType(mappings), [mappings]);
+  // Kept for the two places that still want a raw measure/column split (badges, search haystack).
   const { columns, measures } = useMemo(() => {
     const cols = [];
     const meas = [];
     mappings.forEach((row) => {
       const kind = String(row?.field_type || row?.entity_kind || '').toLowerCase();
-      if (kind === 'measure' || kind === 'metric') {
-        meas.push(row);
-      } else {
-        cols.push(row);
-      }
+      if (kind === 'measure' || kind === 'metric') meas.push(row); else cols.push(row);
     });
     return { columns: cols, measures: meas };
   }, [mappings]);
+
+  // ── Reset both filter tiers whenever a *new* dry run lands (not on row edits —
+  //    edits only touch `mappings`/`detectedMappings`, never the `summary` object).
+  //    Adjusted during render (React's documented pattern for "reset state when a
+  //    prop changes") rather than in an effect, to avoid an extra render pass. ──
+  const [lastSummary, setLastSummary] = useState(summary);
+  if (summary !== lastSummary) {
+    setLastSummary(summary);
+    setActiveFieldType('all');
+    setActiveStatuses(new Set());
+    setNeedsReviewOnly(false);
+  }
+
+  // ── Rows in scope for Tier 2 facet computation (the selected Tier 1 group) ──
+  const scopedRows = useMemo(() => {
+    const group = fieldGroups.find((g) => g.key === activeFieldType);
+    return group ? group.rows : mappings;
+  }, [fieldGroups, activeFieldType, mappings]);
+
+  // ── Tier 2 options: real statuses present in scope, plus conversion outcome
+  //    facets (only if this scope actually has expressions to convert), plus
+  //    the always-present schema-issues toggle (structurally not a row status) ──
+  const statusFacets = useMemo(() => computeStatusFacets(scopedRows), [scopedRows]);
+  const showConversionFacets = useMemo(() => hasConversionData(scopedRows), [scopedRows]);
+  const tier2Options = useMemo(() => {
+    const options = statusFacets.map((f) => ({ ...f, kind: 'status' }));
+    if (showConversionFacets) {
+      Object.entries(CONVERSION_FACET_LABELS).forEach(([key, label]) => {
+        const count = scopedRows.filter((r) => rowConversionOutcome(r) === key).length;
+        if (count > 0) options.push({ key, label, count, kind: 'conversion' });
+      });
+    }
+    if (schemaConflicts.length > 0) {
+      options.push({ key: 'schema_issues', label: 'Schema Issues', count: schemaConflicts.length, kind: 'schema' });
+    }
+    return options;
+  }, [statusFacets, showConversionFacets, scopedRows, schemaConflicts.length]);
+
+  const needsReviewCount = useMemo(() => scopedRows.filter(rowNeedsReview).length, [scopedRows]);
+
+  const toggleStatus = useCallback((key) => {
+    setActiveStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   // ── Derived counts (over all mappings + schema issues) ──────────────────────
   const counts = useMemo(() => {
@@ -949,8 +1091,23 @@ export default function DryRunMappingTable({
   }, [synonymModal, onSynonymUpdate]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────────
-  const filterRow = (row) => {
-    if (activeFilter !== 'all' && String(row?.status || '').toLowerCase() !== activeFilter) return false;
+  // Tier 2 is OR-across-selections; an empty selection means "show all" for that tier.
+  const matchesTier2 = useCallback((row) => {
+    if (activeStatuses.size === 0) return true;
+    const status = String(row?.status || '').toLowerCase().trim() || 'unknown';
+    if (activeStatuses.has(status)) return true;
+    const conversionKey = rowConversionOutcome(row);
+    if (conversionKey && activeStatuses.has(conversionKey)) return true;
+    // 'schema_issues' never matches a row — it has no per-row status; selecting it
+    // alongside real statuses still shows those via OR, selecting it alone shows none
+    // (the always-visible schema-conflicts panel below carries that information instead).
+    return false;
+  }, [activeStatuses]);
+
+  const filterRow = useCallback((row) => {
+    if (activeFieldType !== 'all' && normalizeFieldTypeKey(row) !== activeFieldType) return false;
+    if (!matchesTier2(row)) return false;
+    if (needsReviewOnly && !rowNeedsReview(row)) return false;
     if (search.trim()) {
       const haystack = [
         row.source_field,
@@ -965,10 +1122,14 @@ export default function DryRunMappingTable({
       if (!matchesSmartQuery(haystack, search, useRegex)) return false;
     }
     return true;
-  };
+  }, [activeFieldType, matchesTier2, needsReviewOnly, search, useRegex]);
 
-  const filteredColumns = useMemo(() => columns.filter(filterRow), [columns, activeFilter, search, useRegex]);
-  const filteredMeasures = useMemo(() => measures.filter(filterRow), [measures, activeFilter, search, useRegex]);
+  // ── Visible field-type sections: the selected Tier 1 group, or all of them ──
+  const visibleGroups = useMemo(() => {
+    const groups = fieldGroups.filter((g) => g.key !== 'all'
+      && (activeFieldType === 'all' || activeFieldType === g.key));
+    return groups.map((g) => ({ ...g, filteredRows: g.rows.filter(filterRow) }));
+  }, [fieldGroups, activeFieldType, filterRow]);
 
   // ── Summary bar values ──────────────────────────────────────────────────────
   const totalFields  = summary?.total_fields  ?? mappings.length;
@@ -1081,24 +1242,54 @@ export default function DryRunMappingTable({
         )}
       </div>
 
-      {/* ── Controls row: filter tabs + search + Resolve All ─────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-        <div className="filter-tabs" style={{ marginBottom: 0 }}>
-          {MAPPING_FILTERS.map((filter) => {
-            const count = counts[filter.id] ?? counts.all;
-            const active = activeFilter === filter.id;
-            const isCollisionTab = filter.id === 'collision';
-            return (
-              <button
-                key={filter.id}
-                type="button"
-                className={`filter-tab${active ? ' active' : ''}${isCollisionTab ? ' collision-tab' : ''}`}
-                onClick={() => setActiveFilter(filter.id)}
-              >
-                {filter.label} ({count})
-              </button>
-            );
-          })}
+      <DroppedFieldsPanel entries={droppedEntities} />
+
+      {/* ── Controls row: two-tier filter + search + Resolve All ─────────────── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {/* Tier 1 — field type (single-select), built from whatever field types are in the data */}
+          <div className="filter-tabs" style={{ marginBottom: 0 }}>
+            {fieldGroups.map((group) => {
+              const active = activeFieldType === group.key;
+              const count = group.rows.length;
+              return (
+                <button
+                  key={group.key}
+                  type="button"
+                  className={`filter-tab${active ? ' active' : ''}`}
+                  onClick={() => setActiveFieldType(group.key)}
+                >
+                  {group.label} ({count})
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Tier 2 — status (multi-select, OR), scoped to the selected Tier 1 group, plus
+              a "Needs Review" quick toggle. Options here are whatever statuses/conversion
+              outcomes are actually present — nothing is hardcoded to a known connector. */}
+          <div className="filter-checks">
+            <button
+              type="button"
+              className={`filter-check needs-review${needsReviewOnly ? ' active' : ''}`}
+              onClick={() => setNeedsReviewOnly((prev) => !prev)}
+            >
+              Needs Review ({needsReviewCount})
+            </button>
+            {tier2Options.map((option) => {
+              const checked = activeStatuses.has(option.key);
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={`filter-check${checked ? ' active' : ''}${option.key === 'collision' ? ' collision-check' : ''}`}
+                  onClick={() => toggleStatus(option.key)}
+                >
+                  {option.label} ({option.count})
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -1195,98 +1386,70 @@ export default function DryRunMappingTable({
         </div>
       ) : (
         <>
-          {/* Columns section */}
-          {columns.length > 0 && (
-            <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)', marginBottom: 16 }}>
-              <div style={{
-                padding: '10px 14px',
-                background: 'rgba(255, 255, 255, 0.03)',
-                borderBottom: '1px solid var(--border-main)',
-                fontSize: 11,
-                fontWeight: 800,
-                color: 'var(--text-primary)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8
-              }}>
-                <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent-blue)' }} />
-                Columns ({columns.length})
-              </div>
-              <TableHeader />
-              {filteredColumns.length === 0 ? (
-                <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-                  No columns match the current filter or search.
+          {/* One section per field-type group present in the data (Tier 1 = 'all' shows every
+              group; a specific selection isolates just that one). 'measure' keeps its existing
+              cyan "fx" branding; any other/unforeseen group key gets the neutral default look. */}
+          {visibleGroups.map((group) => {
+            const isMeasureGroup = group.key === 'measure';
+            return (
+              <div
+                key={group.key}
+                style={{
+                  border: isMeasureGroup ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid var(--border-main)',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  background: 'var(--bg-surface)',
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{
+                  padding: '10px 14px',
+                  background: isMeasureGroup ? 'rgba(56, 189, 248, 0.05)' : 'rgba(255, 255, 255, 0.03)',
+                  borderBottom: isMeasureGroup ? '1px solid rgba(56, 189, 248, 0.2)' : '1px solid var(--border-main)',
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: isMeasureGroup ? '#7dd3fc' : 'var(--text-primary)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}>
+                  {isMeasureGroup
+                    ? <div style={{ fontSize: 14, color: '#7dd3fc' }}>fx</div>
+                    : <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent-blue)' }} />}
+                  {group.label} ({group.filteredRows.length})
                 </div>
-              ) : (
-                filteredColumns.map(row => (
-                  <MappingRow
-                    key={row.id}
-                    row={row}
-                    onEdit={onEdit}
-                    onSynonymEdit={openSynonymModal}
-                    allRows={mappings}
-                    expandedCollision={expandedCollision}
-                    setExpandedCollision={setExpandedCollision}
-                    pendingRenames={pendingRenames}
-                    setPendingRenames={setPendingRenames}
-                    applyingRename={applyingRename}
-                    onApplyRename={applyRename}
-                  />
-                ))
-              )}
-            </div>
-          )}
-
-          {/* Measures section */}
-          {measures.length > 0 && (
-            <div style={{ border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-surface)' }}>
-              <div style={{
-                padding: '10px 14px',
-                background: 'rgba(56, 189, 248, 0.05)',
-                borderBottom: '1px solid rgba(56, 189, 248, 0.2)',
-                fontSize: 11,
-                fontWeight: 800,
-                color: '#7dd3fc',
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}>
-                <div style={{ fontSize: 14, color: '#7dd3fc' }}>fx</div>
-                Measures ({measures.length})
+                <TableHeader />
+                {group.filteredRows.length === 0 ? (
+                  <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                    No {group.label.toLowerCase()} match the current filter or search.
+                  </div>
+                ) : (
+                  group.filteredRows.map(row => (
+                    <MappingRow
+                      key={row.id}
+                      row={row}
+                      onEdit={onEdit}
+                      onSynonymEdit={openSynonymModal}
+                      allRows={mappings}
+                      expandedCollision={expandedCollision}
+                      setExpandedCollision={setExpandedCollision}
+                      pendingRenames={pendingRenames}
+                      setPendingRenames={setPendingRenames}
+                      applyingRename={applyingRename}
+                      onApplyRename={applyRename}
+                    />
+                  ))
+                )}
               </div>
-              <TableHeader />
-              {filteredMeasures.length === 0 ? (
-                <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-                  No measures match the current filter or search.
-                </div>
-              ) : (
-                filteredMeasures.map(row => (
-                  <MappingRow
-                    key={row.id}
-                    row={row}
-                    onEdit={onEdit}
-                    onSynonymEdit={openSynonymModal}
-                    allRows={mappings}
-                    expandedCollision={expandedCollision}
-                    setExpandedCollision={setExpandedCollision}
-                    pendingRenames={pendingRenames}
-                    setPendingRenames={setPendingRenames}
-                    applyingRename={applyingRename}
-                    onApplyRename={applyRename}
-                  />
-                ))
-              )}
-            </div>
-          )}
+            );
+          })}
         </>
       )}
 
       {/* ── Schema Issues panel (DIMENSION_MISSING conflicts) ───────────────── */}
-      {activeFilter === 'schema_issues' && (
+      {activeStatuses.has('schema_issues') && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {schemaToast && (
             <div style={{
@@ -1419,7 +1582,7 @@ export default function DryRunMappingTable({
       )}
 
       {/* ── Relationships section ─────────────────────────────────────────────── */}
-      {activeFilter !== 'schema_issues' && (
+      {!activeStatuses.has('schema_issues') && (
         <RelationshipsSection relationships={relationships} />
       )}
       <SynonymEditModal

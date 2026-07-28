@@ -20,7 +20,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.core.exceptions import ConnectorError, PBIXParsingError
 from semabridge.core.interfaces import BaseConnector
@@ -151,7 +151,7 @@ class LocalPBIXConnector(BaseConnector):
             "raw_tmsl_json": None,
             "raw_model": None,
             "presentation_metadata": [],
-            "measure_aliases": [],
+            "field_aliases": [],
             "metadata": {
                 "source": "local_pbix",
                 "file_path": str(self._pbix_path),
@@ -213,21 +213,40 @@ class LocalPBIXConnector(BaseConnector):
             presentation_metadata = self._parse_presentation_metadata(layout)
             result["presentation_metadata"] = presentation_metadata
 
-            aliases_by_measure: Dict[str, List[str]] = {}
-            for item in presentation_metadata:
-                m = item["measure"]
-                t = item["title"]
-                if m not in aliases_by_measure:
-                    aliases_by_measure[m] = []
-                if t and t.lower() != m.lower():
-                    if t not in aliases_by_measure[m]:
-                        aliases_by_measure[m].append(t)
+            aliases_by_field: Dict[Tuple[str, str, Optional[str]], List[str]] = {}
 
-            measure_aliases = [
-                {"measure": m, "aliases": aliases}
-                for m, aliases in aliases_by_measure.items()
+            def _add_alias(field_name: str, field_kind: str, table_name: Optional[str], title: str) -> None:
+                key = (field_name, field_kind, table_name if field_kind == "column" else None)
+                if key not in aliases_by_field:
+                    aliases_by_field[key] = []
+                if title and title.lower() != field_name.lower():
+                    if title not in aliases_by_field[key]:
+                        aliases_by_field[key].append(title)
+
+            for item in presentation_metadata:
+                f = item["field"]
+                k = item["field_type"]
+                tbl = item.get("table")
+                t = item["title"]
+                if k == "unknown":
+                    # No adjacent Measure/Column node to type this reference.
+                    # It can safely feed the measure bucket (measure names are
+                    # globally unique in valid TMSL, so no table info is ever
+                    # needed there). It cannot safely feed the column bucket:
+                    # columns are only unique per-table, and an untyped
+                    # reference never resolves a table either — attributing it
+                    # to a column risks misattributing across same-named
+                    # columns in different tables, so it's skipped entirely
+                    # for columns rather than guessed.
+                    _add_alias(f, "measure", None, t)
+                else:
+                    _add_alias(f, k, tbl, t)
+
+            field_aliases = [
+                {"field": f, "field_type": k, "table": tbl, "aliases": aliases}
+                for (f, k, tbl), aliases in aliases_by_field.items()
             ]
-            result["measure_aliases"] = measure_aliases
+            result["field_aliases"] = field_aliases
 
             if presentation_metadata:
                 logger.info(
@@ -869,18 +888,36 @@ class LocalPBIXConnector(BaseConnector):
             logger.warning("Failed to parse report layout JSON from PBIX archive")
         return None
 
-    def _extract_measure_references(self, visual: Dict[str, Any]) -> Set[str]:
-        """Recursively traverse a visual container's fields to extract measure names.
+    def _extract_field_references(self, visual: Dict[str, Any]) -> Set[Tuple[str, str, Optional[str]]]:
+        """Recursively traverse a visual container's fields to extract measure
+        and column field references, resolved to their source table where
+        possible.
+
+        Both DAX measures and column-bound visuals encode their binding as a
+        node named after the entity kind (``Measure`` or ``Column``) with a
+        ``Property`` holding the field name — confirmed against real PBIX
+        Report/Layout JSON, where a column-bound Select entry has the
+        identical shape as a measure-bound one:
+            {"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isVanArsdel"}}
+            {"Measure": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Total Units"}}
 
         Args:
             visual: Visual container dictionary.
 
         Returns:
-            Set of unique normalized measure names.
+            Set of (field_name, field_kind, table_name) tuples. field_kind is
+            "measure", "column", or "unknown" (bare queryRef match with no
+            adjacent Measure/Column node — confirmed empirically to never
+            carry table information either). table_name is the resolved
+            source table (from the query's From clause) for columns, or None
+            when unresolvable. Measures are left unscoped (None) since
+            measure names are globally unique in valid TMSL — no From-clause
+            resolution is attempted for them.
         """
-        measures: Set[str] = set()
+        fields: Set[Tuple[str, str, Optional[str]]] = set()
+        alias_to_entity: Dict[str, str] = {}
 
-        def _clean_measure_name(name: str) -> str:
+        def _clean_field_name(name: str) -> str:
             name = name.strip()
             if "[" in name and name.endswith("]"):
                 start = name.rfind("[")
@@ -891,23 +928,52 @@ class LocalPBIXConnector(BaseConnector):
                     name = parts[-1]
             return name.strip()
 
+        def _collect_aliases(data: Any) -> None:
+            if isinstance(data, dict):
+                from_clause = data.get("From")
+                if isinstance(from_clause, list):
+                    for source in from_clause:
+                        if isinstance(source, dict):
+                            alias = source.get("Name")
+                            entity = source.get("Entity")
+                            if isinstance(alias, str) and isinstance(entity, str) and entity.strip():
+                                alias_to_entity[alias] = entity
+                for val in data.values():
+                    _collect_aliases(val)
+            elif isinstance(data, list):
+                for item in data:
+                    _collect_aliases(item)
+
+        def _resolve_table(node: Dict[str, Any]) -> Optional[str]:
+            expr = node.get("Expression")
+            if isinstance(expr, dict):
+                source_ref = expr.get("SourceRef")
+                if isinstance(source_ref, dict):
+                    alias = source_ref.get("Source")
+                    if isinstance(alias, str):
+                        return alias_to_entity.get(alias)
+            return None
+
         def _traverse(data: Any) -> None:
             if isinstance(data, dict):
-                # Case 1: Measure -> Property
-                measure_node = data.get("Measure")
-                if isinstance(measure_node, dict):
-                    prop = measure_node.get("Property")
-                    if isinstance(prop, str) and prop.strip():
-                        cleaned = _clean_measure_name(prop)
-                        if cleaned:
-                            measures.add(cleaned)
+                # Case 1: Measure -> Property, or Column -> Property (identical shape)
+                for node_key, field_kind in (("Measure", "measure"), ("Column", "column")):
+                    node = data.get(node_key)
+                    if isinstance(node, dict):
+                        prop = node.get("Property")
+                        if isinstance(prop, str) and prop.strip():
+                            cleaned = _clean_field_name(prop)
+                            if cleaned:
+                                table_name = _resolve_table(node) if field_kind == "column" else None
+                                fields.add((cleaned, field_kind, table_name))
 
-                # Case 2: queryRef
+                # Case 2: queryRef (no adjacent Measure/Column node — confirmed
+                # empirically to never carry a resolvable table either)
                 query_ref = data.get("queryRef")
                 if isinstance(query_ref, str) and query_ref.strip():
-                    cleaned = _clean_measure_name(query_ref)
+                    cleaned = _clean_field_name(query_ref)
                     if cleaned:
-                        measures.add(cleaned)
+                        fields.add((cleaned, "unknown", None))
 
                 for val in data.values():
                     _traverse(val)
@@ -915,7 +981,11 @@ class LocalPBIXConnector(BaseConnector):
                 for item in data:
                     _traverse(item)
 
-        # Parse and traverse the four visual container JSON properties
+        # Parse the four visual container JSON properties once, then run two
+        # passes over them: first collect every From-clause alias->table
+        # mapping (order-independent — doesn't rely on From preceding Select
+        # in the JSON), then resolve Column/Measure references against it.
+        parsed_fields: List[Any] = []
         for field_name in ("config", "query", "filters", "dataTransforms"):
             field_val = visual.get(field_name)
             if not field_val:
@@ -936,9 +1006,14 @@ class LocalPBIXConnector(BaseConnector):
                     continue
 
             if parsed_val:
-                _traverse(parsed_val)
+                parsed_fields.append(parsed_val)
 
-        return measures
+        for parsed_val in parsed_fields:
+            _collect_aliases(parsed_val)
+        for parsed_val in parsed_fields:
+            _traverse(parsed_val)
+
+        return fields
 
     def _parse_presentation_metadata(self, layout: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parse report layout sections and visual containers to extract presentation metadata.
@@ -1028,19 +1103,22 @@ class LocalPBIXConnector(BaseConnector):
                 if not title:
                     continue
 
-                # 4. Extract referenced measures using the linear recursive traversal helper
-                measures = self._extract_measure_references(visual)
-                if not measures:
+                # 4. Extract referenced fields (measures + columns) using the linear
+                #    recursive traversal helper
+                field_refs = self._extract_field_references(visual)
+                if not field_refs:
                     continue
 
                 # 5. Populate and deduplicate tuples
-                for measure in measures:
-                    # Deduplicate identical (measure, title, page, visual_type) tuples
-                    tpl = (measure, title, page, visual_type)
+                for field_name, field_kind, table_name in field_refs:
+                    # Deduplicate identical (field, kind, table, title, page, visual_type) tuples
+                    tpl = (field_name, field_kind, table_name, title, page, visual_type)
                     if tpl not in seen_tuples:
                         seen_tuples.add(tpl)
                         presentation_metadata.append({
-                            "measure": measure,
+                            "field": field_name,
+                            "field_type": field_kind,
+                            "table": table_name,
                             "title": title,
                             "page": page,
                             "visual_type": visual_type,

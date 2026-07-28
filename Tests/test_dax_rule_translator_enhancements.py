@@ -42,8 +42,11 @@ def test_time_intelligence_uses_max_date_anchor():
         "snowflake",
     )
 
-    assert "DATE_TRUNC('YEAR', max_date)" in sql
-    assert 'DATE."CAL_DT" <= max_date' in sql
+    # MAX_DATE must be qualified with the fact table's alias — a bare MAX_DATE
+    # is not a valid identifier inside a semantic view's METRICS clause; it only
+    # resolves because it's a real column on the fact table's enriched view.
+    assert "DATE_TRUNC('YEAR', SPEND_FACT.\"MAX_DATE\")" in sql
+    assert 'CAL_DT" <= SPEND_FACT."MAX_DATE"' in sql
     assert 'SPEND_FACT."TRANSACTION_USD_AMOUNT"' in sql
 
 

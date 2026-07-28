@@ -202,6 +202,8 @@ class OSIToSMLConverter(BaseConverter):
             format_string=osi_col.format_string,
             # Cortex AI metadata (propagated from OSI)
             synonyms=list(osi_col.synonyms),
+            synonym_sources=dict(osi_col.synonym_sources),
+            has_report_alias=osi_col.has_report_alias,
             is_enum=osi_col.is_enum,
             cortex_search_service=osi_col.cortex_search_service,
             sample_values=list(osi_col.sample_values),
@@ -259,6 +261,8 @@ class OSIToSMLConverter(BaseConverter):
                 sync_enabled=True,
                 access_modifier=osi_metric.access_modifier,
                 synonyms=list(osi_metric.synonyms),
+                synonym_sources=dict(osi_metric.synonym_sources),
+                has_report_alias=osi_metric.has_report_alias,
             )
             if _tier == 0:
                 metric.sync_failure_reason = "SQL→DAX reverse translation not available for this expression; raw SQL preserved"
@@ -312,6 +316,8 @@ class OSIToSMLConverter(BaseConverter):
         # Propagate Cortex AI metadata from OSI layer
         metric.access_modifier = osi_metric.access_modifier
         metric.synonyms = list(osi_metric.synonyms)
+        metric.synonym_sources = dict(osi_metric.synonym_sources)
+        metric.has_report_alias = osi_metric.has_report_alias
 
         return metric
 

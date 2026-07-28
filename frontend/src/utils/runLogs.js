@@ -99,20 +99,26 @@ function collectStepLogs(summary, prefix = '') {
 function buildSummaryRunLogs(run = {}) {
   const lines = [];
 
+  // The backend (_build_run_logs in run_service.py) already emits one
+  // complete, timestamped, correctly-scoped line per stage. Re-deriving the
+  // same lines here from run.summary / run.results independently used to
+  // double-log (and with the bracket/no-bracket split, quadruple-log) every
+  // stage. Only fall back to local reconstruction when the backend response
+  // doesn't include logs at all.
   if (Array.isArray(run.logs) && run.logs.length) {
     lines.push(...run.logs.map((line) => String(line)));
-  }
+  } else {
+    const topLevelSummaryLines = collectStepLogs(run.summary);
+    if (topLevelSummaryLines.length) {
+      lines.push(...topLevelSummaryLines);
+    }
 
-  const topLevelSummaryLines = collectStepLogs(run.summary);
-  if (topLevelSummaryLines.length) {
-    lines.push(...topLevelSummaryLines);
+    const results = Array.isArray(run.results) ? run.results : [];
+    results.forEach((result) => {
+      const modelName = result?.model ? `[${result.model}]` : '[Model]';
+      lines.push(...collectStepLogs(result?.summary, modelName));
+    });
   }
-
-  const results = Array.isArray(run.results) ? run.results : [];
-  results.forEach((result) => {
-    const modelName = result?.model ? `[${result.model}]` : '[Model]';
-    lines.push(...collectStepLogs(result?.summary, modelName));
-  });
 
   if (lines.length) {
     if (run.message) {

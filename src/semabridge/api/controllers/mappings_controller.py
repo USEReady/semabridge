@@ -317,12 +317,49 @@ async def dry_run_mapping(
             session_key=f"{preview_project_id}-mapping-session",
             target_connector=target_connector,
         )
+        dropped_entities = list(built.get("dropped_entities", []))
+
+        # ── Trial DDL-build pass ──────────────────────────────────────────────
+        # Runs the real DDL-emission builders (with placeholder Snowflake creds,
+        # never connecting) purely to surface Tier C / DDL-emission-time drops
+        # (e.g. metrics whose DAX translation failed) in the dry-run preview,
+        # before deployment. generate_ddls() is pure string-building — no
+        # network calls, no writes beyond a local debug .sql file — so this is
+        # safe to re-run on every mapping-iteration dry-run call.
+        if sml_blob and target_connector == "snowflake":
+            try:
+                from semabridge.sml.serializer import SMLSerializer
+                from semabridge.core.settings import SnowflakeConfig
+                from semabridge.core.behavior import ConnectorBehavior
+                from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+
+                trial_sml = SMLSerializer._dict_to_model(sml_blob)
+                target_cfg = request.target_config or {}
+                trial_cfg = SnowflakeConfig(
+                    account=str(target_cfg.get("account") or "placeholder"),
+                    user=str(target_cfg.get("user") or "placeholder"),
+                    warehouse=str(target_cfg.get("warehouse") or "placeholder"),
+                    database=str(target_cfg.get("database") or "placeholder"),
+                )
+                trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=ConnectorBehavior())
+                try:
+                    trial_emitter.generate_ddls(trial_sml)
+                except Exception as ddl_err:
+                    # Expected for models with unresolvable drops (e.g. every
+                    # metric fails translation) — the ledger is still populated
+                    # incrementally by the sub-builders before such a raise.
+                    logger.info("[DryRun] Trial DDL-build pass raised (non-fatal): %s", ddl_err)
+                dropped_entities.extend(trial_emitter.drop_ledger.to_json())
+            except Exception as trial_setup_err:
+                logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
+
         data = {
             "project_id": preview_project_id,
             "mappings": built.get("mappings", []),
             "source_fields": built.get("source_fields", []),
             "target_fields": built.get("target_fields", []),
             "collisions": built.get("collisions", []),
+            "dropped_entities": dropped_entities,
         }
 
         entity_mappings = _compat_serialize_auto_map_entity_mappings(
@@ -400,6 +437,7 @@ async def dry_run_mapping(
             "model_name": model_name,
             "entity_mappings": filtered_mappings,
             "extraction_failed": extraction_failed,
+            "dropped_entities": data.get("dropped_entities", []),
             "summary": {
                 "total_fields": len(filtered_mappings),
                 "auto_mapped": auto_count,
@@ -419,6 +457,7 @@ async def dry_run_mapping(
                 "success": False,
                 "error": str(e),
                 "entity_mappings": [],
+                "dropped_entities": [],
                 "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},
             },
         )

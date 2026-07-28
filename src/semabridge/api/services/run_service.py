@@ -131,40 +131,73 @@ def _compat_sync_mode_for_restore_snapshot(
     return "copy"
 
 
+def _format_step_timestamp(iso_value: Optional[str]) -> str:
+    """Format an ISO timestamp as 'HH:MM:SS', or '' if missing/unparseable."""
+    if not iso_value:
+        return ""
+    try:
+        import datetime as _datetime
+        return _datetime.datetime.fromisoformat(str(iso_value)).strftime("%H:%M:%S")
+    except (ValueError, TypeError):
+        return ""
+
+
 def _collect_step_logs(summary: Dict[str, Any], prefix: str = "") -> List[str]:
     lines: List[str] = []
     for step in (summary.get("steps_completed") or []):
         if not isinstance(step, dict):
             continue
         detail = f" - {step.get('message')}" if step.get("message") else ""
-        prefix_text = f"{prefix} " if prefix else ""
-        lines.append(
-            f"{str(step.get('status') or 'info').upper()} {prefix_text}Stage {step.get('step_number', '?')}: {step.get('step_name') or 'Unknown'}{detail}"
-        )
+        parts = [str(step.get("status") or "info").upper()]
+        timestamp = _format_step_timestamp(step.get("completed_at") or step.get("started_at"))
+        if timestamp:
+            parts.append(timestamp)
+        if prefix:
+            parts.append(prefix)
+        parts.append(f"Stage {step.get('step_number', '?')}: {step.get('step_name') or 'Unknown'}{detail}")
+        lines.append(" ".join(parts))
     for err in (summary.get("errors") or []):
         if not isinstance(err, dict):
             continue
-        prefix_text = f"{prefix} " if prefix else ""
-        lines.append(
-            f"ERROR {prefix_text}Stage {err.get('step_number', '?')} ({err.get('step_name') or 'Execution'}) - {err.get('message') or 'Unknown error'}"
+        parts = ["ERROR"]
+        timestamp = _format_step_timestamp(summary.get("completed_at") or summary.get("started_at"))
+        if timestamp:
+            parts.append(timestamp)
+        if prefix:
+            parts.append(prefix)
+        parts.append(
+            f"Stage {err.get('step_number', '?')} ({err.get('step_name') or 'Execution'}) - {err.get('message') or 'Unknown error'}"
         )
+        lines.append(" ".join(parts))
     return lines
 
 
 def _build_run_logs(sync_result: Dict[str, Any]) -> List[str]:
-    logs = _collect_step_logs(
+    """Build one log line per stage.
+
+    ``sync_result["summary"]`` is not an independent aggregate — for both
+    single- and multi-model syncs it is simply the last model's own summary,
+    re-surfaced at the top level (see ``last_summary`` in
+    sync_execution_service.py). Rendering both it and ``results[*].summary``
+    duplicated every stage line. Per-model results are the complete,
+    correctly-scoped picture whenever they exist; the top-level summary is
+    only used as a fallback for shapes that never populate ``results``.
+    """
+    results = [r for r in (sync_result.get("results") or []) if isinstance(r, dict)]
+    if results:
+        logs: List[str] = []
+        for result in results:
+            logs.extend(
+                _collect_step_logs(
+                    result.get("summary") if isinstance(result.get("summary"), dict) else {},
+                    f"[{str(result.get('model') or 'Model')}]",
+                )
+            )
+        return logs
+
+    return _collect_step_logs(
         sync_result.get("summary") if isinstance(sync_result.get("summary"), dict) else {}
     )
-    for result in (sync_result.get("results") or []):
-        if not isinstance(result, dict):
-            continue
-        logs.extend(
-            _collect_step_logs(
-                result.get("summary") if isinstance(result.get("summary"), dict) else {},
-                f"[{str(result.get('model') or 'Model')}]",
-            )
-        )
-    return logs
 
 
 def _build_stage_states(sync_result: Dict[str, Any]) -> List[Dict[str, str]]:
