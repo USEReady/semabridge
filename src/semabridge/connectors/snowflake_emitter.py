@@ -520,7 +520,7 @@ class SnowflakeEmitter(BaseEmitter):
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
-                    self._generate_deployment_artifacts(model, ddls)
+                    self._generate_deployment_artifacts(model, ddls, cur)
 
                 # Step 6: Post-deploy smoke test — catch runtime errors early
                 # ddls is list[str]; extract view name from each DDL for the test.
@@ -673,13 +673,38 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as e:
             return str(e)
 
-    def _generate_deployment_artifacts(self, sml: SMLModel, ddls: Dict[str, str]) -> None:
+    def _generate_deployment_artifacts(self, sml: SMLModel, ddls: Dict[str, str], cur=None) -> None:
         """Generate side-car artifacts like Cortex YAML."""
         if self.behavior.features.enable_cortex_analyst:
-            cortex_yaml = self.generate_cortex_yaml(sml)  # noqa: F841  (save logic TBD)
+            sample_fetcher = self._build_sample_fetcher(sml, cur) if cur is not None else None
+            cortex_yaml = self.generate_cortex_yaml(sml, sample_fetcher=sample_fetcher)  # noqa: F841  (save logic TBD)
 
         if getattr(self.sf_behavior, "generate_audit_yaml", False):
             logger.debug("generate_audit_yaml flagged but renderer not yet implemented; skipping.")
+
+    def _build_sample_fetcher(self, sml: SMLModel, cur):
+        """Build a memoized (dataset, column) -> sample-values callback for the Cortex renderer.
+
+        Kept separate from the renderer so `generate_cortex_yaml` stays a pure
+        model-to-YAML converter with no direct Snowflake dependency.
+        """
+        cache: Dict[tuple, list] = {}
+
+        def _fetch(dataset_unique_name: str, column: Optional[str]) -> list:
+            key = (dataset_unique_name, column)
+            if key in cache:
+                return cache[key]
+            values: list = []
+            ds = next((d for d in sml.datasets if d.unique_name == dataset_unique_name), None)
+            if ds is not None and column:
+                safe_table = self._safe_table_name(ds.source_table or ds.unique_name)
+                values = self.connection_manager.fetch_distinct_sample_values(
+                    cur, self.config.database, self.config.schema_name, safe_table, column,
+                )
+            cache[key] = values
+            return values
+
+        return _fetch
 
     # =========================================================================
     # BASE EMITTER INTERFACE (Abstract Method Implementations)
@@ -727,11 +752,11 @@ class SnowflakeEmitter(BaseEmitter):
     def _build_history_snapshot_ddls_for_osi(self, osi: OSIModel) -> list[str]:
         return self.semantic_view_builder._build_history_snapshot_ddls_for_osi(osi)
 
-    def generate_cortex_yaml(self, sml: SMLModel) -> str:
-        return _renderers.generate_cortex_yaml(self, sml)
+    def generate_cortex_yaml(self, sml: SMLModel, sample_fetcher=None) -> str:
+        return _renderers.generate_cortex_yaml(self, sml, sample_fetcher=sample_fetcher)
 
-    def generate_cortex_yaml_from_osi(self, osi: OSIModel) -> str:
-        return _renderers.generate_cortex_yaml_from_osi(self, osi)
+    def generate_cortex_yaml_from_osi(self, osi: OSIModel, sample_fetcher=None) -> str:
+        return _renderers.generate_cortex_yaml_from_osi(self, osi, sample_fetcher=sample_fetcher)
 
     def _get_source_table_mapping(self) -> Dict[str, str]:
         """Return effective source_table_mapping, merging behavior config and local enriched mapping.

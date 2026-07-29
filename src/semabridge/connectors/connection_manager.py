@@ -137,6 +137,35 @@ class SnowflakeConnectionManager:
                 self._session_conn = None
                 self._verified_tables.clear()
 
+    def fetch_distinct_sample_values(
+        self,
+        cursor,
+        database: str,
+        schema: str,
+        table: str,
+        column: str,
+        limit: int = 5,
+    ) -> List[str]:
+        """Best-effort fetch of a few distinct non-null values for a column.
+
+        Used to populate representative `sample_values` in generated Cortex
+        Analyst YAML. Never raises: a missing table/column, an unqualified
+        expression passed as `column`, or an all-null column all just
+        resolve to an empty list.
+        """
+        if not column:
+            return []
+        qualified = f"{self._quote_ident(database)}.{self._quote_ident(schema)}.{self._quote_ident(table)}"
+        quoted_col = self._quote_ident(column)
+        sql = f"SELECT DISTINCT {quoted_col} FROM {qualified} WHERE {quoted_col} IS NOT NULL LIMIT {int(limit)}"
+        try:
+            self._execute_sql(cursor, sql, context=f"sample_values[{table}.{column}]")
+            rows = cursor.fetchall()
+        except Exception as exc:
+            logger.debug("Sample-value fetch failed for %s.%s: %s", table, column, exc)
+            return []
+        return [str(row[0]) for row in rows if row and row[0] is not None]
+
     def _execute_sql(
         self,
         cursor,

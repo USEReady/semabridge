@@ -147,3 +147,45 @@ def test_execution_engine_applies_metric_override_with_space_underscore_variants
     ExecutionEngine._apply_mapping_overrides_from_config(model, cfg)
 
     assert model.metrics[0].unique_name == "MEASURE_FF"
+
+
+def test_execution_engine_disambiguates_overrides_colliding_after_sanitization(tmp_path: Path):
+    # Regression test: "Total Units YTD Var" and "Total Units YTD Var %" both
+    # sanitize to "TOTAL_UNITS_YTD_VAR" under _normalize_identifier_for_match.
+    # Both metrics — and both overrides — must still resolve to their own,
+    # distinct, correctly-mapped target names rather than one being dropped
+    # and the other misassigned to the wrong source metric.
+    model = SMLModel(
+        unique_name="Model1",
+        datasets=[
+            SMLDataset(
+                unique_name="Sales",
+                columns=[SMLColumn(unique_name="amount", data_type=DataType.DECIMAL)],
+            )
+        ],
+        metrics=[
+            SMLMetric(unique_name="Total Units YTD Var", dataset="Sales", expression="A-B"),
+            SMLMetric(unique_name="Total Units YTD Var %", dataset="Sales", expression="DIVIDE(A-B, B)"),
+        ],
+    )
+
+    cfg = tmp_path / "semabridge.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "project_name: test",
+                "mappings_overrides:",
+                "  - source_path: metrics.Total Units YTD Var",
+                "    target_name: TOTAL_UNITS_YTD_VAR",
+                "  - source_path: metrics.Total Units YTD Var %",
+                "    target_name: TOTAL_UNITS_YTD_VAR_PCT",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    ExecutionEngine._apply_mapping_overrides_from_config(model, cfg)
+
+    by_expression = {m.expression: m.unique_name for m in model.metrics}
+    assert by_expression["A-B"] == "TOTAL_UNITS_YTD_VAR"
+    assert by_expression["DIVIDE(A-B, B)"] == "TOTAL_UNITS_YTD_VAR_PCT"

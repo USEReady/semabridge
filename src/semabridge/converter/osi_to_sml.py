@@ -121,12 +121,14 @@ class OSIToSMLConverter(BaseConverter):
             self._resolve_metric_dependencies(sml)
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
+            from semabridge.converter.dax_ast_parser import is_by_design_excluded
             tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
             for sml_metric in sml.metrics:
                 if (
                     not sml_metric.sql_expression
                     and sml_metric.expression
                     and sml_metric.expression.strip()
+                    and not is_by_design_excluded(sml_metric.sync_failure_reason)
                 ):
                     dax = sml_metric.expression.strip()
                     table_alias = to_alias(sml_metric.dataset)
@@ -271,6 +273,51 @@ class OSIToSMLConverter(BaseConverter):
         # DAX Translation Logic
         expression = osi_metric.expression or ""
 
+        # Constant expressions and string-producing root expressions are a
+        # modeling-classification mismatch, not a DAX translation gap — a
+        # Snowflake semantic-view metric must be an aggregate expression.
+        # Detected purely from AST shape (no field/model names involved).
+        if expression:
+            from semabridge.converter.dax_ast_parser import (
+                BY_DESIGN_EXCLUDED_PREFIX,
+                dax_has_zero_data_dependencies,
+                dax_root_is_string_producing,
+            )
+            by_design_reason = None
+            if dax_has_zero_data_dependencies(expression):
+                by_design_reason = (
+                    f"{BY_DESIGN_EXCLUDED_PREFIX}: expression has no column/measure/table "
+                    "reference (a compile-time constant) — there is nothing to "
+                    "aggregate, so this is not a DAX translation failure."
+                )
+            elif dax_root_is_string_producing(expression):
+                by_design_reason = (
+                    f"{BY_DESIGN_EXCLUDED_PREFIX}: expression's root operation produces a "
+                    "string value, not a numeric aggregate — Snowflake "
+                    "semantic-view metrics must be aggregate expressions. This "
+                    "field should be modeled as a dimension attribute instead."
+                )
+            if by_design_reason:
+                sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
+                metric = SMLMetric(
+                    unique_name=osi_metric.unique_name,
+                    label=osi_metric.label,
+                    description=osi_metric.description or "",
+                    dataset=osi_metric.dataset,
+                    expression=expression,
+                    aggregation=sml_agg,
+                    format_string=osi_metric.format_string,
+                    is_hidden=osi_metric.is_hidden,
+                    complexity_tier=1,
+                    sync_enabled=False,
+                    sync_failure_reason=by_design_reason,
+                    access_modifier=osi_metric.access_modifier,
+                    synonyms=list(osi_metric.synonyms),
+                    synonym_sources=dict(osi_metric.synonym_sources),
+                    has_report_alias=osi_metric.has_report_alias,
+                )
+                return metric
+
         # Analyze Complexity
         complexity = self.dax_translator.analyze_complexity(expression)
         
@@ -310,6 +357,7 @@ class OSIToSMLConverter(BaseConverter):
                 metric.sql_expression = translation.sql
                 metric.complexity_tier = translation.tier
                 metric.sync_enabled = True
+                metric.sync_failure_reason = None
             elif metric.sync_enabled:
                  metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
 
@@ -330,10 +378,17 @@ class OSIToSMLConverter(BaseConverter):
         if not sml.metrics:
             return
 
+        from semabridge.converter.dax_ast_parser import is_by_design_excluded
+
         for pass_idx in range(max_passes):
             resolved_this_pass = 0
             for metric in sml.metrics:
                 if metric.sql_expression or not (metric.expression or "").strip():
+                    continue
+                # A by-design-excluded metric (constant expression /
+                # string-producing root) was never a translation candidate —
+                # re-attempting here could silently un-exclude it.
+                if is_by_design_excluded(metric.sync_failure_reason):
                     continue
 
                 safe_alias = to_alias(metric.dataset)

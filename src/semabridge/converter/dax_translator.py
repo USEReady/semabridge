@@ -274,6 +274,39 @@ class DAXTranslator:
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
 
+        # General deterministic fallback: attempt AST translation for any
+        # remaining shape the AST renderer can already express structurally —
+        # e.g. CALCULATE(measure) nested inside IF/arithmetic, binary
+        # arithmetic between CALCULATE-wrapped measures, or nested IF/SWITCH
+        # with comparison conditions — before giving up to the LLM tier.
+        # try_ast_translate is side-effect-free and returns None on failure,
+        # so this can only recover cases that would otherwise reach Tier 5.
+        #
+        # Unlike the two blocks above (pre-existing, and possibly relying on
+        # FILTER/iterator row-context bracket-as-column semantics this simple
+        # grammar doesn't model), this new path requires every bracket
+        # reference in the expression to be an already-resolved measure. A
+        # measure reference the renderer can't distinguish from a column
+        # (silently falling back to treating it as one) must never be
+        # accepted here — better to defer to a later pass that has fuller
+        # context (see _resolve_metric_dependencies-style passes) than to
+        # risk a plausible-looking but wrong translation.
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+        resolved_measures = {}
+        if metrics_context:
+            for m in metrics_context:
+                if getattr(m, "sql_expression", None):
+                    resolved_measures[m.unique_name] = m.sql_expression
+        if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures):
+            general_ast_sql = try_ast_translate(
+                clean_dax,
+                table_alias=table_alias,
+                date_alias=self._get_date_alias(),
+                measure_sql_map=resolved_measures,
+            )
+            if general_ast_sql:
+                return DAXTranslationResult(general_ast_sql, 4, clean_dax)
+
         # Tier 5: LLM Fallback - Use Claude for complex expressions deterministic parsing couldn't handle
         # Only attempt if LLM is available and enabled
         llm_result = self._try_llm_fallback(
@@ -358,6 +391,40 @@ class DAXTranslator:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
 
         return None
+
+    def _has_unresolved_bracket_reference(
+        self, dax: str, resolved_measures: Dict[str, str]
+    ) -> bool:
+        """
+        True if `dax` contains any bracket-only reference (e.g. [Name]) that
+        is not a key of `resolved_measures`.
+
+        The AST renderer's grammar cannot distinguish "this bracket reference
+        names a measure with no SQL yet" from "this bracket reference names a
+        column in an iterator/FILTER row-context" (both use identical [Name]
+        syntax) — unresolved, it silently falls back to treating the name as
+        a raw physical column, which is only sometimes correct. Rather than
+        try to reconstruct row-context here, this check is deliberately
+        strict: every bracket reference must already be a known, resolved
+        measure, or the result is not trusted. This only guards the new,
+        general fallback path below (CALCULATE-wrapping-a-measure,
+        measure-to-measure arithmetic, nested IF/SWITCH) — none of those
+        shapes legitimately need iterator/FILTER row-context, so being this
+        strict costs nothing there, while a declined case simply falls
+        through to whatever later pass has fuller measure context (e.g.
+        _resolve_metric_dependencies-style passes), never a hard failure.
+        """
+        if not dax:
+            return False
+        resolved_lower = {str(k).casefold() for k in (resolved_measures or {}).keys()}
+        for match in self._MEASURE_REF_PATTERN.finditer(dax):
+            start = match.start()
+            if start > 0 and dax[start - 1] == "'":
+                continue  # table-qualified 'Table'[Column] ref, not a bracket-only ref
+            name = match.group(1).strip().casefold()
+            if name and name not in resolved_lower:
+                return True
+        return False
 
     def _contains_unsafe_time_offset(self, dax: str) -> bool:
         upper_dax = (dax or "").upper()
@@ -464,6 +531,18 @@ class DAXTranslator:
                     alt = args[2].strip() if len(args) >= 3 and args[2].strip() else "0"
                     return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
 
+        # This substitution only replaces [Measure] tokens — it cannot
+        # translate surrounding DAX function-call syntax (e.g. INT(...),
+        # DIVIDE(...), ROUND(...)) into valid SQL. Trust it only for pure
+        # bracket-arithmetic (operators/parens/literals/measure refs, no
+        # function calls anywhere outside the brackets) — anything else must
+        # fall through to a function-aware tier (the AST renderer) rather
+        # than silently emit un-translated DAX syntax as if it were SQL.
+        # (DIVIDE(...) as the *entire* expression is already handled above;
+        # this only guards the remaining, more general case.)
+        if self._has_function_call_outside_brackets(clean_dax):
+            return None
+
         refs = [match.group(1).strip() for match in self._MEASURE_REF_PATTERN.finditer(clean_dax)]
         refs = [ref for ref in refs if ref]
         if refs:
@@ -483,6 +562,16 @@ class DAXTranslator:
                 return replaced
 
         return None
+
+    @staticmethod
+    def _has_function_call_outside_brackets(dax: str) -> bool:
+        """True if `dax` contains an identifier-immediately-followed-by-'('
+        (a function call) anywhere outside of [bracket references]. Bracket
+        contents are stripped first so a measure name that happens to
+        contain literal parentheses (e.g. "[Revenue (Net)]") never triggers
+        a false positive."""
+        without_brackets = re.sub(r"\[[^\]]*\]", "", dax or "")
+        return bool(re.search(r"[A-Za-z_][A-Za-z0-9_]*\s*\(", without_brackets))
 
     def _split_dax_arguments(self, args_text: str) -> List[str]:
         """Split a comma-separated DAX argument list at top level only."""
@@ -1326,23 +1415,18 @@ class DAXTranslator:
                             f"ORDER BY {period_ref})"
                         )
 
-            # Generic arithmetic replacement for [A] +/-/*// [B].
+            # Generic arithmetic replacement for [A] +/-/*// [B]. This only
+            # replaces [Measure] tokens — it cannot translate a surrounding
+            # DAX function call (e.g. INT(...), DIVIDE(...), ROUND(...)) into
+            # valid SQL, so decline outright whenever one is present anywhere
+            # outside the bracket references, rather than relying on a
+            # hardcoded denylist of "known bad" keywords that will always be
+            # one function behind whatever DAX actually uses.
+            if self._has_function_call_outside_brackets(clean_expr):
+                return None
+
             replaced = replace_measure_refs(clean_expr, visiting)
             if replaced and replaced != clean_expr:
-                # Do not emit partially-rewritten DAX function syntax as SQL.
-                # If DAX-only keywords remain, force fallback handling instead.
-                dax_only_keywords = (
-                    "CALCULATE",
-                    "SAMEPERIODLASTYEAR",
-                    "DATEADD",
-                    "DATESYTD",
-                    "TOTALYTD",
-                    "IF(",
-                    "BLANK(",
-                )
-                upper_replaced = replaced.upper()
-                if any(keyword in upper_replaced for keyword in dax_only_keywords):
-                    return None
                 if "[" in replaced or "]" in replaced:
                     return None
                 return replaced

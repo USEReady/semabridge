@@ -254,3 +254,113 @@ class TestCortexAnalystSynonyms:
 
         assert data["semantic_model"]["node_type"] == "unknown"
         assert "synonyms" not in data["semantic_model"]["tables"][0]["measures"][0]
+
+
+class TestCortexAnalystSampleValues:
+    """Test suite verifying sample_values rendering in Cortex Analyst YAML."""
+
+    def _sml(self, metric_source_column=None):
+        return SMLModel(
+            unique_name="sales_model",
+            datasets=[
+                SMLDataset(
+                    unique_name="Sales",
+                    columns=[
+                        SMLColumn(unique_name="Revenue", data_type=DataType.DECIMAL),
+                        SMLColumn(unique_name="CustomerKey", data_type=DataType.STRING),
+                    ],
+                )
+            ],
+            dimensions=[
+                SMLDimension(
+                    unique_name="Customer",
+                    dataset="Sales",
+                    attributes=[
+                        SMLAttribute(
+                            unique_name="CustomerKey",
+                            dataset="Sales",
+                            dataset_column="CustomerKey",
+                        )
+                    ],
+                )
+            ],
+            metrics=[
+                SMLMetric(
+                    unique_name="TotalRevenue",
+                    dataset="Sales",
+                    sql_expression="SUM(Sales.Revenue)",
+                    aggregation=AggregationType.SUM,
+                    format_string="$#,##0.00",
+                    source_column=metric_source_column,
+                )
+            ],
+        )
+
+    def test_sample_values_never_carries_format_string(self):
+        """Regression: sample_values must never be the numeric display format."""
+        emitter = MockEmitter()
+        yaml_str = generate_cortex_yaml(emitter, self._sml())
+        assert "Format:" not in yaml_str
+
+        data = yaml.safe_load(yaml_str)
+        measure = data["semantic_model"]["tables"][0]["measures"][0]
+        assert "sample_values" not in measure or not str(
+            measure.get("sample_values", "")
+        ).startswith("Format:")
+
+    def test_dimension_receives_real_sample_values_from_fetcher(self):
+        """A dimension's sample_values come from the injected fetcher, not the model."""
+        emitter = MockEmitter()
+
+        def fake_fetcher(dataset_unique_name, column):
+            if column == "CustomerKey":
+                return ["C-1001", "C-1002"]
+            return []
+
+        yaml_str = generate_cortex_yaml(emitter, self._sml(), sample_fetcher=fake_fetcher)
+        data = yaml.safe_load(yaml_str)
+        dim = data["semantic_model"]["tables"][0]["dimensions"][0]
+        assert dim["sample_values"] == ["C-1001", "C-1002"]
+
+    def test_metric_with_source_column_receives_real_sample_values(self):
+        """A metric that is a direct pass-through aggregation of one column is sampled."""
+        emitter = MockEmitter()
+
+        def fake_fetcher(dataset_unique_name, column):
+            if column == "Revenue":
+                return ["100.00", "250.50"]
+            return []
+
+        yaml_str = generate_cortex_yaml(
+            emitter, self._sml(metric_source_column="Revenue"), sample_fetcher=fake_fetcher
+        )
+        data = yaml.safe_load(yaml_str)
+        measure = data["semantic_model"]["tables"][0]["measures"][0]
+        assert measure["sample_values"] == ["100.00", "250.50"]
+
+    def test_metric_without_source_column_gets_no_sample_values(self):
+        """A metric with no resolvable single source column gets no sample_values at all."""
+        emitter = MockEmitter()
+
+        def fake_fetcher(dataset_unique_name, column):
+            return ["should never be used"]
+
+        yaml_str = generate_cortex_yaml(emitter, self._sml(), sample_fetcher=fake_fetcher)
+        data = yaml.safe_load(yaml_str)
+        measure = data["semantic_model"]["tables"][0]["measures"][0]
+        assert "sample_values" not in measure
+
+    def test_empty_fetcher_result_is_handled_gracefully(self):
+        """A table/column with zero rows or all-null values yields no error, no key."""
+        emitter = MockEmitter()
+
+        def empty_fetcher(dataset_unique_name, column):
+            return []
+
+        yaml_str = generate_cortex_yaml(
+            emitter, self._sml(metric_source_column="Revenue"), sample_fetcher=empty_fetcher
+        )
+        data = yaml.safe_load(yaml_str)
+        table = data["semantic_model"]["tables"][0]
+        assert "sample_values" not in table["dimensions"][0]
+        assert "sample_values" not in table["measures"][0]

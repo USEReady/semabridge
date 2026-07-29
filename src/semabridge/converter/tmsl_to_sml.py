@@ -221,8 +221,14 @@ class TMSLTransformer:
                         # If metric still has no SQL, collect for Tier-5 batch.
                         # Do not gate on sync_enabled here; initial complexity heuristics
                         # are conservative and can be recovered by LLM translation.
-                        if (not metric.sql_expression and 
-                            metric.expression and metric.expression.strip()):
+                        # Exception: a by-design-excluded metric (constant expression /
+                        # string-producing root) was never a translation candidate in
+                        # the first place — sending it to the LLM batch could silently
+                        # un-exclude it if a translation happens to come back.
+                        from semabridge.converter.dax_ast_parser import is_by_design_excluded
+                        if (not metric.sql_expression and
+                            metric.expression and metric.expression.strip() and
+                            not is_by_design_excluded(metric.sync_failure_reason)):
                             dax = metric.expression.strip()
                             table_alias = to_alias(ds.unique_name)
                             tier5_candidates.append((metric.unique_name, dax, table_alias, ds.unique_name))
@@ -779,6 +785,61 @@ class TMSLTransformer:
                 ),
             )
         
+        # EDGE CASE 1b/1c: constant expressions and string-producing root
+        # expressions are a modeling-classification mismatch, not a DAX
+        # translation gap — a Snowflake semantic-view metric must be an
+        # aggregate expression, and a value with no data dependency has
+        # nothing to aggregate. Detected purely from AST shape (no field or
+        # model names involved), so this generalizes to any model.
+        from semabridge.converter.dax_ast_parser import (
+            BY_DESIGN_EXCLUDED_PREFIX,
+            dax_has_zero_data_dependencies,
+            dax_root_is_string_producing,
+        )
+        by_design_reason = None
+        if dax_has_zero_data_dependencies(dax):
+            by_design_reason = (
+                f"{BY_DESIGN_EXCLUDED_PREFIX}: expression has no column/measure/table "
+                "reference (a compile-time constant) — there is nothing to "
+                "aggregate, so this is not a DAX translation failure."
+            )
+        elif dax_root_is_string_producing(dax):
+            by_design_reason = (
+                f"{BY_DESIGN_EXCLUDED_PREFIX}: expression's root operation produces a "
+                "string value, not a numeric aggregate — Snowflake "
+                "semantic-view metrics must be aggregate expressions. This "
+                "field should be modeled as a dimension attribute instead."
+            )
+        if by_design_reason:
+            logger.info(
+                "Measure '%s' in table '%s' excluded by design: %s",
+                measure_def.get("name", "Unknown"), table_name, by_design_reason,
+            )
+            by_design_display_name = display_name or measure_def["name"]
+            by_design_user_synonyms = measure_def.get("synonyms") or []
+            if not isinstance(by_design_user_synonyms, list):
+                by_design_user_synonyms = []
+            return SMLMetric(
+                unique_name=measure_def["name"],
+                label=by_design_display_name,
+                dataset=table_name,
+                expression=dax,
+                is_hidden=measure_def.get("isHidden", False),
+                sync_enabled=False,
+                sync_failure_reason=by_design_reason,
+                complexity_tier=1,
+                synonyms=merge_synonyms(
+                    ui_overrides=lookup_synonym_override(
+                        self._synonym_overrides,
+                        self._synonym_model_names,
+                        table_name,
+                        measure_def["name"],
+                    ),
+                    user_defined=by_design_user_synonyms,
+                    auto_generated=self._auto_synonyms(by_design_display_name),
+                ),
+            )
+
         # EDGE CASE 2: Sanitize measure names with special characters
         measure_name = measure_def["name"]
         sanitized_name = measure_name

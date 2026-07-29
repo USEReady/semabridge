@@ -93,6 +93,32 @@ export const CONVERSION_FACET_LABELS = {
 };
 
 /**
+ * null when the row isn't a measure with a known DAX complexity tier;
+ * otherwise buckets tiers 1-4 (rule-based translation) vs tier 5 (LLM
+ * fallback) so the UI can flag AI-assisted conversions for manual review.
+ */
+export function rowComplexityTier(row) {
+  if (normalizeFieldTypeKey(row) !== 'measure') return null;
+  // Only a metric that was actually, successfully converted gets a trust
+  // tier — a by-design-excluded or genuinely-failed metric must never show
+  // up as "Tier 1, trustworthy" just because complexity_tier defaulted to a
+  // low number. Those surface only in the conversion-outcome facet instead.
+  if (rowConversionOutcome(row) !== 'conversion_success') return null;
+  const tier = Number(row?.complexity_tier);
+  if (!Number.isFinite(tier) || tier <= 0) return null;
+  return tier >= 5 ? 'tier_ai_assisted' : 'tier_rule_based';
+}
+
+export function hasComplexityTierData(rows) {
+  return rows.some((row) => rowComplexityTier(row) !== null);
+}
+
+export const COMPLEXITY_TIER_FACET_LABELS = {
+  tier_rule_based: 'Converted (rule-based)',
+  tier_ai_assisted: 'Converted (AI-assisted, review recommended)',
+};
+
+/**
  * A row needs review when its status isn't in the known-clean set, or when
  * it has an expression that failed to convert (even if its status is clean).
  */

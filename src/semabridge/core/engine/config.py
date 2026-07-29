@@ -105,24 +105,70 @@ def _apply_mapping_overrides_from_config(
     for dataset in sml_model.datasets:
         dataset_by_name[str(dataset.unique_name)] = dataset
 
+    # Build exact- and normalized-name indexes over the model's metrics once,
+    # up front, instead of rescanning sml_model.metrics per override. Exact
+    # matches are tried first because override source names are themselves
+    # exact metric names (they were recorded from this same model), so exact
+    # matching can never be ambiguous the way the lossy normalized fallback
+    # can be (e.g. "Total Units YTD Var" and "Total Units YTD Var %" both
+    # normalize to "TOTAL_UNITS_YTD_VAR"). The normalized index only exists
+    # to survive whitespace/underscore/case drift in stale configs.
+    exact_metric_index: Dict[str, Any] = {}
+    normalized_metric_index: Dict[str, list] = {}
+    for metric in sml_model.metrics:
+        identity_strings = {
+            str(getattr(metric, "unique_name", "")).strip(),
+            str(getattr(metric, "label", "")).strip(),
+        }
+        for identity in identity_strings:
+            if not identity:
+                continue
+            exact_metric_index.setdefault(identity.lower(), metric)
+            normalized_metric_index.setdefault(_normalize_identifier_for_match(identity), []).append(metric)
+
+    metric_overrides = [
+        (source_path[len("metrics."):].strip(), target_name)
+        for source_path, target_name in overrides.items()
+        if source_path.startswith("metrics.")
+    ]
+    normalized_override_groups: Dict[str, list] = {}
+    for metric_name, _target_name in metric_overrides:
+        normalized_override_groups.setdefault(_normalize_identifier_for_match(metric_name), []).append(metric_name)
+
+    for metric_name, target_name in metric_overrides:
+        metric_lookup_normalized = _normalize_identifier_for_match(metric_name)
+
+        matched_metric = exact_metric_index.get(metric_name.lower())
+        if matched_metric is None:
+            normalized_candidates = normalized_metric_index.get(metric_lookup_normalized) or []
+            sibling_override_names = normalized_override_groups.get(metric_lookup_normalized) or []
+            if len(normalized_candidates) <= 1:
+                matched_metric = normalized_candidates[0] if normalized_candidates else None
+            elif len(normalized_candidates) == len(sibling_override_names):
+                # Multiple distinct metric names collided after sanitization.
+                # Disambiguate deterministically (sorted-name pairing) instead
+                # of guessing based on iteration order — the same principle
+                # _resolve_unique_metric_alias/_resolve_persistent_duplicate_name
+                # use elsewhere: never let a collision silently pick a winner.
+                sorted_candidates = sorted(normalized_candidates, key=lambda m: str(getattr(m, "unique_name", "")))
+                sorted_override_names = sorted(set(sibling_override_names))
+                pairing = dict(zip(sorted_override_names, sorted_candidates))
+                matched_metric = pairing.get(metric_name)
+            else:
+                logger.warning(
+                    "Ambiguous mapping override for metric '%s': %d metric(s) share the "
+                    "sanitized name '%s' but %d override(s) do; skipping this override "
+                    "rather than risk misassigning it to the wrong metric.",
+                    metric_name, len(normalized_candidates), metric_lookup_normalized, len(sibling_override_names),
+                )
+
+        if matched_metric is not None and str(matched_metric.unique_name) != target_name:
+            matched_metric.unique_name = target_name
+            matched_metric.label = target_name
+            renamed_metrics += 1
+
     for source_path, target_name in overrides.items():
         if source_path.startswith("metrics."):
-            metric_name = source_path[len("metrics."):].strip()
-            metric_lookup = metric_name.lower()
-            metric_lookup_normalized = _normalize_identifier_for_match(metric_name)
-            for metric in sml_model.metrics:
-                metric_unique_name = str(getattr(metric, "unique_name", "")).strip()
-                metric_label = str(getattr(metric, "label", "")).strip()
-                unique_match = metric_unique_name.lower() == metric_lookup
-                label_match = metric_label.lower() == metric_lookup
-                normalized_unique_match = _normalize_identifier_for_match(metric_unique_name) == metric_lookup_normalized
-                normalized_label_match = _normalize_identifier_for_match(metric_label) == metric_lookup_normalized
-                if unique_match or label_match or normalized_unique_match or normalized_label_match:
-                    if str(metric.unique_name) != target_name:
-                        metric.unique_name = target_name
-                        metric.label = target_name
-                        renamed_metrics += 1
-                    break
             continue
 
         if source_path.startswith("datasets.") and ".columns." in source_path:

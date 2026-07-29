@@ -21,7 +21,7 @@ def generate_ddls(emitter, sml):
     return [emitter._generate_semantic_view(sml)]
 
 
-def generate_cortex_yaml(emitter, sml):
+def generate_cortex_yaml(emitter, sml, sample_fetcher=None):
     output = {
         "semantic_model": {
             "name": sml.unique_name,
@@ -53,6 +53,10 @@ def generate_cortex_yaml(emitter, sml):
                         "expr": getattr(attr, "dataset_column", None) or getattr(attr, "source_column", attr.unique_name),
                         "description": getattr(attr, "description", "") or "",
                     }
+                    if sample_fetcher is not None:
+                        dim_samples = sample_fetcher(ds.unique_name, attr_col)
+                        if dim_samples:
+                            dim_def["sample_values"] = dim_samples
                     from semabridge.utils.synonyms import lookup_attribute_synonyms
                     dim_synonyms = lookup_attribute_synonyms(attr, ds, attr_col)
                     if dim_synonyms:
@@ -75,8 +79,13 @@ def generate_cortex_yaml(emitter, sml):
                     measure_def["description"] = (measure_def["description"] + dax_note).strip()
                 else:
                     continue
-                if metric.format_string:
-                    measure_def["sample_values"] = f"Format: {metric.format_string}"
+                # Metrics are aggregate expressions, so a general "sample value" for a
+                # metric isn't well-defined. Only sample when the metric is a direct
+                # pass-through aggregation of a single known source column.
+                if sample_fetcher is not None and metric.source_column:
+                    metric_samples = sample_fetcher(ds.unique_name, metric.source_column)
+                    if metric_samples:
+                        measure_def["sample_values"] = metric_samples
                 if getattr(metric, "synonyms", None):
                     measure_def["synonyms"] = list(metric.synonyms)
                 table_def["measures"].append(measure_def)
@@ -90,7 +99,7 @@ def generate_ddls_from_osi(emitter, osi):
     return [emitter._generate_semantic_view_from_osi(osi)]
 
 
-def generate_cortex_yaml_from_osi(emitter, osi):
+def generate_cortex_yaml_from_osi(emitter, osi, sample_fetcher=None):
     output = {
         "semantic_model": {
             "name": osi.unique_name,
@@ -131,6 +140,10 @@ def generate_cortex_yaml_from_osi(emitter, osi):
                         "expr": attr.source_column,
                         "description": attr.label or "",
                     }
+                    if sample_fetcher is not None:
+                        dim_samples = sample_fetcher(ds.unique_name, attr.source_column)
+                        if dim_samples:
+                            dim_def["sample_values"] = dim_samples
                     from semabridge.utils.synonyms import lookup_attribute_synonyms
                     dim_synonyms = lookup_attribute_synonyms(attr, ds, attr.source_column)
                     if dim_synonyms:
@@ -154,8 +167,13 @@ def generate_cortex_yaml_from_osi(emitter, osi):
                     measure_def["description"] = (measure_def["description"] + dax_note).strip()
                 else:
                     continue
-                if metric.format_string:
-                    measure_def["sample_values"] = f"Format: {metric.format_string}"
+                # Metrics are aggregate expressions, so a general "sample value" for a
+                # metric isn't well-defined. Only sample when the metric is a direct
+                # pass-through aggregation of a single known source column.
+                if sample_fetcher is not None and metric.source_column:
+                    metric_samples = sample_fetcher(ds.unique_name, metric.source_column)
+                    if metric_samples:
+                        measure_def["sample_values"] = metric_samples
                 if getattr(metric, "synonyms", None):
                     measure_def["synonyms"] = list(metric.synonyms)
                 table_def["measures"].append(measure_def)

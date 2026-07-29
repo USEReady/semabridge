@@ -24,8 +24,11 @@ import {
   computeStatusFacets,
   hasConversionData,
   rowConversionOutcome,
+  hasComplexityTierData,
+  rowComplexityTier,
   rowNeedsReview,
   CONVERSION_FACET_LABELS,
+  COMPLEXITY_TIER_FACET_LABELS,
 } from '../utils/mappingFilterUtils';
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
@@ -923,6 +926,7 @@ export default function DryRunMappingTable({
   //    the always-present schema-issues toggle (structurally not a row status) ──
   const statusFacets = useMemo(() => computeStatusFacets(scopedRows), [scopedRows]);
   const showConversionFacets = useMemo(() => hasConversionData(scopedRows), [scopedRows]);
+  const showComplexityTierFacets = useMemo(() => hasComplexityTierData(scopedRows), [scopedRows]);
   const tier2Options = useMemo(() => {
     const options = statusFacets.map((f) => ({ ...f, kind: 'status' }));
     if (showConversionFacets) {
@@ -931,11 +935,17 @@ export default function DryRunMappingTable({
         if (count > 0) options.push({ key, label, count, kind: 'conversion' });
       });
     }
+    if (showComplexityTierFacets) {
+      Object.entries(COMPLEXITY_TIER_FACET_LABELS).forEach(([key, label]) => {
+        const count = scopedRows.filter((r) => rowComplexityTier(r) === key).length;
+        if (count > 0) options.push({ key, label, count, kind: 'complexity_tier' });
+      });
+    }
     if (schemaConflicts.length > 0) {
       options.push({ key: 'schema_issues', label: 'Schema Issues', count: schemaConflicts.length, kind: 'schema' });
     }
     return options;
-  }, [statusFacets, showConversionFacets, scopedRows, schemaConflicts.length]);
+  }, [statusFacets, showConversionFacets, showComplexityTierFacets, scopedRows, schemaConflicts.length]);
 
   const needsReviewCount = useMemo(() => scopedRows.filter(rowNeedsReview).length, [scopedRows]);
 
@@ -1098,6 +1108,8 @@ export default function DryRunMappingTable({
     if (activeStatuses.has(status)) return true;
     const conversionKey = rowConversionOutcome(row);
     if (conversionKey && activeStatuses.has(conversionKey)) return true;
+    const tierKey = rowComplexityTier(row);
+    if (tierKey && activeStatuses.has(tierKey)) return true;
     // 'schema_issues' never matches a row — it has no per-row status; selecting it
     // alongside real statuses still shows those via OR, selecting it alone shows none
     // (the always-visible schema-conflicts panel below carries that information instead).

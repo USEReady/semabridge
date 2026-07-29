@@ -537,6 +537,30 @@ class MetricsClauseBuilder:
         fact_aliases: Optional[Set[str]] = None,
         metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
+        # A by-design-excluded metric (constant expression / string-producing
+        # root, classified earlier in the pipeline — see dax_ast_parser.py's
+        # dax_has_zero_data_dependencies/dax_root_is_string_producing) was
+        # never a translation candidate to begin with. Without this check,
+        # every fallback below (LLM, then basic DAX patterns) gets an
+        # independent shot at "translating" its raw DAX expression, and a
+        # naive literal-conversion fallback can succeed at turning something
+        # like a DAX empty-string literal into a valid — but meaningless —
+        # SQL empty-string literal, silently undoing the earlier exclusion.
+        from semabridge.converter.dax_ast_parser import is_by_design_excluded
+        if is_by_design_excluded(getattr(metric, "sync_failure_reason", None)):
+            logger.debug(
+                "Metric '%s': by-design excluded — skipping DDL emission "
+                "rather than re-attempting translation.",
+                metric.unique_name,
+            )
+            self.drop_ledger.record(
+                "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                metric.sync_failure_reason or "By-design excluded from metric translation.",
+                dataset=getattr(metric, "dataset", None),
+                by_design=True,
+            )
+            return None
+
         if (metric.source_column and metric.aggregation and
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
             

@@ -919,6 +919,16 @@ class DaxSqlRenderer:
                 # Direct comparison inside CALCULATE, e.g. CALCULATE(SUM(...), 'Date'[Year] = 2024)
                 filter_clauses.append(self._render_node(filter_arg))
 
+            else:
+                # Anything else (a bare measure/column reference, literal, etc.)
+                # is not a recognized filter shape. Raise rather than silently
+                # dropping it — a dropped filter argument changes what the
+                # expression computes without any indication that happened.
+                raise self.DaxRenderError(
+                    f"CALCULATE filter argument of type {type(filter_arg).__name__} "
+                    "is not a recognized filter modifier or comparison predicate"
+                )
+
         if is_window:
             if partition_cols:
                 partition_clause = "PARTITION BY " + ", ".join(partition_cols)
@@ -1100,3 +1110,78 @@ def try_ast_translate(
         _AST_CACHE.clear()
     _AST_CACHE[cache_key] = sql
     return sql
+
+
+# ---------------------------------------------------------------------------
+# Root-shape classifiers — used to distinguish "cannot translate this DAX"
+# from "this DAX isn't a valid aggregate metric to begin with" (a modeling
+# classification, not a translation gap). Both are pure AST-shape checks:
+# no field/model/dataset names are ever inspected.
+# ---------------------------------------------------------------------------
+
+# Shared marker prefix for sync_failure_reason on by-design-excluded metrics.
+# Any later pass that might otherwise re-attempt translating an unresolved
+# metric (Tier-5 batching, cross-metric dependency resolution, etc.) must
+# check for this prefix and skip — these metrics were never meant to be
+# translated, so re-attempting could silently un-exclude them.
+BY_DESIGN_EXCLUDED_PREFIX = "BY_DESIGN_EXCLUDED"
+
+
+def is_by_design_excluded(sync_failure_reason: Optional[str]) -> bool:
+    """True if `sync_failure_reason` marks a metric as by-design excluded
+    (constant expression / string-producing root) rather than a genuine,
+    still-open DAX translation failure."""
+    return str(sync_failure_reason or "").startswith(BY_DESIGN_EXCLUDED_PREFIX)
+
+
+_STRING_PRODUCING_FUNCS = {
+    "CONCATENATE", "LEFT", "RIGHT", "MID", "FORMAT", "SUBSTITUTE", "REPT",
+    "TRIM", "UPPER", "LOWER",
+}
+
+
+def dax_root_is_string_producing(dax: str) -> bool:
+    """
+    True if the DAX expression's root/outermost operation produces a string
+    value — a bare string literal, or a call to a string-producing function
+    — rather than a numeric aggregate.
+
+    Such an expression cannot be represented in a Snowflake semantic-view
+    METRICS clause (which requires an aggregate expression); it should be
+    classified as a dimension/attribute instead, not attempted as a metric
+    translation.
+    """
+    node = DaxAstParser().parse(dax)
+    if isinstance(node, LiteralNode):
+        return isinstance(node.value, str)
+    if isinstance(node, FunctionCallNode):
+        return node.func.upper() in _STRING_PRODUCING_FUNCS
+    return False
+
+
+def dax_has_zero_data_dependencies(dax: str) -> bool:
+    """
+    True if the DAX expression references no column, measure, or table
+    anywhere in its parse tree — a compile-time constant (e.g. a bare
+    string/numeric literal, or arithmetic over literals only).
+
+    Such an expression has nothing to aggregate and should be classified as
+    by-design excluded, not attempted as a translation or reported as a
+    DAX-translation failure.
+    """
+    node = DaxAstParser().parse(dax)
+    if node is None:
+        return False
+
+    def _refs_data(n: DaxNode) -> bool:
+        if isinstance(n, (ColumnRefNode, MeasureRefNode)):
+            return True
+        if isinstance(n, BinaryOpNode):
+            return _refs_data(n.left) or _refs_data(n.right)
+        if isinstance(n, UnaryOpNode):
+            return _refs_data(n.operand)
+        if isinstance(n, FunctionCallNode):
+            return any(_refs_data(a) for a in n.args)
+        return False
+
+    return not _refs_data(node)

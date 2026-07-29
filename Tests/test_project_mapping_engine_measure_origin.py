@@ -1,4 +1,5 @@
 from semabridge.api.services.project_mapping_engine import build_entity_mappings
+from semabridge.api.services.mapping_service import _compat_serialize_auto_map_entity_mappings
 
 
 def test_metric_rows_include_single_measure_source_table() -> None:
@@ -278,6 +279,41 @@ def test_metric_and_column_rows_include_synonyms() -> None:
 
     assert col_empty["synonyms"] == []
     assert metric_empty["synonyms"] == []
+
+
+def test_complexity_tier_survives_end_to_end_with_distinct_values() -> None:
+    # Synthetic model: one rule-based (tier 2) metric and one LLM-fallback (tier 5) metric.
+    model = {
+        "unique_name": "SyntheticModel",
+        "datasets": [
+            {"unique_name": "FACT", "columns": [{"unique_name": "AMOUNT", "data_type": "number"}]},
+        ],
+        "metrics": [
+            {"unique_name": "RULE_BASED_METRIC", "expression": "SUM(FACT[AMOUNT])", "data_type": "number", "complexity_tier": 2},
+            {"unique_name": "AI_ASSISTED_METRIC", "expression": "SOME_COMPLEX_DAX(FACT[AMOUNT])", "data_type": "number", "complexity_tier": 5},
+        ],
+    }
+
+    payload = build_entity_mappings(project_id="p1", model=model)
+    mappings = payload["mappings"]
+
+    rule_based = next(r for r in mappings if r.get("source_name") == "RULE_BASED_METRIC")
+    ai_assisted = next(r for r in mappings if r.get("source_name") == "AI_ASSISTED_METRIC")
+
+    assert rule_based["complexity_tier"] == 2
+    assert ai_assisted["complexity_tier"] == 5
+
+    # A column entity has no complexity_tier concept and should not fake one.
+    column_row = next(r for r in mappings if r.get("entity_kind") == "column")
+    assert column_row["complexity_tier"] is None
+
+    # And the field survives the API-facing compat serializer unchanged.
+    serialized = _compat_serialize_auto_map_entity_mappings(mappings, target_connector="snowflake")
+    serialized_rule_based = next(r for r in serialized if r.get("source_name") == "RULE_BASED_METRIC")
+    serialized_ai_assisted = next(r for r in serialized if r.get("source_name") == "AI_ASSISTED_METRIC")
+
+    assert serialized_rule_based["complexity_tier"] == 2
+    assert serialized_ai_assisted["complexity_tier"] == 5
 
 
 
