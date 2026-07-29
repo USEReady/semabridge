@@ -97,6 +97,14 @@ class DAXTranslator:
         "PARALLELPERIOD", "OPENINGBALANCEYEAR", "CLOSINGBALANCEYEAR"
     ]
 
+    # TOTALYTD/MTD/QTD are included here (not just the SAMEPERIODLASTYEAR-style
+    # offset functions) so that _try_strict_translation's own TOTALYTD branch —
+    # which emits a bare OVER(...) window function with no date-range bound,
+    # invalid for a Snowflake semantic-view METRICS clause — never runs. That
+    # branch has been removed; blocking these here routes every time-intelligence
+    # function through the AST renderer's correct CASE-WHEN-bounded translation
+    # instead (see dax_ast_parser.DaxSqlRenderer._render_period_to_date /
+    # _render_lag_period).
     STRICT_BLOCKED_FUNCTIONS = (
         "SAMEPERIODLASTYEAR",
         "PREVIOUSYEAR",
@@ -111,22 +119,11 @@ class DAXTranslator:
         "CLOSINGBALANCEYEAR",
         "ALL",
         "ALLEXCEPT",
+        "TOTALYTD",
+        "TOTALMTD",
+        "TOTALQTD",
     )
 
-    UNSAFE_TIME_OFFSET_FUNCTIONS = (
-        "SAMEPERIODLASTYEAR",
-        "PREVIOUSYEAR",
-        "PREVIOUSMONTH",
-        "PREVIOUSQUARTER",
-        "DATEADD",
-        "DATESYTD",
-        "DATESMTD",
-        "DATESQTD",
-        "PARALLELPERIOD",
-        "OPENINGBALANCEYEAR",
-        "CLOSINGBALANCEYEAR",
-    )
-    
     # Patterns that CANNOT be safely translated (require DAX engine evaluation)
     UNSUPPORTED_PATTERNS = [
         r"CALCULATE\s*\([^)]+,\s*FILTER\s*\(",          # CALCULATE with FILTER
@@ -160,12 +157,6 @@ class DAXTranslator:
             return DAXTranslationResult(None, 3, "")
         
         clean_dax = dax.strip()
-        if self._contains_unsafe_time_offset(clean_dax):
-            logger.debug(
-                "Rejected unsupported time-offset DAX before deterministic/LLM fallback: %s",
-                clean_dax[:120],
-            )
-            return DAXTranslationResult(None, 4, clean_dax)
 
         # Tier 1-4 are handled before the broader deterministic fallback so
         # common patterns remain predictable and do not get over-simplified.
@@ -239,16 +230,13 @@ class DAXTranslator:
         is_time_intel = any(func.upper() in dax.upper() for func in self.TIME_INTEL_FUNCTIONS)
         if is_time_intel:
             from semabridge.converter.dax_ast_parser import try_ast_translate
-            resolved_measures = {}
-            if metrics_context:
-                for m in metrics_context:
-                    if m.sql_expression:
-                        resolved_measures[m.unique_name] = m.sql_expression
+            resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
+                known_measure_names=self._all_measure_names(metrics_context),
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -260,16 +248,13 @@ class DAXTranslator:
         )
         if is_complex:
             from semabridge.converter.dax_ast_parser import try_ast_translate
-            resolved_measures = {}
-            if metrics_context:
-                for m in metrics_context:
-                    if m.sql_expression:
-                        resolved_measures[m.unique_name] = m.sql_expression
+            resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
+                known_measure_names=self._all_measure_names(metrics_context),
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -292,17 +277,14 @@ class DAXTranslator:
         # context (see _resolve_metric_dependencies-style passes) than to
         # risk a plausible-looking but wrong translation.
         from semabridge.converter.dax_ast_parser import try_ast_translate
-        resolved_measures = {}
-        if metrics_context:
-            for m in metrics_context:
-                if getattr(m, "sql_expression", None):
-                    resolved_measures[m.unique_name] = m.sql_expression
+        resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
         if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures):
             general_ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
+                known_measure_names=self._all_measure_names(metrics_context),
             )
             if general_ast_sql:
                 return DAXTranslationResult(general_ast_sql, 4, clean_dax)
@@ -355,11 +337,8 @@ class DAXTranslator:
             if tier2_sql:
                 return DAXTranslationResult(tier2_sql, 2, clean_dax)
 
-        resolved_measures = {}
-        if metrics_context:
-            for metric in metrics_context:
-                if getattr(metric, "sql_expression", None):
-                    resolved_measures[metric.unique_name] = metric.sql_expression
+        resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
+        all_measure_names = self._all_measure_names(metrics_context)
 
         is_time_intel = any(func.upper() in clean_dax.upper() for func in self.TIME_INTEL_FUNCTIONS)
         if is_time_intel:
@@ -370,6 +349,7 @@ class DAXTranslator:
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
+                known_measure_names=all_measure_names,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -386,6 +366,7 @@ class DAXTranslator:
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
+                known_measure_names=all_measure_names,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -425,13 +406,6 @@ class DAXTranslator:
             if name and name not in resolved_lower:
                 return True
         return False
-
-    def _contains_unsafe_time_offset(self, dax: str) -> bool:
-        upper_dax = (dax or "").upper()
-        return any(
-            re.search(rf"\b{re.escape(func)}\s*\(", upper_dax)
-            for func in self.UNSAFE_TIME_OFFSET_FUNCTIONS
-        )
 
     def _try_dependency_translation(
         self,
@@ -699,55 +673,71 @@ class DAXTranslator:
 
         return None
 
+    def _build_resolved_measures_map(
+        self, table_alias: str, metrics_context: Optional[List[Any]]
+    ) -> Dict[str, str]:
+        """Build a name -> SQL map for every measure in `metrics_context`
+        that can be resolved right now, for inlining [MeasureName]
+        references the AST renderer (Tier 3/4) encounters.
+
+        Reuses `_resolve_measure_sql`'s existing recursive fallback (already
+        translated `.sql_expression`, or freshly translating the measure's
+        own `.expression`) instead of only checking whether `.sql_expression`
+        already happens to be populated — a referenced measure gets a fair
+        shot at resolution even on the pass where it hasn't been translated
+        yet, so the AST renderer doesn't have to fall back to treating an
+        unresolved [MeasureName] as a raw column reference.
+        """
+        resolved: Dict[str, str] = {}
+        if not metrics_context:
+            return resolved
+        for metric in metrics_context:
+            name = getattr(metric, "unique_name", None)
+            if not name or name in resolved:
+                continue
+            sql = self._resolve_measure_sql(name, metrics_context, table_alias)
+            if sql:
+                resolved[name] = sql
+        return resolved
+
+    @staticmethod
+    def _all_measure_names(metrics_context: Optional[List[Any]]) -> set:
+        """Every measure name tracked in `metrics_context`, resolved or not.
+
+        Passed to the AST renderer alongside its (possibly smaller)
+        resolved-SQL map so it can distinguish "this bracket reference names
+        a real measure that just isn't translated yet" (fail closed) from
+        "this bracket reference names something outside the measure
+        registry entirely" (fall back to a column reference — the common
+        SUM([Column]) shape).
+        """
+        if not metrics_context:
+            return set()
+        return {
+            getattr(m, "unique_name", None)
+            for m in metrics_context
+            if getattr(m, "unique_name", None)
+        }
+
     def _try_strict_translation(
         self,
         dax: str,
         table_alias: str,
         metrics_context: Optional[List[Any]] = None,
     ) -> Optional[str]:
-        """Translate only the two strict forms supported by the prompt."""
+        """Translate only the strict CALCULATE-with-simple-filter form.
+
+        A TOTALYTD branch previously lived here, emitting a bare
+        OVER(PARTITION BY ... ORDER BY ...) window function with no
+        date-range bound — invalid for a Snowflake semantic-view METRICS
+        clause and missing the actual "up to today" filter entirely. TOTALYTD
+        (and MTD/QTD) are now in STRICT_BLOCKED_FUNCTIONS so this method is
+        never reached for them; translation instead goes through the AST
+        renderer's correct CASE-WHEN-bounded logic (see
+        dax_ast_parser.DaxSqlRenderer._render_period_to_date).
+        """
         clean_dax = " ".join((dax or "").split())
         upper_dax = clean_dax.upper()
-
-        if upper_dax.startswith("TOTALYTD(") and clean_dax.endswith(")"):
-            args = self._split_dax_arguments(clean_dax[len("TOTALYTD("):-1])
-            if len(args) != 2:
-                return None
-
-            base_expr = self._strip_outer_parens(args[0])
-            base_sql = self._try_tier1(base_expr, table_alias)
-            if not base_sql and re.fullmatch(r"\[([^\]]+)\]", base_expr):
-                base_sql = self._resolve_measure_sql(base_expr[1:-1], metrics_context, table_alias)
-            if not base_sql and metrics_context:
-                base_sql = self._try_dependency_translation(
-                    base_expr,
-                    table_alias,
-                    "",
-                    metrics_context,
-                    visiting=set(),
-                )
-            if not base_sql and metrics_context:
-                base_sql = self._try_branching(base_expr, metrics_context)
-            if not base_sql:
-                return None
-
-            base_sql = self._strip_outer_parens(base_sql)
-            date_alias = self._get_date_alias()
-            parsed_agg = self._parse_sql_aggregation(base_sql)
-            if parsed_agg:
-                agg_func, value_expr = parsed_agg
-                sql_agg = "COUNT(DISTINCT" if agg_func == "COUNT_DISTINCT" else agg_func
-                if agg_func == "COUNT_DISTINCT":
-                    return (
-                        f"COUNT(DISTINCT {value_expr}) OVER "
-                        f"(PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
-                    )
-                return (
-                    f"{sql_agg}({value_expr}) OVER "
-                    f"(PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
-                )
-
-            return f"SUM({base_sql}) OVER (PARTITION BY {date_alias}.YEAR ORDER BY {date_alias}.PERIOD)"
 
         if upper_dax.startswith("CALCULATE(") and clean_dax.endswith(")"):
             args = self._split_dax_arguments(clean_dax[len("CALCULATE("):-1])
@@ -1373,47 +1363,15 @@ class DAXTranslator:
                         f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
                     )
 
-            # Handle TOTALYTD(Expression, Date) using metadata injection.
-            if clean_expr.upper().startswith("TOTALYTD(") and clean_expr.endswith(")"):
-                inner = clean_expr[9:-1]
-                args = split_args(inner)
-                if args:
-                    inner_expr = args[0].strip()
-                    inner_sql = (
-                        self._try_tier1(inner_expr, table_alias)
-                        or replace_measure_refs(inner_expr, visiting)
-                        or self._try_dependency_translation(
-                            inner_expr,
-                            table_alias,
-                            "",
-                            metrics,
-                            visiting=set(),
-                        )
-                    )
-                    if inner_sql:
-                        inner_sql = self._strip_outer_parens(inner_sql)
-                        parsed_agg = self._parse_sql_aggregation(inner_sql)
-
-                        # Snowflake semantic metric windows are safest when PARTITION/ORDER
-                        # columns come from the same metric entity alias.
-                        year_ref = f"{table_alias}.YEAR"
-                        period_ref = f"{table_alias}.PERIOD"
-                        if parsed_agg:
-                            agg_func, value_expr = parsed_agg
-                            if agg_func == "COUNT_DISTINCT":
-                                return (
-                                    f"COUNT(DISTINCT {value_expr}) OVER "
-                                    f"(PARTITION BY {year_ref} ORDER BY {period_ref})"
-                                )
-                            return (
-                                f"{agg_func}({value_expr}) OVER "
-                                f"(PARTITION BY {year_ref} ORDER BY {period_ref})"
-                            )
-
-                        return (
-                            f"SUM({inner_sql}) OVER (PARTITION BY {year_ref} "
-                            f"ORDER BY {period_ref})"
-                        )
+            # TOTALYTD(Expression, Date) used to be handled here with a bare
+            # OVER(PARTITION BY ... ORDER BY ...) window function — invalid
+            # for a Snowflake semantic-view METRICS clause, and with no
+            # date-range bound at all. Time-intelligence functions are
+            # handled correctly and generally by the AST renderer (see
+            # dax_ast_parser.DaxSqlRenderer._render_period_to_date), reached
+            # via the is_time_intel check in translate()/_try_tiered_translation;
+            # declining here (falling through to that check) instead of
+            # returning early with the broken shape.
 
             # Generic arithmetic replacement for [A] +/-/*// [B]. This only
             # replaces [Measure] tokens — it cannot translate a surrounding
@@ -1527,66 +1485,6 @@ class DAXTranslator:
             result["tier"] = 2
         
         return result
-    
-    def try_tier3_time_intel(
-        self, 
-        dax: str, 
-        table_alias: str, 
-        date_alias: str = "CALENDAR"
-    ) -> Optional[str]:
-        """
-        Attempt Tier 3 Time Intelligence translation using Snowflake window functions.
-        
-        Converts DAX Time Intelligence to SQL window functions:
-        - TOTALYTD -> Cumulative sum partitioned by Year
-        - TOTALMTD -> Cumulative sum partitioned by Year, Month
-        - TOTALQTD -> Cumulative sum partitioned by Year, Quarter
-        
-        Args:
-            dax: The DAX expression
-            table_alias: SQL alias for the measure's source table
-            date_alias: SQL alias for the Date dimension table
-            
-        Returns:
-            SQL expression or None if translation not possible
-        """
-        for period_type, pattern in self.TIME_INTEL_PATTERNS.items():
-            match = pattern.search(dax)
-            if match:
-                agg_func = match.group(1).upper()
-                col_name = match.group(2) or match.group(3)
-                # Groups 4 and 5 are the date table and column
-                
-                col_ref = f"{table_alias}.{self._quote(col_name)}"
-                sql_agg = {
-                    "SUM": "SUM", 
-                    "AVERAGE": "AVG", 
-                    "COUNT": "COUNT",
-                    "MIN": "MIN",
-                    "MAX": "MAX"
-                }.get(agg_func, "SUM")
-                
-                # Generate Snowflake window function for period-to-date
-                if period_type == "YTD":
-                    return f"""{sql_agg}({col_ref}) OVER (
-    PARTITION BY {date_alias}."YEAR"
-    ORDER BY {date_alias}."DATE"
-    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-)"""
-                elif period_type == "MTD":
-                    return f"""{sql_agg}({col_ref}) OVER (
-    PARTITION BY {date_alias}."YEAR", {date_alias}."MONTH"
-    ORDER BY {date_alias}."DATE"
-    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-)"""
-                elif period_type == "QTD":
-                    return f"""{sql_agg}({col_ref}) OVER (
-    PARTITION BY {date_alias}."YEAR", {date_alias}."QUARTER"
-    ORDER BY {date_alias}."DATE"
-    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-)"""
-        
-        return None
     
     def get_required_dimensions(self, dax: str) -> list[str]:
         """

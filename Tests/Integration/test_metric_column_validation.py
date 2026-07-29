@@ -384,17 +384,26 @@ class TestMetricColumnValidation:
         assert "CASE WHEN SCENARIO.SCENARIO = 'Actual'" in outputs["REVENUETY"]
         assert outputs["REVENUE_VAR_TO_BUDGET"] is not None
         assert "-" in outputs["REVENUE_VAR_TO_BUDGET"]
+        # Snowflake semantic-view METRICS clauses do not support window
+        # functions (OVER) — TOTALYTD must translate to a scalar CASE WHEN
+        # aggregate bounded by the fact table's MAX_DATE anchor instead, with
+        # the referenced measure's own filter (e.g. the SCENARIO CASE WHEN)
+        # inlined rather than dropped, and never a nested aggregate.
         assert outputs["YTD_REVENUE"] is not None
-        assert 'SUM(FACT."REVENUETY") OVER' in outputs["YTD_REVENUE"]
-        assert 'PARTITION BY FACT."YEAR"' in outputs["YTD_REVENUE"]
-        assert 'ORDER BY FACT."PERIOD"' in outputs["YTD_REVENUE"]
-        assert "CASE WHEN" not in outputs["YTD_REVENUE"]
+        assert "OVER" not in outputs["YTD_REVENUE"]
+        assert "CASE WHEN" in outputs["YTD_REVENUE"]
+        assert "SUM(SUM(" not in outputs["YTD_REVENUE"]
+        assert "SCENARIO.SCENARIO = 'Actual'" in outputs["YTD_REVENUE"]
         assert outputs["YTD_COGS"] is not None
-        assert 'SUM(FACT."REVENUE_BUDGET") OVER' in outputs["YTD_COGS"]
-        assert 'PARTITION BY FACT."YEAR"' in outputs["YTD_COGS"]
+        assert "OVER" not in outputs["YTD_COGS"]
+        assert "CASE WHEN" in outputs["YTD_COGS"]
+        assert "SUM(SUM(" not in outputs["YTD_COGS"]
+        assert "SCENARIO.SCENARIO = 'Budget'" in outputs["YTD_COGS"]
         assert outputs["YTD_GROSS_MARGIN"] is not None
-        assert 'SUM(FACT."REVENUE_VAR_TO_BUDGET") OVER' in outputs["YTD_GROSS_MARGIN"]
-        assert 'PARTITION BY FACT."YEAR"' in outputs["YTD_GROSS_MARGIN"]
+        assert "OVER" not in outputs["YTD_GROSS_MARGIN"]
+        assert "CASE WHEN" in outputs["YTD_GROSS_MARGIN"]
+        assert "SUM(SUM(" not in outputs["YTD_GROSS_MARGIN"]
+        assert " - " in outputs["YTD_GROSS_MARGIN"]
 
     def test_repair_invalid_bare_table_sum_identifier(self, emitter):
         """Repair SUM("TABLE") into SUM(alias.PREFERRED_NUMERIC_COLUMN)."""

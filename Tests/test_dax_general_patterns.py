@@ -510,3 +510,194 @@ class TestByDesignExclusionSurvivesDDLEmission:
             if r["entity_name"] == "Placeholder_Spacer"
         ]
         assert by_design_records and by_design_records[0]["by_design"] is True
+
+
+class TestDivideGeneralizesToAnyMeasurePair:
+    """DIVIDE([Numerator], [Denominator][, alt]) must keep its division for
+    ANY pair of measure/column names — not just one hardcoded pair. This is
+    a regression test for a bug where the rule-based DIVIDE translator only
+    produced a real division when the DAX literally named one specific
+    historical measure pair, silently returning numerator-only SQL (or
+    None) for every other DIVIDE-shaped expression."""
+
+    def test_divide_of_placeholder_measures_keeps_division(self):
+        from semabridge.converter.dax_rule_translator import translate_divide_measures
+
+        dax = "DIVIDE([Placeholder Numerator Measure], [Placeholder Denominator Measure], 0)"
+        sql = translate_divide_measures(dax, "fact")
+
+        assert sql is not None, "DIVIDE with unfamiliar measure names must still translate"
+        assert "/" in sql, f"division operator missing from translated SQL: {sql!r}"
+        assert "NULLIF" in sql.upper(), f"safe-division guard missing: {sql!r}"
+        assert "COALESCE" in sql.upper()
+
+    def test_divide_of_columns_keeps_division_via_rule_based_translation(self):
+        from semabridge.converter.dax_rule_translator import rule_based_translation
+
+        dax = "DIVIDE([SomeNumeratorColumn], [SomeDenominatorColumn], 0)"
+        sql = rule_based_translation(dax, "fact")
+
+        assert sql is not None
+        assert "/" in sql, f"division operator missing from translated SQL: {sql!r}"
+        assert "NULLIF" in sql.upper()
+
+    def test_llm_candidate_missing_division_is_rejected_for_any_dax(self):
+        from semabridge.connectors.translator import MetricExpressionTranslator
+
+        dax = "DIVIDE([Placeholder Numerator Measure], [Placeholder Denominator Measure], 0)"
+        numerator_only_sql = 'SUM(fact."SOME_NUMERATOR_COLUMN")'
+
+        assert MetricExpressionTranslator._dax_divide_lost_its_division(dax, numerator_only_sql) is True
+        divided_sql = 'SUM(fact."SOME_NUMERATOR_COLUMN") / NULLIF(SUM(fact."SOME_DENOMINATOR_COLUMN"), 0)'
+        assert MetricExpressionTranslator._dax_divide_lost_its_division(dax, divided_sql) is False
+
+
+class TestMeasureReferenceNeverLeaksAsColumnRef:
+    """A DAX measure referencing another measure by name ([OtherMeasure])
+    must never be rendered as a direct column reference (ALIAS."OTHERMEASURE")
+    when [OtherMeasure] is a real, tracked measure that just hasn't been
+    translated yet — that would silently reference a physical column that
+    doesn't exist. This is a regression test for that bug.
+
+    Crucially, an unqualified bracket reference the caller's model has NO
+    measure-registry knowledge of at all (e.g. plain SUM([Amount]), the
+    overwhelmingly common shape throughout this codebase) must still fall
+    back to a column reference exactly as before — the AST parser cannot
+    distinguish "this bracket names a column" from "this bracket names a
+    measure" at the token level, so the fix must not break that pre-existing,
+    load-bearing convention while fixing the narrower measure-reference bug.
+    """
+
+    def test_unresolved_but_known_measure_ref_fails_closed_not_as_column(self):
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "[Placeholder_Other_Measure] + 1"
+        sql = try_ast_translate(
+            dax,
+            table_alias="fact",
+            date_alias="COL_DATE",
+            measure_sql_map={},
+            known_measure_names={"Placeholder_Other_Measure"},
+        )
+
+        assert sql is None, (
+            f"unresolved-but-known measure reference must fail closed (None), not fabricate SQL: {sql!r}"
+        )
+
+    def test_bracket_name_outside_measure_registry_still_falls_back_to_column(self):
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "[SomeColumn] + 1"
+        sql = try_ast_translate(dax, table_alias="fact", date_alias="COL_DATE", measure_sql_map={})
+
+        assert sql is not None, "bracket name with no measure-registry knowledge must still translate"
+        assert 'fact."SOMECOLUMN"' in sql, (
+            f"expected the pre-existing column-reference fallback to be preserved: {sql!r}"
+        )
+
+    def test_resolved_measure_ref_inlines_referenced_measure_sql(self):
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "[Placeholder_Other_Measure] + 1"
+        sql = try_ast_translate(
+            dax,
+            table_alias="fact",
+            date_alias="COL_DATE",
+            measure_sql_map={"Placeholder_Other_Measure": 'SUM(fact."SOME_COLUMN")'},
+        )
+
+        assert sql is not None
+        assert 'SUM(fact."SOME_COLUMN")' in sql
+        assert '"PLACEHOLDER_OTHER_MEASURE"' not in sql.upper(), (
+            f"measure reference leaked as a dot-notation column reference: {sql!r}"
+        )
+
+    def test_all_measure_names_includes_measures_with_no_sql_yet(self):
+        # DAXTranslator must tell the renderer about every tracked measure —
+        # not just the ones already resolved — so a genuinely unresolved
+        # measure reference fails closed instead of falling through to the
+        # column-reference fallback meant for names outside the registry.
+        translator = DAXTranslator()
+        metrics_context = [_metric("Placeholder_Other_Measure", None)]
+
+        all_names = translator._all_measure_names(metrics_context)
+        resolved = translator._build_resolved_measures_map("fact", metrics_context)
+
+        assert "Placeholder_Other_Measure" in all_names
+        assert "Placeholder_Other_Measure" not in resolved
+
+    def test_measure_referencing_resolved_measure_through_full_translator_inlines_it(self):
+        translator = DAXTranslator()
+        metrics_context = [
+            _metric("Placeholder_Other_Measure", 'SUM(fact."SOME_COLUMN")'),
+        ]
+        dax = "[Placeholder_Other_Measure] + 1"
+        result = translator.translate(dax, "fact", "SomeTable", metrics_context=metrics_context)
+
+        assert result.is_success, f"expected translation to succeed, got sql={result.sql!r}"
+        assert '"PLACEHOLDER_OTHER_MEASURE"' not in result.sql.upper(), (
+            f"resolved measure reference must be inlined, not left as a column reference: {result.sql!r}"
+        )
+        assert 'SUM(fact."SOME_COLUMN")' in result.sql
+
+
+class TestTimeIntelligenceCarriesADateRangeFilter:
+    """Time-intelligence DAX (TOTALYTD, SAMEPERIODLASTYEAR, etc.) must
+    produce SQL with an actual, distinct date-range filter bounding it to
+    the intended period — not the same value as the non-time-filtered base
+    measure, and not a bare window function (OVER), which a Snowflake
+    semantic-view METRICS clause does not support. This is a regression
+    test for a bug where time-intelligence functions were dispatched to a
+    branch that emitted an unbounded OVER(...) window function (or, for
+    SAMEPERIODLASTYEAR/DATEADD/etc., were rejected outright) before the
+    already-correct CASE-WHEN-bounded AST renderer ever got a chance."""
+
+    def test_totalytd_of_direct_aggregation_has_distinct_bounded_filter(self):
+        translator = DAXTranslator()
+
+        base_dax = "SUM([SomeColumn])"
+        base_result = translator.translate(base_dax, "fact", "SomeTable")
+
+        ytd_dax = "TOTALYTD(SUM([SomeColumn]), 'SomeDateTable'[SomeDateColumn])"
+        ytd_result = translator.translate(ytd_dax, "fact", "SomeTable")
+
+        assert ytd_result.is_success, f"expected TOTALYTD to translate, got sql={ytd_result.sql!r}"
+        assert "OVER" not in ytd_result.sql.upper(), (
+            f"time-intelligence SQL must not be a window function (unsupported in METRICS clause): {ytd_result.sql!r}"
+        )
+        assert "DATE_TRUNC" in ytd_result.sql.upper() and "CASE WHEN" in ytd_result.sql.upper(), (
+            f"expected a real date-range CASE WHEN filter: {ytd_result.sql!r}"
+        )
+        assert base_result.sql != ytd_result.sql, (
+            "YTD translation must differ from the non-time-filtered base measure "
+            f"(base={base_result.sql!r}, ytd={ytd_result.sql!r})"
+        )
+
+    def test_totalytd_of_measure_reference_inlines_without_nested_aggregate(self):
+        translator = DAXTranslator()
+        metrics_context = [
+            _metric("Placeholder_Other_Measure", 'SUM(fact."SOME_COLUMN"::FLOAT)'),
+        ]
+        dax = "TOTALYTD([Placeholder_Other_Measure], 'SomeDateTable'[SomeDateColumn])"
+        result = translator.translate(dax, "fact", "SomeTable", metrics_context=metrics_context)
+
+        assert result.is_success, f"expected TOTALYTD-of-measure-ref to translate, got sql={result.sql!r}"
+        sql_upper = result.sql.upper()
+        assert "OVER" not in sql_upper
+        assert "DATE_TRUNC" in sql_upper and "CASE WHEN" in sql_upper
+        assert sql_upper.count("SUM(") == 1, (
+            f"must not nest an outer aggregate around the already-aggregated measure SQL: {result.sql!r}"
+        )
+        assert '"PLACEHOLDER_OTHER_MEASURE"' not in sql_upper
+
+    def test_sameperiodlastyear_is_no_longer_rejected_outright(self):
+        translator = DAXTranslator()
+
+        dax = "CALCULATE(SUM([SomeColumn]), SAMEPERIODLASTYEAR('SomeDateTable'[SomeDateColumn]))"
+        result = translator.translate(dax, "fact", "SomeTable")
+
+        assert result.sql is not None, (
+            "SAMEPERIODLASTYEAR must get a chance at the AST renderer instead of being "
+            "flatly rejected before any tier runs"
+        )
+        assert "OVER" not in result.sql.upper()

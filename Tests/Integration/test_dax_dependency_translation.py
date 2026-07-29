@@ -57,12 +57,16 @@ def test_category3_totalytd_metadata_injection():
         metrics_context=metrics,
     )
 
+    # Snowflake semantic-view METRICS clauses do not support window
+    # functions (OVER) — TOTALYTD must translate to a scalar CASE WHEN
+    # aggregate bounded by the fact table's MAX_DATE anchor instead.
     assert result.is_success
     assert result.sql is not None
-    assert 'SUM(FACT."REVENUE")' in result.sql
-    assert 'OVER (' in result.sql
-    assert "PARTITION BY CALENDAR.YEAR" in result.sql
-    assert "ORDER BY CALENDAR.PERIOD" in result.sql
+    assert "OVER (" not in result.sql
+    assert "CASE WHEN" in result.sql
+    assert "DATE_TRUNC('YEAR'" in result.sql
+    assert 'FACT."REVENUE"' in result.sql
+    assert 'FACT."MAX_DATE"' in result.sql
 
 
 def test_category3_totalytd_with_inner_sum_wrapper():
@@ -76,9 +80,10 @@ def test_category3_totalytd_with_inner_sum_wrapper():
 
     assert result.is_success
     assert result.sql is not None
-    assert 'SUM(FACT."REVENUE")' in result.sql
-    assert "PARTITION BY CALENDAR.YEAR" in result.sql
-    assert "ORDER BY CALENDAR.PERIOD" in result.sql
+    assert "OVER (" not in result.sql
+    assert "CASE WHEN" in result.sql
+    assert "DATE_TRUNC('YEAR'" in result.sql
+    assert 'FACT."REVENUE"' in result.sql
     assert "SUM(SUM(" not in result.sql
 
 
@@ -150,7 +155,11 @@ def test_no_partial_dax_sql_emission_for_calculate_sameperiodlastyear():
     assert sql is None
 
 
-def test_translate_rejects_unsupported_time_offsets():
+def test_translate_resolves_previously_unsupported_time_offsets():
+    # SAMEPERIODLASTYEAR (and DATEADD/DATESYTD/PARALLELPERIOD/etc.) used to
+    # be rejected outright before any translation tier ran at all. They now
+    # get a fair shot at the AST renderer's correct CASE-WHEN-bounded
+    # translation instead.
     translator = DAXTranslator()
     metrics = [
         _metric("Total Revenue", "SUM([Revenue])"),
@@ -163,8 +172,12 @@ def test_translate_rejects_unsupported_time_offsets():
         metrics_context=metrics,
     )
 
-    assert not result.is_success
-    assert result.sql is None
+    assert result.is_success
+    assert result.sql is not None
+    assert "OVER (" not in result.sql
+    assert "CASE WHEN" in result.sql
+    assert 'FACT."REVENUE"' in result.sql
+    assert "SUM(SUM(" not in result.sql
 
 
 def test_nested_totalytd_static_filter_dependency_chain_resolves():
@@ -198,8 +211,9 @@ def test_nested_totalytd_static_filter_dependency_chain_resolves():
 
     assert ytd_result.is_success
     assert ytd_result.sql is not None
-    assert "PARTITION BY CALENDAR.YEAR" in ytd_result.sql
-    assert "ORDER BY CALENDAR.PERIOD" in ytd_result.sql
+    assert "OVER (" not in ytd_result.sql
+    assert "CASE WHEN" in ytd_result.sql
+    assert "DATE_TRUNC('YEAR'" in ytd_result.sql
     assert "SUM(SUM(" not in ytd_result.sql
 
     assert budget_result.is_success
@@ -236,12 +250,15 @@ def test_totalytd_measure_dependency_chain_avoids_nested_aggregates():
     assert revenue_ty_ytd.is_success
     assert revenue_ty_ytd.sql is not None
     assert "SUM(SUM(" not in revenue_ty_ytd.sql
-    assert "PARTITION BY CALENDAR.YEAR" in revenue_ty_ytd.sql
+    assert "OVER (" not in revenue_ty_ytd.sql
+    assert "CASE WHEN" in revenue_ty_ytd.sql
 
     assert variance_ytd.is_success
     assert variance_ytd.sql is not None
     assert "SUM(SUM(" not in variance_ytd.sql
-    assert "PARTITION BY CALENDAR.YEAR" in variance_ytd.sql
+    assert "OVER (" not in variance_ytd.sql
+    assert "CASE WHEN" in variance_ytd.sql
+    assert " - " in variance_ytd.sql
 
 
 def test_no_partial_dax_sql_emission_for_if_blank():

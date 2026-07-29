@@ -176,6 +176,11 @@ class SnowflakeEmitter(BaseEmitter):
                 cur = conn.cursor()
                 # Store model for helper methods
                 self._model = model
+                # Let TablesClauseBuilder precompute anchor literals (e.g.
+                # _CURRENT_FISCAL_PERIOD) via a live lookup instead of
+                # embedding a subquery in the TABLES clause — see
+                # TablesClauseBuilder._fetch_fiscal_anchor_literal.
+                self.semantic_view_builder.cursor = cur
                 
                 # Auto-enrichment (NEW)
                 if getattr(self.sf_behavior, 'auto_execute_precompute', False):
@@ -216,6 +221,16 @@ class SnowflakeEmitter(BaseEmitter):
                         self.schema_manager._apply_inferred_types_ctas_sml(cur, model)
                 
                 # Step 1.5: Validation Gate & Metadata Refresh
+                # Bust the module-level schema cache first — Step 1 may have
+                # just created/altered tables (_ensure_source_tables_exist /
+                # _apply_inferred_types_ctas_*), and this step's whole job is
+                # to confirm what actually exists in Snowflake *right now*.
+                # Without this, a stale cache entry from an earlier deploy
+                # attempt against the same database.schema (still within its
+                # TTL) gets served instead of a fresh snapshot, silently
+                # excluding columns that do exist (or including ones that no
+                # longer do).
+                self.schema_manager.refresh_schema_cache()
                 sf_meta = self.schema_manager._fetch_schema_metadata(cur)
                 if not sf_meta:
                     datasets = list(getattr(model, "datasets", []) or [])
@@ -1585,33 +1600,24 @@ class SnowflakeEmitter(BaseEmitter):
         """
         Dynamically find the date/calendar table in the model.
         Returns (table_name, date_column, fiscal_period_column) or None.
-        No hardcoding!
+
+        Delegates to the same config-driven resolver TablesClauseBuilder
+        uses (DateResolutionConfig, see date_resolution.py /
+        Config/date_resolution.yaml) instead of a separate hardcoded
+        keyword list. The old body here required an exact date-column name
+        match AND a "fiscal"-named column to both be present, so it
+        returned None (silently skipping MAX_DATE/_CURRENT_FISCAL_PERIOD
+        anchor injection in _create_enriched_view) for any model whose date
+        table has no fiscal-period column at all — even though the later,
+        correct resolution in TablesClauseBuilder only ever required the
+        date column.
         """
-        date_keywords = ['date', 'calendar', 'cal', 'dim_date', 'dates']
-        fiscal_keywords = ['fiscal_yr_period', 'fiscal_period', 'fiscal_year_period']
-        
-        for dataset in getattr(model, 'datasets', []):
-            dataset_name = dataset.unique_name.lower()
-            
-            # Check if this looks like a date table
-            is_date_table = any(kw in dataset_name for kw in date_keywords)
-            
-            if is_date_table:
-                # Find date column
-                date_col = None
-                fiscal_col = None
-                
-                for col in dataset.columns:
-                    col_name = col.unique_name.lower()
-                    if col_name in ['cal_dt', 'date', 'calendar_date', 'cal_date']:
-                        date_col = col.unique_name
-                    if any(fk in col_name for fk in fiscal_keywords):
-                        fiscal_col = col.unique_name
-                
-                if date_col and fiscal_col:
-                    return (dataset.unique_name, date_col, fiscal_col)
-        
-        return None
+        from semabridge.converter.date_resolution import DateResolutionConfig
+
+        resolution = DateResolutionConfig().resolve(model)
+        if not resolution:
+            return None
+        return (resolution.table, resolution.date_col, resolution.monthindex_col or resolution.date_col)
 
     def _auto_execute_precompute_suggestions(self, model, cursor) -> None:
         """
@@ -1925,12 +1931,28 @@ class SnowflakeEmitter(BaseEmitter):
                 if getattr(c, "unique_name", None)
             }
         projected_cols: set[str] = set()
-        
+
+        from semabridge.connectors.ddl_helpers import format_scalar_sql_literal
+
+        def _fetch_literal(sql: str) -> Optional[str]:
+            # Snowflake rejects subqueries embedded inside CREATE VIEW column
+            # expressions; these anchors have no per-row dependency, so fetch
+            # them once here and splice in the literal result instead.
+            try:
+                cursor.execute(sql)
+                row = cursor.fetchone()
+                return format_scalar_sql_literal(row[0] if row else None)
+            except Exception as exc:
+                logger.warning("Could not precompute enriched-view anchor value (%s): %s", sql[:80], exc)
+                return None
+
         select_parts = [f"SELECT f.*"]
-        
+
         if "UNITS" in fact_cols:
-            select_parts.append(f'\n        , (SELECT SUM("UNITS") FROM {fact_source_ref}) AS "TOTAL_UNITS_ALL"')
-            projected_cols.add("TOTAL_UNITS_ALL")
+            total_units_literal = _fetch_literal(f'SELECT SUM("UNITS") FROM {fact_source_ref}')
+            if total_units_literal is not None:
+                select_parts.append(f'\n        , {total_units_literal} AS "TOTAL_UNITS_ALL"')
+                projected_cols.add("TOTAL_UNITS_ALL")
         
         # Add generic cross-dataset precomputed columns into the fact enriched view.
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
@@ -1974,10 +1996,18 @@ class SnowflakeEmitter(BaseEmitter):
                 resolved_date_col = self._id.sanitize_column(date_col)
                 resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
 
-            select_parts.append(f"""
-            , (SELECT MAX("{resolved_date_col}") FROM {fact_source_ref}) AS "MAX_DATE"
-            , (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD""")
-            projected_cols.update({"MAX_DATE", "_CURRENT_FISCAL_PERIOD"})
+            max_date_literal = _fetch_literal(f'SELECT MAX("{resolved_date_col}") FROM {fact_source_ref}')
+            if max_date_literal is not None:
+                select_parts.append(f'\n            , {max_date_literal} AS "MAX_DATE"')
+                projected_cols.add("MAX_DATE")
+
+            fiscal_period_literal = _fetch_literal(
+                f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
+                f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
+            )
+            if fiscal_period_literal is not None:
+                select_parts.append(f'\n            , {fiscal_period_literal} AS "_CURRENT_FISCAL_PERIOD"')
+                projected_cols.add("_CURRENT_FISCAL_PERIOD")
         
         select_parts.append(f"FROM {fact_source_ref} f")
         

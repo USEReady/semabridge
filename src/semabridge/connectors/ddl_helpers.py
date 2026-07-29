@@ -6,6 +6,7 @@ reused from the larger `SemanticViewBuilder` implementation.
 """
 from __future__ import annotations
 
+import datetime
 import re
 from typing import List, Optional
 
@@ -52,6 +53,32 @@ def fix_global_sums(sql_str: str, translator) -> str:
             result.append(sql_str[i:sum_open_idx])
             i = sum_open_idx
     return "".join(result)
+
+
+def format_scalar_sql_literal(value) -> str:
+    """Render a Python value fetched from Snowflake as a SQL literal.
+
+    Used to splice a pre-fetched anchor value (e.g. "today's fiscal period")
+    into DDL as a constant instead of embedding the subquery that produced
+    it — Snowflake rejects subqueries inside semantic-view TABLES clauses
+    and view definitions regardless of whether they are correlated.
+    """
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    # datetime.datetime is a subclass of datetime.date — check it first.
+    # A DATE/TIMESTAMP anchor (e.g. MAX_DATE) formatted as a bare quoted
+    # string is a VARCHAR literal, not a date — functions that require a
+    # real date/timestamp argument (DATE_TRUNC, DATEADD, etc.) reject it
+    # with a type error rather than implicitly casting it.
+    if isinstance(value, datetime.datetime):
+        return f"TIMESTAMP '{value.strftime('%Y-%m-%d %H:%M:%S')}'"
+    if isinstance(value, datetime.date):
+        return f"DATE '{value.isoformat()}'"
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def deduplicate_metrics_lines(lines: List[str]) -> List[str]:

@@ -58,6 +58,12 @@ class SemanticViewBuilder:
         self.schema_manager = schema_manager
         self.dup_name_repo = dup_name_repo
         self.translator = translator
+        # Set by the deploying caller before generate_ddls()/generate_ddls_from_osi()
+        # when a live Snowflake cursor is available. None (the default, e.g. for
+        # DDL-preview-only callers with no live connection) means anchor values
+        # that require a live lookup (see TablesClauseBuilder) are skipped rather
+        # than embedded as an unsupported subquery.
+        self.cursor: Any = None
         # Populated after generate_ddls() — maps dataset_name → [phys_col, ...]
         # for columns present in the source model but absent from the Snowflake
         # physical schema.  Callers can surface these as warnings/conflicts.
@@ -274,7 +280,7 @@ class SemanticViewBuilder:
         related_ds = {r.from_dataset for r in sml.relationships if r.is_active} | {r.to_dataset for r in sml.relationships if r.is_active}
 
         # TABLES
-        tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
+        tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata, cursor=self.cursor)
         tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
@@ -332,7 +338,7 @@ class SemanticViewBuilder:
         related_ds = {r.from_dataset for r in osi.relationships if r.is_active} | {r.to_dataset for r in osi.relationships if r.is_active}
 
         # TABLES
-        tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata)
+        tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata, cursor=self.cursor)
         tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 

@@ -15,12 +15,15 @@ class TablesClauseBuilder:
         config: Any,
         behavior: Any,
         live_schema_metadata: dict[str, set[str]],
+        cursor: Any = None,
     ) -> None:
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
         self.config = config
         self.behavior = behavior
         self.live_schema_metadata = live_schema_metadata
+        self.cursor = cursor
+        self._anchor_literal_cache: dict[tuple, Optional[str]] = {}
 
     def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
         """
@@ -95,12 +98,53 @@ class TablesClauseBuilder:
                 )
                 return source_fq
 
+        anchor_literal = self._fetch_fiscal_anchor_literal(date_table_ref, resolved_date_col, resolved_fiscal_col)
+        if anchor_literal is None:
+            return source_fq
+
         return f"""(
     SELECT
         f.*,
-        (SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) AS "_CURRENT_FISCAL_PERIOD"
+        {anchor_literal} AS "_CURRENT_FISCAL_PERIOD"
     FROM {source_fq} f
 )"""
+
+    def _fetch_fiscal_anchor_literal(
+        self, date_table_ref: str, resolved_date_col: str, resolved_fiscal_col: str
+    ) -> Optional[str]:
+        """Compute the current-fiscal-period anchor once via a plain scalar
+        SELECT and return it as a ready-to-splice SQL literal.
+
+        Snowflake rejects subqueries embedded inside a semantic view's
+        TABLES clause (or any view-like definition), even uncorrelated
+        scalar ones. This value has no per-row dependency on the fact
+        table it will be attached to, so fetching it once here and
+        splicing in the literal result keeps the base table SELECT free
+        of any subquery.
+        """
+        if self.cursor is None:
+            return None
+        cache_key = (date_table_ref, resolved_date_col, resolved_fiscal_col)
+        if cache_key in self._anchor_literal_cache:
+            return self._anchor_literal_cache[cache_key]
+        literal: Optional[str] = None
+        try:
+            self.cursor.execute(
+                f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
+                f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
+            )
+            row = self.cursor.fetchone()
+            from semabridge.connectors.ddl_helpers import format_scalar_sql_literal
+            literal = format_scalar_sql_literal(row[0] if row else None)
+        except Exception:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "Could not precompute _CURRENT_FISCAL_PERIOD anchor value; "
+                "skipping anchor for this deploy.",
+            )
+            literal = None
+        self._anchor_literal_cache[cache_key] = literal
+        return literal
 
     def build_for_sml(
         self,

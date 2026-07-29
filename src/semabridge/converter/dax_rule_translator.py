@@ -283,6 +283,7 @@ def rule_based_translation(
         ("fiscal_cutoff", translate_fiscal_cutoff),
         ("calculate_filters", translate_calculate_with_filters),
         ("divide_measures", translate_divide_measures),
+        ("if_wrapped_divide", translate_if_wrapped_divide),
         ("calculate_arithmetic", translate_calculate_arithmetic),
         ("iterator", translate_iterator),
     )
@@ -378,9 +379,32 @@ def translate_calculate_arithmetic(dax: str, table_alias: str) -> Optional[str]:
     return None
 
 
+def _resolve_divide_operand_sql(operand: str, table_alias: str) -> str:
+    """Resolve one DIVIDE(...) argument to a SQL aggregate expression.
+
+    `operand` is whatever DIVIDE's regex captured — usually a bare measure/
+    column name (e.g. "Total Units"), occasionally an explicit aggregation
+    call (e.g. "SUM(Units)"). Either shape resolves generically: an explicit
+    aggregation call is used as-is; a bare name is treated as a column to
+    sum, exactly like every other direct-aggregation rule in this module.
+    A wrong guess is caught by the caller's downstream column-reference
+    validation, so this fails closed rather than emitting confidently-wrong
+    SQL for names it doesn't recognize.
+    """
+    clean = (operand or "").strip()
+    agg = _parse_aggregation(clean)
+    if agg:
+        func, table, column, _ = agg
+        col_ref = _column_ref(table, column, table_alias)
+        return f"COUNT(DISTINCT {col_ref})" if func == "DISTINCTCOUNT" else f"{func}({col_ref})"
+    return f"SUM({table_alias}.{_quote_identifier(clean)})"
+
+
 def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
     """
-    Translate DIVIDE([Numerator], [Denominator], [AlternateResult])
+    Translate DIVIDE([Numerator], [Denominator], [AlternateResult]) for any
+    pair of measure/column names matching the DIVIDE(...) shape — not just
+    one hardcoded pair.
     """
     logger.debug(f"Attempting to translate DIVIDE expression: {dax}")
     pattern = r"^\s*DIVIDE\s*\(\s*\[?([^\]]+)\]?\s*,\s*\[?([^\]]+)\]?\s*(?:,\s*(\d+))?\s*\)\s*$"
@@ -395,18 +419,49 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
     denominator_measure = match.group(2)
     alternate_result = match.group(3) or "0"
 
-    # This is a brittle, test-specific implementation
-    if "VanArsdel Units" in numerator_measure and "Total Units" in denominator_measure:
-        
-        # Manually define the SQL for the numerator and denominator based on the test case
-        numerator_sql = f"SUM(CASE WHEN {table_alias}.\"ISVANARSDEL\" = 'Yes' THEN {table_alias}.\"UNITS\" ELSE 0 END)"
-        denominator_sql = f"SUM({table_alias}.\"UNITS\")"
+    numerator_sql = _resolve_divide_operand_sql(numerator_measure, table_alias)
+    denominator_sql = _resolve_divide_operand_sql(denominator_measure, table_alias)
 
-        result = f"COALESCE(({numerator_sql}) / NULLIF({denominator_sql}, 0), {alternate_result})"
-        logger.debug(f"Translated DIVIDE expression to: {result}")
-        return result
+    result = f"COALESCE(({numerator_sql}) / NULLIF({denominator_sql}, 0), {alternate_result})"
+    logger.debug(f"Translated DIVIDE expression to: {result}")
+    return result
 
-    logger.debug("DIVIDE translation failed: measures not recognized.")
+
+def translate_if_wrapped_divide(dax: str, table_alias: str) -> Optional[str]:
+    """
+    Translate IF(<condition>, <alt>, DIVIDE(...)) — and the symmetric
+    IF(<condition>, DIVIDE(...), <alt>) — a very common defensive idiom
+    (e.g. IF([Denominator]=0, 0, DIVIDE([Numerator], [Denominator], 0))).
+
+    DIVIDE's own third argument already provides the same zero-guard
+    semantics this IF wrapper is redundantly re-expressing, so this
+    translates straight to the inner DIVIDE(...) (reusing
+    translate_divide_measures) instead of trying to interpret the
+    condition itself. Without this, DAX shaped this way would fall through
+    to whatever translator happens to match some unrelated substring in
+    the DAX text (e.g. a measure name it references), silently producing a
+    numerator-only or otherwise wrong result — the exact class of bug this
+    module's DIVIDE handling exists to prevent.
+    """
+    if not dax or not isinstance(dax, str):
+        return None
+    if not re.match(r"^\s*IF\s*\(", dax, re.IGNORECASE):
+        return None
+
+    inner = re.sub(r"^\s*IF\s*\(", "", dax.strip(), flags=re.IGNORECASE)
+    if not inner.endswith(")"):
+        return None
+    inner = inner[:-1]
+    args = _split_top_level(inner)
+    if len(args) != 3:
+        return None
+
+    _, true_branch, false_branch = (a.strip() for a in args)
+    for branch in (false_branch, true_branch):
+        if re.match(r"^\s*DIVIDE\s*\(", branch, re.IGNORECASE):
+            result = translate_divide_measures(branch, table_alias)
+            if result:
+                return result
     return None
 
 
@@ -759,9 +814,17 @@ def translate_vanarsdel_flag(dax: str, table_alias: str) -> Optional[str]:
         or re.search(r'[=]\s*["\']No["\']', dax, re.IGNORECASE)
     )
     flag_value = "'No'" if is_other else "'Yes'"
-    # Find the units/value column from the inner SUM
+    # Find the units/value column from the inner SUM. This translator's shape
+    # is specifically "SUM(...) filtered by a VanArsdel flag" — if there's no
+    # SUM(...) call to extract a column from, the DAX isn't that shape (e.g.
+    # it may be an IF/DIVIDE ratio that merely *references* a measure whose
+    # name happens to contain "VanArsdel"). Decline rather than guessing a
+    # hardcoded "UNITS" column, which would silently produce a plausible but
+    # wrong translation for a shape this function was never meant to handle.
     col_m = re.search(r"SUM\s*\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", dax, re.IGNORECASE)
-    col = _quote_identifier(col_m.group(1).strip()) if col_m else '"UNITS"'
+    if not col_m:
+        return None
+    col = _quote_identifier(col_m.group(1).strip())
     return (
         f"SUM(CASE WHEN PRODUCT.\"ISVANARSDEL\" = {flag_value} "
         f"THEN {table_alias}.{col} ELSE 0 END)"
@@ -909,22 +972,6 @@ def translate_measure_arithmetic(dax: str, table_alias: str) -> Optional[str]:
     if re.match(r"^\s*\[[^\]]+\]\s*[\+\-\*/]\s*\[[^\]]+\]", dax, re.IGNORECASE):
         logger.debug(f"Measure arithmetic detected: {dax[:80]}")
         return dax  # Pass through for semantic layer to handle
-    return None
-
-
-def translate_divide_function(dax: str, table_alias: str) -> Optional[str]:
-    """
-    Handle DIVIDE function with measures: DIVIDE([Measure1], [Measure2], 0)
-    """
-    match = re.match(r"^\s*DIVIDE\s*\(\s*(\[[\w\s]+\])\s*,\s*(\[[\w\s]+\])\s*(?:,\s*(\d+))?\s*\)\s*$", 
-                     dax, re.IGNORECASE)
-    if match:
-        num = match.group(1)
-        denom = match.group(2)
-        fallback = match.group(3) or "0"
-        # Format: (measure1) / NULLIF(measure2, 0)
-        logger.debug(f"DIVIDE function expanded")
-        return dax  # Pass through for semantic layer to handle measure expansion
     return None
 
 

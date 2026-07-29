@@ -259,47 +259,20 @@ class DeterministicSQLGenerator:
     def _translate_time_intel(self, expr: DaxExpression,
                               context: ColumnMappingContext,
                               table_alias: str) -> Optional[str]:
-        """Translate time intelligence functions."""
+        """Decline all time-intelligence functions.
+
+        This generator previously special-cased TOTALYTD with a window
+        function embedded inside a CASE expression — invalid for a
+        Snowflake semantic-view METRICS clause (no OVER allowed there) and
+        missing an actual upper-bound date filter (just a year-equality
+        check, so it doesn't stop at "today"). Time-intelligence functions
+        are handled correctly by the AST renderer's CASE-WHEN-bounded
+        translation (see dax_ast_parser.DaxSqlRenderer._render_period_to_date
+        / _render_lag_period); this generator always declines so dispatch
+        defers to that renderer instead of risking invalid SQL.
+        """
         func = expr.function.upper()
-        dax = expr.raw
-        
-        if func == 'TOTALYTD':
-            # TOTALYTD(SUM([Amount]), [Date])
-            # → SUM(Amount) OVER (ORDER BY Date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-            #   filtered WHERE YEAR(Date) = YEAR(CURRENT_DATE)
-            
-            pattern = r'TOTALYTD\s*\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)'
-            match = re.search(pattern, dax, re.IGNORECASE)
-            if not match:
-                return None
-            
-            agg_part = match.group(1).strip()
-            date_ref = match.group(2).strip()
-            
-            # Map aggregation
-            agg_sql = self._resolve_simple_agg(agg_part, context, table_alias)
-            if not agg_sql:
-                return None
-            
-            # Get date column
-            date_col = self._extract_column_from_ref(date_ref)
-            if not date_col:
-                return None
-            
-            schema_date = context.map_column(date_col)
-            if not schema_date:
-                schema_date = date_col.upper()
-            
-            date_ref_sql = f"{table_alias}.{schema_date}"
-            
-            # Build window function
-            # Simplified: FILTER year, then aggregate with window
-            sql = f"CASE WHEN YEAR({date_ref_sql}) = YEAR(CURRENT_DATE()) THEN ({agg_sql}) OVER (ORDER BY {date_ref_sql}) ELSE 0 END"
-            
-            logger.debug(f"Generated TOTALYTD SQL: {sql[:100]}...")
-            return sql
-        
-        logger.debug(f"Time intelligence function not yet supported: {func}")
+        logger.debug(f"Time intelligence function '{func}' deferred to AST renderer")
         return None
     
     def _translate_calculate(self, expr: DaxExpression,

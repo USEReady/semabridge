@@ -44,15 +44,19 @@ class MetricExpressionTranslator:
         # Remove bare ALIAS placeholders that LLMs occasionally emit
         sql = re.sub(r'\bALIAS\."?[A-Z_][A-Z0-9_]*"?', '', sql, flags=re.IGNORECASE).strip()
 
-        # Test compliance overrides for LLM flakiness
-        dax_upper = dax.upper()
-        if "TOTALYTD" in dax_upper and "CURRENT_DATE" not in sql.upper() and "SUM" in sql.upper():
-            return "SUM(CASE WHEN COL_DATE.\"YEAR\" = YEAR(CURRENT_DATE()) AND COL_DATE.\"COL_DATE\" <= CURRENT_DATE() THEN SALESFACT.UNITS ELSE 0 END)"
-
-        if "DIVIDE" in dax_upper and "VANARSDEL" in dax_upper and "COALESCE" not in sql.upper():
-            return "COALESCE(SUM(CASE WHEN SALESFACT.ISVANARSDEL THEN SALESFACT.UNITS ELSE 0 END) / NULLIF(SUM(SALESFACT.UNITS), 0), 0)"
-
         return sql
+
+    @staticmethod
+    def _dax_divide_lost_its_division(dax: str, sql: str) -> bool:
+        """True if `dax` calls DIVIDE(...) as a function but `sql` contains
+        no division operator — a known LLM failure mode where the numerator
+        survives but the denominator is silently dropped. Keyed purely on
+        DAX/SQL grammar shape (a DIVIDE call vs. an absent '/'), not on any
+        specific measure name, so it catches this failure for any DIVIDE
+        expression rather than one hardcoded pair of measures."""
+        if not re.search(r"\bDIVIDE\s*\(", dax or "", re.IGNORECASE):
+            return False
+        return "/" not in (sql or "")
 
         
     def _sanitize_semantic_name(self, name: str) -> str:
@@ -205,26 +209,16 @@ class MetricExpressionTranslator:
 
         metrics_list = list(model.metrics) if (model is not None and getattr(model, "metrics", None)) else [metric]
 
-        m_totalytd_metric_ref = re.match(r"(?i)^TOTALYTD\(\s*\[([^\]]+)\]\s*,\s*(?:'[^']+'\s*)?\[[^\]]+\]\s*\)$", expr)
-        if m_totalytd_metric_ref:
-            ref_name = m_totalytd_metric_ref.group(1).strip()
-            metrics_by_name = {
-                str(getattr(m, "unique_name", "")).strip().casefold(): m
-                for m in metrics_list
-                if getattr(m, "unique_name", None)
-            }
-            ref_metric = metrics_by_name.get(ref_name.casefold())
-            if ref_metric and str(getattr(ref_metric, "dataset", "")).casefold() == str(metric.dataset).casefold():
-                ref_metric_name = self._sanitize_semantic_name(str(getattr(ref_metric, "unique_name", ref_name)))
-                year_col = self._resolve_year_partition_column(known_cols)
-                order_col = self._resolve_ytd_order_column(known_cols)
-                if year_col and order_col:
-                    return (
-                        f'SUM({table_alias}."{ref_metric_name}") OVER '
-                        f'(PARTITION BY {table_alias}."{year_col}" '
-                        f'ORDER BY {table_alias}."{order_col}")'
-                    )
-
+        # TOTALYTD([SomeMeasure], 'Date'[Date]) — a time-intelligence function
+        # wrapping a measure reference — used to be special-cased here with a
+        # bare OVER(PARTITION BY ... ORDER BY ...) window function: invalid
+        # for a Snowflake semantic-view METRICS clause, and with no
+        # date-range bound at all (running total ordered by period, not
+        # "up to today"). DAXTranslator.translate() below already handles
+        # this shape correctly and generally via the AST renderer's
+        # CASE-WHEN-bounded translation (see
+        # dax_ast_parser.DaxSqlRenderer._render_period_to_date), so this now
+        # falls straight through to that instead of a separate, broken path.
         try:
             from semabridge.converter.dax_translator import DAXTranslator
 
@@ -431,6 +425,9 @@ class MetricExpressionTranslator:
                 continue
 
             if not self._is_scalar_metric_sql(expr):
+                continue
+
+            if self._dax_divide_lost_its_division(dax_expression, expr):
                 continue
 
             expr = self.fix_common_llm_issues(expr, dax_expression)
@@ -1486,20 +1483,6 @@ class MetricExpressionTranslator:
         if best_score < 1: return None
         best = [col for score, col in scored if score == best_score]
         return sorted(best, key=lambda c: (len(c), c))[0]
-
-    @staticmethod
-    def _resolve_year_partition_column(known_cols: set[str]) -> Optional[str]:
-        if not known_cols: return None
-        for candidate in ["YEAR", "CALENDAR_YEAR", "FISCAL_YEAR"]:
-            if candidate in known_cols: return candidate
-        return None
-
-    @staticmethod
-    def _resolve_ytd_order_column(known_cols: set[str]) -> Optional[str]:
-        if not known_cols: return None
-        for candidate in ["PERIOD", "MONTH", "MONTH_NUM", "YEARPERIOD", "DATE", "PRIMARY_DATE", "PRIMARYDATE"]:
-            if candidate in known_cols: return candidate
-        return None
 
     def _get_cached_or_translate(self, dax: str, metric_name: str) -> Optional[str]:
         """

@@ -248,7 +248,15 @@ class TMSLTransformer:
                             metric.sync_enabled = True
                             metric.sync_failure_reason = None
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
-            
+
+            # Step 2c: Resolve inter-measure dependencies now that every metric
+            # in the model has been parsed. Measures above are translated
+            # table-by-table in TMSL source order, so a measure referencing
+            # another measure defined later in that order sees an incomplete
+            # metrics_context on its first attempt. Mirrors osi_to_sml.py's
+            # equivalent step for the OSI pipeline.
+            self._resolve_metric_dependencies(sml)
+
             # 3. Process Relationships
             # Build case-insensitive map of valid datasets so relationship
             # endpoints can be canonicalized before filtering.
@@ -750,6 +758,57 @@ class TMSLTransformer:
                 auto_generated=self._auto_synonyms(col_name),
             ),
         )
+
+    def _resolve_metric_dependencies(self, sml: SMLModel, max_passes: int = 3) -> None:
+        """Resolve unresolved metrics using the full model-wide metric list,
+        in deterministic convergence passes.
+
+        Measures are parsed table-by-table in TMSL source order (see the
+        Pass 2 loop in `transform`), so a measure referencing another
+        measure defined later in that order sees an incomplete
+        `metrics_context` on its first translation attempt. Each pass here
+        retries every still-unresolved metric against the complete
+        `sml.metrics` list, so a measure resolved in pass N unlocks anything
+        depending on it in pass N+1. Mirrors `osi_to_sml.py`'s
+        `_resolve_metric_dependencies`, which already solves this for the
+        OSI pipeline.
+        """
+        if not sml.metrics:
+            return
+
+        from semabridge.converter.dax_ast_parser import is_by_design_excluded
+
+        for pass_idx in range(max_passes):
+            resolved_this_pass = 0
+            for metric in sml.metrics:
+                if metric.sql_expression or not (metric.expression or "").strip():
+                    continue
+                if is_by_design_excluded(metric.sync_failure_reason):
+                    continue
+
+                safe_alias = to_alias(metric.dataset)
+                translation = self.dax_translator.translate(
+                    metric.expression,
+                    safe_alias,
+                    metric.dataset,
+                    metric_name=metric.unique_name,
+                    metrics_context=sml.metrics,
+                )
+                if translation.is_success and translation.sql:
+                    metric.sql_expression = translation.sql
+                    metric.complexity_tier = translation.tier
+                    metric.sync_enabled = True
+                    metric.sync_failure_reason = None
+                    resolved_this_pass += 1
+
+            if resolved_this_pass == 0:
+                break
+
+            logger.info(
+                "TMSL->SML dependency resolution pass %d resolved %d metrics",
+                pass_idx + 1,
+                resolved_this_pass,
+            )
 
     def _parse_measure(self, measure_def: Dict[str, Any], table_name: str, overrides: Dict[str, str] = None, metrics_context: List[Any] = None) -> SMLMetric:
         """Parse a TMSL measure into SMLMetric with complexity analysis."""

@@ -220,8 +220,8 @@ def test_dax_strict_time_intelligence_uses_configured_date_alias(monkeypatch):
     )
 
     assert result.sql
-    assert "COL_DATE_2.YEAR" in result.sql
-    assert "CALENDAR.YEAR" not in result.sql
+    assert 'COL_DATE_2."COL_DATE"' in result.sql
+    assert "CALENDAR." not in result.sql
 
 def test_indicator_metrics_with_no_expression_fall_through_to_general_pipeline():
     """Indicator label metrics used to be covered by a hardcoded overrides

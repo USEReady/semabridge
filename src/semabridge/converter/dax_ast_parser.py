@@ -36,9 +36,16 @@ _AST_CACHE: dict[tuple, Optional[str]] = {}
 _AST_CACHE_MAX = 1024
 
 
-def _ast_cache_key(dax: str, table_alias: str, date_alias: str, measure_sql_map: Optional[Dict[str, str]]) -> tuple:
+def _ast_cache_key(
+    dax: str,
+    table_alias: str,
+    date_alias: str,
+    measure_sql_map: Optional[Dict[str, str]],
+    known_measure_names: Optional[Any] = None,
+) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
-    return (dax or "", table_alias or "", date_alias or "", items)
+    names = tuple(sorted(known_measure_names or ()))
+    return (dax or "", table_alias or "", date_alias or "", items, names)
 from semabridge.utils.naming import sanitize_column
 
 logger = get_logger(__name__)
@@ -564,16 +571,32 @@ class DaxSqlRenderer:
         "COUNTA": "COUNT",
     }
 
+    # Matches an already-rendered SQL aggregate call, e.g. SUM(fact."AMOUNT")
+    # or SUM(fact."AMOUNT"::FLOAT) — used to inject a date-range CASE filter
+    # into a referenced measure's own aggregate instead of wrapping an
+    # already-aggregated expression in a second outer aggregate.
+    _RENDERED_AGG_PATTERN = re.compile(r"^(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(.+?)\s*\)$", re.IGNORECASE)
+
     def __init__(
         self,
         table_alias: str = "T",
         date_alias: str = "CALENDAR",
         measure_sql_map: Optional[Dict[str, str]] = None,
+        known_measure_names: Optional[Any] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
         self.measure_sql_map = measure_sql_map or {}
+        # Names of measures known to exist in the model but not yet resolved
+        # to SQL (absent from measure_sql_map). Distinguishes "this bracket
+        # reference names a real measure that just isn't translated yet"
+        # (must fail closed — see _render_measure_ref) from "this bracket
+        # reference names something the caller has no measure-registry
+        # knowledge of at all" (the common SUM([Column]) shape, where a bare
+        # bracket names a physical column — falls back to a column
+        # reference, exactly as before).
+        self.known_measure_names = set(known_measure_names or ())
         self._func_registry = FunctionRegistry()
 
     def render(self, node: Optional[DaxNode]) -> Optional[str]:
@@ -624,6 +647,23 @@ class DaxSqlRenderer:
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
         if node.name in self.measure_sql_map:
             return f"({self.measure_sql_map[node.name]})"
+        if node.name in self.known_measure_names:
+            # The caller's model tracks this as a real measure name, so
+            # rendering it as a column would reference a physical column
+            # that doesn't exist (Bug: measure-references-measure leaking
+            # as a column reference). Fail closed so the caller can defer
+            # to a later pass with fuller measure context, instead of
+            # "succeeding" with wrong SQL.
+            raise self.DaxRenderError(
+                f"Unresolved measure reference [{node.name}]: known measure with no resolved SQL yet"
+            )
+        # The caller has no measure-registry knowledge of this name at all —
+        # the common case is a bare [Column] used as an aggregation
+        # argument (e.g. SUM([Amount])), where the parser cannot distinguish
+        # a column from a measure at the token level. Falling back to a
+        # column reference here preserves that long-standing, widely-relied
+        # upon shape; it is only wrong for genuine unresolved measure
+        # references, which are caught by the branch above instead.
         col = sanitize_column(node.name)
         return f'{self.table_alias}."{col}"'
 
@@ -810,9 +850,69 @@ class DaxSqlRenderer:
         sql_func = "AVG" if func == "AVERAGE" else func
         if sql_func == "COUNTA":
             sql_func = "COUNT"
-            
+
         cast = "::FLOAT" if func in ("SUM", "AVERAGE") else ""
         return f"{sql_func}({case_expr}{cast})"
+
+    @staticmethod
+    def _split_top_level_additive(expr: str) -> Optional[Tuple[str, str, str]]:
+        """Split `expr` at the first top-level (paren-depth 0, outside
+        string literals) '+' or '-' operator. Returns (left, op, right), or
+        None if there is no such split point (a leading unary sign is not
+        treated as one)."""
+        depth = 0
+        in_string = False
+        for i, ch in enumerate(expr):
+            if ch == "'":
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch in ("+", "-") and depth == 0 and i > 0:
+                left = expr[:i].strip()
+                right = expr[i + 1:].strip()
+                if left and right:
+                    return left, ch, right
+        return None
+
+    def _inject_case_filter_into_rendered_aggregate(self, rendered_sql: str, condition_sql: str) -> Optional[str]:
+        """Rewrite an already-rendered SQL aggregate (e.g. from inlining a
+        referenced measure's own SQL) to apply `condition_sql` inside its
+        argument, instead of wrapping the whole already-aggregated
+        expression in a second outer aggregate.
+
+        Recurses through top-level '+'/'-' (e.g. a measure defined as
+        [A] - [B], each side its own aggregate) so the filter reaches every
+        aggregate leaf. Returns None if `rendered_sql` isn't something this
+        can safely rewrite that way — callers should fail closed rather
+        than risk emitting a nested aggregate (SUM(...SUM(...)...)), which
+        Snowflake (and this codebase's own metric-SQL rules) disallow.
+        """
+        clean = (rendered_sql or "").strip()
+        if clean.startswith("(") and clean.endswith(")"):
+            clean = clean[1:-1].strip()
+
+        match = self._RENDERED_AGG_PATTERN.match(clean)
+        if match:
+            func = match.group(1).upper()
+            arg = match.group(2).strip()
+            if re.search(r"\b(SUM|AVG|MIN|MAX|COUNT)\s*\(", arg, re.IGNORECASE):
+                return None  # arg still contains a nested call — not safe to assume simple
+            return f"{func}(CASE WHEN {condition_sql} THEN {arg} ELSE NULL END)"
+
+        split = self._split_top_level_additive(clean)
+        if split:
+            left, op, right = split
+            left_rewritten = self._inject_case_filter_into_rendered_aggregate(left, condition_sql)
+            right_rewritten = self._inject_case_filter_into_rendered_aggregate(right, condition_sql)
+            if left_rewritten and right_rewritten:
+                return f"({left_rewritten}) {op} ({right_rewritten})"
+
+        return None
 
     def _render_calculate(self, args: List[DaxNode]) -> str:
         """
@@ -878,12 +978,19 @@ class DaxSqlRenderer:
                         f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
                         f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date})) THEN {col_sql}{cast} END)"
                     )
-            # Fallback: wrap the raw agg_expr in a CASE-bounded prior-year filter
+            # Fallback: args[0] isn't a direct aggregation call — e.g. a
+            # measure reference. Inject the filter into ITS aggregate
+            # argument rather than wrapping the already-aggregated
+            # expression in a second outer aggregate (same pattern as
+            # _render_period_to_date/_render_lag_period).
             if lag_interval == "year":
-                return (
-                    f"SUM(CASE WHEN YEAR({date_col}) = YEAR({max_date}) - 1 "
-                    f"AND {date_col} <= DATEADD(YEAR, -1, {max_date}) THEN ({agg_expr})::FLOAT END)"
+                condition_sql = (
+                    f"YEAR({date_col}) = YEAR({max_date}) - 1 "
+                    f"AND {date_col} <= DATEADD(YEAR, -1, {max_date})"
                 )
+                rewritten = self._inject_case_filter_into_rendered_aggregate(agg_expr, condition_sql)
+                if rewritten:
+                    return rewritten
             raise self.DaxRenderError(f"Cannot render lag_interval={lag_interval} without recognized aggregation")
 
         for filter_arg in args[1:]:
@@ -987,22 +1094,31 @@ class DaxSqlRenderer:
                     f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
                 )
         else:
-            # fallback: render the whole agg, wrap in YEAR filter
+            # Base argument isn't a direct aggregation call — the common
+            # real-world shape here is a measure reference, e.g.
+            # TOTALYTD([Total Sales], 'Date'[Date]). Render it (inlining the
+            # referenced measure's own SQL via measure_sql_map, or failing
+            # closed per _render_measure_ref) and inject the date-range
+            # filter into ITS aggregate argument, rather than wrapping the
+            # already-aggregated expression in a second outer aggregate —
+            # Snowflake disallows nested aggregate functions.
             agg_sql = self._render_node(agg_node)
             if func == "TOTALYTD":
-                return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', {max_date}) "
-                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
-                )
-            if func == "TOTALMTD":
-                return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', {max_date}) "
-                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
-                )
-            if func == "TOTALQTD":
-                return (
-                    f"SUM(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', {max_date}) "
-                    f"AND {date_col} <= {max_date} THEN ({agg_sql})::FLOAT END)"
+                condition_sql = f"{date_col} >= DATE_TRUNC('YEAR', {max_date}) AND {date_col} <= {max_date}"
+            elif func == "TOTALMTD":
+                condition_sql = f"{date_col} >= DATE_TRUNC('MONTH', {max_date}) AND {date_col} <= {max_date}"
+            elif func == "TOTALQTD":
+                condition_sql = f"{date_col} >= DATE_TRUNC('QUARTER', {max_date}) AND {date_col} <= {max_date}"
+            else:
+                condition_sql = None
+            if condition_sql:
+                rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, condition_sql)
+                if rewritten:
+                    return rewritten
+                raise self.DaxRenderError(
+                    f"{func}: base expression '{agg_sql}' is not a simple aggregate this "
+                    "renderer can safely apply a date-range filter to without risking a "
+                    "nested aggregate"
                 )
         raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
 
@@ -1050,8 +1166,35 @@ class DaxSqlRenderer:
                 f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date})) THEN {col_sql}{cast} END)"
             )
 
+        # Base argument isn't a direct aggregation call — e.g. a measure
+        # reference such as SAMEPERIODLASTYEAR([Total Sales], 'Date'[Date]).
+        # Render it and inject the period condition into its aggregate
+        # argument rather than wrapping the already-aggregated expression
+        # in a second outer aggregate (see _render_period_to_date for the
+        # same pattern applied to TOTALYTD/MTD/QTD).
+        agg_sql = self._render_node(agg_node)
+        if interval == "year":
+            condition_sql = (
+                f"YEAR({date_col}) = YEAR({max_date}) - 1 "
+                f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
+                f"AND DATEADD(YEAR, -1, {max_date})"
+            )
+        elif interval == "quarter":
+            condition_sql = (
+                f"YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
+                f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date}))"
+            )
+        else:
+            condition_sql = (
+                f"YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
+                f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date}))"
+            )
+        rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, condition_sql)
+        if rewritten:
+            return rewritten
         raise self.DaxRenderError(
-            f"Period function requires a direct aggregation as first argument, got: {type(agg_node).__name__}"
+            f"Period function base expression '{agg_sql}' is not a simple aggregate this "
+            "renderer can safely apply a date-range filter to without risking a nested aggregate"
         )
 
     def _render_dateadd(self, args: List[DaxNode]) -> str:
@@ -1080,6 +1223,7 @@ def try_ast_translate(
     table_alias: str,
     date_alias: str = "calendar",
     measure_sql_map: Optional[Dict[str, str]] = None,
+    known_measure_names: Optional[Any] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1087,10 +1231,21 @@ def try_ast_translate(
     This is the entry-point called by DAXTranslator for Tier 3/4 expressions
     that cannot be handled by the fast-path regex approach.
 
+    Args:
+        known_measure_names: names of measures the caller's model tracks
+            (whether or not they have resolved SQL yet). Lets the renderer
+            fail closed on a genuinely unresolved measure reference while
+            still falling back to a column reference for bracket names it
+            has no measure-registry knowledge of at all (the common
+            SUM([Column]) shape). Omit (or pass an empty collection) to
+            preserve the historical "unknown bracket name -> column"
+            fallback for every bracket reference, e.g. for callers with no
+            measure registry to consult.
+
     Returns:
         SQL string on success, None on failure.
     """
-    cache_key = _ast_cache_key(dax, table_alias, date_alias, measure_sql_map)
+    cache_key = _ast_cache_key(dax, table_alias, date_alias, measure_sql_map, known_measure_names)
     if cache_key in _AST_CACHE:
         return _AST_CACHE[cache_key]
 
@@ -1104,6 +1259,7 @@ def try_ast_translate(
         table_alias=table_alias,
         date_alias=date_alias,
         measure_sql_map=measure_sql_map or {},
+        known_measure_names=known_measure_names,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:

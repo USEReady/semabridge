@@ -163,9 +163,25 @@ def _apply_mapping_overrides_from_config(
                 )
 
         if matched_metric is not None and str(matched_metric.unique_name) != target_name:
+            old_name = str(matched_metric.unique_name)
             matched_metric.unique_name = target_name
             matched_metric.label = target_name
             renamed_metrics += 1
+
+            # A sibling metric's raw DAX may reference this measure by its
+            # OLD name (e.g. TOTALYTD([Total Units], 'Date'[Date])). Measure
+            # resolution elsewhere matches bracket references against
+            # unique_name by exact (case-insensitive) string comparison —
+            # it does not normalize spaces/underscores — so leaving those
+            # references unrewritten breaks resolution for every metric that
+            # depends on this one, the moment its name changes here.
+            bracket_pattern = re.compile(rf"\[\s*{re.escape(old_name)}\s*\]", re.IGNORECASE)
+            for other_metric in sml_model.metrics:
+                if other_metric is matched_metric:
+                    continue
+                expr = getattr(other_metric, "expression", None)
+                if expr and bracket_pattern.search(expr):
+                    other_metric.expression = bracket_pattern.sub(f"[{target_name}]", expr)
 
     for source_path, target_name in overrides.items():
         if source_path.startswith("metrics."):
