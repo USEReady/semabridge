@@ -121,6 +121,36 @@ def _set_test_database_env(request: pytest.FixtureRequest):
 
 
 # -----------------------------------------------------------------------------
+# Compat store isolation — force a throwaway path for all tests
+# -----------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_compat_store(tmp_path_factory):
+    """Redirect the legacy project/run compat-store JSON to a throwaway path.
+
+    ~/.semabridge/.semabridge_compat_store.json is real per-user runtime
+    state (project list, run history, mappings) — not a test fixture. A
+    project_shared.py-level PYTEST_CURRENT_TEST guard already refuses to
+    resolve to the real path under pytest, but this fixture sets the
+    explicit SEMABRIDGE_COMPAT_STORE_PATH override too, so the redirect is
+    visible/controllable from the test session itself rather than relying
+    solely on the implicit env-var check — belt and suspenders, mirroring
+    _set_test_database_env's isolation of SEMABRIDGE_DATABASE_URL above.
+    """
+    fake_path = tmp_path_factory.mktemp("compat_store") / ".semabridge_compat_store.json"
+
+    _old = os.environ.get("SEMABRIDGE_COMPAT_STORE_PATH")
+    os.environ["SEMABRIDGE_COMPAT_STORE_PATH"] = str(fake_path)
+
+    yield fake_path
+
+    if _old is not None:
+        os.environ["SEMABRIDGE_COMPAT_STORE_PATH"] = _old
+    else:
+        os.environ.pop("SEMABRIDGE_COMPAT_STORE_PATH", None)
+
+
+# -----------------------------------------------------------------------------
 # SML Model Fixtures
 # -----------------------------------------------------------------------------
 

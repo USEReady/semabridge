@@ -301,7 +301,6 @@ def rule_based_translation(
                 
                 # More precise alias replacement
                 result = re.sub(r'\bSALESFACT\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
-                result = re.sub(r'\bPRODUCT\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
                 # Do not replace COL_DATE globally, it's a date dimension
                 # result = re.sub(r'\bCOL_DATE\b', table_alias, result, flags=re.IGNORECASE)
 
@@ -313,8 +312,6 @@ def rule_based_translation(
     additional_translators = (
         ("rolling_12_months", translate_rolling_12_months),
         ("sameperiodlastyear", translate_sameperiodlastyear),
-        ("sentiment_gap", translate_sentiment_gap),
-        ("vanarsdel_flag", translate_vanarsdel_flag),
     )
     for pattern_name, translator in additional_translators:
         try:
@@ -379,17 +376,28 @@ def translate_calculate_arithmetic(dax: str, table_alias: str) -> Optional[str]:
     return None
 
 
-def _resolve_divide_operand_sql(operand: str, table_alias: str) -> str:
-    """Resolve one DIVIDE(...) argument to a SQL aggregate expression.
+def _resolve_divide_operand_sql(operand: str, table_alias: str) -> Optional[str]:
+    """Resolve one DIVIDE(...) argument to a SQL aggregate expression, or
+    None if it can't be resolved as a direct aggregation.
 
     `operand` is whatever DIVIDE's regex captured — usually a bare measure/
     column name (e.g. "Total Units"), occasionally an explicit aggregation
-    call (e.g. "SUM(Units)"). Either shape resolves generically: an explicit
-    aggregation call is used as-is; a bare name is treated as a column to
-    sum, exactly like every other direct-aggregation rule in this module.
-    A wrong guess is caught by the caller's downstream column-reference
-    validation, so this fails closed rather than emitting confidently-wrong
-    SQL for names it doesn't recognize.
+    call (e.g. "SUM(Units)"). An explicit aggregation call resolves
+    generically, used as-is. A bare name is ambiguous — this function (a
+    pure text-pattern rule, like every other function in this module) has
+    no measure registry or schema to check against, so it cannot tell "this
+    is a column to sum" apart from "this is a reference to another
+    measure". Guessing the former used to silently emit a bare reference to
+    the measure by name (table_alias."MeasureName"), which Snowflake's
+    semantic-view engine rejects with "a metric must directly refer to
+    another aggregate-level expression" (the same mechanism behind the
+    TOTAL_UNITS_YTD_SPLY-class bugs) — for exactly the metrics most likely
+    to hit this path, since DIVIDE's numerator/denominator are usually
+    other named measures, not raw columns. Returns None instead, so the
+    caller declines and dispatch falls through to
+    dax_ast_parser.py's DaxSqlRenderer, which has the measure registry
+    (via measure_sql_map/known_measure_names) to resolve this correctly —
+    or fails closed until the referenced measure is resolved.
     """
     clean = (operand or "").strip()
     agg = _parse_aggregation(clean)
@@ -397,7 +405,7 @@ def _resolve_divide_operand_sql(operand: str, table_alias: str) -> str:
         func, table, column, _ = agg
         col_ref = _column_ref(table, column, table_alias)
         return f"COUNT(DISTINCT {col_ref})" if func == "DISTINCTCOUNT" else f"{func}({col_ref})"
-    return f"SUM({table_alias}.{_quote_identifier(clean)})"
+    return None
 
 
 def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
@@ -421,6 +429,9 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
 
     numerator_sql = _resolve_divide_operand_sql(numerator_measure, table_alias)
     denominator_sql = _resolve_divide_operand_sql(denominator_measure, table_alias)
+    if numerator_sql is None or denominator_sql is None:
+        logger.debug("DIVIDE operand is not a direct aggregate call — declining to a measure reference.")
+        return None
 
     result = f"COALESCE(({numerator_sql}) / NULLIF({denominator_sql}, 0), {alternate_result})"
     logger.debug(f"Translated DIVIDE expression to: {result}")
@@ -671,15 +682,24 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
         func, measure_table, measure_col, _ = agg
         measure_col_ref = _column_ref(measure_table, measure_col, table_alias)
     else:
-        # Fallback to simple column extraction if we can't parse standard aggregation
-        col_match = re.search(r"\[(\w+)\]", inner_agg_dax)
-        if col_match:
-            col_name = col_match.group(1)
-            measure_col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
-            func = "SUM"
-        else:
-            logger.debug("Could not translate inner aggregation for time intelligence.")
-            return None
+        # The inner expression isn't a direct aggregation call — the common
+        # real-world shape here is a measure reference, e.g.
+        # TOTALYTD([Total Sales], 'Date'[Date]). This function (a pure
+        # text-pattern rule, like every other function in this module) has
+        # no access to the referenced measure's own resolved SQL or to the
+        # model's measure registry, so it cannot tell "this bracket names a
+        # measure" apart from "this bracket names a physical column" —
+        # guessing the latter used to silently emit a bare reference to the
+        # measure by name (table_alias."MeasureName"), which Snowflake's
+        # semantic-view engine rejects with "a metric must directly refer
+        # to another aggregate-level expression" (the exact mechanism
+        # behind the TOTAL_UNITS_YTD_SPLY-class bugs). Decline instead —
+        # dax_ast_parser.py's DaxSqlRenderer._render_period_to_date has the
+        # measure registry (via measure_sql_map/known_measure_names) and
+        # correctly inlines the referenced measure's own SQL, or fails
+        # closed until it's resolved.
+        logger.debug("Inner aggregation is not a direct aggregate call — declining to a measure reference.")
+        return None
 
     date_col_ref = f"{_quote_identifier(date_table_and_col)}"
     # Qualified reference to the fact table's enriched-view MAX_DATE anchor
@@ -762,73 +782,24 @@ def translate_rolling_12_months(dax: str, table_alias: str) -> Optional[str]:
 
 
 def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
-    """Simplified SAMEPERIODLASTYEAR handler translating to prior-year window.
+    """Always declines now — kept as a named no-op rather than deleted
+    outright, since rule_based_translation's dispatch tuple still names it
+    (removing the entry too is a Phase 2 dead-code concern, not this fix).
 
-    This emits a conservative SQL that approximates previous year sums using MAX_DATE anchor.
+    This used to emit CALCULATE([Measure], SAMEPERIODLASTYEAR(...)) as
+    `SUM(CASE WHEN <prior-year window> THEN {table_alias}."{Measure}" ELSE
+    0 END)` — treating the bracketed MEASURE NAME as if it were a physical
+    column. That is a bare reference to another metric by name, which is
+    exactly the shape Snowflake's semantic-view engine rejects with "a
+    metric must directly refer to another aggregate-level expression."
+    This function (a pure text-pattern rule, like every other function in
+    this module) has no access to the referenced measure's own resolved
+    SQL — dax_ast_parser.py's DaxSqlRenderer does, via measure_sql_map, and
+    correctly inlines it (see _render_lag_period's measure-reference
+    fallback). Declining unconditionally lets dispatch fall through to
+    that general path instead of "succeeding" with invalid SQL.
     """
-    if not dax or not isinstance(dax, str):
-        return None
-    m = re.search(r"CALCULATE\s*\(\s*\[([^\]]+)\]\s*,\s*SAMEPERIODLASTYEAR\s*\(\s*['\"]?Date['\"]?\[Date\]\s*\)\s*\)", dax, re.IGNORECASE)
-    if not m:
-        return None
-    inner = m.group(1).strip()
-    # Use the fact table's enriched-view MAX_DATE anchor to bound the prior-year
-    # window; must be qualified with table_alias — a bare "MAX_DATE" is not a
-    # valid identifier inside a semantic view's METRICS clause.
-    date_alias = _date_alias()
-    max_date_ref = _column_ref(None, "MAX_DATE", table_alias)
-    return f"SUM(CASE WHEN DATE_PART('YEAR', {date_alias}.\"COL_DATE\") = DATE_PART('YEAR', DATEADD(YEAR, -1, {max_date_ref})) AND {date_alias}.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date_ref})) AND DATEADD(YEAR, -1, {max_date_ref}) THEN {table_alias}.{_quote_identifier(inner)} ELSE 0 END)"
-
-
-def translate_sentiment_gap(dax: str, table_alias: str) -> Optional[str]:
-    """Translate a common sentiment-gap IF(ISBLANK(...)) pattern into AVG differences.
-
-    Uses the SENTIMENT table's SCORE column and MANUFACTURER.MFGISVANARSDEL for
-    filtering — not columns that don't exist on the fact table.
-    """
-    if not dax or not isinstance(dax, str):
-        return None
-    # look for two CALCULATE blocks mentioning Sentiment or similar
-    m = re.search(r"CALCULATE\s*\(\s*\[Sentiment\]\s*,.*?Mfg.*?=(?:\s*\"|\s*')?(Yes|No)(?:\"|')?.*?\)\s*.*?-\s*CALCULATE\s*\(\s*\[Sentiment\]\s*,.*?Mfg.*?=(?:\s*\"|\s*')?(Yes|No)(?:\"|')?.*?\)", dax, re.IGNORECASE | re.DOTALL)
-    if not m:
-        return None
-    # Emit difference of two AVG CASE expressions using the actual source tables
-    return (
-        "AVG(CASE WHEN MANUFACTURER.\"MFGISVANARSDEL\" = 'Yes' THEN SENTIMENT.\"SCORE\" ELSE NULL END) - "
-        "AVG(CASE WHEN MANUFACTURER.\"MFGISVANARSDEL\" = 'No' THEN SENTIMENT.\"SCORE\" ELSE NULL END)"
-    )
-
-
-def translate_vanarsdel_flag(dax: str, table_alias: str) -> Optional[str]:
-    """Detect SUM with cross-table Product filter and emit CASE WHEN on PRODUCT.ISVANARSDEL.
-
-    Example: SUMX(FILTER(Sales, Product[isVanArsdel] = "Yes"), [Units])
-    """
-    if not dax or not isinstance(dax, str):
-        return None
-    if not re.search(r"isVanArsdel|ISVANARSDEL|VANARSDEL", dax, re.IGNORECASE):
-        return None
-    # Determine if this is for "Other" (non-VanArsdel) or VanArsdel itself
-    is_other = bool(
-        re.search(r"OTHER", dax, re.IGNORECASE)
-        or re.search(r'[=]\s*["\']No["\']', dax, re.IGNORECASE)
-    )
-    flag_value = "'No'" if is_other else "'Yes'"
-    # Find the units/value column from the inner SUM. This translator's shape
-    # is specifically "SUM(...) filtered by a VanArsdel flag" — if there's no
-    # SUM(...) call to extract a column from, the DAX isn't that shape (e.g.
-    # it may be an IF/DIVIDE ratio that merely *references* a measure whose
-    # name happens to contain "VanArsdel"). Decline rather than guessing a
-    # hardcoded "UNITS" column, which would silently produce a plausible but
-    # wrong translation for a shape this function was never meant to handle.
-    col_m = re.search(r"SUM\s*\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", dax, re.IGNORECASE)
-    if not col_m:
-        return None
-    col = _quote_identifier(col_m.group(1).strip())
-    return (
-        f"SUM(CASE WHEN PRODUCT.\"ISVANARSDEL\" = {flag_value} "
-        f"THEN {table_alias}.{col} ELSE 0 END)"
-    )
+    return None
 
 
 def translate_calculate_with_filters(dax: str, table_alias: str) -> Optional[str]:
@@ -885,10 +856,65 @@ def translate_calculate_with_filters(dax: str, table_alias: str) -> Optional[str
     return f"SUM(CASE WHEN {' AND '.join(conditions)} THEN {measure_col_ref} ELSE 0 END)"
 
 
+def _parse_simple_predicate_conditions(filter_expr: str, table_alias: str) -> Optional[List[str]]:
+    """Parse a DAX filter predicate into ANDed SQL comparison conditions —
+    only the shape a scalar CASE WHEN can express: simple, non-aggregating
+    per-row `[Table][Column] <op> <literal>` comparisons joined by AND.
+
+    Returns None (fail closed) rather than a partial result if the
+    predicate contains OR, any nested iterator/CALCULATE/FILTER call (a
+    cross-row dependency this can't reduce to a per-row CASE WHEN), or any
+    individual comparison this regex can't fully parse — silently dropping
+    or mis-parsing part of a filter would be worse than declining it.
+    """
+    filter_expr = (filter_expr or "").replace("&&", " AND ").strip()
+    if not filter_expr:
+        return None
+    if re.search(r"\bOR\b", filter_expr, re.IGNORECASE):
+        return None
+    if re.search(
+        r"\b(CALCULATE|FILTER|TOPN|RANKX|ALLEXCEPT|ALL|SELECTEDVALUE|SUMX|AVERAGEX|MINX|MAXX|COUNTX|EARLIER)\s*\(",
+        filter_expr,
+        re.IGNORECASE,
+    ):
+        return None
+
+    conditions: List[str] = []
+    for predicate in re.split(r"\s+\bAND\b\s+", filter_expr, flags=re.IGNORECASE):
+        predicate = predicate.strip()
+        pred_match = re.match(
+            r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*(<=|>=|<>|=|<|>)\s*"
+            r"(\"[^\"]*\"|'[^']*'|[-+]?\d+(?:\.\d+)?)\s*$",
+            predicate,
+            re.IGNORECASE,
+        )
+        if not pred_match:
+            return None
+        table = (pred_match.group(1) or pred_match.group(2) or table_alias).strip()
+        column = pred_match.group(3).strip()
+        op = pred_match.group(4)
+        value = pred_match.group(5).strip()
+        if value.startswith('"') and value.endswith('"'):
+            value = "'" + value[1:-1].replace("'", "''") + "'"
+        conditions.append(f"{_column_ref(table, column, table_alias)} {op} {value}")
+    return conditions or None
+
+
 def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
-    """Translate simple SUMX/AVERAGEX/MINX/MAXX iterator expressions."""
+    """Translate SUMX/AVERAGEX/MINX/MAXX iterator expressions, including
+    the common SUMX(FILTER(table, predicate), expr) idiom.
+
+    Iterating a filtered row-set and reducing is exactly equivalent to
+    reducing over a CASE-gated full row-set, for a predicate whose
+    conditions are simple, non-aggregating per-row comparisons ANDed
+    together (see _parse_simple_predicate_conditions). Declines rather
+    than guessing for anything more complex — a cross-row aggregation
+    inside the predicate, an OR, or any shape that regex can't parse
+    fully — so a caller never gets a plausible-looking but wrong CASE WHEN
+    for a predicate this hasn't proven correct for.
+    """
     match = re.match(
-        r"\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(\s*([^,]+)\s*,\s*(.+)\s*\)\s*$",
+        r"\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(\s*(.+)\s*\)\s*$",
         dax or "",
         re.IGNORECASE | re.DOTALL,
     )
@@ -896,9 +922,28 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
         return None
 
     func = match.group(1).upper()
-    iterator_table = match.group(2).strip().strip("'\"") or table_alias
-    expression = match.group(3).strip()
     sql_func = {"SUMX": "SUM", "AVERAGEX": "AVG", "MINX": "MIN", "MAXX": "MAX"}[func]
+
+    # Paren-depth-aware split (not a naive first-comma regex) so a
+    # FILTER(table, predicate) first argument — which itself contains a
+    # comma — isn't sheared in half.
+    parts = _split_top_level(match.group(2))
+    if len(parts) != 2:
+        return None
+    iterator_arg, expression = parts[0].strip(), parts[1].strip()
+
+    filter_match = re.match(r"FILTER\s*\(\s*(.+)\s*\)\s*$", iterator_arg, re.IGNORECASE | re.DOTALL)
+    where_conditions: Optional[List[str]] = None
+    if filter_match:
+        filter_parts = _split_top_level(filter_match.group(1))
+        if len(filter_parts) != 2:
+            return None
+        iterator_table = filter_parts[0].strip().strip("'\"") or table_alias
+        where_conditions = _parse_simple_predicate_conditions(filter_parts[1], table_alias)
+        if where_conditions is None:
+            return None
+    else:
+        iterator_table = iterator_arg.strip().strip("'\"") or table_alias
 
     def repl_col(col_match: re.Match) -> str:
         return _column_ref(iterator_table, col_match.group(1), table_alias)
@@ -906,6 +951,12 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     expr_sql = re.sub(r"\[([^\]]+)\]", repl_col, expression)
     if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|SELECTEDVALUE)\b", expr_sql, re.IGNORECASE):
         return None
+
+    if where_conditions is not None:
+        where = " AND ".join(where_conditions)
+        cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} ELSE 0 END)"
+
     return f"{sql_func}({expr_sql})"
 
 

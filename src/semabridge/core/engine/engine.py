@@ -215,6 +215,8 @@ class ExecutionEngine:
                 config_path,
                 sync_mode=sync_mode,
             )
+            context.config_path = config_path
+            context.config_payload = config_dict
             self._context = context
             self._summary = create_run_summary(
                 project_id=context.project_id,

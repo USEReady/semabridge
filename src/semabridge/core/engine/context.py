@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as _dataclass_field
-from typing import Any, Literal, Optional
+from pathlib import Path
+from typing import Any, Dict, Literal, Optional
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import Settings
 from semabridge.core.source_format import SourceFormat
@@ -40,6 +41,13 @@ class RunContext:
     target_artifact_path: Optional[str] = None
     routing_summary: Optional[dict[str, Any]] = None
     sync_mode: str = "copy"
+
+    # Threaded through so Step 6's OSI→SML conversion can apply
+    # metric-name mapping overrides to the OSI model's DAX bracket
+    # references BEFORE translation runs, not just to the final SML
+    # model afterward. See _apply_mapping_overrides_from_config.
+    config_path: Optional[Path] = None
+    config_payload: Optional[Dict[str, Any]] = None
 
     # Uniform "what got dropped and why" collector for this run — shared by
     # every DDL-building/extraction component so all drop reasons (DAX

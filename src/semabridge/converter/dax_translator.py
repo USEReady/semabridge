@@ -63,14 +63,20 @@ class DAXTranslator:
     _MEASURE_REF_PATTERN = re.compile(r"\[([^\]]+)\]")
 
     CALENDAR_MAP = {
-        "table": "CALENDAR",
+        # "COL_DATE" is the established Snowflake naming convention for the
+        # Date/Calendar dimension's table alias (see snowflake_emitter.py's
+        # "Map common DAX name -> physical name (e.g. Date -> COL_DATE)" and
+        # dax_rule_translator.py's own _date_alias(), which already defaults
+        # to this) — kept consistent with those rather than a stale default
+        # that doesn't match any table the deployed semantic view declares.
+        "table": "COL_DATE",
         "date_col": "DATE",
         "year_col": "YEAR",
         "period_col": "PERIOD",
     }
 
     def _get_date_alias(self) -> str:
-        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "CALENDAR"))
+        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "COL_DATE"))
     
     # Time Intelligence patterns that CAN be translated to Snowflake window functions
     TIME_INTEL_PATTERNS = {
@@ -137,15 +143,45 @@ class DAXTranslator:
         r"VALUES\s*\([^)]+\)\s*\)",                      # Context-dependent values
     ]
     
-    def translate(self, 
-                  dax: str, 
-                  table_alias: str, 
-                  dataset_name: str, 
+    @staticmethod
+    def build_schema_lookup(datasets: Optional[List[Any]]) -> Tuple[Dict[str, set], Dict[str, str]]:
+        """Build a (dataset_col_lookup, dataset_aliases) pair from SML/OSI
+        dataset objects (anything with .unique_name and .columns, each
+        column having .unique_name).
+
+        Uses the same sanitize_column/to_alias utilities already imported
+        by this module — general and schema-shape-derived, not hardcoded to
+        any specific table/column/model name. This is what lets Tier 5's
+        semantic validator run against Pipeline A's *source* (Fabric/PBIX)
+        schema, since no Snowflake-side physical schema exists yet at
+        extraction time.
+        """
+        dataset_col_lookup: Dict[str, set] = {}
+        dataset_aliases: Dict[str, str] = {}
+        for ds in datasets or []:
+            dataset_col_lookup[ds.unique_name] = {
+                sanitize_column(c.unique_name, force_uppercase=True)
+                for c in getattr(ds, "columns", []) or []
+            }
+            dataset_aliases[ds.unique_name] = to_alias(ds.unique_name)
+        return dataset_col_lookup, dataset_aliases
+
+    def translate(self,
+                  dax: str,
+                  table_alias: str,
+                  dataset_name: str,
                   metric_name: str = None,
-                  metrics_context: List[Any] = None) -> DAXTranslationResult:
+                  metrics_context: List[Any] = None,
+                  dataset_col_lookup: Optional[Dict[str, set]] = None,
+                  dataset_aliases: Optional[Dict[str, str]] = None) -> DAXTranslationResult:
         """
         Translate a DAX expression to SQL.
-        
+
+        dataset_col_lookup/dataset_aliases are new, optional (Step 3 of the
+        DAX translation consolidation) — see build_schema_lookup() above.
+        Only consumed by the Tier 5 LLM fallback; Tiers 1-4 are pure
+        DAX-grammar logic and never needed physical schema.
+
         Args:
             dax: The DAX formula string
             table_alias: SQL alias for the main table (e.g. 'sales')
@@ -292,10 +328,12 @@ class DAXTranslator:
         # Tier 5: LLM Fallback - Use Claude for complex expressions deterministic parsing couldn't handle
         # Only attempt if LLM is available and enabled
         llm_result = self._try_llm_fallback(
-            clean_dax, 
+            clean_dax,
             table_alias,
             dataset_name,
-            metric_name
+            metric_name,
+            dataset_col_lookup=dataset_col_lookup,
+            dataset_aliases=dataset_aliases,
         )
         if llm_result:
             return llm_result
@@ -809,20 +847,54 @@ class DAXTranslator:
                           dax: str,
                           table_alias: str,
                           dataset_name: str,
-                          metric_name: Optional[str] = None) -> Optional[DAXTranslationResult]:
+                          metric_name: Optional[str] = None,
+                          dataset_col_lookup: Optional[Dict[str, set]] = None,
+                          dataset_aliases: Optional[Dict[str, str]] = None) -> Optional[DAXTranslationResult]:
+        """Thin shim onto DaxTranslationService's Tier 5 (Step 3 of the
+        approved consolidation migration). Same signature (two new
+        optional trailing kwargs), same Optional[DAXTranslationResult]
+        contract — every existing caller (tmsl_to_sml.py, osi_to_sml.py)
+        is unaffected unless it opts in by passing the new kwargs.
+
+        Preserved, not delegated — no equivalent hook in
+        DaxTranslationService: the Tier 4.5 rule-based-translation-first
+        classification (is_simple_metric / rule_based_translation).
+        Unchanged below, for the same reason as Pipeline B's cutover
+        (connectors/translator.py) — dropping it would be a real
+        regression, not a shape change.
+
+        Calls tier5.service.Tier5Service directly rather than
+        DaxTranslationService.translate_metric() — this method is only
+        ever reached from translate() *after* Tiers 1-4 have already run
+        and declined; going through DaxTranslationService here would
+        silently re-run those same deterministic tiers a second time for
+        no benefit (the exact "verbatim double-pass" waste eliminated in
+        Step 1's tiers_1_4.py).
+
+        dataset_col_lookup/dataset_aliases are new. This call site never
+        had real schema information before (extraction-time, no
+        Snowflake-side physical schema exists yet), so Tier 5 here
+        previously ran with zero semantic (column-existence) validation.
+        Feeding empty dicts through the new mandatory validator would
+        reject nearly all realistic LLM output (both the old and new
+        prompts ask for qualified alias.column references) — a real
+        regression, not a no-op. Callers now build this from the
+        *source* (Fabric/PBIX) schema already in scope, via
+        DAXTranslator.build_schema_lookup() (sanitize_column/to_alias —
+        the same general utilities already used throughout this module,
+        not hardcoded to any table/column/model name). This gives
+        Pipeline A real semantic validation for the first time.
+
+        Batching note: the old OpenAI-batch path here (and in
+        batch_translate_tier5) issued one JSON-batched API call per 20
+        metrics. Tier5Service has no equivalent — it translates one
+        metric per call. With no real LLM keys configured today this has
+        no observable effect, but once real keys are available this is a
+        real (if currently dormant) increase in API call count worth
+        tracking, not something silently preserved.
         """
-        Attempt Tier 5 LLM translation for complex expressions.
-        
-        First checks if the metric is simple enough for rule-based translation.
-        Only uses Google Gemini as a fallback for truly complex expressions.
-        Returns None if LLM is not available or declines to translate.
-        """
-        # TIER 4.5: Check if metric is simple enough for rule-based translation
-        # This dramatically reduces LLM API usage by 60-80%
         if is_simple_metric(dax):
             logger.info(f"🟢 Metric classified as SIMPLE - using rule-based translation: {metric_name or dax[:50]}")
-            
-            # Try rule-based translation
             sql = rule_based_translation(dax, table_alias)
             if sql:
                 logger.debug(f"   ✓ Rule-based translation succeeded: {sql[:80]}")
@@ -831,174 +903,88 @@ class DAXTranslator:
                 logger.debug(f"   ✗ Rule-based translation failed, will fall through to LLM")
         else:
             logger.info(f"🟠 Metric classified as COMPLEX - requesting LLM translation: {metric_name or dax[:50]}")
-        
-        # PRIORITY 0: OpenAI translation first if OPENAI_API_KEY is configured
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key:
-            try:
-                from openai import OpenAI
-                model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
-                client = OpenAI(api_key=openai_api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
-                
-                logger.info(f"🤖 Calling OpenAI API for measure '{metric_name or dax[:30]}'...")
-                
-                prompt = (
-                    "Dialect: Snowflake Semantic View METRICS clause\n"
-                    f"Metric name: {metric_name or 'unnamed'}\n"
-                    f"Default table alias: {table_alias}\n"
-                    "Rules:\n"
-                    "- Return only a single SQL expression, no explanation.\n"
-                    "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
-                    "- Do not nest aggregate functions like SUM(MAX(...)).\n"
-                    "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN column ELSE 0 END).\n"
-                    "- Quote identifiers only when needed as ALIAS.\"COLUMN\"; uppercase Snowflake column names.\n"
-                    "- If a pattern is impossible, return CAST(NULL AS DOUBLE).\n"
-                    "DAX:\n"
-                    f"{dax}"
-                )
-                
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
-                                "Return only one SQL expression. Do not use markdown."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
-                    max_tokens=int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500")),
-                    timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
-                )
-                sql = (response.choices[0].message.content or "").strip()
-                
-                if sql.startswith("```"):
-                    sql = re.sub(r"^```(?:sql|python|.*?)\n", "", sql, flags=re.IGNORECASE)
-                    sql = re.sub(r"\n```$", "", sql, flags=re.IGNORECASE)
-                    sql = sql.strip()
-                
-                if sql:
-                    sql_upper = sql.upper()
-                    forbidden = (
-                        " SELECT ",
-                        "(SELECT",
-                        " FROM ",
-                        " JOIN ",
-                        " WITH ",
-                        " DROP ",
-                        " DELETE ",
-                        " TRUNCATE ",
-                        " INSERT ",
-                        " UPDATE ",
-                        " ALTER ",
-                        ";",
-                    )
-                    padded = f" {sql_upper} "
-                    if any(token in padded for token in forbidden):
-                        logger.warning(
-                            "OpenAI DAX translation rejected (forbidden SQL tokens) for metric '%s': %s",
-                            metric_name,
-                            sql[:120],
-                        )
-                    else:
-                        logger.info(f"✓ [{metric_name or dax[:30]}]: OpenAI translation")
-                        return DAXTranslationResult(sql, 5, dax)
-            except Exception as exc:
-                logger.warning("OpenAI individual translation fallback failed: %s", exc)
 
-        # Tier 5: LLM Fallback - Use Gemini for genuinely complex expressions
         try:
-            from semabridge.converter.gemini_dax_translator import get_gemini_translator
-            
-            translator = get_gemini_translator()
-            if not translator.api_key:
-                logger.debug("LLM API key not configured")
-                return None
-            
-            # Attempt LLM translation
-            llm_result = translator.translate(
+            from semabridge.dax_translation.tier5.service import Tier5Service
+            from semabridge.dax_translation.types import TranslationRequest
+
+            request = TranslationRequest(
                 dax=dax,
-                table_alias=table_alias,
                 dataset_name=dataset_name,
-                metric_name=metric_name
+                table_alias=table_alias,
+                dataset_col_lookup=dataset_col_lookup or {},
+                dataset_aliases=dataset_aliases or {},
+                metric_name=metric_name,
+                dialect="snowflake",
             )
-            
-            # Only use LLM result if:
-            # 1. Translation succeeded (is_valid=True)
-            # 2. Confidence is acceptable (>= 0.55)
-            if llm_result.is_valid and llm_result.sql and llm_result.confidence >= 0.55:
+            result = Tier5Service().translate(request)
+            if result is not None and result.is_success and result.sql:
                 logger.info(
                     f"LLM translation accepted for '{metric_name}' "
-                    f"(confidence: {llm_result.confidence:.2f}, tier: 5)"
+                    f"(provider={result.provider}, confidence={result.translation_provider_confidence:.2f})"
                 )
-                return DAXTranslationResult(llm_result.sql, 5, dax)
-            elif llm_result.sql and llm_result.confidence > 0.4:
-                # Low confidence - log but don't use
-                logger.warning(
-                    f"LLM translation low confidence for '{metric_name}': "
-                    f"confidence={llm_result.confidence:.2f}. Falling back to None. "
-                    f"SQL was: {llm_result.sql[:100]}..."
-                )
-                return None
-            else:
-                logger.debug(
-                    f"LLM translation declined for '{metric_name}': "
-                    f"confidence={llm_result.confidence:.2f}. Error: {llm_result.error}"
-                )
-                return None
-                
-        except ImportError:
-            logger.debug("LLM translator module not available")
+                return DAXTranslationResult(result.sql, 5, dax)
+            logger.debug(f"Tier 5 declined for '{metric_name}'")
             return None
-        except Exception as e:
-            logger.warning(f"Unexpected error in LLM fallback: {str(e)}")
+        except Exception as exc:
+            logger.warning(f"Unexpected error in Tier 5 fallback for metric '{metric_name}': {exc}")
+            return None
             return None
     
     def batch_translate_tier5(self,
-                             metrics_list: List[Tuple[str, str, str, str]]) -> Dict[str, Optional[DAXTranslationResult]]:
-        """
-        Batch translate multiple metrics that failed Tier 1-4 using LLM (Tier 5).
-        
-        First separates simple metrics (which use rule-based translation) from complex ones
-        (which need LLM). This dramatically reduces API calls by preventing simple metrics
-        from being sent to Gemini.
-        
-        When there are complex metrics, batches them into groups to minimize API calls
-        (batching 20+ metrics into a single request).
-        
-        Args:
-            metrics_list: List of (metric_name, dax, table_alias, dataset_name) tuples
-            
-        Returns:
-            Dict of metric_name -> DAXTranslationResult (or None if no LLM result)
+                             metrics_list: List[Tuple[str, str, str, str]],
+                             dataset_col_lookup: Optional[Dict[str, set]] = None,
+                             dataset_aliases: Optional[Dict[str, str]] = None) -> Dict[str, Optional[DAXTranslationResult]]:
+        """Thin shim onto DaxTranslationService's Tier 5, batch form (Step 3
+        of the approved consolidation migration). Same signature (two new
+        optional trailing kwargs), same Dict[str, Optional[DAXTranslationResult]]
+        contract, every key from metrics_list guaranteed present.
+
+        Preserved unchanged, same rationale as _try_llm_fallback: the
+        simple/complex classification and rule-based-translation-first
+        step (is_simple_metric / rule_based_translation), including
+        escalating simple-but-rule-engine-failed metrics to Tier 5 rather
+        than dropping them.
+
+        dataset_col_lookup/dataset_aliases: see _try_llm_fallback's
+        docstring — same rationale, built once per model by the caller via
+        DAXTranslator.build_schema_lookup() and passed through here.
+
+        Batching restored (previously noted as a real cost/latency
+        regression from the Step 3 cutover — Tier5Service now had a
+        translate_batch(), this method didn't yet use it). Every remaining
+        candidate after rule-based classification is now sent to
+        Tier5Service.translate_batch() as one call (chunked internally at
+        Tier5Config.max_batch_size, default 20 — the same chunk size
+        Pipeline B's original OpenAI batch-prefetch used), not one
+        Tier5Service.translate() call per metric. Every individual result
+        still goes through the exact same validation Tier5Service.translate()
+        applies — batching only reduces API call count, never weakens
+        per-metric validation.
         """
         if not metrics_list:
             return {}
-        
+
         results = {}
-        
+
         # CLASSIFICATION STEP: Separate simple from complex metrics
         simple_metrics = []
         complex_metrics = []
         simple_failed_for_llm = []
-        
+
         for metric_name, dax, table_alias, dataset_name in metrics_list:
             if is_simple_metric(dax):
                 simple_metrics.append((metric_name, dax, table_alias, dataset_name))
             else:
                 complex_metrics.append((metric_name, dax, table_alias, dataset_name))
-        
+
         logger.info(
             f"🔄 Batch processing {len(metrics_list)} metrics:\n"
             f"   ├─ SIMPLE (rule-based): {len(simple_metrics)} metrics\n"
             f"   └─ COMPLEX (LLM): {len(complex_metrics)} metrics"
         )
-        
+
         # RULE-BASED TRANSLATION: Process simple metrics without API calls
-        simple_api_calls = 0
         for metric_name, dax, table_alias, dataset_name in simple_metrics:
             sql = rule_based_translation(dax, table_alias)
             if sql:
@@ -1011,208 +997,60 @@ class DAXTranslator:
                 logger.debug(
                     f"   ⚠ [{metric_name}] Rule-based translation failed; escalating to LLM"
                 )
-        
+
         llm_candidates = complex_metrics + simple_failed_for_llm
-        
-        # ─────────────────────────────────────────────────────────
-        # PRIORITY 0: OPENAI BATCH
-        # ─────────────────────────────────────────────────────────
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        openai_translated = {}
-        import json
-        
-        if openai_api_key and llm_candidates:
-            try:
-                from openai import OpenAI
-                model_name = os.getenv("OPENAI_DAX_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o"))
-                client = OpenAI(api_key=openai_api_key, organization=os.getenv("OPENAI_ORGANIZATION") or None)
-                
-                # Chunk candidates into batches of 20
-                chunk_size = 20
-                for start in range(0, len(llm_candidates), chunk_size):
-                    chunk = llm_candidates[start:start + chunk_size]
-                    logger.info(f"🤖 Calling OpenAI API for batch of {len(chunk)} measures...")
-                    
-                    # Build batch prompt
-                    metric_lines = []
-                    for metric_name, dax, alias, dataset in chunk:
-                        dax_clean = " ".join(dax.split())
-                        metric_lines.append(
-                            f'{{"name":"{metric_name}","dataset":"{dataset}","table_alias":"{alias}","dax":"{dax_clean}"}}'
-                        )
-                    
-                    prompt = (
-                        "Dialect: Snowflake Semantic View METRICS clause\n"
-                        "Rules:\n"
-                        "- Return ONLY valid JSON object mapping metric name to SQL expression.\n"
-                        "- No markdown, no extra keys, no prose.\n"
-                        "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
-                        "- Do not nest aggregate functions like SUM(MAX(...)).\n"
-                        "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
-                        "- Quote identifiers only when needed as ALIAS.\"COLUMN\"; uppercase Snowflake column names.\n"
-                        "- If a pattern is impossible in a metric expression, return CAST(NULL AS DOUBLE).\n"
-                        "Metrics:\n"
-                        + "\n".join(metric_lines)
-                    )
-                    
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You translate Power BI DAX measures to Snowflake Semantic View metric SQL. "
-                                    "Return JSON only mapping measure names to translated SQL expressions."
-                                ),
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
-                        max_tokens=int(os.getenv("OPENAI_DAX_BATCH_MAX_TOKENS", "2200")),
-                        timeout=float(os.getenv("OPENAI_DAX_TIMEOUT", "30")),
-                    )
-                    
-                    payload = (response.choices[0].message.content or "").strip()
-                    logger.info(f"✅ OpenAI batch response received for {len(chunk)} measures")
-                    
-                    # Parse JSON payload
-                    if payload.startswith("```"):
-                        payload = re.sub(r"^```(?:json|sql|python|.*?)\n", "", payload, flags=re.IGNORECASE)
-                        payload = re.sub(r"\n```$", "", payload, flags=re.IGNORECASE)
-                        payload = payload.strip()
-                    payload = re.sub(r"^json\s*", "", payload, flags=re.IGNORECASE)
-                    
-                    parsed = {}
-                    try:
-                        parsed = json.loads(payload)
-                    except Exception:
-                        pass
-                    
-                    if isinstance(parsed, dict):
-                        for metric_name, dax, alias, dataset in chunk:
-                            sql = parsed.get(metric_name)
-                            if sql:
-                                sql = sql.strip()
-                                if sql.startswith("```"):
-                                    sql = re.sub(r"^```(?:sql|python|.*?)\n", "", sql, flags=re.IGNORECASE)
-                                    sql = re.sub(r"\n```$", "", sql, flags=re.IGNORECASE)
-                                    sql = sql.strip()
-                                
-                                # Safety validation
-                                sql_upper = sql.upper()
-                                forbidden = (
-                                    " SELECT ", "(SELECT", " FROM ", " JOIN ", " WITH ", " OVER ",
-                                    " DROP ", " DELETE ", " TRUNCATE ", " INSERT ", " UPDATE ", " ALTER ", ";"
-                                )
-                                padded = f" {sql_upper} "
-                                if any(token in padded for token in forbidden):
-                                    logger.warning(
-                                        "OpenAI batch translation rejected (forbidden SQL tokens) for metric '%s': %s",
-                                        metric_name,
-                                        sql[:120],
-                                    )
-                                else:
-                                    logger.info(f"✓ [{metric_name}]: OpenAI translation")
-                                    results[metric_name] = DAXTranslationResult(sql, 5, dax)
-                                    openai_translated[metric_name] = sql
-                
-                # Remove successfully translated candidates so they aren't processed by Gemini
-                llm_candidates = [c for c in llm_candidates if c[0] not in openai_translated]
-                
-            except Exception as exc:
-                logger.error(f"OpenAI batch translation failed: {exc}")
-        
-        # LLM TRANSLATION: Only send remaining complex metrics to Gemini
+
         if llm_candidates:
+            # Restored batching: one (or a few, chunked at
+            # Tier5Config.max_batch_size) JSON-map API call for every
+            # remaining candidate instead of one call per metric — the
+            # cost/latency regression noted in this method's docstring
+            # above is fixed by Tier5Service.translate_batch(), not by
+            # reverting to a Pipeline-A-specific batch prompt.
             try:
-                from semabridge.converter.gemini_dax_translator import get_gemini_translator
-                
-                translator = get_gemini_translator()
-                if not translator.api_key:
-                    logger.debug("LLM API key not configured for batch translation")
-                    for metric_name, _, _, _ in llm_candidates:
-                        if metric_name not in results:
-                            results[metric_name] = None
-                    return results
-                
-                # Prepare batch for Gemini translator (only complex metrics)
-                # Format: (metric_name, dax, table_alias, dataset_name, None)
-                batch = [
-                    (metric_name, dax, table_alias, dataset_name, None)
+                from semabridge.dax_translation.tier5.service import Tier5Service
+                from semabridge.dax_translation.types import TranslationRequest
+
+                requests = [
+                    TranslationRequest(
+                        dax=dax,
+                        dataset_name=dataset_name,
+                        table_alias=table_alias,
+                        dataset_col_lookup=dataset_col_lookup or {},
+                        dataset_aliases=dataset_aliases or {},
+                        metric_name=metric_name,
+                        dialect="snowflake",
+                    )
                     for metric_name, dax, table_alias, dataset_name in llm_candidates
                 ]
-                
-                logger.info(
-                    f"🔄 Batch translating {len(batch)} COMPLEX metrics via Tier 5 LLM "
-                    f"(expected API calls: {(len(batch) + 19) // 20}) - "
-                    f"API CALL REDUCTION: {len(simple_metrics) - len(simple_failed_for_llm) + len(openai_translated)} / {len(metrics_list)} metrics skipped LLM"
-                )
-                
-                # Call batch translation
-                batch_result = translator.translate_batch(batch, batch_size=20)
-                simple_api_calls = batch_result.api_calls
-                
-                # Process results - convert to DAXTranslationResult with confidence filtering
-                for metric_name, gemini_result in batch_result.results.items():
-                    if gemini_result.is_valid and gemini_result.sql and gemini_result.confidence >= 0.55:
-                        # High confidence - use result
-                        results[metric_name] = DAXTranslationResult(gemini_result.sql, 5, 
-                                                                    next((dax for name, dax, _, _ in llm_candidates if name == metric_name), ""))
-                        logger.debug(f"   ✓ [{metric_name}] LLM translated (conf: {gemini_result.confidence:.2f})")
-                    elif gemini_result.sql and gemini_result.confidence > 0.4:
-                        # Low confidence - log warning but don't use
-                        logger.warning(
-                            f"   ⚠️ [{metric_name}] Low confidence: {gemini_result.confidence:.2f}"
-                        )
-                        results[metric_name] = None
-                    else:
-                        # Failed translation
-                        logger.debug(f"   ❌ [{metric_name}] Could not translate: {gemini_result.error}")
-                        results[metric_name] = None
-                
-                # Log summary with classification insight
-                successful = sum(1 for r in results.values() if r is not None)
-                if llm_candidates:
-                    api_call_reduction = (simple_api_calls / len(metrics_list)) * 100
-                    quota_reduction = ((len(simple_metrics) - len(simple_failed_for_llm) + len(openai_translated)) / len(metrics_list)) * 100
+                tier5_results = Tier5Service().translate_batch(requests)
+            except Exception as exc:
+                logger.error(f"Unexpected error in batch Tier 5 translation: {exc}")
+                tier5_results = [None] * len(llm_candidates)
+
+            for (metric_name, dax, table_alias, dataset_name), tier5_result in zip(
+                llm_candidates, tier5_results
+            ):
+                if tier5_result is not None and tier5_result.is_success and tier5_result.sql:
+                    results[metric_name] = DAXTranslationResult(tier5_result.sql, 5, dax)
+                    logger.debug(
+                        f"   ✓ [{metric_name}] LLM translated (provider={tier5_result.provider}, "
+                        f"conf={tier5_result.translation_provider_confidence:.2f})"
+                    )
                 else:
-                    api_call_reduction = 0
-                    quota_reduction = 100
-                
-                logger.info(
-                    f"✅ Batch translation complete:\n"
-                    f"   ├─ Total metrics: {len(metrics_list)}\n"
-                    f"   ├─ Simple (no API calls): {len(simple_metrics) - len(simple_failed_for_llm)} ({(len(simple_metrics) - len(simple_failed_for_llm)) / len(metrics_list) * 100:.0f}%)\n"
-                    f"   ├─ LLM candidates: {len(llm_candidates)} ({len(llm_candidates) / len(metrics_list) * 100:.0f}%)\n"
-                    f"   ├─ API calls: {simple_api_calls} (vs {len(metrics_list)} per-metric)\n"
-                    f"   ├─ Successful: {successful}/{len(metrics_list)}\n"
-                    f"   └─ QUOTA REDUCTION: {quota_reduction:.0f}% metrics avoided LLM calls"
-                )
-                
-                return results
-                
-            except ImportError:
-                logger.debug("Batch LLM translator not available")
-                for metric_name, _, _, _ in llm_candidates:
-                    if metric_name not in results:
-                        results[metric_name] = None
-                return results
-            except Exception as e:
-                logger.error(f"Unexpected error in batch Tier 5 translation: {str(e)}")
-                for metric_name, _, _, _ in llm_candidates:
-                    if metric_name not in results:
-                        results[metric_name] = None
-                return results
-        else:
-            # All metrics were simple or translated by OpenAI, no Gemini needed
-            successful = sum(1 for r in results.values() if r is not None)
-            logger.info(
-                f"✅ Batch translation complete:\n"
-                f"   ├─ Total metrics: {len(metrics_list)}\n"
-                f"   ├─ Successful: {successful}/{len(metrics_list)}"
-            )
-            return results
-    
+                    results[metric_name] = None
+                    logger.debug(f"   ❌ [{metric_name}] Could not translate")
+
+        successful = sum(1 for r in results.values() if r is not None)
+        logger.info(
+            f"✅ Batch translation complete:\n"
+            f"   ├─ Total metrics: {len(metrics_list)}\n"
+            f"   ├─ Simple (no API calls): {len(simple_metrics) - len(simple_failed_for_llm)}\n"
+            f"   ├─ LLM candidates: {len(llm_candidates)}\n"
+            f"   └─ Successful: {successful}/{len(metrics_list)}"
+        )
+        return results
+
     def _try_tier1(self, dax: str, table_alias: str) -> Optional[str]:
         """Attempt Tier 1 translation."""
         match = self._TIER1_PATTERN.match(dax)
@@ -1445,7 +1283,9 @@ class DAXTranslator:
             if re.search(pattern, upper_dax, re.IGNORECASE):
                 result["tier"] = 4
                 result["sync_enabled"] = False
-                result["failure_reason"] = f"Unsupported DAX pattern detected"
+                from semabridge.converter.dax_ast_parser import dax_context_transition_failure_reason
+                context_transition_reason = dax_context_transition_failure_reason(clean_dax)
+                result["failure_reason"] = context_transition_reason or "Unsupported DAX pattern detected"
                 return result
         
         # Check for Time Intelligence functions (Tier 3)

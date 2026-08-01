@@ -75,6 +75,22 @@ def _convert_snowflake_to_sml(self, context: RunContext) -> SMLModel:
                 }
             )
             context.osi_model = osi_model
+
+            # Apply metric-name mapping overrides (e.g. "Total Units" ->
+            # "TOTAL_UNITS") to the OSI model now, before from_osi()
+            # translates any DAX. A sibling metric's raw DAX referencing the
+            # renamed measure by its old bracket name (e.g.
+            # TOTALYTD([Total Units], ...)) only gets rewritten to the new
+            # name by this same call — running it after conversion would
+            # mean translation already gave up on the stale bracket text,
+            # permanently (there's no later retry). See
+            # _apply_mapping_overrides_from_config's own comment for why
+            # the rewrite matters.
+            if context.config_path is not None:
+                self._apply_mapping_overrides_from_config(
+                    osi_model, Path(context.config_path), config_payload=context.config_payload
+                )
+
             sml_model = OSIToSMLConverter().from_osi(osi_model)
 
             self._record_step(

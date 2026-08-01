@@ -64,8 +64,8 @@ class TablesClauseBuilder:
             _unq = resolved_source_table.rsplit(".", 1)[-1] if "." in resolved_source_table else resolved_source_table
             safe_table = self.identifier_sanitizer.sanitize_table_name(_unq)
             date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
-            resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
-            resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
+            resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col, model=model)
+            resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col, model=model)
         else:
             _unq_dt = date_table.rsplit(".", 1)[-1] if "." in date_table else date_table
             safe_table = self.identifier_sanitizer.sanitize_table_name(_unq_dt)
@@ -225,7 +225,7 @@ class TablesClauseBuilder:
             relationship_pk_cols: list[str] = []
             if dataset.unique_name in relationship_pk_map:
                 for rel_col in relationship_pk_map[dataset.unique_name]:
-                    resolved = self.identifier_sanitizer.sanitize_column(rel_col) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, rel_col)
+                    resolved = self.identifier_sanitizer.sanitize_column(rel_col) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, rel_col, model=self._current_model)
                     if not known_phys or resolved in known_phys:
                         if resolved not in relationship_pk_cols:
                             relationship_pk_cols.append(resolved)
@@ -243,7 +243,7 @@ class TablesClauseBuilder:
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
                 if key_cols:
-                    res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name)
+                    res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name, model=self._current_model)
                     pk_cols = [f'"{res_col}"']
                 else:
                     if getattr(self.behavior.snowflake, "pk_resolution_mode", None) == "strict":

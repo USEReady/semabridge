@@ -297,7 +297,29 @@ def _compat_store_write_path() -> Path:
     (resolve_log_file_path) and the DuckDB fallback DB
     (session_factory.fetch_latest_database_url), neither of which is
     typically inside a cloud-sync folder.
+
+    This is real per-user state, not a fixture — a test process must never
+    resolve to it. SEMABRIDGE_COMPAT_STORE_PATH gives an explicit override
+    (Tests/conftest.py sets one), and as a backstop independent of that,
+    any process running under pytest (PYTEST_CURRENT_TEST, set by pytest
+    itself for the duration of every test — same convention already used in
+    databricks_publisher.py) redirects to a throwaway path under the system
+    temp directory instead of Path.home(), so a test run can never load or
+    overwrite a real user's compat store even if some future test forgets
+    to isolate it.
     """
+    override = os.environ.get("SEMABRIDGE_COMPAT_STORE_PATH")
+    if override:
+        override_path = Path(override)
+        override_path.parent.mkdir(parents=True, exist_ok=True)
+        return override_path
+
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        import tempfile
+        test_dir = Path(tempfile.gettempdir()) / "semabridge_test_compat_store"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        return test_dir / ".semabridge_compat_store.json"
+
     stable_dir = Path.home() / ".semabridge"
     stable_dir.mkdir(parents=True, exist_ok=True)
     return stable_dir / ".semabridge_compat_store.json"
@@ -311,9 +333,17 @@ def _compat_store_path() -> Path:
     silently lost — those are read-only fallbacks; every save goes through
     _compat_store_write_path(), so the data migrates to the stable location
     on the very next write and the legacy path is never touched again.
+
+    Under test isolation (explicit override or PYTEST_CURRENT_TEST) the
+    legacy repo-relative scan is skipped entirely — a file that happens to
+    exist at one of those repo-relative paths for unrelated reasons must
+    never be picked up as a test's compat store.
     """
     stable_path = _compat_store_write_path()
     if stable_path.exists():
+        return stable_path
+
+    if os.environ.get("SEMABRIDGE_COMPAT_STORE_PATH") or "PYTEST_CURRENT_TEST" in os.environ:
         return stable_path
 
     for legacy_candidate in (

@@ -157,6 +157,14 @@ class SnowflakeEmitter(BaseEmitter):
             # stale dropped-metric/smoke-test warnings over from a prior deploy.
             self._dropped_metrics = []
             self._smoke_test_warnings = []
+            # Same reason as the two resets above — a reused emitter instance
+            # must not carry a prior deploy's live-schema snapshot into this
+            # one (e.g. a MAX_DATE anchor a previous run found, on a table
+            # this run's Step 1 might recreate from scratch). Cleared in
+            # place, not reassigned — self.semantic_view_builder holds this
+            # same dict by reference (passed at construction, see __init__),
+            # exactly like drop_ledger below.
+            self._live_schema_metadata.clear()
             # Cleared in place (see __init__) so SemanticViewBuilder's shared
             # reference to this same ledger stays valid.
             self.drop_ledger.clear()
@@ -181,25 +189,7 @@ class SnowflakeEmitter(BaseEmitter):
                 # embedding a subquery in the TABLES clause — see
                 # TablesClauseBuilder._fetch_fiscal_anchor_literal.
                 self.semantic_view_builder.cursor = cur
-                
-                # Auto-enrichment (NEW)
-                if getattr(self.sf_behavior, 'auto_execute_precompute', False):
-                    logger.info("🔧 Auto-enrichment enabled - executing pre-compute suggestions...")
-                    self._auto_execute_precompute_suggestions(model, cur)
-                    
-                    if getattr(self.sf_behavior, 'auto_create_enriched_view', False):
-                        for fact_table in self._get_fact_tables_needing_enrichment(model):
-                            enriched_view = self._create_enriched_view(model, cur, fact_table=fact_table)
-                            if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
-                                mapping = getattr(self.sf_behavior, 'source_table_mapping', None)
-                                if mapping is None:
-                                    # Keep mapping local to emitter instance
-                                    self._enriched_view_mapping[fact_table] = enriched_view
-                                else:
-                                    mapping[fact_table] = enriched_view
-                                logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
 
-                
                 # Step -1: Pre-compute duplicate name mappings
                 if is_osi:
                     self.semantic_view_builder._precompute_duplicate_mappings(model, is_osi=True)
@@ -219,7 +209,7 @@ class SnowflakeEmitter(BaseEmitter):
                         self.schema_manager._apply_inferred_types_ctas_osi(cur, model)
                     else:
                         self.schema_manager._apply_inferred_types_ctas_sml(cur, model)
-                
+
                 # Step 1.5: Validation Gate & Metadata Refresh
                 # Bust the module-level schema cache first — Step 1 may have
                 # just created/altered tables (_ensure_source_tables_exist /
@@ -236,6 +226,36 @@ class SnowflakeEmitter(BaseEmitter):
                     datasets = list(getattr(model, "datasets", []) or [])
                     sf_meta = self.schema_manager._fetch_model_table_metadata(cur, datasets)
                 self._live_schema_metadata.update(sf_meta or {})
+
+                # Auto-enrichment — moved to run here (after Step 1/1.5, once
+                # the underlying fact table is confirmed to actually exist),
+                # not before Step 1 as originally written. Previously this
+                # ran first, against a table that might not exist yet on a
+                # cold deploy — _create_enriched_view's own anchor-column
+                # fetch (e.g. MAX_DATE, or any other computed anchor for any
+                # table) swallows that failure silently and just omits the
+                # column, so a metric depending on it would flip between
+                # "live" and "dropped" across runs purely based on whether a
+                # *previous* run happened to have already created the table
+                # — the same code, same model, different outcome. Running
+                # this after the table is guaranteed to exist removes that
+                # timing dependency entirely, for any anchor column, any
+                # table, any model — not just MAX_DATE.
+                if getattr(self.sf_behavior, 'auto_execute_precompute', False):
+                    logger.info("🔧 Auto-enrichment enabled - executing pre-compute suggestions...")
+                    self._auto_execute_precompute_suggestions(model, cur)
+
+                    if getattr(self.sf_behavior, 'auto_create_enriched_view', False):
+                        for fact_table in self._get_fact_tables_needing_enrichment(model):
+                            enriched_view = self._create_enriched_view(model, cur, fact_table=fact_table)
+                            if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
+                                mapping = getattr(self.sf_behavior, 'source_table_mapping', None)
+                                if mapping is None:
+                                    # Keep mapping local to emitter instance
+                                    self._enriched_view_mapping[fact_table] = enriched_view
+                                else:
+                                    mapping[fact_table] = enriched_view
+                                logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
 
                 if is_osi:
                     self.schema_manager._preflight_check_osi(cur, model)
@@ -539,15 +559,21 @@ class SnowflakeEmitter(BaseEmitter):
 
                 # Step 6: Post-deploy smoke test — catch runtime errors early
                 # ddls is list[str]; extract view name from each DDL for the test.
+                # The DDL declares the view fully qualified as "DB"."SCHEMA"."VIEW"
+                # (see ddl_builder.py full_view_name), and Snowflake allows mixed
+                # quoting per segment, so the view name is always the LAST
+                # dot-separated segment, not the first.
                 import re as _re_smoke
                 for _ddl_sql in ddls:
                     _m = _re_smoke.search(
-                        r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+"?(\w+)"?',
+                        r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+'
+                        r'((?:"[^"]+"|\w+)(?:\s*\.\s*(?:"[^"]+"|\w+))*)',
                         _ddl_sql, _re_smoke.IGNORECASE,
                     )
                     if not _m:
                         continue
-                    _view_name = _m.group(1)
+                    _qualified_name = _m.group(1)
+                    _view_name = _qualified_name.split(".")[-1].strip().strip('"')
                     _smoke_err = self._smoke_test_semantic_view(cur, _view_name, _ddl_sql)
                     if _smoke_err:
                         logger.warning(
@@ -692,10 +718,33 @@ class SnowflakeEmitter(BaseEmitter):
         """Generate side-car artifacts like Cortex YAML."""
         if self.behavior.features.enable_cortex_analyst:
             sample_fetcher = self._build_sample_fetcher(sml, cur) if cur is not None else None
-            cortex_yaml = self.generate_cortex_yaml(sml, sample_fetcher=sample_fetcher)  # noqa: F841  (save logic TBD)
+            cortex_yaml = self.generate_cortex_yaml(sml, sample_fetcher=sample_fetcher)
+            self._save_cortex_yaml_artifact(sml, cortex_yaml)
 
         if getattr(self.sf_behavior, "generate_audit_yaml", False):
             logger.debug("generate_audit_yaml flagged but renderer not yet implemented; skipping.")
+
+    def _save_cortex_yaml_artifact(self, sml: SMLModel, cortex_yaml: str) -> None:
+        """Persist the Cortex Analyst YAML to the same output/reverse/<project>/
+        directory the target-conversion stage already writes semantic_view.sql
+        and a sample-less cortex_analyst.yaml to (core/engine/targets/snowflake.py).
+
+        This overwrites that placeholder with the deploy-time version, which is
+        the only point in the pipeline with a live cursor and therefore the
+        only place real sample_values can be populated (Fix 1). Runs
+        independent of deployment_method — the DDL path deploys metrics/
+        synonyms straight to Snowflake, but sample_values only ever exist in
+        this side-car YAML.
+        """
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(sml.unique_name or "model"))
+        safe_name = re.sub(r"_+", "_", safe_name).strip("._") or "model"
+        yaml_path = Path("output") / "reverse" / safe_name / "cortex_analyst.yaml"
+        try:
+            yaml_path.parent.mkdir(parents=True, exist_ok=True)
+            yaml_path.write_text(cortex_yaml, encoding="utf-8")
+            logger.info("Cortex Analyst YAML (with live sample values) written to %s", yaml_path)
+        except Exception as exc:
+            logger.warning("Failed to persist Cortex Analyst YAML artifact to %s: %s", yaml_path, exc)
 
     def _build_sample_fetcher(self, sml: SMLModel, cur):
         """Build a memoized (dataset, column) -> sample-values callback for the Cortex renderer.
@@ -713,8 +762,9 @@ class SnowflakeEmitter(BaseEmitter):
             ds = next((d for d in sml.datasets if d.unique_name == dataset_unique_name), None)
             if ds is not None and column:
                 safe_table = self._safe_table_name(ds.source_table or ds.unique_name)
+                safe_column = self._sanitize_col_name(column)
                 values = self.connection_manager.fetch_distinct_sample_values(
-                    cur, self.config.database, self.config.schema_name, safe_table, column,
+                    cur, self.config.database, self.config.schema_name, safe_table, safe_column,
                 )
             cache[key] = values
             return values
@@ -1795,7 +1845,7 @@ class SnowflakeEmitter(BaseEmitter):
         dataset = self._get_dataset_by_name(model, dataset_name)
         if dataset is not None:
             try:
-                return self.schema_manager._resolve_physical_column_name(dataset, column_name)
+                return self.schema_manager._resolve_physical_column_name(dataset, column_name, model=model)
             except Exception:
                 pass
         return self._id.sanitize_column(column_name)
@@ -1988,26 +2038,51 @@ class SnowflakeEmitter(BaseEmitter):
                 )
                 safe_table = self._id.sanitize_table_name(resolved_source_table)
                 date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
-                resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col)
-                resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col)
+                resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col, model=model)
+                resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col, model=model)
             else:
                 safe_table = self._id.sanitize_table_name(date_table)
                 date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
                 resolved_date_col = self._id.sanitize_column(date_col)
                 resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
 
-            max_date_literal = _fetch_literal(f'SELECT MAX("{resolved_date_col}") FROM {fact_source_ref}')
-            if max_date_literal is not None:
-                select_parts.append(f'\n            , {max_date_literal} AS "MAX_DATE"')
-                projected_cols.add("MAX_DATE")
+            # Table selection for each anchor must be driven by which table
+            # actually owns the column — never by loop order or first-match.
+            # Mirrors the "UNITS" in fact_cols" gate above: only fire the
+            # MAX_DATE probe against fact_source_ref when fact_table's own
+            # columns actually contain resolved_date_col (this fact table may
+            # not be the one the date anchor belongs to — see the KPI/SalesFact
+            # multi-fact-table regression this guard was added to fix).
+            if resolved_date_col in fact_cols:
+                max_date_literal = _fetch_literal(f'SELECT MAX("{resolved_date_col}") FROM {fact_source_ref}')
+                if max_date_literal is not None:
+                    select_parts.append(f'\n            , {max_date_literal} AS "MAX_DATE"')
+                    projected_cols.add("MAX_DATE")
 
-            fiscal_period_literal = _fetch_literal(
-                f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
-                f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
-            )
-            if fiscal_period_literal is not None:
-                select_parts.append(f'\n            , {fiscal_period_literal} AS "_CURRENT_FISCAL_PERIOD"')
-                projected_cols.add("_CURRENT_FISCAL_PERIOD")
+            # Same principle for the fiscal-period anchor, but checked against
+            # the date table's own columns (it queries date_table_ref, not
+            # fact_source_ref).
+            date_source_key = self._id.sanitize_table_name(
+                (date_dataset.source_table or date_dataset.unique_name) if date_dataset else date_table
+            ).upper()
+            date_cols = {
+                str(c).upper()
+                for c in self._live_schema_metadata.get(date_source_key, set())
+            }
+            if not date_cols and date_dataset is not None:
+                date_cols = {
+                    self._resolve_model_column_name(model, date_dataset.unique_name, getattr(c, "unique_name", "")).upper()
+                    for c in getattr(date_dataset, "columns", []) or []
+                    if getattr(c, "unique_name", None)
+                }
+            if resolved_fiscal_col in date_cols and resolved_date_col in date_cols:
+                fiscal_period_literal = _fetch_literal(
+                    f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
+                    f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
+                )
+                if fiscal_period_literal is not None:
+                    select_parts.append(f'\n            , {fiscal_period_literal} AS "_CURRENT_FISCAL_PERIOD"')
+                    projected_cols.add("_CURRENT_FISCAL_PERIOD")
         
         select_parts.append(f"FROM {fact_source_ref} f")
         

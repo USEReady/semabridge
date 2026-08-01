@@ -319,13 +319,69 @@ class MetricExpressionTranslator:
         skipped_metric_names: set[str],
         metric_to_alias: Optional[Dict[str, str]] = None
     ) -> Optional[str]:
+        """Thin shim onto DaxTranslationService (Step 2 of the approved
+        consolidation migration). Same signature, same external contract
+        (Optional[str]) as before this cutover — every existing caller is
+        unaffected.
+
+        Two pieces of the original implementation are deliberately kept
+        here rather than delegated, because DaxTranslationService has no
+        equivalent hook for either and dropping them would be a real
+        regression, not a shape change:
+
+        - The rule-based-translation-first step (dax_rule_translator.
+          rule_based_translation). DaxTranslationService's Tier 1-4
+          deliberately excludes this separate rule engine (see
+          tiers_1_4.py) — some real metrics (e.g. proj-pbix-test's
+          SENTIMENT_GAP) only resolve through it. Unchanged below.
+        - The OpenAI batch-prefetch cache and the unresolved-metric-
+          reference post-check (all_physical_col_names /
+          emittable_metric_name_set / skipped_metric_names) — Pipeline-B-
+          specific emission-time bookkeeping that a generic translation
+          service has no business knowing about. Unchanged below.
+
+        Everything else — Featherless/multi-model/OpenAI/Gemini candidate
+        generation and the shared repair/validation loop — is now handled
+        by DaxTranslationService, using the same validation logic
+        (verbatim-salvaged into dax_translation/tier5/validation.py) this
+        method used to call directly via self._validate_metric_column_references
+        / self._normalize_metric_column_references. Those two methods are
+        untouched on this class and still used for the two steps above.
+
+        One deliberate behavior change, expected and explained (not a
+        bug): DaxTranslationService.translate_metric() tries the
+        deterministic Tier 1-4 translators (converter/dax_translator.py)
+        BEFORE any LLM call — this method never did that itself before
+        (that only happened one level up, in metrics_clause_builder.py,
+        as a *second*, later fallback via
+        _try_basic_dax_metric_fallback_expression). Some metrics that
+        previously only reached the deterministic tiers after the rule
+        engine AND every LLM provider had already declined will now
+        resolve here, deterministically, without any LLM call — this is
+        the intended fix for the "rule-engine+LLM tried before the
+        correct deterministic pipeline" dispatch-order finding, arriving
+        as a natural side effect of this cutover rather than a separate
+        change.
+        """
+
+        def _passes_unresolved_metric_ref_guard(expr: str) -> bool:
+            unresolved_metric_refs = [
+                r for r in re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr)
+                if r in metric_name_set
+                and r not in all_physical_col_names
+                and (
+                    r not in emittable_metric_name_set
+                    or r in skipped_metric_names
+                )
+                and r != metric_name
+            ]
+            return not unresolved_metric_refs
+
         dax_expression = (getattr(metric, "expression", None) or "").strip()
         if not dax_expression:
             return None
 
-        candidate_expressions: list[str] = []
-
-        # 1. Attempt a rule-based translation for simple metrics first
+        # 1. Rule-based translation first — unchanged from the original.
         try:
             from semabridge.converter.dax_rule_translator import (
                 is_simple_metric,
@@ -348,7 +404,7 @@ class MetricExpressionTranslator:
                 is_valid, issues = self._validate_metric_column_references(
                     normalized_rule_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_name_set
                 )
-                if is_valid and not issues:
+                if is_valid and not issues and _passes_unresolved_metric_ref_guard(normalized_rule_sql):
                     logger.info(f"Rule-based translation for '{metric_name}' is valid.")
                     return normalized_rule_sql
                 else:
@@ -358,125 +414,70 @@ class MetricExpressionTranslator:
         except Exception as ex:
             logger.debug(f"Local fallback unavailable for metric '{metric_name}': {ex}")
 
-        # 2. Check OpenAI batch-prefetch cache
+        # 2. OpenAI batch-prefetch cache — validated through the same
+        # repair/validation calls the original used, unchanged.
         prefetched_sql = self._openai_prefetch_sql_by_metric.get(metric_name)
         if prefetched_sql:
-            candidate_expressions.append(prefetched_sql)
-
-        # 3. Call LLM services only if not already cached
-        if not prefetched_sql:
-            # Try Featherless first (cost-effective, multiple models)
-            featherless_result = self._try_featherless_translation(
-                dax_expression=dax_expression,
-                metric=metric,
-                table_alias=table_alias,
-                dataset_col_lookup=dataset_col_lookup,
-            )
-            if featherless_result:
-                candidate_expressions.append(featherless_result)
-
-            # Try multi-model (DeepSeek + failover) SECOND
-            multi_model_result = self._try_multi_model_translation(
-                dax_expression=dax_expression,
-                metric=metric,
-                table_alias=table_alias,
-                dataset_col_lookup=dataset_col_lookup,
-            )
-            if multi_model_result:
-                candidate_expressions.append(multi_model_result)
-
-            # Try OpenAI legacy single call
-            openai_expr = self._try_openai_dax_translation(
-                dax_expression=dax_expression,
-                metric=metric,
-                table_alias=table_alias,
-                dataset_col_lookup=dataset_col_lookup,
-            )
-            if openai_expr:
-                candidate_expressions.append(openai_expr)
-
-            # Try Gemini translation legacy fallback
-            try:
-                from semabridge.converter.gemini_dax_translator import get_gemini_translator
-                translator = get_gemini_translator()
-            except Exception as ex:
-                logger.debug(f"LLM fallback unavailable for metric '{metric_name}': {ex}")
-                translator = None
-
-            if translator and getattr(translator, "use_gemini", False) and getattr(translator, "api_key", None):
-                schema_context = {ds_name: sorted(list(cols)) for ds_name, cols in dataset_col_lookup.items()}
-                llm_result = translator.translate(
-                    dax=dax_expression,
-                    table_alias=table_alias.lower(),
-                    dataset_name=getattr(metric, "dataset", ""),
-                    metric_name=metric_name,
-                    schema_context=schema_context,
+            expr = self._sanitize_sql_markdown(prefetched_sql)
+            if (
+                expr
+                and "SELECT" not in expr.upper()
+                and self._is_scalar_metric_sql(expr)
+                and not self._dax_divide_lost_its_division(dax_expression, expr)
+            ):
+                expr = self.fix_common_llm_issues(expr, dax_expression)
+                expr = self._id.resolve_dot_notation(
+                    expr, alias_by_raw, sanitize_col_fn=self._id.sanitize_column,
                 )
+                expr = self._normalize_metric_column_references(
+                    expr,
+                    metric.unique_name,
+                    dataset_col_lookup,
+                    dataset_aliases,
+                    metric_names=metric_name_set,
+                    preferred_table_alias=table_alias,
+                    metric_to_alias=metric_to_alias,
+                )
+                is_valid, _ = self._validate_metric_column_references(
+                    expr, metric.unique_name, dataset_col_lookup, dataset_aliases, metric_names=metric_name_set,
+                )
+                expr_upper = expr.upper().strip()
+                if (
+                    is_valid
+                    and expr.strip()
+                    and expr_upper != 'SUM(*)'
+                    and not expr_upper.endswith('SUM(*)')
+                    and _passes_unresolved_metric_ref_guard(expr)
+                ):
+                    logger.info(f"Recovered metric '{metric.unique_name}' via prefetch cache")
+                    return self.fix_common_llm_issues(expr, dax_expression)
 
-                if llm_result and llm_result.is_valid and llm_result.sql:
-                    candidate_expressions.append(llm_result.sql)
-                else:
-                    logger.debug(f"LLM fallback failed for metric '{metric_name}': {getattr(llm_result, 'error', 'invalid translation')}")
+        # 3. Everything else — DaxTranslationService: deterministic Tier
+        # 1-4 first, then the unified Tier 5 provider chain with mandatory
+        # schema-existence validation for every candidate.
+        try:
+            from semabridge.dax_translation.service import DaxTranslationService
+            from semabridge.dax_translation.types import TranslationRequest
 
-
-        for candidate_sql in candidate_expressions:
-            expr = self._sanitize_sql_markdown(candidate_sql)
-            if not expr or "SELECT" in expr.upper():
-                continue
-
-            if not self._is_scalar_metric_sql(expr):
-                continue
-
-            if self._dax_divide_lost_its_division(dax_expression, expr):
-                continue
-
-            expr = self.fix_common_llm_issues(expr, dax_expression)
-            expr = self._id.resolve_dot_notation(
-                expr,
-                alias_by_raw,
-                sanitize_col_fn=self._id.sanitize_column,
-            )
-            expr = self._normalize_metric_column_references(
-                expr,
-                metric.unique_name,
-                dataset_col_lookup,
-                dataset_aliases,
-                metric_names=metric_name_set,
-                preferred_table_alias=table_alias,
-                metric_to_alias=metric_to_alias
-            )
-
-            is_valid, _ = self._validate_metric_column_references(
-                expr,
-                metric.unique_name,
-                dataset_col_lookup,
-                dataset_aliases,
+            request = TranslationRequest(
+                dax=dax_expression,
+                dataset_name=str(getattr(metric, "dataset", "") or ""),
+                table_alias=table_alias,
+                dataset_col_lookup=dataset_col_lookup,
+                dataset_aliases=dataset_aliases,
+                metric_name=metric_name,
+                dialect=self.dialect,
                 metric_names=metric_name_set,
             )
-            if not is_valid:
-                continue
-
-            if not expr.strip():
-                continue
-            expr_upper = expr.upper().strip()
-            if expr_upper == 'SUM(*)' or expr_upper.endswith('SUM(*)'):
-                continue
-
-            unresolved_metric_refs = [
-                r for r in re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr)
-                if r in metric_name_set
-                and r not in all_physical_col_names
-                and (
-                    r not in emittable_metric_name_set
-                    or r in skipped_metric_names
+            result = DaxTranslationService().translate_metric(request)
+            if result.is_success and result.sql and _passes_unresolved_metric_ref_guard(result.sql):
+                logger.info(
+                    f"Recovered metric '{metric.unique_name}' via DaxTranslationService "
+                    f"(tier={result.tier}, provider={result.provider})"
                 )
-                and r != metric_name
-            ]
-            if unresolved_metric_refs:
-                continue
-
-            logger.info(f"Recovered metric '{metric.unique_name}' via fallback translation")
-            return self.fix_common_llm_issues(expr, dax_expression)
+                return result.sql
+        except Exception as exc:
+            logger.debug(f"DaxTranslationService fallback failed for metric '{metric_name}': {exc}")
 
         return None
 

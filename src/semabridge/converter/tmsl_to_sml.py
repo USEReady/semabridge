@@ -204,10 +204,19 @@ class TMSLTransformer:
                 sml.datasets.append(ds)
                 tables_to_process.append((table, ds))
 
+            # Source-schema lookup for Tier 5's semantic validator (Step 3 of
+            # the DAX translation consolidation). Built once here, from the
+            # source (Fabric/PBIX) datasets/columns just collected in Pass 1
+            # — no Snowflake-side physical schema exists yet at this stage.
+            # General/schema-shape-derived (sanitize_column/to_alias, same
+            # utilities already used throughout this module) — not hardcoded
+            # to any table/column/model name.
+            dax_dataset_col_lookup, dax_dataset_aliases = DAXTranslator.build_schema_lookup(sml.datasets)
+
             # Pass 2: Process Measures (Metrics)
             # Step 2a: Parse all measures and identify those needing Tier 5 LLM translation
             tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
-            
+
             for table, ds in tables_to_process:
                 for measure in self._iter_table_measures_with_stable_names(table):
                         metric = self._parse_measure(
@@ -215,6 +224,8 @@ class TMSLTransformer:
                             ds.unique_name,
                             None,
                             sml.metrics,
+                            dataset_col_lookup=dax_dataset_col_lookup,
+                            dataset_aliases=dax_dataset_aliases,
                         )
                         sml.metrics.append(metric)
                         
@@ -236,7 +247,11 @@ class TMSLTransformer:
             # Step 2b: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
             if tier5_candidates:
                 logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
-                batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
+                batch_results = self.dax_translator.batch_translate_tier5(
+                    tier5_candidates,
+                    dataset_col_lookup=dax_dataset_col_lookup,
+                    dataset_aliases=dax_dataset_aliases,
+                )
                 
                 # Apply batch translation results back to metrics
                 for metric in sml.metrics:
@@ -255,7 +270,11 @@ class TMSLTransformer:
             # another measure defined later in that order sees an incomplete
             # metrics_context on its first attempt. Mirrors osi_to_sml.py's
             # equivalent step for the OSI pipeline.
-            self._resolve_metric_dependencies(sml)
+            self._resolve_metric_dependencies(
+                sml,
+                dataset_col_lookup=dax_dataset_col_lookup,
+                dataset_aliases=dax_dataset_aliases,
+            )
 
             # 3. Process Relationships
             # Build case-insensitive map of valid datasets so relationship
@@ -759,7 +778,13 @@ class TMSLTransformer:
             ),
         )
 
-    def _resolve_metric_dependencies(self, sml: SMLModel, max_passes: int = 3) -> None:
+    def _resolve_metric_dependencies(
+        self,
+        sml: SMLModel,
+        max_passes: int = 3,
+        dataset_col_lookup: Optional[Dict[str, set]] = None,
+        dataset_aliases: Optional[Dict[str, str]] = None,
+    ) -> None:
         """Resolve unresolved metrics using the full model-wide metric list,
         in deterministic convergence passes.
 
@@ -772,9 +797,16 @@ class TMSLTransformer:
         depending on it in pass N+1. Mirrors `osi_to_sml.py`'s
         `_resolve_metric_dependencies`, which already solves this for the
         OSI pipeline.
+
+        dataset_col_lookup/dataset_aliases: forwarded to DAXTranslator's
+        Tier 5 semantic validator (Step 3 of the DAX translation
+        consolidation); rebuilt from sml.datasets if not supplied.
         """
         if not sml.metrics:
             return
+
+        if dataset_col_lookup is None or dataset_aliases is None:
+            dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(sml.datasets)
 
         from semabridge.converter.dax_ast_parser import is_by_design_excluded
 
@@ -791,6 +823,8 @@ class TMSLTransformer:
                     metric.expression,
                     safe_alias,
                     metric.dataset,
+                    dataset_col_lookup=dataset_col_lookup,
+                    dataset_aliases=dataset_aliases,
                     metric_name=metric.unique_name,
                     metrics_context=sml.metrics,
                 )
@@ -810,7 +844,15 @@ class TMSLTransformer:
                 resolved_this_pass,
             )
 
-    def _parse_measure(self, measure_def: Dict[str, Any], table_name: str, overrides: Dict[str, str] = None, metrics_context: List[Any] = None) -> SMLMetric:
+    def _parse_measure(
+        self,
+        measure_def: Dict[str, Any],
+        table_name: str,
+        overrides: Dict[str, str] = None,
+        metrics_context: List[Any] = None,
+        dataset_col_lookup: Optional[Dict[str, set]] = None,
+        dataset_aliases: Optional[Dict[str, str]] = None,
+    ) -> SMLMetric:
         """Parse a TMSL measure into SMLMetric with complexity analysis."""
         dax = self._extract_measure_expression(measure_def)
         if isinstance(dax, list):
@@ -986,11 +1028,13 @@ class TMSLTransformer:
         safe_alias = to_alias(table_name)
         
         translation = self.dax_translator.translate(
-            dax, 
-            safe_alias, 
+            dax,
+            safe_alias,
             table_name,
             metric_name=metric.unique_name,
-            metrics_context=metrics_context
+            metrics_context=metrics_context,
+            dataset_col_lookup=dataset_col_lookup,
+            dataset_aliases=dataset_aliases
         )
         
         if translation.is_success:
@@ -1004,8 +1048,18 @@ class TMSLTransformer:
             if unsupported_reason:
                 metric.sync_failure_reason = unsupported_reason
             else:
+                from semabridge.converter.dax_ast_parser import (
+                    dax_context_transition_failure_reason,
+                    dax_lag_period_of_measure_reference_failure_reason,
+                )
+                context_transition_reason = dax_context_transition_failure_reason(dax)
+                lag_period_reason = dax_lag_period_of_measure_reference_failure_reason(dax)
                 # Detect pattern type for better error message
-                if "FILTER" in dax.upper() and "ALL" in dax.upper():
+                if context_transition_reason:
+                    metric.sync_failure_reason = context_transition_reason
+                elif lag_period_reason:
+                    metric.sync_failure_reason = lag_period_reason
+                elif "FILTER" in dax.upper() and "ALL" in dax.upper():
                     metric.sync_failure_reason = f"Unsupported DAX pattern detected (FILTER with ALL)"
                 elif "CALCULATE" in dax.upper() and "FILTER" in dax.upper():
                     metric.sync_failure_reason = f"DAX translation failed (Tier {translation.tier}) - Complex CALCULATE with FILTER"

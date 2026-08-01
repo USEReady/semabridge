@@ -72,6 +72,20 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     }
     osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model
+
+    # Apply metric-name mapping overrides (e.g. "Total Units" -> "TOTAL_UNITS")
+    # to the OSI model now, before Phase 2 translates any DAX. A sibling
+    # metric's raw DAX referencing the renamed measure by its old bracket
+    # name (e.g. TOTALYTD([Total Units], ...)) only gets rewritten to the
+    # new name by this same call — running it after Phase 2 would mean
+    # translation already gave up on the stale bracket text, permanently
+    # (there's no later retry). See _apply_mapping_overrides_from_config's
+    # own comment for why the rewrite matters.
+    if context.config_path is not None:
+        self._apply_mapping_overrides_from_config(
+            osi_model, Path(context.config_path), config_payload=context.config_payload
+        )
+
     logger.debug(
         f"PBIX OSI intermediate: {len(osi_model.datasets)} datasets, "
         f"{len(osi_model.metrics)} metrics"

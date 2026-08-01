@@ -79,10 +79,18 @@ class TestCalculate:
         assert "CASE WHEN" in sql.upper() or "WHERE" in sql.upper()
     
     def test_calculate_with_all(self):
+        # ALL(...)/ALLEXCEPT(...) inside CALCULATE mean "re-partition this
+        # aggregate independently of the query's own grouping" — inherently
+        # a SQL window function, which Snowflake's semantic-view METRICS
+        # clause forbids. This used to silently "succeed" with an
+        # OVER(...) clause that deploys fine but returns NULL at query
+        # time (dax_ast_parser.py's DaxSqlRenderer._render_calculate now
+        # fails closed on this shape instead of emitting one).
         engine = DaxTranslationEngine()
         dax = "CALCULATE(SUM([Amount]), ALL([Date]))"
         sql, metrics = engine.translate(dax, "sales")
-        assert sql is not None
+        assert sql is None
+        assert metrics.strategy == TranslationStrategy.LLM_FALLBACK
 
 
 class TestTimeIntelligence:

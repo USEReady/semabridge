@@ -1,0 +1,814 @@
+semantic_model:
+  name: proj-pbix-test
+  node_type: semantic_model
+  tables:
+    - name: Category
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: CATEGORY
+      dimensions:
+        - name: Category
+          expr: Category
+          description: ''
+          sample_values:
+            - Convenience
+            - Regular
+            - Extreme
+            - Moderation
+        - name: Channel
+          expr: Channel
+          description: ''
+          sample_values:
+            - Outlet
+            - Stores
+            - Online
+            - Social Media
+          synonyms:
+            - Total Sales by Product and Channel
+            - Total Sales by Channel Over Time
+            - Total Sales by Channel and State
+            - Sales and ROI Over Time
+            - Total Sales by City
+        - name: Sort
+          expr: Sort
+          description: ''
+          sample_values:
+            - '4'
+            - '3'
+            - '1'
+            - '2'
+      measures: []
+    - name: Date
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: DATE
+      dimensions:
+        - name: Date
+          expr: Date
+          description: ''
+          sample_values:
+            - '1999-07-04'
+            - '2006-07-14'
+            - '1999-07-05'
+            - '1999-07-13'
+            - '2005-07-06'
+          synonyms:
+            - Total Sales by Product and Channel
+            - Total Sales by Channel Over Time
+            - Total Sales
+            - Online Sales
+            - Social Media Sales
+            - Stores Sales
+            - Outlet Sales
+            - Total Sales by Channel and State
+            - Sales and ROI Over Time
+        - name: MonthNo
+          expr: MonthNo
+          description: ''
+          sample_values:
+            - '9'
+            - '5'
+            - '11'
+            - '7'
+            - '8'
+          synonyms:
+            - Month No
+        - name: MonthName
+          expr: MonthName
+          description: ''
+          sample_values:
+            - Jul
+            - Aug
+            - Dec
+            - Oct
+            - Apr
+          synonyms:
+            - Month Name
+        - name: MonthID
+          expr: MonthID
+          description: ''
+          sample_values:
+            - '200902'
+            - '200703'
+            - '200810'
+            - '201202'
+            - '199907'
+          synonyms:
+            - Month Id
+        - name: Month
+          expr: Month
+          description: ''
+          sample_values:
+            - '4'
+            - '10'
+            - '5'
+            - '8'
+            - '11'
+        - name: Quarter
+          expr: Quarter
+          description: ''
+          sample_values:
+            - Q4
+            - Q3
+            - Q2
+            - Q1
+        - name: Year
+          expr: Year
+          description: ''
+          sample_values:
+            - '2001'
+            - '2002'
+            - '2003'
+            - '2004'
+            - '1999'
+        - name: RunningMonths
+          expr: RunningMonths
+          description: ''
+          sample_values:
+            - '138'
+            - '162'
+            - '174'
+            - '102'
+            - '186'
+          synonyms:
+            - Running Months
+        - name: Running Year
+          expr: Running Year
+          description: ''
+          sample_values:
+            - '16'
+            - '12'
+            - '15'
+            - '11'
+            - '14'
+          synonyms:
+            - '% Units Market Share R12M and % Units Market Share by Month'
+            - Total Sales by Product and Channel
+            - Total Sales by Channel Over Time
+            - Total Sales
+            - Online Sales
+            - Social Media Sales
+            - Stores Sales
+            - Outlet Sales
+            - Total Sales by Channel and State
+            - Sales and ROI Over Time
+            - Total Sales by City
+        - name: Running Months
+          expr: Running Months
+          description: ''
+          sample_values:
+            - Running 12 Months
+            - Running 25-36 Months
+            - Running 13-24 Months
+        - name: Rolling Period
+          expr: Rolling Period
+          description: ''
+          sample_values:
+            - P-01
+            - P-07
+            - P-00
+            - P-04
+            - P-02
+        - name: Rolling Period Sort
+          expr: Rolling Period Sort
+          description: ''
+          sample_values:
+            - '7'
+            - '11'
+            - '12'
+            - '10'
+            - '5'
+        - name: MonthIndex
+          expr: MonthIndex
+          description: ''
+          sample_values:
+            - '31'
+            - '55'
+            - '79'
+            - '7'
+            - '19'
+          synonyms:
+            - Month Index
+        - name: Months
+          expr: Months
+          description: ''
+          sample_values:
+            - Nov
+            - Aug
+            - May
+            - Sep
+            - Oct
+          synonyms:
+            - Total Sales by Channel Over Time
+            - Sales and ROI Over Time
+      measures: []
+    - name: Geo
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: GEO
+      dimensions:
+        - name: Zip
+          expr: Zip
+          description: ''
+          sample_values:
+            - '15203'
+            - '15211'
+            - '15215'
+            - '16326'
+            - '15201'
+        - name: City
+          expr: City
+          description: ''
+          sample_values:
+            - Pittsburgh, PA
+            - Jerome, PA
+            - Sidman, PA
+            - Altoona, PA
+            - South Fork, PA
+          synonyms:
+            - Total Sales by City
+        - name: State
+          expr: State
+          description: ''
+          sample_values:
+            - PA
+            - OH
+            - NY
+            - MI
+            - FL
+          synonyms:
+            - Outlet Sales
+            - Stores Sales
+            - Social Media Sales
+            - Online Sales
+            - Total Sales
+            - Total Sales by Channel and State
+            - Total Sales by City
+        - name: Region
+          expr: Region
+          description: ''
+          sample_values:
+            - East
+            - Central
+            - West
+        - name: District
+          expr: District
+          description: ''
+          sample_values:
+            - 'District #13'
+            - 'District #06'
+            - 'District #15'
+            - 'District #03'
+            - 'District #01'
+      measures: []
+    - name: Indicators
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: INDICATORS
+      dimensions:
+        - name: Sort
+          expr: Sort
+          description: ''
+          sample_values:
+            - '2'
+            - '1'
+            - '3'
+        - name: Status
+          expr: Status
+          description: ''
+          sample_values:
+            - Low
+            - High
+            - Medium
+        - name: Image
+          expr: Image
+          description: ''
+          sample_values:
+            - https://imageshack.com/a/img923/7161/UkezBH.png
+            - https://imageshack.com/a/img923/5979/Nmi3QO.png
+            - https://imageshack.com/a/img923/3499/gu6FR2.png
+      measures: []
+    - name: KPI
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: KPI
+      dimensions:
+        - name: KPI
+          expr: KPI
+          description: ''
+          sample_values:
+            - '3'
+            - '5'
+            - '2'
+            - '4'
+            - '1'
+          synonyms:
+            - Total Sales
+            - Online Sales
+            - Social Media Sales
+            - Stores Sales
+            - Outlet Sales
+        - name: Category
+          expr: Category
+          description: ''
+          sample_values:
+            - '1'
+      measures:
+        - name: KPI01
+          description: |-
+            [DAX: IF(SUM('KPI'[KPI])=1,CONCATENATE(LEFT([TOTAL_UNITS_YTD_VAR_PCT2],3),(" % ROI (Return on Investment)"...]
+          expr: 'NULL'
+          synonyms:
+            - Total Sales
+            - Online Sales
+            - Social Media Sales
+            - Stores Sales
+            - Outlet Sales
+        - name: KPI02
+          description: |-
+            [DAX: IF(SUM('KPI'[KPI])=1,(CALCULATE([TOTAL_CATEGORY_VOLUME],'Date'[Running Year]=1)),IF(SUM('KPI'[KPI])=...]
+          expr: 'NULL'
+    - name: Manufacturer
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: MANUFACTURER
+      dimensions:
+        - name: ManufacturerID
+          expr: ManufacturerID
+          description: ''
+          sample_values:
+            - '6'
+            - '12'
+            - '14'
+            - '1'
+            - '2'
+          synonyms:
+            - Manufacturer Id
+        - name: Manufacturer
+          expr: Manufacturer
+          description: ''
+          sample_values:
+            - Leo
+            - Quibus
+            - Abbas
+            - Aliqui
+            - Victoria
+        - name: MfgisVanArsdel
+          expr: MfgisVanArsdel
+          description: ''
+          sample_values:
+            - 'False'
+            - 'True'
+          synonyms:
+            - Mfgis Van Arsdel
+      measures: []
+    - name: Product
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: PRODUCT
+      dimensions:
+        - name: Manufacturer
+          expr: Manufacturer
+          description: ''
+          sample_values:
+            - Abbas
+            - Fama
+            - Natura
+            - Palma
+            - VanArsdel
+        - name: Category
+          expr: Category
+          description: ''
+          sample_values:
+            - Rural
+            - Urban
+            - Youth
+            - Mix
+          synonyms:
+            - Total Sales by Product and Channel
+            - Total Sales by Channel Over Time
+            - Total Sales
+            - Online Sales
+            - Social Media Sales
+            - Stores Sales
+            - Outlet Sales
+            - Total Sales by Channel and State
+            - Sales and ROI Over Time
+        - name: Segment
+          expr: Segment
+          description: ''
+          sample_values:
+            - Regular
+            - Select
+            - Extreme
+            - Youth
+            - Moderation
+          synonyms:
+            - Total Sales
+            - Online Sales
+            - Social Media Sales
+            - Stores Sales
+            - Outlet Sales
+        - name: Product
+          expr: Product
+          description: ''
+          sample_values:
+            - Natura UC-51
+            - Natura UC-05
+            - Maximus UC-04
+            - Maximus UC-52
+            - Maximus UC-32
+          synonyms:
+            - Total Sales by Product and Channel
+        - name: ProductID
+          expr: ProductID
+          description: ''
+          sample_values:
+            - '594'
+            - '947'
+            - '674'
+            - '662'
+            - '536'
+          synonyms:
+            - Product Id
+        - name: isVanArsdel
+          expr: isVanArsdel
+          description: ''
+          sample_values:
+            - 'False'
+            - 'True'
+          synonyms:
+            - Is Van Arsdel
+        - name: IsCompeteHide
+          expr: IsCompeteHide
+          description: ''
+          sample_values:
+            - 'True'
+            - 'False'
+          synonyms:
+            - Is Compete Hide
+        - name: ManufacturerID
+          expr: ManufacturerID
+          description: ''
+          sample_values:
+            - '1'
+            - '5'
+            - '9'
+            - '7'
+            - '8'
+          synonyms:
+            - Manufacturer Id
+        - name: IsCompete
+          expr: IsCompete
+          description: ''
+          sample_values:
+            - 'False'
+            - 'True'
+          synonyms:
+            - Is Compete
+      measures:
+        - name: COUNT_OF_PRODUCT
+          description: ''
+          expr: COUNT(product."PRODUCT")
+        - name: NEWCOUNT_OF_PRODUCT
+          description: '[DAX: COUNTBLANK(''Product''[Product])]'
+          expr: 'NULL'
+          synonyms:
+            - New Count Of Product
+        - name: NEWNEWCOUNT_OF_PRODUCT
+          description: '[DAX: COUNTBLANK(''Product''[Product])]'
+          expr: 'NULL'
+          synonyms:
+            - New New Count Of Product
+    - name: SalesFact
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: SALESFACT
+      dimensions:
+        - name: ProductID
+          expr: ProductID
+          description: ''
+          sample_values:
+            - '2213'
+            - '1085'
+            - '2396'
+            - '2212'
+            - '1086'
+          synonyms:
+            - Product Id
+        - name: Date
+          expr: Date
+          description: ''
+          sample_values:
+            - '2007-05-17'
+            - '2007-03-01'
+            - '2004-04-17'
+            - '2005-06-14'
+            - '2004-06-03'
+        - name: Zip
+          expr: Zip
+          description: ''
+          sample_values:
+            - '45771'
+            - '94002'
+            - '28705'
+            - '83716'
+            - '98589'
+        - name: Units
+          expr: Units
+          description: ''
+          sample_values:
+            - '1'
+            - '3'
+            - '6'
+            - '22'
+            - '28'
+        - name: Revenue
+          expr: Revenue
+          description: ''
+          sample_values:
+            - '3716'
+            - '1070'
+            - '3779'
+            - '5039'
+            - '1889'
+      measures:
+        - name: TOTAL_UNITS
+          description: ''
+          expr: SUM(salesfact."UNITS")
+        - name: SALES_DOL
+          description: ''
+          expr: SUM(salesfact."REVENUE")
+        - name: SENTIMENT
+          description: ''
+          expr: AVG(salesfact."SCORE")
+        - name: TOTAL_UNITS_YTD
+          description: '[DAX: TOTALYTD([TOTAL_UNITS], ''Date''[Date])]'
+          expr: 'NULL'
+        - name: TOTAL_VANARSDEL_UNITS_YTD
+          description: |-
+            [DAX: CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))]
+          expr: 'NULL'
+          synonyms:
+            - Total Van Arsdel Units Ytd
+        - name: TOTAL_OTHER_UNITS_YTD
+          description: |-
+            [DAX: CALCULATE([TOTAL_UNITS_YTD], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))]
+          expr: 'NULL'
+        - name: TOTAL_VANARSDEL_UNITS
+          description: |-
+            [DAX: CALCULATE([TOTAL_UNITS], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))]
+          expr: 'NULL'
+          synonyms:
+            - Total Van Arsdel Units
+        - name: TOTAL_OTHER_UNITS
+          description: |-
+            [DAX: CALCULATE([TOTAL_UNITS], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))]
+          expr: 'NULL'
+        - name: PCT_UNITS_MARKET_SHARE
+          description: ''
+          expr: |-
+            COALESCE((SUM(salesfact."TOTAL_VANARSDEL_UNITS")) / NULLIF(SUM(salesfact."TOTAL_UNITS"), 0), 0)
+          synonyms:
+            - '% Units Market Share R12M and % Units Market Share by Month'
+        - name: TOTAL_CATEGORY_VOLUME
+          description: ''
+          expr: (SUM(salesfact."UNITS"))
+          synonyms:
+            - Total Sales by Product and Channel
+            - Total Sales by Channel Over Time
+            - Total Sales by Channel and State
+            - Sales and ROI Over Time
+            - Total Sales by City
+        - name: TOTAL_COMPETE_VOLUME
+          description: ''
+          expr: SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN salesfact."UNITS" ELSE 0 END)
+        - name: PCT_CATEGORY_COMPETE_SHARE
+          description: ''
+          expr: |-
+            FLOOR(DIV0((SUM(CASE WHEN PRODUCT.ISVANARSDEL = 'No' THEN salesfact."UNITS" ELSE 0 END)), (SUM(salesfact."UNITS"))) * 100)
+        - name: TOTAL_UNITS_SPLY
+          description: ''
+          expr: |-
+            SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."TOTAL_UNITS" ELSE 0 END)
+        - name: TOTAL_UNITS_YTD_SPLY
+          description: ''
+          expr: |-
+            SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."TOTAL_UNITS_YTD" ELSE 0 END)
+        - name: TOTAL_VANARSDEL_UNITS_YTD_SPLY
+          description: ''
+          expr: |-
+            SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."TOTAL_VANARSDEL_UNITS_YTD" ELSE 0 END)
+          synonyms:
+            - Total Van Arsdel Units Ytd Sply
+        - name: TOTAL_OTHER_UNITS_YTD_SPLY
+          description: ''
+          expr: |-
+            SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."TOTAL_OTHER_UNITS_YTD" ELSE 0 END)
+        - name: PCT_UNITS_MARKET_SHARE_YTD
+          description: ''
+          expr: |-
+            COALESCE((SUM(salesfact."TOTAL_VANARSDEL_UNITS_YTD")) / NULLIF(SUM(salesfact."TOTAL_UNITS_YTD"), 0), 0)
+        - name: PCT_MARKET_SHARE_SPLY_YTD
+          description: ''
+          expr: |-
+            SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."PCT_UNITS_MARKET_SHARE_YTD" ELSE 0 END)
+        - name: PCT_UNIT_MARKET_SHARE_YOY_CHANGE
+          description: ''
+          expr: |-
+            (COALESCE((SUM(salesfact."TOTAL_VANARSDEL_UNITS")) / NULLIF(SUM(salesfact."TOTAL_UNITS"), 0), 0))-(SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."PCT_UNITS_MARKET_SHARE" ELSE 0 END))
+        - name: PCT_UNITS_MARKET_SHARE_SPLY
+          description: ''
+          expr: |-
+            SUM(CASE WHEN DATE_PART('YEAR', COL_DATE."COL_DATE") = DATE_PART('YEAR', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', SALESFACT."MAX_DATE")) AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN salesfact."PCT_UNITS_MARKET_SHARE" ELSE 0 END)
+        - name: TOTAL_UNITS_R12MS
+          description: |-
+            [DAX: CALCULATE(SUM([Units]), FILTER(ALL('Date'), 'Date'[MonthIndex]<=MAX('Date'[MonthIndex])&& 'Date'[Mon...]
+          expr: 'NULL'
+        - name: TOTAL_VANARSDEL_UNITS_R12M
+          description: |-
+            [DAX: CALCULATE([TOTAL_UNITS_R12MS], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="Yes"))]
+          expr: 'NULL'
+          synonyms:
+            - Total Van Arsdel Units R12M
+        - name: TOTAL_OTHER_UNITS_R12M
+          description: |-
+            [DAX: CALCULATE([TOTAL_UNITS_R12MS], FILTER(ALL(Product[isVanArsdel]), Product[isVanArsdel]="No"))]
+          expr: 'NULL'
+        - name: PCT_UNITS_MARKET_SHARE_R12M
+          description: ''
+          expr: |-
+            COALESCE((SUM(salesfact."TOTAL_VANARSDEL_UNITS_R12M")) / NULLIF(SUM(salesfact."TOTAL_UNITS_R12MS"), 0), 0)
+          synonyms:
+            - '% Units Market Share R12M and % Units Market Share by Month'
+        - name: SENTIMENT_GAP
+          description: ''
+          expr: |-
+            AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'Yes' THEN SENTIMENT."SCORE" ELSE NULL END) - AVG(CASE WHEN MANUFACTURER."MFGISVANARSDEL" = 'No' THEN SENTIMENT."SCORE" ELSE NULL END)
+        - name: TOTAL_UNITS_YTD_VAR
+          description: '[DAX: [TOTAL_UNITS_YTD]-[TOTAL_UNITS_YTD_SPLY]]'
+          expr: 'NULL'
+        - name: TOTAL_UNITS_YTD_VAR_PCT
+          description: ''
+          expr: |-
+            COALESCE((SUM(salesfact."TOTAL_UNITS_YTD_VAR")) / NULLIF(SUM(salesfact."TOTAL_UNITS_SPLY"), 0), 0)
+          synonyms:
+            - Sales and ROI Over Time
+        - name: SUM_OF_UNITS
+          description: ''
+          expr: SUM(salesfact."UNITS")
+        - name: SUM_OF_REVENUE
+          description: ''
+          expr: SUM(salesfact."REVENUE")
+        - name: ATINDICATOR01
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."%_CATEGORY_COMPETE_SHARE" < 0.55 THEN 1 ELSE CASE WHEN salesfact."%_CATEGORY_COMPETE_SHARE" > 0.6 THEN 3 ELSE 2 END END
+          synonyms:
+            - Total Sales by Product and Channel
+        - name: ATINDICATOR02
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."%_UNIT_MARKET_SHARE_YOY_CHANGE" < 0 THEN 1 ELSE CASE WHEN salesfact."%_UNIT_MARKET_SHARE_YOY_CHANGE" > "_" THEN 2 ELSE 3 END END
+        - name: NUMSPACE01
+          description: '[DAX: "" ]'
+          expr: 'NULL'
+        - name: NUMSPACE02
+          description: '[DAX: "" ]'
+          expr: 'NULL'
+        - name: ATINDICATOR03
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."TOTAL_UNITS_YTD_VAR_%" < 0 THEN 1 ELSE CASE WHEN salesfact."TOTAL_UNITS_YTD_VAR_%" > 0.1 THEN 3 ELSE 2 END END
+        - name: ATINDICATOR04
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."SENTIMENT" < 65 THEN 1 ELSE CASE WHEN salesfact."SENTIMENT" > 67 THEN 3 ELSE 2 END END
+        - name: ATINDICATOR05
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."SENTIMENT_GAP" < 15 THEN 1 ELSE CASE WHEN salesfact."SENTIMENT_GAP" > 25 THEN 3 ELSE 2 END END
+        - name: ATINDICATOR04A
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."@INDICATOR04" = 1 THEN 'Low Sentiment Rate' ELSE CASE WHEN salesfact."@INDICATOR04" = 3 THEN 'High Sentiment Rate' ELSE 'Medium Sentiment Rate' END END
+        - name: ATINDICATOR05A
+          description: ''
+          expr: |-
+            CASE WHEN salesfact."@INDICATOR05" = 1 THEN 'Low Sentiment Gap' ELSE CASE WHEN salesfact."@INDICATOR05" = 3 THEN 'High Sentiment Gap' ELSE 'Medium Sentiment Gap' END END
+        - name: TOTAL_UNITS_YTD_VAR_PCT2
+          description: '[DAX: INT(DIVIDE([TOTAL_UNITS_YTD_VAR],[TOTAL_UNITS_SPLY])*100)]'
+          expr: 'NULL'
+    - name: Sentiment
+      base_table:
+        database: SEMABRIDGE
+        schema: SEMABRIDGE_WORKSPACE
+        table: SENTIMENT
+      dimensions:
+        - name: DateID
+          expr: DateID
+          description: ''
+          sample_values:
+            - '1970-01-13'
+            - '1970-01-11'
+            - '1970-01-08'
+            - '1970-01-24'
+            - '1970-01-09'
+          synonyms:
+            - Date Id
+        - name: StateID
+          expr: StateID
+          description: ''
+          sample_values:
+            - '27'
+            - '12'
+            - '14'
+            - '44'
+            - '1'
+          synonyms:
+            - State Id
+        - name: ManufacturerID
+          expr: ManufacturerID
+          description: ''
+          sample_values:
+            - '13'
+            - '5'
+            - '6'
+            - '10'
+            - '3'
+          synonyms:
+            - Manufacturer Id
+        - name: Score
+          expr: Score
+          description: ''
+          sample_values:
+            - '82'
+            - '73'
+            - '62'
+            - '89'
+            - '86'
+        - name: Manufacturer
+          expr: Manufacturer
+          description: ''
+          sample_values:
+            - Salvus
+            - Leo
+            - Currus
+            - Fama
+            - Barba
+        - name: Date
+          expr: Date
+          description: ''
+          sample_values:
+            - '2013-08-01'
+            - '2013-12-01'
+            - '2013-09-01'
+            - '2013-10-01'
+            - '2013-07-01'
+        - name: State
+          expr: State
+          description: ''
+          sample_values:
+            - ND
+            - CT
+            - IL
+            - VA
+            - NY
+        - name: zip
+          expr: zip
+          description: ''
+          sample_values:
+            - '188'
+            - '64'
+            - '42223'
+            - '58001'
+            - '62356'
+        - name: ProductID
+          expr: ProductID
+          description: ''
+          sample_values:
+            - '211'
+            - '199'
+            - '1863'
+            - '1043'
+            - '1908'
+          synonyms:
+            - Product Id
+      measures:
+        - name: SUM_OF_SCORE
+          description: ''
+          expr: SUM(sentiment."SCORE")
+        - name: AVERAGE_OF_SCORE
+          description: ''
+          expr: AVG(sentiment."SCORE")
+        - name: NEW_DEMO_MEASURE
+          description: ''
+          expr: AVG(sentiment."SCORE")

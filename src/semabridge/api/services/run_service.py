@@ -364,6 +364,69 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         run["total_models"] = int((sync_result or {}).get("total_models") or 0)
         run["logs"] = _build_run_logs(sync_result or {})
         run["stage_states"] = _build_stage_states(sync_result or {})
+
+        # Post-deploy reconciliation: verify every Stage 6 snapshot metric is
+        # either live in the deployed semantic view or already recorded in
+        # dropped_entities above. Best-effort and non-fatal on purpose — a
+        # reconciliation failure (no Snowflake target, the live GET_DDL query
+        # itself failing, etc.) must never flip an otherwise-successful
+        # deploy to "failed". Unaccounted metrics are surfaced through the
+        # same dropped_entities list DroppedFieldsPanel already renders,
+        # tagged with stage="reconciliation" so they group under their own
+        # heading rather than needing a new UI mechanism.
+        try:
+            if (
+                run["status"] != "failed"
+                and str(run["summary"].get("target_type") or "").lower() == "snowflake"
+                and run["summary"].get("sml_snapshot_id")
+            ):
+                from semabridge.core.reconciliation import reconcile_run as _reconcile_run
+
+                recon = _reconcile_run(run["id"])
+                run["summary"]["reconciliation"] = {
+                    "is_clean": recon.is_clean(),
+                    "unaccounted": recon.unaccounted,
+                    "deployed_live_count": len(recon.deployed_live_metrics),
+                    "deployed_dead_count": len(recon.deployed_dead_metrics),
+                    "ddl_error": recon.ddl_error,
+                }
+                if not recon.is_clean():
+                    logger.warning(
+                        "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
+                        project_id, recon.unaccounted,
+                    )
+                    unaccounted_entries = [
+                        {
+                            "entity_kind": "metric",
+                            "entity_name": base,
+                            "dataset": None,
+                            "stage": "reconciliation",
+                            "reason": (
+                                "This metric normalizes to a name present in the Stage 6 "
+                                "snapshot but absent from both the deployed semantic "
+                                "view's DDL and the drop ledger — possible silent loss "
+                                "during deployment."
+                            ),
+                            "detail": f"{count} snapshot occurrence(s) unaccounted for.",
+                            "by_design": False,
+                        }
+                        for base, count in recon.unaccounted.items()
+                    ]
+                    run["summary"].setdefault("dropped_entities", [])
+                    run["summary"]["dropped_entities"].extend(unaccounted_entries)
+                    for result_entry in run.get("results") or []:
+                        if not isinstance(result_entry, dict):
+                            continue
+                        result_summary = result_entry.get("summary") or {}
+                        if result_summary.get("sml_snapshot_id") == recon.snapshot_id:
+                            result_entry.setdefault("dropped_entities", [])
+                            result_entry["dropped_entities"].extend(unaccounted_entries)
+        except Exception as recon_exc:
+            logger.warning(
+                "[%s] Post-deploy reconciliation skipped (non-fatal): %s",
+                project_id, recon_exc,
+            )
+
         run["message"] = (
             "Execution completed successfully."
             if run["status"] == "success"

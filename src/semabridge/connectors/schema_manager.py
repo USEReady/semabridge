@@ -574,29 +574,103 @@ class SnowflakeSchemaManager:
 
         return selected
 
-    def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str) -> str:
+    def _resolve_column_via_relationship(self, model: Any, dataset: Any, raw_col_name: str) -> Optional[str]:
+        """Borrow a physical column name from an active FK relationship partner
+        whose own schema IS confirmed (live or modeled), instead of guessing
+        from this dataset's own declared label/name.
+
+        The two sides of an active join are physically the same column by
+        construction (that's what makes it joinable), so when `dataset`'s own
+        schema is unknown, its partner's confirmed resolution for the paired
+        column is a strictly more reliable answer than sanitizing `dataset`'s
+        own (possibly mapping-override-renamed) column label.
+        """
+        raw_cf = str(raw_col_name).strip().casefold()
+        datasets_by_name = {d.unique_name: d for d in getattr(model, "datasets", []) or []}
+
+        for rel in getattr(model, "relationships", []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+
+            # `dataset` on the "to" (referenced) side; partner is "from" (referencing).
+            if rel.to_dataset == dataset.unique_name:
+                pairs = list(zip(rel.to_columns or [], rel.from_columns or []))
+                partner_name = rel.from_dataset
+            # `dataset` on the "from" (referencing) side; partner is "to" (referenced).
+            elif rel.from_dataset == dataset.unique_name:
+                pairs = list(zip(rel.from_columns or [], rel.to_columns or []))
+                partner_name = rel.to_dataset
+            else:
+                continue
+
+            partner = datasets_by_name.get(partner_name)
+            if partner is None:
+                continue
+
+            for own_col, partner_col in pairs:
+                if str(own_col).strip().casefold() != raw_cf:
+                    continue
+                partner_key = (partner.source_table or partner.unique_name).upper()
+                partner_cols = self._live_schema_metadata.get(partner_key, set())
+                if not partner_cols:
+                    try:
+                        partner_cols = set(self._collect_physical_source_columns(partner).keys())
+                    except Exception:
+                        partner_cols = set()
+                if not partner_cols:
+                    continue
+                partner_cols_upper = {c.upper(): c for c in partner_cols}
+                sanitized_partner_col = self._sanitize_col_name(partner_col).upper()
+                if sanitized_partner_col in partner_cols_upper:
+                    return partner_cols_upper[sanitized_partner_col]
+                raw_partner_upper = str(partner_col).upper()
+                if raw_partner_upper in partner_cols_upper:
+                    return partner_cols_upper[raw_partner_upper]
+
+        return None
+
+    def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str, model: Any = None) -> str:
         """Resolve semantic/raw column name to canonical physical column name dynamically."""
         raw_upper = str(raw_col_name).upper()
         table_name_upper = (dataset.source_table or dataset.unique_name).upper()
-        
+
         # Get live columns if available, otherwise fall back to dataset's SML/OSI columns
         live_cols = self._live_schema_metadata.get(table_name_upper, set())
+        has_confirmed_live_schema = bool(live_cols)
         if not live_cols:
             # Fallback to SML/OSI columns defined in the model
             try:
                 live_cols = set(self._collect_physical_source_columns(dataset).keys())
             except Exception:
                 live_cols = set()
-                
+
+        # 1a. This dataset's own schema isn't confirmed live (live_cols below
+        # is the modeled-columns fallback, built by sanitizing this same
+        # raw_col_name — so exact/case-insensitive/fuzzy matching against it
+        # can only ever "succeed" by trivially re-deriving
+        # sanitize(raw_col_name), never anything more reliable). Before
+        # accepting that circular guess, prefer borrowing the physical name
+        # from an active FK relationship partner whose OWN schema IS
+        # confirmed — the two sides of a join are physically the same
+        # column by construction, so that's a strictly better answer than
+        # guessing from this dataset's own (possibly mapping-override-
+        # renamed) label. This must run before the exact/case-insensitive
+        # checks below, which would otherwise trivially match the
+        # fallback's self-derived entry first.
+        if not has_confirmed_live_schema and model is not None:
+            via_relationship = self._resolve_column_via_relationship(model, dataset, raw_col_name)
+            if via_relationship:
+                return via_relationship
+
         # 1. Exact match
         if raw_upper in live_cols:
             return raw_upper
-            
+
         # 2. Case-insensitive lookup in live columns
         live_cols_upper = {c.upper(): c for c in live_cols}
         if raw_upper in live_cols_upper:
             return live_cols_upper[raw_upper]
-            
+
         # 3. Date/time pattern mappings (dynamic resolution from candidates)
         date_patterns = {
             "DATE": ["CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
@@ -614,14 +688,14 @@ class SnowflakeSchemaManager:
             "MONTHS": ["CAL_MNTH", "MONTHS"],
             "MONTHID": ["CAL_YR_PERIOD", "MONTHID"],
         }
-        
+
         if raw_upper in date_patterns:
             for candidate in date_patterns[raw_upper]:
                 if candidate in live_cols:
                     return candidate
                 if candidate.upper() in live_cols_upper:
                     return live_cols_upper[candidate.upper()]
-                    
+
         # 4. Prefix / suffix checks (e.g. CAL_YEAR -> CAL_YR, etc.)
         for col_name in live_cols:
             col_upper = col_name.upper()
@@ -631,13 +705,13 @@ class SnowflakeSchemaManager:
                 return col_name
             if raw_upper.startswith("COL_") and col_upper == raw_upper[4:]:
                 return col_name
-                
+
         # 5. Fuzzy match fallback using sanitized names
         sanitized_raw = self._sanitize_col_name(raw_col_name).upper()
         for col_name in live_cols:
             if self._sanitize_col_name(col_name).upper() == sanitized_raw:
                 return col_name
-                
+
         # 6. Default to sanitizing raw_col_name if no match is found
         return self._sanitize_col_name(raw_col_name)
 
@@ -700,73 +774,6 @@ class SnowflakeSchemaManager:
             selected[safe_name] = col
 
         return selected
-
-    def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str) -> str:
-        """Resolve semantic/raw column name to canonical physical column name dynamically."""
-        raw_upper = str(raw_col_name).upper()
-        table_name_upper = (dataset.source_table or dataset.unique_name).upper()
-        
-        # Get live columns if available, otherwise fall back to dataset's SML/OSI columns
-        live_cols = self._live_schema_metadata.get(table_name_upper, set())
-        if not live_cols:
-            # Fallback to SML/OSI columns defined in the model
-            try:
-                live_cols = set(self._collect_physical_source_columns(dataset).keys())
-            except Exception:
-                live_cols = set()
-                
-        # 1. Exact match
-        if raw_upper in live_cols:
-            return raw_upper
-            
-        # 2. Case-insensitive lookup in live columns
-        live_cols_upper = {c.upper(): c for c in live_cols}
-        if raw_upper in live_cols_upper:
-            return live_cols_upper[raw_upper]
-            
-        # 3. Date/time pattern mappings (dynamic resolution from candidates)
-        date_patterns = {
-            "DATE": ["CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
-            "YEAR": ["CAL_YR", "COL_YEAR", "FISCAL_YR", "CAL_YR", "YEAR"],
-            "MONTH": ["CAL_MNTH", "COL_MONTH", "FISCAL_MNTH", "CAL_MNTH", "MONTH"],
-            "QUARTER": ["CAL_QTR_NUM", "COL_QUARTER", "FISCAL_QTR", "QUARTER"],
-            "MONTHNO": ["CAL_MNTH", "MONTH_NUM", "MONTHNO"],
-            "MONTHINDEX": ["CAL_MNTH", "MONTHINDEX"],
-            "MONTHNAME": ["CAL_PERIOD_NM", "MONTHNAME"],
-            "RUNNINGMONTHS": ["CAL_YR_PERIOD", "RUNNINGMONTHS"],
-            "RUNNING_MONTHS": ["CAL_YR_PERIOD", "RUNNING_MONTHS"],
-            "RUNNING_YEAR": ["CAL_YR", "RUNNING_YEAR"],
-            "ROLLING_PERIOD": ["CAL_YR_PERIOD", "ROLLING_PERIOD"],
-            "ROLLING_PERIOD_SORT": ["CAL_YR_PERIOD", "ROLLING_PERIOD_SORT"],
-            "MONTHS": ["CAL_MNTH", "MONTHS"],
-            "MONTHID": ["CAL_YR_PERIOD", "MONTHID"],
-        }
-        
-        if raw_upper in date_patterns:
-            for candidate in date_patterns[raw_upper]:
-                if candidate in live_cols:
-                    return candidate
-                if candidate.upper() in live_cols_upper:
-                    return live_cols_upper[candidate.upper()]
-                    
-        # 4. Prefix / suffix checks (e.g. CAL_YEAR -> CAL_YR, etc.)
-        for col_name in live_cols:
-            col_upper = col_name.upper()
-            if col_upper == f"CAL_{raw_upper}" or col_upper == f"COL_{raw_upper}":
-                return col_name
-            if raw_upper.startswith("CAL_") and col_upper == raw_upper[4:]:
-                return col_name
-            if raw_upper.startswith("COL_") and col_upper == raw_upper[4:]:
-                return col_name
-                
-        # 5. Fuzzy match fallback using sanitized names
-        sanitized_raw = self._sanitize_col_name(raw_col_name).upper()
-        for col_name in live_cols:
-            if self._sanitize_col_name(col_name).upper() == sanitized_raw:
-                return col_name
-                
-        # 6. Default to sanitizing raw_col_name if no match is found
-        return self._sanitize_col_name(raw_col_name)
 
     def generate_ctas_sql(
         self,

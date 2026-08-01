@@ -475,6 +475,22 @@ class DaxAstParser:
             name = tok.value.strip("[]")
             return MeasureRefNode(name=name)
 
+        if tok.type == DaxTokenType.IDENTIFIER:
+            # Unquoted table-qualified column reference: TableName[Column]
+            # (DAX allows omitting the quotes around a table name that has
+            # no spaces/special characters — the existing COLUMN_REF branch
+            # above only recognizes the quoted 'Table'[Column] form). The
+            # lexer tokenizes this as a bare IDENTIFIER immediately followed
+            # by a MEASURE_REF, with no operator/comma between them — the
+            # only DAX grammar production that produces that exact adjacent
+            # pair, so this check is unambiguous.
+            next_tok = self.tokens[self.pos + 1] if self.pos + 1 < len(self.tokens) else None
+            if next_tok is not None and next_tok.type == DaxTokenType.MEASURE_REF:
+                self._advance()  # consume the table-name identifier
+                bracket_tok = self._advance()  # consume [Column]
+                column = bracket_tok.value.strip("[]")
+                return ColumnRefNode(table=tok.value, column=column, raw=f"{tok.value}{bracket_tok.value}")
+
         if tok.type == DaxTokenType.NUMBER:
             self._advance()
             try:
@@ -541,7 +557,12 @@ class DaxSqlRenderer:
 
     Args:
         table_alias: SQL alias for the primary fact table (e.g. ``"SALES"``).
-        date_alias: SQL alias for the Date/Calendar dimension table (e.g. ``"CALENDAR"``).
+        date_alias: SQL alias for the Date/Calendar dimension table. Defaults
+            to ``"COL_DATE"`` — the established Snowflake naming convention
+            for this dimension (see snowflake_emitter.py's "Map common DAX
+            name -> physical name (e.g. Date -> COL_DATE)" and
+            dax_rule_translator.py's own _date_alias(), both of which already
+            use this convention).
         measure_sql_map: Pre-resolved SQL for other metrics, keyed by measure name.
             Used to resolve [MeasureName] references in Tier 2/4 expressions.
     """
@@ -580,7 +601,7 @@ class DaxSqlRenderer:
     def __init__(
         self,
         table_alias: str = "T",
-        date_alias: str = "CALENDAR",
+        date_alias: str = "COL_DATE",
         measure_sql_map: Optional[Dict[str, str]] = None,
         known_measure_names: Optional[Any] = None,
     ) -> None:
@@ -597,6 +618,18 @@ class DaxSqlRenderer:
         # bracket names a physical column — falls back to a column
         # reference, exactly as before).
         self.known_measure_names = set(known_measure_names or ())
+        # DAX measure-name resolution is case-insensitive (Analysis Services
+        # treats [Total Units] and [TOTAL UNITS] as the same measure) —
+        # build casefolded lookups alongside the caller-provided ones so
+        # _render_measure_ref matches regardless of casing, without
+        # weakening the known-but-unresolved-vs-genuinely-unknown
+        # distinction in _render_measure_ref below.
+        self._measure_sql_map_by_casefold = {
+            str(name).casefold(): sql for name, sql in self.measure_sql_map.items()
+        }
+        self._known_measure_names_casefold = {
+            str(name).casefold() for name in self.known_measure_names
+        }
         self._func_registry = FunctionRegistry()
 
     def render(self, node: Optional[DaxNode]) -> Optional[str]:
@@ -645,9 +678,10 @@ class DaxSqlRenderer:
         return f'{self.table_alias}."{col}"'
 
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
-        if node.name in self.measure_sql_map:
-            return f"({self.measure_sql_map[node.name]})"
-        if node.name in self.known_measure_names:
+        name_cf = node.name.casefold()
+        if name_cf in self._measure_sql_map_by_casefold:
+            return f"({self._measure_sql_map_by_casefold[name_cf]})"
+        if name_cf in self._known_measure_names_casefold:
             # The caller's model tracks this as a real measure name, so
             # rendering it as a column would reference a physical column
             # that doesn't exist (Bug: measure-references-measure leaking
@@ -749,6 +783,12 @@ class DaxSqlRenderer:
                 raise self.DaxRenderError("ISBLANK requires 1 argument")
             arg_sql = self._render_node(node.args[0])
             return f"({arg_sql} IS NULL)"
+
+        # BLANK() -> SQL NULL (matches ISBLANK's own "x IS NULL" mapping
+        # just above, and the same BLANK()->NULL rule already documented
+        # for Tier 5's prompt — just never implemented in this renderer).
+        if func == "BLANK":
+            return "NULL"
 
         # CONCATENATE
         if func == "CONCATENATE":
@@ -932,66 +972,31 @@ class DaxSqlRenderer:
         partition_cols: List[str] = []
         is_window = False
 
-        # Support lag-period time-intelligence functions inside CALCULATE
-        is_lag = False
+        # Support lag-period time-intelligence functions inside CALCULATE —
+        # DAX allows this shape (CALCULATE(agg, SAMEPERIODLASTYEAR(Date[Date])))
+        # as an alternative to the direct SAMEPERIODLASTYEAR(agg, Date[Date])
+        # form _render_lag_period already handles. These are the same DAX
+        # operation expressed two different ways — delegate to that single
+        # shared implementation rather than keeping a second, independent
+        # copy of the same CASE WHEN/anchor-shift logic here. (This
+        # duplication is exactly how a quarter/month measure-reference
+        # fallback existed in _render_lag_period but not here, and how an
+        # anchor-shift bug got fixed in one copy but not the other.)
+        lag_filter_arg = None
         lag_interval = "year"
         for filter_arg in args[1:]:
             if isinstance(filter_arg, FunctionCallNode):
                 fname = filter_arg.func.upper()
                 if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
-                    is_lag = True
                     lag_interval = "year" if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR") else ("quarter" if fname == "PREVIOUSQUARTER" else "month")
+                    lag_filter_arg = filter_arg
                     break
 
-        if is_lag:
-            # CALCULATE(agg, SAMEPERIODLASTYEAR(Date[Date])) → scalar CASE WHEN
-            # SUM(CASE WHEN YEAR(date_col) = YEAR(max_date) - 1
-            #           AND MONTH(date_col) <= MONTH(max_date) THEN col END)
-            d = self.date_alias
-            date_col = f'{d}."COL_DATE"'
-            # Qualified reference to the fact table's enriched-view MAX_DATE anchor
-            # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
-            # identifier inside a semantic view's METRICS clause.
-            max_date = f'{self.table_alias}."MAX_DATE"'
-            # Extract agg column from agg_expr if possible
-            if isinstance(args[0], FunctionCallNode) and args[0].func.upper() in self._AGG_MAP:
-                inner_agg_func = args[0].func.upper()
-                if args[0].args:
-                    col_sql = self._render_node(args[0].args[0])
-                else:
-                    col_sql = f'{self.table_alias}."UNITS"'
-                sql_func = "AVG" if inner_agg_func == "AVERAGE" else inner_agg_func
-                cast = "::FLOAT" if inner_agg_func in ("SUM", "AVERAGE") else ""
-                if lag_interval == "year":
-                    return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR({max_date}) - 1 "
-                        f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
-                        f"AND DATEADD(YEAR, -1, {max_date}) THEN {col_sql}{cast} END)"
-                    )
-                elif lag_interval == "quarter":
-                    return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
-                        f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date})) THEN {col_sql}{cast} END)"
-                    )
-                else:  # month
-                    return (
-                        f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
-                        f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date})) THEN {col_sql}{cast} END)"
-                    )
-            # Fallback: args[0] isn't a direct aggregation call — e.g. a
-            # measure reference. Inject the filter into ITS aggregate
-            # argument rather than wrapping the already-aggregated
-            # expression in a second outer aggregate (same pattern as
-            # _render_period_to_date/_render_lag_period).
-            if lag_interval == "year":
-                condition_sql = (
-                    f"YEAR({date_col}) = YEAR({max_date}) - 1 "
-                    f"AND {date_col} <= DATEADD(YEAR, -1, {max_date})"
-                )
-                rewritten = self._inject_case_filter_into_rendered_aggregate(agg_expr, condition_sql)
-                if rewritten:
-                    return rewritten
-            raise self.DaxRenderError(f"Cannot render lag_interval={lag_interval} without recognized aggregation")
+        if lag_filter_arg is not None:
+            date_arg = lag_filter_arg.args[0] if lag_filter_arg.args else None
+            if date_arg is None:
+                raise self.DaxRenderError(f"{lag_filter_arg.func} requires a date-column argument")
+            return self._render_lag_period([args[0], date_arg], interval=lag_interval, amount=-1)
 
         for filter_arg in args[1:]:
             if isinstance(filter_arg, FunctionCallNode):
@@ -1037,19 +1042,41 @@ class DaxSqlRenderer:
                 )
 
         if is_window:
-            if partition_cols:
-                partition_clause = "PARTITION BY " + ", ".join(partition_cols)
-                return f"{agg_expr} OVER ({partition_clause})"
-            else:
-                return f"{agg_expr} OVER ()"
+            # ALL(...)/ALLEXCEPT(...) mean "re-partition this aggregate
+            # independently of the query's own grouping" — inherently a SQL
+            # window function. Snowflake's semantic-view METRICS clause
+            # forbids window functions (see metrics_clause_builder.py's and
+            # snowflake_metric_sql.py's own OVER/PARTITION BY guards), and
+            # this codebase has no derived-metric/precomputed-column
+            # mechanism to materialize the windowed value another way.
+            # Emitting OVER(...) here used to look like a successful Tier 4
+            # translation while actually being invalid Snowflake METRICS
+            # SQL (silently NULL at query time) — fail closed instead, so
+            # the metric correctly escalates to Tier 5 like any other
+            # genuinely unresolved pattern.
+            raise self.DaxRenderError(
+                "ALLEXCEPT/ALL context-transition requires a SQL window "
+                "function, which Snowflake's semantic-view METRICS clause "
+                "does not support"
+            )
         elif filter_clauses:
             where = " AND ".join(filter_clauses)
             if isinstance(args[0], FunctionCallNode) and args[0].func.upper() in self._AGG_MAP:
                 return self._rewrite_filtered_aggregate(args[0], where)
-            else:
-                raise self.DaxRenderError(
-                    f"Base aggregation {args[0]} is too complex to rewrite as CASE-based filtered aggregate"
-                )
+            # Base isn't a direct aggregate call — the common real-world
+            # shape here is a measure reference, e.g. CALCULATE([Measure],
+            # <filter>). Inject the filter into ITS aggregate argument
+            # rather than wrapping the already-aggregated expression in a
+            # second outer aggregate — the same fallback already used for
+            # TOTALYTD/lag-period measure-reference bases
+            # (_render_period_to_date/_render_lag_period), just never
+            # applied to this branch until now.
+            rewritten = self._inject_case_filter_into_rendered_aggregate(agg_expr, where)
+            if rewritten:
+                return rewritten
+            raise self.DaxRenderError(
+                f"Base aggregation {args[0]} is too complex to rewrite as CASE-based filtered aggregate"
+            )
         else:
             return agg_expr
 
@@ -1168,26 +1195,49 @@ class DaxSqlRenderer:
 
         # Base argument isn't a direct aggregation call — e.g. a measure
         # reference such as SAMEPERIODLASTYEAR([Total Sales], 'Date'[Date]).
-        # Render it and inject the period condition into its aggregate
-        # argument rather than wrapping the already-aggregated expression
-        # in a second outer aggregate (see _render_period_to_date for the
-        # same pattern applied to TOTALYTD/MTD/QTD).
         agg_sql = self._render_node(agg_node)
+        shift_expr = {
+            "year": f"DATEADD(YEAR, -1, {max_date})",
+            "quarter": f"DATEADD(QUARTER, -1, {max_date})",
+            "month": f"DATEADD(MONTH, -1, {max_date})",
+        }[interval]
+
+        if max_date in agg_sql:
+            # The referenced measure's own SQL already anchors a date
+            # window to MAX_DATE (e.g. TOTALYTD's own "date <= MAX_DATE"
+            # upper bound) — shifting every reference to that anchor by
+            # the same lag period moves the WHOLE window back together,
+            # which is what SAMEPERIODLASTYEAR/PREVIOUSxxx of an
+            # already-date-bounded measure actually means. ANDing a
+            # second, unshifted "is this row from last year" condition
+            # around an inner window still bounded to *this* year's
+            # MAX_DATE would be self-contradictory — the two conditions
+            # can never both be true (confirmed for
+            # TOTALYTD-wrapped-in-SAMEPERIODLASTYEAR, which is exactly how
+            # this bug manifested: an always-empty CASE WHEN, never a
+            # crash, so it never surfaced as a translation failure).
+            return agg_sql.replace(max_date, shift_expr)
+
+        # No existing anchor to shift — the referenced measure has no date
+        # window of its own (e.g. a plain SUM with no date filter at all),
+        # so there is nothing to conflict with. Inject a new period
+        # condition instead (same pattern as _render_period_to_date's
+        # measure-reference fallback for TOTALYTD/MTD/QTD).
         if interval == "year":
             condition_sql = (
                 f"YEAR({date_col}) = YEAR({max_date}) - 1 "
                 f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
-                f"AND DATEADD(YEAR, -1, {max_date})"
+                f"AND {shift_expr}"
             )
         elif interval == "quarter":
             condition_sql = (
-                f"YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
-                f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date}))"
+                f"YEAR({date_col}) = YEAR({shift_expr}) "
+                f"AND QUARTER({date_col}) = QUARTER({shift_expr})"
             )
         else:
             condition_sql = (
-                f"YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
-                f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date}))"
+                f"YEAR({date_col}) = YEAR({shift_expr}) "
+                f"AND MONTH({date_col}) = MONTH({shift_expr})"
             )
         rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, condition_sql)
         if rewritten:
@@ -1221,7 +1271,7 @@ class DaxSqlRenderer:
 def try_ast_translate(
     dax: str,
     table_alias: str,
-    date_alias: str = "calendar",
+    date_alias: str = "COL_DATE",
     measure_sql_map: Optional[Dict[str, str]] = None,
     known_measure_names: Optional[Any] = None,
 ) -> Optional[str]:
@@ -1341,3 +1391,153 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
         return False
 
     return not _refs_data(node)
+
+
+_CONTEXT_TRANSITION_REASON = (
+    "DAX ALLEXCEPT/ALL requires re-partitioning the aggregate "
+    "independently of the query's own grouping (a SQL window "
+    "function) — Snowflake's semantic-view METRICS clause does not "
+    "support window functions, and no derived-metric/precomputed-"
+    "column materialization exists yet for this pattern."
+)
+
+
+def _calculate_has_direct_all_or_allexcept_modifier(node: DaxNode) -> bool:
+    """True if any CALCULATE(...) anywhere in the tree has ALL(...) or
+    ALLEXCEPT(...) as one of its own direct filter-modifier arguments —
+    the exact shape DaxSqlRenderer._render_calculate treats as a
+    context-transition/window-function case (sets is_window=True).
+
+    Deliberately NOT a text/regex search for "ALL(" or "ALLEXCEPT("
+    anywhere in the expression: ALL(...) also appears legitimately nested
+    inside FILTER(...)'s own first argument (e.g. CALCULATE(measure,
+    FILTER(ALL(table), predicate))) — DAX's idiom for "filter the whole
+    table regardless of context," a normal, different, sometimes-
+    resolvable filtered-aggregate pattern, not a window-function one. Only
+    an ALL/ALLEXCEPT that CALCULATE sees as its own direct argument
+    triggers the window-function path; walking the same structure
+    _render_calculate itself dispatches on keeps this classifier exactly
+    consistent with the renderer's actual behavior.
+    """
+    if isinstance(node, FunctionCallNode):
+        if node.func == "CALCULATE":
+            for filter_arg in node.args[1:]:
+                if isinstance(filter_arg, FunctionCallNode) and filter_arg.func in ("ALL", "ALLEXCEPT"):
+                    return True
+        return any(_calculate_has_direct_all_or_allexcept_modifier(a) for a in node.args)
+    if isinstance(node, BinaryOpNode):
+        return (
+            _calculate_has_direct_all_or_allexcept_modifier(node.left)
+            or _calculate_has_direct_all_or_allexcept_modifier(node.right)
+        )
+    if isinstance(node, UnaryOpNode):
+        return _calculate_has_direct_all_or_allexcept_modifier(node.operand)
+    return False
+
+
+def dax_context_transition_failure_reason(dax: str) -> Optional[str]:
+    """
+    Returns a specific, accurate failure reason if `dax` contains
+    CALCULATE(agg, ALL(...)) or CALCULATE(agg, ALLEXCEPT(...)) — a genuine
+    DAX context-transition pattern with no SQL equivalent inside
+    Snowflake's semantic-view METRICS clause. ALLEXCEPT/ALL mean
+    "recompute this aggregate re-partitioned independently of whatever
+    dimensions the query itself groups by" — inherently a SQL window
+    function, which Snowflake's METRICS clause forbids (see
+    DaxSqlRenderer._render_calculate, which fails closed on this shape
+    rather than emitting one). This codebase has no derived-metric/
+    precomputed-column mechanism to materialize the windowed value some
+    other way, so the pattern is genuinely unsupported today, not just
+    untranslated.
+
+    Returns None for any other DAX shape (including ALL(...) nested inside
+    FILTER(...), a different and sometimes-resolvable idiom — see
+    _calculate_has_direct_all_or_allexcept_modifier), so callers fall back
+    to their own generic translation-failure message.
+    """
+    if not dax:
+        return None
+    node = DaxAstParser().parse(dax)
+    if node is None:
+        return None
+    if _calculate_has_direct_all_or_allexcept_modifier(node):
+        return _CONTEXT_TRANSITION_REASON
+    return None
+
+
+_LAG_PERIOD_FUNCS = ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER")
+
+
+def _calculate_lag_period_of_measure_reference(node: DaxNode) -> Optional[str]:
+    """Returns the referenced measure's name if any CALCULATE(...)
+    anywhere in the tree wraps a bare measure reference (not a direct
+    aggregate call) with a SAMEPERIODLASTYEAR/PREVIOUSxxx filter modifier
+    as its own direct argument — the shape DaxSqlRenderer._render_lag_period's
+    measure-reference fallback handles by inlining that measure's own
+    resolved SQL (shifting its date anchor, or injecting a new period
+    filter if it has none). Mirrors
+    _calculate_has_direct_all_or_allexcept_modifier's AST-walk approach —
+    a text/regex search would risk matching the function name appearing
+    nested somewhere unrelated.
+    """
+    if isinstance(node, FunctionCallNode):
+        if node.func == "CALCULATE" and node.args:
+            base = node.args[0]
+            if isinstance(base, MeasureRefNode):
+                for filter_arg in node.args[1:]:
+                    if isinstance(filter_arg, FunctionCallNode) and filter_arg.func in _LAG_PERIOD_FUNCS:
+                        return base.name
+        for a in node.args:
+            found = _calculate_lag_period_of_measure_reference(a)
+            if found:
+                return found
+        return None
+    if isinstance(node, BinaryOpNode):
+        return (
+            _calculate_lag_period_of_measure_reference(node.left)
+            or _calculate_lag_period_of_measure_reference(node.right)
+        )
+    if isinstance(node, UnaryOpNode):
+        return _calculate_lag_period_of_measure_reference(node.operand)
+    return None
+
+
+def dax_lag_period_of_measure_reference_failure_reason(dax: str) -> Optional[str]:
+    """
+    Returns a specific, accurate failure reason if `dax` contains
+    CALCULATE([SomeMeasure], SAMEPERIODLASTYEAR(...)/PREVIOUSYEAR(...)/
+    PREVIOUSMONTH(...)/PREVIOUSQUARTER(...)) — a measure reference (not a
+    direct aggregate) wrapped in a prior-period filter.
+
+    Translating this requires inlining the referenced measure's own
+    resolved SQL and shifting its date anchor (or, if it has none,
+    injecting a new period filter) — see
+    DaxSqlRenderer._render_lag_period. If this still failed to translate,
+    the referenced measure either hasn't been resolved yet (a normal,
+    later-pass-clears-it deferral) or its SQL shape was too complex to
+    safely rewrite — either way, "DAX translation failed" alone doesn't
+    say why, and this used to fail differently and worse: emitting a bare
+    reference to the other metric by name (rejected by Snowflake with "a
+    metric must directly refer to another aggregate-level expression") or
+    a self-contradictory always-empty filter, neither of which is this
+    function's concern to restate — it only describes the current,
+    corrected failure mode.
+
+    Returns None for any other DAX shape, so callers fall back to their
+    own generic translation-failure message.
+    """
+    if not dax:
+        return None
+    node = DaxAstParser().parse(dax)
+    if node is None:
+        return None
+    measure_name = _calculate_lag_period_of_measure_reference(node)
+    if measure_name is None:
+        return None
+    return (
+        f"DAX SAMEPERIODLASTYEAR/PREVIOUSYEAR/PREVIOUSMONTH/PREVIOUSQUARTER wraps "
+        f"measure [{measure_name}] rather than a direct aggregate — requires that "
+        f"measure's own resolved SQL to inline and shift its date window. Not yet "
+        f"resolvable: either [{measure_name}] hasn't been translated yet, or its "
+        f"SQL shape is too complex to safely rewrite."
+    )

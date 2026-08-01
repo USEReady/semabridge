@@ -108,17 +108,34 @@ class OSIToSMLConverter(BaseConverter):
             for osi_dim in osi_model.dimensions:
                 sml.dimensions.append(self._convert_dimension(osi_dim))
 
+            # Source-schema lookup for Tier 5's semantic validator (Step 3 of
+            # the DAX translation consolidation). Built once here, from the
+            # source datasets/columns just converted above — no
+            # Snowflake-side physical schema exists yet at this stage.
+            # General/schema-shape-derived (sanitize_column/to_alias, same
+            # utilities already used throughout this module) — not
+            # hardcoded to any table/column/model name.
+            dax_dataset_col_lookup, dax_dataset_aliases = DAXTranslator.build_schema_lookup(sml.datasets)
+
             # 3. Convert Metrics with automated translation pipeline
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
-            
+
             for osi_metric in osi_model.metrics:
-                sml_metric = self._convert_metric(osi_metric)
+                sml_metric = self._convert_metric(
+                    osi_metric,
+                    dataset_col_lookup=dax_dataset_col_lookup,
+                    dataset_aliases=dax_dataset_aliases,
+                )
                 sml.metrics.append(sml_metric)
 
             # Step 3b: Resolve inter-measure dependencies now that all metrics are loaded.
             # This helps Category 2/3 formulas like [A]-[B], DIVIDE([A],[B]), TOTALYTD([A], ...)
             # when dependencies appear later in source order.
-            self._resolve_metric_dependencies(sml)
+            self._resolve_metric_dependencies(
+                sml,
+                dataset_col_lookup=dax_dataset_col_lookup,
+                dataset_aliases=dax_dataset_aliases,
+            )
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
             from semabridge.converter.dax_ast_parser import is_by_design_excluded
@@ -133,11 +150,15 @@ class OSIToSMLConverter(BaseConverter):
                     dax = sml_metric.expression.strip()
                     table_alias = to_alias(sml_metric.dataset)
                     tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
-            
+
             # Step 3d: Batch translate all Tier 5 candidates at once (reduces API calls by 90%)
             if tier5_candidates:
                 logger.info(f"📦 Batch translating {len(tier5_candidates)} Tier 5 metrics...")
-                batch_results = self.dax_translator.batch_translate_tier5(tier5_candidates)
+                batch_results = self.dax_translator.batch_translate_tier5(
+                    tier5_candidates,
+                    dataset_col_lookup=dax_dataset_col_lookup,
+                    dataset_aliases=dax_dataset_aliases,
+                )
                 
                 # Apply batch translation results back to metrics
                 for metric in sml.metrics:
@@ -231,7 +252,12 @@ class OSIToSMLConverter(BaseConverter):
             is_hidden=osi_dim.is_hidden
         )
 
-    def _convert_metric(self, osi_metric: OSIMetric) -> SMLMetric:
+    def _convert_metric(
+        self,
+        osi_metric: OSIMetric,
+        dataset_col_lookup: Optional[Dict[str, set]] = None,
+        dataset_aliases: Optional[Dict[str, str]] = None,
+    ) -> SMLMetric:
         # --- Snowflake-sourced metrics already have sql_expression ---
         # When the source is a Snowflake semantic view, the expression is already
         # valid SQL. Use SQLToDAXConverter to produce a DAX representation for
@@ -350,7 +376,9 @@ class OSIToSMLConverter(BaseConverter):
                 expression,
                 safe_alias,
                 osi_metric.dataset,
-                metric_name=metric.unique_name
+                metric_name=metric.unique_name,
+                dataset_col_lookup=dataset_col_lookup,
+                dataset_aliases=dataset_aliases,
             )
             
             if translation.is_success:
@@ -359,7 +387,18 @@ class OSIToSMLConverter(BaseConverter):
                 metric.sync_enabled = True
                 metric.sync_failure_reason = None
             elif metric.sync_enabled:
-                 metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
+                from semabridge.converter.dax_ast_parser import (
+                    dax_context_transition_failure_reason,
+                    dax_lag_period_of_measure_reference_failure_reason,
+                )
+                context_transition_reason = dax_context_transition_failure_reason(expression)
+                lag_period_reason = dax_lag_period_of_measure_reference_failure_reason(expression)
+                if context_transition_reason:
+                    metric.sync_failure_reason = context_transition_reason
+                elif lag_period_reason:
+                    metric.sync_failure_reason = lag_period_reason
+                else:
+                    metric.sync_failure_reason = f"DAX translation deferred to Tier-5 batch (Tier {translation.tier})"
 
         # Propagate Cortex AI metadata from OSI layer
         metric.access_modifier = osi_metric.access_modifier
@@ -369,14 +408,27 @@ class OSIToSMLConverter(BaseConverter):
 
         return metric
 
-    def _resolve_metric_dependencies(self, sml: SMLModel, max_passes: int = 3) -> None:
+    def _resolve_metric_dependencies(
+        self,
+        sml: SMLModel,
+        max_passes: int = 3,
+        dataset_col_lookup: Optional[Dict[str, set]] = None,
+        dataset_aliases: Optional[Dict[str, str]] = None,
+    ) -> None:
         """Resolve unresolved metrics using full metric context in deterministic passes.
 
         This performs lightweight topological convergence: each pass can unlock
         downstream expressions once upstream measures receive SQL.
+
+        dataset_col_lookup/dataset_aliases: forwarded to DAXTranslator's
+        Tier 5 semantic validator (Step 3 of the DAX translation
+        consolidation); rebuilt from sml.datasets if not supplied.
         """
         if not sml.metrics:
             return
+
+        if dataset_col_lookup is None or dataset_aliases is None:
+            dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(sml.datasets)
 
         from semabridge.converter.dax_ast_parser import is_by_design_excluded
 
@@ -398,6 +450,8 @@ class OSIToSMLConverter(BaseConverter):
                     metric.dataset,
                     metric_name=metric.unique_name,
                     metrics_context=sml.metrics,
+                    dataset_col_lookup=dataset_col_lookup,
+                    dataset_aliases=dataset_aliases,
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql

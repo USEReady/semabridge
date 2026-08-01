@@ -4127,13 +4127,77 @@ class DatabricksPublisher:
                 context[alias] = sorted(set(columns))
         return context
 
+    def _build_dax_translation_schema_lookup(
+        self, sml_model: SMLModel
+    ) -> tuple[dict[str, set], dict[str, str]]:
+        """dataset_col_lookup/dataset_aliases for Tier 5's semantic validator,
+        keyed by dataset unique_name (not alias) — the shape TranslationRequest
+        expects. Reuses this class's own _sanitize_identifier (Databricks'
+        identifier rules — different from Snowflake's IdentifierSanitizer
+        used by Pipeline A/B), not the Snowflake-oriented sanitizer, and not
+        hardcoded to any table/column/model name.
+
+        _build_llm_schema_context() above builds a similarly-sanitized dict
+        for display purposes, but keys it by *alias* — wrong shape for
+        dataset_col_lookup, which callers resolve via alias_to_dataset then
+        look up by dataset name. Built fresh here instead of reusing it.
+        """
+        dataset_col_lookup: dict[str, set] = {}
+        dataset_aliases: dict[str, str] = {}
+        for dataset in sml_model.datasets:
+            ds_name = str(dataset.unique_name or "").strip()
+            if not ds_name:
+                continue
+            alias = self._sanitize_identifier(ds_name)
+            if not alias:
+                continue
+            dataset_aliases[ds_name] = alias
+            columns = {
+                self._sanitize_identifier(col.unique_name).upper()
+                for col in dataset.columns
+                if self._sanitize_identifier(col.unique_name)
+            }
+            if columns:
+                dataset_col_lookup[ds_name] = columns
+        return dataset_col_lookup, dataset_aliases
+
     def _try_llm_metric_fallback_expression(
         self,
         metric: SMLMetric,
         dataset: Optional[SMLDataset],
         sml_model: SMLModel,
     ) -> Optional[str]:
-        """Attempt LLM-based DAX translation when deterministic rules fail."""
+        """Thin shim onto DaxTranslationService's Tier 5 (Step 4 of the
+        approved consolidation migration). Same signature, same
+        Optional[str] contract — the one existing caller (_resolve_measure_sql)
+        is unaffected.
+
+        Unlike Pipeline A/B, there is no rule-based-translation-first step
+        to preserve here — the real implementation went straight to OpenAI
+        then Gemini, with no rule engine and no prefetch cache. Confirmed by
+        reading the full original body before this cutover.
+
+        Calls tier5.service.Tier5Service directly, NOT
+        DaxTranslationService.translate_metric() — that would also run
+        Tier 1-4 (converter/dax_translator.py's tiers_1_4.py), which are
+        Snowflake-dialect-specific (Snowflake quoting, ::FLOAT casts, DIV0).
+        Calling the full service here would silently produce Snowflake SQL
+        for a Databricks deploy — a real dialect bug, not just redundant
+        work (unlike Pipeline A's identical-dialect case in Step 3). This
+        connector's own deterministic tiers (self._measure_translator,
+        tried earlier in _resolve_measure_sql's priority chain) are a
+        separate, Databricks-native engine, untouched by this migration.
+
+        Found during this cutover's required dialect-correctness check (not
+        preserved silently — fixed generally in tier5/validation.py and
+        tier5/prompt.py, reported separately): the verbatim-salvaged
+        validator only recognized Snowflake's double-quote identifier
+        syntax, so backtick-quoted Databricks SQL referencing a nonexistent
+        column was silently accepted. A dialect-aware quote-translation
+        layer and dialect-gated Snowflake-only-syntax helpers (::FLOAT,
+        IFF) close that gap generally, for every Databricks caller, not
+        just this one.
+        """
         if not dataset:
             return None
         dax_expr = (metric.expression or "").strip()
@@ -4141,52 +4205,40 @@ class DatabricksPublisher:
             return None
 
         table_alias = self._sanitize_identifier(dataset.unique_name) or "source"
-        schema_context = self._build_llm_schema_context(sml_model)
+        dataset_col_lookup, dataset_aliases = self._build_dax_translation_schema_lookup(sml_model)
 
-        # 1. Try OpenAI translation first if OPENAI_API_KEY is configured
-        openai_sql = self._try_openai_dax_translation(
-            dax_expression=dax_expr,
-            metric=metric,
-            table_alias=table_alias,
-            schema_context=schema_context,
-        )
-        if openai_sql:
-            return openai_sql
-
-        # 2. Fall back to Gemini
         try:
-            from semabridge.converter.gemini_dax_translator import get_gemini_translator
-        except Exception as exc:  # pragma: no cover - import guard
-            logger.debug("Gemini translator unavailable: %s", exc)
-            return None
+            from semabridge.dax_translation.tier5.service import Tier5Service
+            from semabridge.dax_translation.types import TranslationRequest
 
-        translator = get_gemini_translator()
-        if not translator.use_gemini or not translator.api_key:
-            logger.debug("Gemini translator disabled or missing API key")
-            return None
-
-        result = translator.translate(
-            dax=dax_expr,
-            table_alias=table_alias,
-            dataset_name=str(dataset.unique_name or ""),
-            metric_name=str(metric.unique_name or ""),
-            schema_context=schema_context,
-        )
-        if result and result.is_valid and result.sql:
-            logger.info(
-                "LLM translated DAX for measure '%s': %s → %s",
-                metric.unique_name,
-                dax_expr[:60],
-                result.sql,
+            request = TranslationRequest(
+                dax=dax_expr,
+                dataset_name=str(dataset.unique_name or ""),
+                table_alias=table_alias,
+                dataset_col_lookup=dataset_col_lookup,
+                dataset_aliases=dataset_aliases,
+                metric_name=str(metric.unique_name or ""),
+                dialect="databricks",
             )
-            return result.sql
-        if result and result.sql:
+            result = Tier5Service().translate(request)
+            if result is not None and result.is_success and result.sql:
+                logger.info(
+                    "LLM translated DAX for measure '%s' (provider=%s, confidence=%.2f): %s → %s",
+                    metric.unique_name,
+                    result.provider,
+                    result.translation_provider_confidence,
+                    dax_expr[:60],
+                    result.sql,
+                )
+                return result.sql
+            return None
+        except Exception as exc:
             logger.warning(
-                "LLM translation rejected for measure '%s': %s",
+                "Tier 5 fallback failed for Databricks measure '%s': %s",
                 metric.unique_name,
-                result.sql[:80],
+                exc,
             )
-        return None
+            return None
 
     def _try_openai_dax_translation(
         self,

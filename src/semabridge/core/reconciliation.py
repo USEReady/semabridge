@@ -60,9 +60,19 @@ from semabridge.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Matches a METRICS-clause definition line, e.g.:  ALIAS."METRIC_NAME" AS <expr>,
-_METRIC_DEF_RE = re.compile(r'^\s*\w+\."([^"]+)"\s+AS\s+(.+?)\s*,?\s*$')
+# The identifier quoting and AS/as casing must both be optional/case-insensitive:
+# our own DDL builders always emit uppercase-quoted (ALIAS."NAME" AS ...), but
+# Snowflake's GET_DDL echoes the *live* deployed view back lowercase and only
+# quotes identifiers that actually need it (alias.name as ...) — reconcile_run
+# parses GET_DDL output directly (see _fetch_live_deployed_ddl), so both
+# shapes have to match here.
+_METRIC_DEF_RE = re.compile(r'^\s*\w+\."?(\w+)"?\s+AS\s+(.+?)\s*,?\s*$', re.IGNORECASE)
 _CLAUSE_CLOSE_RE = re.compile(r'^\s*\)\s*;?\s*$')
 _NULL_CAST_RE = re.compile(r'^\s*CAST\s*\(\s*NULL\s+AS\s+DOUBLE\s*\)\s*$', re.IGNORECASE)
+# Same GET_DDL-vs-our-DDL spacing/casing mismatch for the trailing synonyms
+# clause: we emit " WITH SYNONYMS = (...)", Snowflake's GET_DDL echoes back
+# "with synonyms=(...)" with no spaces around "=".
+_SYNONYMS_SUFFIX_RE = re.compile(r'\s*WITH\s+SYNONYMS\s*=\s*\(.*\)\s*$', re.IGNORECASE)
 # Generic dedup-suffix patterns applied to colliding metric aliases elsewhere
 # in the codebase: "_<digits>" (connectors/metrics_clause_builder.py
 # ``_resolve_unique_metric_alias``) or "_<4 hex chars>" (connectors/
@@ -200,10 +210,7 @@ def _extract_deployed_metric_names(ddl_text: str) -> tuple[set[str], set[str]]:
         expr_clean = expr.strip().rstrip(",")
         # Strip a trailing WITH SYNONYMS(...) clause before checking for the
         # NULL-cast shape, same split used in metrics_clause_builder.py.
-        marker = " WITH SYNONYMS = ("
-        idx = expr_clean.upper().rfind(marker)
-        if idx >= 0:
-            expr_clean = expr_clean[:idx].rstrip()
+        expr_clean = _SYNONYMS_SUFFIX_RE.sub("", expr_clean).rstrip()
         if _NULL_CAST_RE.match(expr_clean):
             dead.add(name.upper())
         else:
@@ -245,82 +252,142 @@ def compute_reconciliation(
     )
 
 
-def reconcile_run(run_id: str, *, snowflake_account: Optional[str] = None) -> ReconciliationReport:
-    """Build a :class:`ReconciliationReport` for any completed sync run.
+def _fetch_live_deployed_ddl(project_id: str, view_name: str) -> str:
+    """Fetch the DDL of the currently-deployed semantic view directly from
+    Snowflake via ``GET_DDL``.
 
-    Works against durable state only:
-      1. The Stage 6 SML snapshot committed for ``run_id`` (``snapshots`` table).
-      2. A deterministic re-emission of deploy-time DDL from that snapshot,
-         using the real ``SnowflakeEmitter`` with placeholder credentials
-         (pure string-building — no network I/O).
-      3. The DropLedger produced by that same re-emission pass.
-
-    Raises ``ValueError`` if the run, its snapshot, or the snapshot payload
-    cannot be found (e.g. a failed run whose snapshot payload was cleared —
-    see ``model_repository._payload_for_snapshot``).
+    This reflects whatever the real deploy actually put live right now — no
+    DAX translation, no LLM calls, nothing re-derived. Uses the same
+    identity_id-scoped credential resolution the real deploy path uses
+    (``core/engine/deployment/snowflake.py:_deploy_to_snowflake``).
     """
     from sqlalchemy import select
 
-    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
-    from semabridge.core.behavior import ConnectorBehavior
-    from semabridge.core.settings import SnowflakeConfig
-    from semabridge.repository.model_repository import ModelRepository
-    from semabridge.repository.orm.models import Run, SnapshotRow
+    from semabridge.api.services.project_shared import _compat_load_modular_project
+    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.sml.serializer import SMLSerializer
+
+    bundle = _compat_load_modular_project(project_id)
+    if not bundle:
+        raise ValueError(f"No project config found for project_id={project_id!r}")
+
+    identity_id = ""
+    for target in (bundle.get("assembled") or {}).get("targets") or []:
+        if isinstance(target, dict) and target.get("type") == "snowflake":
+            identity_id = str(target.get("identity_id") or "").strip()
+            break
+    if not identity_id:
+        raise ValueError(f"Project {project_id!r} has no Snowflake identity_id configured")
 
     with db_manager.get_session() as session:
-        run_row = session.get(Run, run_id)
-        if run_row is None:
-            raise ValueError(f"No run found with run_id={run_id!r}")
-        project_id = run_row.project_id
-
-        snap_row = session.execute(
-            select(SnapshotRow)
-            .where(SnapshotRow.run_id == run_id, SnapshotRow.deleted_at.is_(None))
-            .order_by(SnapshotRow.timestamp.desc())
+        account = session.execute(
+            select(Account).where(Account.connector_type == "SNOWFLAKE", Account.id == identity_id)
         ).scalars().first()
+        if not account:
+            raise ValueError(f"No linked Snowflake account found for identity_id={identity_id!r}")
 
-    if snap_row is None:
-        raise ValueError(f"No SML snapshot found for run_id={run_id!r}")
+        with scoped_account_env(account, session):
+            from semabridge.core.settings import reload_settings
+
+            sf_cfg = reload_settings().snowflake
+            return SnowflakeExtractor(sf_cfg).extract_semantic_view_ddl(view_name)
+
+
+def reconcile_run(run_id: str) -> ReconciliationReport:
+    """Build a :class:`ReconciliationReport` for any completed sync run.
+
+    Works against durable state the real deploy already produced — nothing
+    here re-derives or re-translates anything:
+      1. The Stage 6 SML snapshot for the run (looked up via the run's
+         persisted ``summary.sml_snapshot_id`` — see note below on why this
+         reads the compat store rather than the ``runs``/``snapshots`` ORM
+         tables).
+      2. The metric list of the *actually deployed* semantic view, fetched
+         live via ``GET_DDL`` (``_fetch_live_deployed_ddl`` above) — not a
+         fresh re-emission through the DDL builders, which would re-invoke
+         DAX-to-SQL translation (calls to OpenAI/Groq) and could fail or
+         diverge from what's actually live for reasons entirely unrelated to
+         the real deploy, e.g. an LLM key that has since expired.
+      3. The metric-level drop records the real deploy already recorded in
+         that same run summary's ``dropped_entities`` — not a freshly
+         regenerated DropLedger.
+
+    Note on run tracking: the app currently has two parallel, unsynced run-
+    tracking stores — a JSON-backed "compat" store (``_compat_project_runs``,
+    read here) that the API/UI actually read and write for run status and
+    ``dropped_entities``, and a separate Postgres ORM ``runs``/``snapshots``
+    schema that historically backed this function but that nothing in the
+    app currently keeps in sync (a run can show ``status="success"`` in the
+    compat store while its ORM ``Run`` row is still ``"running"``). This
+    function reads the compat store since that's the one durable source that
+    actually carries the real deploy's ``dropped_entities``. The SML snapshot
+    payload itself is still fetched via ``ModelRepository`` — both stores
+    reference the same underlying snapshot id, so that part is shared.
+
+    Raises ``ValueError`` if the run or its snapshot payload cannot be found.
+    """
+    from semabridge.api.services.project_shared import _compat_load_store, _compat_project_runs
+    from semabridge.repository.model_repository import ModelRepository
+    from semabridge.sml.serializer import SMLSerializer
+    from semabridge.utils.name_translator import get_target_deployment_name
+
+    _compat_load_store()
+
+    run_entry: Optional[dict] = None
+    project_id: Optional[str] = None
+    for pid, runs in _compat_project_runs.items():
+        match = next((r for r in (runs or []) if isinstance(r, dict) and r.get("run_id") == run_id), None)
+        if match is not None:
+            run_entry, project_id = match, pid
+            break
+
+    if run_entry is None:
+        raise ValueError(f"No run found with run_id={run_id!r}")
+
+    summary = run_entry.get("summary") or {}
+    snapshot_id = summary.get("sml_snapshot_id")
+    if not snapshot_id:
+        raise ValueError(f"Run {run_id!r} has no sml_snapshot_id recorded — nothing to reconcile.")
 
     repo = ModelRepository()
-    snapshot = repo.get_snapshot(snap_row.snapshot_id)
+    snapshot = repo.get_snapshot(snapshot_id)
     if not snapshot or not snapshot.sml_blob:
         raise ValueError(
-            f"Snapshot {snap_row.snapshot_id!r} for run {run_id!r} has no sml_blob "
+            f"Snapshot {snapshot_id!r} for run {run_id!r} has no sml_blob "
             "(failed runs clear their payload — nothing to reconcile)."
         )
 
     sml_blob = snapshot.sml_blob
     raw_metric_names = [m.get("unique_name") for m in (sml_blob.get("metrics") or []) if m.get("unique_name")]
-
     sml_model = SMLSerializer._dict_to_model(sml_blob)
 
-    placeholder_cfg = SnowflakeConfig(
-        account=snowflake_account or "placeholder",
-        user="placeholder",
-        warehouse="placeholder",
-        database=(sml_blob.get("unique_name") or "placeholder"),
-    )
-    emitter = SnowflakeEmitter(config=placeholder_cfg, behavior=ConnectorBehavior())
+    drop_records = [
+        r for r in (summary.get("dropped_entities") or [])
+        if isinstance(r, dict) and r.get("entity_kind") == "metric"
+    ]
+
+    view_name = get_target_deployment_name(sml_model.unique_name or sml_model.label or "model", "snowflake")
 
     ddl_error: Optional[str] = None
     ddl_text = ""
     try:
-        ddls = emitter.generate_ddls(sml_model)
-        ddl_text = "\n\n".join(ddls)
+        ddl_text = _fetch_live_deployed_ddl(project_id, view_name)
     except Exception as exc:  # noqa: BLE001 - deliberately broad, mirrors dry-run precedent
         ddl_error = str(exc)
-        logger.info("reconcile_run: generate_ddls raised (non-fatal, ledger still populated): %s", exc)
+        logger.info(
+            "reconcile_run: could not fetch live deployed DDL for view %r (non-fatal): %s",
+            view_name, exc,
+        )
 
     return compute_reconciliation(
         run_id=run_id,
         project_id=project_id,
-        snapshot_id=snap_row.snapshot_id,
+        snapshot_id=snapshot_id,
         snapshot_metric_names=raw_metric_names,
         deployed_ddl_text=ddl_text,
-        drop_records=emitter.drop_ledger.to_json(),
+        drop_records=drop_records,
         ddl_error=ddl_error,
     )
 

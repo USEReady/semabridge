@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -18,16 +19,28 @@ def _cfg():
     )
 
 def test_databricks_openai_fallback_success(monkeypatch):
-    """Verify that when OPENAI_API_KEY is configured, Databricks fallback tries OpenAI and returns the translated SQL."""
+    """Verify that when OPENAI_API_KEY is configured, Databricks fallback tries OpenAI and returns the translated SQL.
+
+    Updated for the DAX translation consolidation's Step 4 cutover:
+    _try_llm_metric_fallback_expression now calls DaxTranslationService's
+    Tier5Service, which (a) uses the central config's model default
+    (gpt-4o-mini, not the old hardcoded gpt-4o), and (b) runs the response
+    through the shared normalize/validate pipeline for the first time —
+    Pipeline C never had semantic validation before this migration. The
+    normalized SQL is still correct, executable Databricks SQL (uppercased
+    column name, backtick quoting dropped since not required for this
+    identifier) — just no longer a raw, unvalidated echo of the LLM's
+    response. See Step 4's report for the full rationale.
+    """
     monkeypatch.setenv("OPENAI_API_KEY", "mock-openai-key")
-    
+
     # Mock OpenAI client
     mock_choices = [SimpleNamespace(message=SimpleNamespace(content="SUM(`sales`.`revenue`)"))]
     mock_response = SimpleNamespace(choices=mock_choices)
-    
+
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = mock_response
-    
+
     class MockOpenAI:
         def __init__(self, *args, **kwargs):
             pass
@@ -37,7 +50,7 @@ def test_databricks_openai_fallback_success(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=MockOpenAI))
 
     publisher = DatabricksPublisher(_cfg())
-    
+
     model = SMLModel(
         unique_name="TestModel",
         datasets=[
@@ -54,27 +67,43 @@ def test_databricks_openai_fallback_success(monkeypatch):
     # Invoke fallback
     sql = publisher._try_llm_metric_fallback_expression(metric, dataset, model)
 
-    assert sql == "SUM(`sales`.`revenue`)"
+    # Normalized (uppercased, unquoted-since-not-needed) but still valid,
+    # correct Databricks SQL referencing the same real column.
+    assert sql == "SUM(sales.REVENUE)"
+    # OpenAI succeeds on the first attempt, so Tier5Service returns
+    # immediately without trying any further configured provider.
     mock_client.chat.completions.create.assert_called_once()
-    
-    # Inspect arguments to verify prompt contains Databricks rules
+
+    # Inspect arguments to verify prompt contains Databricks rules and the
+    # centrally-configured model (gpt-4o-mini), not the old hardcoded gpt-4o.
     kwargs = mock_client.chat.completions.create.call_args[1]
-    assert kwargs["model"] == "gpt-4o"
+    assert kwargs["model"] == "gpt-4o-mini"
     messages = kwargs["messages"]
     assert "Databricks SQL" in messages[1]["content"] or "Databricks SQL" in messages[0]["content"]
 
 
 def test_databricks_openai_fallback_rejected_forbidden_sql(monkeypatch):
-    """Verify that if OpenAI returns forbidden SQL tokens, it rejects it and doesn't crash."""
+    """Verify that if OpenAI returns forbidden SQL tokens, it rejects it and doesn't crash.
+
+    Updated for Step 4: Pipeline C previously hardcoded OpenAI->Gemini only.
+    It now goes through Tier5Service's centrally-configured provider order
+    (openai, gemini, groq, featherless) — this environment has a GROQ_API_KEY
+    name present, so Groq is also tried after OpenAI's response is rejected,
+    via its own direct OpenAI-compatible-client leg (which also imports
+    `openai.OpenAI`, so the same mock intercepts it too — hence 2 calls, not
+    1). The functional outcome this test actually cares about — a forbidden
+    SELECT statement is rejected and the function returns None without
+    crashing — is unchanged and still verified below.
+    """
     monkeypatch.setenv("OPENAI_API_KEY", "mock-openai-key")
-    
+
     # Mock OpenAI client returning forbidden SELECT statement
     mock_choices = [SimpleNamespace(message=SimpleNamespace(content="SELECT SUM(`sales`.`revenue`) FROM `sales`"))]
     mock_response = SimpleNamespace(choices=mock_choices)
-    
+
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = mock_response
-    
+
     class MockOpenAI:
         def __init__(self, *args, **kwargs):
             pass
@@ -83,7 +112,7 @@ def test_databricks_openai_fallback_rejected_forbidden_sql(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=MockOpenAI))
 
     publisher = DatabricksPublisher(_cfg())
-    
+
     model = SMLModel(
         unique_name="TestModel",
         datasets=[
@@ -97,40 +126,47 @@ def test_databricks_openai_fallback_rejected_forbidden_sql(monkeypatch):
     metric = SMLMetric(unique_name="TotalRevenue", expression="SUM([sales].[revenue])", dataset="sales")
     dataset = model.datasets[0]
 
-    # Patch Gemini to return None or assert it falls back to Gemini
-    with patch("semabridge.converter.gemini_dax_translator.get_gemini_translator") as mock_gemini_get:
-        mock_translator = MagicMock()
-        mock_translator.use_gemini = True
-        mock_translator.api_key = None  # Force it to return None in Gemini
-        mock_gemini_get.return_value = mock_translator
-        
-        sql = publisher._try_llm_metric_fallback_expression(metric, dataset, model)
-        
-        # It should reject the SELECT statement and fall back to Gemini, which returns None due to no API key
-        assert sql is None
-        mock_client.chat.completions.create.assert_called_once()
-        mock_gemini_get.assert_called_once()
+    sql = publisher._try_llm_metric_fallback_expression(metric, dataset, model)
+
+    # The forbidden SELECT statement must be rejected — no valid translation
+    # is returned, and the call must not crash.
+    assert sql is None
+    # OpenAI (the first configured provider) was tried at least once, with
+    # the rejected response.
+    assert mock_client.chat.completions.create.call_count >= 1
+    first_call_kwargs = mock_client.chat.completions.create.call_args_list[0][1]
+    assert first_call_kwargs["model"] == "gpt-4o-mini"
 
 
 def test_sml_loader_openai_batch_translation(monkeypatch):
-    """Verify SML loader batch translation calls OpenAI and successfully parses JSON response."""
+    """Verify DAXTranslator.batch_translate_tier5 successfully translates
+    multiple metrics via OpenAI.
+
+    Updated again for the DAX translation consolidation's batching-restore
+    task: batch_translate_tier5 now calls Tier5Service.translate_batch(),
+    which sends every remaining candidate as ONE JSON-map prompt/response
+    per provider call instead of one call per metric — see
+    dax_translator.py's batch_translate_tier5 docstring. This test now
+    asserts the restored one-call contract (call_count == 1 regardless of
+    metric count) and mocks a single JSON response mapping the batch's
+    synthetic per-position keys (m0, m1, ...) to SQL, matching
+    tier5/prompt.py's build_batch_prompt/parse_batch_payload contract.
+    """
     monkeypatch.setenv("OPENAI_API_KEY", "mock-openai-key")
-    
-    # Mock JSON response payload
-    mock_payload = '{"MetricA": "SUM(`sales`.`revenue`)", "MetricB": "AVG(`sales`.`cost`)"}'
-    mock_choices = [SimpleNamespace(message=SimpleNamespace(content=mock_payload))]
-    mock_response = SimpleNamespace(choices=mock_choices)
-    
+
+    batch_response = json.dumps({"m0": "SUM(`sales`.`revenue`)", "m1": "AVG(`sales`.`cost`)"})
     mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = mock_response
-    
+    mock_client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=batch_response))]
+    )
+
     class MockOpenAI:
         def __init__(self, *args, **kwargs):
             pass
         chat = mock_client.chat
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=MockOpenAI))
-    
+
     # Also mock Gemini so it doesn't interfere
     with patch("semabridge.converter.gemini_dax_translator.get_gemini_translator") as mock_gemini_get:
         mock_gemini_translator = MagicMock()
@@ -141,7 +177,7 @@ def test_sml_loader_openai_batch_translation(monkeypatch):
 
         translator = DAXTranslator()
         # Use RANKX / TOPN — truly opaque expressions the deterministic engine cannot handle,
-        # ensuring these reach the OpenAI Priority-0 batch path.
+        # ensuring these reach the Tier 5 LLM path.
         metrics_list = [
             ("MetricA", "RANKX(ALL('Sales'), [Total Revenue])", "sales", "sales"),
             ("MetricB", "TOPN(10, VALUES('Sales'[Region]), [Total Cost], DESC)", "sales", "sales"),
@@ -159,7 +195,9 @@ def test_sml_loader_openai_batch_translation(monkeypatch):
         assert results["MetricB"].is_success is True
         assert results["MetricB"].sql == "AVG(`sales`.`cost`)"
 
-        mock_client.chat.completions.create.assert_called_once()
+        # The whole point of restoring batching: 2 metrics needing Tier 5
+        # cost exactly 1 API call, not 2.
+        assert mock_client.chat.completions.create.call_count == 1
 
 
 def test_translator_bare_metric_qualification():
