@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior
+from semabridge.connectors.fact_table_naming import (
+    FACT_KEYWORDS as _FACT_KEYWORDS,
+    tokenize_dataset_name as _tokenize_dataset_name,
+)
 from semabridge.formats.sml.models import SMLModel
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.utils.logger import get_logger
@@ -1479,27 +1483,12 @@ class SnowflakeEmitter(BaseEmitter):
 
 
 
-    _FACT_KEYWORDS = frozenset({"FACT", "FACTS", "SALES", "TRANSACTION", "TRANSACTIONS"})
-
-    @staticmethod
-    def _tokenize_dataset_name(name: str) -> list[str]:
-        """
-        Split a dataset name into whole "words" so keyword matching can't be
-        fooled by a keyword appearing mid-word (e.g. "Manufacturer" contains
-        "fact" as a substring, "Artifact" and "Satisfaction" do too, but none
-        of them are actual fact tables).
-
-        Splits on non-alphanumeric separators (underscores, spaces, hyphens)
-        and on camelCase/PascalCase boundaries, e.g. "SalesFact" -> ["Sales",
-        "Fact"], but "Manufacturer" stays a single token since it has no
-        internal case transition.
-        """
-        word_re = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+')
-        tokens: list[str] = []
-        for part in re.split(r'[^A-Za-z0-9]+', name or ""):
-            if part:
-                tokens.extend(word_re.findall(part))
-        return [t.upper() for t in tokens if t]
+    # Canonical implementation lives in fact_table_naming.py (shared with
+    # tables_clause_builder.py) — kept as class attributes here since
+    # existing internal call sites (self._tokenize_dataset_name(...),
+    # self._FACT_KEYWORDS) and tests reference them at this location.
+    _FACT_KEYWORDS = _FACT_KEYWORDS
+    _tokenize_dataset_name = staticmethod(_tokenize_dataset_name)
 
     def _identify_fact_table(self, model):
         """
@@ -1789,22 +1778,21 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _resolve_physical_col_name(self, dax_col_name: str, existing_cols: set[str]) -> str:
         """
-        Map a DAX column name (potentially model-level) to its physical Snowflake column name.
-        Tries: exact, COL_{name}, {name}ID, and case-insensitive match.
+        Map a DAX column name to its physical Snowflake column name, using
+        only unambiguous, structure-preserving normalizations of the real,
+        live schema in `existing_cols` — exact (case-insensitive) match, or
+        spaces collapsed to underscores. Returns "" (not a guessed name)
+        when nothing matches, so callers correctly treat "not found" as
+        not found instead of acting on an unverified name.
         """
         candidates = [
             dax_col_name.upper(),
-            f"COL_{dax_col_name.upper()}",
             dax_col_name.upper().replace(' ', '_'),
         ]
         for c in candidates:
             if c in existing_cols:
                 return c
-        # Try substring match (e.g. DAX 'Date' might be 'COL_DATE')
-        for existing in existing_cols:
-            if dax_col_name.upper() in existing:
-                return existing
-        return dax_col_name.upper().replace(' ', '_')
+        return ""
 
     def _get_directional_join_key(self, table1: str, table2: str, from_side: str) -> str:
         """
@@ -1998,12 +1986,6 @@ class SnowflakeEmitter(BaseEmitter):
 
         select_parts = [f"SELECT f.*"]
 
-        if "UNITS" in fact_cols:
-            total_units_literal = _fetch_literal(f'SELECT SUM("UNITS") FROM {fact_source_ref}')
-            if total_units_literal is not None:
-                select_parts.append(f'\n        , {total_units_literal} AS "TOTAL_UNITS_ALL"')
-                projected_cols.add("TOTAL_UNITS_ALL")
-        
         # Add generic cross-dataset precomputed columns into the fact enriched view.
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
         _ = suggestions
@@ -2047,12 +2029,12 @@ class SnowflakeEmitter(BaseEmitter):
                 resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
 
             # Table selection for each anchor must be driven by which table
-            # actually owns the column — never by loop order or first-match.
-            # Mirrors the "UNITS" in fact_cols" gate above: only fire the
-            # MAX_DATE probe against fact_source_ref when fact_table's own
-            # columns actually contain resolved_date_col (this fact table may
-            # not be the one the date anchor belongs to — see the KPI/SalesFact
-            # multi-fact-table regression this guard was added to fix).
+            # actually owns the column — never by loop order or first-match:
+            # only fire the MAX_DATE probe against fact_source_ref when
+            # fact_table's own columns actually contain resolved_date_col
+            # (this fact table may not be the one the date anchor belongs
+            # to — see the KPI/SalesFact multi-fact-table regression this
+            # guard was added to fix).
             if resolved_date_col in fact_cols:
                 max_date_literal = _fetch_literal(f'SELECT MAX("{resolved_date_col}") FROM {fact_source_ref}')
                 if max_date_literal is not None:
@@ -2140,10 +2122,11 @@ class SnowflakeEmitter(BaseEmitter):
         model_name: str,
         shadow_table: str,
         triage_results: Dict[str, Any],
-        grain_dimensions: list[str]
+        grain_dimensions: list[str],
+        column_types: Optional[Dict[str, bool]] = None,
     ) -> str:
         return self.measure_synchronizer.generate_semantic_view_tiered(
-            model_name, shadow_table, triage_results, grain_dimensions
+            model_name, shadow_table, triage_results, grain_dimensions, column_types
         )
 
     def _try_basic_dax_metric_fallback_expression(

@@ -39,6 +39,7 @@ from semabridge.utils.synonyms import (
     merge_synonyms_with_sources,
 )
 from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.connectors.business_field_type_hints import infer_business_field_type
 
 logger = get_logger(__name__)
 
@@ -380,10 +381,7 @@ class TMSLToOSIConverter(BaseConverter):
             for col in table_def["columns"]:
                 columns.append(self._parse_column(col, name))
         
-        # Source table logic
         source_table = name
-        if name == "Table":
-            source_table = "DEVICE_INVENTORY"  # Legacy heuristic from PRD/Test environment
 
         return OSIDataset(
             unique_name=name,
@@ -629,28 +627,22 @@ class TMSLToOSIConverter(BaseConverter):
         }
         return mapping.get(normalized, OSIAggregationType.SUM)
 
-    @staticmethod
+    _BUSINESS_FIELD_TYPE_TO_OSI = {
+        "BOOLEAN": OSIDataType.BOOLEAN,
+        "TIMESTAMP": OSIDataType.DATETIME,
+        "FLOAT": OSIDataType.FLOAT,
+        "DATE": OSIDataType.DATE,
+    }
+
+    @classmethod
     def _business_rule_type(
+        cls,
         table_name: str,
         col_name: str,
     ) -> Optional[OSIDataType]:
-        """Business-rule layer for known Salesforce semantic fields."""
-        t = (table_name or "").upper()
-        c = (col_name or "").strip().upper()
-        c_norm = re.sub(r"[^A-Z0-9]", "", c)
-
-        if c_norm == "FIRMNESSOFFIRSTDELIVERYDATE":
-            return OSIDataType.STRING
-        if c == "DELETED":
-            return OSIDataType.BOOLEAN
-        if "MODSTAMP" in c_norm:
-            return OSIDataType.DATETIME
-        if "VOLUME" in c_norm or "AMOUNT" in c_norm:
-            return OSIDataType.FLOAT
-        if "DATE" in c_norm and not t.endswith("FIELDHISTORY"):
-            return OSIDataType.DATE
-
-        return None
+        """Business-rule layer for common CRM-style naming conventions."""
+        hint = infer_business_field_type(table_name, col_name)
+        return cls._BUSINESS_FIELD_TYPE_TO_OSI.get(hint) if hint else None
 
     @staticmethod
     def _infer_string_column_type(

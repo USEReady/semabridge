@@ -34,21 +34,35 @@ class MeasureSynchronizer:
         self.translator = translator
 
     
-    def _build_safe_sum_sql(self, expr_sql: str, identifier_hint: Optional[str] = None) -> str:
+    def _build_safe_sum_sql(
+        self,
+        expr_sql: str,
+        identifier_hint: Optional[str] = None,
+        *,
+        is_boolean_column: Optional[bool] = None,
+    ) -> str:
         """Return SUM SQL that is safe for both numeric and boolean expressions.
 
         We avoid TRY_TO_NUMBER/TRY_TO_BOOLEAN on numeric columns because Snowflake
         throws compilation errors when those functions are applied to non-VARCHAR types.
+
+        is_boolean_column, when the caller has it, is the authoritative signal —
+        derived from the actual synced data's real Python value types (see
+        _detect_boolean_columns), not the column's name. Falls back to the
+        name-pattern heuristic only when no real type information is available.
         """
-        is_flag = False
-        if identifier_hint:
-            hint = identifier_hint.strip().upper().replace('"', '')
-            col_name = hint.split('.')[-1] if '.' in hint else hint
-            flag_patterns = [
-                r'^IS_', r'^HAS_', r'^WAS_', r'^DID_', r'^DOES_',
-                r'_FLAG$', r'_FLG$', r'^DELETED$', r'_DELETED$'
-            ]
-            is_flag = any(re.search(p, col_name) for p in flag_patterns)
+        if is_boolean_column is not None:
+            is_flag = is_boolean_column
+        else:
+            is_flag = False
+            if identifier_hint:
+                hint = identifier_hint.strip().upper().replace('"', '')
+                col_name = hint.split('.')[-1] if '.' in hint else hint
+                flag_patterns = [
+                    r'^IS_', r'^HAS_', r'^WAS_', r'^DID_', r'^DOES_',
+                    r'_FLAG$', r'_FLG$', r'^DELETED$', r'_DELETED$'
+                ]
+                is_flag = any(re.search(p, col_name) for p in flag_patterns)
 
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"
@@ -57,12 +71,28 @@ class MeasureSynchronizer:
             return f"SUM({expr_sql})"
         return f"SUM({expr_sql}::FLOAT)"
 
+    def _detect_boolean_columns(self, data: list[dict]) -> Dict[str, bool]:
+        """Authoritative True/False per column, derived from the actual synced
+        row values (Power BI's JSON API preserves true/false as native Python
+        bool) — not from column naming. Every column present in `data` gets a
+        definitive entry, overriding the name heuristic in _build_safe_sum_sql;
+        only columns absent from the synced data fall through to that
+        heuristic.
+        """
+        if not data:
+            return {}
+        return {
+            self._id.sanitize_column(col): isinstance(val, bool)
+            for col, val in data[0].items()
+        }
+
     def generate_semantic_view_tiered(
         self,
         model_name: str,
         shadow_table: str,
         triage_results: Dict[str, Any],
-        grain_dimensions: list[str]
+        grain_dimensions: list[str],
+        column_types: Optional[Dict[str, bool]] = None,
     ) -> str:
         """Generate a Snowflake VIEW that reconstructs measures per tier.
 
@@ -74,10 +104,14 @@ class MeasureSynchronizer:
             shadow_table: Fully qualified shadow table reference.
             triage_results: Dict of metric_name → TriageResult.
             grain_dimensions: Dimension column names used in GROUP BY.
+            column_types: Optional sanitized-column-name -> is_boolean map
+                (see _detect_boolean_columns) used to build safe SUM
+                expressions from real data types instead of column naming.
 
         Returns:
             A CREATE OR REPLACE VIEW DDL string.
         """
+        column_types = column_types or {}
         view_name = f"V_{self._id.sanitize_table_name(model_name)}"
         full_view = (
             f"{self.config.database}.{self.config.schema_name}."
@@ -101,19 +135,19 @@ class MeasureSynchronizer:
             if triage.strategy.value == "passthrough":
                 # Tier 1: simple pass-through aggregation
                 select_parts.append(
-                    f'    {self._build_safe_sum_sql(safe_expr, safe)} AS "{safe}"'
+                    f'    {self._build_safe_sum_sql(safe_expr, safe, is_boolean_column=column_types.get(safe))} AS "{safe}"'
                 )
 
             elif triage.strategy.value == "aligned_history":
                 # Tier 2: base value + companion columns
                 select_parts.append(
-                    f'    {self._build_safe_sum_sql(safe_expr, safe)} AS "{safe}"'
+                    f'    {self._build_safe_sum_sql(safe_expr, safe, is_boolean_column=column_types.get(safe))} AS "{safe}"'
                 )
                 for suffix in triage.aligned_measures:
                     alias = self._id.sanitize_column(f"{metric_name}{suffix}")
                     alias_expr = f'base."{alias}"'
                     select_parts.append(
-                        f'    {self._build_safe_sum_sql(alias_expr, alias)} AS "{alias}"'
+                        f'    {self._build_safe_sum_sql(alias_expr, alias, is_boolean_column=column_types.get(alias))} AS "{alias}"'
                     )
 
             elif triage.strategy.value == "decomposition":
@@ -124,13 +158,13 @@ class MeasureSynchronizer:
                     num_expr = f'base."{num_col}"'
                     den_expr = f'base."{den_col}"'
                     select_parts.append(
-                        f'    {self._build_safe_sum_sql(num_expr, num_col)} / '
-                        f'NULLIF({self._build_safe_sum_sql(den_expr, den_col)}, 0) AS "{safe}"'
+                        f'    {self._build_safe_sum_sql(num_expr, num_col, is_boolean_column=column_types.get(num_col))} / '
+                        f'NULLIF({self._build_safe_sum_sql(den_expr, den_col, is_boolean_column=column_types.get(den_col))}, 0) AS "{safe}"'
                     )
                 else:
                     # Tier 3 without decomposition — pass-through
                     select_parts.append(
-                        f'    {self._build_safe_sum_sql(safe_expr, safe)} AS "{safe}"'
+                        f'    {self._build_safe_sum_sql(safe_expr, safe, is_boolean_column=column_types.get(safe))} AS "{safe}"'
                     )
 
         select_block = ",\n".join(select_parts)
@@ -468,6 +502,7 @@ class MeasureSynchronizer:
                             grain_dimensions=[
                                 self._id.sanitize_column(d) for d in grain
                             ],
+                            column_types=self._detect_boolean_columns(data),
                         )
                         logger.debug(f"View DDL:\n{view_ddl}")
                     except Exception as view_err:
@@ -644,6 +679,7 @@ class MeasureSynchronizer:
                             grain_dimensions=[
                                 self._id.sanitize_column(d) for d in grain
                             ],
+                            column_types=self._detect_boolean_columns(data),
                         )
                         logger.debug(f"View DDL:\n{view_ddl}")
                     except Exception as view_err:

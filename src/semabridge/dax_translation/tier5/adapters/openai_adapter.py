@@ -24,7 +24,12 @@ import time
 from typing import Optional
 
 from semabridge.utils.logger import get_logger
-from semabridge.dax_translation.tier5.adapters.base import RawResult, strip_markdown_fences
+from semabridge.dax_translation.tier5.adapters.base import (
+    ProviderAuthError,
+    RawResult,
+    is_auth_error,
+    strip_markdown_fences,
+)
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 logger = get_logger(__name__)
@@ -73,6 +78,12 @@ class OpenAIAdapter:
                 sql = (response.choices[0].message.content or "").strip()
                 break
             except Exception as exc:
+                if is_auth_error(exc):
+                    # A bad/expired key fails identically on every retry —
+                    # don't burn the remaining attempts (and their backoff
+                    # sleeps) on a guaranteed-repeat failure.
+                    logger.warning("OpenAI adapter auth failure, skipping remaining retries: %s", exc)
+                    raise ProviderAuthError("openai", exc) from exc
                 logger.warning("OpenAI adapter attempt %d/%d failed: %s", attempt, max_retries, exc)
                 if attempt < max_retries:
                     time.sleep(min(2 ** attempt, 10))

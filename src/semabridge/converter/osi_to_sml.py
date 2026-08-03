@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
+from semabridge.connectors.dataset_classification_keywords import is_calendar_like_name
 from semabridge.intermediate.models import (
     OSIModel,
     OSIDataset,
@@ -490,7 +491,7 @@ class OSIToSMLConverter(BaseConverter):
 
     def _inject_calendar_dimension(self, sml: SMLModel) -> None:
         # Same logic as TMSLTransformer
-        if any("DATE" in ds.unique_name.upper() or "CALENDAR" in ds.unique_name.upper() for ds in sml.datasets):
+        if any(is_calendar_like_name(ds.unique_name) for ds in sml.datasets):
             return
             
         # Create standard Date column definitions

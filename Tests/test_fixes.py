@@ -184,7 +184,31 @@ def test_dynamic_alias_healing_rewrites_to_active_alias():
     ) == "SALESFACT_ENRICHED.UNITS"
 
 def test_dynamic_alias_healing_does_not_accept_invalid_qualified_alias():
-    """Explicit invalid aliases must remain validation failures."""
+    """An alias must remain a validation failure when the column it
+    references has no owner anywhere either — genuinely unresolvable.
+    (A column uniquely owned by a real dataset, like REVENUE below, now
+    correctly resolves through an unrecognized alias — see
+    test_dynamic_alias_healing_resolves_unknown_alias_via_column_ownership;
+    that's the fix, not a regression here.)"""
+    from semabridge.connectors.translator import MetricExpressionTranslator
+    from semabridge.utils.identifiers import IdentifierSanitizer
+
+    translator = MetricExpressionTranslator(IdentifierSanitizer())
+    valid, issue = translator._validate_metric_column_references(
+        'unknown."NOPE"',
+        "Metric",
+        {"SalesFact": {"REVENUE"}},
+        {"SalesFact": "SALESFACT"},
+        metric_names=set(),
+    )
+
+    assert valid is False
+    assert "Alias 'unknown' not found" in issue
+
+
+def test_dynamic_alias_healing_resolves_unknown_alias_via_column_ownership():
+    """Regression: an alias the LLM got wrong must still resolve correctly
+    when the referenced column is uniquely owned by a real dataset."""
     from semabridge.connectors.translator import MetricExpressionTranslator
     from semabridge.utils.identifiers import IdentifierSanitizer
 
@@ -197,8 +221,7 @@ def test_dynamic_alias_healing_does_not_accept_invalid_qualified_alias():
         metric_names=set(),
     )
 
-    assert valid is False
-    assert "Alias 'unknown' not found" in issue
+    assert valid is True, issue
 
 def test_dax_strict_time_intelligence_uses_configured_date_alias(monkeypatch):
     """Strict DAX TOTALYTD output should not hardcode CALENDAR."""

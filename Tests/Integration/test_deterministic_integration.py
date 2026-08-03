@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
-Test that deterministic translator integration is working correctly.
+Test that DAXTranslator's translation output stays safe and predictable.
+
+DeterministicTranslator/semantic_layer.py are retained as standalone-tested
+legacy classes (see the direct-construction tests below and
+Tests/Integration/test_semantic_translation.py) but have no live call site in
+the active translation pipeline — converter.dax_translator.DAXTranslator no
+longer routes through them (removed: they were hardcoded to a 5-column demo
+schema and never generalized to real customer schemas). The tests below
+exercise DAXTranslator directly and no longer assume DeterministicTranslator
+is on that path.
 
 Verifies:
-1. DeterministicTranslator is being used as primary engine
+1. Tier 1-4 (not DeterministicTranslator) is what's actually invoked
 2. No heuristic fallback SQL is generated
 3. Schema validation is enforced
 4. Invalid columns are rejected
@@ -187,11 +196,39 @@ def test_schema_validation():
     print(f"\n✅ TEST 6 PASSED: Schema validation prevents invalid column processing")
 
 
+def test_translate_does_not_route_through_deterministic_translator_fixture(monkeypatch):
+    """Regression: DAXTranslator.translate() used to try DeterministicTranslator
+    (hardcoded to a 5-column demo schema: DATE/PRODUCTID/REVENUE/UNITS/ZIP)
+    ahead of the general Tier 1-4 translators. That fixture is no longer part
+    of the live translation path — prove it using column names that share
+    nothing with the demo schema, so this can't pass by accidental overlap.
+    """
+    import semabridge.converter.deterministic_translator as det_module
+
+    construct_calls = []
+    original_init = det_module.DeterministicTranslator.__init__
+
+    def spy_init(self, *args, **kwargs):
+        construct_calls.append(True)
+        return original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(det_module.DeterministicTranslator, "__init__", spy_init)
+
+    translator = DAXTranslator()
+    result = translator.translate(
+        "SUM([Claims_Paid_Amount])", "fact", "dataset", metric_name="ClaimsTotal"
+    )
+
+    assert construct_calls == []  # DeterministicTranslator never constructed
+    assert result.is_success
+    assert "CLAIMS_PAID_AMOUNT" in result.sql.upper()
+
+
 if __name__ == "__main__":
     print("\n" + "#"*80)
     print("# DETERMINISTIC TRANSLATOR INTEGRATION TEST SUITE")
     print("#"*80)
-    
+
     try:
         test_deterministic_primary_flow()
         test_invalid_column_rejection()
@@ -199,7 +236,10 @@ if __name__ == "__main__":
         test_debug_tracing()
         test_column_mapping()
         test_schema_validation()
-        
+        # test_translate_does_not_route_through_deterministic_translator_fixture
+        # requires pytest's monkeypatch fixture — run via pytest, not this
+        # manual runner.
+
         print("\n" + "#"*80)
         print("# ALL INTEGRATION TESTS PASSED ✅")
         print("#"*80)

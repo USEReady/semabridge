@@ -291,6 +291,15 @@ class DatabricksBehavior(BaseModel):
             "existing candidate columns (for example, customer -> customer_key)."
         )
     )
+    enable_auto_relationship_inference: bool = Field(
+        default=False,
+        description=(
+            "When true, Databricks preflight fabricates NEW relationships between datasets "
+            "that share a column matching a join-key naming convention (id/key/unit/period/"
+            "date). No independent structural signal (constraint/uniqueness metadata) is "
+            "available to verify these — opt-in only, conservative default off."
+        )
+    )
     preflight_validate_join_dimensions: bool = Field(
         default=True,
         description=(

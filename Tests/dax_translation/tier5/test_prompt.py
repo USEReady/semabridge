@@ -48,6 +48,31 @@ def test_prompt_includes_salvaged_few_shot_section():
     assert "DAX: TODAY()" in prompt
 
 
+def test_few_shot_section_contains_no_real_customer_vocabulary():
+    """The salvaged few-shot section used to embed one real customer's
+    actual schema vocabulary (e.g. "Corporate DSI", "Corporate IOH",
+    "GL Refresh Datetime") directly in the live prompt sent to the LLM for
+    every customer's translation — a data-hygiene leak, not a customer
+    name any generic example should ever need."""
+    prompt = build_prompt(_request())
+    for leaked_term in ("Corporate DSI", "Corporate COS", "Corporate IOH", "GL Refresh Datetime"):
+        assert leaked_term not in prompt
+
+
+def test_snowflake_prompt_disclaims_the_databricks_style_examples():
+    """The few-shot examples are Databricks-backtick-quoted regardless of
+    dialect, silently contradicting the Snowflake quoting rule stated just
+    above them. A Snowflake-dialect prompt must carry an explicit note
+    telling the model not to copy that quoting style verbatim."""
+    prompt = build_prompt(_request(dialect=Dialect.SNOWFLAKE))
+    assert "do not copy the examples' literal backtick quoting" in prompt
+
+
+def test_databricks_prompt_has_no_disclaimer_since_examples_already_match():
+    prompt = build_prompt(_request(dialect=Dialect.DATABRICKS))
+    assert "do not copy the examples' literal backtick quoting" not in prompt
+
+
 def test_system_message_differs_by_dialect():
     snowflake_msg = build_system_message(Dialect.SNOWFLAKE)
     databricks_msg = build_system_message(Dialect.DATABRICKS)

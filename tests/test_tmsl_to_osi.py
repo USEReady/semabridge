@@ -39,11 +39,14 @@ class TestTMSLToOSI:
         qty_col = next(c for c in sales_ds.columns if c.unique_name == "Quantity")
         assert qty_col.data_type == OSIDataType.INTEGER # int64
         
-        # Check source table override heuristic
-        table_ds = OSIDataset(unique_name="Table", source_table="Table")
-        # In our converter, we override source_table for "Table" to "DEVICE_INVENTORY"
+        # A table literally named "Table" (Power BI's default generic name for
+        # an auto-imported/unrenamed table) must resolve source_table to its
+        # own name like any other table — there is no general signal in the
+        # TMSL for what a "better" name would be, so guessing one (the
+        # converter used to hardcode "DEVICE_INVENTORY" here) silently
+        # corrupts any other customer's model that has a genuine "Table".
         ds_t = converter._parse_dataset({"name": "Table"})
-        assert ds_t.source_table == "DEVICE_INVENTORY"
+        assert ds_t.source_table == "Table"
 
         # 3. Check Metrics
         assert len(osi.metrics) == 1

@@ -10,7 +10,7 @@ candidate from every adapter — no call site can opt out.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from semabridge.utils.logger import get_logger
 from semabridge.dax_translation.types import TranslationRequest, TranslationResult
@@ -30,7 +30,7 @@ from semabridge.dax_translation.tier5.validation import (
     normalize_metric_column_references,
     validate_metric_column_references,
 )
-from semabridge.dax_translation.tier5.adapters.base import ProviderAdapter
+from semabridge.dax_translation.tier5.adapters.base import ProviderAdapter, ProviderAuthError
 from semabridge.dax_translation.tier5.adapters.openai_adapter import OpenAIAdapter
 from semabridge.dax_translation.tier5.adapters.gemini_adapter import GeminiAdapter
 from semabridge.dax_translation.tier5.adapters.groq_adapter import GroqAdapter
@@ -62,6 +62,14 @@ class Tier5Service:
     def __init__(self, config: Optional[Tier5Config] = None) -> None:
         self.config = config or Tier5Config.default()
         self._adapters = _build_adapters(self.config)
+        # Providers that have raised a ProviderAuthError (bad/expired key)
+        # during this instance's lifetime. Scoped to this instance, not
+        # process-wide: since every real call site holds one Tier5Service
+        # for the duration of one translation run (see call sites' own
+        # lazy-instance caching) and constructs a fresh one for the next
+        # run, this cache is exactly "for the rest of the current run" and
+        # naturally clears once credentials are fixed and a new run starts.
+        self._unavailable_providers: Set[str] = set()
 
     def translate(self, request: TranslationRequest) -> Optional[TranslationResult]:
         prompt = build_prompt(request)
@@ -69,12 +77,22 @@ class Tier5Service:
         validation_notes: List[str] = []
 
         for provider_name in self.config.enabled_provider_order():
+            if provider_name in self._unavailable_providers:
+                continue
+
             adapter = self._adapters.get(provider_name)
             if adapter is None or not adapter.is_available():
                 continue
 
             try:
                 raw = adapter.translate(prompt, system_message)
+            except ProviderAuthError as exc:
+                logger.warning(
+                    "Tier5Service: provider %r failed authentication, skipping for the rest of this run: %s",
+                    provider_name, exc,
+                )
+                self._unavailable_providers.add(provider_name)
+                continue
             except Exception as exc:
                 logger.warning("Tier5Service: provider %r raised, treating as unavailable: %s", provider_name, exc)
                 continue
@@ -156,12 +174,23 @@ class Tier5Service:
         expected_keys = {batch_key(i) for i in range(len(requests))}
 
         for provider_name in self.config.enabled_provider_order():
+            if provider_name in self._unavailable_providers:
+                continue
+
             adapter = self._adapters.get(provider_name)
             if adapter is None or not adapter.is_available():
                 continue
 
             try:
                 raw = adapter.translate(prompt, system_message)
+            except ProviderAuthError as exc:
+                logger.warning(
+                    "Tier5Service.translate_batch: provider %r failed authentication, "
+                    "skipping for the rest of this run: %s",
+                    provider_name, exc,
+                )
+                self._unavailable_providers.add(provider_name)
+                continue
             except Exception as exc:
                 logger.warning(
                     "Tier5Service.translate_batch: provider %r raised, treating as unavailable: %s",

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from semabridge.sml.models import DataType
 from semabridge.utils.logger import get_logger
+from semabridge.connectors.dataset_classification_keywords import is_calendar_like_name
 
 logger = get_logger(__name__)
 
@@ -74,19 +75,22 @@ class SmlInferenceEngine:
             for col in cols:
                 dtype = DataType.from_snowflake(col.get("data_type", "VARCHAR"))
                 col_upper = col["name"].upper()
-                
-                # Check for Date
-                if dtype in (DataType.DATE, DataType.DATETIME) or "DATE" in col_upper:
+
+                # Check for Date — whole-word match, not a raw substring
+                # (which would wrongly flag e.g. "VALIDATED_FLAG"/"UPDATE_TIMESTAMP").
+                if dtype in (DataType.DATE, DataType.DATETIME) or is_calendar_like_name(col["name"]):
                     self.scores[table_name].date_columns += 1
-                
+
                 # Check for IDs
                 if col_upper.endswith("_ID") or col_upper.endswith("_KEY") or col_upper == "ID":
                     self.scores[table_name].id_columns += 1
-                
+
                 # Check for Measures (Numeric + Measure Pattern)
                 if dtype in (DataType.INTEGER, DataType.DECIMAL, DataType.FLOAT):
-                    # Exclude likely Keys/IDs from measures
-                    if not (col_upper.endswith("_ID") or col_upper.endswith("KEY")):
+                    # Exclude likely Keys/IDs from measures — "_KEY" anchored
+                    # like "_ID" above (was bare "KEY", wrongly excluding
+                    # e.g. "Turkey"/"Hockey"-named columns).
+                    if not (col_upper.endswith("_ID") or col_upper.endswith("_KEY") or col_upper == "KEY"):
                         self.scores[table_name].measure_candidates += 1
 
         # 2. Relationship Analysis
@@ -137,7 +141,7 @@ class SmlInferenceEngine:
             # Factor 4: Date Dimension Specific
             if score.date_columns >= 1 and (score.column_count < 15):
                 # High density of date columns relative to size suggests Date Dim
-                if (score.date_columns / score.column_count) > 0.2 or "DATE" in name_upper:
+                if (score.date_columns / score.column_count) > 0.2 or is_calendar_like_name(name):
                      score.classification = "TIME" # Override
 
     def _assign_classifications(self):

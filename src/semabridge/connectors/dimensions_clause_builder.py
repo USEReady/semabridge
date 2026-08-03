@@ -178,7 +178,7 @@ class DimensionsClauseBuilder:
             # the _live filter above. _SYNTHETIC_COLS only blocks columns that are
             # NEVER real physical columns in target tables.
             _SYNTHETIC_COLS = {
-                "MAX_DATE", "_CURRENT_FISCAL_PERIOD", "TOTAL_UNITS_ALL",
+                "MAX_DATE", "_CURRENT_FISCAL_PERIOD",
                 "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX",
             }
             # Columns that are synthetic date-intelligence anchors NOT present in

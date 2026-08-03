@@ -16,7 +16,12 @@ import os
 from typing import Optional
 
 from semabridge.utils.logger import get_logger
-from semabridge.dax_translation.tier5.adapters.base import RawResult, strip_markdown_fences
+from semabridge.dax_translation.tier5.adapters.base import (
+    ProviderAuthError,
+    RawResult,
+    is_auth_error,
+    strip_markdown_fences,
+)
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 logger = get_logger(__name__)
@@ -56,9 +61,17 @@ class GroqAdapter:
             if sql:
                 return RawResult(text=sql, confidence=_PLACEHOLDER_CONFIDENCE)
         except Exception as exc:
+            if is_auth_error(exc):
+                # Same api_key would be rejected identically by the direct
+                # client below — trying it would just be a second wasted
+                # round trip to the same failure, not a real fallback.
+                logger.warning("Groq adapter (ChatGroq) auth failure, skipping direct-client variant: %s", exc)
+                raise ProviderAuthError("groq", exc) from exc
             logger.warning("Groq adapter (ChatGroq) failed: %s", exc)
 
-        # 2. Direct OpenAI-compatible client fallback
+        # 2. Direct OpenAI-compatible client fallback — only reached for a
+        # ChatGroq failure that wasn't auth-related (a genuinely different
+        # code path worth trying once per call).
         try:
             from openai import OpenAI
 
@@ -77,6 +90,9 @@ class GroqAdapter:
             if sql:
                 return RawResult(text=sql, confidence=_PLACEHOLDER_CONFIDENCE)
         except Exception as exc:
+            if is_auth_error(exc):
+                logger.warning("Groq adapter (direct client) auth failure: %s", exc)
+                raise ProviderAuthError("groq", exc) from exc
             logger.warning("Groq adapter (direct client) failed: %s", exc)
 
         return None

@@ -774,6 +774,41 @@ class TestTotalPeriodToDateOfMeasureReferenceNeverLeaksBareName:
         assert "SOMECOLUMN" in sql.upper()
 
 
+class TestTimeIntelligenceAnchorsUseNativeExpressionsNotSyntheticColumns:
+    """translate_time_intelligence_with_anchors and translate_rolling_12_months
+    used to reference synthetic enriched-view anchor columns (MAX_DATE,
+    MAX_MONTHINDEX) that either aren't in scope inside a semantic view's
+    METRICS clause (MAX_DATE) or are never actually computed anywhere in
+    the enriched-view builder at all (MAX_MONTHINDEX). Both now use native
+    CURRENT_DATE()-derived expressions instead — matching the same fix
+    already applied to connectors/translator.py's parallel TOTALYTD/
+    SAMEPERIODLASTYEAR implementation (commit e4c8322), which this file's
+    copy had never been synced to."""
+
+    def test_totalytd_uses_current_date_not_synthetic_max_date_anchor(self):
+        from semabridge.converter.dax_rule_translator import translate_time_intelligence_with_anchors
+
+        dax = "TOTALYTD(SUM('SomeTable'[SomeColumn]), 'Date'[Date])"
+        result = translate_time_intelligence_with_anchors(dax, "sometable")
+        assert result is not None
+        assert "MAX_DATE" not in result.upper()
+        assert "CURRENT_DATE()" in result
+
+    def test_rolling_12_months_uses_native_month_index_not_synthetic_anchor(self):
+        from semabridge.converter.dax_rule_translator import translate_rolling_12_months
+
+        dax = (
+            "SUM([SomeColumn]) WHERE MonthIndex <= MAX(AnythingHere) "
+            "AND MonthIndex > MAX(AnythingHere) - 12"
+        )
+        result = translate_rolling_12_months(dax, "sometable")
+        assert result is not None
+        assert "MAX_MONTHINDEX" not in result.upper()
+        assert "EXTRACT(YEAR FROM CURRENT_DATE())" in result
+        assert "EXTRACT(MONTH FROM CURRENT_DATE())" in result
+        assert "SOMECOLUMN" in result.upper()
+
+
 class TestDivideOperandNeverLeaksBareMeasureName:
     """DIVIDE([Numerator], [Denominator]) — found alongside the TOTALYTD
     bug during the same real-deploy reconciliation: _resolve_divide_operand_sql
@@ -1306,3 +1341,96 @@ class TestTimeIntelligenceCarriesADateRangeFilter:
             "flatly rejected before any tier runs"
         )
         assert "OVER" not in result.sql.upper()
+
+
+class TestGetRequiredDimensionsNeverHardcodesOrSubstringMatches:
+    """get_required_dimensions used to (a) hardcode a literal
+    "'Calendar'[Date]" dimension whenever any time-intelligence function
+    appeared in the DAX — wrong for any customer whose date table isn't
+    literally named "Calendar" with a "Date" column, and with no schema
+    access available to this function to resolve the real one — and (b)
+    exclude bracketed references from GROUP BY using a raw substring
+    check against English business terms (AMOUNT/SALES/REVENUE/PRICE/
+    COST/QTY), which would wrongly drop a genuine dimension like
+    "Costco_Region" (contains "COST") from the required GROUP BY list."""
+
+    def test_time_intelligence_no_longer_hardcodes_a_calendar_date_literal(self):
+        translator = DAXTranslator()
+        dims = translator.get_required_dimensions(
+            "TOTALYTD(SUM('SomeTable'[SomeColumn]), 'SomeDateTable'[SomeDateColumn])"
+        )
+        assert "'Calendar'[Date]" not in dims
+
+    def test_real_dimension_reference_containing_a_value_term_substring_is_kept(self):
+        """Regression: 'Costco_Region' contains 'COST' as a substring but
+        is clearly a dimension, not a cost/value measure column."""
+        translator = DAXTranslator()
+        dims = translator.get_required_dimensions("SUM('Geo'[Costco_Region])")
+        assert "'Geo'[Costco_Region]" in dims
+
+    def test_genuine_value_column_whole_word_is_still_excluded(self):
+        translator = DAXTranslator()
+        dims = translator.get_required_dimensions("SUM('SalesFact'[Amount])")
+        assert "'SalesFact'[Amount]" not in dims
+
+    def test_multiple_references_mix_of_dimension_and_value_columns(self):
+        translator = DAXTranslator()
+        dims = translator.get_required_dimensions(
+            "CALCULATE(SUM('SalesFact'[Revenue]), 'Product'[Costco_Supplier])"
+        )
+        assert "'SalesFact'[Revenue]" not in dims
+        assert "'Product'[Costco_Supplier]" in dims
+
+
+class TestResolvePhysicalColNameNeverGuessesAnUnverifiedName:
+    """_resolve_physical_col_name used to hardcode a "COL_{name}" prefix
+    convention (this codebase's own internal synthetic-anchor naming, not
+    a general customer schema convention) and fall back to an unbounded
+    substring match with no word-boundary check — DAX "ID" would match
+    CUSTOMERID/PRODUCTID/VALID_FLAG/anything containing those two letters
+    — then always returned a guessed name, never "not found". One call
+    site feeds the guess directly into a live UPDATE statement's SELECT
+    column, so a false substring match meant silently pulling data from
+    the wrong physical column."""
+
+    def _build_emitter(self) -> SnowflakeEmitter:
+        config = SnowflakeConfig(
+            account="test.local",
+            user="test_user",
+            password="test_password",
+            warehouse="test_wh",
+            database="test_db",
+            schema_name="test_schema",
+            role="test_role",
+        )
+        return SnowflakeEmitter(config, ConnectorBehavior())
+
+    def test_resolves_exact_case_insensitive_match(self):
+        emitter = self._build_emitter()
+        existing = {"WIDGET_COUNT", "GADGET_TOTAL"}
+        assert emitter._resolve_physical_col_name("widget_count", existing) == "WIDGET_COUNT"
+
+    def test_resolves_space_to_underscore_normalized_match(self):
+        emitter = self._build_emitter()
+        existing = {"WIDGET_COUNT"}
+        assert emitter._resolve_physical_col_name("Widget Count", existing) == "WIDGET_COUNT"
+
+    def test_does_not_guess_a_col_prefixed_name_that_does_not_exist(self):
+        """No hardcoded 'COL_' convention — a customer whose real schema
+        doesn't use that prefix must not get a fabricated column name."""
+        emitter = self._build_emitter()
+        existing = {"GADGET_TOTAL"}  # no COL_WIDGET anywhere
+        assert emitter._resolve_physical_col_name("Widget", existing) == ""
+
+    def test_does_not_substring_match_an_unrelated_column(self):
+        """Synthetic placeholder proving the old unbounded substring bug:
+        DAX column 'ID' must not match a real column that merely contains
+        those letters, like VALID_FLAG."""
+        emitter = self._build_emitter()
+        existing = {"VALID_FLAG"}
+        assert emitter._resolve_physical_col_name("ID", existing) == ""
+
+    def test_returns_empty_string_not_a_guess_when_nothing_matches(self):
+        emitter = self._build_emitter()
+        existing = {"COMPLETELY_UNRELATED_COLUMN"}
+        assert emitter._resolve_physical_col_name("Widget Count", existing) == ""

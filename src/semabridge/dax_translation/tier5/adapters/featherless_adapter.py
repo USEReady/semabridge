@@ -17,7 +17,12 @@ import os
 from typing import Optional
 
 from semabridge.utils.logger import get_logger
-from semabridge.dax_translation.tier5.adapters.base import RawResult, strip_markdown_fences
+from semabridge.dax_translation.tier5.adapters.base import (
+    ProviderAuthError,
+    RawResult,
+    is_auth_error,
+    strip_markdown_fences,
+)
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 logger = get_logger(__name__)
@@ -41,6 +46,7 @@ class FeatherlessAdapter:
             return None
 
         models = self.settings.models or ["deepseek-ai/DeepSeek-V4-Pro"]
+        timeout = float(self.settings.timeout_seconds or 30)
 
         try:
             from langchain_openai import ChatOpenAI
@@ -56,7 +62,7 @@ class FeatherlessAdapter:
                     base_url=_FEATHERLESS_BASE_URL,
                     temperature=0.1,
                     max_tokens=500,
-                    timeout=30,
+                    timeout=timeout,
                 )
                 response = llm.invoke([("system", system_message), ("user", prompt)])
                 sql = strip_markdown_fences(response.content)
@@ -64,6 +70,15 @@ class FeatherlessAdapter:
                     return RawResult(text=sql, confidence=_PLACEHOLDER_CONFIDENCE)
                 logger.warning("Featherless (%s) returned empty/invalid SQL", model)
             except Exception as exc:
+                if is_auth_error(exc):
+                    # Same api_key for every model in the failover list —
+                    # a rejected key fails the remaining models identically,
+                    # so there's no point trying them.
+                    logger.warning(
+                        "Featherless (%s) auth failure, skipping remaining models in failover list: %s",
+                        model, exc,
+                    )
+                    raise ProviderAuthError("featherless", exc) from exc
                 logger.warning("Featherless (%s) failed: %s", model, exc)
 
         return None

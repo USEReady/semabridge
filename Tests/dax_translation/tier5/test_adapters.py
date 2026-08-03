@@ -150,6 +150,57 @@ def test_featherless_adapter_happy_path_via_chatopenai(monkeypatch):
     assert result.text == 'SUM(sometable."SOMECOLUMN")'
 
 
+def test_featherless_adapter_reads_configured_timeout(monkeypatch):
+    """Regression: the adapter used to hardcode timeout=30 unconditionally,
+    never reading ProviderSettings.timeout_seconds even though the field
+    already existed and every sibling adapter (openai, groq) already read
+    it — editing Tier5Config had zero effect for Featherless specifically."""
+    monkeypatch.setenv("FEATHERLESS_API_KEY", "fake-key")
+    captured_kwargs = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, *a, **k):
+            captured_kwargs.update(k)
+
+        def invoke(self, messages):
+            return SimpleNamespace(content='SUM(sometable."SOMECOLUMN")')
+
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeChatOpenAI)
+
+    adapter = FeatherlessAdapter(
+        ProviderSettings(
+            enabled_env="FEATHERLESS_API_KEY",
+            models=["deepseek-ai/DeepSeek-V4-Pro"],
+            timeout_seconds=7,
+        )
+    )
+    adapter.translate(_PROMPT, _SYSTEM)
+    assert captured_kwargs["timeout"] == 7.0
+
+
+def test_featherless_adapter_defaults_timeout_to_30_when_unconfigured(monkeypatch):
+    """Zero behavior change for today's default config, which never sets
+    timeout_seconds for Featherless: float(None or 30) == 30.0, the exact
+    value the old hardcoded literal produced."""
+    monkeypatch.setenv("FEATHERLESS_API_KEY", "fake-key")
+    captured_kwargs = {}
+
+    class FakeChatOpenAI:
+        def __init__(self, *a, **k):
+            captured_kwargs.update(k)
+
+        def invoke(self, messages):
+            return SimpleNamespace(content='SUM(sometable."SOMECOLUMN")')
+
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", FakeChatOpenAI)
+
+    adapter = FeatherlessAdapter(
+        ProviderSettings(enabled_env="FEATHERLESS_API_KEY", models=["deepseek-ai/DeepSeek-V4-Pro"])
+    )
+    adapter.translate(_PROMPT, _SYSTEM)
+    assert captured_kwargs["timeout"] == 30.0
+
+
 def test_featherless_adapter_tries_next_model_on_failure(monkeypatch):
     monkeypatch.setenv("FEATHERLESS_API_KEY", "fake-key")
 

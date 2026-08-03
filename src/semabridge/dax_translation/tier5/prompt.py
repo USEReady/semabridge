@@ -97,17 +97,17 @@ FEW-SHOT EXAMPLES
 DAX: TODAY()
 SQL: MAX(current_date())
 
-DAX: CONCATENATE("Last Refreshed: ", MAX('Corporate DSI Last Refreshed'[GL Refresh Datetime]))
-SQL: ANY_VALUE(CONCAT('Last Refreshed: ', DATE_FORMAT(`corporate_dsi_last_refreshed`.`gl_refresh_datetime`, 'MM/dd/yyyy HH:mm:ss')))
+DAX: CONCATENATE("Last Refreshed: ", MAX('Sync Log'[Last Sync Timestamp]))
+SQL: ANY_VALUE(CONCAT('Last Refreshed: ', DATE_FORMAT(`sync_log`.`last_sync_timestamp`, 'MM/dd/yyyy HH:mm:ss')))
 
-DAX: SUM('Corporate DSI Aggregate'[DSI_MNTHLY])
-SQL: SUM(`corporate_dsi_aggregate`.`dsi_mnthly`)
+DAX: SUM('Sales Aggregate'[Monthly Revenue])
+SQL: SUM(`sales_aggregate`.`monthly_revenue`)
 
-DAX: DIVIDE([Corporate COS], [Corporate IOH])
-SQL: COALESCE(SUM(`corporate_dsi_aggregate`.`cos_excldng_lifo_amt`) / NULLIF(SUM(`corporate_dsi_aggregate`.`ioh_excldng_lifo_amt`), 0), 0)
+DAX: DIVIDE([Total Cost], [Total Revenue])
+SQL: COALESCE(SUM(`sales_aggregate`.`total_cost_amt`) / NULLIF(SUM(`sales_aggregate`.`total_revenue_amt`), 0), 0)
 
-DAX: CALCULATE(SUM('Inventory Fact'[Total Stock Qty]), 'Business Units'[Business Unit] = "Subledger")
-SQL: SUM(CASE WHEN `business_units`.`business_unit` = 'Subledger' THEN `inventory_fact`.`total_stock_qty` ELSE 0 END)
+DAX: CALCULATE(SUM('Sales Fact'[Order Quantity]), 'Region'[Region Name] = "West")
+SQL: SUM(CASE WHEN `region`.`region_name` = 'West' THEN `sales_fact`.`order_quantity` ELSE 0 END)
 
 DAX: CALCULATE(COUNTROWS('Customer'), Customer[City] = "London")
 SQL: COUNT(CASE WHEN `customer`.`city` = 'London' THEN 1 ELSE NULL END)
@@ -118,6 +118,26 @@ SQL: COUNT(DISTINCT CASE WHEN `product`.`category` = 'Electronics' THEN `product
 DAX: IF(ISBLANK([Sales]), 0, [Sales])
 SQL: COALESCE(sales, 0)
 '''.strip()
+
+# The examples above are written in Databricks' backtick-quoted style (see
+# the module docstring) but are appended regardless of the request's actual
+# dialect — for a non-Databricks request this silently contradicts the
+# dialect-specific quoting rule already given above it. Rather than
+# hand-authoring a second, unverified set of examples per dialect, make the
+# conflict explicit and tell the model which one to trust.
+_FEW_SHOT_DIALECT_DISCLAIMER = (
+    "Note: the examples below use Databricks-style backtick quoting to "
+    "illustrate translation PATTERNS and CALCULATE/filter logic only. "
+    "Follow the quoting and function-name conventions in the Rules above "
+    "for the actual target dialect — do not copy the examples' literal "
+    "backtick quoting or Databricks-specific function names verbatim."
+)
+
+
+def _few_shot_section(dialect: Dialect) -> str:
+    if dialect == Dialect.DATABRICKS:
+        return _FEW_SHOT_SECTION
+    return f"{_FEW_SHOT_DIALECT_DISCLAIMER}\n\n{_FEW_SHOT_SECTION}"
 
 
 def build_system_message(dialect: Dialect | str) -> str:
@@ -191,7 +211,7 @@ def build_prompt(request: TranslationRequest) -> str:
     if skill_blocks:
         sections.append("\n\n".join(b for b in skill_blocks if b))
     sections.append(base)
-    sections.append(_FEW_SHOT_SECTION)
+    sections.append(_few_shot_section(dialect))
     return "\n\n".join(sections)
 
 
@@ -280,7 +300,7 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
     if skill_blocks:
         sections.append("\n\n".join(b for b in skill_blocks if b))
     sections.append(base)
-    sections.append(_FEW_SHOT_SECTION)
+    sections.append(_few_shot_section(dialect))
     return "\n\n".join(sections)
 
 

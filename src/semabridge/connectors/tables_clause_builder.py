@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Set, Optional
 
 from semabridge.converter.date_resolution import DateResolutionConfig
+from semabridge.connectors.fact_table_naming import is_fact_like_name
 
 
 class TablesClauseBuilder:
@@ -262,7 +263,7 @@ class TablesClauseBuilder:
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             
-            if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or "fact" in dataset.unique_name.lower()):
+            if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or is_fact_like_name(dataset.unique_name)):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
             tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')

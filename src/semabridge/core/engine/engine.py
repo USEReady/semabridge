@@ -297,7 +297,8 @@ class ExecutionEngine:
             # Step 6: Convert to Canonical SML (with target context if UPSERT)
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id, force=force)
             
-            self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
+            if config_path is not None and not context.mapping_overrides_applied:
+                self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
             context.sml_model = sml_model
             
             # Step 7: Persist Artifacts

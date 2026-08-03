@@ -183,17 +183,38 @@ def test_sml_loader_openai_batch_translation(monkeypatch):
             ("MetricB", "TOPN(10, VALUES('Sales'[Region]), [Total Cost], DESC)", "sales", "sales"),
         ]
 
-        results = translator.batch_translate_tier5(metrics_list)
+        # dax_translator.py's batch_translate_tier5 always requests
+        # dialect="snowflake" internally regardless of the real target, so
+        # this mocked backtick-quoted response must resolve against real
+        # schema data — item 18's validator fix (backtick presence, not
+        # declared dialect, now triggers quote normalization before
+        # validation) means an empty lookup here would now genuinely fail
+        # alias resolution instead of silently passing unexamined.
+        dataset_col_lookup = {"sales": {"revenue", "cost"}}
+        dataset_aliases = {"sales": "sales"}
 
+        results = translator.batch_translate_tier5(
+            metrics_list,
+            dataset_col_lookup=dataset_col_lookup,
+            dataset_aliases=dataset_aliases,
+        )
+
+        # batch_translate_tier5 always declares dialect="snowflake" for this
+        # shim, so the mocked backtick-quoted response is genuinely
+        # validated/normalized to Snowflake-style quoting (item 18's fix —
+        # backtick presence, not declared dialect, now triggers that
+        # normalization) rather than passing through untouched, which only
+        # ever happened before because non-Databricks-dialect backtick SQL
+        # was invisible to validation entirely.
         assert "MetricA" in results
         assert results["MetricA"] is not None
         assert results["MetricA"].is_success is True
-        assert results["MetricA"].sql == "SUM(`sales`.`revenue`)"
+        assert results["MetricA"].sql == "SUM(sales.revenue)"
 
         assert "MetricB" in results
         assert results["MetricB"] is not None
         assert results["MetricB"].is_success is True
-        assert results["MetricB"].sql == "AVG(`sales`.`cost`)"
+        assert results["MetricB"].sql == "AVG(sales.cost)"
 
         # The whole point of restoring batching: 2 metrics needing Tier 5
         # cost exactly 1 API call, not 2.

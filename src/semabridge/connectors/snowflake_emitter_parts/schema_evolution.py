@@ -6,6 +6,7 @@ from decimal import Decimal
 from datetime import date, datetime
 
 from semabridge.utils.logger import get_logger
+from semabridge.connectors.business_field_type_hints import infer_business_field_type
 
 logger = get_logger(__name__)
 
@@ -135,23 +136,8 @@ def normalize_declared_type(raw_type: str) -> str:
 
 
 def business_rule_type(table_name: str, col_name: str) -> Optional[str]:
-    """Business-rule layer for known Salesforce semantic fields."""
-    t = (table_name or "").upper()
-    c = (col_name or "").strip().upper()
-    c_norm = re.sub(r"[^A-Z0-9]", "", c)
-
-    if c_norm == "FIRMNESSOFFIRSTDELIVERYDATE":
-        return "VARCHAR"
-    if c == "DELETED":
-        return "BOOLEAN"
-    if "MODSTAMP" in c_norm:
-        return "TIMESTAMP"
-    if "VOLUME" in c_norm or "AMOUNT" in c_norm:
-        return "FLOAT"
-    if "DATE" in c_norm and not t.endswith("FIELDHISTORY"):
-        return "DATE"
-
-    return None
+    """Business-rule layer for common CRM-style naming conventions."""
+    return infer_business_field_type(table_name, col_name)
 
 
 def build_cast_expression(

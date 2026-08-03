@@ -41,11 +41,27 @@ def test_validate_rejects_unknown_column():
 
 
 def test_validate_rejects_unknown_alias():
+    """'NOPE' has no owner in any dataset — genuinely unresolvable, must
+    still fail. (A column that IS uniquely owned by a real dataset, like
+    SOMECOLUMN, now correctly resolves through an unknown alias — see
+    test_validate_heals_unknown_alias_via_column_ownership below; that's
+    the fix, not a regression here.)"""
     ok, err = _validator()._validate_metric_column_references(
-        'unknownalias."SOMECOLUMN"', "Metric_A", _COL_LOOKUP, _ALIASES,
+        'unknownalias."NOPE"', "Metric_A", _COL_LOOKUP, _ALIASES,
     )
     assert ok is False
     assert "unknownalias" in err
+
+
+def test_validate_heals_unknown_alias_via_column_ownership():
+    """Regression: an alias the LLM got wrong must still resolve correctly
+    when the referenced column is uniquely owned by a real dataset — this
+    used to only work if the wrong alias happened to textually resemble a
+    real dataset name."""
+    ok, err = _validator()._validate_metric_column_references(
+        'totally_bogus_alias."SOMECOLUMN"', "Metric_A", _COL_LOOKUP, _ALIASES,
+    )
+    assert ok is True, err
 
 
 def test_validate_accepts_known_metric_reference():
@@ -91,8 +107,31 @@ def test_dax_divide_lost_its_division_detects_missing_slash():
     assert _dax_divide_lost_its_division("SUM([Measure_A])", 'SUM(sometable."SOMECOLUMN")') is False
 
 
-def test_fix_common_llm_issues_remaps_calendar_alias():
-    assert fix_common_llm_issues('CALENDAR."COL_DATE" > 1', "x") == 'COL_DATE."COL_DATE" > 1'
+def test_fix_common_llm_issues_no_longer_force_rewrites_misspelled_date_alias():
+    """Regression: fix_common_llm_issues used to hardcode any CALENDAR/
+    DATES/DATE alias to a literal 'COL_DATE' target — wrong for any
+    customer whose real date-table alias isn't spelled that way. It must
+    leave the alias untouched now; the real resolution happens
+    structurally downstream via _heal_unknown_alias, keyed on which
+    dataset actually owns the referenced column, not a hardcoded name."""
+    assert fix_common_llm_issues('CALENDAR."THE_YEAR_COL" > 1', "x") == 'CALENDAR."THE_YEAR_COL" > 1'
+    assert fix_common_llm_issues('DATES."THE_YEAR_COL" > 1', "x") == 'DATES."THE_YEAR_COL" > 1'
+    assert fix_common_llm_issues('salesfact."UNITS"', "x") == 'salesfact."UNITS"'
+
+
+def test_misspelled_date_alias_still_resolves_correctly_end_to_end():
+    """Even though fix_common_llm_issues no longer rewrites the alias, the
+    metric still validates correctly because _heal_unknown_alias resolves
+    it structurally by column ownership — using a synthetic date-like
+    dataset name that shares nothing with any real project schema."""
+    col_lookup = {"CalendarPlaceholderDataset": {"THE_YEAR_COL"}}
+    aliases = {"CalendarPlaceholderDataset": "cal_tbl"}
+    sql = 'DATES."THE_YEAR_COL" > 1'  # LLM used the wrong alias spelling
+    repaired = fix_common_llm_issues(sql, "x")
+    ok, err = _validator()._validate_metric_column_references(
+        repaired, "Metric_A", col_lookup, aliases,
+    )
+    assert ok is True, err
 
 
 def test_module_level_wrappers_use_request_fields():
@@ -188,9 +227,41 @@ def test_quote_translation_round_trip_helpers():
     assert _from_snowflake_style_quoting(internal, "databricks") == "SUM(`sales`.`REVENUE`)"
     # a standalone bare backtick-quoted metric reference round-trips too
     assert _from_snowflake_style_quoting('"SOME_METRIC"', "databricks") == "`SOME_METRIC`"
-    # no-op for Snowflake dialect
-    assert _to_snowflake_style_quoting("SUM(`x`.`y`)", "snowflake") == "SUM(`x`.`y`)"
+    # true no-op only when there is nothing to convert
+    assert _to_snowflake_style_quoting('SUM(x."y")', "snowflake") == 'SUM(x."y")'
     assert _from_snowflake_style_quoting('SUM(x."y")', "snowflake") == 'SUM(x."y")'
+
+
+def test_to_snowflake_style_quoting_normalizes_backticks_even_for_snowflake_dialect():
+    """Backticks are never valid Snowflake syntax, so their presence — not
+    the declared dialect — must trigger normalization; a Snowflake request
+    whose LLM output backtick-quotes identifiers anyway (e.g. confused by
+    the prompt's Databricks-flavored few-shot examples, see item 18) used
+    to be invisible to the validator, the exact blindness this sandwich was
+    built to close for Databricks. _from_snowflake_style_quoting is NOT
+    widened the same way: converting the validated result back out must
+    still follow the real declared dialect, not whatever quoting the input
+    happened to arrive in."""
+    assert _to_snowflake_style_quoting("SUM(`x`.`y`)", "snowflake") == 'SUM(x."y")'
+    assert _from_snowflake_style_quoting('SUM(x."y")', "snowflake") == 'SUM(x."y")'
+
+
+def test_snowflake_validation_catches_backtick_quoted_nonexistent_column():
+    """The item-18 gap this closes: before, a Snowflake-dialect response
+    with backtick-quoted identifiers was silently accepted regardless of
+    whether the referenced column existed at all."""
+    sf_request = TranslationRequest(
+        dax="SUM('Sales'[Revenue])",
+        dataset_name="sales",
+        table_alias="sales",
+        dataset_col_lookup=_DBX_COL_LOOKUP,
+        dataset_aliases=_DBX_ALIASES,
+        dialect=Dialect.SNOWFLAKE,
+        metric_name="Metric_A",
+    )
+    ok, err = validate_metric_column_references("SUM(`sales`.`NOPE_DOES_NOT_EXIST`)", sf_request)
+    assert ok is False
+    assert "NOPE_DOES_NOT_EXIST" in err
 
 
 def test_build_safe_sum_sql_omits_snowflake_only_syntax_for_databricks():
@@ -201,3 +272,69 @@ def test_build_safe_sum_sql_omits_snowflake_only_syntax_for_databricks():
     assert v._build_safe_sum_sql("sales.REVENUE", "REVENUE", dialect="databricks") == "SUM(sales.REVENUE)"
     # even for a flag-like column name that would trigger IFF(...) wrapping on Snowflake
     assert v._build_safe_sum_sql("sales.IS_ACTIVE", "IS_ACTIVE", dialect="databricks") == "SUM(sales.IS_ACTIVE)"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: alias/column resolution must be structural (schema-
+# driven), never guessed from names — synthetic placeholder data only,
+# sharing nothing with any real project's dataset/column/table names.
+# ---------------------------------------------------------------------------
+
+def test_heal_unknown_alias_resolves_by_column_ownership():
+    """An alias the LLM got completely wrong must still resolve correctly
+    when the referenced column is uniquely owned by one real dataset —
+    resolved by checking dataset_col_lookup, never by pattern-matching the
+    (already wrong) alias's spelling."""
+    col_lookup = {"WidgetFacts": {"WIDGET_COUNT"}, "GadgetFacts": {"GADGET_COUNT"}}
+    aliases = {"WidgetFacts": "wf", "GadgetFacts": "gf"}
+    resolved = _validator()._heal_unknown_alias("bogus_alias", "WIDGET_COUNT", aliases, col_lookup)
+    assert resolved == "WidgetFacts"
+
+
+def test_heal_unknown_alias_returns_none_when_column_is_ambiguous():
+    """Two synthetic datasets both declare the same column name — with no
+    relationship graph available, this must decline (None) rather than
+    guess, since neither name resembles the bogus alias either."""
+    col_lookup = {"WidgetFacts": {"SHARED_COL"}, "GadgetFacts": {"SHARED_COL"}}
+    aliases = {"WidgetFacts": "wf", "GadgetFacts": "gf"}
+    resolved = _validator()._heal_unknown_alias("bogus_alias", "SHARED_COL", aliases, col_lookup)
+    assert resolved is None
+
+
+def test_qualify_bare_column_identifiers_leaves_ambiguous_column_unqualified():
+    """Two synthetic datasets — neither named anything like 'FACT' — both
+    declare the same column. With the old code, this only resolved when
+    exactly one candidate's dataset name happened to contain 'FACT'; now
+    it must fail closed (leave the bare token as-is) instead of guessing."""
+    col_lookup = {"AlphaWidgets": {"SHARED_METRIC_COL"}, "BetaGadgets": {"SHARED_METRIC_COL"}}
+    aliases = {"AlphaWidgets": "alpha", "BetaGadgets": "beta"}
+    sql = "SUM(SHARED_METRIC_COL)"
+    result = _validator()._qualify_bare_column_identifiers(sql, col_lookup, aliases)
+    assert result == sql  # left unqualified, not silently assigned to either dataset
+
+
+def test_repair_bare_aggregate_identifiers_coerces_ambiguous_column_to_null():
+    """Same ambiguous-ownership scenario as above, through the aggregate-
+    repair path — must coerce to NULL (safe, visible) rather than guess."""
+    col_lookup = {"AlphaWidgets": {"SHARED_METRIC_COL"}, "BetaGadgets": {"SHARED_METRIC_COL"}}
+    aliases = {"AlphaWidgets": "alpha", "BetaGadgets": "beta"}
+    sql = "SUM(SHARED_METRIC_COL)"
+    result = _validator()._repair_bare_aggregate_identifiers(sql, "Some_Metric", col_lookup, aliases)
+    assert result == "NULL"
+
+
+def test_pick_preferred_aggregate_column_returns_none_when_ambiguous():
+    """Two non-key/non-date candidate columns with no keyword relationship
+    to the metric name at all — must decline rather than guess via
+    keyword-overlap scoring."""
+    columns = {"WIDGET_TOTAL", "GADGET_TOTAL"}
+    result = _validator()._pick_preferred_aggregate_column("SomeUnrelatedMetricName", columns)
+    assert result is None
+
+
+def test_pick_preferred_aggregate_column_returns_sole_non_key_candidate():
+    """Excluding key/FK/date-suffixed columns leaves exactly one candidate
+    — a real structural signal, safe to auto-resolve."""
+    columns = {"WIDGET_TOTAL", "WIDGET_ID", "WIDGET_KEY", "WIDGET_DATE"}
+    result = _validator()._pick_preferred_aggregate_column("Anything", columns)
+    assert result == "WIDGET_TOTAL"

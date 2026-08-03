@@ -337,7 +337,15 @@ def _select_strongest_relationship(self, candidates: list[SMLRelationship]) -> S
 
         # Preference 3: Column matches target table name
         # e.g., scenario_id -> scenario table
-        col_base = from_col.upper().rstrip("_ID_KEYFK")
+        # str.rstrip(chars) strips any trailing characters IN that set, not
+        # a literal suffix — from_col.upper().rstrip("_ID_KEYFK") used to
+        # over-strip any name ending in a char from {_,I,D,K,E,Y,F} (e.g.
+        # "DECK_ID" -> "DEC", not "DECK"). Strip one real suffix instead.
+        col_base = from_col.upper()
+        for suffix in fk_suffixes:
+            if col_base.endswith(suffix):
+                col_base = col_base[: -len(suffix)]
+                break
         if col_base == to_dataset or col_base.rstrip("S") == to_dataset:
             score += 25
 

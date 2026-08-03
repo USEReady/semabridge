@@ -37,6 +37,16 @@ class TestTMSLTransformerBasic:
         assert sml.source_platform == SourcePlatform.FABRIC
         assert len(sml.datasets) == 0
     
+    def test_table_literally_named_table_keeps_its_own_source_table(self, transformer):
+        """A table named "Table" (Power BI's default generic name for an
+        auto-imported/unrenamed table) must resolve source_table to its own
+        name like any other table — the converter used to hardcode
+        source_table="DEVICE_INVENTORY" for this exact name, a demo-project
+        fixture that would silently corrupt any other customer's model that
+        genuinely has a table named "Table"."""
+        ds = transformer._parse_table({"name": "Table"})
+        assert ds.source_table == "Table"
+
     def test_transform_sets_metadata(self, transformer):
         """Test that metadata is correctly set."""
         tmsl = {

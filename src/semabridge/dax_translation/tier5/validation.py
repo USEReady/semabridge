@@ -55,14 +55,6 @@ def fix_common_llm_issues(sql: str, dax: str = "") -> str:
     # is not in scope inside semantic view metric expressions).
     # sql = sql.replace("CURRENT_DATE()", "MAX_DATE")   # removed
     # sql = sql.replace("CURRENT_DATE", "MAX_DATE")     # removed
-    sql = re.sub(r"salesfact\.", "SALESFACT.", sql, flags=re.IGNORECASE)
-
-    # Normalize common LLM date-table alias errors: CALENDAR → COL_DATE
-    sql = re.sub(r'\bCALENDAR\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
-    # Normalize DATES alias (common LLM error) → COL_DATE
-    sql = re.sub(r'\bDATES\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
-    # Normalize DATE alias (common LLM error) → COL_DATE
-    sql = re.sub(r'\bDATE\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
     # Remove bare ALIAS placeholders that LLMs occasionally emit
     sql = re.sub(r'\bALIAS\."?[A-Z_][A-Z0-9_]*"?', '', sql, flags=re.IGNORECASE).strip()
 
@@ -136,8 +128,11 @@ class MetricSqlValidator:
     ) -> Optional[str]:
         """
         Dynamically heal unknown or mismatched table aliases to their correct dataset names.
+
+        Resolved structurally — by checking which real dataset actually
+        declares `col_name` — never by pattern-matching `table_alias`'s
+        (already-unresolved) spelling.
         """
-        table_alias_lower = table_alias.lower()
         sanitized_col_name = self._id.sanitize_column(col_name) if self._id else col_name.upper()
 
         # 1. If col_name is a known metric, treat alias as a dummy and let metric resolution happen
@@ -147,17 +142,13 @@ class MetricSqlValidator:
                 if dataset_aliases:
                     return next(iter(dataset_aliases.keys()))
 
-        # 2. Date table keywords remapping
-        date_keywords = {"date", "calendar", "dates", "dim_date", "cal", "col_date"}
-        if table_alias_lower in date_keywords or re.fullmatch(r"(?:col_)?date(?:_\d+)?|dates(?:_\d+)?|calendar(?:_\d+)?|dim_date(?:_\d+)?|cal(?:_\d+)?", table_alias_lower):
-            for ds_name in dataset_aliases:
-                if any(kw in ds_name.lower() for kw in ("date", "calendar", "dates")):
-                    return ds_name
-
-        # 3. Substring matching of alias to dataset names
-        for ds_name in dataset_aliases:
-            if table_alias_lower in ds_name.lower() or ds_name.lower() in table_alias_lower:
-                return ds_name
+        # 2. Resolve via real schema: which dataset actually declares this column?
+        owners = [
+            ds_name for ds_name, cols in dataset_col_lookup.items()
+            if self._resolve_column_name_for_dataset(cols, sanitized_col_name)
+        ]
+        if len(owners) == 1:
+            return owners[0]
 
         return None
 
@@ -220,12 +211,6 @@ class MetricSqlValidator:
             if len(owners) == 1:
                 owner_ds, owner_col = owners[0]
                 return dataset_aliases.get(owner_ds), owner_col
-
-            if len(owners) > 1:
-                fact_like = [candidate for candidate in owners if "FACT" in candidate[0].upper()]
-                if len(fact_like) == 1:
-                    owner_ds, owner_col = fact_like[0]
-                    return dataset_aliases.get(owner_ds), owner_col
 
             return None
 
@@ -357,11 +342,6 @@ class MetricSqlValidator:
                     resolved_col = self._resolve_column_name_for_dataset(cols, ident)
                     if resolved_col:
                         owner_candidates.append((ds_name, resolved_col))
-
-            if len(owner_candidates) > 1:
-                fact_like = [candidate for candidate in owner_candidates if "FACT" in candidate[0].upper()]
-                if len(fact_like) == 1:
-                    owner_candidates = fact_like
 
             if len(owner_candidates) != 1:
                 logger.warning("Metric '%s': ambiguous/unresolved bare aggregate identifier '%s' owners=%s; coercing to NULL", metric_name, ident, sorted({ds for ds, _ in owner_candidates}))
@@ -557,29 +537,20 @@ class MetricSqlValidator:
         return "NULL"
 
     def _pick_preferred_aggregate_column(self, metric_name: str, known_columns: set) -> Optional[str]:
+        """Only auto-resolves when excluding structural key/FK/date-suffixed
+        columns leaves exactly one candidate — never by scoring keyword
+        overlap with the metric's own name, which can silently substitute
+        the wrong column."""
         if not known_columns: return None
-        metric_token_set = set(t for t in self._id.sanitize_column(metric_name).split("_") if t)
-        value_terms = {"AMOUNT", "REVENUE", "SALES", "SPEND", "VALUE", "COST", "PRICE", "TOTAL", "QTY", "QUANTITY", "UNITS", "USD"}
-        categorical_terms = {"TYPE", "CATEGORY", "STATUS", "FLAG", "NAME", "DESC", "DESCRIPTION", "CODE", "GROUP", "CLASS", "SEGMENT"}
-        excluded_suffixes = ("_CK", "_ID", "_KEY", "_DATE")
-        scored: list = []
-        for col in sorted(known_columns):
-            tokens = [t for t in col.split("_") if t]
-            token_set = set(tokens)
-            score = 0
-            overlap = len(metric_token_set.intersection(token_set))
-            score += overlap * 10
-            if token_set.intersection(value_terms): score += 8
-            if token_set.intersection(categorical_terms): score -= 18
-            if col.endswith(excluded_suffixes): score -= 20
-            if "AMOUNT" in token_set: score += 4
-            scored.append((score, col))
-        if not scored: return None
-        scored.sort(key=lambda item: (item[0], -len(item[1])), reverse=True)
-        best_score = scored[0][0]
-        if best_score < 1: return None
-        best = [col for score, col in scored if score == best_score]
-        return sorted(best, key=lambda c: (len(c), c))[0]
+        excluded_suffixes = (
+            "_CK", "_ID", "_KEY", "_DATE",
+            "_TYPE", "_STATUS", "_FLAG", "_NAME", "_CODE",
+            "_CLASS", "_SEGMENT", "_DESC", "_DESCRIPTION", "_GROUP", "_CATEGORY",
+        )
+        candidates = [col for col in known_columns if not col.upper().endswith(excluded_suffixes)]
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
 
     def _validate_metric_column_references(
         self,
@@ -882,7 +853,14 @@ def _dialect_str(request: Any) -> str:
 
 
 def _to_snowflake_style_quoting(sql: str, dialect: str) -> str:
-    if dialect != "databricks" or not sql:
+    # Triggered by backtick PRESENCE, not the declared dialect: backticks
+    # are never valid Snowflake syntax, so a Snowflake-dialect request
+    # whose LLM output backtick-quotes identifiers anyway (e.g. confused by
+    # prompt.py's Databricks-flavored few-shot examples) must still be
+    # normalized before the verbatim regexes below can see it — gating this
+    # on dialect == "databricks" left that case invisible to validation
+    # entirely, the same blindness this sandwich was built to close.
+    if not sql or "`" not in sql:
         return sql
     # `alias`.`column` -> alias."column" (bare alias, quoted column)
     sql = _BACKTICK_DOT_PAIR_RE.sub(r'\1."\2"', sql)

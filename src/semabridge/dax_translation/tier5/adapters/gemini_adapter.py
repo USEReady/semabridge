@@ -23,7 +23,12 @@ import re
 from typing import Optional
 
 from semabridge.utils.logger import get_logger
-from semabridge.dax_translation.tier5.adapters.base import RawResult, strip_markdown_fences
+from semabridge.dax_translation.tier5.adapters.base import (
+    ProviderAuthError,
+    RawResult,
+    is_auth_error,
+    strip_markdown_fences,
+)
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 logger = get_logger(__name__)
@@ -86,13 +91,19 @@ class GeminiAdapter:
         if not service.is_available:
             return None
 
-        def _fallback(_prompt: str) -> None:
-            return None
-
         try:
             full_prompt = f"{system_message}\n\n{prompt}" if system_message else prompt
-            response = service.call(full_prompt, fallback_fn=_fallback)
+            # No fallback_fn here (unlike the original call site): passing
+            # one makes GeminiAPIService.call() swallow every failure and
+            # silently return the fallback value, which would hide an
+            # auth-class error from the classification below. Letting it
+            # raise GeminiAPIError/GeminiRateLimitError instead has the
+            # same net effect for this adapter (still returns None on any
+            # ordinary failure), it just does so via the except branch.
+            response = service.call(full_prompt, fallback_fn=None)
         except Exception as exc:
+            if is_auth_error(exc):
+                raise ProviderAuthError("gemini", exc) from exc
             logger.warning("Gemini adapter call failed: %s", exc)
             return None
 

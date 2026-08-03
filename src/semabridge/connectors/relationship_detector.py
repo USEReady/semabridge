@@ -28,8 +28,14 @@ class RelationshipDetector:
     3. Common prefix/suffix patterns
     """
     
-    # Common suffix patterns that indicate foreign keys
-    FK_SUFFIXES = ["_id", "_key", "_fk", "_code", "id", "key"]
+    # Common suffix patterns that indicate foreign keys. Bare "id"/"key"
+    # (no leading underscore) were removed — they matched any column
+    # merely ENDING in those letters (PAID, VALID, GUID), and provided no
+    # legitimate matching value beyond the anchored "_id"/"_key" forms:
+    # stripping "id"/"key" from a name with no underscore separator either
+    # produces the anchored match anyway or an empty/nonsense base that
+    # _match_column_to_table already discards.
+    FK_SUFFIXES = ["_id", "_key", "_fk", "_code"]
     
     # Common table name patterns to strip when matching
     TABLE_SUFFIXES_TO_STRIP = ["s", "es", "ies"]
@@ -119,7 +125,7 @@ class RelationshipDetector:
                 # Try to match to another table
                 match = self._match_column_to_table(from_table, col_name)
                 if match:
-                    to_table, to_column = match
+                    to_table, to_column, pk_verified = match
                     key = (
                         from_table.upper(),
                         col_name.upper(),
@@ -134,7 +140,11 @@ class RelationshipDetector:
                             "to_table": to_table,
                             "to_column": to_column,
                             "source": "naming_convention",
-                            "confidence": 0.8,
+                            # Lower confidence when the target PK itself was
+                            # a name-pattern guess (no uniqueness check
+                            # possible at this metadata-only layer), not a
+                            # real declared primary key.
+                            "confidence": 0.8 if pk_verified else 0.5,
                         })
                         seen.add(key)
         
@@ -147,16 +157,22 @@ class RelationshipDetector:
         self,
         from_table: str,
         column_name: str,
-    ) -> Optional[tuple[str, str]]:
+    ) -> Optional[tuple[str, str, bool]]:
         """
         Try to match a column to a potential target table.
-        
+
         Args:
             from_table: Source table name
             column_name: Column name to analyze
-            
+
         Returns:
-            Tuple of (target_table, target_column) or None
+            Tuple of (target_table, target_column, pk_verified) or None.
+            pk_verified is True only when target_column came from real
+            declared primary-key metadata, False when it was inferred
+            purely from a name-pattern guess (see _get_likely_pk) — this
+            table/column-metadata-only layer has no way to verify
+            uniqueness for a guessed PK, so callers should treat it as
+            lower-confidence than a real one.
         """
         col_upper = column_name.upper()
         
@@ -173,10 +189,10 @@ class RelationshipDetector:
                 target_table = self._find_matching_table(base)
                 if target_table and target_table.upper() != from_table.upper():
                     # Find the PK column in target table
-                    target_pk = self._get_likely_pk(target_table)
+                    target_pk, pk_verified = self._get_likely_pk(target_table)
                     if target_pk:
-                        return (target_table, target_pk)
-        
+                        return (target_table, target_pk, pk_verified)
+
         return None
     
     def _find_matching_table(self, base_name: str) -> Optional[str]:
@@ -209,16 +225,24 @@ class RelationshipDetector:
         
         return None
     
-    def _get_likely_pk(self, table_name: str) -> Optional[str]:
-        """Get the most likely primary key column for a table."""
+    def _get_likely_pk(self, table_name: str) -> tuple[Optional[str], bool]:
+        """Get the most likely primary key column for a table.
+
+        Returns (column_name, is_verified). is_verified is True only when
+        the column came from real declared primary-key metadata; False
+        when it was inferred purely from a name-pattern guess with no
+        uniqueness check possible at this (metadata-only) layer — callers
+        should report a genuinely lower confidence for a guessed PK than
+        a real one, not silently treat them the same.
+        """
         # First, check explicit PKs
         pks = self.primary_keys.get(table_name, [])
         if pks:
-            return pks[0]  # Return first PK column
-        
+            return pks[0], True  # Return first PK column
+
         # Fallback: look for common PK patterns
         table_cols = self._column_lookup.get(table_name.upper(), {})
-        
+
         # Common PK column names in order of preference
         pk_patterns = [
             "ID",
@@ -227,12 +251,12 @@ class RelationshipDetector:
             "KEY",
             f"{table_name.upper()}_KEY",
         ]
-        
+
         for pattern in pk_patterns:
             if pattern in table_cols:
-                return table_cols[pattern]
-        
-        return None
+                return table_cols[pattern], False
+
+        return None, False
     
     def get_relationships_for_table(
         self,

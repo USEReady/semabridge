@@ -88,6 +88,7 @@ def _convert_fabric_to_sml(
         self._apply_mapping_overrides_from_config(
             osi_model, Path(context.config_path), config_payload=context.config_payload
         )
+        context.mapping_overrides_applied = True
 
     logger.debug(
         f"OSI intermediate: {len(osi_model.datasets)} datasets, "

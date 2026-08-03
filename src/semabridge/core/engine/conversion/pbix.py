@@ -85,6 +85,7 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         self._apply_mapping_overrides_from_config(
             osi_model, Path(context.config_path), config_payload=context.config_payload
         )
+        context.mapping_overrides_applied = True
 
     logger.debug(
         f"PBIX OSI intermediate: {len(osi_model.datasets)} datasets, "

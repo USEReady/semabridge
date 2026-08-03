@@ -12,6 +12,7 @@ from typing import Optional, Tuple, Dict, List, Any
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import sanitize_column, to_alias
 from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
+from semabridge.connectors.fact_table_naming import tokenize_dataset_name as _tokenize_dataset_name
 
 logger = get_logger(__name__)
 
@@ -74,6 +75,21 @@ class DAXTranslator:
         "year_col": "YEAR",
         "period_col": "PERIOD",
     }
+
+    def __init__(self) -> None:
+        # Lazily created and reused across every _try_llm_fallback /
+        # batch_translate_tier5 call made through this instance, so a
+        # provider's per-run "unavailable after auth failure" cache (see
+        # Tier5Service._unavailable_providers) actually spans the whole
+        # run instead of resetting on every metric (each fresh
+        # Tier5Service() used to start that cache empty again).
+        self._tier5_service = None
+
+    def _get_tier5_service(self):
+        if self._tier5_service is None:
+            from semabridge.dax_translation.tier5.service import Tier5Service
+            self._tier5_service = Tier5Service()
+        return self._tier5_service
 
     def _get_date_alias(self) -> str:
         return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "COL_DATE"))
@@ -194,8 +210,8 @@ class DAXTranslator:
         
         clean_dax = dax.strip()
 
-        # Tier 1-4 are handled before the broader deterministic fallback so
-        # common patterns remain predictable and do not get over-simplified.
+        # Tier 1-4 (regex/AST-based general DAX grammar) run first; anything
+        # they decline falls through to the retry/AST/LLM tiers below.
         tiered_sql = self._try_tiered_translation(
             clean_dax,
             table_alias,
@@ -204,26 +220,7 @@ class DAXTranslator:
         )
         if tiered_sql:
             return tiered_sql
-        
-        # **NEW PRIMARY FLOW: Try deterministic translator first**
-        # This enforces pipeline as single source of truth
-        try:
-            from semabridge.converter.deterministic_translator import DeterministicTranslator
-            det_translator = DeterministicTranslator()
-            det_result = det_translator.translate(
-                clean_dax,
-                table_alias,
-                dataset_name,
-                metric_name=metric_name
-            )
-            if det_result.is_success and det_result.sql:
-                logger.info(f"✓ Deterministic translation successful: {det_result.sql[:60]}")
-                return DAXTranslationResult(det_result.sql, det_result.tier, clean_dax)
-            else:
-                logger.debug(f"Deterministic translator returned no SQL, falling back to Tier logic")
-        except Exception as e:
-            logger.warning(f"Deterministic translator error, falling back to Tier logic: {e}")
-        
+
         # Tier 1: Direct Aggregations
         tier1_sql = self._try_tier1(clean_dax, table_alias)
         if tier1_sql:
@@ -905,7 +902,6 @@ class DAXTranslator:
             logger.info(f"🟠 Metric classified as COMPLEX - requesting LLM translation: {metric_name or dax[:50]}")
 
         try:
-            from semabridge.dax_translation.tier5.service import Tier5Service
             from semabridge.dax_translation.types import TranslationRequest
 
             request = TranslationRequest(
@@ -917,7 +913,7 @@ class DAXTranslator:
                 metric_name=metric_name,
                 dialect="snowflake",
             )
-            result = Tier5Service().translate(request)
+            result = self._get_tier5_service().translate(request)
             if result is not None and result.is_success and result.sql:
                 logger.info(
                     f"LLM translation accepted for '{metric_name}' "
@@ -1008,7 +1004,6 @@ class DAXTranslator:
             # above is fixed by Tier5Service.translate_batch(), not by
             # reverting to a Pipeline-A-specific batch prompt.
             try:
-                from semabridge.dax_translation.tier5.service import Tier5Service
                 from semabridge.dax_translation.types import TranslationRequest
 
                 requests = [
@@ -1023,7 +1018,7 @@ class DAXTranslator:
                     )
                     for metric_name, dax, table_alias, dataset_name in llm_candidates
                 ]
-                tier5_results = Tier5Service().translate_batch(requests)
+                tier5_results = self._get_tier5_service().translate_batch(requests)
             except Exception as exc:
                 logger.error(f"Unexpected error in batch Tier 5 translation: {exc}")
                 tier5_results = [None] * len(llm_candidates)
@@ -1326,34 +1321,33 @@ class DAXTranslator:
         
         return result
     
+    # Whole-word terms suggesting a bracketed reference is a value/measure
+    # column rather than a dimension to group by — see get_required_dimensions.
+    _VALUE_COLUMN_TERMS = frozenset({"AMOUNT", "SALES", "REVENUE", "PRICE", "COST", "QTY"})
+
     def get_required_dimensions(self, dax: str) -> list[str]:
         """
         Extract dimension columns that should be included in GROUP BY for proper measure evaluation.
-        
+
         Analyzes the DAX expression to determine what dimensions are needed for
         context-dependent calculations.
-        
+
         Returns:
             List of dimension column references (e.g., ["'Date'[Year]", "'Region'[Name]"])
         """
         dimensions = []
-        upper_dax = dax.upper() if dax else ""
-        
-        # Time Intelligence always needs date context
-        for func in self.TIME_INTEL_FUNCTIONS:
-            if func in upper_dax:
-                dimensions.append("'Calendar'[Date]")
-                break
-        
+
         # Extract explicit table[column] references that might indicate required dimensions
-        # Pattern: 'TableName'[ColumnName] 
+        # Pattern: 'TableName'[ColumnName]
         table_col_refs = re.findall(r"'([\w\s]+)'\[(\w+)\]", dax or "")
         for table, col in table_col_refs:
             dim_ref = f"'{table}'[{col}]"
             if dim_ref not in dimensions:
-                # Only add if it looks like a dimension (not a measure column)
-                col_upper = col.upper()
-                if not any(m in col_upper for m in ["AMOUNT", "SALES", "REVENUE", "PRICE", "COST", "QTY"]):
+                # Only add if it looks like a dimension (not a measure column) —
+                # whole-word match, not a raw substring (which would wrongly
+                # exclude e.g. "Costco_Region" for containing "COST").
+                col_tokens = set(_tokenize_dataset_name(col))
+                if not (col_tokens & self._VALUE_COLUMN_TERMS):
                     dimensions.append(dim_ref)
-        
+
         return dimensions

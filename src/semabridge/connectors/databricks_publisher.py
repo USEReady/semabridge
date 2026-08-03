@@ -35,6 +35,7 @@ from semabridge.connectors.databricks_measure_translation import (
     TIER_RELATIONSHIP_AWARE_FILTERED_AGGREGATION,
 )
 from semabridge.connectors.schema_reconciler import SchemaMapper
+from semabridge.connectors.fact_table_naming import is_fact_like_name, tokenize_dataset_name
 from semabridge.repository.orm.session_factory import db_manager
 from semabridge.repository.semantic_routing_repository import RouterDecision, SemanticRoutingRepository
 from semabridge.sml.models import AggregationType, SMLDataset, SMLJoin, SMLMetric, SMLModel
@@ -208,10 +209,22 @@ class DatabricksPublisher:
         self._last_skipped_details: list[dict[str, str]] = []
         self._last_sql_fallback_state: str = SQL_FALLBACK_NOT_TRIGGERED
         self._last_sql_fallback_reason: str = ""
+        # Lazily created and reused across every
+        # _try_llm_metric_fallback_expression call made through this
+        # instance (one per deploy), so a provider's per-run "unavailable
+        # after auth failure" cache (Tier5Service._unavailable_providers)
+        # spans the whole deploy instead of resetting on every measure.
+        self._tier5_service = None
 
         # Initialize network pooling and thread-safe OAuth recovery
         self.session = requests.Session()
         self._auth_lock = threading.Lock()
+
+    def _get_tier5_service(self):
+        if self._tier5_service is None:
+            from semabridge.dax_translation.tier5.service import Tier5Service
+            self._tier5_service = Tier5Service()
+        return self._tier5_service
 
     @staticmethod
     def _reason_action_hint(reason: str) -> str:
@@ -1190,10 +1203,26 @@ class DatabricksPublisher:
                 
         return f"{cache_key}.{table_name.lower()}" in self._table_exists_cache
 
+    # Whole-word terms suggesting a shared column is a genuine join key —
+    # see _auto_infer_missing_relationships.
+    _JOIN_KEY_TERMS = frozenset({"ID", "KEY", "UNIT", "PERIOD", "DATE"})
+
     def _auto_infer_missing_relationships(self, sml_model: SMLModel) -> None:
-        """Automatically infer and inject missing relationships based on shared key columns."""
+        """Automatically infer and inject missing relationships based on shared key columns.
+
+        Conservative, opt-in only: disabled unless
+        ``enable_auto_relationship_inference`` is set, matching the same
+        opt-in pattern as the sibling ``_auto_bridge_relationship_join_keys``
+        — this fabricates NEW relationships from a name-based heuristic
+        with no independent structural signal (no constraint/uniqueness
+        metadata available at this layer), so it should never run silently
+        by default.
+        """
+        if not getattr(self._dbx_behavior, "enable_auto_relationship_inference", False):
+            return
+
         from semabridge.sml.models import SMLRelationship, Cardinality
-        
+
         existing_edges = set()
         for rel in sml_model.relationships:
             if rel.from_dataset and rel.to_dataset:
@@ -1201,7 +1230,7 @@ class DatabricksPublisher:
                 existing_edges.add((rel.to_dataset.lower(), rel.from_dataset.lower()))
 
         datasets = sml_model.datasets
-        fact_datasets = [d for d in datasets if d.is_fact or "fact" in d.unique_name.lower() or "aggregate" in d.unique_name.lower()]
+        fact_datasets = [d for d in datasets if d.is_fact or is_fact_like_name(d.unique_name)]
         if not fact_datasets:
             fact_datasets = datasets
 
@@ -1213,19 +1242,27 @@ class DatabricksPublisher:
                 edge = (ds1.unique_name.lower(), ds2.unique_name.lower())
                 if edge in existing_edges:
                     continue
-                
+
                 ds1_cols = {str(c.unique_name).lower().replace(" ", "").replace("_", ""): c.unique_name for c in ds1.columns}
                 ds2_cols = {str(c.unique_name).lower().replace(" ", "").replace("_", ""): c.unique_name for c in ds2.columns}
-                
+
                 shared_norm = set(ds1_cols.keys()).intersection(set(ds2_cols.keys()))
-                
+
                 join_keys_1 = []
                 join_keys_2 = []
                 for norm in shared_norm:
-                    if "id" in norm or "key" in norm or "unit" in norm or "period" in norm or "date" in norm:
-                        join_keys_1.append(ds1_cols[norm])
-                        join_keys_2.append(ds2_cols[norm])
-                
+                    # Whole-word match against the ORIGINAL (unnormalized)
+                    # column names — the aggressively-stripped `norm` key
+                    # above (no spaces/underscores at all) is only for
+                    # finding same-named columns across datasets; checking
+                    # substring containment against it is unbounded (e.g.
+                    # "Community" -> "community" contains "unit" mid-word).
+                    name1, name2 = ds1_cols[norm], ds2_cols[norm]
+                    tokens = set(tokenize_dataset_name(name1)) | set(tokenize_dataset_name(name2))
+                    if tokens & self._JOIN_KEY_TERMS:
+                        join_keys_1.append(name1)
+                        join_keys_2.append(name2)
+
                 if not join_keys_1:
                     continue
                     
@@ -4208,7 +4245,6 @@ class DatabricksPublisher:
         dataset_col_lookup, dataset_aliases = self._build_dax_translation_schema_lookup(sml_model)
 
         try:
-            from semabridge.dax_translation.tier5.service import Tier5Service
             from semabridge.dax_translation.types import TranslationRequest
 
             request = TranslationRequest(
@@ -4220,7 +4256,7 @@ class DatabricksPublisher:
                 metric_name=str(metric.unique_name or ""),
                 dialect="databricks",
             )
-            result = Tier5Service().translate(request)
+            result = self._get_tier5_service().translate(request)
             if result is not None and result.is_success and result.sql:
                 logger.info(
                     "LLM translated DAX for measure '%s' (provider=%s, confidence=%.2f): %s → %s",

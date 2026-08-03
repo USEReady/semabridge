@@ -22,6 +22,10 @@ from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
+from semabridge.connectors.dataset_classification_keywords import (
+    is_calendar_like_name,
+    is_dimension_like_name,
+)
 from semabridge.utils.relationship_naming import generate_relationship_name
 from semabridge.utils.synonyms import (
     load_synonym_overrides,
@@ -497,7 +501,7 @@ class TMSLTransformer:
             score = scores.get(ds.unique_name)
             if score:
                 # Force Dimensions by regex override still useful
-                if any(x in ds.unique_name.upper() for x in ["BU", "BUSINESSUNIT", "DIM", "USER", "CALENDAR"]):
+                if is_dimension_like_name(ds.unique_name):
                      ds.is_fact = False
                      continue
 
@@ -512,7 +516,7 @@ class TMSLTransformer:
         If missing, inject a standard one.
         """
         # Check if any date dimension exists
-        if any("DATE" in ds.unique_name.upper() or "CALENDAR" in ds.unique_name.upper() for ds in sml.datasets):
+        if any(is_calendar_like_name(ds.unique_name) for ds in sml.datasets):
             return
             
         logger.info("Injecting missing Calendar/Date dimension")
@@ -549,14 +553,8 @@ class TMSLTransformer:
                 self._current_table_name = name
                 columns.append(self._parse_column(col))
                 
-        # For Fabric reverse flow, source table might be vague if it's an import query.
-        # If the table name is literally 'Table', we try to use a more specific name
-        # for the Snowflake source to avoid collisions with generic names.
         source_table = name
-        if name == "Table":
-            # Known exception for the Device model in this environment
-            source_table = "DEVICE_INVENTORY"
-            
+
         return SMLDataset(
             unique_name=name,
             label=name,

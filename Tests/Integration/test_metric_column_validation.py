@@ -126,21 +126,43 @@ class TestMetricColumnValidation:
         assert "not found" in error.lower()
     
     def test_unknown_alias_in_reference(self, emitter):
-        """Test that unknown aliases are caught."""
-        metric_sql = 'SUM(unknown."REVENUE")'
+        """An alias that doesn't match any known dataset must still be
+        rejected when the referenced column has no owner anywhere either —
+        genuinely unresolvable. (A column that IS uniquely owned by a real
+        dataset now correctly resolves through an unknown alias — see
+        test_unknown_alias_heals_via_column_ownership below; that's the
+        fix, not a regression here.)"""
+        metric_sql = 'SUM(unknown."NOPE")'
         metric_name = "unknown_alias_metric"
         dataset_col_lookup = {
             "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
         }
         dataset_aliases = {"salesfact": "sf"}
-        
+
         is_valid, error = emitter._validate_metric_column_references(
             metric_sql, metric_name, dataset_col_lookup, dataset_aliases
         )
-        
+
         assert is_valid is False
         assert error is not None
         assert "unknown" in error.lower()
+
+    def test_unknown_alias_heals_via_column_ownership(self, emitter):
+        """Regression: an alias the LLM got wrong must still resolve
+        correctly when the referenced column is uniquely owned by a real
+        dataset — this used to only work if the wrong alias happened to
+        textually resemble a real dataset name."""
+        metric_sql = 'SUM(unknown."REVENUE")'
+        dataset_col_lookup = {
+            "salesfact": {"REVENUE", "UNITS", "DATE_ID"},
+        }
+        dataset_aliases = {"salesfact": "sf"}
+
+        is_valid, error = emitter._validate_metric_column_references(
+            metric_sql, "unknown_alias_metric", dataset_col_lookup, dataset_aliases
+        )
+
+        assert is_valid is True, error
     
     def test_no_table_reference_simple_aggregation(self, emitter):
         """Test that simple aggregations without table refs pass."""

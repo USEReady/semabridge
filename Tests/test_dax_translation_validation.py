@@ -25,8 +25,11 @@ test_cases = [
     {
         "name": "YTD",
         "dax": "TOTALYTD(SUM('SalesFact'[Units]), 'Date'[Date])",
-        "expected_pattern": "MAX_DATE",
-        "should_pass": True, # Assuming the translator now uses MAX_DATE
+        # CURRENT_DATE() is the correct anchor, not the synthetic MAX_DATE
+        # enriched-view column — see connectors/translator.py's e4c8322 fix
+        # and dax_rule_translator.py's translate_time_intelligence_with_anchors.
+        "expected_pattern": "CURRENT_DATE",
+        "should_pass": True,
     },
     {
         "name": "VanArsdel Units",

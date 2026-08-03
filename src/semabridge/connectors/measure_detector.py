@@ -11,6 +11,7 @@ from typing import Any
 
 from semabridge.sml.models import DataType, AggregationType
 from semabridge.utils.logger import get_logger
+from semabridge.connectors.fact_table_naming import tokenize_dataset_name
 
 logger = get_logger(__name__)
 
@@ -37,12 +38,16 @@ class MeasureDetector:
         "SCORE", "RATING", "RANK",
     ]
     
-    # Column names to exclude from measure detection
+    # Column names to exclude from measure detection — matched as whole
+    # words (see tokenize_dataset_name), not raw substrings: a plain `in`
+    # check would wrongly exclude e.g. "HOLIDAY_BONUS_AMOUNT" (contains
+    # "DAY"), "PRIOR_YEAR_REVENUE" (contains "YEAR"), or "ESCROW_AMOUNT"
+    # (contains "ROW_").
     EXCLUDE_PATTERNS = [
-        "_ID", "_KEY", "_CODE", "_NUM",
+        "ID", "KEY", "CODE", "NUM",
         "YEAR", "MONTH", "DAY", "DATE",
         "ORDINAL", "POSITION", "SEQUENCE",
-        "ROW_", "VERSION", "BATCH",
+        "ROW", "VERSION", "BATCH",
     ]
     
     # Numeric data types
@@ -130,36 +135,41 @@ class MeasureDetector:
         
         for col in columns:
             col_name = col["name"]
-            col_upper = col_name.upper()
+            col_tokens = set(tokenize_dataset_name(col_name))
             data_type = DataType.from_snowflake(col.get("data_type", "VARCHAR"))
-            
+
             # Skip if not numeric
             if data_type not in self.NUMERIC_TYPES:
                 continue
-            
-            # Skip if matches exclude patterns
-            if any(excl in col_upper for excl in self.EXCLUDE_PATTERNS):
+
+            # Check if column name suggests a measure (whole-word, not
+            # substring — e.g. "SEPARATE_ACCOUNT" contains "RATE" mid-word
+            # but isn't a rate measure)
+            matched_patterns = [p for p in self.MEASURE_PATTERNS if p in col_tokens]
+
+            # Skip if matches exclude patterns (whole-word, not substring) —
+            # unless a measure-pattern whole word is ALSO present, in which
+            # case that signal wins: e.g. "Prior_Year_Revenue" genuinely
+            # contains "YEAR" as its own word, not just embedded mid-word,
+            # but "REVENUE" makes it unambiguously a measure anyway.
+            if (col_tokens & set(self.EXCLUDE_PATTERNS)) and not matched_patterns:
                 continue
-            
-            # Check if column name suggests a measure
+
             is_likely_measure = False
             suggested_agg = AggregationType.SUM
-            
-            for pattern in self.MEASURE_PATTERNS:
-                if pattern in col_upper:
-                    is_likely_measure = True
-                    # Adjust aggregation based on pattern
-                    if pattern in ("COUNT", "QTY", "QUANTITY"):
-                        suggested_agg = AggregationType.SUM
-                    elif pattern in ("RATE", "PERCENT", "PCT", "AVG"):
-                        suggested_agg = AggregationType.AVG
-                    break
-            
+            if matched_patterns:
+                is_likely_measure = True
+                pattern = matched_patterns[0]
+                if pattern in ("COUNT", "QTY", "QUANTITY"):
+                    suggested_agg = AggregationType.SUM
+                elif pattern in ("RATE", "PERCENT", "PCT", "AVG"):
+                    suggested_agg = AggregationType.AVG
+
             # For fact tables, also include numeric columns that don't match exclude
             if is_fact and not is_likely_measure:
                 is_likely_measure = True
                 suggested_agg = AggregationType.SUM
-            
+
             if is_likely_measure:
                 # Include table name in measure name to ensure uniqueness across the model
                 col_display = col_name.replace('_', ' ').title()
@@ -170,7 +180,7 @@ class MeasureDetector:
                     "table": table_name,
                     "aggregation": suggested_agg.value,
                     "data_type": data_type.value,
-                    "confidence": 0.9 if any(p in col_upper for p in self.MEASURE_PATTERNS) else 0.7,
+                    "confidence": 0.9 if matched_patterns else 0.7,
                 }
                 measures.append(measure)
         

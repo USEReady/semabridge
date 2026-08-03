@@ -24,6 +24,18 @@ class MetricExpressionTranslator:
         self.behavior = behavior
         self._openai_prefetch_sql_by_metric: Dict[str, str] = {}
         self._openai_prefetch_done = False
+        # Lazily created and reused across every translate() call made
+        # through this instance (one per conversion run), so a provider's
+        # per-run "unavailable after auth failure" cache
+        # (Tier5Service._unavailable_providers) spans the whole run
+        # instead of resetting on every metric.
+        self._dax_translation_service = None
+
+    def _get_dax_translation_service(self):
+        if self._dax_translation_service is None:
+            from semabridge.dax_translation.service import DaxTranslationService
+            self._dax_translation_service = DaxTranslationService()
+        return self._dax_translation_service
 
     @staticmethod
     def fix_common_llm_issues(sql: str, dax: str = "") -> str:
@@ -33,14 +45,6 @@ class MetricExpressionTranslator:
         # is not in scope inside semantic view metric expressions).
         # sql = sql.replace("CURRENT_DATE()", "MAX_DATE")   # removed
         # sql = sql.replace("CURRENT_DATE", "MAX_DATE")     # removed
-        sql = re.sub(r"salesfact\.", "SALESFACT.", sql, flags=re.IGNORECASE)
-
-        # Normalize common LLM date-table alias errors: CALENDAR → COL_DATE
-        sql = re.sub(r'\bCALENDAR\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
-        # Normalize DATES alias (common LLM error) → COL_DATE
-        sql = re.sub(r'\bDATES\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
-        # Normalize DATE alias (common LLM error) → COL_DATE
-        sql = re.sub(r'\bDATE\.', 'COL_DATE.', sql, flags=re.IGNORECASE)
         # Remove bare ALIAS placeholders that LLMs occasionally emit
         sql = re.sub(r'\bALIAS\."?[A-Z_][A-Z0-9_]*"?', '', sql, flags=re.IGNORECASE).strip()
 
@@ -125,7 +129,7 @@ class MetricExpressionTranslator:
                 sanitized = self._id.sanitize_column(col_name)
                 result.add((dataset_name, sanitized))
 
-        sql_agg_pattern = r"(?:SUM|AVG|AVERAGE|COUNT|MIN|MAX|DISTINCTCOUNT|COUNT_DISTINCT|COUNT_IF)\s*\(\s*(?:DISTINCT\s+)?(?:\")?([A-ZaZ_][A-ZaZ0-9_]*)(?:\")?(?:\s+[A-Z]+)?\s*\)"
+        sql_agg_pattern = r"(?:SUM|AVG|AVERAGE|COUNT|MIN|MAX|DISTINCTCOUNT|COUNT_DISTINCT|COUNT_IF)\s*\(\s*(?:DISTINCT\s+)?(?:\")?([A-Za-z_][A-Za-z0-9_]*)(?:\")?(?:\s+[A-Z]+)?\s*\)"
         matches = re.findall(sql_agg_pattern, expr, re.IGNORECASE)
         for col_name in matches:
             sanitized = self._id.sanitize_column(col_name)
@@ -456,7 +460,6 @@ class MetricExpressionTranslator:
         # 1-4 first, then the unified Tier 5 provider chain with mandatory
         # schema-existence validation for every candidate.
         try:
-            from semabridge.dax_translation.service import DaxTranslationService
             from semabridge.dax_translation.types import TranslationRequest
 
             request = TranslationRequest(
@@ -469,7 +472,7 @@ class MetricExpressionTranslator:
                 dialect=self.dialect,
                 metric_names=metric_name_set,
             )
-            result = DaxTranslationService().translate_metric(request)
+            result = self._get_dax_translation_service().translate_metric(request)
             if result.is_success and result.sql and _passes_unresolved_metric_ref_guard(result.sql):
                 logger.info(
                     f"Recovered metric '{metric.unique_name}' via DaxTranslationService "
@@ -961,7 +964,7 @@ class MetricExpressionTranslator:
             normalized_sql = normalized_sql.replace(old_ref, new_ref)
             logger.debug(f"Normalized metric '{metric_name}': {old_ref} → {new_ref}")
 
-        unquoted_pattern = r'(?:"(\w+)"|(\w+))\.([A-Za-z_][A-ZaZ0-9_$]*)'
+        unquoted_pattern = r'(?:"(\w+)"|(\w+))\.([A-Za-z_][A-Za-z0-9_$]*)'
         for match in re.finditer(unquoted_pattern, normalized_sql):
             table_alias = match.group(1) or match.group(2)
             col_name = match.group(3)
@@ -1050,8 +1053,11 @@ class MetricExpressionTranslator:
     ) -> Optional[str]:
         """
         Dynamically heal unknown or mismatched table aliases to their correct dataset names.
+
+        Resolved structurally — by checking which real dataset actually
+        declares `col_name` — never by pattern-matching `table_alias`'s
+        (already-unresolved) spelling.
         """
-        table_alias_lower = table_alias.lower()
         sanitized_col_name = self._id.sanitize_column(col_name) if self._id else col_name.upper()
 
         # 1. If col_name is a known metric, treat alias as a dummy and let metric resolution happen
@@ -1061,17 +1067,13 @@ class MetricExpressionTranslator:
                 if dataset_aliases:
                     return next(iter(dataset_aliases.keys()))
 
-        # 2. Date table keywords remapping
-        date_keywords = {"date", "calendar", "dates", "dim_date", "cal", "col_date"}
-        if table_alias_lower in date_keywords or re.fullmatch(r"(?:col_)?date(?:_\d+)?|dates(?:_\d+)?|calendar(?:_\d+)?|dim_date(?:_\d+)?|cal(?:_\d+)?", table_alias_lower):
-            for ds_name in dataset_aliases:
-                if any(kw in ds_name.lower() for kw in ("date", "calendar", "dates")):
-                    return ds_name
-
-        # 3. Substring matching of alias to dataset names
-        for ds_name in dataset_aliases:
-            if table_alias_lower in ds_name.lower() or ds_name.lower() in table_alias_lower:
-                return ds_name
+        # 2. Resolve via real schema: which dataset actually declares this column?
+        owners = [
+            ds_name for ds_name, cols in dataset_col_lookup.items()
+            if self._resolve_column_name_for_dataset(cols, sanitized_col_name)
+        ]
+        if len(owners) == 1:
+            return owners[0]
 
         return None
 
@@ -1134,12 +1136,6 @@ class MetricExpressionTranslator:
             if len(owners) == 1:
                 owner_ds, owner_col = owners[0]
                 return dataset_aliases.get(owner_ds), owner_col
-
-            if len(owners) > 1:
-                fact_like = [candidate for candidate in owners if "FACT" in candidate[0].upper()]
-                if len(fact_like) == 1:
-                    owner_ds, owner_col = fact_like[0]
-                    return dataset_aliases.get(owner_ds), owner_col
 
             return None
 
@@ -1208,7 +1204,7 @@ class MetricExpressionTranslator:
             return match.group(0)
 
         normalized = re.sub(
-            r'"([A-ZaZ_][A-ZaZ0-9_$]*)"\."([^"]+)"',
+            r'"([A-Za-z_][A-Za-z0-9_$]*)"\."([^"]+)"',
             _replace_qualified,
             metric_sql,
         )
@@ -1270,11 +1266,6 @@ class MetricExpressionTranslator:
                     resolved_col = self._resolve_column_name_for_dataset(cols, ident)
                     if resolved_col:
                         owner_candidates.append((ds_name, resolved_col))
-
-            if len(owner_candidates) > 1:
-                fact_like = [candidate for candidate in owner_candidates if "FACT" in candidate[0].upper()]
-                if len(fact_like) == 1:
-                    owner_candidates = fact_like
 
             if len(owner_candidates) != 1:
                 logger.warning("Metric '%s': ambiguous/unresolved bare aggregate identifier '%s' owners=%s; coercing to NULL", metric_name, ident, sorted({ds for ds, _ in owner_candidates}))
@@ -1461,29 +1452,20 @@ class MetricExpressionTranslator:
         return "NULL"
 
     def _pick_preferred_aggregate_column(self, metric_name: str, known_columns: set[str]) -> Optional[str]:
+        """Only auto-resolves when excluding structural key/FK/date-suffixed
+        columns leaves exactly one candidate — never by scoring keyword
+        overlap with the metric's own name, which can silently substitute
+        the wrong column."""
         if not known_columns: return None
-        metric_token_set = set(t for t in self._id.sanitize_column(metric_name).split("_") if t)
-        value_terms = {"AMOUNT", "REVENUE", "SALES", "SPEND", "VALUE", "COST", "PRICE", "TOTAL", "QTY", "QUANTITY", "UNITS", "USD"}
-        categorical_terms = {"TYPE", "CATEGORY", "STATUS", "FLAG", "NAME", "DESC", "DESCRIPTION", "CODE", "GROUP", "CLASS", "SEGMENT"}
-        excluded_suffixes = ("_CK", "_ID", "_KEY", "_DATE")
-        scored: list[tuple[int, str]] = []
-        for col in sorted(known_columns):
-            tokens = [t for t in col.split("_") if t]
-            token_set = set(tokens)
-            score = 0
-            overlap = len(metric_token_set.intersection(token_set))
-            score += overlap * 10
-            if token_set.intersection(value_terms): score += 8
-            if token_set.intersection(categorical_terms): score -= 18
-            if col.endswith(excluded_suffixes): score -= 20
-            if "AMOUNT" in token_set: score += 4
-            scored.append((score, col))
-        if not scored: return None
-        scored.sort(key=lambda item: (item[0], -len(item[1])), reverse=True)
-        best_score = scored[0][0]
-        if best_score < 1: return None
-        best = [col for score, col in scored if score == best_score]
-        return sorted(best, key=lambda c: (len(c), c))[0]
+        excluded_suffixes = (
+            "_CK", "_ID", "_KEY", "_DATE",
+            "_TYPE", "_STATUS", "_FLAG", "_NAME", "_CODE",
+            "_CLASS", "_SEGMENT", "_DESC", "_DESCRIPTION", "_GROUP", "_CATEGORY",
+        )
+        candidates = [col for col in known_columns if not col.upper().endswith(excluded_suffixes)]
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
 
     def _get_cached_or_translate(self, dax: str, metric_name: str) -> Optional[str]:
         """

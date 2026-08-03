@@ -49,6 +49,13 @@ class RunContext:
     config_path: Optional[Path] = None
     config_payload: Optional[Dict[str, Any]] = None
 
+    # Set True once a source-specific Step 6 conversion has already applied
+    # mapping overrides at the OSI stage (fabric/pbix/snowflake-semantic-view).
+    # Lets Step 6's caller skip a second, guaranteed-no-op pass over the same
+    # overrides on the final SML model — the plain-metadata Snowflake path
+    # never sets this, since it's the only path that still needs that call.
+    mapping_overrides_applied: bool = False
+
     # Uniform "what got dropped and why" collector for this run — shared by
     # every DDL-building/extraction component so all drop reasons (DAX
     # translation, schema mismatch, DDL-emission skips, DDL-deployment

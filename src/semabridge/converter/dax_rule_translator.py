@@ -702,10 +702,24 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
         return None
 
     date_col_ref = f"{_quote_identifier(date_table_and_col)}"
-    # Qualified reference to the fact table's enriched-view MAX_DATE anchor
-    # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
-    # identifier inside a semantic view's METRICS clause.
-    max_date_ref = _column_ref(None, "MAX_DATE", table_alias)
+    # CURRENT_DATE() — a native Snowflake function, not the synthetic
+    # enriched-view MAX_DATE anchor column, which is not in scope inside a
+    # semantic view's METRICS clause (matches connectors/translator.py's
+    # parallel implementation, fixed the same way in commit e4c8322).
+    #
+    # Known tradeoff, not an oversight: MAX_DATE reflected the actual latest
+    # date present in the synced data (frozen as of the last enriched-view
+    # refresh); CURRENT_DATE() is the real wall-clock date, live on every
+    # query regardless of how current the underlying data actually is. For
+    # a SUM-based YTD this mostly self-corrects during the year (no rows
+    # exist past the real data boundary either way), but right at a year
+    # rollover — if synced data lags behind today for any reason (trailing
+    # sync, month-end close, archival/historical models) — DATE_TRUNC('YEAR',
+    # CURRENT_DATE()) flips to the new year before the data does, and the
+    # CASE WHEN below silently matches zero rows: a silent $0 YTD, not an
+    # error. Snowflake's METRICS clause forbids subqueries/window functions,
+    # so a live MAX(date_col)-at-query-time anchor isn't expressible either.
+    max_date_ref = "CURRENT_DATE()"
 
     period = ""
     if time_func == "TOTALYTD":
@@ -776,9 +790,22 @@ def translate_rolling_12_months(dax: str, table_alias: str) -> Optional[str]:
         return None
     col = m.group(1).strip()
     months = m.group(2).strip()
-    # use MAX_MONTHINDEX anchor expected to exist in enriched view
     date_alias = _date_alias()
-    return f"SUM(CASE WHEN {date_alias}.MONTHINDEX <= MAX_MONTHINDEX AND {date_alias}.MONTHINDEX > MAX_MONTHINDEX - {months} THEN {table_alias}.{_quote_identifier(col)} ELSE 0 END)"
+    # Native current-month-index expression instead of a MAX_MONTHINDEX
+    # anchor column — unlike MAX_DATE, MAX_MONTHINDEX is never actually
+    # computed anywhere in the enriched-view builder, only assumed to exist
+    # by several consumers (semantic_ddl_sanitizer.py's own missing-column
+    # fallback confirms this). Formula matches that existing fallback
+    # verbatim. Same known tradeoff as the MAX_DATE substitution above:
+    # calendar-today, not last-synced-date — see that comment for the
+    # year/period-boundary silent-zero failure mode this can produce if
+    # synced data lags behind real time.
+    current_month_index = "(EXTRACT(YEAR FROM CURRENT_DATE()) * 12 + EXTRACT(MONTH FROM CURRENT_DATE()))"
+    return (
+        f"SUM(CASE WHEN {date_alias}.MONTHINDEX <= {current_month_index} "
+        f"AND {date_alias}.MONTHINDEX > {current_month_index} - {months} "
+        f"THEN {table_alias}.{_quote_identifier(col)} ELSE 0 END)"
+    )
 
 
 def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:

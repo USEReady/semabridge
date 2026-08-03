@@ -7,7 +7,7 @@ isolation, with synthetic DAX/schema data only.
 from semabridge.dax_translation.types import TranslationRequest
 from semabridge.dax_translation.tier5.config import Tier5Config, ProviderSettings
 from semabridge.dax_translation.tier5 import service as tier5_service_module
-from semabridge.dax_translation.tier5.adapters.base import RawResult
+from semabridge.dax_translation.tier5.adapters.base import ProviderAuthError, RawResult
 
 _COL_LOOKUP = {"SomeTable": {"SOMECOLUMN"}}
 _ALIASES = {"SomeTable": "sometable"}
@@ -29,16 +29,21 @@ def _request(**overrides):
 class _FakeAdapter:
     """Test double satisfying the ProviderAdapter protocol."""
 
-    def __init__(self, settings, *, response_text=None, confidence=0.9, raises=False):
+    def __init__(self, settings, *, response_text=None, confidence=0.9, raises=False, raises_auth=False):
         self.settings = settings
         self._response_text = response_text
         self._confidence = confidence
         self._raises = raises
+        self._raises_auth = raises_auth
+        self.call_count = 0
 
     def is_available(self) -> bool:
         return True
 
     def translate(self, prompt: str, system_message: str):
+        self.call_count += 1
+        if self._raises_auth:
+            raise ProviderAuthError("fake_provider", RuntimeError("401 invalid_api_key"))
         if self._raises:
             raise RuntimeError("simulated adapter failure")
         if self._response_text is None:
@@ -357,6 +362,106 @@ def test_translate_batch_empty_input_returns_empty_list_with_no_calls():
 
     assert results == []
     assert len(fake.calls) == 0
+
+
+def test_auth_failure_is_cached_and_skipped_for_rest_of_run_without_calling_adapter_again():
+    """The regression under test: a provider whose key is invalid/expired
+    must be detected once (ProviderAuthError) and then skipped on every
+    subsequent call to the *same* Tier5Service instance (i.e. the rest of
+    one translation run) — no repeated network round trip to a provider
+    that is guaranteed to fail identically again."""
+    auth_failing_factory = lambda settings: _FakeAdapter(settings, raises_auth=True)
+    good_factory = lambda settings: _FakeAdapter(settings, response_text='SUM(sometable."SOMECOLUMN")', confidence=0.9)
+    config, original = _config_with_fake_adapters(
+        {"fake_bad_key": auth_failing_factory, "fake_good": good_factory},
+        provider_order=["fake_bad_key", "fake_good"],
+    )
+    try:
+        service = tier5_service_module.Tier5Service(config)
+        bad_adapter = service._adapters["fake_bad_key"]
+        good_adapter = service._adapters["fake_good"]
+
+        # First call: the bad-key provider is actually attempted once,
+        # fails authentication, and the run falls through to the next
+        # configured provider.
+        result_1 = service.translate(_request(metric_name="Metric_A"))
+        assert result_1 is not None and result_1.provider == "fake_good"
+        assert bad_adapter.call_count == 1
+        assert good_adapter.call_count == 1
+
+        # Second call, same instance/run: the bad-key provider must be
+        # skipped without another translate() invocation.
+        result_2 = service.translate(_request(metric_name="Metric_B"))
+        assert result_2 is not None and result_2.provider == "fake_good"
+        assert bad_adapter.call_count == 1  # unchanged — no second attempt
+        assert good_adapter.call_count == 2
+    finally:
+        _restore_adapter_classes(original)
+
+
+def test_auth_failure_cache_does_not_persist_across_a_new_run():
+    """Credentials can be fixed between deploys — a fresh Tier5Service
+    (a new run) must not inherit a previous run's "unavailable" marking
+    and must try the provider again."""
+    auth_failing_factory = lambda settings: _FakeAdapter(settings, raises_auth=True)
+    config, original = _config_with_fake_adapters({"fake_bad_key": auth_failing_factory})
+    try:
+        first_run = tier5_service_module.Tier5Service(config)
+        first_run.translate(_request())
+        assert first_run._adapters["fake_bad_key"].call_count == 1
+
+        second_run = tier5_service_module.Tier5Service(config)
+        second_run.translate(_request())
+        assert second_run._adapters["fake_bad_key"].call_count == 1  # tried fresh, not skipped
+    finally:
+        _restore_adapter_classes(original)
+
+
+def test_non_auth_exception_is_not_cached_and_is_retried_every_call():
+    """Transient failures (rate limits, timeouts, network blips) must keep
+    being retried per the existing logic — only a clear authentication
+    failure gets the "skip for the rest of this run" treatment."""
+    flaky_factory = lambda settings: _FakeAdapter(settings, raises=True)
+    config, original = _config_with_fake_adapters({"fake_flaky": flaky_factory})
+    try:
+        service = tier5_service_module.Tier5Service(config)
+        flaky_adapter = service._adapters["fake_flaky"]
+
+        service.translate(_request(metric_name="Metric_A"))
+        service.translate(_request(metric_name="Metric_B"))
+
+        assert flaky_adapter.call_count == 2  # retried both times, never cached as unavailable
+    finally:
+        _restore_adapter_classes(original)
+
+
+def test_translate_batch_also_caches_auth_failure_across_chunks():
+    """translate_batch's provider loop (_translate_one_batch_chunk) must
+    apply the same per-run cache as translate() — chunk 2 must not retry a
+    provider that failed authentication on chunk 1."""
+    import json as _json
+
+    auth_failing = _FakeBatchAdapter(None)
+    auth_failing.translate = lambda prompt, system_message: (_ for _ in ()).throw(
+        ProviderAuthError("fake_bad_key", RuntimeError("401 invalid_api_key"))
+    )
+    good_response = _json.dumps({"m0": 'SUM(sometable."SOMECOLUMN")', "m1": 'SUM(sometable."SOMECOLUMN")'})
+    good = _FakeBatchAdapter(None, responses=[good_response, good_response])
+
+    config, original = _config_with_fake_adapters(
+        {"fake_bad_key": lambda settings: auth_failing, "fake_good": lambda settings: good},
+        provider_order=["fake_bad_key", "fake_good"],
+    )
+    config.max_batch_size = 2
+    try:
+        service = tier5_service_module.Tier5Service(config)
+        results = service.translate_batch(_batch_requests(4))
+    finally:
+        _restore_adapter_classes(original)
+
+    assert len(good.calls) == 2  # one per chunk — the bad-key provider was never retried
+    assert len(results) == 4
+    assert all(r is not None and r.provider == "fake_good" for r in results)
 
 
 def test_dax_divide_lost_its_division_is_enforced():
