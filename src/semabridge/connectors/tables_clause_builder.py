@@ -8,6 +8,27 @@ from semabridge.converter.date_resolution import DateResolutionConfig
 from semabridge.connectors.fact_table_naming import is_fact_like_name
 
 
+def resolve_source_table_mapping(
+    behavior_mapping: Optional[Dict[str, str]],
+    enriched_view_mapping: Optional[Dict[str, str]],
+) -> Dict[str, str]:
+    """Merge an explicit behavior-config source_table_mapping with the
+    emitter's own enriched-view redirect mapping (dataset -> "*_ENRICHED"
+    view name, recorded when auto-enrichment succeeds).
+
+    This is the single source of truth every consumer that needs to know
+    "which physical table actually backs this dataset" must use — TABLES
+    clause building, dataset_col_lookup construction, and enriched-view
+    SELECT resolution. behavior_mapping wins on conflict (an explicit user
+    override). Neither input being None/missing is treated as an error;
+    an enrichment success must always be visible here regardless of how
+    behavior_mapping happens to be configured, for any table/anchor/model.
+    """
+    merged = dict(enriched_view_mapping or {})
+    merged.update(behavior_mapping or {})
+    return merged
+
+
 class TablesClauseBuilder:
     def __init__(
         self,
@@ -17,6 +38,7 @@ class TablesClauseBuilder:
         behavior: Any,
         live_schema_metadata: dict[str, set[str]],
         cursor: Any = None,
+        enriched_view_mapping: Optional[Dict[str, str]] = None,
     ) -> None:
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -24,6 +46,12 @@ class TablesClauseBuilder:
         self.behavior = behavior
         self.live_schema_metadata = live_schema_metadata
         self.cursor = cursor
+        # Shared by reference with the owning SnowflakeEmitter (see
+        # SnowflakeEmitter._enriched_view_mapping) so an enrichment success
+        # recorded there is visible here without a stale/duplicated copy.
+        self.enriched_view_mapping: Dict[str, str] = (
+            enriched_view_mapping if enriched_view_mapping is not None else {}
+        )
         self._anchor_literal_cache: dict[tuple, Optional[str]] = {}
 
     def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
@@ -50,7 +78,9 @@ class TablesClauseBuilder:
             return source_fq
 
         date_table, date_col, fiscal_col = date_info
-        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+        source_table_mapping = resolve_source_table_mapping(
+            getattr(self.behavior.snowflake, "source_table_mapping", None), self.enriched_view_mapping
+        )
 
         date_dataset = next(
             (d for d in getattr(model, "datasets", []) or [] if d.unique_name == date_table),
@@ -196,7 +226,9 @@ class TablesClauseBuilder:
         # confirmed" from "modelled assumption".  Empty entry = schema unknown.
         live_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
-        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+        source_table_mapping = resolve_source_table_mapping(
+            getattr(self.behavior.snowflake, "source_table_mapping", None), self.enriched_view_mapping
+        )
         for dataset in datasets:
             if is_osi:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}

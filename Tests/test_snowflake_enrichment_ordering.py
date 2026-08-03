@@ -284,3 +284,69 @@ def test_live_schema_metadata_is_reset_between_deploys_on_a_reused_emitter(monke
     # The reset must be in-place (cleared), not a reassignment — SemanticViewBuilder
     # holds this same dict by reference from construction time.
     assert emitter.semantic_view_builder.live_schema_metadata is emitter._live_schema_metadata
+
+
+def test_enriched_view_mapping_survives_when_behavior_source_table_mapping_is_none(monkeypatch):
+    """Regression for the dataset_col_lookup/enriched-view mapping-store
+    split: recording an enrichment success used to go to one of two
+    unconnected dicts depending on whether behavior.snowflake.source_table_mapping
+    happened to be None, with only one of those two dicts ever read by
+    TablesClauseBuilder when it builds dataset_col_lookup. If a caller
+    ever set source_table_mapping to None explicitly (instead of leaving
+    the default empty dict), the enrichment success would be recorded
+    into a dict nothing else read — reproducing the exact
+    'enrichment succeeded but the anchor column is still reported missing'
+    symptom this whole test module guards against, just via a different
+    trigger than cold-start ordering.
+
+    Fixed by always recording into SnowflakeEmitter._enriched_view_mapping
+    and having every consumer (TablesClauseBuilder, _dataset_source_ref,
+    _create_enriched_view) resolve through the shared
+    resolve_source_table_mapping() merge instead of reading
+    behavior.snowflake.source_table_mapping directly.
+    """
+    from semabridge.connectors.alias_registry import AliasRegistry
+    from semabridge.connectors.tables_clause_builder import TablesClauseBuilder
+
+    emitter = _build_emitter()
+    call_order = []
+    table_exists_flag = {"value": True}  # warm: table already exists
+    _wire_stubs(emitter, monkeypatch, call_order, table_exists_flag)
+
+    # The exact edge case under test: explicitly None, not the Pydantic
+    # default empty dict.
+    emitter.sf_behavior.source_table_mapping = None
+
+    result = emitter._execute_deployment_pipeline(_model(), is_osi=False)
+
+    assert result is False  # halted by our sentinel, as designed
+    assert "create_enriched_view" in call_order
+
+    # The enrichment success must still be recorded somewhere every
+    # consumer can see, even though behavior-level mapping is None.
+    assert emitter._enriched_view_mapping.get("SomeFactTable") == "SOMEFACTTABLE_ENRICHED"
+    assert emitter._get_source_table_mapping().get("SomeFactTable") == "SOMEFACTTABLE_ENRICHED"
+
+    # End-to-end: a freshly built TablesClauseBuilder — sharing the same
+    # live_schema_metadata and enriched_view_mapping the real pipeline
+    # would hand it — must resolve the fact dataset to the enriched view
+    # and therefore see MAX_DATE in dataset_col_lookup, exactly as it
+    # would need to for metric-column validation to pass.
+    tbuilder = TablesClauseBuilder(
+        emitter._id,
+        emitter.schema_manager,
+        emitter.config,
+        emitter.behavior,
+        emitter._live_schema_metadata,
+        enriched_view_mapping=emitter._enriched_view_mapping,
+    )
+    _, _, _, dataset_col_lookup, _, _ = tbuilder.build_for_sml(
+        _model(), AliasRegistry(), {}, set()
+    )
+
+    assert "MAX_DATE" in dataset_col_lookup.get("SomeFactTable", set()), (
+        "MAX_DATE must be visible in dataset_col_lookup even when "
+        "behavior.snowflake.source_table_mapping is explicitly None — "
+        "the enriched-view redirect must never be recorded somewhere "
+        "dataset_col_lookup construction can't see"
+    )

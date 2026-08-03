@@ -29,6 +29,7 @@ from semabridge.connectors.connection_manager import SnowflakeConnectionManager
 from semabridge.connectors.schema_manager import SnowflakeSchemaManager
 from semabridge.connectors.measure_sync import MeasureSynchronizer
 from semabridge.connectors.ddl_builder import SemanticViewBuilder
+from semabridge.connectors.tables_clause_builder import resolve_source_table_mapping
 from semabridge.connectors.translator import MetricExpressionTranslator
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.connectors.snowflake_emitter_parts import renderers as _renderers
@@ -122,6 +123,7 @@ class SnowflakeEmitter(BaseEmitter):
             dup_name_repo=self._dup_name_repo,
             translator=self.translator,
             drop_ledger=self.drop_ledger,
+            enriched_view_mapping=self._enriched_view_mapping,
         )
 
     # =========================================================================
@@ -253,12 +255,12 @@ class SnowflakeEmitter(BaseEmitter):
                         for fact_table in self._get_fact_tables_needing_enrichment(model):
                             enriched_view = self._create_enriched_view(model, cur, fact_table=fact_table)
                             if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
-                                mapping = getattr(self.sf_behavior, 'source_table_mapping', None)
-                                if mapping is None:
-                                    # Keep mapping local to emitter instance
-                                    self._enriched_view_mapping[fact_table] = enriched_view
-                                else:
-                                    mapping[fact_table] = enriched_view
+                                # Always recorded here, never on behavior.snowflake.source_table_mapping
+                                # directly — every reader merges this in via
+                                # _get_source_table_mapping()/resolve_source_table_mapping(), so this
+                                # stays visible regardless of whether behavior-level mapping is None,
+                                # empty, or already holds unrelated explicit overrides.
+                                self._enriched_view_mapping[fact_table] = enriched_view
                                 logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
 
                 if is_osi:
@@ -832,10 +834,9 @@ class SnowflakeEmitter(BaseEmitter):
 
         Behavior-level mapping takes precedence over local emitter mapping.
         """
-        mapping = getattr(self.sf_behavior, 'source_table_mapping', None) or {}
-        merged = dict(self._enriched_view_mapping or {})
-        merged.update(mapping or {})
-        return merged
+        return resolve_source_table_mapping(
+            getattr(self.sf_behavior, 'source_table_mapping', None), self._enriched_view_mapping
+        )
 
     def deploy_cortex_yaml(self, cursor: Any, sml: SMLModel, yaml_content: str) -> None:
         """Upload and register Cortex Analyst YAML via a Snowflake internal stage.
@@ -1821,7 +1822,7 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _dataset_source_ref(self, model: Any, dataset_name: str) -> str:
         dataset = self._get_dataset_by_name(model, dataset_name)
-        source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+        source_table_mapping = self._get_source_table_mapping()
         source_table = source_table_mapping.get(
             getattr(dataset, "unique_name", dataset_name),
             getattr(dataset, "source_table", None) or dataset_name,
@@ -2006,7 +2007,7 @@ class SnowflakeEmitter(BaseEmitter):
         # Add YTD anchor
         if date_info:
             date_table, date_col, fiscal_col = date_info
-            source_table_mapping = getattr(self.behavior.snowflake, "source_table_mapping", {}) or {}
+            source_table_mapping = self._get_source_table_mapping()
 
             date_dataset = next(
                 (d for d in getattr(model, "datasets", []) or [] if d.unique_name == date_table),

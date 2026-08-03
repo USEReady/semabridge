@@ -14,6 +14,7 @@ from semabridge.api.services.project_shared import (
     _compat_default_project_yaml,
     _compat_deleted_project_ids,
     _compat_ensure_loaded,
+    _compat_folders,
     _compat_load_project_yaml_text,
     _compat_load_repo_yaml_text,
     _compat_mappings,
@@ -31,6 +32,7 @@ from semabridge.api.services.project_shared import (
     _compat_save_project_yaml_text,
     _compat_save_store,
     _compat_snapshot_groups,
+    _compat_store_loaded,
     db_manager,
     logger,
 )
@@ -465,11 +467,17 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
             pid = file_path.stem.strip()
             if (
                 not pid
-                or pid in deduped
                 or pid in _compat_deleted_project_ids
                 or pid == "preview"
                 or pid.startswith("preview-")
             ):
+                continue
+            if pid in deduped:
+                logger.warning(
+                    "Duplicate project_id '%s' found across project directories; "
+                    "keeping the already-loaded entry and skipping %s",
+                    pid, file_path,
+                )
                 continue
             try:
                 file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
@@ -477,26 +485,25 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
                 if not isinstance(project_cfg, dict):
                     continue
                 entry = _project_discovery_entry(pid, file_path, project_cfg)
-                deduped[_project_semantic_key(entry, pid)] = entry
+                deduped[pid] = entry
             except Exception as e:
                 logger.warning(f"Failed to load project config {file_path}: {e}")
 
     for p in _compat_projects.values():
         pid = str(p.get("id") or p.get("project_id") or "").strip()
-        semantic_key = _project_semantic_key(p, pid)
-        if not pid or not semantic_key:
+        if not pid:
             continue
         if p.get("is_transient_preview") or pid == "preview" or pid.startswith("preview-"):
             continue
-        
-        current = deduped.get(semantic_key)
+
+        current = deduped.get(pid)
         if not current:
-            deduped[semantic_key] = _project_with_semantic_models(p, pid)
+            deduped[pid] = _project_with_semantic_models(p, pid)
             continue
         cur_ts = str(current.get("updated_at") or current.get("created_at") or "")
         new_ts = str(p.get("updated_at") or p.get("created_at") or "")
         if new_ts >= cur_ts:
-            deduped[semantic_key] = _project_with_semantic_models(p, pid)
+            deduped[pid] = _project_with_semantic_models(p, pid)
 
     all_projects = [
         _project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or ""))

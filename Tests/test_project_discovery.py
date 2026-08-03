@@ -111,6 +111,55 @@ def test_create_project_reuses_existing_semantic_name(monkeypatch, tmp_path):
     assert len([p for p in ppi._compat_projects.values() if p.get("semantic_name") == "Competitive Marketing Analysis"]) == 1
 
 
+def test_list_projects_keeps_distinct_ids_sharing_same_display_name(monkeypatch, tmp_path):
+    """Regression: list_projects_compat() used to dedup by casefolded
+    display name instead of project_id, so two genuinely different
+    projects that happen to share a name (e.g. after a rename collides
+    with an existing project) would silently collapse to one — the
+    project that lost would vanish from the Home page even though its
+    runs still show up on the Runs page (which lists by project_id with
+    no name-based dedup at all). project_id is the real unique
+    identifier here — it's what runs are filed under and it's guaranteed
+    unique by construction — so dedup must key on it, not on name.
+
+    Asserts both ids are present as a subset, not that the result is
+    exactly these two and nothing else: _compat_config_roots() always
+    additionally includes this machine's real on-disk Config/projects
+    directory regardless of monkeypatch.chdir (a separate, tracked
+    pre-existing test-isolation gap — see _compat_repo_root() in
+    project_shared.py), so an exact-count assertion here would be
+    fragile to whatever real project files happen to exist locally.
+    What this regression actually cares about — that dedup never drops
+    either id — doesn't need an exact count to prove it."""
+    monkeypatch.chdir(tmp_path)
+    _reset_compat_state()
+
+    ppi._compat_projects["proj-aaa"] = {
+        "id": "proj-aaa",
+        "project_id": "proj-aaa",
+        "name": "Q1 Sales Analytics",
+        "display_name": "Q1 Sales Analytics",
+        "source": "fabric",
+        "target_type": "snowflake",
+    }
+    ppi._compat_projects["proj-bbb"] = {
+        "id": "proj-bbb",
+        "project_id": "proj-bbb",
+        "name": "Q1 Sales Analytics",
+        "display_name": "Q1 Sales Analytics",
+        "source": "fabric",
+        "target_type": "snowflake",
+    }
+
+    rows = asyncio.run(ppi.list_projects_compat())
+
+    ids = {row["id"] for row in rows}
+    assert {"proj-aaa", "proj-bbb"}.issubset(ids), (
+        "both distinct-id projects sharing a display name must survive "
+        "dedup — neither should be silently dropped"
+    )
+
+
 def test_list_projects_includes_semantic_models(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
