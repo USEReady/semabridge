@@ -13,6 +13,7 @@ import os
 import json
 
 from semabridge.utils.logger import get_logger
+from semabridge.utils.null_sentinel import is_null_cast_sql
 
 logger = get_logger(__name__)
 
@@ -24,18 +25,41 @@ class MetricExpressionTranslator:
         self.behavior = behavior
         self._openai_prefetch_sql_by_metric: Dict[str, str] = {}
         self._openai_prefetch_done = False
+        # Shape tuple (see converter/time_intelligence_shapes.py) -> flag
+        # column name precomputed on the current fact table's enriched view
+        # by snowflake_emitter.py::_create_enriched_view. Set by the emitter
+        # right after enrichment runs, before any metric translation for
+        # that fact table — empty (the default) preserves the inline
+        # MAX_DATE rendering exactly, e.g. for callers with no live
+        # enrichment step (the schema-blind dry-run/preview path).
+        self.anchor_flag_map: Dict[Any, str] = {}
         # Lazily created and reused across every translate() call made
         # through this instance (one per conversion run), so a provider's
         # per-run "unavailable after auth failure" cache
         # (Tier5Service._unavailable_providers) spans the whole run
         # instead of resetting on every metric.
         self._dax_translation_service = None
+        # Same rationale, same fix shape, for the sibling deterministic
+        # fallback path (_try_basic_dax_metric_fallback_expression below):
+        # that method used to construct a fresh DAXTranslator() per metric,
+        # which meant a fresh, empty-cache Tier5Service too (see
+        # DAXTranslator.__init__'s own lazy _tier5_service), silently
+        # discarding _unavailable_providers on every call and re-attempting
+        # (and re-failing) a dead provider once per metric instead of once
+        # per run.
+        self._dax_translator = None
 
     def _get_dax_translation_service(self):
         if self._dax_translation_service is None:
             from semabridge.dax_translation.service import DaxTranslationService
             self._dax_translation_service = DaxTranslationService()
         return self._dax_translation_service
+
+    def _get_dax_translator(self):
+        if self._dax_translator is None:
+            from semabridge.converter.dax_translator import DAXTranslator
+            self._dax_translator = DAXTranslator()
+        return self._dax_translator
 
     @staticmethod
     def fix_common_llm_issues(sql: str, dax: str = "") -> str:
@@ -160,30 +184,22 @@ class MetricExpressionTranslator:
             if model is None:
                 return None
 
-        if "SAMEPERIODLASTYEAR" in expr.upper():
-            m_sum = re.search(r"(?i)SUM\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", expr)
-            if m_sum:
-                col = self._id.sanitize_column(m_sum.group(1))
-                # Scalar CASE WHEN for prior year period (no OVER allowed in METRICS)
-                return (
-                    f'SUM(CASE WHEN YEAR({table_alias}."COL_DATE") = YEAR(CURRENT_DATE()) - 1 '
-                    f'AND {table_alias}."COL_DATE" BETWEEN '
-                    f"DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) "
-                    f"AND DATEADD(YEAR, -1, CURRENT_DATE()) "
-                    f'THEN {table_alias}."{col}"::FLOAT END)'
-                )
-
-        if "TOTALYTD" in expr.upper():
-            m_sum = re.search(r"(?i)SUM\(\s*(?:'[^']+'\s*)?\[([^\]]+)\]\s*\)", expr)
-            if m_sum:
-                col = self._id.sanitize_column(m_sum.group(1))
-                # Scalar CASE WHEN for YTD (no OVER allowed in METRICS)
-                return (
-                    f'SUM(CASE WHEN {table_alias}."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
-                    f'AND {table_alias}."COL_DATE" <= CURRENT_DATE() '
-                    f'THEN {table_alias}."{col}"::FLOAT END)'
-                )
-
+        # SAMEPERIODLASTYEAR(SUM(...), ...) / TOTALYTD(SUM(...), ...) — a
+        # direct-aggregate time-intelligence call — used to be special-cased
+        # here with its own inline CASE WHEN, anchored to CURRENT_DATE()
+        # (today's wall-clock date) rather than the enriched view's MAX_DATE
+        # anchor (the actual latest date present in the fact data) — wrong
+        # whenever the data doesn't extend all the way to today, and a
+        # second, independent implementation of the exact same DAX shapes
+        # dax_ast_parser.DaxSqlRenderer._render_period_to_date /
+        # _render_lag_period already handle correctly (anchored to the real
+        # data, and — see converter/time_intelligence_shapes.py — able to
+        # reference a precomputed flag column instead of a raw MAX_DATE
+        # reference, which Snowflake's semantic-view compiler rejects even
+        # though the column physically exists). Falls through to the same
+        # DAXTranslator().translate() call below that the measure-reference
+        # form of these functions already used, instead of maintaining a
+        # second, divergent path for the direct-aggregate form.
         known_cols = dataset_col_lookup.get(metric.dataset, set())
 
         if re.match(r"(?i)^COUNTROWS\(\s*'[^']+'\s*\)$", expr):
@@ -224,14 +240,13 @@ class MetricExpressionTranslator:
         # dax_ast_parser.DaxSqlRenderer._render_period_to_date), so this now
         # falls straight through to that instead of a separate, broken path.
         try:
-            from semabridge.converter.dax_translator import DAXTranslator
-
-            translated = DAXTranslator().translate(
+            translated = self._get_dax_translator().translate(
                 raw_expr,
                 table_alias,
                 metric.dataset,
                 metric_name=metric.unique_name,
                 metrics_context=metrics_list,
+                anchor_flag_map=self.anchor_flag_map,
             )
             if translated.is_success and translated.sql:
                 return translated.sql
@@ -392,7 +407,9 @@ class MetricExpressionTranslator:
                 rule_based_translation,
             )
             metric_label = metric.name if hasattr(metric, "name") else metric_name
-            rule_based_sql = rule_based_translation(dax_expression, table_alias, metric_label)
+            rule_based_sql = rule_based_translation(
+                dax_expression, table_alias, metric_label, anchor_flag_map=self.anchor_flag_map
+            )
 
             if rule_based_sql:
                 normalized_rule_sql = self.fix_common_llm_issues(rule_based_sql, dax_expression)
@@ -408,7 +425,12 @@ class MetricExpressionTranslator:
                 is_valid, issues = self._validate_metric_column_references(
                     normalized_rule_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_name_set
                 )
-                if is_valid and not issues and _passes_unresolved_metric_ref_guard(normalized_rule_sql):
+                if (
+                    is_valid
+                    and not issues
+                    and not is_null_cast_sql(normalized_rule_sql)
+                    and _passes_unresolved_metric_ref_guard(normalized_rule_sql)
+                ):
                     logger.info(f"Rule-based translation for '{metric_name}' is valid.")
                     return normalized_rule_sql
                 else:
@@ -451,6 +473,7 @@ class MetricExpressionTranslator:
                     and expr.strip()
                     and expr_upper != 'SUM(*)'
                     and not expr_upper.endswith('SUM(*)')
+                    and not is_null_cast_sql(expr)
                     and _passes_unresolved_metric_ref_guard(expr)
                 ):
                     logger.info(f"Recovered metric '{metric.unique_name}' via prefetch cache")
@@ -473,7 +496,12 @@ class MetricExpressionTranslator:
                 metric_names=metric_name_set,
             )
             result = self._get_dax_translation_service().translate_metric(request)
-            if result.is_success and result.sql and _passes_unresolved_metric_ref_guard(result.sql):
+            if (
+                result.is_success
+                and result.sql
+                and not is_null_cast_sql(result.sql)
+                and _passes_unresolved_metric_ref_guard(result.sql)
+            ):
                 logger.info(
                     f"Recovered metric '{metric.unique_name}' via DaxTranslationService "
                     f"(tier={result.tier}, provider={result.provider})"

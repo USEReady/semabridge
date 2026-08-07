@@ -174,6 +174,10 @@ class SnowflakeEmitter(BaseEmitter):
             # Cleared in place (see __init__) so SemanticViewBuilder's shared
             # reference to this same ledger stays valid.
             self.drop_ledger.clear()
+            # Same reason again — a reused emitter instance must not carry a
+            # prior deploy's time-intelligence flag-column map into this one
+            # (see _create_enriched_view / converter/time_intelligence_shapes.py).
+            self.translator.anchor_flag_map.clear()
             deploy_started_at = time.perf_counter()
             model_name = getattr(model, "unique_name", None) or getattr(model, "label", None) or "<unnamed_model>"
             path_type = "OSI" if is_osi else "SML"
@@ -506,7 +510,9 @@ class SnowflakeEmitter(BaseEmitter):
                             _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
                             if not _invalid_id:
                                 break
-                            _fixed_sql, _changed = _sanitizer.remediate_invalid_identifier(_current_sql, _invalid_id)
+                            _fixed_sql, _changed, _nulled_metric_names = _sanitizer.remediate_invalid_identifier(
+                                _current_sql, _invalid_id
+                            )
                             if not _changed:
                                 logger.warning(
                                     "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
@@ -525,26 +531,8 @@ class SnowflakeEmitter(BaseEmitter):
                             # pass-by-pass WARNING logs.
                             _invalid_upper = _invalid_id.upper().replace('"', "")
                             if "." in _invalid_id and _invalid_upper not in ("MAX_DATE", "MAX_MONTHINDEX"):
-                                # Resolve the raw rejected identifier (e.g. a
-                                # table.column reference inside a metric's SQL)
-                                # back to the METRICS-clause name that declares
-                                # it, so the ledger records the same metric
-                                # identity used everywhere else (the SML
-                                # snapshot's unique_name-derived name) instead
-                                # of an opaque SQL identifier no downstream
-                                # reconciliation can match against.
-                                _dropped_metric_name = self._resolve_metric_name_for_invalid_identifier(
-                                    _current_sql, _invalid_id
-                                )
-                                self._dropped_metrics.append(
-                                    {"metric": _dropped_metric_name, "reason": str(_current_exc)}
-                                )
-                                self.drop_ledger.record(
-                                    "metric", _dropped_metric_name, DropStage.DDL_DEPLOYMENT,
-                                    "Snowflake rejected this identifier when executing the "
-                                    "compiled semantic-view DDL, and it could not be "
-                                    "automatically remediated.",
-                                    detail=str(_current_exc)[:300],
+                                self._record_ddl_deployment_drops(
+                                    _invalid_id, _nulled_metric_names, _current_sql, _current_exc
                                 )
                             _current_sql = _fixed_sql
                             try:
@@ -684,6 +672,47 @@ class SnowflakeEmitter(BaseEmitter):
                 if m:
                     return m.group(1)
         return invalid_id
+
+    def _record_ddl_deployment_drops(
+        self,
+        invalid_id: str,
+        nulled_metric_names: List[str],
+        current_sql: str,
+        exc: Exception,
+    ) -> None:
+        """Record a drop for every metric a DDL-execution-time remediation
+        pass actually nulled out — never just one.
+
+        A single invalid identifier (e.g. a shared anchor column referenced
+        by several metrics' expressions) can cause
+        SemanticDDLSanitizer.remediate_invalid_identifier's METRICS-clause
+        sweep to null out multiple metrics in one pass. Recording only the
+        one name _resolve_metric_name_for_invalid_identifier happens to
+        resolve first — as this used to do — silently loses every other
+        metric nulled in that same sweep: it never reaches drop_ledger, so
+        reconciliation and the dry-run/runs-page UI report the run as
+        cleaner than it actually was.
+
+        `nulled_metric_names` (from remediate_invalid_identifier's return
+        value) is the precise, complete list when the fix happened inside
+        the METRICS clause. It is empty when the fix instead happened in
+        TABLES/RELATIONSHIPS/DIMENSIONS (no metric was nulled at all) — in
+        that case this falls back to the prior single-name resolution, so
+        that path's behavior (some record, even if imprecise, rather than
+        none) is unchanged.
+        """
+        names_to_record = nulled_metric_names or [
+            self._resolve_metric_name_for_invalid_identifier(current_sql, invalid_id)
+        ]
+        for dropped_metric_name in names_to_record:
+            self._dropped_metrics.append({"metric": dropped_metric_name, "reason": str(exc)})
+            self.drop_ledger.record(
+                "metric", dropped_metric_name, DropStage.DDL_DEPLOYMENT,
+                "Snowflake rejected this identifier when executing the "
+                "compiled semantic-view DDL, and it could not be "
+                "automatically remediated.",
+                detail=str(exc)[:300],
+            )
 
     def _smoke_test_semantic_view(self, cursor: Any, view_name: str, ddl: str = "") -> Optional[str]:
         """Run a lightweight query against the semantic view to catch runtime errors.
@@ -2041,6 +2070,49 @@ class SnowflakeEmitter(BaseEmitter):
                 if max_date_literal is not None:
                     select_parts.append(f'\n            , {max_date_literal} AS "MAX_DATE"')
                     projected_cols.add("MAX_DATE")
+
+                    # Precompute one boolean flag column per time-intelligence
+                    # shape this model's metrics actually need (YTD, SPLY,
+                    # nested compositions, etc. — see
+                    # converter/time_intelligence_shapes.py). Snowflake's
+                    # semantic-view METRICS clause rejects a direct reference
+                    # to MAX_DATE itself (confirmed against a live deploy —
+                    # see the proj-test-1 investigation) even though the
+                    # column physically exists; an ordinary per-row boolean
+                    # column referencing the same anchor does not have that
+                    # problem (confirmed: PRODUCT_ISVANARSDEL, a column added
+                    # by this same enrichment mechanism, is already
+                    # referenced successfully in live METRICS expressions).
+                    # Never hardcoded to specific metric names or shapes —
+                    # empty when the model has no time-intelligence metrics.
+                    from semabridge.converter.time_intelligence_shapes import (
+                        build_shape_boolean_sql,
+                        discover_time_intelligence_shapes,
+                        flag_column_name,
+                    )
+
+                    shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
+                    fact_date_col_sql = f'f."{resolved_date_col}"'
+                    new_flag_map = {}
+                    for shape in sorted(shapes):
+                        flag_name = flag_column_name(shape)
+                        flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_literal)
+                        select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
+                        projected_cols.add(flag_name)
+                        new_flag_map[shape] = flag_name
+
+                    # Expose to metric translation (translator.py's
+                    # DAXTranslator().translate() call reads
+                    # self.translator.anchor_flag_map) so metrics for this
+                    # fact table render flag-column references instead of
+                    # inline MAX_DATE arithmetic. Merged rather than
+                    # replaced — a model with more than one fact table
+                    # accumulates flags across every _create_enriched_view
+                    # call rather than only remembering the last one; shape
+                    # tuples alone (not fact-table-qualified) are the lookup
+                    # key today, matching every other consumer of this map.
+                    if hasattr(self, "translator") and self.translator is not None:
+                        self.translator.anchor_flag_map.update(new_flag_map)
 
             # Same principle for the fiscal-period anchor, but checked against
             # the date table's own columns (it queries date_table_ref, not

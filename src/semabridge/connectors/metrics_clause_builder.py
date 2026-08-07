@@ -16,6 +16,7 @@ from semabridge.connectors.ddl_helpers import (
 from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metric_sql
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.utils.null_sentinel import is_null_cast_sql
 
 logger = get_logger(__name__)
 
@@ -156,37 +157,37 @@ class MetricsClauseBuilder:
             metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
             metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
             metric_base_seen[metric_base_alias] = metric_seen_idx
-            
-            metric_alias_seed = (metric_base_alias if metric_base_totals.get(metric_base_alias, 0) == 1 
+
+            metric_alias_seed = (metric_base_alias if metric_base_totals.get(metric_base_alias, 0) == 1
                                  else f"{metric_base_alias}_{metric_seen_idx}")
-            
+
             if metric_base_totals.get(metric_base_alias, 0) > 1:
                 metric_signature_seed = self._build_duplicate_signature_seed(
-                    metric.unique_name, 
-                    getattr(metric, "sql_expression", None) or metric.expression, 
-                    None, 
+                    metric.unique_name,
+                    getattr(metric, "sql_expression", None) or metric.expression,
+                    None,
                     metric.aggregation.value if metric.aggregation else None
                 )
                 sig_idx = metric_signature_seen.get(metric_signature_seed, 0) + 1
                 metric_signature_seen[metric_signature_seed] = sig_idx
                 metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
                 metric_alias_seed = self._resolve_persistent_duplicate_name(
-                    "metric", metric_namespace, 
+                    "metric", metric_namespace,
                     self.identifier_sanitizer.sanitize_alias(metric.dataset),
                     metric_base_alias, metric.unique_name, metric_signature, metric_alias_seed
                 )
 
             metric_name = self._resolve_unique_metric_alias(metric_alias_seed, used_metric_names, metric.unique_name)
             expected_metrics.append((alias, metric_name, metric.unique_name))
-            
+
             expr = self._generate_metric_expression(
-                metric, metric_name, alias, dataset_by_name, dataset_aliases, 
-                dataset_col_lookup, alias_by_raw, metric_name_set, 
+                metric, metric_name, alias, dataset_by_name, dataset_aliases,
+                dataset_col_lookup, alias_by_raw, metric_name_set,
                 all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
                 fact_aliases=fact_aliases,
                 metric_to_alias=metric_to_alias
             )
-            
+
             if expr:
                 expr = normalize_snowflake_metric_sql(expr)
 
@@ -633,6 +634,41 @@ class MetricsClauseBuilder:
         sql_expr = getattr(metric, "sql_expression", None)
         dax_expr = getattr(metric, "expression", None)
 
+        if sql_expr and is_null_cast_sql(sql_expr):
+            # A prior stage (or a previous run's persisted translation) already
+            # gave up on this metric and stored the NULL-cast placeholder as
+            # its sql_expression. Treat it exactly like "no sql_expression" —
+            # fall through to a DAX-expression retry if one exists (that path
+            # records its own success/failure), rather than validating and
+            # emitting the placeholder as if it were real SQL. Only record
+            # here when there's no DAX fallback to attempt, so this doesn't
+            # double up with the DAX-expression branch's own record below.
+            if not dax_expr:
+                logger.warning(
+                    "Metric '%s': stored sql_expression is a NULL-cast placeholder "
+                    "from an earlier translation attempt that declined to translate, "
+                    "and no DAX expression exists to retry. Skipping rather than "
+                    "emitting it as if valid.",
+                    metric.unique_name,
+                )
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DAX_TRANSLATION,
+                    "A prior translation stage stored a NULL-cast placeholder instead of "
+                    "real SQL for this metric's expression, and no DAX expression exists "
+                    "to retry — treating as untranslated rather than emitting a dead "
+                    "metric silently.",
+                    dataset=getattr(metric, "dataset", None),
+                )
+                return None
+            logger.warning(
+                "Metric '%s': stored sql_expression is a NULL-cast placeholder from "
+                "an earlier translation attempt that declined to translate. Falling "
+                "back to its DAX expression instead of emitting the placeholder as "
+                "if valid.",
+                metric.unique_name,
+            )
+            sql_expr = None
+
         if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
             logger.warning(f"Metric '{metric.unique_name}': virtual measures table, trying DAX fallback")
             # Fall through to DAX expression path
@@ -802,7 +838,7 @@ class MetricsClauseBuilder:
                     dataset_col_lookup,
                 )
                 return translated
-            
+
             # Translation failed — skip this metric rather than emitting invalid SQL
             logger.warning(
                 "Could not translate metric '%s' with expression '%s'. "
@@ -825,8 +861,6 @@ class MetricsClauseBuilder:
             dataset=getattr(metric, "dataset", None),
         )
         return None
-
-
 
     def _apply_osi_fallbacks(
         self, metrics_lines: List[str], expected_metrics: List[Any], osi: Any, 

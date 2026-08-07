@@ -8,6 +8,7 @@ Responsibilities:
 
 import logging
 import os
+from functools import lru_cache
 from typing import Optional
 from cryptography.fernet import Fernet
 import base64
@@ -16,8 +17,20 @@ import hashlib
 _encryption_logger = logging.getLogger(__name__)
 
 
+@lru_cache()
 def _get_fernet() -> Fernet:
-    """Derives a Fernet key from a configured secret key or environment variable."""
+    """Derives a Fernet key from a configured secret key or environment variable.
+
+    Cached for the process lifetime (same convention as core/env.py's
+    load_repo_dotenv() and core/settings.py's settings loader) so the
+    dev-mode "SEMABRIDGE_ENCRYPTION_KEY is not set" warning below logs once
+    per process instead of once per encrypt_token()/decrypt_token() call —
+    every credential field decrypted from a bundle used to re-trigger this
+    same warning. The underlying key-derivation logic and the hard failure
+    when AUTH_ENABLED=true is unchanged; lru_cache doesn't cache raised
+    exceptions, so that path still re-evaluates (and still raises) on every
+    call exactly as before.
+    """
     secret = os.environ.get("SEMABRIDGE_ENCRYPTION_KEY")
     if not secret:
         # Allow dev mode to proceed with a warning, but never silently use a hardcoded key

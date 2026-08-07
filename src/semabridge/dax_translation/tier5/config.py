@@ -21,9 +21,22 @@ class ProviderSettings:
     max_retries: Optional[int] = None
     rate_limit_rpm: Optional[int] = None
     models: Optional[List[str]] = None  # ordered failover list (featherless)
+    # Resolved, in-memory only — decrypted Settings-page API key for this
+    # provider, if one is configured there (see
+    # repository/llm_provider_credentials.py and Tier5Config.resolve()
+    # below). Deliberately NOT written to os.environ: settings_api.py's
+    # save_secret() already documents why mutating process-global
+    # os.environ from a stored credential is unsafe for concurrent
+    # requests; threading the key through this field instead means every
+    # adapter's is_available()/translate() just prefers it over
+    # os.getenv(enabled_env), with no global mutation at all. Also
+    # deliberately excluded from repr (field(repr=False)) — a plain
+    # dataclass repr would otherwise print the decrypted key into any log
+    # line or traceback that stringifies a ProviderSettings/Tier5Config.
+    api_key: Optional[str] = field(default=None, repr=False)
 
     def is_enabled(self) -> bool:
-        return bool(os.getenv(self.enabled_env))
+        return bool(self.api_key) or bool(os.getenv(self.enabled_env))
 
 
 @dataclass
@@ -47,7 +60,7 @@ class Tier5Config:
     @classmethod
     def default(cls) -> "Tier5Config":
         return cls(
-            provider_order=["openai", "gemini", "groq", "featherless"],
+            provider_order=["openai", "gemini", "groq", "featherless", "anthropic"],
             min_confidence=0.55,
             providers={
                 "openai": ProviderSettings(
@@ -74,10 +87,65 @@ class Tier5Config:
                         "meta-llama/Llama-3.2-3B-Instruct",
                     ],
                 ),
-                # Anthropic deliberately omitted — deferred per Step 1 scope
-                # (no key, no adapter built yet; add both together later).
+                "anthropic": ProviderSettings(
+                    enabled_env="ANTHROPIC_API_KEY",
+                    # model intentionally left unset — AnthropicAdapter
+                    # performs live model discovery via the Models API to
+                    # pick a cost-appropriate default (see
+                    # adapters/anthropic_adapter.py). Set this explicitly
+                    # to pin a model and skip discovery.
+                    timeout_seconds=30,
+                    max_retries=2,
+                ),
             },
         )
+
+    @classmethod
+    def resolve(cls) -> "Tier5Config":
+        """Build the config for one run: start from default() (provider
+        order, timeouts, per-provider hardcoded fallbacks), then overlay
+        any Settings-page-configured provider credentials/models on top.
+
+        This is the ONLY place Settings-stored LLM provider config is
+        read from the database, and it happens exactly once per
+        Tier5Service instance (called from Tier5Service.__init__).
+        Tier5Service itself is already constructed exactly once per
+        run/deploy by every real call site (DAXTranslator,
+        DatabricksPublisher, DaxTranslationService — each caches it as a
+        lazy instance attribute via its own `_get_tier5_service()`/
+        `__init__`, the fix from the Groq-batch-spam bug). So this DB
+        read happens once per run, not once per metric, with no separate
+        cache of its own needed here.
+
+        Deliberately NOT wrapped in @lru_cache(): unlike
+        auth/encryption.py's Fernet key (genuinely immutable for the
+        process lifetime, which is why @lru_cache() is correct there),
+        Settings-configured provider keys/models CAN change between runs
+        — an admin edits them via the Settings UI while a long-lived
+        server process keeps running — and a process-wide cache would
+        keep serving stale config until a restart. Fresh resolution on
+        every new Tier5Service() is what makes "a Settings change takes
+        effect on the very next run" correct; caching would silently
+        reintroduce the same staleness class the encryption-warning fix
+        exists to describe (just at the config layer instead of a Fernet
+        object).
+
+        Failure to read Settings config (DB unavailable, etc.) degrades
+        to default()'s .env-only behavior rather than breaking Tier 5
+        entirely — Settings config is additive, .env must keep working
+        standalone.
+        """
+        config = cls.default()
+        try:
+            from semabridge.repository.llm_provider_credentials import apply_settings_overrides
+            apply_settings_overrides(config)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Tier5Config.resolve(): failed to read Settings-configured provider "
+                "credentials, falling back to .env-only config for this run: %s", exc,
+            )
+        return config
 
     @classmethod
     def from_dict(cls, data: dict) -> "Tier5Config":

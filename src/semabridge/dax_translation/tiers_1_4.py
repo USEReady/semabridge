@@ -98,6 +98,7 @@ def translate_tiers_1_4(request: TranslationRequest) -> Optional[TranslationResu
             date_alias=_translator._get_date_alias(),
             measure_sql_map=resolved_measures,
             known_measure_names=all_measure_names,
+            anchor_flag_map=request.anchor_flag_map,
         )
         if ast_sql:
             return TranslationResult(sql=ast_sql, tier=3, original_dax=clean_dax)
@@ -115,6 +116,7 @@ def translate_tiers_1_4(request: TranslationRequest) -> Optional[TranslationResu
             date_alias=_translator._get_date_alias(),
             measure_sql_map=resolved_measures,
             known_measure_names=all_measure_names,
+            anchor_flag_map=request.anchor_flag_map,
         )
         if ast_sql:
             return TranslationResult(sql=ast_sql, tier=4, original_dax=clean_dax)
@@ -133,6 +135,7 @@ def translate_tiers_1_4(request: TranslationRequest) -> Optional[TranslationResu
             date_alias=_translator._get_date_alias(),
             measure_sql_map=resolved_measures,
             known_measure_names=all_measure_names,
+            anchor_flag_map=request.anchor_flag_map,
         )
         if general_ast_sql:
             return TranslationResult(sql=general_ast_sql, tier=4, original_dax=clean_dax)

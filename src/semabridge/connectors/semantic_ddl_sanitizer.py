@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from semabridge.utils.logger import get_logger
+from semabridge.utils.null_sentinel import is_null_cast_sql
+from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
 
@@ -13,8 +15,13 @@ logger = get_logger(__name__)
 class SemanticDDLSanitizer:
     """Handles identifier sanitization and DDL structural integrity for Snowflake."""
 
-    def __init__(self, identifier_sanitizer: Any):
+    def __init__(self, identifier_sanitizer: Any, drop_ledger: Optional[DropLedger] = None):
         self.identifier_sanitizer = identifier_sanitizer
+        # Falls back to a private DropLedger() when the caller doesn't share
+        # one — same pattern as every other builder in this package (see
+        # core/drop_ledger.py's DropLedger docstring) — so
+        # self.drop_ledger.record(...) is always safe to call unconditionally.
+        self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def sanitize_semantic_name(self, name: str) -> str:
         """Sanitize semantic name and ensure it does not start with a digit."""
@@ -593,16 +600,34 @@ class SemanticDDLSanitizer:
             )
             expr = re.sub(r'(?<!\.)"([^"]+)"', _replace, expr)
             expr = self._normalize_metric_owner_refs(expr, metric_owner_by_name)
-            if (
-                expr.strip().upper() == "NULL"
-                or self._has_derived_metric_reference(expr, current_metric_name, metric_names)
-                or self._has_unresolved_bare_metric_identifier(expr, metric_names)
-            ):
+            was_null_cast_already = is_null_cast_sql(expr)
+            drop_reason: Optional[str] = None
+            if expr.strip().upper() == "NULL":
+                drop_reason = "Metric expression resolved to a bare NULL literal."
+            elif self._has_derived_metric_reference(expr, current_metric_name, metric_names):
+                drop_reason = (
+                    "Metric expression references another metric's emitted name, which "
+                    "Snowflake's semantic-view METRICS clause does not support here."
+                )
+            elif self._has_unresolved_bare_metric_identifier(expr, metric_names):
+                drop_reason = (
+                    "Metric expression contains a bare quoted identifier that does not "
+                    "resolve to any known column or metric."
+                )
+            if drop_reason is not None:
                 synonym_suffix = ""
                 synonym_match = re.search(r'\s+WITH\s+SYNONYMS\s+=\s+\(.+\)\s*$', expr, flags=re.IGNORECASE)
                 if synonym_match:
                     synonym_suffix = synonym_match.group(0)
                 expr = f"CAST(NULL AS DOUBLE){synonym_suffix}"
+            if drop_reason is not None or was_null_cast_already:
+                self.drop_ledger.record(
+                    "metric", current_metric_name or "<unknown>", DropStage.DDL_EMISSION,
+                    drop_reason or (
+                        "Metric expression was already a NULL-cast placeholder when this "
+                        "structural normalization pass ran on it."
+                    ),
+                )
             normalized.append(f"{parts[0]}{parts[1]}{expr}")
         return normalized
 
@@ -707,10 +732,22 @@ class SemanticDDLSanitizer:
         self,
         ddl: str,
         invalid_identifier: str
-    ) -> Tuple[str, bool]:
-        """Best-effort repair for semantic-view invalid identifier failures."""
+    ) -> Tuple[str, bool, List[str]]:
+        """Best-effort repair for semantic-view invalid identifier failures.
+
+        Returns (fixed_ddl, changed, nulled_metric_names). nulled_metric_names
+        lists every metric whose expression this call replaced with
+        CAST(NULL AS DOUBLE) in the METRICS-clause sweep below — a single
+        invalid identifier (e.g. a shared anchor column referenced by many
+        metrics) can null out several metrics in one pass, and the caller
+        must record a drop for each of them, not just one. Always empty for
+        the two anchor-substitution special cases (MAX_DATE/MAX_MONTHINDEX)
+        below, since those keep every metric's real semantics instead of
+        nulling anything, and for TABLES/RELATIONSHIPS/DIMENSIONS-only fixes,
+        since no metric was nulled in those cases either.
+        """
         if not ddl or not invalid_identifier:
-            return ddl, False
+            return ddl, False, []
 
         invalid_norm = invalid_identifier.upper().replace('"', "")
 
@@ -722,8 +759,8 @@ class SemanticDDLSanitizer:
             # Replace bare MAX_DATE (not inside quotes) with CURRENT_DATE()
             fixed = re.sub(r'(?<!["\w])MAX_DATE(?!["\w])', 'CURRENT_DATE()', ddl)
             if fixed != ddl:
-                return fixed, True
-            return ddl, False
+                return fixed, True, []
+            return ddl, False, []
 
         if invalid_norm == "MAX_MONTHINDEX":
             # MAX_MONTHINDEX is a synthetic anchor column for rolling-period metrics.
@@ -736,8 +773,8 @@ class SemanticDDLSanitizer:
                 ddl
             )
             if fixed != ddl:
-                return fixed, True
-            return ddl, False
+                return fixed, True, []
+            return ddl, False, []
 
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
@@ -748,13 +785,14 @@ class SemanticDDLSanitizer:
 
         lines = ddl.splitlines()
         remediated_lines: list[str] = []
+        nulled_metric_names: List[str] = []
         in_tables = False
         in_relationships = False
         in_dimensions = False
         in_metrics = False
         changed = False
-        
-        metric_line_pattern = re.compile(r'^(\s*\w+\."[^"]+"\s+AS\s+).+?(?P<comma>,?)\s*$')
+
+        metric_line_pattern = re.compile(r'^(\s*\w+\."([^"]+)"\s+AS\s+).+?(?P<comma>,?)\s*$')
         table_pk_pattern = re.compile(
             r'^(\s*)(\w+)(\s+AS\s+.+?)\s+PRIMARY\s+KEY\s+\("([^"]+)"\)\s*(?P<comma>,?)\s*$',
             flags=re.IGNORECASE,
@@ -864,6 +902,7 @@ class SemanticDDLSanitizer:
                 metric_match = metric_line_pattern.match(line)
                 if metric_match:
                     prefix = metric_match.group(1)
+                    nulled_metric_names.append(metric_match.group(2))
                     # Strip any trailing synonym clause from the original line
                     # so we can reconstruct a clean replacement.
                     raw_after_as = line[metric_match.end(1):]
@@ -873,6 +912,9 @@ class SemanticDDLSanitizer:
                 else:
                     # Continuation line or unrecognised format — drop it entirely;
                     # _normalize_all_clause_commas will fix up trailing commas.
+                    # No name is resolvable here, so this metric (if any) can't
+                    # be added to nulled_metric_names — same pre-existing
+                    # limitation the caller's own fallback attribution has.
                     pass
                 changed = True
                 continue
@@ -880,7 +922,7 @@ class SemanticDDLSanitizer:
             remediated_lines.append(line)
 
         self._normalize_all_clause_commas(remediated_lines)
-        return "\n".join(remediated_lines), changed
+        return "\n".join(remediated_lines), changed, nulled_metric_names
 
     def _normalize_all_clause_commas(self, all_lines: list[str]) -> None:
         """Normalize trailing commas inside semantic-view clause blocks.

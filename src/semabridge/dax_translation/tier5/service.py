@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Set
 
 from semabridge.utils.logger import get_logger
+from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.dax_translation.types import TranslationRequest, TranslationResult
 from semabridge.dax_translation.tier5.config import Tier5Config, ProviderSettings
 from semabridge.dax_translation.tier5.prompt import (
@@ -35,6 +36,7 @@ from semabridge.dax_translation.tier5.adapters.openai_adapter import OpenAIAdapt
 from semabridge.dax_translation.tier5.adapters.gemini_adapter import GeminiAdapter
 from semabridge.dax_translation.tier5.adapters.groq_adapter import GroqAdapter
 from semabridge.dax_translation.tier5.adapters.featherless_adapter import FeatherlessAdapter
+from semabridge.dax_translation.tier5.adapters.anthropic_adapter import AnthropicAdapter
 
 logger = get_logger(__name__)
 
@@ -43,7 +45,7 @@ _ADAPTER_CLASSES = {
     "gemini": GeminiAdapter,
     "groq": GroqAdapter,
     "featherless": FeatherlessAdapter,
-    # "anthropic" deliberately omitted — deferred, no adapter built yet.
+    "anthropic": AnthropicAdapter,
 }
 
 
@@ -60,7 +62,12 @@ def _build_adapters(config: Tier5Config) -> Dict[str, ProviderAdapter]:
 
 class Tier5Service:
     def __init__(self, config: Optional[Tier5Config] = None) -> None:
-        self.config = config or Tier5Config.default()
+        # Tier5Config.resolve() (not .default()) so Settings-page-
+        # configured provider keys/models take effect. This read happens
+        # exactly once here, at construction — see resolve()'s docstring
+        # for why that's "once per run" given how Tier5Service itself is
+        # already cached at every real call site.
+        self.config = config or Tier5Config.resolve()
         self._adapters = _build_adapters(self.config)
         # Providers that have raised a ProviderAuthError (bad/expired key)
         # during this instance's lifetime. Scoped to this instance, not
@@ -108,6 +115,12 @@ class Tier5Service:
                 continue
 
             repaired = fix_common_llm_issues(raw.text, request.dax)
+
+            if is_null_cast_sql(repaired):
+                validation_notes.append(
+                    f"{provider_name}: returned a NULL-cast placeholder (declined to translate) — rejected"
+                )
+                continue
 
             if _dax_divide_lost_its_division(request.dax, repaired):
                 validation_notes.append(f"{provider_name}: DIVIDE() in DAX but no '/' in SQL — rejected")
@@ -241,6 +254,8 @@ class Tier5Service:
             return None
 
         repaired = fix_common_llm_issues(raw_sql, request.dax)
+        if is_null_cast_sql(repaired):
+            return None
         if _dax_divide_lost_its_division(request.dax, repaired):
             return None
         if not _is_scalar_metric_sql(repaired, dialect=request.dialect):

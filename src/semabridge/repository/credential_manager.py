@@ -29,6 +29,11 @@ from semabridge.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# Services whose stored values must NEVER be pushed into os.environ by
+# inject_all() -- see inject_all()'s docstring. Currently just the Tier 5
+# "llm_*" services (repository/llm_provider_credentials.py).
+_SERVICE_PREFIX_NEVER_INJECTED = "llm_"
+
 # Mapping: (service, key) -> environment variable name
 _ENV_MAP: Dict[str, Dict[str, str]] = {
     "fabric": {
@@ -73,6 +78,19 @@ _ENV_MAP: Dict[str, Dict[str, str]] = {
         "catalog": "DATABRICKS_CATALOG",
         "schema_name": "DATABRICKS_SCHEMA",
     },
+    # Tier 5 (DAX-to-SQL LLM translation) provider credentials, configured
+    # via the Settings page (see repository/llm_provider_credentials.py).
+    # Only "api_key" has an env fallback — "model" (the Settings-selected
+    # model, saved separately) has no .env equivalent, since there was
+    # never an existing convention for pinning a model via an env var;
+    # get_credentials()'s Step 3 env-fallback loop only ever looks up
+    # keys present in this map, so omitting "model" here means it's
+    # correctly DB-only with no fallback attempted.
+    "llm_openai": {"api_key": "OPENAI_API_KEY"},
+    "llm_gemini": {"api_key": "GEMINI_API_KEY"},
+    "llm_groq": {"api_key": "GROQ_API_KEY"},
+    "llm_featherless": {"api_key": "FEATHERLESS_API_KEY"},
+    "llm_anthropic": {"api_key": "ANTHROPIC_API_KEY"},
 }
 
 # Keys that are exclusive to each auth mode — used to purge stale
@@ -346,6 +364,13 @@ class CredentialManager:
         """
         status: Dict[str, Any] = {}
         for service in _ENV_MAP:
+            # Tier 5 LLM provider services have their own dedicated status
+            # endpoint (repository/llm_provider_credentials.get_all_provider_status)
+            # -- they don't belong in the fabric/snowflake/databricks
+            # connection-status dict this method's callers (the Settings
+            # page's Connector Configuration section) expect.
+            if service.startswith(_SERVICE_PREFIX_NEVER_INJECTED):
+                continue
             stored = self.get_credentials(service, mask_secrets=True, user_id=user_id)
             persisted = self.get_credentials(
                 service,
@@ -482,9 +507,22 @@ class CredentialManager:
         return injected
 
     def inject_all(self) -> Dict[str, int]:
-        """Inject credentials for all configured services."""
+        """Inject credentials for all configured services.
+
+        Skips every ``llm_*`` service (Tier 5 LLM provider credentials —
+        see repository/llm_provider_credentials.py). Those services'
+        stored ``api_key`` value is Fernet-ciphertext, not a usable key —
+        unlike fabric/snowflake/databricks, providers read a
+        Settings-configured key through ``ProviderSettings.api_key``,
+        never through ``os.environ`` (see ``Tier5Config.resolve()``'s
+        docstring for why). Injecting them here would silently overwrite
+        a real provider's env var with ciphertext on the next app start
+        after an admin saves a key via Settings.
+        """
         results: Dict[str, int] = {}
         for service in _ENV_MAP:
+            if service.startswith(_SERVICE_PREFIX_NEVER_INJECTED):
+                continue
             try:
                 count = self.inject_credentials_to_env(service)
                 results[service] = count
@@ -504,6 +542,17 @@ class CredentialManager:
             "snowflake": {"password", "private_key", "private_key_passphrase", "oauth_client_secret"},
             "fabric_token": {"access_token", "refresh_token"},
             "databricks": {"token", "client_secret", "access_token", "refresh_token"},
+            # Tier 5 provider API keys. Note this only controls masking
+            # (mask_secrets=True → "••••••••") for generic listing paths —
+            # the value stored is already Fernet-ciphertext by the time it
+            # reaches this table (see repository/llm_provider_credentials.py),
+            # so this is defense-in-depth against ever displaying the
+            # ciphertext raw, not the encryption itself.
+            "llm_openai": {"api_key"},
+            "llm_gemini": {"api_key"},
+            "llm_groq": {"api_key"},
+            "llm_featherless": {"api_key"},
+            "llm_anthropic": {"api_key"},
         }
         return secret_map.get(service, set())
 

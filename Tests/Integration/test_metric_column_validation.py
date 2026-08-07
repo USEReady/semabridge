@@ -252,7 +252,14 @@ class TestMetricColumnValidation:
         assert error is None
 
     def test_basic_fallback_totalytd_uses_primarydate_token(self, emitter):
-        """TOTALYTD should treat [PrimaryDate] as semantic token and use physical date column."""
+        """TOTALYTD should treat [PrimaryDate] as semantic token and use physical
+        date column, anchored to the enriched view's real MAX_DATE column
+        (qualified with the fact table's own alias) -- not CURRENT_DATE()
+        (today's wall-clock date, wrong whenever the data doesn't extend all
+        the way to today) or a bare, unqualified MAX_DATE token (both stale
+        expectations from an earlier version of this fallback, before it
+        was routed through the same AST renderer the measure-reference form
+        of TOTALYTD already used)."""
         from semabridge.formats.sml.models import SMLMetric
 
         metric = SMLMetric(
@@ -270,10 +277,15 @@ class TestMetricColumnValidation:
         )
 
         assert translated is not None
-        assert 'SUM(CASE WHEN sf."COL_DATE" >= DATE_TRUNC(\'YEAR\', MAX_DATE) AND sf."COL_DATE" <= MAX_DATE THEN sf."REVENUE"::FLOAT END)' in translated
+        assert (
+            'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', sf."MAX_DATE") '
+            'AND COL_DATE."COL_DATE" <= sf."MAX_DATE" THEN sf."REVENUE"::FLOAT END)'
+        ) in translated
 
     def test_basic_fallback_sply_uses_window_when_offset_present(self, emitter, monkeypatch):
-        """SPLY keeps universal window fallback even when offset key exists."""
+        """SPLY keeps universal window fallback even when offset key exists,
+        anchored to the enriched view's real, qualified MAX_DATE column --
+        see test_basic_fallback_totalytd_uses_primarydate_token above."""
         from semabridge.formats.sml.models import SMLMetric
 
         monkeypatch.setenv("SEMABRIDGE_SNOWFLAKE_ENABLE_SPLY_OFFSET_FASTPATH", "true")
@@ -299,7 +311,11 @@ class TestMetricColumnValidation:
         )
 
         assert translated is not None
-        assert 'SUM(CASE WHEN YEAR(sf."COL_DATE") = YEAR(MAX_DATE) - 1 AND sf."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', MAX_DATE)) AND DATEADD(YEAR, -1, MAX_DATE) THEN sf."REVENUE"::FLOAT END)' in translated
+        assert (
+            'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(sf."MAX_DATE") - 1 '
+            'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', sf."MAX_DATE")) '
+            'AND DATEADD(YEAR, -1, sf."MAX_DATE") THEN sf."REVENUE"::FLOAT END)'
+        ) in translated
 
     def test_warns_for_non_sync_friendly_time_intelligence_dax(self, emitter, caplog):
         """Unsupported TI functions should emit a warn-only parser guidance message."""

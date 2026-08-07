@@ -350,3 +350,110 @@ def test_enriched_view_mapping_survives_when_behavior_source_table_mapping_is_no
         "the enriched-view redirect must never be recorded somewhere "
         "dataset_col_lookup construction can't see"
     )
+
+
+def test_create_enriched_view_emits_flag_columns_for_discovered_shapes(monkeypatch):
+    """Part 2, Step 2 of the MAX_DATE-capability-limit fix: _create_enriched_view
+    must precompute one boolean flag column per time-intelligence shape the
+    model's metrics actually need (see converter/time_intelligence_shapes.py),
+    following the exact same "fetch the anchor once, splice as a literal"
+    pattern already used for MAX_DATE itself — never hardcoded to specific
+    metric or shape names."""
+    from semabridge.sml.models import SMLModel, SMLDataset, SMLColumn, SMLMetric, DataType
+
+    emitter = _build_emitter()
+
+    model = SMLModel(
+        unique_name="synthetic_ytd_model",
+        datasets=[
+            SMLDataset(
+                unique_name="FactWithDate",
+                source_table="FactWithDate",
+                columns=[
+                    SMLColumn(unique_name="OrderDate", data_type=DataType.STRING),
+                    SMLColumn(unique_name="Amount", data_type=DataType.DECIMAL),
+                ],
+            ),
+        ],
+        metrics=[
+            SMLMetric(
+                unique_name="TOTAL_AMOUNT_YTD",
+                dataset="FactWithDate",
+                expression="TOTALYTD([TOTAL_AMOUNT], 'Date'[Date])",
+            ),
+            SMLMetric(
+                unique_name="TOTAL_AMOUNT_YTD_SPLY",
+                dataset="FactWithDate",
+                expression="CALCULATE([TOTAL_AMOUNT_YTD], SAMEPERIODLASTYEAR('Date'[Date]))",
+            ),
+        ],
+    )
+
+    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("FactWithDate", "OrderDate", "OrderDate"))
+    monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_suggestions", lambda m: {})
+    monkeypatch.setattr(emitter.semantic_view_builder, "get_precompute_details", lambda: [])
+
+    emitter._live_schema_metadata["FACTWITHDATE"] = {"ORDERDATE", "AMOUNT"}
+
+    executed_sql: list[str] = []
+    fake_cursor = MagicMock()
+    fake_cursor.execute.side_effect = lambda sql, *a, **k: executed_sql.append(sql)
+    fake_cursor.fetchone.return_value = ("2026-01-01",)
+
+    result = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
+
+    assert result == "FactWithDate_ENRICHED"
+    create_view_sql = next(sql for sql in executed_sql if "CREATE OR REPLACE VIEW" in sql.upper())
+
+    # Discovered shapes: direct YTD, and the nested YTD-then-SPLY composition
+    # (SAMEPERIODLASTYEAR wraps a measure reference whose own shape is YTD).
+    assert 'AS "IS_YTD"' in create_view_sql
+    assert 'AS "IS_YTD_SPLY_YEAR"' in create_view_sql
+    # Well-formed: each flag column is a parenthesized boolean expression
+    # comparing the fact table's OWN date column (not a joined dimension —
+    # this runs inside the enriched view's own CREATE VIEW, before any
+    # join) against the same anchor literal MAX_DATE uses.
+    assert 'f."ORDERDATE"' in create_view_sql
+    assert create_view_sql.count("DATE_TRUNC('YEAR'") >= 2  # base YTD + shifted nested YTD
+
+    enriched_cols = emitter._live_schema_metadata.get("FACTWITHDATE_ENRICHED", set())
+    assert {"MAX_DATE", "IS_YTD", "IS_YTD_SPLY_YEAR"} <= enriched_cols
+
+
+def test_create_enriched_view_emits_no_flag_columns_when_model_has_no_time_intelligence(monkeypatch):
+    """No time-intelligence shapes anywhere in the model must add no flag
+    columns at all — never a default/guessed set."""
+    from semabridge.sml.models import SMLModel, SMLDataset, SMLColumn, SMLMetric, DataType
+
+    emitter = _build_emitter()
+
+    model = SMLModel(
+        unique_name="synthetic_plain_model",
+        datasets=[
+            SMLDataset(
+                unique_name="FactWithDate",
+                source_table="FactWithDate",
+                columns=[
+                    SMLColumn(unique_name="OrderDate", data_type=DataType.STRING),
+                    SMLColumn(unique_name="Amount", data_type=DataType.DECIMAL),
+                ],
+            ),
+        ],
+        metrics=[
+            SMLMetric(unique_name="TOTAL_AMOUNT", dataset="FactWithDate", expression="SUM([Amount])"),
+        ],
+    )
+
+    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("FactWithDate", "OrderDate", "OrderDate"))
+    monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_suggestions", lambda m: {})
+    monkeypatch.setattr(emitter.semantic_view_builder, "get_precompute_details", lambda: [])
+    emitter._live_schema_metadata["FACTWITHDATE"] = {"ORDERDATE", "AMOUNT"}
+
+    fake_cursor = MagicMock()
+    fake_cursor.fetchone.return_value = ("2026-01-01",)
+
+    emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
+
+    enriched_cols = emitter._live_schema_metadata.get("FACTWITHDATE_ENRICHED", set())
+    assert "MAX_DATE" in enriched_cols  # unaffected, still added as before
+    assert not any(c.startswith("IS_") for c in enriched_cols)

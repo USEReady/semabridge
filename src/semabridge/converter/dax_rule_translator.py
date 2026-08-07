@@ -258,6 +258,7 @@ def rule_based_translation(
     table_alias: str,
     metric_name: str = "",
     dialect: str = "snowflake",
+    anchor_flag_map: Optional[dict] = None,
 ) -> Optional[str]:
     """
     Translate simple DAX expressions to SQL using deterministic rules.
@@ -289,7 +290,10 @@ def rule_based_translation(
     )
     for pattern_name, translator in advanced_translators:
         try:
-            result = translator(clean_dax, table_alias)
+            if pattern_name == "time_intelligence":
+                result = translator(clean_dax, table_alias, anchor_flag_map=anchor_flag_map)
+            else:
+                result = translator(clean_dax, table_alias)
             if result:
                 logger.info(
                     "Rule-based translation successful: %s%s -> %s",
@@ -656,11 +660,21 @@ def _is_deterministic_rule_supported(dax: str) -> bool:
     )
 
 
-def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Optional[str]:
+def translate_time_intelligence_with_anchors(
+    dax: str, table_alias: str, anchor_flag_map: Optional[dict] = None
+) -> Optional[str]:
     """
     Translate time intelligence functions using date anchors.
-    
+
     Example: TOTALYTD(SUM('SalesFact'[Sales]), 'Date'[Date])
+
+    anchor_flag_map (see converter/time_intelligence_shapes.py): shape tuple
+    -> precomputed boolean flag column name on the enriched view. When the
+    relevant shape has an entry, references that column directly instead of
+    the CURRENT_DATE()-anchored CASE WHEN below — closes the exact staleness
+    tradeoff the comment on max_date_ref documents (CURRENT_DATE() is today's
+    real wall-clock date, not the actual latest date in the synced data).
+    None/empty preserves the CURRENT_DATE() behavior exactly.
     """
     logger.debug(f"Attempting to translate time intelligence expression: {dax}")
     # Pattern for TOTALYTD, TOTALMTD, TOTALQTD
@@ -702,45 +716,59 @@ def translate_time_intelligence_with_anchors(dax: str, table_alias: str) -> Opti
         return None
 
     date_col_ref = f"{_quote_identifier(date_table_and_col)}"
-    # CURRENT_DATE() — a native Snowflake function, not the synthetic
-    # enriched-view MAX_DATE anchor column, which is not in scope inside a
-    # semantic view's METRICS clause (matches connectors/translator.py's
-    # parallel implementation, fixed the same way in commit e4c8322).
-    #
-    # Known tradeoff, not an oversight: MAX_DATE reflected the actual latest
-    # date present in the synced data (frozen as of the last enriched-view
-    # refresh); CURRENT_DATE() is the real wall-clock date, live on every
-    # query regardless of how current the underlying data actually is. For
-    # a SUM-based YTD this mostly self-corrects during the year (no rows
-    # exist past the real data boundary either way), but right at a year
-    # rollover — if synced data lags behind today for any reason (trailing
-    # sync, month-end close, archival/historical models) — DATE_TRUNC('YEAR',
-    # CURRENT_DATE()) flips to the new year before the data does, and the
-    # CASE WHEN below silently matches zero rows: a silent $0 YTD, not an
-    # error. Snowflake's METRICS clause forbids subqueries/window functions,
-    # so a live MAX(date_col)-at-query-time anchor isn't expressible either.
-    max_date_ref = "CURRENT_DATE()"
 
     period = ""
+    shape_component = None
     if time_func == "TOTALYTD":
         period = "YEAR"
+        shape_component = "YTD"
     elif time_func == "TOTALMTD":
         period = "MONTH"
+        shape_component = "MTD"
     elif time_func == "TOTALQTD":
         period = "QUARTER"
+        shape_component = "QTD"
+
+    flag_name = (anchor_flag_map or {}).get((shape_component,)) if shape_component else None
+    if flag_name:
+        # Shape-flag mode (see converter/time_intelligence_shapes.py):
+        # reference the precomputed boolean column directly instead of the
+        # CURRENT_DATE()-anchored CASE WHEN below — this is an ordinary
+        # per-row column, always correctly anchored to the actual latest
+        # date in the synced data, closing the staleness tradeoff the
+        # CURRENT_DATE() fallback below accepts.
+        condition = f'{table_alias}."{flag_name}"'
+    else:
+        # CURRENT_DATE() — a native Snowflake function, not the synthetic
+        # enriched-view MAX_DATE anchor column, which is not in scope inside a
+        # semantic view's METRICS clause (matches connectors/translator.py's
+        # parallel implementation, fixed the same way in commit e4c8322).
+        #
+        # Known tradeoff, not an oversight: MAX_DATE reflected the actual latest
+        # date present in the synced data (frozen as of the last enriched-view
+        # refresh); CURRENT_DATE() is the real wall-clock date, live on every
+        # query regardless of how current the underlying data actually is. For
+        # a SUM-based YTD this mostly self-corrects during the year (no rows
+        # exist past the real data boundary either way), but right at a year
+        # rollover — if synced data lags behind today for any reason (trailing
+        # sync, month-end close, archival/historical models) — DATE_TRUNC('YEAR',
+        # CURRENT_DATE()) flips to the new year before the data does, and the
+        # CASE WHEN below silently matches zero rows: a silent $0 YTD, not an
+        # error. Snowflake's METRICS clause forbids subqueries/window functions,
+        # so a live MAX(date_col)-at-query-time anchor isn't expressible either.
+        # anchor_flag_map (above) removes this tradeoff entirely whenever a
+        # flag column was precomputed; this remains the fallback for callers
+        # with no live enrichment step (e.g. the schema-blind dry-run/preview
+        # path).
+        max_date_ref = "CURRENT_DATE()"
+        condition = f"{date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) AND {date_col_ref} <= {max_date_ref}"
 
     else_val = "NULL" if func in ("AVG", "MIN", "MAX") else "0"
 
     if func == "DISTINCTCOUNT":
-        result = (
-            f"COUNT(DISTINCT CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) "
-            f"AND {date_col_ref} <= {max_date_ref} THEN {measure_col_ref} ELSE NULL END)"
-        )
+        result = f"COUNT(DISTINCT CASE WHEN {condition} THEN {measure_col_ref} ELSE NULL END)"
     else:
-        result = (
-            f"{func}(CASE WHEN {date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) "
-            f"AND {date_col_ref} <= {max_date_ref} THEN {measure_col_ref} ELSE {else_val} END)"
-        )
+        result = f"{func}(CASE WHEN {condition} THEN {measure_col_ref} ELSE {else_val} END)"
 
     logger.debug(f"Translated time intelligence expression to: {result}")
     return result

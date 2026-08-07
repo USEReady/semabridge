@@ -476,3 +476,101 @@ def test_dax_divide_lost_its_division_is_enforced():
         _restore_adapter_classes(original)
 
     assert result is None
+
+
+def test_null_cast_placeholder_response_is_rejected_not_accepted_as_success():
+    """Every Tier 5 prompt instructs providers to return
+    CAST(NULL AS DOUBLE) when a pattern is impossible to translate. That
+    sentinel must never be accepted as a successful candidate -- it has to
+    be rejected exactly like any other invalid response, so the caller
+    falls through to 'no translation' (and, one level up, records a
+    DropLedger entry) instead of emitting a dead metric silently."""
+    factory = lambda settings: _FakeAdapter(settings, response_text="CAST(NULL AS DOUBLE)", confidence=0.9)
+    config, original = _config_with_fake_adapters({"fake_gives_up": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is None
+
+
+def test_null_cast_placeholder_falls_through_to_next_provider():
+    """The rejection must fall through the provider order, same as any
+    other invalid candidate -- a second provider with a real answer still
+    wins."""
+    giveup_factory = lambda settings: _FakeAdapter(settings, response_text="CAST(NULL AS DOUBLE)", confidence=0.9)
+    good_factory = lambda settings: _FakeAdapter(settings, response_text='SUM(sometable."SOMECOLUMN")', confidence=0.9)
+    config, original = _config_with_fake_adapters(
+        {"fake_gives_up": giveup_factory, "fake_good": good_factory},
+        provider_order=["fake_gives_up", "fake_good"],
+    )
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is not None
+    assert result.provider == "fake_good"
+
+
+def test_null_cast_placeholder_with_type_variation_and_synonyms_is_still_rejected():
+    """The guard is a shape check, not a literal-string match against
+    'DOUBLE' specifically -- any target type, and a trailing WITH SYNONYMS
+    clause, must still be recognized as the placeholder."""
+    factory = lambda settings: _FakeAdapter(
+        settings, response_text="CAST( NULL AS DECIMAL(38,10) )  WITH SYNONYMS = ('Foo')", confidence=0.9
+    )
+    config, original = _config_with_fake_adapters({"fake_gives_up": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is None
+
+
+def test_real_sql_containing_null_keyword_is_not_falsely_rejected():
+    """No false positives: real SQL that legitimately mentions NULL (e.g.
+    an IS NULL / NULLIF guard) is a completely different shape from the
+    bare CAST(NULL AS <type>) placeholder and must still be accepted."""
+    factory = lambda settings: _FakeAdapter(
+        settings,
+        response_text='NULLIF(sometable."SOMECOLUMN", 0)',
+        confidence=0.9,
+    )
+    config, original = _config_with_fake_adapters({"fake_good": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is not None
+    # _normalize_metric_column_references only quotes when needed (reserved
+    # word or "$" in the name) -- SOMECOLUMN needs neither, so the real,
+    # unmodified normalizer legitimately drops the quotes here (same
+    # behavior documented in test_accepts_first_valid_candidate above).
+    assert result.sql == 'NULLIF(sometable.SOMECOLUMN, 0)'
+
+
+def test_translate_batch_rejects_null_cast_placeholder_per_metric():
+    """_validate_one_batch_candidate must apply the identical guard as
+    translate() -- a batch response entry that is the NULL-cast placeholder
+    resolves to None for that metric, not a false 'success'."""
+    requests = _batch_requests(2)
+    import json as _json
+    response = _json.dumps({
+        "m0": 'SUM(sometable."SOMECOLUMN")',
+        "m1": "CAST(NULL AS DOUBLE)",
+    })
+
+    fake = _FakeBatchAdapter(None, responses=[response])
+    factory = lambda settings: fake
+    config, original = _config_with_fake_adapters({"fake_batch": factory})
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(requests)
+    finally:
+        _restore_adapter_classes(original)
+
+    assert results[0] is not None and results[0].is_success
+    assert results[1] is None

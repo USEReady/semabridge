@@ -261,3 +261,95 @@ METRICS (
     assert 'SALESFACT."SENTIMENT"' not in normalized
     assert 'SENTIMENT."SENTIMENT"' in normalized
     assert 'SALESFACT."TOTAL_VANARSDEL_UNITS_YTD" AS CAST(NULL AS DOUBLE)' in normalized
+
+
+def test_semantic_ddl_sanitizer_records_null_cast_substitutions_in_drop_ledger():
+    """Same defect class as the LLM-translation-layer guard: whenever this
+    structural normalization pass neuters a metric expression to
+    CAST(NULL AS DOUBLE) (or passes one through unchanged), that must be
+    recorded via DropLedger, not just silently reflected in the DDL text --
+    even though this pass is not currently wired into production, it
+    shouldn't independently reintroduce the same silent-drop bug if it ever
+    is."""
+    from semabridge.core.drop_ledger import DropLedger, DropStage
+
+    ledger = DropLedger()
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer(), drop_ledger=ledger)
+
+    ddl = """CREATE OR REPLACE SEMANTIC VIEW "DB"."SCHEMA"."MODEL"
+TABLES (
+  SALESFACT AS "DB"."SCHEMA"."SALESFACT" PRIMARY KEY ("ID")
+)
+DIMENSIONS (
+  SALESFACT."ID" AS SALESFACT."ID"
+)
+METRICS (
+  SALESFACT."REAL_METRIC" AS SUM(SALESFACT."UNITS"),
+  SALESFACT."TOTAL_UNITS_YTD" AS NULL
+);"""
+
+    normalized = sanitizer.sanitize_structure(ddl)
+
+    assert 'SALESFACT."TOTAL_UNITS_YTD" AS CAST(NULL AS DOUBLE)' in normalized
+    records = ledger.to_json()
+    assert len(records) == 1
+    assert records[0]["entity_name"] == "TOTAL_UNITS_YTD"
+    assert records[0]["stage"] == DropStage.DDL_EMISSION.value
+    # The real, working metric must never generate a ledger entry.
+    assert not any(r["entity_name"] == "REAL_METRIC" for r in records)
+
+
+def test_remediate_invalid_identifier_reports_every_metric_nulled_in_one_sweep():
+    """When Snowflake rejects a shared anchor column reference qualified
+    with its table alias (e.g. "SALESFACT.MAX_DATE" -- distinct from the
+    bare "MAX_DATE" special case, which preserves semantics instead of
+    nulling anything), remediate_invalid_identifier's general METRICS-clause
+    sweep replaces every metric expression containing that token with
+    CAST(NULL AS DOUBLE) in one pass. It must report every one of those
+    metric names in nulled_metric_names -- the caller uses this list 1:1 to
+    build DropLedger records, and used to only ever learn about one of them."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+
+    ddl = """CREATE OR REPLACE SEMANTIC VIEW "DB"."SCHEMA"."MODEL"
+TABLES (
+  SALESFACT AS "DB"."SCHEMA"."SALESFACT_ENRICHED" PRIMARY KEY ("ID")
+)
+DIMENSIONS (
+  SALESFACT."ID" AS SALESFACT."ID"
+)
+METRICS (
+  SALESFACT."TOTAL_UNITS_YTD" AS SUM(CASE WHEN SALESFACT."COL_DATE" <= SALESFACT."MAX_DATE" THEN SALESFACT."UNITS" ELSE NULL END),
+  SALESFACT."TOTAL_UNITS_SPLY" AS SUM(CASE WHEN SALESFACT."COL_DATE" <= SALESFACT."MAX_DATE" THEN SALESFACT."UNITS" ELSE NULL END),
+  SALESFACT."TOTAL_UNITS_YTD_VAR" AS SUM(CASE WHEN SALESFACT."COL_DATE" <= SALESFACT."MAX_DATE" THEN SALESFACT."UNITS" ELSE NULL END) - 1,
+  SALESFACT."SALES_DOL" AS SUM(SALESFACT."REVENUE")
+);"""
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "SALESFACT.MAX_DATE")
+
+    assert changed is True
+    assert set(nulled) == {"TOTAL_UNITS_YTD", "TOTAL_UNITS_SPLY", "TOTAL_UNITS_YTD_VAR"}
+    assert 'SALESFACT."TOTAL_UNITS_YTD" AS CAST(NULL AS DOUBLE)' in fixed_ddl
+    assert 'SALESFACT."TOTAL_UNITS_SPLY" AS CAST(NULL AS DOUBLE)' in fixed_ddl
+    assert 'SALESFACT."TOTAL_UNITS_YTD_VAR" AS CAST(NULL AS DOUBLE)' in fixed_ddl
+    # A metric that never references the invalid identifier must be untouched.
+    assert 'SALESFACT."SALES_DOL" AS SUM(SALESFACT."REVENUE")' in fixed_ddl
+
+
+def test_remediate_invalid_identifier_bare_anchor_token_still_nulls_nothing():
+    """Unchanged control case: the bare-token special case (Snowflake
+    reports plain 'MAX_DATE', not table-qualified) keeps every metric's real
+    semantics by substituting CURRENT_DATE() globally, so
+    nulled_metric_names must stay empty -- this must not regress into
+    treating the anchor substitution as a metric null."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+
+    ddl = """METRICS (
+  SALESFACT."TOTAL_UNITS_YTD" AS SUM(CASE WHEN SALESFACT."COL_DATE" <= MAX_DATE THEN SALESFACT."UNITS" ELSE NULL END)
+);"""
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "MAX_DATE")
+
+    assert changed is True
+    assert nulled == []
+    assert "CURRENT_DATE()" in fixed_ddl
+    assert "CAST(NULL AS DOUBLE)" not in fixed_ddl

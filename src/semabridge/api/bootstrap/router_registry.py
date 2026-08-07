@@ -42,6 +42,7 @@ def register_routers(app: FastAPI) -> None:
     from semabridge.api.routers.project_router import router as project_router
     from semabridge.api.routers.export_router import router as export_router
     from semabridge.api.routers.synonyms_router import router as synonyms_router
+    from semabridge.api.llm_provider_router import router as llm_provider_router
     from semabridge.api.settings_api import router as settings_router
     from semabridge.api.sync_router import router as sync_router
     from semabridge.api.ui import router as ui_router
@@ -57,6 +58,7 @@ def register_routers(app: FastAPI) -> None:
         sync_router,
         account_router,
         settings_router,
+        llm_provider_router,
         discovery_router,
         browse_router,
         alert_router,

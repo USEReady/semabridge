@@ -80,7 +80,7 @@ class SemanticViewBuilder:
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
 
         # Modular components
-        self.sanitizer = SemanticDDLSanitizer(identifier_sanitizer)
+        self.sanitizer = SemanticDDLSanitizer(identifier_sanitizer, drop_ledger=self.drop_ledger)
         self.snapshot_orchestrator = HistorySnapshotOrchestrator(identifier_sanitizer, schema_manager, config)
         self.relationships_builder = RelationshipsClauseBuilder(
             identifier_sanitizer, schema_manager, self.sanitizer, drop_ledger=self.drop_ledger

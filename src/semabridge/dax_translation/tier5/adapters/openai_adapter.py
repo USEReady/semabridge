@@ -25,6 +25,7 @@ from typing import Optional
 
 from semabridge.utils.logger import get_logger
 from semabridge.dax_translation.tier5.adapters.base import (
+    ModelDiscoveryResult,
     ProviderAuthError,
     RawResult,
     is_auth_error,
@@ -37,6 +38,21 @@ logger = get_logger(__name__)
 _PLACEHOLDER_CONFIDENCE = 0.7  # no real scoring existed for OpenAI historically
 
 
+def list_available_models(api_key: str) -> ModelDiscoveryResult:
+    """Real model discovery for the Settings-page "Discover Models"
+    button. OpenAI's models.list() has no capability flag distinguishing
+    chat/completions-capable models from embeddings/whisper/tts/
+    moderation models -- there's nothing to filter on honestly, so this
+    returns the raw catalog. The Settings UI has to let the admin pick a
+    suitable model themselves; filtering here would be a guess, not a
+    fact."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key)
+    ids = sorted(m.id for m in client.models.list())
+    return ModelDiscoveryResult(models=ids, total_available=len(ids))
+
+
 class OpenAIAdapter:
     name = "openai"
 
@@ -44,10 +60,10 @@ class OpenAIAdapter:
         self.settings = settings
 
     def is_available(self) -> bool:
-        return bool(os.getenv(self.settings.enabled_env))
+        return bool(self.settings.api_key or os.getenv(self.settings.enabled_env))
 
     def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
-        api_key = os.getenv(self.settings.enabled_env)
+        api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
         if not api_key:
             return None
 

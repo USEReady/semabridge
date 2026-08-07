@@ -42,10 +42,12 @@ def _ast_cache_key(
     date_alias: str,
     measure_sql_map: Optional[Dict[str, str]],
     known_measure_names: Optional[Any] = None,
+    anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
 ) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
     names = tuple(sorted(known_measure_names or ()))
-    return (dax or "", table_alias or "", date_alias or "", items, names)
+    flags = tuple(sorted((anchor_flag_map or {}).items()))
+    return (dax or "", table_alias or "", date_alias or "", items, names, flags)
 from semabridge.utils.naming import sanitize_column
 
 logger = get_logger(__name__)
@@ -604,11 +606,24 @@ class DaxSqlRenderer:
         date_alias: str = "COL_DATE",
         measure_sql_map: Optional[Dict[str, str]] = None,
         known_measure_names: Optional[Any] = None,
+        anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
         self.measure_sql_map = measure_sql_map or {}
+        # Shape tuple (see converter/time_intelligence_shapes.py, e.g.
+        # ("YTD",), ("YTD", "SPLY_YEAR")) -> precomputed boolean flag column
+        # name on the enriched view (e.g. "IS_YTD"). When a shape has an
+        # entry here, _render_period_to_date/_render_lag_period reference
+        # that column directly instead of building inline MAX_DATE
+        # arithmetic — MAX_DATE itself is rejected by Snowflake's semantic-
+        # view compiler even though the column physically exists; an
+        # ordinary per-row boolean column is not. Empty (the default)
+        # preserves today's inline-MAX_DATE behavior exactly — this is the
+        # schema-blind dry-run/preview path's only mode, since it has no
+        # live enriched view to reference flags on.
+        self.anchor_flag_map: Dict[Tuple[str, ...], str] = anchor_flag_map or {}
         # Names of measures known to exist in the model but not yet resolved
         # to SQL (absent from measure_sql_map). Distinguishes "this bracket
         # reference names a real measure that just isn't translated yet"
@@ -1080,6 +1095,13 @@ class DaxSqlRenderer:
         else:
             return agg_expr
 
+    # Must stay in sync with converter/time_intelligence_shapes.py's
+    # PERIOD_TO_DATE_FUNCS / LAG_FUNCS — duplicated locally (not imported)
+    # to avoid a circular import (that module imports node classes from
+    # this one).
+    _PERIOD_TO_DATE_COMPONENT = {"TOTALYTD": "YTD", "TOTALMTD": "MTD", "TOTALQTD": "QTD"}
+    _PERIOD_TO_DATE_UNIT = {"TOTALYTD": "YEAR", "TOTALMTD": "MONTH", "TOTALQTD": "QUARTER"}
+
     def _render_period_to_date(self, func: str, args: List[DaxNode]) -> str:
         """
         Translate TOTALYTD / TOTALMTD / TOTALQTD to Snowflake CASE WHEN scalar aggregates.
@@ -1092,10 +1114,34 @@ class DaxSqlRenderer:
 
         d = self.date_alias
         date_col = f'{d}."COL_DATE"'
-        # Qualified reference to the fact table's enriched-view MAX_DATE anchor
-        # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
-        # identifier inside a semantic view's METRICS clause.
-        max_date = f'{self.table_alias}."MAX_DATE"'
+
+        # Shape-flag mode (see converter/time_intelligence_shapes.py): if the
+        # caller precomputed a boolean flag column for this exact shape on
+        # the enriched view, reference it directly — Snowflake's semantic-
+        # view compiler rejects a direct MAX_DATE reference even though the
+        # column physically exists, but accepts an ordinary per-row boolean
+        # column fine (confirmed against a live deploy). Falls back to
+        # today's inline MAX_DATE arithmetic when no flag map was supplied —
+        # the schema-blind dry-run/preview path's only mode, since it has no
+        # live enriched view to reference flags on.
+        component = self._PERIOD_TO_DATE_COMPONENT.get(func)
+        flag_name = self.anchor_flag_map.get((component,)) if component else None
+        if flag_name:
+            condition_sql = f'{self.table_alias}."{flag_name}"'
+        else:
+            # Qualified reference to the fact table's enriched-view MAX_DATE
+            # anchor column (see _create_enriched_view) — a bare "MAX_DATE"
+            # is not a valid identifier inside a semantic view's METRICS
+            # clause.
+            max_date = f'{self.table_alias}."MAX_DATE"'
+            unit = self._PERIOD_TO_DATE_UNIT.get(func)
+            condition_sql = (
+                f"{date_col} >= DATE_TRUNC('{unit}', {max_date}) AND {date_col} <= {max_date}"
+                if unit else None
+            )
+
+        if condition_sql is None:
+            raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
 
         # Unwrap the inner aggregation to build a CASE WHEN expression
         agg_node = args[0]
@@ -1104,50 +1150,28 @@ class DaxSqlRenderer:
             col_sql = self._render_node(agg_node.args[0]) if agg_node.args else f'{self.table_alias}."AMOUNT"'
             sql_func = "AVG" if inner_func == "AVERAGE" else inner_func
             cast = "::FLOAT" if inner_func in ("SUM", "AVERAGE") else ""
+            return f"{sql_func}(CASE WHEN {condition_sql} THEN {col_sql}{cast} END)"
 
-            if func == "TOTALYTD":
-                return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('YEAR', {max_date}) "
-                    f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
-                )
-            if func == "TOTALMTD":
-                return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('MONTH', {max_date}) "
-                    f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
-                )
-            if func == "TOTALQTD":
-                return (
-                    f"{sql_func}(CASE WHEN {date_col} >= DATE_TRUNC('QUARTER', {max_date}) "
-                    f"AND {date_col} <= {max_date} THEN {col_sql}{cast} END)"
-                )
-        else:
-            # Base argument isn't a direct aggregation call — the common
-            # real-world shape here is a measure reference, e.g.
-            # TOTALYTD([Total Sales], 'Date'[Date]). Render it (inlining the
-            # referenced measure's own SQL via measure_sql_map, or failing
-            # closed per _render_measure_ref) and inject the date-range
-            # filter into ITS aggregate argument, rather than wrapping the
-            # already-aggregated expression in a second outer aggregate —
-            # Snowflake disallows nested aggregate functions.
-            agg_sql = self._render_node(agg_node)
-            if func == "TOTALYTD":
-                condition_sql = f"{date_col} >= DATE_TRUNC('YEAR', {max_date}) AND {date_col} <= {max_date}"
-            elif func == "TOTALMTD":
-                condition_sql = f"{date_col} >= DATE_TRUNC('MONTH', {max_date}) AND {date_col} <= {max_date}"
-            elif func == "TOTALQTD":
-                condition_sql = f"{date_col} >= DATE_TRUNC('QUARTER', {max_date}) AND {date_col} <= {max_date}"
-            else:
-                condition_sql = None
-            if condition_sql:
-                rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, condition_sql)
-                if rewritten:
-                    return rewritten
-                raise self.DaxRenderError(
-                    f"{func}: base expression '{agg_sql}' is not a simple aggregate this "
-                    "renderer can safely apply a date-range filter to without risking a "
-                    "nested aggregate"
-                )
-        raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
+        # Base argument isn't a direct aggregation call — the common
+        # real-world shape here is a measure reference, e.g.
+        # TOTALYTD([Total Sales], 'Date'[Date]). Render it (inlining the
+        # referenced measure's own SQL via measure_sql_map, or failing
+        # closed per _render_measure_ref) and inject the date-range
+        # filter into ITS aggregate argument, rather than wrapping the
+        # already-aggregated expression in a second outer aggregate —
+        # Snowflake disallows nested aggregate functions.
+        agg_sql = self._render_node(agg_node)
+        rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, condition_sql)
+        if rewritten:
+            return rewritten
+        raise self.DaxRenderError(
+            f"{func}: base expression '{agg_sql}' is not a simple aggregate this "
+            "renderer can safely apply a date-range filter to without risking a "
+            "nested aggregate"
+        )
+
+    # Must stay in sync with converter/time_intelligence_shapes.py's LAG_FUNCS.
+    _LAG_COMPONENT = {"year": "SPLY_YEAR", "quarter": "SPLY_QUARTER", "month": "SPLY_MONTH"}
 
     def _render_lag_period(
         self, args: List[DaxNode], interval: str, amount: int
@@ -1169,6 +1193,8 @@ class DaxSqlRenderer:
         # identifier inside a semantic view's METRICS clause.
         max_date = f'{self.table_alias}."MAX_DATE"'
         agg_node = args[0]
+        lag_component = self._LAG_COMPONENT[interval]
+        base_flag = self.anchor_flag_map.get((lag_component,))
 
         if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
             inner_func = agg_node.func.upper()
@@ -1176,22 +1202,25 @@ class DaxSqlRenderer:
             sql_func = "AVG" if inner_func == "AVERAGE" else inner_func
             cast = "::FLOAT" if inner_func in ("SUM", "AVERAGE") else ""
 
-            if interval == "year":
-                return (
-                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR({max_date}) - 1 "
+            if base_flag:
+                condition_sql = f'{self.table_alias}."{base_flag}"'
+            elif interval == "year":
+                condition_sql = (
+                    f"YEAR({date_col}) = YEAR({max_date}) - 1 "
                     f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
-                    f"AND DATEADD(YEAR, -1, {max_date}) THEN {col_sql}{cast} END)"
+                    f"AND DATEADD(YEAR, -1, {max_date})"
                 )
-            if interval == "quarter":
-                return (
-                    f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
-                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date})) THEN {col_sql}{cast} END)"
+            elif interval == "quarter":
+                condition_sql = (
+                    f"YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
+                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date}))"
                 )
-            # month
-            return (
-                f"{sql_func}(CASE WHEN YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
-                f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date})) THEN {col_sql}{cast} END)"
-            )
+            else:  # month
+                condition_sql = (
+                    f"YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
+                    f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date}))"
+                )
+            return f"{sql_func}(CASE WHEN {condition_sql} THEN {col_sql}{cast} END)"
 
         # Base argument isn't a direct aggregation call — e.g. a measure
         # reference such as SAMEPERIODLASTYEAR([Total Sales], 'Date'[Date]).
@@ -1201,6 +1230,56 @@ class DaxSqlRenderer:
             "quarter": f"DATEADD(QUARTER, -1, {max_date})",
             "month": f"DATEADD(MONTH, -1, {max_date})",
         }[interval]
+
+        if self.anchor_flag_map:
+            # Shape-flag mode: a boolean flag column can't be shifted with
+            # DATEADD the way a literal date value can (see the MAX_DATE
+            # text-substitution branch below, which this replaces) — so
+            # nested composition is resolved by finding which OTHER shape's
+            # flag reference the already-rendered inner SQL contains, and
+            # swapping it for the combined shape's own flag reference
+            # instead. inner_shape + (lag_component,) is exactly the same
+            # canonical shape converter/time_intelligence_shapes.py's
+            # discovery pass would have derived for this composition, so
+            # the enriched view must already carry that column whenever
+            # this substitution is reachable.
+            for inner_shape, inner_flag in self.anchor_flag_map.items():
+                inner_ref = f'{self.table_alias}."{inner_flag}"'
+                if inner_ref not in agg_sql:
+                    continue
+                combined_flag = self.anchor_flag_map.get(inner_shape + (lag_component,))
+                if combined_flag:
+                    return agg_sql.replace(inner_ref, f'{self.table_alias}."{combined_flag}"')
+                # The inner expression already has its own date-window flag,
+                # but no flag was provisioned for the combined (nested)
+                # shape. Unlike the MAX_DATE case, this must not silently
+                # fall through to the "no existing anchor" branch below —
+                # that branch assumes agg_sql has NO date window of its own,
+                # which is false here (it's opaque, but real), and ANDing an
+                # unrelated new condition around an opaque flag reference
+                # risks the exact always-empty-CASE contradiction this whole
+                # mechanism exists to avoid. Fail closed instead.
+                raise self.DaxRenderError(
+                    f"Period function needs a flag column for the nested shape "
+                    f"{inner_shape + (lag_component,)!r}, but none was provisioned — "
+                    "the shape-discovery pass and the enriched view must agree on "
+                    "every nested time-intelligence composition actually used"
+                )
+
+            if base_flag:
+                rewritten = self._inject_case_filter_into_rendered_aggregate(
+                    agg_sql, f'{self.table_alias}."{base_flag}"'
+                )
+                if rewritten:
+                    return rewritten
+                raise self.DaxRenderError(
+                    f"Period function base expression '{agg_sql}' is not a simple aggregate this "
+                    "renderer can safely apply a date-range filter to without risking a nested aggregate"
+                )
+            # No flag provisioned for this exact shape (discovery pass and
+            # enrichment disagree, or this shape wasn't anticipated) — fall
+            # through to the inline MAX_DATE logic below rather than emit
+            # something silently wrong.
 
         if max_date in agg_sql:
             # The referenced measure's own SQL already anchors a date
@@ -1274,6 +1353,7 @@ def try_ast_translate(
     date_alias: str = "COL_DATE",
     measure_sql_map: Optional[Dict[str, str]] = None,
     known_measure_names: Optional[Any] = None,
+    anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1291,11 +1371,16 @@ def try_ast_translate(
             preserve the historical "unknown bracket name -> column"
             fallback for every bracket reference, e.g. for callers with no
             measure registry to consult.
+        anchor_flag_map: shape tuple -> precomputed flag column name (see
+            converter/time_intelligence_shapes.py). Omit (or pass empty) to
+            preserve the historical inline-MAX_DATE rendering exactly —
+            required for the schema-blind dry-run/preview path, which has
+            no live enriched view to reference flags on.
 
     Returns:
         SQL string on success, None on failure.
     """
-    cache_key = _ast_cache_key(dax, table_alias, date_alias, measure_sql_map, known_measure_names)
+    cache_key = _ast_cache_key(dax, table_alias, date_alias, measure_sql_map, known_measure_names, anchor_flag_map)
     if cache_key in _AST_CACHE:
         return _AST_CACHE[cache_key]
 
@@ -1310,6 +1395,7 @@ def try_ast_translate(
         date_alias=date_alias,
         measure_sql_map=measure_sql_map or {},
         known_measure_names=known_measure_names,
+        anchor_flag_map=anchor_flag_map,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:

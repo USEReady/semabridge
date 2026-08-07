@@ -50,6 +50,13 @@ class TranslationRequest:
     dialect: Dialect = Dialect.SNOWFLAKE
     metrics_context: List[Any] = field(default_factory=list)
     metric_names: Optional[Set[str]] = None
+    # Shape tuple (see converter/time_intelligence_shapes.py) -> precomputed
+    # flag column name on the current fact table's enriched view. Lets Tier
+    # 3's AST renderer reference that column instead of inline MAX_DATE
+    # arithmetic, which Snowflake's semantic-view compiler rejects even
+    # though the column physically exists. None/empty preserves the
+    # inline-MAX_DATE rendering exactly.
+    anchor_flag_map: Optional[Dict[Any, str]] = None
 
     def __post_init__(self) -> None:
         self.dialect = Dialect.coerce(self.dialect)

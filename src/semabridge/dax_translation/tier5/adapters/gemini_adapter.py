@@ -24,6 +24,7 @@ from typing import Optional
 
 from semabridge.utils.logger import get_logger
 from semabridge.dax_translation.tier5.adapters.base import (
+    ModelDiscoveryResult,
     ProviderAuthError,
     RawResult,
     is_auth_error,
@@ -32,6 +33,26 @@ from semabridge.dax_translation.tier5.adapters.base import (
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 logger = get_logger(__name__)
+
+
+def list_available_models(api_key: str):
+    """Real model discovery for the Settings-page "Discover Models"
+    button. Uses google.generativeai directly (the same package
+    gemini_api_service.py calls, not the newer google-genai package) for
+    consistency with how this adapter actually talks to Gemini. Filtered
+    to models whose supported_generation_methods includes
+    "generateContent" -- unlike OpenAI, this IS a real, documented
+    capability field on Gemini's model objects, so filtering on it is a
+    fact, not a guess."""
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    ids = sorted(
+        m.name.split("/", 1)[-1]
+        for m in genai.list_models()
+        if "generateContent" in getattr(m, "supported_generation_methods", [])
+    )
+    return ModelDiscoveryResult(models=ids, total_available=len(ids))
 
 
 def score_confidence(sql: str, original_dax: str) -> float:
@@ -79,38 +100,67 @@ class GeminiAdapter:
 
     def is_available(self) -> bool:
         import os
-        return bool(os.getenv(self.settings.enabled_env))
+        return bool(self.settings.api_key) or bool(os.getenv(self.settings.enabled_env))
 
     def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
         if not self.is_available():
             return None
 
-        from semabridge.converter.gemini_api_service import get_gemini_service
+        full_prompt = f"{system_message}\n\n{prompt}" if system_message else prompt
+        text: Optional[str]
 
-        service = get_gemini_service()
-        if not service.is_available:
+        if self.settings.api_key:
+            # A Settings-configured key bypasses the shared
+            # get_gemini_service() singleton entirely, for two reasons:
+            # (1) that singleton reads GEMINI_API_KEY from os.environ at
+            # its own construction time and is a lazy process-lifetime
+            # singleton (get_gemini_service() in gemini_api_service.py) --
+            # it has no way to take a per-adapter key at all, and (2) its
+            # 5 RPM rate limiter is calibrated to the free-tier quota
+            # assumed for the .env-configured key; a Settings-configured
+            # key could be on a different (paid) plan with a completely
+            # different quota, so inheriting that hardcoded limiter would
+            # be actively wrong, not just redundant.
+            try:
+                import google.generativeai as genai
+
+                genai.configure(api_key=self.settings.api_key)
+                model_name = self.settings.model or "gemini-1.5-flash"
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(full_prompt, stream=False)
+                text = response.text if response else None
+            except Exception as exc:
+                if is_auth_error(exc):
+                    raise ProviderAuthError("gemini", exc) from exc
+                logger.warning("Gemini adapter (Settings key) call failed: %s", exc)
+                return None
+        else:
+            from semabridge.converter.gemini_api_service import get_gemini_service
+
+            service = get_gemini_service()
+            if not service.is_available:
+                return None
+
+            try:
+                # No fallback_fn here (unlike the original call site):
+                # passing one makes GeminiAPIService.call() swallow every
+                # failure and silently return the fallback value, which
+                # would hide an auth-class error from the classification
+                # below. Letting it raise GeminiAPIError/
+                # GeminiRateLimitError instead has the same net effect for
+                # this adapter (still returns None on any ordinary
+                # failure), it just does so via the except branch.
+                text = service.call(full_prompt, fallback_fn=None)
+            except Exception as exc:
+                if is_auth_error(exc):
+                    raise ProviderAuthError("gemini", exc) from exc
+                logger.warning("Gemini adapter call failed: %s", exc)
+                return None
+
+        if not isinstance(text, str) or not text.strip():
             return None
 
-        try:
-            full_prompt = f"{system_message}\n\n{prompt}" if system_message else prompt
-            # No fallback_fn here (unlike the original call site): passing
-            # one makes GeminiAPIService.call() swallow every failure and
-            # silently return the fallback value, which would hide an
-            # auth-class error from the classification below. Letting it
-            # raise GeminiAPIError/GeminiRateLimitError instead has the
-            # same net effect for this adapter (still returns None on any
-            # ordinary failure), it just does so via the except branch.
-            response = service.call(full_prompt, fallback_fn=None)
-        except Exception as exc:
-            if is_auth_error(exc):
-                raise ProviderAuthError("gemini", exc) from exc
-            logger.warning("Gemini adapter call failed: %s", exc)
-            return None
-
-        if not isinstance(response, str) or not response.strip():
-            return None
-
-        sql = strip_markdown_fences(response)
+        sql = strip_markdown_fences(text)
         if not sql:
             return None
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import List, Optional, Protocol
 
 
 def strip_markdown_fences(sql: Optional[str]) -> str:
@@ -32,6 +32,21 @@ class RawResult:
 
     text: str
     confidence: float = 0.5
+
+
+@dataclass
+class ModelDiscoveryResult:
+    """Uniform return shape for every adapter's list_available_models(),
+    used by the Settings-page "Discover Models" endpoint. `truncated`/
+    `total_available` matter only for a provider whose real catalog can
+    be large enough to need capping (see featherless_adapter.py's
+    _MAX_DISCOVERED_MODELS) — for a provider that just returns its whole
+    catalog, `truncated` stays False and `total_available` equals
+    `len(models)`."""
+
+    models: List[str]
+    truncated: bool = False
+    total_available: Optional[int] = None
 
 
 class ProviderAuthError(Exception):

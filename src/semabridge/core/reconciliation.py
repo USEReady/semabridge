@@ -146,7 +146,16 @@ class ReconciliationReport:
         is individually "present" among deployed/dropped names.
         """
         snapshot_counts = Counter(_normalize(n, self.sanitizer) for n in self.snapshot_metric_names if n)
-        deployed_base_counts = Counter(_strip_dedup_suffix(n) for n in self.deployed_metrics)
+        # Only LIVE deployed metrics count as "deployed" for this invariant.
+        # A "declared-dead" (CAST(NULL AS DOUBLE)) DDL entry is not a working
+        # metric -- it must additionally have a matching DropLedger record to
+        # be considered accounted for, exactly like a metric that's fully
+        # absent from the DDL. Folding deployed_dead_metrics in here (as a
+        # prior version of this check did) let any NULL-cast metric with zero
+        # ledger record silently read as "accounted for" purely because its
+        # name still appears in the DDL text -- the same blind spot this
+        # module exists to catch.
+        deployed_base_counts = Counter(_strip_dedup_suffix(n) for n in self.deployed_live_metrics)
         dropped_base_counts = Counter(
             _normalize(r["entity_name"], self.sanitizer)
             for r in self.drop_records
@@ -183,12 +192,16 @@ class ReconciliationReport:
 def _extract_deployed_metric_names(ddl_text: str) -> tuple[set[str], set[str]]:
     """Parse every METRICS( ... ) clause in *ddl_text* into (live, declared-dead) name sets.
 
-    "declared-dead" = the expression is exactly ``CAST(NULL AS DOUBLE)`` —
-    deploy-time auto-remediation (``connectors/semantic_ddl_sanitizer.py``)
-    neutered the metric to let the DDL compile, but the name still appears
-    in the deployed semantic view. That is "accounted for" (visible, with a
-    ledger record from the deployment pass) but not a *working* metric —
-    reported as a distinct bucket rather than silently folded into "live".
+    "declared-dead" = the expression is exactly ``CAST(NULL AS DOUBLE)`` — some
+    stage (deploy-time auto-remediation, or a translation path that silently
+    accepted the LLM's "I can't translate this" placeholder as if it were
+    real SQL) neutered the metric, but the name still appears in the
+    deployed semantic view. This is visible, but NOT automatically
+    "accounted for" — unlike ``deployed_live_metrics``, entries here still
+    require a matching DropLedger record to satisfy the invariant (see
+    ``unaccounted`` below); a NULL-cast metric with no ledger record is a
+    real bug (a mechanism dropped it without recording why), not a
+    by-design bucket to fold in for free.
     """
     live: set[str] = set()
     dead: set[str] = set()

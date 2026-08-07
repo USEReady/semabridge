@@ -2143,6 +2143,68 @@ export const api = {
         return handleResponse(res);
     },
 
+    // ── LLM Provider Configuration (Tier 5 DAX translation) ────────────────
+
+    /**
+     * Status for all 5 LLM providers (OpenAI/Gemini/Groq/Featherless/Anthropic):
+     * which source (Settings vs .env vs none) is supplying the key, whether a
+     * model has been selected, and a masked hint when Settings-configured.
+     */
+    async getLlmProviders() {
+        const res = await authFetch(`${API_BASE_URL}/settings/llm-providers`);
+        return handleResponse(res);
+    },
+
+    /**
+     * Save (or overwrite) the Settings-configured API key for a provider.
+     * The raw key is never returned again after saving.
+     */
+    async saveLlmProviderApiKey(provider, apiKey) {
+        const res = await authFetch(`${API_BASE_URL}/settings/llm-providers/${encodeURIComponent(provider)}/api-key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey }),
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    /**
+     * Remove the Settings-configured key for a provider, reverting it to
+     * .env-only (if a .env value exists).
+     */
+    async deleteLlmProviderApiKey(provider) {
+        const res = await authFetch(`${API_BASE_URL}/settings/llm-providers/${encodeURIComponent(provider)}/api-key`, {
+            method: 'DELETE',
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
+    /**
+     * Live model discovery against the provider's currently effective key
+     * (Settings, else .env). Returns { provider, models, truncated, total_available }.
+     * Throws on failure — callers should surface err.message (400 no key,
+     * 401 bad key, 502 network/provider error, each with a distinct detail).
+     */
+    async discoverLlmProviderModels(provider) {
+        const res = await authFetch(`${API_BASE_URL}/settings/llm-providers/${encodeURIComponent(provider)}/discover-models`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    /** Save the selected model for a provider (not validated server-side — trust the discovered-models dropdown). */
+    async saveLlmProviderModel(provider, model) {
+        const res = await authFetch(`${API_BASE_URL}/settings/llm-providers/${encodeURIComponent(provider)}/model`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model }),
+        });
+        if (res.status === 204) return null;
+        return handleResponse(res);
+    },
+
     async browseDirectory(pathValue = '') {
         const params = new URLSearchParams();
         const normalizedPath = String(pathValue || '').trim();

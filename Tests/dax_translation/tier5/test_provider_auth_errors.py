@@ -15,6 +15,7 @@ from semabridge.dax_translation.tier5.adapters.base import ProviderAuthError, is
 from semabridge.dax_translation.tier5.adapters.groq_adapter import GroqAdapter
 from semabridge.dax_translation.tier5.adapters.openai_adapter import OpenAIAdapter
 from semabridge.dax_translation.tier5.adapters.featherless_adapter import FeatherlessAdapter
+from semabridge.dax_translation.tier5.adapters.anthropic_adapter import AnthropicAdapter
 from semabridge.dax_translation.tier5.config import ProviderSettings
 
 
@@ -183,3 +184,57 @@ def test_featherless_adapter_auth_failure_skips_remaining_models(monkeypatch):
         pass
 
     assert attempted_models == ["model-a"]  # stopped after the first auth failure
+
+
+def test_anthropic_adapter_auth_failure_skips_remaining_retries(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-invalid")
+    call_count = []
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            call_count.append(True)
+            raise _MockAuthError("Incorrect API key provided")
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeClient)
+
+    adapter = AnthropicAdapter(
+        ProviderSettings(enabled_env="ANTHROPIC_API_KEY", model="claude-haiku-4-5", max_retries=3)
+    )
+
+    try:
+        adapter.translate("prompt", "system")
+        assert False, "expected ProviderAuthError"
+    except ProviderAuthError as exc:
+        assert exc.provider_name == "anthropic"
+
+    assert len(call_count) == 1  # no retries burned on a guaranteed-repeat failure
+
+
+def test_anthropic_adapter_model_discovery_auth_failure_raises_without_falling_back(monkeypatch):
+    """A bad key must surface as ProviderAuthError even when the failure
+    happens during model discovery (before any translate call is made) --
+    not silently swallowed into the _FALLBACK_DEFAULT_MODEL fallback that
+    covers ordinary discovery failures (network errors, timeouts)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-invalid")
+
+    class FakeModels:
+        def list(self):
+            raise _MockAuthError("invalid_api_key")
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            self.models = FakeModels()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeClient)
+
+    adapter = AnthropicAdapter(ProviderSettings(enabled_env="ANTHROPIC_API_KEY"))  # no explicit model -> triggers discovery
+
+    try:
+        adapter.translate("prompt", "system")
+        assert False, "expected ProviderAuthError"
+    except ProviderAuthError as exc:
+        assert exc.provider_name == "anthropic"

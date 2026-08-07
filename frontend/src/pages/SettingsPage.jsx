@@ -13,6 +13,7 @@ import ConnectionsPanel from '../components/ConnectionsPanel';
 import ConfigEditor from '../components/ConfigEditor';
 import Modal from '../components/common/Modal';
 import SecretsPanel from '../components/SecretsPanel';
+import LlmProvidersPanel from '../components/LlmProvidersPanel';
 import { api } from '../utils/api';
 
 const ENVIRONMENTS = ['Dev', 'Staging', 'Prod'];
@@ -505,6 +506,9 @@ export default function SettingsPage() {
 
       {/* API Secrets */}
       <SecretsPanel />
+
+      {/* LLM Providers (Tier 5 DAX translation) */}
+      <LlmProvidersPanel />
 
       {/* API Health / Backend Service */}
       <div className="mb-8">

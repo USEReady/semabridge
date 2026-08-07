@@ -58,9 +58,13 @@ def test_dropped_metric_recorded_in_ledger_is_not_unaccounted():
     assert report.dropped_metrics == {"UNITS"}
 
 
-def test_declared_dead_metric_is_accounted_but_reported_separately():
-    """CAST(NULL AS DOUBLE) metrics are 'accounted for' (visible, present in
-    DDL) but tracked in a distinct bucket since they aren't working metrics."""
+def test_declared_dead_metric_with_no_ledger_record_is_unaccounted():
+    """CAST(NULL AS DOUBLE) metrics are visible (present in DDL, tracked in a
+    distinct 'dead' bucket since they aren't working metrics) but are NOT
+    automatically 'accounted for' just by being textually present -- some
+    mechanism nulled this metric out, and if it never called
+    DropLedger.record(...), that is exactly the silent-drop bug this module
+    exists to catch, not a clean run."""
     ddl = _ddl('  FACT."REVENUE" AS SUM(FACT."REVENUE"),\n  FACT."UNITS" AS CAST(NULL AS DOUBLE)')
     report = compute_reconciliation(
         run_id="r1", project_id="p1", snapshot_id="s1",
@@ -68,9 +72,28 @@ def test_declared_dead_metric_is_accounted_but_reported_separately():
         deployed_ddl_text=ddl,
         drop_records=[],
     )
-    assert report.is_clean()
+    assert not report.is_clean()
+    assert report.unaccounted == {"UNITS": 1}
     assert report.deployed_dead_metrics == {"UNITS"}
     assert "UNITS" not in report.deployed_live_metrics
+
+
+def test_declared_dead_metric_with_matching_ledger_record_is_accounted():
+    """The same CAST(NULL AS DOUBLE) DDL entry IS accounted for once the
+    mechanism that nulled it out recorded why via DropLedger -- the ledger
+    record, not mere DDL presence, is what satisfies the invariant."""
+    ddl = _ddl('  FACT."REVENUE" AS SUM(FACT."REVENUE"),\n  FACT."UNITS" AS CAST(NULL AS DOUBLE)')
+    report = compute_reconciliation(
+        run_id="r1", project_id="p1", snapshot_id="s1",
+        snapshot_metric_names=["Revenue", "Units"],
+        deployed_ddl_text=ddl,
+        drop_records=[
+            {"entity_kind": "metric", "entity_name": "Units", "stage": "dax_translation", "reason": "..."},
+        ],
+    )
+    assert report.is_clean()
+    assert report.unaccounted == {}
+    assert report.deployed_dead_metrics == {"UNITS"}
 
 
 def test_dedup_suffixed_name_still_reconciles_against_base_snapshot_name():

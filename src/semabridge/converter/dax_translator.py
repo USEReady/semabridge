@@ -189,7 +189,8 @@ class DAXTranslator:
                   metric_name: str = None,
                   metrics_context: List[Any] = None,
                   dataset_col_lookup: Optional[Dict[str, set]] = None,
-                  dataset_aliases: Optional[Dict[str, str]] = None) -> DAXTranslationResult:
+                  dataset_aliases: Optional[Dict[str, str]] = None,
+                  anchor_flag_map: Optional[Dict[Any, str]] = None) -> DAXTranslationResult:
         """
         Translate a DAX expression to SQL.
 
@@ -217,6 +218,7 @@ class DAXTranslator:
             table_alias,
             dataset_name,
             metrics_context,
+            anchor_flag_map=anchor_flag_map,
         )
         if tiered_sql:
             return tiered_sql
@@ -270,6 +272,7 @@ class DAXTranslator:
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
                 known_measure_names=self._all_measure_names(metrics_context),
+                anchor_flag_map=anchor_flag_map,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -288,6 +291,7 @@ class DAXTranslator:
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
                 known_measure_names=self._all_measure_names(metrics_context),
+                anchor_flag_map=anchor_flag_map,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -318,6 +322,7 @@ class DAXTranslator:
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
                 known_measure_names=self._all_measure_names(metrics_context),
+                anchor_flag_map=anchor_flag_map,
             )
             if general_ast_sql:
                 return DAXTranslationResult(general_ast_sql, 4, clean_dax)
@@ -344,6 +349,7 @@ class DAXTranslator:
         table_alias: str,
         dataset_name: str,
         metrics_context: List[Any] = None,
+        anchor_flag_map: Optional[Dict[Any, str]] = None,
     ) -> Optional[DAXTranslationResult]:
         tier1_sql = self._try_tier1(clean_dax, table_alias)
         if tier1_sql:
@@ -385,6 +391,7 @@ class DAXTranslator:
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
                 known_measure_names=all_measure_names,
+                anchor_flag_map=anchor_flag_map,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -402,6 +409,7 @@ class DAXTranslator:
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
                 known_measure_names=all_measure_names,
+                anchor_flag_map=anchor_flag_map,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)

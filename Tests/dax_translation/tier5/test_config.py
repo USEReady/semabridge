@@ -8,10 +8,9 @@ from semabridge.dax_translation.tier5.config import Tier5Config, ProviderSetting
 
 def test_default_config_matches_documented_shape():
     config = Tier5Config.default()
-    assert config.provider_order == ["openai", "gemini", "groq", "featherless"]
+    assert config.provider_order == ["openai", "gemini", "groq", "featherless", "anthropic"]
     assert config.min_confidence == 0.55
-    assert set(config.providers.keys()) == {"openai", "gemini", "groq", "featherless"}
-    assert "anthropic" not in config.providers  # deferred per Step 1 scope
+    assert set(config.providers.keys()) == {"openai", "gemini", "groq", "featherless", "anthropic"}
 
     openai = config.providers["openai"]
     assert openai.enabled_env == "OPENAI_API_KEY"
@@ -26,6 +25,12 @@ def test_default_config_matches_documented_shape():
         "mistralai/Mistral-7B-Instruct-v0.3",
         "meta-llama/Llama-3.2-3B-Instruct",
     ]
+
+    anthropic = config.providers["anthropic"]
+    assert anthropic.enabled_env == "ANTHROPIC_API_KEY"
+    assert anthropic.model is None  # resolved via live discovery, not a hardcoded default (see adapters/anthropic_adapter.py)
+    assert anthropic.timeout_seconds == 30
+    assert anthropic.max_retries == 2
 
 
 def test_provider_settings_is_enabled_reflects_env_var(monkeypatch):
