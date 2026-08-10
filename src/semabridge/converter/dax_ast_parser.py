@@ -31,7 +31,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from semabridge.utils.logger import get_logger
 from semabridge.converter.function_registry import FunctionRegistry
-from semabridge.utils.relationship_graph import has_relationship_path
+from semabridge.utils.relationship_graph import has_relationship_path, build_relationship_edges
 
 _AST_CACHE: dict[tuple, Optional[str]] = {}
 _AST_CACHE_MAX = 1024
@@ -153,7 +153,17 @@ class DaxLexer:
                 tok = self._read_measure_ref()
             elif ch == '"':
                 tok = self._read_string('"')
-            elif ch.isdigit() or (ch == "-" and self._peek_next_is_digit()):
+            elif (
+                ch.isdigit()
+                or (ch == "-" and self._peek_next_is_digit())
+                # DAX allows a leading-dot decimal with no integer part
+                # (".1", ".55") — the common way these thresholds get typed
+                # in Power BI. Without this, "." falls to _read_operator()
+                # as a standalone UNKNOWN token and the digits after it
+                # become a separate token, corrupting downstream parsing
+                # (see _parse_function_call's comma handling below).
+                or (ch == "." and self._peek_next_is_digit())
+            ):
                 tok = self._read_number()
             elif ch.isalpha() or ch == "_":
                 tok = self._read_identifier()
@@ -530,7 +540,23 @@ class DaxAstParser:
         if tok.type == DaxTokenType.EOF:
             raise DaxParseError("Unexpected end of expression")
 
-        # Unknown token — consume and return identifier
+        if tok.type == DaxTokenType.UNKNOWN:
+            # A character the lexer couldn't classify at all (e.g. a stray
+            # "%" left over from a percent-literal, or a "." the lexer
+            # dispatch didn't recognize as starting a number). Silently
+            # treating this as a bare identifier used to let it flow
+            # through as a bogus extra function argument (see
+            # _parse_function_call) — corrupting argument order rather
+            # than failing — and render as a real (wrong) SQL identifier,
+            # e.g. sanitize_column(".") producing the literal column name
+            # "_", which Snowflake then rejects at deploy time with no
+            # link back to the actual cause. Fail closed instead so the
+            # caller falls through to a later translation tier.
+            raise DaxParseError(f"Unrecognized character {tok.value!r} in DAX expression")
+
+        # Unknown token type otherwise unhandled above — consume and
+        # return identifier (preserves historical behavior for any token
+        # shape not already handled by a branch above).
         self._advance()
         return IdentifierNode(name=tok.value)
 
@@ -545,11 +571,21 @@ class DaxAstParser:
         self._advance()  # consume '('
         args: List[DaxNode] = []
 
-        # Parse arguments separated by commas
+        # Parse arguments separated by commas. Each argument must be
+        # followed by a comma or the closing paren — anything else (e.g. a
+        # stray unconsumed token) used to be silently ignored by looping
+        # straight into parsing "another argument", corrupting arg count/
+        # order without any error (see the UNKNOWN-token fail-closed check
+        # in _parse_primary for the token-level half of this same bug).
         while not self._match(DaxTokenType.RPAREN, DaxTokenType.EOF):
             args.append(self._parse_expr())
             if self._match(DaxTokenType.COMMA):
                 self._advance()
+            elif not self._match(DaxTokenType.RPAREN, DaxTokenType.EOF):
+                raise DaxParseError(
+                    f"Expected ',' or ')' in {func_name}(...) argument list, "
+                    f"got {self._peek().value!r}"
+                )
 
         if self._peek().type == DaxTokenType.RPAREN:
             self._advance()  # consume ')'
@@ -1956,3 +1992,254 @@ def dax_calculate_filters_unreachable_dimension(
             )
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Disconnected-selector-switch splitting
+# ---------------------------------------------------------------------------
+#
+# The KPI01/KPI02 idiom specifically: IF(SUM('Selector'[Col])=1, branchA,
+# IF(SUM('Selector'[Col])=2, branchB, IF(SUM('Selector'[Col])=3, branchC))).
+# 'Selector' is a Power BI "disconnected parameter table" — a report-side
+# slicer with no relationship to any real data, used only so a user can
+# switch which of several calculation variants a visual displays. DAX can
+# read "what's currently selected in this slicer" from an unrelated table;
+# a Snowflake semantic-view metric cannot — it has no notion of a client's
+# current UI selection, and 'Selector' has no join path for the compiler to
+# validate the branches' real table references against anyway (error
+# 010211, see dax_calculate_filters_unreachable_dimension above).
+#
+# Unlike that function, this one IS a rewriter: each branch's own data
+# dependency is a real, reachable table (that's how the branches' own
+# translation already succeeds) — the metric is just declared under the
+# wrong (disconnected) table as a whole. The fix is to stop declaring one
+# metric under 'Selector' and instead declare N separate metrics, one per
+# branch, each under the table its own branch actually depends on.
+
+
+def _collect_measure_ref_names(node: DaxNode) -> Set[str]:
+    """Every distinct measure name referenced by a MeasureRefNode anywhere
+    in this subtree. Mirrors _collect_column_ref_tables's walk, for the
+    other kind of cross-entity reference a branch can make."""
+    names: Set[str] = set()
+
+    def _walk(n: DaxNode) -> None:
+        if isinstance(n, MeasureRefNode):
+            names.add(n.name)
+        elif isinstance(n, BinaryOpNode):
+            _walk(n.left)
+            _walk(n.right)
+        elif isinstance(n, UnaryOpNode):
+            _walk(n.operand)
+        elif isinstance(n, FunctionCallNode):
+            for a in n.args:
+                _walk(a)
+
+    _walk(node)
+    return names
+
+
+def _match_selector_condition(cond: DaxNode) -> Optional[Tuple[str, str, float]]:
+    """If `cond` is SUM('Table'[Column]) = <number> (either operand
+    order), return (table, column, number); else None."""
+    if not isinstance(cond, BinaryOpNode) or cond.op != "=":
+        return None
+
+    def _as_sum_of_column(n: DaxNode) -> Optional[Tuple[str, str]]:
+        if (
+            isinstance(n, FunctionCallNode)
+            and n.func == "SUM"
+            and len(n.args) == 1
+            and isinstance(n.args[0], ColumnRefNode)
+        ):
+            col = n.args[0]
+            return (col.table, col.column)
+        return None
+
+    def _as_number(n: DaxNode) -> Optional[float]:
+        if isinstance(n, LiteralNode) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
+            return n.value
+        return None
+
+    left_sum = _as_sum_of_column(cond.left)
+    if left_sum is not None:
+        num = _as_number(cond.right)
+        if num is not None:
+            return (left_sum[0], left_sum[1], num)
+    right_sum = _as_sum_of_column(cond.right)
+    if right_sum is not None:
+        num = _as_number(cond.left)
+        if num is not None:
+            return (right_sum[0], right_sum[1], num)
+    return None
+
+
+@dataclass
+class SelectorBranch:
+    """One branch of a disconnected-selector switch, with the dataset it
+    should be re-homed under once split into its own metric."""
+
+    selector_value: Optional[float]  # None for the trailing catch-all/else branch
+    node: DaxNode
+    resolved_dataset: Optional[str]  # best-guess real table this branch depends on
+    depends_on_measure: Optional[str]  # first measure reference found, for labeling
+
+
+@dataclass
+class DisconnectedSelectorSwitch:
+    """A metric whose DAX is IF(SUM(selector)=N, ..., IF(SUM(selector)=M,
+    ...)) gated by a table with no relationship to anything else in the
+    model — see module comment above."""
+
+    selector_table: str
+    selector_column: str
+    branches: List[SelectorBranch]
+
+
+def find_disconnected_selector_switch(
+    dax: str,
+    calling_dataset: str,
+    relationships: Iterable[Any],
+    metric_datasets: Optional[Dict[str, str]] = None,
+) -> Optional[DisconnectedSelectorSwitch]:
+    """Detect the KPI01/KPI02 idiom described above and resolve each
+    branch's real home dataset, so a caller can split this one metric into
+    one metric per branch instead of leaving it permanently unrenderable.
+
+    Returns None whenever the shape isn't a clean, safe match — a mixed or
+    single-condition IF chain, a selector table that DOES have some
+    relationship (so this isn't the "totally disconnected" idiom this
+    function specifically targets), or a set of branches where not one
+    resolves to a real dataset (nothing to re-home to). Callers should
+    treat None as "leave this metric alone," never as an error.
+    """
+    if not dax or not calling_dataset:
+        return None
+    root = DaxAstParser().parse(dax)
+    if root is None:
+        return None
+
+    selector_table: Optional[str] = None
+    selector_column: Optional[str] = None
+    raw_branches: List[Tuple[Optional[float], DaxNode]] = []
+    node: Optional[DaxNode] = root
+    while isinstance(node, FunctionCallNode) and node.func == "IF" and len(node.args) in (2, 3):
+        sel = _match_selector_condition(node.args[0])
+        if sel is None:
+            break
+        table, column, value = sel
+        if selector_table is None:
+            selector_table, selector_column = table, column
+        elif (
+            selector_column is None
+            or table.casefold() != selector_table.casefold()
+            or column.casefold() != selector_column.casefold()
+        ):
+            # Inconsistent selector partway through the chain -- not the
+            # clean single-selector idiom this function safely rewrites.
+            return None
+        raw_branches.append((value, node.args[1]))
+        node = node.args[2] if len(node.args) == 3 else None
+
+    if selector_table is None or selector_column is None:
+        return None  # first condition didn't match the shape at all
+    if node is not None:
+        raw_branches.append((None, node))  # trailing else/fallback branch
+    if len(raw_branches) < 2:
+        return None  # nothing worth splitting
+
+    # This function only targets a table with NO relationship anywhere in
+    # the model -- a genuine disconnected parameter table. A selector table
+    # that's merely unreachable from THIS metric's own dataset but related
+    # to something else entirely is a different, less clear-cut situation
+    # (see dax_calculate_filters_unreachable_dimension's advisory instead).
+    if build_relationship_edges(relationships, selector_table):
+        return None
+
+    metric_datasets_ci = {str(k).casefold(): v for k, v in (metric_datasets or {}).items()}
+
+    def _resolve_branch_dataset(n: DaxNode) -> Tuple[Optional[str], Optional[str]]:
+        first_measure: Optional[str] = None
+        candidates: List[str] = []
+        for name in sorted(_collect_measure_ref_names(n)):
+            if first_measure is None:
+                first_measure = name
+            ds = metric_datasets_ci.get(name.casefold())
+            if ds:
+                candidates.append(ds)
+        for table in _collect_column_ref_tables(n):
+            if table.casefold() != selector_table.casefold():
+                candidates.append(table)
+        if not candidates:
+            return None, first_measure
+        # Most frequent candidate wins a tie by first-seen order.
+        counts: Dict[str, int] = {}
+        for c in candidates:
+            counts[c] = counts.get(c, 0) + 1
+        best = max(candidates, key=lambda c: (counts[c], -candidates.index(c)))
+        return best, first_measure
+
+    branches: List[SelectorBranch] = []
+    for value, branch_node in raw_branches:
+        resolved_dataset, depends_on_measure = _resolve_branch_dataset(branch_node)
+        branches.append(SelectorBranch(
+            selector_value=value,
+            node=branch_node,
+            resolved_dataset=resolved_dataset,
+            depends_on_measure=depends_on_measure,
+        ))
+
+    # Fallback pass: a branch with no dependency of its own (e.g. a bare
+    # literal spacer/blank variant) inherits the most common dataset among
+    # its siblings, so every split metric lands somewhere valid.
+    sibling_counts: Dict[str, int] = {}
+    for b in branches:
+        if b.resolved_dataset:
+            sibling_counts[b.resolved_dataset] = sibling_counts.get(b.resolved_dataset, 0) + 1
+    if sibling_counts:
+        fallback_dataset = max(sibling_counts, key=lambda d: sibling_counts[d])
+        for b in branches:
+            if not b.resolved_dataset:
+                b.resolved_dataset = fallback_dataset
+
+    if not any(b.resolved_dataset for b in branches):
+        return None  # nothing to re-home any branch to -- leave metric alone
+
+    return DisconnectedSelectorSwitch(
+        selector_table=selector_table,
+        selector_column=selector_column,
+        branches=branches,
+    )
+
+
+def dax_source_repr(node: DaxNode) -> str:
+    """Reconstruct a DAX-syntax string from an AST subtree.
+
+    Not a general pretty-printer -- covers exactly the node types a real
+    branch expression is built from (literals, column/measure refs,
+    function calls, binary/unary ops), which is all find_disconnected_
+    selector_switch's branches ever contain. Used only to give a split-out
+    branch metric a normal DAX .expression that the existing translation
+    pipeline can process from scratch like any other metric; the exact
+    original formatting doesn't need to round-trip, only the meaning.
+    """
+    if isinstance(node, LiteralNode):
+        if node.raw:
+            return node.raw
+        if isinstance(node.value, str):
+            escaped = node.value.replace('"', '""')
+            return f'"{escaped}"'
+        return str(node.value)
+    if isinstance(node, ColumnRefNode):
+        return node.raw or f"'{node.table}'[{node.column}]"
+    if isinstance(node, MeasureRefNode):
+        return f"[{node.name}]"
+    if isinstance(node, IdentifierNode):
+        return node.name
+    if isinstance(node, UnaryOpNode):
+        return f"{node.op}{dax_source_repr(node.operand)}"
+    if isinstance(node, BinaryOpNode):
+        return f"{dax_source_repr(node.left)} {node.op} {dax_source_repr(node.right)}"
+    if isinstance(node, FunctionCallNode):
+        return f"{node.func}({', '.join(dax_source_repr(a) for a in node.args)})"
+    return ""

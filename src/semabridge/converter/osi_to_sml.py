@@ -92,6 +92,14 @@ class OSIToSMLConverter(BaseConverter):
             SMLModel object
         """
         try:
+            # 0. Split any metric built on a disconnected Power BI parameter/
+            # selector table (the KPI01/KPI02 idiom) into one real metric per
+            # branch, before anything else reads osi_model.metrics -- see
+            # _split_disconnected_selector_metrics's docstring. Mutates
+            # osi_model.metrics in place; every metric this doesn't match
+            # (the overwhelming majority) passes through unchanged.
+            self._split_disconnected_selector_metrics(osi_model)
+
             sml = SMLModel(
                 unique_name=osi_model.unique_name,
                 label=osi_model.label,
@@ -573,6 +581,124 @@ class OSIToSMLConverter(BaseConverter):
                 continue
             if hit:
                 metric.advisory_notes.append(hit.reason)
+
+    def _split_disconnected_selector_metrics(self, osi_model: OSIModel) -> None:
+        """Replace any metric shaped like the KPI01/KPI02 idiom -- IF(SUM(
+        DisconnectedSelectorTable[Col])=1, branchA, IF(...=2, branchB, ...))
+        -- with one real metric per branch, each declared under the
+        dataset its own branch actually depends on instead of the
+        disconnected selector table.
+
+        Why: 'DisconnectedSelectorTable' here is a Power BI report-side
+        parameter/slicer table with no relationship to any real data --
+        DAX can read "what's currently selected" from it, but a Snowflake
+        semantic-view metric has no such notion, and the table has no join
+        path for the compiler to validate the branches' real references
+        against anyway. Snowflake rejects the original metric outright
+        with error 010211 ("a metric cannot refer to another dimension
+        from an unrelated entity") -- no rewrite of the SQL text fixes
+        that, only re-homing it under a real table does. See
+        find_disconnected_selector_switch's module comment for the full
+        analysis (converter/dax_ast_parser.py).
+
+        Mutates osi_model.metrics in place. Every metric that isn't this
+        exact shape (the overwhelming majority) is untouched -- the
+        detector itself is conservative and returns None for anything
+        short of a clean, single-selector, fully-disconnected match (see
+        its own docstring), so this never touches a metric that might
+        legitimately need its original single-metric form.
+        """
+        from semabridge.converter.dax_ast_parser import find_disconnected_selector_switch, dax_source_repr
+
+        if not osi_model.metrics:
+            return
+
+        metric_datasets = {m.unique_name: m.dataset for m in osi_model.metrics if m.dataset}
+        existing_names = {m.unique_name.casefold() for m in osi_model.metrics}
+        new_metrics: List[OSIMetric] = []
+        any_split = False
+
+        for metric in osi_model.metrics:
+            if not metric.expression or not metric.dataset:
+                new_metrics.append(metric)
+                continue
+            try:
+                switch = find_disconnected_selector_switch(
+                    metric.expression, metric.dataset, osi_model.relationships, metric_datasets,
+                )
+            except Exception as exc:  # noqa: BLE001 - never fail conversion over this
+                logger.debug(
+                    "Disconnected-selector split check skipped for '%s' (non-fatal): %s",
+                    metric.unique_name, exc,
+                )
+                new_metrics.append(metric)
+                continue
+
+            if switch is None:
+                new_metrics.append(metric)
+                continue
+
+            branch_metrics: List[OSIMetric] = []
+            name_collision = False
+            for idx, branch in enumerate(switch.branches, start=1):
+                new_name = f"{metric.unique_name}_{idx}"
+                if new_name.casefold() in existing_names:
+                    name_collision = True
+                    break
+                branch_label = (
+                    f"{branch.depends_on_measure} variant" if branch.depends_on_measure
+                    else f"variant {idx}"
+                )
+                value_desc = (
+                    f"{switch.selector_column}={branch.selector_value:g}"
+                    if branch.selector_value is not None
+                    else f"{switch.selector_column} else"
+                )
+                branch_metrics.append(metric.model_copy(update={
+                    "unique_name": new_name,
+                    "label": f"{metric.label} ({branch_label})",
+                    "dataset": branch.resolved_dataset or metric.dataset,
+                    "expression": dax_source_repr(branch.node),
+                    "sql_expression": None,
+                    "description": (
+                        f"Auto-split from '{metric.unique_name}' (branch {idx}/"
+                        f"{len(switch.branches)}: {switch.selector_table}[{value_desc}]). "
+                        f"'{switch.selector_table}' has no relationship to any table in "
+                        "this model, so the original metric could never be declared "
+                        "correctly under it -- see osi_to_sml.py's "
+                        "_split_disconnected_selector_metrics."
+                    ),
+                    "synonyms": [],
+                    "synonym_sources": {},
+                    "has_report_alias": False,
+                    "complexity_tier": 0,
+                    "depends_on_measures": [],
+                }))
+
+            if name_collision or not branch_metrics:
+                logger.warning(
+                    "Skipping disconnected-selector split for '%s': generated branch name "
+                    "already exists in this model -- leaving the original metric as-is "
+                    "(it will still fail Snowflake's compiler as before, unchanged from "
+                    "today's behavior).",
+                    metric.unique_name,
+                )
+                new_metrics.append(metric)
+                continue
+
+            logger.info(
+                "Split disconnected-selector metric '%s' (selector table '%s' has no "
+                "relationships) into %d branch metrics: %s",
+                metric.unique_name, switch.selector_table, len(branch_metrics),
+                ", ".join(b.unique_name for b in branch_metrics),
+            )
+            for b in branch_metrics:
+                existing_names.add(b.unique_name.casefold())
+            new_metrics.extend(branch_metrics)
+            any_split = True
+
+        if any_split:
+            osi_model.metrics = new_metrics
 
     def _convert_relationship(self, osi_rel: OSIRelationship) -> Optional[SMLRelationship]:
         try:
