@@ -175,6 +175,43 @@ def test_name_collision_one_deployed_one_properly_dropped_is_clean():
     assert report.is_clean()
 
 
+def test_is_metric_live_true_for_a_live_deployed_metric():
+    ddl = _ddl('  FACT."REVENUE" AS SUM(FACT."REVENUE")')
+    report = compute_reconciliation(
+        run_id="r1", project_id="p1", snapshot_id="s1",
+        snapshot_metric_names=["Revenue"],
+        deployed_ddl_text=ddl,
+        drop_records=[],
+    )
+    assert report.is_metric_live("Revenue")
+    assert report.is_metric_live("REVENUE")  # normalization is case-insensitive
+
+
+def test_is_metric_live_false_for_a_declared_dead_metric():
+    """A CAST(NULL AS DOUBLE) placeholder is textually present but NOT
+    "live" -- is_metric_live must say False so a real ledger record for it
+    (e.g. a genuine deploy-time rejection) is never mistakenly retracted."""
+    ddl = _ddl('  FACT."KPI01" AS CAST(NULL AS DOUBLE)')
+    report = compute_reconciliation(
+        run_id="r1", project_id="p1", snapshot_id="s1",
+        snapshot_metric_names=["KPI01"],
+        deployed_ddl_text=ddl,
+        drop_records=[],
+    )
+    assert not report.is_metric_live("KPI01")
+
+
+def test_is_metric_live_false_for_a_metric_absent_from_ddl():
+    ddl = _ddl('  FACT."REVENUE" AS SUM(FACT."REVENUE")')
+    report = compute_reconciliation(
+        run_id="r1", project_id="p1", snapshot_id="s1",
+        snapshot_metric_names=["Revenue", "Units"],
+        deployed_ddl_text=ddl,
+        drop_records=[],
+    )
+    assert not report.is_metric_live("Units")
+
+
 def test_non_metric_drop_records_are_ignored():
     ddl = _ddl('  FACT."REVENUE" AS SUM(FACT."REVENUE")')
     report = compute_reconciliation(

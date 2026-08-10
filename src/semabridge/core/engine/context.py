@@ -61,3 +61,15 @@ class RunContext:
     # translation, schema mismatch, DDL-emission skips, DDL-deployment
     # rejections) land in one place regardless of stage or cause.
     drop_ledger: DropLedger = _dataclass_field(default_factory=DropLedger)
+
+    # The DDL of the semantic view actually deployed to the target, as read
+    # back live via GET_DDL at the end of Step 9's real deploy (see
+    # engine/deployment/snowflake.py) — using the same connection Step 9
+    # already has open, no separate fetch. None whenever no live deploy
+    # happened this run (dry run, no target, or the deploy itself failed).
+    # Step 10 (finalize.py) uses this to reconcile drop_ledger's records
+    # against what's actually live before populating RunSummary.dropped_entities,
+    # so an entity that failed in an earlier, incomplete pass (e.g. Step 8's
+    # schema-less preview emitter) but succeeded in this real deploy isn't
+    # reported as dropped just because nothing else ever retracted it.
+    deployed_ddl_text: Optional[str] = None

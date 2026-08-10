@@ -57,6 +57,18 @@ class TranslationRequest:
     # though the column physically exists. None/empty preserves the
     # inline-MAX_DATE rendering exactly.
     anchor_flag_map: Optional[Dict[Any, str]] = None
+    # dataset -> {SANITIZED_COLUMN: TYPE_TOKEN} (e.g. "INTEGER", "DATE") --
+    # the type-carrying sibling of dataset_col_lookup, built the same way
+    # connectors/type_safety_validator.py's build_dataset_col_types() builds
+    # it for DDL-emission-time validation. Optional and additive, same as
+    # anchor_flag_map above: None/empty preserves the existing name-only
+    # schema-context rendering in tier5/prompt.py exactly; populated by a
+    # caller, it lets the Tier 5 prompt tell the LLM which columns are
+    # DATE-typed vs. INTEGER/NUMBER-typed, so it stops guessing and
+    # producing date-arithmetic compared against an integer surrogate key
+    # (the real incident type_safety_validator.py's DDL-emission check
+    # catches after the fact -- this is the earlier, prevention-side half).
+    dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None
 
     def __post_init__(self) -> None:
         self.dialect = Dialect.coerce(self.dialect)

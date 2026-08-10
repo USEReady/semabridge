@@ -32,6 +32,9 @@ class DummyTranslator:
     def _auto_qualify_cross_table_refs(self, expr, aliases):
         return expr
 
+    def _resolve_column_name_for_dataset(self, cols, col_name):
+        return col_name if col_name in cols else None
+
 
 def _builder(translator=None):
     return MetricsClauseBuilder(
@@ -47,7 +50,12 @@ def _model(metrics):
     return SimpleNamespace(metrics=metrics, unique_name="model", label="model")
 
 
-def test_dollar_sign_metric_name_is_recorded_not_silently_dropped():
+def test_dollar_sign_metric_name_is_sanitized_not_dropped():
+    """'$' in a metric name is no longer a hardcoded drop reason --
+    identifier_sanitizer's general character-replacement table (the same one
+    that turns '@' into 'AT' and '#' into 'NUM' for every other metric) turns
+    'Sales $' into 'SALES_DOL' and the metric is emitted normally, exactly
+    like any metric with punctuation in its name."""
     builder = _builder()
     metric = SimpleNamespace(
         unique_name="Sales $", dataset="SalesFact", expression="",
@@ -55,7 +63,12 @@ def test_dollar_sign_metric_name_is_recorded_not_silently_dropped():
         aggregation=SimpleNamespace(value="sum"),
     )
 
-    lines = builder.build_for_sml(
+    # build_for_osi (not build_for_sml): the OSI path sanitizes source_column
+    # directly instead of resolving it through a live schema_manager, which
+    # this test's fixture doesn't provide -- irrelevant to what's being
+    # exercised here (the '$'-name path), same as the other tests in this
+    # module that don't need a real schema_manager either.
+    lines = builder.build_for_osi(
         _model([metric]),
         dataset_aliases={"SalesFact": "SALESFACT"},
         dataset_by_name={"SalesFact": SimpleNamespace(is_fact=True)},
@@ -65,12 +78,52 @@ def test_dollar_sign_metric_name_is_recorded_not_silently_dropped():
         emittable_metric_name_set=set(),
     )
 
-    assert lines == []
-    records = builder.drop_ledger.to_json()
-    assert len(records) == 1
-    assert records[0]["entity_kind"] == "metric"
-    assert records[0]["entity_name"] == "Sales $"
-    assert records[0]["stage"] == DropStage.DDL_EMISSION.value
+    assert lines == ['  SALESFACT."SALES_DOL" AS SUM(SALESFACT."REVENUE")']
+    assert builder.drop_ledger.to_json() == []
+
+
+def test_dollar_sanitized_name_colliding_with_another_metric_does_not_merge():
+    """Safety check for the fix above: 'Sales $' and 'Sales Dol' both
+    sanitize_alias to the identical 'SALES_DOL' base -- confirms the
+    existing duplicate-name disambiguation machinery (metric_base_totals /
+    metric_signature_seen / _resolve_unique_metric_alias, the same
+    mechanism any two colliding names go through regardless of which
+    character caused the collision) assigns each a distinct suffixed
+    identifier instead of silently merging two distinct metrics into one
+    DDL line."""
+    builder = _builder()
+    metric_dollar = SimpleNamespace(
+        unique_name="Sales $", dataset="SalesFact", expression="",
+        sql_expression=None, source_column="Revenue",
+        aggregation=SimpleNamespace(value="sum"),
+    )
+    metric_spelled_out = SimpleNamespace(
+        unique_name="Sales Dol", dataset="SalesFact", expression="",
+        sql_expression=None, source_column="Discount",
+        aggregation=SimpleNamespace(value="sum"),
+    )
+
+    lines = builder.build_for_osi(
+        _model([metric_dollar, metric_spelled_out]),
+        dataset_aliases={"SalesFact": "SALESFACT"},
+        dataset_by_name={"SalesFact": SimpleNamespace(is_fact=True)},
+        dataset_col_lookup={"SalesFact": {"REVENUE", "DISCOUNT"}},
+        alias_by_raw={},
+        all_physical_col_names={"REVENUE", "DISCOUNT"},
+        emittable_metric_name_set=set(),
+    )
+
+    # Both metrics must survive as two distinct, disambiguated lines --
+    # never collapse into one (which would silently drop one metric's data).
+    assert len(lines) == 2
+    assert lines[0] != lines[1]
+    joined = "\n".join(lines)
+    assert 'SUM(SALESFACT."REVENUE")' in joined
+    assert 'SUM(SALESFACT."DISCOUNT")' in joined
+    # Neither line uses the bare, un-disambiguated "SALES_DOL" name --
+    # collision detection must have kicked in for both.
+    assert 'SALESFACT."SALES_DOL"' not in joined
+    assert builder.drop_ledger.to_json() == []
 
 
 def test_metric_with_no_dataset_alias_is_recorded_not_silently_dropped():
@@ -254,6 +307,90 @@ def test_record_ddl_deployment_drops_records_every_metric_nulled_in_one_sweep():
     assert {r["entity_name"] for r in records} == set(nulled_metric_names)
     assert all(r["entity_kind"] == "metric" for r in records)
     assert all(r["stage"] == DropStage.DDL_DEPLOYMENT.value for r in records)
+
+
+def test_date_expression_compared_to_integer_column_is_dropped_not_emitted():
+    """Regression test for a real incident: a Tier-5 (Anthropic) translation
+    for a rolling-12-month metric produced a date-arithmetic expression
+    (DATE_ADDDAYSTODATE-shaped) compared directly against an INTEGER
+    surrogate-key column. Nothing validated that type mismatch before it
+    reached Snowflake, and the resulting DDL crashed the entire deploy --
+    not just this one metric.
+
+    Placeholder names only (no real project/metric names) -- this reproduces
+    the *shape* of the failure: a date-producing function combined with a
+    column whose model-declared data_type is integer. Two more metrics are
+    included as siblings to prove the rest of the deploy proceeds normally
+    around the dropped one.
+    """
+    translator = MetricExpressionTranslator(IdentifierSanitizer())
+    builder = _builder(translator=translator)
+
+    bad_metric = SimpleNamespace(
+        unique_name="Rolling Metric Bad", dataset="SalesFact", expression="",
+        sql_expression=(
+            'SUM(CASE WHEN SALESFACT.MONTHINDEX > '
+            'DATE_ADDDAYSTODATE(NEGATE(12), SALESFACT.MAX_DATE) '
+            'THEN SALESFACT."UNITS" ELSE 0 END)'
+        ),
+        source_column=None, aggregation=None,
+    )
+    sibling_metric = SimpleNamespace(
+        unique_name="Sibling Metric", dataset="SalesFact", expression="",
+        sql_expression=None, source_column="Units",
+        aggregation=SimpleNamespace(value="sum"),
+    )
+
+    model = SimpleNamespace(
+        metrics=[bad_metric, sibling_metric],
+        unique_name="model", label="model",
+        datasets=[
+            SimpleNamespace(
+                unique_name="SalesFact",
+                columns=[
+                    SimpleNamespace(unique_name="MONTHINDEX", data_type="integer"),
+                    SimpleNamespace(unique_name="MAX_DATE", data_type="date"),
+                    SimpleNamespace(unique_name="UNITS", data_type="integer"),
+                ],
+            )
+        ],
+    )
+
+    # build_for_osi (not build_for_sml): the sibling metric's direct
+    # source_column+aggregation path sanitizes source_column directly
+    # instead of resolving it through a live schema_manager, which this
+    # test's fixture doesn't provide -- same reasoning as the '$'-name test
+    # above; irrelevant to what's being exercised here (the type-mismatch
+    # check on the bad metric's sql_expression).
+    lines = builder.build_for_osi(
+        model,
+        dataset_aliases={"SalesFact": "SALESFACT"},
+        dataset_by_name={"SalesFact": SimpleNamespace(is_fact=True)},
+        dataset_col_lookup={"SalesFact": {"MONTHINDEX", "MAX_DATE", "UNITS"}},
+        alias_by_raw={},
+        all_physical_col_names={"MONTHINDEX", "MAX_DATE", "UNITS"},
+        emittable_metric_name_set=set(),
+    )
+
+    # (a) the mismatched metric never reaches the DDL ...
+    joined = "\n".join(lines)
+    assert "DATE_ADDDAYSTODATE" not in joined
+    assert "Rolling Metric Bad" not in joined
+
+    # (b) ... and is recorded with a clear reason, not silently vanished
+    records = builder.drop_ledger.to_json()
+    bad_records = [r for r in records if r["entity_name"] == "Rolling Metric Bad"]
+    assert len(bad_records) == 1
+    assert bad_records[0]["stage"] == DropStage.DDL_EMISSION.value
+    assert "Type mismatch" in bad_records[0]["reason"]
+    assert "DATE" in bad_records[0]["reason"]
+    assert "INTEGER" in bad_records[0]["reason"]
+
+    # (c) the rest of the deploy proceeds normally -- the sibling metric
+    # still gets emitted with its own, unrelated, valid line.
+    assert len(lines) == 1
+    assert 'SUM(SALESFACT."UNITS")' in lines[0]
+    assert not any(r["entity_name"] == "Sibling Metric" for r in records)
 
 
 def test_record_ddl_deployment_drops_falls_back_to_single_name_when_sweep_nulled_no_metric():

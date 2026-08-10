@@ -120,6 +120,15 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             context.sml_model,
             sync_mode=getattr(context, "sync_mode", "copy"),
         )
+        # Propagate the live deployed DDL (captured by deploy() itself via
+        # GET_DDL, on the connection it already had open — see
+        # snowflake_emitter.py's Step 6b) so Step 10 can reconcile
+        # context.drop_ledger against what's actually deployed instead of
+        # trusting whichever pass populated it first. None when deploy()
+        # failed before reaching that capture point, or the capture itself
+        # failed non-fatally — either way Step 10 just falls back to the
+        # unreconciled ledger, no regression.
+        context.deployed_ddl_text = getattr(emitter, "_last_deployed_ddl_text", None)
         # deploy() rebuilds DDL from scratch internally, so emitter.drop_ledger
         # also re-contains every DDL-emission-stage drop Step 8 already merged
         # into context.drop_ledger. Only merge the deployment-stage entries

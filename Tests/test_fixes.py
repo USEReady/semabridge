@@ -17,22 +17,24 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir / "src"))
 
 def test_metric_filtering():
-    """Test that metrics with $ are filtered"""
+    """Test that metrics with $ are no longer hardcoded-dropped."""
     print("=" * 70)
     print("TESTING: Metric $ Character Filtering")
     print("=" * 70)
-    
+
     # Read the metrics_clause_builder file and check for the fix
     builder_path = root_dir / "src" / "semabridge" / "connectors" / "metrics_clause_builder.py"
-    
+
     with open(builder_path, 'r', encoding='utf-8') as f:
         content = f.read()
-    
-    # Check for the filtering fix (now recorded to the DropLedger rather than
-    # silently discarded — see Tests/test_metric_drop_ledger_coverage.py for
-    # the behavioral test of this path)
-    assert 'if "$" in m.unique_name:' in content
-    print("✅ PASS: Metric $ filtering is in place")
+
+    # The old hardcoded "$" drop is gone -- '$' now flows through the same
+    # general identifier_sanitizer character-replacement table every other
+    # punctuation character (%, @, #, ...) already uses (see
+    # Tests/test_metric_drop_ledger_coverage.py::test_dollar_sign_metric_name_is_sanitized_not_dropped
+    # for the behavioral test of this path).
+    assert 'if "$" in m.unique_name:' not in content
+    print("✅ PASS: Metric $ is no longer hardcoded-dropped")
 
 def test_relationship_validation():
     """Test that relationship validation guards are in place"""

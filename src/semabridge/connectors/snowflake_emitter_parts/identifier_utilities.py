@@ -138,10 +138,23 @@ def safe_table_name_static(name: str) -> str:
         name: Raw model or metric name.
 
     Returns:
-        Snowflake-safe uppercase identifier.
+        Snowflake-safe uppercase identifier. Never empty — a fully
+        degenerate input (e.g. all punctuation/whitespace, or a name
+        made entirely of characters this function strips to
+        underscores) falls back to ``"UNKNOWN"``, matching the
+        non-empty guarantee every sibling sanitizer in
+        ``identifiers.py`` (``sanitize_column`` → ``"COLUMN_UNKNOWN"``,
+        ``sanitize_alias`` → ``"ALIAS"``) already makes. Without this,
+        callers that build a compound identifier by concatenating this
+        result with a fixed separator (e.g. ``f"{prefix}_{safe}"``)
+        would silently emit a truncated or bare-separator identifier.
     """
+    if not name:
+        return "UNKNOWN"
     safe = re.sub(r"[^A-Za-z0-9_]", "_", name)
     safe = re.sub(r"_+", "_", safe).strip("_")
+    if not safe:
+        return "UNKNOWN"
     return safe.upper()
 
 

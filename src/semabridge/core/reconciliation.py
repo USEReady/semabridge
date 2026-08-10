@@ -172,6 +172,26 @@ class ReconciliationReport:
     def is_clean(self) -> bool:
         return not self.unaccounted
 
+    def is_metric_live(self, entity_name: str) -> bool:
+        """True if *entity_name* (a raw/unsanitized metric name, e.g. a
+        DropRecord's ``entity_name``) normalizes to a base that is present
+        among ``deployed_live_metrics`` -- i.e. genuinely emitting real SQL
+        in the DDL this report was computed against, not merely textually
+        present as a ``CAST(NULL AS DOUBLE)`` placeholder.
+
+        Deliberately checks LIVE only, never ``deployed_dead_metrics``: a
+        declared-dead metric is not "confirmed present" in any sense a
+        dropped-fields report should treat as resolved -- see this module's
+        docstring and ``unaccounted``'s handling of the same distinction.
+
+        Intended use: reconciling a run's DropLedger against the DDL that
+        was *actually* deployed, so a drop record from an earlier, less
+        complete pass (e.g. a schema-less preview emitter) can be retracted
+        once a later, real pass proves the metric deployed successfully.
+        See ``core/engine/finalize.py``'s Step 10.
+        """
+        return _normalize(entity_name, self.sanitizer) in self.deployed_live_metrics
+
     def summary(self) -> str:
         unaccounted = self.unaccounted
         lines = [

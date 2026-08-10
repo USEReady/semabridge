@@ -131,6 +131,50 @@ def test_falls_through_to_next_provider_when_first_is_rejected():
     assert result.provider == "fake_good"
 
 
+def test_settings_configured_anthropic_is_tried_before_env_only_openai(monkeypatch):
+    """Real-provider-name regression for the Part 2 dispatch-order fix:
+    openai is only enabled via a (possibly stale/placeholder) .env key and
+    sits earlier in the real default provider_order; anthropic is enabled
+    via a Settings-configured api_key (as Tier5Config.resolve() would set
+    it after apply_settings_overrides() reads a real Settings-page save)
+    and sits later. anthropic must be tried first, and openai's adapter
+    must never be called at all.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-stale-dotenv-placeholder")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    openai_adapter = _FakeAdapter(None, response_text='SUM(sometable."SOMECOLUMN")', confidence=0.9)
+    anthropic_adapter = _FakeAdapter(None, response_text='SUM(sometable."SOMECOLUMN")', confidence=0.9)
+
+    config = Tier5Config(
+        provider_order=["openai", "gemini", "groq", "featherless", "anthropic"],
+        min_confidence=0.55,
+        providers={
+            "openai": ProviderSettings(enabled_env="OPENAI_API_KEY"),
+            "anthropic": ProviderSettings(enabled_env="ANTHROPIC_API_KEY", api_key="sk-ant-from-settings"),
+        },
+    )
+    original = dict(tier5_service_module._ADAPTER_CLASSES)
+    tier5_service_module._ADAPTER_CLASSES.update({
+        "openai": lambda settings: openai_adapter,
+        "anthropic": lambda settings: anthropic_adapter,
+    })
+    try:
+        # Sanity-check the scenario itself before trusting the assertion below.
+        assert config.provider_order.index("openai") < config.provider_order.index("anthropic")
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is not None
+    assert result.provider == "anthropic"
+    assert anthropic_adapter.call_count == 1
+    assert openai_adapter.call_count == 0, (
+        "openai must never be called — anthropic (Settings-configured) must be "
+        "tried and accepted before openai (.env-only) is even reached"
+    )
+
+
 def test_adapter_exception_does_not_crash_and_falls_through():
     raising_factory = lambda settings: _FakeAdapter(settings, raises=True)
     good_factory = lambda settings: _FakeAdapter(settings, response_text='SUM(sometable."SOMECOLUMN")', confidence=0.9)
@@ -269,6 +313,83 @@ def test_translate_batch_malformed_response_falls_through_to_next_provider():
         _restore_adapter_classes(original)
 
     assert len(bad.calls) == 1
+    assert len(good.calls) == 1
+    assert all(r is not None and r.provider == "fake_good" for r in results)
+
+
+def test_translate_batch_falls_through_on_truncated_mid_object_response():
+    """Realistic malformation, not an arbitrary "not json" string: the
+    first provider's response is cut off partway through the batch object
+    -- exactly what hitting a provider's output-token cap mid-response
+    looks like (see the Tier 5 max_tokens=500-per-batch-call finding). Must
+    fall through to the next provider, same as any other malformed batch
+    response, never raise."""
+    requests = _batch_requests(2)
+    import json as _json
+    good_response = _json.dumps({f"m{i}": 'SUM(sometable."SOMECOLUMN")' for i in range(2)})
+
+    truncated = _FakeBatchAdapter(None, responses=['{"m0": "SUM(sometable."SOMECOLUMN")", "m1": "AVG(CASE WHEN'])
+    good = _FakeBatchAdapter(None, responses=[good_response])
+    config, original = _config_with_fake_adapters(
+        {"fake_truncated": lambda settings: truncated, "fake_good": lambda settings: good},
+        provider_order=["fake_truncated", "fake_good"],
+    )
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(requests)
+    finally:
+        _restore_adapter_classes(original)
+
+    assert len(truncated.calls) == 1
+    assert len(good.calls) == 1
+    assert all(r is not None and r.provider == "fake_good" for r in results)
+
+
+def test_translate_batch_falls_through_on_trailing_comma_response():
+    """A provider that (incorrectly) trails every dict with a comma, as if
+    it were emitting a Python literal rather than strict JSON."""
+    requests = _batch_requests(2)
+    import json as _json
+    good_response = _json.dumps({f"m{i}": 'SUM(sometable."SOMECOLUMN")' for i in range(2)})
+
+    trailing_comma = _FakeBatchAdapter(
+        None, responses=['{"m0": "SUM(sometable."SOMECOLUMN")", "m1": "AVG(sometable."SOMECOLUMN")",}']
+    )
+    good = _FakeBatchAdapter(None, responses=[good_response])
+    config, original = _config_with_fake_adapters(
+        {"fake_trailing_comma": lambda settings: trailing_comma, "fake_good": lambda settings: good},
+        provider_order=["fake_trailing_comma", "fake_good"],
+    )
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(requests)
+    finally:
+        _restore_adapter_classes(original)
+
+    assert len(trailing_comma.calls) == 1
+    assert len(good.calls) == 1
+    assert all(r is not None and r.provider == "fake_good" for r in results)
+
+
+def test_translate_batch_falls_through_on_unescaped_quote_in_value():
+    """A provider that generates SQL containing a literal `"` inside a
+    string comparison without escaping it, breaking the enclosing JSON."""
+    requests = _batch_requests(2)
+    import json as _json
+    good_response = _json.dumps({f"m{i}": 'SUM(sometable."SOMECOLUMN")' for i in range(2)})
+
+    bad_quote = _FakeBatchAdapter(
+        None, responses=['{"m0": "SUM(CASE WHEN x="bad" THEN 1 END)", "m1": "AVG(y)"}']
+    )
+    good = _FakeBatchAdapter(None, responses=[good_response])
+    config, original = _config_with_fake_adapters(
+        {"fake_bad_quote": lambda settings: bad_quote, "fake_good": lambda settings: good},
+        provider_order=["fake_bad_quote", "fake_good"],
+    )
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(requests)
+    finally:
+        _restore_adapter_classes(original)
+
+    assert len(bad_quote.calls) == 1
     assert len(good.calls) == 1
     assert all(r is not None and r.provider == "fake_good" for r in results)
 

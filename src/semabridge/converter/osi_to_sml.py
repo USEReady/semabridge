@@ -132,10 +132,17 @@ class OSIToSMLConverter(BaseConverter):
             # Step 3b: Resolve inter-measure dependencies now that all metrics are loaded.
             # This helps Category 2/3 formulas like [A]-[B], DIVIDE([A],[B]), TOTALYTD([A], ...)
             # when dependencies appear later in source order.
+            # skip_tier5=True: deterministic (Tier 1-4) convergence only here --
+            # a dependency chain through a metric that itself needs Tier 5 is
+            # picked up by the second call below, AFTER the Step 3d batch has
+            # had a chance to resolve that upstream metric. Without this, each
+            # pass here could issue its own individual Tier5Service call per
+            # metric (the dry-run-timeout root cause this fixes).
             self._resolve_metric_dependencies(
                 sml,
                 dataset_col_lookup=dax_dataset_col_lookup,
                 dataset_aliases=dax_dataset_aliases,
+                skip_tier5=True,
             )
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
@@ -172,11 +179,40 @@ class OSIToSMLConverter(BaseConverter):
                             metric.sync_failure_reason = None
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
+                # Step 3e: one more deterministic-only convergence pass now that
+                # the batch call may have populated sql_expression for metrics
+                # that needed Tier 5 -- lets any purely Tier 1-4 metric whose
+                # DAX references one of *those* (e.g. [A]-[B] where A needed an
+                # LLM and B didn't) resolve via cheap substitution instead of
+                # being sent to the LLM itself with an unresolved [A] reference
+                # it has no schema context to make sense of. skip_tier5=True:
+                # this is convergence only, never a second individual Tier-5
+                # attempt for whatever the batch still left unresolved.
+                self._resolve_metric_dependencies(
+                    sml,
+                    dataset_col_lookup=dax_dataset_col_lookup,
+                    dataset_aliases=dax_dataset_aliases,
+                    skip_tier5=True,
+                )
+
             # 4. Convert Relationships
             for osi_rel in osi_model.relationships:
                 sml_rel = self._convert_relationship(osi_rel)
                 if sml_rel:
                     sml.relationships.append(sml_rel)
+
+            # 4a. Advisory-only: flag metrics whose DAX will fail Snowflake's
+            # semantic-view compiler for a relationship-graph reason, even
+            # though translation itself succeeds — see
+            # _flag_unreachable_dimension_calculates' docstring. Must run
+            # AFTER relationships are converted (immediately above) since
+            # the check needs sml.relationships, and after all metrics
+            # exist (Step 3 above) since it needs every metric's own
+            # dataset for the optional "does the referenced measure reach
+            # it instead" enrichment. Never touches sync_enabled/
+            # sync_failure_reason/sql_expression — this changes only what
+            # a user sees at mapping/dry-run time, never what deploys.
+            self._flag_unreachable_dimension_calculates(sml)
 
             # 4b. Fabric/PBIX extractions can legitimately surface 0 explicit
             # measures in TMSL. Reuse the older heuristic detector so downstream
@@ -369,7 +405,14 @@ class OSIToSMLConverter(BaseConverter):
             partition_dimension="'Date'[Year]" if complexity["requires_time_intel"] else None,
         )
         
-        # Attempt Translation using automated deterministic/AST/rule/LLM tiers
+        # Attempt Translation using automated deterministic/AST/rule tiers only
+        # (Tiers 1-4). skip_tier5=True: this runs once per metric for every
+        # metric in the model, so resolving Tier 5 here too would mean one
+        # sequential Tier5Service.translate() API call per hard-to-translate
+        # metric -- exactly the multi-minute dry-run cost this was fixed to
+        # avoid. Anything Tiers 1-4 decline falls through to Step 3c/3d below
+        # (from_osi()), which now collects every such metric across the whole
+        # model and resolves them all in one batch_translate_tier5() call.
         if expression:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
@@ -380,6 +423,7 @@ class OSIToSMLConverter(BaseConverter):
                 metric_name=metric.unique_name,
                 dataset_col_lookup=dataset_col_lookup,
                 dataset_aliases=dataset_aliases,
+                skip_tier5=True,
             )
             
             if translation.is_success:
@@ -415,6 +459,7 @@ class OSIToSMLConverter(BaseConverter):
         max_passes: int = 3,
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         dataset_aliases: Optional[Dict[str, str]] = None,
+        skip_tier5: bool = False,
     ) -> None:
         """Resolve unresolved metrics using full metric context in deterministic passes.
 
@@ -424,6 +469,16 @@ class OSIToSMLConverter(BaseConverter):
         dataset_col_lookup/dataset_aliases: forwarded to DAXTranslator's
         Tier 5 semantic validator (Step 3 of the DAX translation
         consolidation); rebuilt from sml.datasets if not supplied.
+
+        skip_tier5: forwarded to DAXTranslator.translate() -- see its
+        docstring. from_osi() calls this method twice: once with
+        skip_tier5=True *before* the Step 3c/3d Tier-5 batch call (so this
+        method's own per-metric loop, run up to `max_passes` times, never
+        issues an individual Tier5Service call itself), and once more with
+        skip_tier5=True *after* the batch call, so a metric that is a pure
+        deterministic (Tier 1-4) dependency on a metric the batch just
+        resolved still converges correctly -- without either call spending
+        a second, redundant per-metric Tier-5 attempt.
         """
         if not sml.metrics:
             return
@@ -453,6 +508,7 @@ class OSIToSMLConverter(BaseConverter):
                     metrics_context=sml.metrics,
                     dataset_col_lookup=dataset_col_lookup,
                     dataset_aliases=dataset_aliases,
+                    skip_tier5=skip_tier5,
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql
@@ -469,6 +525,54 @@ class OSIToSMLConverter(BaseConverter):
                 pass_idx + 1,
                 resolved_this_pass,
             )
+
+    def _flag_unreachable_dimension_calculates(self, sml: SMLModel) -> None:
+        """Advisory-only: append a well-explained note to any metric whose
+        DAX contains CALCULATE(...) filtering by a table its own dataset
+        cannot reach via sml.relationships — the shape Snowflake's
+        semantic-view compiler rejects as "a metric cannot refer to
+        another dimension from an unrelated entity" (error 010211),
+        regardless of whether translation itself succeeds (it can, and
+        did, for the case this was written for — see
+        dax_calculate_filters_unreachable_dimension's module-level
+        comment: rewriting the SQL text doesn't fix which table the
+        metric is declared under).
+
+        Deliberately advisory, not corrective: this NEVER sets
+        sync_enabled=False, never clears/overwrites sql_expression or
+        sync_failure_reason, and never removes the metric from
+        sml.metrics. The metric proceeds through translation, DDL
+        emission, and (if still unreachable) DDL-deployment-time
+        auto-remediation exactly as it would without this check — the
+        only difference is that a user inspecting the model at mapping/
+        dry-run time now sees why, before spending a deploy attempt to
+        find out.
+        """
+        from semabridge.converter.dax_ast_parser import dax_calculate_filters_unreachable_dimension
+
+        if not sml.metrics:
+            return
+
+        metric_datasets = {m.unique_name: m.dataset for m in sml.metrics if m.dataset}
+
+        for metric in sml.metrics:
+            if not metric.expression or not metric.dataset:
+                continue
+            try:
+                hit = dax_calculate_filters_unreachable_dimension(
+                    metric.expression,
+                    metric.dataset,
+                    sml.relationships,
+                    metric_datasets=metric_datasets,
+                )
+            except Exception as exc:  # noqa: BLE001 - advisory-only, never fail conversion over it
+                logger.debug(
+                    "Unreachable-dimension advisory check skipped for '%s' (non-fatal): %s",
+                    metric.unique_name, exc,
+                )
+                continue
+            if hit:
+                metric.advisory_notes.append(hit.reason)
 
     def _convert_relationship(self, osi_rel: OSIRelationship) -> Optional[SMLRelationship]:
         try:

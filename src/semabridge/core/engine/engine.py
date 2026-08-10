@@ -300,7 +300,19 @@ class ExecutionEngine:
             if config_path is not None and not context.mapping_overrides_applied:
                 self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
             context.sml_model = sml_model
-            
+
+            # Step 6b: Predict time-intelligence flag columns (Snowflake
+            # target only) and upgrade anchor-dependent metrics'
+            # sql_expression from Stage 1's safe CURRENT_DATE() fallback to
+            # a flag-column reference wherever prediction says one will
+            # exist -- BEFORE Step 7 persists this model, so a future
+            # rollback to this snapshot doesn't resurrect the plain
+            # fallback rendering. See targets/snowflake.py's
+            # _step6b_predict_anchor_flag_columns for why this must run
+            # here rather than only inside Step 9's real deploy.
+            if target == "snowflake":
+                self._step6b_predict_anchor_flag_columns(context)
+
             # Step 7: Persist Artifacts
             self._step7_persist_artifacts(context, tag)
             
@@ -441,6 +453,7 @@ ExecutionEngine._step8_convert_to_target      = _tgt_base._step8_convert_to_targ
 ExecutionEngine._convert_to_fabric_target     = _tgt_fab._convert_to_fabric_target
 ExecutionEngine._convert_to_snowflake_target  = _tgt_sf._convert_to_snowflake_target
 ExecutionEngine._convert_to_databricks_target = _tgt_db._convert_to_databricks_target
+ExecutionEngine._step6b_predict_anchor_flag_columns = _tgt_sf._step6b_predict_anchor_flag_columns
 
 from semabridge.core.engine.deployment import base as _dep_base
 from semabridge.core.engine.deployment import fabric as _dep_fab

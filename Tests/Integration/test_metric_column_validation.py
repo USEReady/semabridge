@@ -253,13 +253,24 @@ class TestMetricColumnValidation:
 
     def test_basic_fallback_totalytd_uses_primarydate_token(self, emitter):
         """TOTALYTD should treat [PrimaryDate] as semantic token and use physical
-        date column, anchored to the enriched view's real MAX_DATE column
-        (qualified with the fact table's own alias) -- not CURRENT_DATE()
-        (today's wall-clock date, wrong whenever the data doesn't extend all
-        the way to today) or a bare, unqualified MAX_DATE token (both stale
-        expectations from an earlier version of this fallback, before it
-        was routed through the same AST renderer the measure-reference form
-        of TOTALYTD already used)."""
+        date column, anchored to CURRENT_DATE() -- not a raw, qualified
+        MAX_DATE column reference. This call site has no anchor_flag_map
+        (schema-blind, no live enriched view), so it hits
+        dax_ast_parser.DaxSqlRenderer._render_period_to_date's no-flag
+        fallback -- MAX_DATE only exists once _create_enriched_view has
+        actually run for this fact table, so referencing it here
+        unconditionally was exactly as enrichment-dependent as the
+        flag-column path, just via an uglier, unconfirmed column name (this
+        test previously pinned that raw MAX_DATE reference as the expected,
+        "already fixed" output -- that expectation predates the discovery,
+        documented in dax_ast_parser.py/dax_rule_translator.py, that
+        Snowflake's semantic-view compiler rejects a direct MAX_DATE
+        reference even when the column exists, which is exactly why the
+        flag-column mechanism exists at all; CURRENT_DATE() matches the
+        fallback already established and tested in
+        dax_rule_translator.py's translate_time_intelligence_with_anchors
+        and connectors/translator.py's other TOTALYTD path, commit
+        e4c8322)."""
         from semabridge.formats.sml.models import SMLMetric
 
         metric = SMLMetric(
@@ -278,14 +289,15 @@ class TestMetricColumnValidation:
 
         assert translated is not None
         assert (
-            'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', sf."MAX_DATE") '
-            'AND COL_DATE."COL_DATE" <= sf."MAX_DATE" THEN sf."REVENUE"::FLOAT END)'
+            'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
+            'AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN sf."REVENUE"::FLOAT END)'
         ) in translated
+        assert "MAX_DATE" not in translated
 
     def test_basic_fallback_sply_uses_window_when_offset_present(self, emitter, monkeypatch):
         """SPLY keeps universal window fallback even when offset key exists,
-        anchored to the enriched view's real, qualified MAX_DATE column --
-        see test_basic_fallback_totalytd_uses_primarydate_token above."""
+        anchored to CURRENT_DATE() -- see
+        test_basic_fallback_totalytd_uses_primarydate_token above."""
         from semabridge.formats.sml.models import SMLMetric
 
         monkeypatch.setenv("SEMABRIDGE_SNOWFLAKE_ENABLE_SPLY_OFFSET_FASTPATH", "true")
@@ -312,10 +324,11 @@ class TestMetricColumnValidation:
 
         assert translated is not None
         assert (
-            'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(sf."MAX_DATE") - 1 '
-            'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', sf."MAX_DATE")) '
-            'AND DATEADD(YEAR, -1, sf."MAX_DATE") THEN sf."REVENUE"::FLOAT END)'
+            'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(CURRENT_DATE()) - 1 '
+            'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
+            'AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN sf."REVENUE"::FLOAT END)'
         ) in translated
+        assert "MAX_DATE" not in translated
 
     def test_warns_for_non_sync_friendly_time_intelligence_dax(self, emitter, caplog):
         """Unsupported TI functions should emit a warn-only parser guidance message."""

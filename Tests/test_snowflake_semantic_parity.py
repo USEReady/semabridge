@@ -353,3 +353,190 @@ def test_remediate_invalid_identifier_bare_anchor_token_still_nulls_nothing():
     assert nulled == []
     assert "CURRENT_DATE()" in fixed_ddl
     assert "CAST(NULL AS DOUBLE)" not in fixed_ddl
+
+
+# ---------------------------------------------------------------------------
+# Regression coverage for the proj-09-08-test incident: Snowflake rejected
+# the first DDL attempt with `invalid identifier '_'`, and
+# remediate_invalid_identifier's old `invalid_norm in line_norm` substring
+# check then matched almost every line in RELATIONSHIPS/DIMENSIONS/METRICS
+# (since ordinary identifiers like SALESFACT_PRODUCTID_PRODUCT_PRODUCTID
+# contain underscores too), wiping out the entire RELATIONSHIPS block
+# instead of touching only a genuine isolated `_` token.
+# ---------------------------------------------------------------------------
+
+_REAL_MODEL_STYLE_DDL = """CREATE OR REPLACE SEMANTIC VIEW "SEMABRIDGE"."SEMABRIDGE_WORKSPACE"."PROJ0908TEST_SEMANTIC"
+TABLES (
+  SALESFACT AS "SEMABRIDGE"."SEMABRIDGE_WORKSPACE"."SALESFACT" PRIMARY KEY ("PRODUCTID"),
+  PRODUCT AS "SEMABRIDGE"."SEMABRIDGE_WORKSPACE"."PRODUCT" PRIMARY KEY ("PRODUCTID")
+)
+RELATIONSHIPS (
+  SALESFACT_PRODUCTID_PRODUCT_PRODUCTID AS SALESFACT ("PRODUCTID") REFERENCES PRODUCT ("PRODUCTID")
+)
+DIMENSIONS (
+  SALESFACT."UNITS" AS SALESFACT."UNITS"
+)
+METRICS (
+  SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS"::FLOAT)
+);"""
+
+
+def test_remediate_invalid_identifier_bare_underscore_does_not_wipe_relationships():
+    """A bare '_' invalid identifier that appears nowhere as a genuine
+    standalone token must leave every clause -- especially RELATIONSHIPS --
+    completely untouched, even though every relationship/dimension/metric
+    name here contains underscores as part of normal identifiers."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(_REAL_MODEL_STYLE_DDL, "_")
+
+    assert changed is False
+    assert nulled == []
+    assert fixed_ddl == _REAL_MODEL_STYLE_DDL
+
+
+def test_remediate_invalid_identifier_bare_underscore_removes_only_the_genuine_token():
+    """When a bare '_' genuinely appears as its own token, remediation must
+    still find and fix it -- just without collateral damage to unrelated
+    lines that merely contain underscores inside normal identifiers."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+    ddl = _REAL_MODEL_STYLE_DDL.replace(
+        '  SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS"::FLOAT)\n)',
+        '  SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS"::FLOAT),\n'
+        '  SALESFACT."BROKEN_METRIC" AS _ + 1\n)',
+    )
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "_")
+
+    assert changed is True
+    assert nulled == ["BROKEN_METRIC"]
+    # The real relationship, dimension, and unrelated metric all survive.
+    assert (
+        'SALESFACT_PRODUCTID_PRODUCT_PRODUCTID AS SALESFACT ("PRODUCTID") '
+        'REFERENCES PRODUCT ("PRODUCTID")'
+    ) in fixed_ddl
+    assert 'SALESFACT."UNITS" AS SALESFACT."UNITS"' in fixed_ddl
+    assert 'SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS"::FLOAT)' in fixed_ddl
+    # Only the metric that genuinely referenced the bad token was nulled.
+    assert 'SALESFACT."BROKEN_METRIC" AS CAST(NULL AS DOUBLE)' in fixed_ddl
+
+
+def test_remediate_invalid_identifier_bare_underscore_ignores_like_wildcard_literal():
+    """A `LIKE '_a%'` SQL wildcard is a string literal, not an identifier
+    reference, and must not be mistaken for the bad `_` token."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+    ddl = """METRICS (
+  SALESFACT."NAME_STARTS_WITH_A" AS SUM(CASE WHEN SALESFACT."NAME" LIKE '_a%' THEN 1 ELSE 0 END)
+);"""
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "_")
+
+    assert changed is False
+    assert nulled == []
+    assert fixed_ddl == ddl
+
+
+def test_remediate_invalid_identifier_removes_emptied_relationships_and_dimensions_clauses():
+    """Defense-in-depth: if remediation empties RELATIONSHIPS or DIMENSIONS
+    out entirely, the clause's header and closing paren must be removed
+    too -- leaving 'RELATIONSHIPS (\\n)' behind is syntactically invalid
+    Snowflake DDL. METRICS, which never referenced the bad column, is
+    untouched."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+    ddl = """CREATE OR REPLACE SEMANTIC VIEW "DB"."SCHEMA"."MODEL"
+TABLES (
+  SALESFACT AS "DB"."SCHEMA"."SALESFACT" PRIMARY KEY ("PRODUCTID")
+)
+RELATIONSHIPS (
+  SALESFACT_BADCOL_PRODUCT_BADCOL AS SALESFACT ("BADCOL") REFERENCES PRODUCT ("BADCOL")
+)
+DIMENSIONS (
+  SALESFACT."BADCOL" AS SALESFACT."BADCOL"
+)
+METRICS (
+  SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS")
+);"""
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "BADCOL")
+
+    assert changed is True
+    assert "RELATIONSHIPS (" not in fixed_ddl
+    assert "DIMENSIONS (" not in fixed_ddl
+    assert 'SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS")' in fixed_ddl
+
+
+def test_remediate_invalid_identifier_cleans_up_preexisting_empty_relationships_clause():
+    """The empty-clause cleanup runs unconditionally at the end of every
+    remediation call, independent of whether this call's own
+    invalid_identifier is what caused the clause to be empty."""
+    sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
+    ddl = """RELATIONSHIPS (
+)
+METRICS (
+  SALESFACT."BROKEN" AS UNRELATED_BAD_TOKEN
+);"""
+
+    fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "UNRELATED_BAD_TOKEN")
+
+    assert "RELATIONSHIPS (" not in fixed_ddl
+
+
+# ---------------------------------------------------------------------------
+# safe_table_name_static: confirmed-not-the-source, but a real latent bug.
+# Traced every real caller in the codebase (identifier_utilities.py's only
+# consumer is measure_sync.generate_semantic_view_tiered, which always
+# prefixes the result with "V_"), and ran every real table/column/
+# relationship name from proj-09-08-test's actual sml/model.yaml through it
+# -- none degenerate to empty, so this function did not produce the bare `_`
+# that this incident's DDL was rejected for. It is fixed anyway for
+# consistency with every sibling sanitizer in identifiers.py
+# (sanitize_column -> "COLUMN_UNKNOWN", sanitize_alias -> "ALIAS"), all of
+# which already guarantee a non-empty result, and as a guard against any
+# future caller that concatenates this result with a fixed separator.
+# ---------------------------------------------------------------------------
+
+def test_safe_table_name_static_never_returns_empty_string():
+    """A fully degenerate input (only characters this function strips to
+    underscores, which then collapse and get stripped) must fall back to a
+    non-empty placeholder instead of "" -- matching sanitize_column's
+    COLUMN_UNKNOWN and sanitize_alias's ALIAS conventions."""
+    from semabridge.connectors.snowflake_emitter_parts.identifier_utilities import (
+        safe_table_name_static,
+    )
+
+    assert safe_table_name_static("") == "UNKNOWN"
+    assert safe_table_name_static("   ") == "UNKNOWN"
+    assert safe_table_name_static("___") == "UNKNOWN"
+    assert safe_table_name_static("!!!") == "UNKNOWN"
+    assert safe_table_name_static("---") == "UNKNOWN"
+
+
+def test_safe_table_name_static_normal_names_unaffected():
+    """The fallback must not change behavior for any ordinary name."""
+    from semabridge.connectors.snowflake_emitter_parts.identifier_utilities import (
+        safe_table_name_static,
+    )
+
+    assert safe_table_name_static("SalesFact") == "SALESFACT"
+    assert safe_table_name_static("Sales Fact Model") == "SALES_FACT_MODEL"
+    assert safe_table_name_static("proj-09-08-test") == "PROJ_09_08_TEST"
+
+
+def test_safe_table_name_static_real_proj_09_08_test_names_never_degenerate():
+    """Every real dataset name from proj-09-08-test's actual model.yaml,
+    run through the real sanitization chain, resolves to a well-formed
+    non-empty identifier -- confirming this function was not the source of
+    this incident's bare `_`."""
+    from semabridge.connectors.snowflake_emitter_parts.identifier_utilities import (
+        safe_table_name_static,
+    )
+
+    real_dataset_names = [
+        "Category", "Date", "Geo", "Indicators", "KPI",
+        "Manufacturer", "Product", "SalesFact", "Sentiment",
+        "proj-09-08-test",
+    ]
+    for name in real_dataset_names:
+        result = safe_table_name_static(name)
+        assert result, f"{name!r} degenerated to empty"
+        assert result != "_"

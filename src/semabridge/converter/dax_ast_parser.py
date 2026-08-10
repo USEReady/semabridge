@@ -27,10 +27,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 from semabridge.utils.logger import get_logger
 from semabridge.converter.function_registry import FunctionRegistry
+from semabridge.utils.relationship_graph import has_relationship_path
 
 _AST_CACHE: dict[tuple, Optional[str]] = {}
 _AST_CACHE_MAX = 1024
@@ -1129,11 +1130,23 @@ class DaxSqlRenderer:
         if flag_name:
             condition_sql = f'{self.table_alias}."{flag_name}"'
         else:
-            # Qualified reference to the fact table's enriched-view MAX_DATE
-            # anchor column (see _create_enriched_view) — a bare "MAX_DATE"
-            # is not a valid identifier inside a semantic view's METRICS
-            # clause.
-            max_date = f'{self.table_alias}."MAX_DATE"'
+            # No flag column provisioned for this shape (schema-blind
+            # dry-run/preview, or a real deploy where enrichment couldn't
+            # establish this fact table's anchor) — anchor to CURRENT_DATE(),
+            # a native Snowflake function, never a synthetic enriched-view
+            # column. MAX_DATE itself only exists on the enriched view (see
+            # _create_enriched_view), so referencing it here unconditionally
+            # is exactly as enrichment-dependent as the flag-column path,
+            # just via an uglier name — this branch must degrade to
+            # something that works with NO enriched view at all. Matches the
+            # fallback already established (and tested) in
+            # dax_rule_translator.py's translate_time_intelligence_with_anchors
+            # and connectors/translator.py's parallel implementation (commit
+            # e4c8322) — known, accepted tradeoff: CURRENT_DATE() is today's
+            # real wall-clock date, not the last-synced date; see those
+            # implementations' comments for the year-rollover staleness
+            # tradeoff this carries.
+            max_date = "CURRENT_DATE()"
             unit = self._PERIOD_TO_DATE_UNIT.get(func)
             condition_sql = (
                 f"{date_col} >= DATE_TRUNC('{unit}', {max_date}) AND {date_col} <= {max_date}"
@@ -1188,10 +1201,16 @@ class DaxSqlRenderer:
 
         d = self.date_alias
         date_col = f'{d}."COL_DATE"'
-        # Qualified reference to the fact table's enriched-view MAX_DATE anchor
-        # column (see _create_enriched_view) — a bare "MAX_DATE" is not a valid
-        # identifier inside a semantic view's METRICS clause.
-        max_date = f'{self.table_alias}."MAX_DATE"'
+        # No flag column provisioned for this shape — anchor to CURRENT_DATE()
+        # rather than the enriched-view-only MAX_DATE column, matching
+        # _render_period_to_date's fallback above and the already-established
+        # dax_rule_translator.py/connectors/translator.py pattern (commit
+        # e4c8322). Every use of `max_date` below (direct-aggregate fallback,
+        # nested-composition detection/shift, and the "inject a new
+        # condition" fallback) stays correct with this substitution: it's
+        # the same anchor expression used consistently both for rendering
+        # and for detecting an inner call's own anchor to shift.
+        max_date = "CURRENT_DATE()"
         agg_node = args[0]
         lag_component = self._LAG_COMPONENT[interval]
         base_flag = self.anchor_flag_map.get((lag_component,))
@@ -1283,19 +1302,41 @@ class DaxSqlRenderer:
 
         if max_date in agg_sql:
             # The referenced measure's own SQL already anchors a date
-            # window to MAX_DATE (e.g. TOTALYTD's own "date <= MAX_DATE"
-            # upper bound) — shifting every reference to that anchor by
-            # the same lag period moves the WHOLE window back together,
-            # which is what SAMEPERIODLASTYEAR/PREVIOUSxxx of an
-            # already-date-bounded measure actually means. ANDing a
+            # window to CURRENT_DATE() (e.g. TOTALYTD's own "date <=
+            # CURRENT_DATE()" upper bound) — shifting every reference to
+            # that anchor by the same lag period moves the WHOLE window
+            # back together, which is what SAMEPERIODLASTYEAR/PREVIOUSxxx
+            # of an already-date-bounded measure actually means. ANDing a
             # second, unshifted "is this row from last year" condition
-            # around an inner window still bounded to *this* year's
-            # MAX_DATE would be self-contradictory — the two conditions
-            # can never both be true (confirmed for
-            # TOTALYTD-wrapped-in-SAMEPERIODLASTYEAR, which is exactly how
-            # this bug manifested: an always-empty CASE WHEN, never a
-            # crash, so it never surfaced as a translation failure).
+            # around an inner window still bounded to *this* year's anchor
+            # would be self-contradictory — the two conditions can never
+            # both be true (confirmed for TOTALYTD-wrapped-in-
+            # SAMEPERIODLASTYEAR, which is exactly how this bug manifested:
+            # an always-empty CASE WHEN, never a crash, so it never
+            # surfaced as a translation failure).
             return agg_sql.replace(max_date, shift_expr)
+
+        legacy_max_date = f'{self.table_alias}."MAX_DATE"'
+        if legacy_max_date in agg_sql:
+            # The inner expression was rendered by an earlier translation of
+            # this same fallback, from before CURRENT_DATE() replaced the
+            # enriched-view-only MAX_DATE column as the no-flag default (see
+            # _render_period_to_date's comment above) — e.g. a
+            # measure_sql_map entry sourced from a persisted sql_expression
+            # translated before this fix. Detect and shift that legacy
+            # anchor too, exactly like the CURRENT_DATE() case above,
+            # rather than treating the inner expression as anchor-less and
+            # ANDing a second, unshifted condition around it — the same
+            # self-contradictory, always-empty-CASE bug the branch above
+            # exists to avoid, just reachable here via a generation
+            # mismatch (mixed old/new sql_expression values) instead of a
+            # missing flag.
+            legacy_shift_expr = {
+                "year": f"DATEADD(YEAR, -1, {legacy_max_date})",
+                "quarter": f"DATEADD(QUARTER, -1, {legacy_max_date})",
+                "month": f"DATEADD(MONTH, -1, {legacy_max_date})",
+            }[interval]
+            return agg_sql.replace(legacy_max_date, legacy_shift_expr)
 
         # No existing anchor to shift — the referenced measure has no date
         # window of its own (e.g. a plain SUM with no date filter at all),
@@ -1627,3 +1668,200 @@ def dax_lag_period_of_measure_reference_failure_reason(dax: str) -> Optional[str
         f"resolvable: either [{measure_name}] hasn't been translated yet, or its "
         f"SQL shape is too complex to safely rewrite."
     )
+
+
+# ---------------------------------------------------------------------------
+# CALCULATE-through-a-disconnected-dimension detection
+# ---------------------------------------------------------------------------
+#
+# The DAX idiom this section detects: CALCULATE(measure_or_agg, <filter on
+# TableX>) where the metric declaring this expression is itself based on a
+# table with no relationship path to TableX. In DAX this is completely
+# normal — CALCULATE's filter arguments apply through the model's whole
+# evaluation context, not through the calling measure's own relationship
+# path — but Snowflake's semantic-view compiler binds each METRICS-clause
+# entry to ONE base-table alias and validates every column reference inside
+# its expression against THAT table's relationship graph, independent of
+# how the SQL is shaped (rejected with "A metric cannot refer to another
+# dimension from an unrelated entity", error 010211). No amount of
+# expression-level rewriting fixes this — DaxSqlRenderer._render_calculate
+# already rewrites CALCULATE([Measure], filter) into a CASE-based filtered
+# aggregate (see _inject_case_filter_into_rendered_aggregate), and the
+# result still gets rejected, because the problem is which table the
+# metric is declared under, not the shape of its SQL text. This is
+# therefore a DETECTOR only, producing a precise, well-explained reason —
+# not a rewriter (see Docs/decisions or the KPI01/KPI02 investigation this
+# was written for).
+
+
+@dataclass
+class UnreachableDimensionFilter:
+    """A CALCULATE(...) filter that references a dimension with no
+    relationship path from the calling metric's own base table — the
+    shape that will fail Snowflake's semantic-view compiler regardless of
+    how the expression is translated."""
+
+    filtered_table: str
+    referenced_measure: Optional[str]
+    referenced_measure_dataset: Optional[str]
+    # None when referenced_measure is unset/unresolvable; otherwise True if
+    # THAT measure's own base table DOES have a path to filtered_table
+    # (the common, fixable shape: the metric is just declared under the
+    # wrong table), False if nothing in the model reaches filtered_table
+    # from either table (the KPI01/KPI02 shape: no fix short of adding a
+    # relationship that may not legitimately exist in the source data).
+    referenced_measure_has_path: Optional[bool]
+    reason: str
+
+
+def _find_all_calculate_nodes(node: DaxNode) -> List[FunctionCallNode]:
+    """Every CALCULATE(...) FunctionCallNode anywhere in the tree, however
+    deeply nested — a metric can contain more than one (e.g. inside
+    separate branches of an IF/SWITCH selector, exactly the KPI01/KPI02
+    shape: IF(SUM('KPI'[KPI])=N, ..., CALCULATE(...), ...))."""
+    found: List[FunctionCallNode] = []
+
+    def _walk(n: DaxNode) -> None:
+        if isinstance(n, FunctionCallNode):
+            if n.func == "CALCULATE":
+                found.append(n)
+            for a in n.args:
+                _walk(a)
+        elif isinstance(n, BinaryOpNode):
+            _walk(n.left)
+            _walk(n.right)
+        elif isinstance(n, UnaryOpNode):
+            _walk(n.operand)
+
+    _walk(node)
+    return found
+
+
+def _collect_column_ref_tables(node: DaxNode) -> Set[str]:
+    """Every distinct table name referenced by a ColumnRefNode anywhere in
+    this subtree — deliberately walks the WHOLE filter-argument subtree
+    (not just a single top-level comparison), so compound filters
+    (FILTER(table, predicate), AND/OR-composed comparisons) are covered,
+    not just the single direct-comparison shape KPI01/KPI02 happens to
+    use."""
+    tables: Set[str] = set()
+
+    def _walk(n: DaxNode) -> None:
+        if isinstance(n, ColumnRefNode):
+            if n.table:
+                tables.add(n.table)
+        elif isinstance(n, BinaryOpNode):
+            _walk(n.left)
+            _walk(n.right)
+        elif isinstance(n, UnaryOpNode):
+            _walk(n.operand)
+        elif isinstance(n, FunctionCallNode):
+            for a in n.args:
+                _walk(a)
+
+    _walk(node)
+    return tables
+
+
+def dax_calculate_filters_unreachable_dimension(
+    dax: str,
+    calling_dataset: str,
+    relationships: Iterable[Any],
+    metric_datasets: Optional[Dict[str, str]] = None,
+) -> Optional["UnreachableDimensionFilter"]:
+    """Detect a CALCULATE(...) filter that references a table unreachable
+    from `calling_dataset` via `relationships` — the shape that will fail
+    Snowflake's semantic-view compiler as "a metric cannot refer to
+    another dimension from an unrelated entity," no matter how the
+    expression itself is translated (see module-level comment above).
+
+    Args:
+        dax: the metric's raw DAX expression.
+        calling_dataset: the dataset/table this metric is (or would be)
+            declared under in the target semantic view.
+        relationships: the model's relationship list (anything
+            utils.relationship_graph.find_relationship_path accepts —
+            e.g. SMLModel.relationships).
+        metric_datasets: optional {metric_unique_name: dataset_name} map,
+            used only to enrich the result with whether the measure
+            CALCULATE's first argument references (when it's a bare
+            measure reference) has its OWN path to the filtered table —
+            distinguishes "this metric is just declared under the wrong
+            table" (fixable by re-anchoring or relating those two tables)
+            from "nothing in this model reaches that table at all" (not
+            fixable without a relationship that may not legitimately
+            exist in the source model). Omit if unavailable — detection
+            of the core problem doesn't depend on it.
+
+    Returns the FIRST such filter found (walking CALCULATE nodes in
+    document order), or None if no CALCULATE in this expression filters by
+    an unreachable table — including the ordinary case where every
+    CALCULATE's filters stay within calling_dataset's own reachable graph.
+    """
+    if not dax or not calling_dataset:
+        return None
+    node = DaxAstParser().parse(dax)
+    if node is None:
+        return None
+
+    metric_datasets_ci = {str(k).casefold(): v for k, v in (metric_datasets or {}).items()}
+
+    for calc_node in _find_all_calculate_nodes(node):
+        if not calc_node.args:
+            continue
+        filtered_tables: Set[str] = set()
+        for filter_arg in calc_node.args[1:]:
+            filtered_tables |= _collect_column_ref_tables(filter_arg)
+
+        for filtered_table in sorted(filtered_tables):
+            if has_relationship_path(relationships, calling_dataset, filtered_table):
+                continue  # reachable -- not the failure shape this detects
+
+            referenced_measure: Optional[str] = None
+            referenced_measure_dataset: Optional[str] = None
+            referenced_measure_has_path: Optional[bool] = None
+            base = calc_node.args[0]
+            if isinstance(base, MeasureRefNode):
+                referenced_measure = base.name
+                referenced_measure_dataset = metric_datasets_ci.get(str(base.name).casefold())
+                if referenced_measure_dataset:
+                    referenced_measure_has_path = has_relationship_path(
+                        relationships, referenced_measure_dataset, filtered_table
+                    )
+
+            reason = (
+                f"This metric's CALCULATE(...) filters by table '{filtered_table}', but "
+                f"'{calling_dataset}' (this metric's own base table) has no relationship "
+                f"path to '{filtered_table}'. Snowflake's semantic-view compiler will "
+                f"reject this as \"a metric cannot refer to another dimension from an "
+                f"unrelated entity\" (error 010211) regardless of how the DAX is "
+                f"translated — the SQL expression's shape isn't the problem, the missing "
+                f"relationship path is."
+            )
+            if referenced_measure:
+                if referenced_measure_has_path:
+                    reason += (
+                        f" '{referenced_measure}' (the measure this CALCULATE wraps, "
+                        f"declared on '{referenced_measure_dataset}') DOES have a path to "
+                        f"'{filtered_table}' — this metric may be declared under the wrong "
+                        f"table; re-anchoring it to '{referenced_measure_dataset}', or "
+                        f"adding a relationship between '{calling_dataset}' and "
+                        f"'{referenced_measure_dataset}', would resolve this."
+                    )
+                elif referenced_measure_dataset:
+                    reason += (
+                        f" '{referenced_measure}' (declared on "
+                        f"'{referenced_measure_dataset}') doesn't reach '{filtered_table}' "
+                        f"either — no relationship anywhere in this model connects any of "
+                        f"these tables."
+                    )
+
+            return UnreachableDimensionFilter(
+                filtered_table=filtered_table,
+                referenced_measure=referenced_measure,
+                referenced_measure_dataset=referenced_measure_dataset,
+                referenced_measure_has_path=referenced_measure_has_path,
+                reason=reason,
+            )
+
+    return None

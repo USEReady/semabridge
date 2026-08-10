@@ -51,11 +51,33 @@ class Tier5Config:
     max_batch_size: int = 20
 
     def enabled_provider_order(self) -> List[str]:
-        """provider_order filtered to providers whose enabled_env is set."""
-        return [
+        """provider_order filtered to enabled providers, with Settings-
+        configured providers tried before .env-only providers.
+
+        A provider is "Settings-configured" when its `api_key` field is
+        set — i.e. Tier5Config.resolve() found a key saved via the
+        Settings UI (see repository/llm_provider_credentials.py's
+        apply_settings_overrides()). A provider is ".env-only" when it's
+        enabled solely because os.getenv(enabled_env) is set, with no
+        Settings/DB key on top.
+
+        Without this split, a fixed provider_order (openai, gemini, groq,
+        featherless, anthropic) would try an earlier, .env-only provider
+        before a later provider the user explicitly configured via
+        Settings — e.g. a stale/placeholder .env OPENAI_API_KEY would be
+        tried before a Settings-saved Anthropic key, even though the user
+        who went to the trouble of configuring Anthropic via the UI
+        reasonably expects it to be tried first. provider_order still
+        applies as the tie-breaker *within* each source tier — it just no
+        longer decides priority *across* the two tiers.
+        """
+        enabled = [
             name for name in self.provider_order
             if name in self.providers and self.providers[name].is_enabled()
         ]
+        settings_configured = [name for name in enabled if self.providers[name].api_key]
+        env_only = [name for name in enabled if not self.providers[name].api_key]
+        return settings_configured + env_only
 
     @classmethod
     def default(cls) -> "Tier5Config":

@@ -192,6 +192,44 @@ def _resolve_own_shape(
     return shape
 
 
+def metrics_with_time_intelligence_shapes(metrics: Iterable[Any]) -> Dict[str, Shape]:
+    """Map of metric unique_name -> resolved Shape, for every metric that
+    discovery finds to have (directly, or transitively through measure
+    references) a time-intelligence shape of its own — the same
+    traversal `discover_time_intelligence_shapes` uses, exposed per-metric
+    instead of only as the aggregate `Set[Shape]`.
+
+    `metrics` is any iterable of objects with `.unique_name` and
+    `.expression` (DAX text) attributes — the same shape as SML/OSI metric
+    objects already used throughout this package. A metric with no shape
+    (the vast majority, for most models) is simply absent from the
+    returned dict — never guessed, never defaulted.
+
+    Callers that need to know WHICH metrics to re-render once an
+    anchor_flag_map becomes available (predicted or real — see
+    predict_anchor_flag_map / connectors/anchor_flag_rerender.py) use
+    this; callers that only need to know which shapes exist AT ALL (e.g.
+    _create_enriched_view, deciding which flag columns to project) use
+    `discover_time_intelligence_shapes` below.
+    """
+    metrics = list(metrics)
+    dax_by_name: Dict[str, Optional[str]] = {
+        str(getattr(m, "unique_name", "") or ""): getattr(m, "expression", None)
+        for m in metrics
+    }
+
+    memo: Dict[str, Optional[Shape]] = {}
+    result: Dict[str, Shape] = {}
+    for m in metrics:
+        name = str(getattr(m, "unique_name", "") or "")
+        if not name:
+            continue
+        shape = _resolve_own_shape(name, dax_by_name, memo, set())
+        if shape:
+            result[name] = shape
+    return result
+
+
 def discover_time_intelligence_shapes(metrics: Iterable[Any]) -> Set[Shape]:
     """Scan every metric's own DAX expression and return the deduplicated
     set of canonical time-intelligence shapes actually needed by this
@@ -203,22 +241,51 @@ def discover_time_intelligence_shapes(metrics: Iterable[Any]) -> Set[Shape]:
     `.expression` (DAX text) attributes — the same shape as SML/OSI metric
     objects already used throughout this package.
     """
-    metrics = list(metrics)
-    dax_by_name: Dict[str, Optional[str]] = {
-        str(getattr(m, "unique_name", "") or ""): getattr(m, "expression", None)
-        for m in metrics
-    }
+    return set(metrics_with_time_intelligence_shapes(metrics).values())
 
-    memo: Dict[str, Optional[Shape]] = {}
-    shapes: Set[Shape] = set()
-    for m in metrics:
-        name = str(getattr(m, "unique_name", "") or "")
-        if not name:
-            continue
-        shape = _resolve_own_shape(name, dax_by_name, memo, set())
-        if shape:
-            shapes.add(shape)
-    return shapes
+
+def predict_anchor_flag_map(
+    metrics: Iterable[Any],
+    eligible_fact_tables: Iterable[str],
+) -> Dict[str, Dict[Shape, str]]:
+    """Predict, WITHOUT a live connection, which fact tables will end up
+    with which time-intelligence flag columns once _create_enriched_view
+    (snowflake_emitter.py) actually runs for real.
+
+    Reuses `discover_time_intelligence_shapes`/`flag_column_name` — the
+    exact same functions _create_enriched_view itself calls
+    (snowflake_emitter.py's enrichment loop) — so the predicted shape ->
+    name mapping can never drift from what real enrichment will produce.
+    Only WHETHER a given fact table gets an entry at all can differ from
+    the real run, and that's entirely bounded by `eligible_fact_tables`,
+    which the caller resolves using the same eligibility check
+    _create_enriched_view uses (see
+    SnowflakeEmitter._resolve_fact_enrichment_date_column /
+    predict_anchor_flag_map on SnowflakeEmitter) — this function itself
+    has no opinion on eligibility, only on naming.
+
+    Mirrors _create_enriched_view's own population exactly: every eligible
+    fact table gets the FULL set of shapes the model's metrics need (not
+    scoped to metrics on that one dataset alone), keyed by casefolded
+    fact-table name — never a flat map merged across every fact table
+    (see _create_enriched_view's own comment on why: a fact table whose
+    own anchor can't be established must get no entries at all, and a
+    metric must never resolve a flag name that only exists on some OTHER
+    table's enriched view).
+
+    Never needs the actual anchor date value — metric SQL only ever
+    references the flag column's NAME (`<alias>."IS_YTD"`), never a
+    literal date; the value is only baked into the enriched view's own
+    column definition, which this function never builds.
+    """
+    shapes = discover_time_intelligence_shapes(metrics)
+    if not shapes:
+        return {}
+    return {
+        str(fact_table).casefold(): {shape: flag_column_name(shape) for shape in shapes}
+        for fact_table in eligible_fact_tables
+        if fact_table
+    }
 
 
 def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) -> str:

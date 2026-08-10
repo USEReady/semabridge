@@ -32,6 +32,8 @@ from semabridge.core.source_format import (
 from semabridge.intermediate.models import OSIModel
 from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
+from semabridge.core.drop_ledger import DropRecord
+from semabridge.core.reconciliation import compute_reconciliation
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
 from semabridge.core.engine.context import RunContext
@@ -129,6 +131,77 @@ def _step7_persist_artifacts(
         self._record_step(7, StepStatus.FAILED, str(e))
         raise PersistenceError(f"Artifact persistence failed: {e}") from e
 
+def _reconcile_dropped_entities(context: RunContext) -> list[DropRecord]:
+    """Filter context.drop_ledger's records against the DDL that was
+    actually deployed this run, so RunSummary.dropped_entities reflects the
+    final, live state -- not an intermediate one.
+
+    Multiple independent passes can populate the same run-wide
+    context.drop_ledger over the course of a run: e.g. Step 8's
+    schema-less, connection-less preview emitter (see targets/snowflake.py's
+    _convert_to_snowflake_target), which can legitimately fail to translate
+    or validate a metric purely because no live schema/enrichment exists at
+    that point yet, followed by Step 9's real deploy -- which DOES have a
+    live connection, real tables, and real enrichment, and can succeed for
+    exactly the metrics Step 8 failed on. Nothing upstream retracts Step 8's
+    now-stale record once that happens (see engine/deployment/snowflake.py's
+    merge, which only pulls DDL_DEPLOYMENT-stage entries out of Step 9's own
+    ledger to avoid double-counting DAX_TRANSLATION/DDL_EMISSION entries it
+    assumes Step 8 already recorded identically -- an assumption that's
+    exactly wrong when the two passes' environments differ). This function
+    is the correction: it re-derives ground truth from context.deployed_ddl_text
+    (the real, live GET_DDL output captured at the end of Step 9 -- see
+    snowflake_emitter.py's Step 6b) and drops any metric-kind ledger entry
+    that reconciliation confirms is genuinely live in that DDL.
+
+    Only ever REMOVES entries proven live -- never adds or invents any --
+    and only for entity_kind == "metric" (the only kind reconciliation.py
+    knows how to check against DDL text; tables/columns/relationships pass
+    through untouched). Falls back to the full, unreconciled ledger whenever
+    there's no live deployed DDL to check against (dry run, no target
+    configured, or the real deploy itself failed) or reconciliation itself
+    raises -- this can only ever degrade to today's existing behavior, never
+    produce a worse one.
+    """
+    records = list(context.drop_ledger.records)
+    if not records or not context.deployed_ddl_text:
+        return records
+
+    try:
+        snapshot_metric_names = [
+            m.unique_name for m in (getattr(context.sml_model, "metrics", None) or [])
+        ]
+        report = compute_reconciliation(
+            run_id=context.run_id,
+            project_id=context.project_id,
+            snapshot_id=context.sml_snapshot_id,
+            snapshot_metric_names=snapshot_metric_names,
+            deployed_ddl_text=context.deployed_ddl_text,
+            drop_records=[r.model_dump(mode="json") for r in records],
+        )
+    except Exception as recon_exc:  # noqa: BLE001 - never fail finalize over a reporting aid
+        logger.warning(
+            "Step 10: drop-ledger reconciliation against the live deployed DDL "
+            "failed (non-fatal) -- dropped_entities may include stale entries "
+            "from an earlier pass: %s", recon_exc,
+        )
+        return records
+
+    reconciled = [
+        r for r in records
+        if not (r.entity_kind == "metric" and r.entity_name and report.is_metric_live(r.entity_name))
+    ]
+    removed = len(records) - len(reconciled)
+    if removed:
+        logger.info(
+            "Step 10: reconciliation confirmed %d metric drop-ledger record(s) "
+            "are actually live in the deployed DDL -- removing them from this "
+            "run's reported dropped_entities.",
+            removed,
+        )
+    return reconciled
+
+
 def _step10_finalize(
     self,
     context: RunContext,
@@ -158,7 +231,7 @@ def _step10_finalize(
     self._summary.target_artifact_path = context.target_artifact_path
     self._summary.routing_summary = context.routing_summary
     if context.drop_ledger.records:
-        self._summary.dropped_entities = list(context.drop_ledger.records)
+        self._summary.dropped_entities = _reconcile_dropped_entities(context)
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

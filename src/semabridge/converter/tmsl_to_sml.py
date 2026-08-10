@@ -223,6 +223,14 @@ class TMSLTransformer:
 
             for table, ds in tables_to_process:
                 for measure in self._iter_table_measures_with_stable_names(table):
+                        # skip_tier5=True: this runs once per measure across the
+                        # whole model, so resolving Tier 5 here too would mean
+                        # one sequential Tier5Service.translate() API call per
+                        # hard-to-translate measure -- exactly the per-metric
+                        # cost the osi_to_sml.py dry-run-timeout fix eliminated.
+                        # Anything Tiers 1-4 decline falls through to Step 2b's
+                        # tier5_candidates collection below, resolved in one
+                        # batch_translate_tier5() call for the whole model.
                         metric = self._parse_measure(
                             measure,
                             ds.unique_name,
@@ -230,6 +238,7 @@ class TMSLTransformer:
                             sml.metrics,
                             dataset_col_lookup=dax_dataset_col_lookup,
                             dataset_aliases=dax_dataset_aliases,
+                            skip_tier5=True,
                         )
                         sml.metrics.append(metric)
                         
@@ -274,10 +283,19 @@ class TMSLTransformer:
             # another measure defined later in that order sees an incomplete
             # metrics_context on its first attempt. Mirrors osi_to_sml.py's
             # equivalent step for the OSI pipeline.
+            # skip_tier5=True: this runs AFTER Step 2b's batch call above, so
+            # it both (a) never issues its own individual Tier-5 attempt for
+            # whatever the batch left unresolved, and (b) still correctly
+            # converges any metric that is a pure Tier 1-4 dependency on a
+            # metric the batch just resolved (osi_to_sml.py needs a *second*
+            # post-batch call for this same correctness guarantee -- its
+            # dependency-resolution step runs before its batch call, not
+            # after, so it can't do double duty the way this one can).
             self._resolve_metric_dependencies(
                 sml,
                 dataset_col_lookup=dax_dataset_col_lookup,
                 dataset_aliases=dax_dataset_aliases,
+                skip_tier5=True,
             )
 
             # 3. Process Relationships
@@ -782,6 +800,7 @@ class TMSLTransformer:
         max_passes: int = 3,
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         dataset_aliases: Optional[Dict[str, str]] = None,
+        skip_tier5: bool = False,
     ) -> None:
         """Resolve unresolved metrics using the full model-wide metric list,
         in deterministic convergence passes.
@@ -799,6 +818,16 @@ class TMSLTransformer:
         dataset_col_lookup/dataset_aliases: forwarded to DAXTranslator's
         Tier 5 semantic validator (Step 3 of the DAX translation
         consolidation); rebuilt from sml.datasets if not supplied.
+
+        skip_tier5: forwarded to DAXTranslator.translate() -- see its
+        docstring. `transform()` calls this method with skip_tier5=True,
+        *after* Step 2b's Tier-5 batch call -- unlike osi_to_sml.py (which
+        needs two calls to this method, one before its batch call and one
+        after), this method already only ever runs after the batch in this
+        file's Pass 2 ordering, so a single skip_tier5=True call here both
+        avoids issuing a second individual Tier-5 attempt for anything the
+        batch left unresolved AND correctly converges any metric that is a
+        pure Tier 1-4 dependency on a metric the batch just resolved.
         """
         if not sml.metrics:
             return
@@ -824,6 +853,7 @@ class TMSLTransformer:
                     dataset_col_lookup=dataset_col_lookup,
                     dataset_aliases=dataset_aliases,
                     metric_name=metric.unique_name,
+                    skip_tier5=skip_tier5,
                     metrics_context=sml.metrics,
                 )
                 if translation.is_success and translation.sql:
@@ -850,8 +880,17 @@ class TMSLTransformer:
         metrics_context: List[Any] = None,
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         dataset_aliases: Optional[Dict[str, str]] = None,
+        skip_tier5: bool = False,
     ) -> SMLMetric:
-        """Parse a TMSL measure into SMLMetric with complexity analysis."""
+        """Parse a TMSL measure into SMLMetric with complexity analysis.
+
+        skip_tier5: forwarded to DAXTranslator.translate() -- see its
+        docstring. `transform()`'s Pass 2 loop passes True here so that
+        this per-measure call (Step 2a) never issues an individual
+        Tier5Service call itself; every measure that needs Tier 5 across
+        the whole model is instead resolved in the single batched call
+        (Step 2b) that already follows this loop.
+        """
         dax = self._extract_measure_expression(measure_def)
         if isinstance(dax, list):
             dax = "\n".join(dax)  # TMSL expressions can be arrays of strings
@@ -1032,7 +1071,8 @@ class TMSLTransformer:
             metric_name=metric.unique_name,
             metrics_context=metrics_context,
             dataset_col_lookup=dataset_col_lookup,
-            dataset_aliases=dataset_aliases
+            dataset_aliases=dataset_aliases,
+            skip_tier5=skip_tier5,
         )
         
         if translation.is_success:

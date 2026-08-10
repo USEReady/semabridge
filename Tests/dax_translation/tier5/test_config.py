@@ -57,6 +57,64 @@ def test_enabled_provider_order_filters_to_configured_env_vars(monkeypatch):
     assert config.enabled_provider_order() == ["openai", "groq"]
 
 
+def test_enabled_provider_order_prioritizes_settings_configured_over_env_only(monkeypatch):
+    """The Part 2 fix: a provider configured via Settings (api_key set on
+    its ProviderSettings, mirroring what apply_settings_overrides() does)
+    must be tried before a provider that's only enabled via .env — even
+    though the .env-only provider (openai) sits earlier in the fixed
+    provider_order than the Settings-configured one (anthropic)."""
+    config = Tier5Config.default()
+    for name, settings in config.providers.items():
+        monkeypatch.delenv(settings.enabled_env, raising=False)
+
+    # openai: .env-only, earlier in provider_order.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-stale-dotenv-placeholder")
+    # anthropic: Settings-configured (api_key set directly, as
+    # apply_settings_overrides() would do after a real Settings save),
+    # later in provider_order.
+    config.providers["anthropic"].api_key = "sk-ant-from-settings"
+
+    assert config.provider_order.index("openai") < config.provider_order.index("anthropic"), (
+        "test setup assumption: openai must be earlier than anthropic in the fixed provider_order"
+    )
+    assert config.enabled_provider_order() == ["anthropic", "openai"], (
+        "Settings-configured anthropic must be tried before .env-only openai, "
+        "despite openai being earlier in provider_order"
+    )
+
+
+def test_enabled_provider_order_breaks_ties_within_same_source_using_provider_order(monkeypatch):
+    """provider_order still matters — but only as a tie-breaker within a
+    single source tier, not across tiers."""
+    config = Tier5Config.default()
+    for name, settings in config.providers.items():
+        monkeypatch.delenv(settings.enabled_env, raising=False)
+
+    # Two .env-only providers: order between them must still follow
+    # provider_order (groq before featherless).
+    monkeypatch.setenv("FEATHERLESS_API_KEY", "fake-value")
+    monkeypatch.setenv("GROQ_API_KEY", "fake-value")
+    # Two Settings-configured providers: order between them must also
+    # still follow provider_order (gemini before anthropic).
+    config.providers["anthropic"].api_key = "sk-ant-from-settings"
+    config.providers["gemini"].api_key = "gemini-key-from-settings"
+
+    assert config.enabled_provider_order() == ["gemini", "anthropic", "groq", "featherless"]
+
+
+def test_enabled_provider_order_settings_key_alone_is_enough_without_env_var(monkeypatch):
+    """A Settings-configured provider must be tried even when it has no
+    .env fallback at all (the common case: a user saves a provider via
+    Settings that was never in .env in the first place)."""
+    config = Tier5Config.default()
+    for name, settings in config.providers.items():
+        monkeypatch.delenv(settings.enabled_env, raising=False)
+
+    config.providers["anthropic"].api_key = "sk-ant-from-settings"
+
+    assert config.enabled_provider_order() == ["anthropic"]
+
+
 def test_from_dict_builds_config_from_documented_yaml_shape():
     data = {
         "dax_translation": {

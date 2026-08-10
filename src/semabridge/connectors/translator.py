@@ -25,14 +25,20 @@ class MetricExpressionTranslator:
         self.behavior = behavior
         self._openai_prefetch_sql_by_metric: Dict[str, str] = {}
         self._openai_prefetch_done = False
-        # Shape tuple (see converter/time_intelligence_shapes.py) -> flag
-        # column name precomputed on the current fact table's enriched view
-        # by snowflake_emitter.py::_create_enriched_view. Set by the emitter
-        # right after enrichment runs, before any metric translation for
-        # that fact table — empty (the default) preserves the inline
-        # MAX_DATE rendering exactly, e.g. for callers with no live
-        # enrichment step (the schema-blind dry-run/preview path).
-        self.anchor_flag_map: Dict[Any, str] = {}
+        # Fact-table-name (casefolded) -> {shape tuple (see
+        # converter/time_intelligence_shapes.py) -> flag column name}
+        # precomputed on that fact table's own enriched view by
+        # snowflake_emitter.py::_create_enriched_view. Nested by fact table
+        # rather than a flat shape->name map merged across every fact table
+        # in the model: a fact table whose own MAX_DATE anchor couldn't be
+        # established gets no entry here at all, and every consumer below
+        # narrows to `self.anchor_flag_map.get(metric.dataset, {})` before
+        # use -- so a metric can never resolve a flag column that only
+        # exists on a *different* fact table's enriched view. Empty (the
+        # default) preserves the inline MAX_DATE rendering exactly, e.g.
+        # for callers with no live enrichment step (the schema-blind
+        # dry-run/preview path).
+        self.anchor_flag_map: Dict[str, Dict[Any, str]] = {}
         # Lazily created and reused across every translate() call made
         # through this instance (one per conversion run), so a provider's
         # per-run "unavailable after auth failure" cache
@@ -246,7 +252,11 @@ class MetricExpressionTranslator:
                 metric.dataset,
                 metric_name=metric.unique_name,
                 metrics_context=metrics_list,
-                anchor_flag_map=self.anchor_flag_map,
+                # Narrowed to this metric's own fact table -- see the
+                # anchor_flag_map docstring in __init__ for why a flat,
+                # unqualified map would risk resolving a flag column from a
+                # *different* fact table's enriched view.
+                anchor_flag_map=self.anchor_flag_map.get(str(metric.dataset or "").casefold(), {}),
             )
             if translated.is_success and translated.sql:
                 return translated.sql
@@ -336,7 +346,8 @@ class MetricExpressionTranslator:
         all_physical_col_names: set[str],
         emittable_metric_name_set: set[str],
         skipped_metric_names: set[str],
-        metric_to_alias: Optional[Dict[str, str]] = None
+        metric_to_alias: Optional[Dict[str, str]] = None,
+        dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> Optional[str]:
         """Thin shim onto DaxTranslationService (Step 2 of the approved
         consolidation migration). Same signature, same external contract
@@ -408,7 +419,10 @@ class MetricExpressionTranslator:
             )
             metric_label = metric.name if hasattr(metric, "name") else metric_name
             rule_based_sql = rule_based_translation(
-                dax_expression, table_alias, metric_label, anchor_flag_map=self.anchor_flag_map
+                dax_expression, table_alias, metric_label,
+                # Same fact-table narrowing as the deterministic AST path
+                # above -- see anchor_flag_map's docstring in __init__.
+                anchor_flag_map=self.anchor_flag_map.get(str(getattr(metric, "dataset", "") or "").casefold(), {}),
             )
 
             if rule_based_sql:
@@ -494,6 +508,7 @@ class MetricExpressionTranslator:
                 metric_name=metric_name,
                 dialect=self.dialect,
                 metric_names=metric_name_set,
+                dataset_col_types=dataset_col_types,
             )
             result = self._get_dax_translation_service().translate_metric(request)
             if (

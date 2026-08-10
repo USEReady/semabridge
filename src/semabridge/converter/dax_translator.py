@@ -190,7 +190,8 @@ class DAXTranslator:
                   metrics_context: List[Any] = None,
                   dataset_col_lookup: Optional[Dict[str, set]] = None,
                   dataset_aliases: Optional[Dict[str, str]] = None,
-                  anchor_flag_map: Optional[Dict[Any, str]] = None) -> DAXTranslationResult:
+                  anchor_flag_map: Optional[Dict[Any, str]] = None,
+                  skip_tier5: bool = False) -> DAXTranslationResult:
         """
         Translate a DAX expression to SQL.
 
@@ -205,6 +206,16 @@ class DAXTranslator:
             dataset_name: Name of the dataset for context
             metric_name: Name of the current metric being translated
             metrics_context: List of SMLMetric objects to resolve dependencies
+            skip_tier5: Run Tiers 1-4 only and decline (same shape as "all
+                tiers exhausted") instead of calling _try_llm_fallback -- i.e.
+                instead of issuing one Tier5Service.translate() call for THIS
+                metric right now. Callers that process many metrics in a loop
+                (osi_to_sml.py's _convert_metric/_resolve_metric_dependencies)
+                pass this so nothing here is resolved via an individual,
+                sequential Tier-5 API call; every metric that needs Tier 5
+                collects into one batch_translate_tier5()/translate_batch()
+                call instead (see the dry-run timeout fix). Default False:
+                every other existing caller's behavior is unchanged.
         """
         if not dax:
             return DAXTranslationResult(None, 3, "")
@@ -326,6 +337,13 @@ class DAXTranslator:
             )
             if general_ast_sql:
                 return DAXTranslationResult(general_ast_sql, 4, clean_dax)
+
+        if skip_tier5:
+            # Tiers 1-4 above already declined. Return the identical shape
+            # as "all tiers exhausted" below rather than spending this
+            # metric's one Tier-5 attempt right now -- the caller collects
+            # it for a single batched call instead (see docstring above).
+            return DAXTranslationResult(None, 4, clean_dax)
 
         # Tier 5: LLM Fallback - Use Claude for complex expressions deterministic parsing couldn't handle
         # Only attempt if LLM is available and enabled

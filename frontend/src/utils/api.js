@@ -16,7 +16,13 @@ const API_CACHE_TTL_MS = Number(import.meta.env.VITE_CACHE_TTL_MS) || 2 * 60 * 1
 const API_REQUEST_TIMEOUT_MS = 60000;
 const UI_LIST_REQUEST_TIMEOUT_MS = 30000;
 const PROJECT_LIST_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_API_TIMEOUT_MS ?? '60000', 10);
-const PROJECT_RUN_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_RUN_TIMEOUT_MS ?? '180000', 10);
+// Safety margin, not a tuned value: dry-run/run now issue a handful of
+// batched Tier-5 calls instead of one sequential call per hard-to-translate
+// metric (see osi_to_sml.py's skip_tier5 fix), but this must still protect
+// against the same wall as models grow or a slower/failing-over provider is
+// selected -- raised from 180000 (3 min, the value that was already being
+// hit by the backend's real ~192s completion time on a live key).
+const PROJECT_RUN_REQUEST_TIMEOUT_MS = parseInt(import.meta.env.VITE_RUN_TIMEOUT_MS ?? '600000', 10);
 const HEALTH_CHECK_TIMEOUT_MS = parseInt(import.meta.env.VITE_HEALTH_TIMEOUT_MS ?? '5000', 10);
 const UI_LIST_CACHE_TTL_MS = 20000;
 const apiCache = new Map();

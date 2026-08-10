@@ -297,6 +297,24 @@ class SMLMetric(BaseModel):
     depends_on_measures: list[str] = Field(default_factory=list, description="Names of measures this metric depends on")
     sync_enabled: bool = Field(default=True, description="Whether measure can be synced to Snowflake")
     sync_failure_reason: Optional[str] = Field(default=None, description="Reason if sync is disabled")
+    # Deliberately separate from sync_failure_reason: that field is read by
+    # is_by_design_excluded()/DDL-emission logic and by other consumers
+    # (e.g. databricks_publisher.py) that treat its mere presence as "this
+    # metric didn't/won't deploy." advisory_notes is purely informational —
+    # never read by translation or DDL-emission code, never changes
+    # sync_enabled/sql_expression/what gets deployed — so a metric whose
+    # DAX translates and deploys successfully today (e.g. one that will
+    # only fail later, at Snowflake's own DDL-compile step, for reasons
+    # unrelated to translation) can carry a heads-up without being
+    # mischaracterized as excluded or non-syncing anywhere else that reads
+    # sync_failure_reason. See converter/dax_ast_parser.py's
+    # dax_calculate_filters_unreachable_dimension for the first producer.
+    advisory_notes: list[str] = Field(
+        default_factory=list,
+        description="Non-blocking, informational notes about this metric surfaced at "
+        "mapping/dry-run time. Never read by translation or DDL-emission logic and never "
+        "changes what happens to the metric — display-only.",
+    )
     confidence: float = Field(default=1.0, description="Confidence score for auto-detected measures")
     # Cortex Analyst advanced AI / access metadata
     access_modifier: Optional[str] = Field(

@@ -163,6 +163,19 @@ class SnowflakeEmitter(BaseEmitter):
             # stale dropped-metric/smoke-test warnings over from a prior deploy.
             self._dropped_metrics = []
             self._smoke_test_warnings = []
+            # Reset so a reused emitter instance never carries a PREVIOUS
+            # deploy's captured DDL into this one's result — see the
+            # GET_DDL capture at the end of this method (Step 7) and its
+            # consumer, core/engine/finalize.py's Step 10 reconciliation.
+            self._last_deployed_ddl_text = None
+            # Set only if the Step 3 DDL-execution loop below fails after at
+            # least one statement already succeeded against live Snowflake.
+            # Reset here so a reused emitter instance never carries a stale
+            # partial-deploy flag from a PREVIOUS deploy into this one's
+            # outer exception handler (e.g. this run fails earlier, during
+            # DDL *generation*, having never reached the exec loop at all --
+            # that must be reported as a plain failure, not "partial").
+            self._partial_deploy_info = None
             # Same reason as the two resets above — a reused emitter instance
             # must not carry a prior deploy's live-schema snapshot into this
             # one (e.g. a MAX_DATE anchor a previous run found, on a table
@@ -266,6 +279,45 @@ class SnowflakeEmitter(BaseEmitter):
                                 # empty, or already holds unrelated explicit overrides.
                                 self._enriched_view_mapping[fact_table] = enriched_view
                                 logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
+
+                # Re-render anchor-dependent metrics now that
+                # self.translator.anchor_flag_map holds the REAL,
+                # confirmed flag-column map from the enrichment loop just
+                # above — this is the authoritative pass. It runs strictly
+                # after enrichment and strictly before "Step 2: Generate
+                # DDLs" below, so metrics_clause_builder.py sees the
+                # corrected sql_expression already in place, with no
+                # change needed to that file's own logic. A predicted
+                # version of this same pass may already have run earlier
+                # (Step 6b, before this model was persisted — see
+                # core/engine/targets/snowflake.py's
+                # _step6b_predict_anchor_flag_columns); this pass corrects
+                # any divergence between that prediction and reality in
+                # either direction (a table predicted to get a flag that
+                # didn't materialize, or vice versa) — never raises,
+                # a rerender failure must not fail an otherwise-successful
+                # deploy.
+                try:
+                    from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
+                    from semabridge.converter.dax_translator import DAXTranslator as _DAXTranslator
+
+                    _dataset_col_lookup, _dataset_aliases = _DAXTranslator.build_schema_lookup(
+                        getattr(model, "datasets", []) or []
+                    )
+                    _rerendered = rerender_anchor_dependent_metrics(
+                        model,
+                        self.translator.anchor_flag_map,
+                        _dataset_col_lookup,
+                        _dataset_aliases,
+                        label="confirmed",
+                    )
+                    if _rerendered:
+                        logger.info(
+                            "Re-rendered %d anchor-dependent metric(s) with the confirmed flag map",
+                            _rerendered,
+                        )
+                except Exception as _rerender_exc:
+                    logger.warning("Anchor-dependent metric re-render skipped: %s", _rerender_exc)
 
                 if is_osi:
                     self.schema_manager._preflight_check_osi(cur, model)
@@ -489,11 +541,21 @@ class SnowflakeEmitter(BaseEmitter):
                             except Exception as _drop_exc:
                                 logger.warning("Pre-drop of semantic view '%s' failed (non-fatal): %s", _vm.group(1), _drop_exc)
 
+                # Tracked so that if this loop fails partway through, the
+                # outer exception handler can report an honest "N of M
+                # statements already executed against live Snowflake"
+                # status instead of a bare FAILED that looks identical to
+                # "nothing happened" -- Snowflake DDL isn't wrapped in a
+                # single transaction here, so a failure after idx>0 can
+                # leave real, already-committed objects behind.
+                _ddls_with_sql_total = sum(1 for _s in ddls if _s)
+                _ddls_executed_count = 0
                 for idx, sql in enumerate(ddls):
                     if not sql:
                         continue
                     try:
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
+                        _ddls_executed_count += 1
                     except Exception as ddl_exc:
                         # Auto-remediate invalid identifier errors iteratively.
                         # Each pass fixes one invalid identifier; we retry up to
@@ -507,34 +569,71 @@ class SnowflakeEmitter(BaseEmitter):
                         _MAX_PASSES = 10
                         _remediated = False
                         for _pass in range(_MAX_PASSES):
-                            _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
-                            if not _invalid_id:
-                                break
-                            _fixed_sql, _changed, _nulled_metric_names = _sanitizer.remediate_invalid_identifier(
-                                _current_sql, _invalid_id
-                            )
-                            if not _changed:
+                            # The identifier-extraction/sanitizer/drop-recording
+                            # calls below live in OTHER modules
+                            # (connection_manager.py, semantic_ddl_sanitizer.py)
+                            # and are not wrapped by anything else here. If any
+                            # of them ever raises (a bug/edge case unrelated to
+                            # the actual Snowflake DDL failure this loop exists
+                            # to remediate), that must not surface as an
+                            # unrelated traceback that aborts the whole deploy
+                            # and masks the real error -- degrade exactly like
+                            # the "sanitizer could not fix it" give-up path
+                            # below: stop remediating this DDL and fall through
+                            # to re-raising the ORIGINAL Snowflake error.
+                            try:
+                                _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
+                                if not _invalid_id:
+                                    break
+                                _fixed_sql, _changed, _nulled_metric_names = _sanitizer.remediate_invalid_identifier(
+                                    _current_sql, _invalid_id
+                                )
+                                if not _changed:
+                                    logger.warning(
+                                        "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
+                                        idx, _pass + 1, _invalid_id,
+                                    )
+                                    break
                                 logger.warning(
-                                    "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
+                                    "DDL[%d] pass %d: fixing invalid identifier '%s'",
                                     idx, _pass + 1, _invalid_id,
                                 )
-                                break
-                            logger.warning(
-                                "DDL[%d] pass %d: fixing invalid identifier '%s'",
-                                idx, _pass + 1, _invalid_id,
-                            )
-                            # Track metric-definition drops (as opposed to anchor-column
-                            # substitutions like MAX_DATE/MAX_MONTHINDEX, which keep the
-                            # metric's real semantics) so the user gets a clear final
-                            # summary of which metrics didn't make it into the deployed
-                            # semantic view, instead of this being buried in these
-                            # pass-by-pass WARNING logs.
-                            _invalid_upper = _invalid_id.upper().replace('"', "")
-                            if "." in _invalid_id and _invalid_upper not in ("MAX_DATE", "MAX_MONTHINDEX"):
-                                self._record_ddl_deployment_drops(
-                                    _invalid_id, _nulled_metric_names, _current_sql, _current_exc
+                                # Track metric-definition drops (as opposed to anchor-column
+                                # substitutions like MAX_DATE/MAX_MONTHINDEX, which keep the
+                                # metric's real semantics) so the user gets a clear final
+                                # summary of which metrics didn't make it into the deployed
+                                # semantic view, instead of this being buried in these
+                                # pass-by-pass WARNING logs.
+                                #
+                                # Gating this on "." in _invalid_id (as this used to) is
+                                # wrong: Snowflake's classic 000904 "invalid identifier"
+                                # error is frequently reported BARE/unqualified -- that is
+                                # exactly why MAX_DATE/MAX_MONTHINDEX (also bare) needed
+                                # their own carve-out below. Any OTHER bare identifier
+                                # that remediate_invalid_identifier's METRICS-clause sweep
+                                # nulls metrics for would previously skip this call
+                                # entirely: no drop_ledger record, no _dropped_metrics
+                                # entry -- silently under-reporting exactly like the
+                                # CAST(NULL AS DOUBLE)-sentinel bug fixed earlier in this
+                                # codebase. The only cases that must NOT be recorded are
+                                # the two known bare substitutions that keep every
+                                # metric's real semantics (never null anything --
+                                # confirmed by remediate_invalid_identifier always
+                                # returning an empty nulled_metric_names list for both).
+                                _invalid_upper = _invalid_id.upper().replace('"', "")
+                                if _invalid_upper not in ("MAX_DATE", "MAX_MONTHINDEX"):
+                                    self._record_ddl_deployment_drops(
+                                        _invalid_id, _nulled_metric_names, _current_sql, _current_exc
+                                    )
+                                _current_sql = _fixed_sql
+                            except Exception as _remediation_bug_exc:
+                                logger.warning(
+                                    "DDL[%d] pass %d: internal error while attempting "
+                                    "remediation (giving up on this DDL; the original "
+                                    "Snowflake error will be reported instead): %s",
+                                    idx, _pass + 1, _remediation_bug_exc,
                                 )
-                            _current_sql = _fixed_sql
+                                break
                             try:
                                 self.connection_manager._execute_sql(
                                     cur, _current_sql, context=f"DDL[{idx}] pass {_pass + 1}"
@@ -544,7 +643,22 @@ class SnowflakeEmitter(BaseEmitter):
                             except Exception as _retry_exc:
                                 _current_exc = _retry_exc
                         if _remediated:
+                            _ddls_executed_count += 1
                             continue  # DDL succeeded after remediation
+                        # Remediation is exhausted -- this DDL statement is
+                        # not going to succeed. Record how far the loop got
+                        # BEFORE re-raising, so the outer handler can tell a
+                        # true "nothing was deployed" failure apart from a
+                        # "some objects already exist in Snowflake, this
+                        # deploy is now partial/inconsistent" one -- the two
+                        # need very different next steps from whoever reads
+                        # last_deployment_error.
+                        if _ddls_executed_count > 0:
+                            self._partial_deploy_info = {
+                                "ddls_executed": _ddls_executed_count,
+                                "ddls_total": _ddls_with_sql_total,
+                                "failed_ddl_index": idx,
+                            }
                         raise _current_exc  # re-raise last failure
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
@@ -558,6 +672,7 @@ class SnowflakeEmitter(BaseEmitter):
                 # quoting per segment, so the view name is always the LAST
                 # dot-separated segment, not the first.
                 import re as _re_smoke
+                _last_qualified_view_name: Optional[str] = None
                 for _ddl_sql in ddls:
                     _m = _re_smoke.search(
                         r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+'
@@ -567,6 +682,7 @@ class SnowflakeEmitter(BaseEmitter):
                     if not _m:
                         continue
                     _qualified_name = _m.group(1)
+                    _last_qualified_view_name = _qualified_name
                     _view_name = _qualified_name.split(".")[-1].strip().strip('"')
                     _smoke_err = self._smoke_test_semantic_view(cur, _view_name, _ddl_sql)
                     if _smoke_err:
@@ -580,28 +696,40 @@ class SnowflakeEmitter(BaseEmitter):
                             {"view": _view_name, "error": _smoke_err}
                         )
 
+                # Step 6b: Capture the just-deployed DDL via GET_DDL, on the
+                # SAME live connection/cursor Step 3 already executed DDL
+                # through -- no separate connection. This is the actual,
+                # final state of the deployed semantic view (post-remediation,
+                # whatever survived Step 3's null-out passes), consumed by
+                # core/engine/finalize.py's Step 10 to reconcile this run's
+                # drop_ledger against reality instead of trusting whichever
+                # pass happened to run first (this real deploy, or an earlier
+                # schema-less preview pass — see targets/snowflake.py's
+                # _convert_to_snowflake_target). Best-effort: a GET_DDL
+                # failure here (e.g. insufficient privilege) must never fail
+                # an otherwise-successful deploy -- _last_deployed_ddl_text
+                # simply stays None and Step 10 falls back to today's
+                # un-reconciled behavior.
+                if _last_qualified_view_name:
+                    try:
+                        cur.execute(
+                            f"SELECT GET_DDL('SEMANTIC_VIEW', '{_last_qualified_view_name}')"
+                        )
+                        _ddl_row = cur.fetchone()
+                        if _ddl_row and _ddl_row[0]:
+                            self._last_deployed_ddl_text = _ddl_row[0]
+                    except Exception as _get_ddl_exc:
+                        logger.warning(
+                            "[%s] Could not fetch live deployed DDL via GET_DDL for "
+                            "drop-ledger reconciliation (non-fatal): %s",
+                            path_type, _get_ddl_exc,
+                        )
+
                 # Final run summary: surface any metrics that were dropped during
                 # auto-remediation. These are non-fatal to deployment (Snowflake
                 # accepted the DDL after nulling them out) but the user needs a
                 # clear, un-missable record of which metrics didn't make it in.
-                if self._dropped_metrics:
-                    logger.warning("=" * 70)
-                    logger.warning(
-                        "⚠️  [%s] %d metric(s) DROPPED from '%s' — Snowflake rejected "
-                        "their definition, so they were replaced with "
-                        "CAST(NULL AS DOUBLE) to let deployment complete:",
-                        path_type, len(self._dropped_metrics), model_name,
-                    )
-                    for _dm in self._dropped_metrics:
-                        logger.warning("  - %s: %s", _dm["metric"], _dm["reason"])
-                    logger.warning(
-                        "These metrics will return NULL until translated manually. "
-                        "This commonly affects time-comparison metrics (SPLY/YoY) "
-                        "whose DAX references another metric inside CALCULATE(...), "
-                        "which Snowflake semantic views cannot express as a "
-                        "single-level aggregate."
-                    )
-                    logger.warning("=" * 70)
+                self._log_dropped_metrics_summary(path_type, model_name)
 
                 logger.info("[%s] success model=%s (%.2fs)", path_type, model_name, time.perf_counter() - deploy_started_at)
                 return True
@@ -611,8 +739,50 @@ class SnowflakeEmitter(BaseEmitter):
                     conn.close()
 
         except Exception as exc:
-            self.last_deployment_error = str(exc)
-            logger.error("[%s] FAILED model=%s: %s", path_type, model_name, exc, exc_info=True)
+            # Snowflake DDL here is not wrapped in one transaction, so a
+            # failure that happens after Step 3's loop already committed
+            # one or more CREATE/DROP/ALTER statements leaves real objects
+            # behind -- this must never be reported identically to a clean
+            # "nothing happened" failure. self._partial_deploy_info is only
+            # ever set by that loop, and only when it's about to re-raise
+            # after remediation is exhausted (see above), so its presence
+            # here is a reliable signal, not a guess.
+            partial = getattr(self, "_partial_deploy_info", None)
+            if partial:
+                self.last_deployment_error = (
+                    f"PARTIAL DEPLOY: {partial['ddls_executed']} of "
+                    f"{partial['ddls_total']} DDL statement(s) executed "
+                    f"against Snowflake before statement #{partial['failed_ddl_index']} "
+                    f"failed and could not be auto-remediated. Snowflake objects for "
+                    f"model '{model_name}' may be in an inconsistent, partially-created "
+                    f"or partially-updated state and require manual review before "
+                    f"retrying this deploy. Underlying error: {exc}"
+                )
+                try:
+                    self.drop_ledger.record(
+                        "model", str(model_name), DropStage.DDL_DEPLOYMENT,
+                        "Deployment aborted mid-DDL-execution after one or more "
+                        "statements already succeeded against live Snowflake -- "
+                        "objects may be partially created/updated. Manual "
+                        "verification required before retrying.",
+                        detail=self.last_deployment_error[:300],
+                    )
+                except Exception:
+                    # Recording the ledger entry is a best-effort courtesy on
+                    # top of last_deployment_error, which is already set
+                    # above -- never let a ledger-write problem mask the
+                    # partial-deploy signal itself.
+                    pass
+                logger.error(
+                    "[%s] PARTIAL DEPLOY model=%s: %d/%d DDL statement(s) executed "
+                    "before failure -- Snowflake state may be inconsistent: %s",
+                    path_type, model_name,
+                    partial["ddls_executed"], partial["ddls_total"], exc,
+                    exc_info=True,
+                )
+            else:
+                self.last_deployment_error = str(exc)
+                logger.error("[%s] FAILED model=%s: %s", path_type, model_name, exc, exc_info=True)
             return False
 
     @staticmethod
@@ -712,6 +882,69 @@ class SnowflakeEmitter(BaseEmitter):
                 "compiled semantic-view DDL, and it could not be "
                 "automatically remediated.",
                 detail=str(exc)[:300],
+            )
+
+    def _log_dropped_metrics_summary(self, path_type: str, model_name: str) -> None:
+        """Log a final, un-missable summary of metrics dropped during DDL
+        auto-remediation (see `_record_ddl_deployment_drops`).
+
+        This runs after the DDLs have already been successfully executed
+        against Snowflake — it is purely cosmetic reporting. It is wrapped
+        top-to-bottom (and per-entry) so that a formatting bug here can
+        NEVER raise: this method is called from inside
+        `_execute_deployment_pipeline`'s try block, and an uncaught
+        exception at this point would be swallowed by that method's own
+        `except Exception` handler, which sets `last_deployment_error` and
+        returns False — i.e. it would misreport an otherwise-successful,
+        real-money deploy as FAILED. Every branch below degrades to "log
+        less" rather than "raise".
+        """
+        if not self._dropped_metrics:
+            return
+        try:
+            # Explicit int() coercion: len() on a real list always returns
+            # int, but _dropped_metrics is mutated across several code
+            # paths (see _record_ddl_deployment_drops) and this summary
+            # must not assume that invariant holds forever — coerce
+            # defensively rather than trust it.
+            try:
+                dropped_count = int(len(self._dropped_metrics))
+            except (TypeError, ValueError):
+                dropped_count = 0
+            # Pluralize by choosing the noun, never by arithmetic on the
+            # count itself (e.g. `count + "s"` is an int+str TypeError).
+            metric_word = "metric" if dropped_count == 1 else "metrics"
+
+            logger.warning("=" * 70)
+            logger.warning(
+                "⚠️  [%s] %d %s DROPPED from '%s' — Snowflake rejected "
+                "their definition, so they were replaced with "
+                "CAST(NULL AS DOUBLE) to let deployment complete:",
+                path_type, dropped_count, metric_word, model_name,
+            )
+            for _dm in self._dropped_metrics:
+                try:
+                    _metric_name = _dm.get("metric", "<unknown metric>")
+                    _reason = _dm.get("reason", "<no reason recorded>")
+                    logger.warning("  - %s: %s", _metric_name, _reason)
+                except Exception:
+                    # A malformed entry (e.g. not a dict) must not stop the
+                    # rest of the summary from printing.
+                    logger.warning("  - <could not format one dropped-metric entry>")
+            logger.warning(
+                "These metrics will return NULL until translated manually. "
+                "This commonly affects time-comparison metrics (SPLY/YoY) "
+                "whose DAX references another metric inside CALCULATE(...), "
+                "which Snowflake semantic views cannot express as a "
+                "single-level aggregate."
+            )
+            logger.warning("=" * 70)
+        except Exception as summary_exc:
+            logger.error(
+                "[%s] Deployment for model=%s succeeded, but the "
+                "dropped-metrics summary could not be logged (non-fatal, "
+                "deployment result is unaffected): %s",
+                path_type, model_name, summary_exc,
             )
 
     def _smoke_test_semantic_view(self, cursor: Any, view_name: str, ddl: str = "") -> Optional[str]:
@@ -1449,7 +1682,20 @@ class SnowflakeEmitter(BaseEmitter):
             
         except Exception as exc:
             logger.error("Error during relationship/measure validation: %s", exc, exc_info=True)
-            return [f"Validation error: {str(exc)}"]
+            # Must match the success path's 2-tuple shape exactly. The
+            # caller (_execute_deployment_pipeline's UPSERT-preserve step)
+            # unconditionally does
+            #   validation_errors, incompatible_tables = self._validate_relationships_measures_on_existing_tables(...)
+            # A bare single-element list here (the shape this used to
+            # return) makes that unpack raise
+            # `ValueError: not enough values to unpack`, which is NOT
+            # caught anywhere near the call site -- it propagates straight
+            # to the outer pipeline handler and fails the entire deploy for
+            # what should have been a recoverable, per-table validation
+            # error. incompatible_datasets is deliberately empty (not a
+            # guess at which tables are bad) since we don't know past the
+            # point this exception was raised.
+            return [f"Validation error: {str(exc)}"], []
 
     def _filter_ddls_for_existing_tables(self, ddls: list, existing_tables: dict) -> list:
         """
@@ -1592,6 +1838,101 @@ class SnowflakeEmitter(BaseEmitter):
         fallback = self._identify_fact_table(model)
         return [fallback] if fallback else []
 
+    def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
+        """Resolve the date column a fact table's time-intelligence anchor
+        (MAX_DATE / flag columns) would be built from — IF this fact table
+        actually qualifies for enrichment at all. Returns None if there's
+        no date-table relationship for the model, or the resolved date
+        column isn't present among this fact table's own columns.
+
+        This is the same eligibility check _create_enriched_view applies
+        before it ever fetches a live anchor literal (see that method's
+        `date_info`/`resolved_date_col in fact_cols` logic), extracted so
+        `predict_anchor_flag_map` (below) can reuse the identical
+        model-based fallback branch. Not wired into _create_enriched_view
+        itself — that method is left untouched to avoid destabilizing its
+        existing, well-tested behavior; the two are kept consistent
+        instead via the cross-check regression test in
+        Tests/test_anchor_flag_map_prediction.py.
+
+        Column existence is checked against live schema (`_live_schema_
+        metadata`) when confirmed, falling back to this model's own
+        declared columns otherwise — exactly the same fallback
+        `SnowflakeSchemaManager._resolve_physical_column_name` already
+        applies internally. For a throwaway, never-deployed emitter
+        instance (no cursor ever attached, `_live_schema_metadata` never
+        populated — see `predict_anchor_flag_map`), this always resolves
+        against the model's own declared columns, which is exactly the
+        "no live connection yet" prediction this method exists for.
+        """
+        date_info = self._find_date_table(model)
+        if not date_info:
+            return None
+        _date_table, date_col, _fiscal_col = date_info
+
+        fact_dataset = self._get_dataset_by_name(model, fact_table)
+        if fact_dataset is None:
+            return None
+
+        resolved_date_col = self.schema_manager._resolve_physical_column_name(
+            fact_dataset, date_col, model=model
+        )
+        if not resolved_date_col:
+            return None
+
+        fact_source_name = getattr(fact_dataset, "source_table", None) or fact_table
+        fact_source_key = self._id.sanitize_table_name(fact_source_name).upper()
+        fact_cols = {
+            str(c).upper() for c in self._live_schema_metadata.get(fact_source_key, set())
+        }
+        if not fact_cols:
+            fact_cols = {
+                self._resolve_model_column_name(model, fact_table, getattr(c, "unique_name", "")).upper()
+                for c in getattr(fact_dataset, "columns", []) or []
+                if getattr(c, "unique_name", None)
+            }
+
+        return resolved_date_col if resolved_date_col.upper() in fact_cols else None
+
+    def _predict_eligible_enrichment_fact_tables(self, model: Any) -> list[str]:
+        """Fact tables `predict_anchor_flag_map` should treat as eligible
+        for a time-intelligence flag column — mirrors
+        _execute_deployment_pipeline's own enrichment loop
+        (`_get_fact_tables_needing_enrichment` + the same
+        `resolved_date_col in fact_cols` eligibility check, factored out
+        as `_resolve_fact_enrichment_date_column` above), minus the parts
+        that require a live cursor. If `auto_create_enriched_view` is off
+        for this project, _create_enriched_view never runs for any fact
+        table on a real deploy either — predicting anything here would
+        promise a flag column that will never actually exist, so this
+        returns nothing.
+        """
+        if not getattr(self.sf_behavior, "auto_create_enriched_view", False):
+            return []
+        return [
+            fact_table
+            for fact_table in self._get_fact_tables_needing_enrichment(model)
+            if self._resolve_fact_enrichment_date_column(model, fact_table)
+        ]
+
+    def predict_anchor_flag_map(self, model: Any) -> Dict[str, Dict[Any, str]]:
+        """Predict this model's anchor_flag_map WITHOUT a live connection —
+        see converter/time_intelligence_shapes.py::predict_anchor_flag_map
+        for what this actually computes and why it's safe to call before
+        any Snowflake connection exists. Called on a throwaway
+        `SnowflakeEmitter` instance that is never used to `deploy()` —
+        `_live_schema_metadata` stays empty for its whole lifetime, so
+        every column-existence check above transparently uses this
+        model's own declared columns, exactly matching what
+        _create_enriched_view itself falls back to whenever live schema
+        isn't confirmed yet.
+        """
+        from semabridge.converter.time_intelligence_shapes import (
+            predict_anchor_flag_map as _predict_anchor_flag_map,
+        )
+
+        eligible_fact_tables = self._predict_eligible_enrichment_fact_tables(model)
+        return _predict_anchor_flag_map(getattr(model, "metrics", []) or [], eligible_fact_tables)
 
     def _find_source_table_for_precompute(self, target_table: str, column_name: str):
         """
@@ -1763,7 +2104,17 @@ class SnowflakeEmitter(BaseEmitter):
                 if not cursor.fetchone():
                     logger.warning("Table %s not found, skipping pre-compute", table)
                     continue
-            except Exception:
+            except Exception as _show_tables_exc:
+                # Was a silent `except Exception: continue` -- indistinguishable
+                # from the "table genuinely doesn't exist" branch above, but this
+                # one can also fire for a real connection/permission/syntax
+                # problem, which would then vanish with zero trace on a live,
+                # paid deploy. Always log which table and why before skipping.
+                logger.warning(
+                    "Could not verify existence of table %s before pre-compute "
+                    "(skipping this table's pre-compute suggestions): %s",
+                    table, _show_tables_exc,
+                )
                 continue
 
             for col in cols_needing_add:
@@ -1868,55 +2219,34 @@ class SnowflakeEmitter(BaseEmitter):
                 pass
         return self._id.sanitize_column(column_name)
 
-    def _relationship_edges(self, model: Any, dataset_name: str) -> list[dict[str, Any]]:
-        edges: list[dict[str, Any]] = []
-        for rel in getattr(model, "relationships", []) or []:
-            if not getattr(rel, "is_active", True):
-                continue
-            from_ds = getattr(rel, "from_dataset", None)
-            to_ds = getattr(rel, "to_dataset", None)
-            from_cols = list(getattr(rel, "from_columns", []) or [])
-            to_cols = list(getattr(rel, "to_columns", []) or [])
-            if not from_ds or not to_ds or not from_cols or not to_cols:
-                continue
-            if str(from_ds).casefold() == str(dataset_name).casefold():
-                edges.append(
-                    {
-                        "current_dataset": from_ds,
-                        "next_dataset": to_ds,
-                        "current_columns": from_cols,
-                        "next_columns": to_cols,
-                    }
-                )
-            if str(to_ds).casefold() == str(dataset_name).casefold():
-                edges.append(
-                    {
-                        "current_dataset": to_ds,
-                        "next_dataset": from_ds,
-                        "current_columns": to_cols,
-                        "next_columns": from_cols,
-                    }
-                )
-        return edges
+    def _relationship_edges(self, model: Any, dataset_name: str) -> list[Any]:
+        """Thin wrapper over the target-agnostic
+        utils.relationship_graph.build_relationship_edges -- kept here so
+        existing call sites in this file don't need to import the utility
+        directly. See that module for the pure graph logic."""
+        from semabridge.utils.relationship_graph import build_relationship_edges
 
-    def _find_relationship_path(self, model: Any, start_dataset: str, target_dataset: str) -> list[dict[str, Any]]:
-        if str(start_dataset).casefold() == str(target_dataset).casefold():
-            return []
-        queue: list[tuple[str, list[dict[str, Any]]]] = [(start_dataset, [])]
-        visited = {str(start_dataset).casefold()}
-        while queue:
-            current, path = queue.pop(0)
-            for edge in self._relationship_edges(model, current):
-                nxt = str(edge["next_dataset"])
-                key = nxt.casefold()
-                if key in visited:
-                    continue
-                next_path = [*path, edge]
-                if key == str(target_dataset).casefold():
-                    return next_path
-                visited.add(key)
-                queue.append((nxt, next_path))
-        return []
+        return build_relationship_edges(getattr(model, "relationships", []) or [], dataset_name)
+
+    def _find_relationship_path(self, model: Any, start_dataset: str, target_dataset: str) -> list[Any]:
+        """Thin wrapper over utils.relationship_graph.find_relationship_path.
+
+        Preserves this method's original contract for its one existing
+        caller (_build_precomputed_column_select, below, which only ever
+        checks ``if not path:``): returns ``[]`` for BOTH "same dataset"
+        and "no path found," since that caller's own docstring/log message
+        ("No active relationship path...") never distinguished the two and
+        changing that here is out of scope. New callers that need the
+        same-dataset-vs-no-path distinction should call
+        utils.relationship_graph.find_relationship_path directly instead
+        of this wrapper — it returns None for "no path," not [].
+        """
+        from semabridge.utils.relationship_graph import find_relationship_path
+
+        path = find_relationship_path(
+            getattr(model, "relationships", []) or [], start_dataset, target_dataset
+        )
+        return path if path is not None else []
 
     def _build_precomputed_column_select(
         self,
@@ -1938,19 +2268,19 @@ class SnowflakeEmitter(BaseEmitter):
             return None
 
         first = path[0]
-        from_clause = f'FROM {self._dataset_source_ref(model, first["next_dataset"])} j1'
-        first_current_col = self._resolve_model_column_name(model, first["current_dataset"], first["current_columns"][0])
-        first_next_col = self._resolve_model_column_name(model, first["next_dataset"], first["next_columns"][0])
+        from_clause = f'FROM {self._dataset_source_ref(model, first.next_dataset)} j1'
+        first_current_col = self._resolve_model_column_name(model, first.current_dataset, first.current_columns[0])
+        first_next_col = self._resolve_model_column_name(model, first.next_dataset, first.next_columns[0])
         where_clause = f'f."{first_current_col}" = j1."{first_next_col}"'
         joins: list[str] = []
 
         for idx, edge in enumerate(path[1:], start=2):
             prev_alias = f"j{idx - 1}"
             alias = f"j{idx}"
-            prev_col = self._resolve_model_column_name(model, edge["current_dataset"], edge["current_columns"][0])
-            next_col = self._resolve_model_column_name(model, edge["next_dataset"], edge["next_columns"][0])
+            prev_col = self._resolve_model_column_name(model, edge.current_dataset, edge.current_columns[0])
+            next_col = self._resolve_model_column_name(model, edge.next_dataset, edge.next_columns[0])
             joins.append(
-                f'JOIN {self._dataset_source_ref(model, edge["next_dataset"])} {alias} '
+                f'JOIN {self._dataset_source_ref(model, edge.next_dataset)} {alias} '
                 f'ON {prev_alias}."{prev_col}" = {alias}."{next_col}"'
             )
 
@@ -2105,14 +2435,33 @@ class SnowflakeEmitter(BaseEmitter):
                     # DAXTranslator().translate() call reads
                     # self.translator.anchor_flag_map) so metrics for this
                     # fact table render flag-column references instead of
-                    # inline MAX_DATE arithmetic. Merged rather than
-                    # replaced — a model with more than one fact table
-                    # accumulates flags across every _create_enriched_view
-                    # call rather than only remembering the last one; shape
-                    # tuples alone (not fact-table-qualified) are the lookup
-                    # key today, matching every other consumer of this map.
+                    # inline MAX_DATE arithmetic.
+                    #
+                    # Nested by fact table (casefold-normalized), NOT a flat
+                    # shape->name map merged across every fact table: a model
+                    # with more than one fact table calls _create_enriched_view
+                    # once per table, and a table whose own MAX_DATE anchor
+                    # can't be established (no date relationship, or the
+                    # anchor-literal fetch fails) never reaches this line at
+                    # all -- it gets NO flag columns projected into its own
+                    # enriched view. A flat, unqualified map would still let
+                    # that table's metrics resolve a flag name some OTHER
+                    # table's enrichment happened to add for the same shape,
+                    # producing a reference to a column that doesn't exist on
+                    # THIS table's enriched view (an invalid-identifier error
+                    # at DDL-deploy time, caught by remediation but an
+                    # avoidable extra pass/drop). Qualifying by fact table
+                    # means a lookup for this table's metrics can only ever
+                    # see flags this table's own enrichment actually created.
+                    # translator.py's two anchor_flag_map consumers do the
+                    # per-metric `self.anchor_flag_map.get(metric.dataset, {})`
+                    # narrowing before passing it further down (the downstream
+                    # shape->name contract in dax_ast_parser.py/
+                    # dax_rule_translator.py is unchanged).
                     if hasattr(self, "translator") and self.translator is not None:
-                        self.translator.anchor_flag_map.update(new_flag_map)
+                        self.translator.anchor_flag_map.setdefault(
+                            str(fact_table).casefold(), {}
+                        ).update(new_flag_map)
 
             # Same principle for the fiscal-period anchor, but checked against
             # the date table's own columns (it queries date_table_ref, not

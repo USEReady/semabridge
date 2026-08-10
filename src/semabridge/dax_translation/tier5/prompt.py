@@ -53,6 +53,29 @@ _DIALECT_QUOTING_RULE = {
     ),
 }
 
+# Added after a real incident: a rolling-N-month/day window translation
+# (e.g. "trailing 12 months", "R12M") produced a date-arithmetic expression
+# (DATEADD/DATE_ADDDAYSTODATE-shaped) compared directly against an INTEGER
+# surrogate-key column (a MONTHINDEX/DATEID-shaped column), which Snowflake
+# rejected and crashed the whole deploy DDL. connectors/type_safety_validator.py
+# now catches this shape at DDL-emission time as a backstop, but the model
+# should never produce it in the first place -- this rule plus the
+# type-annotated schema context above (see _schema_text) are the
+# prevention-side half of that fix. Kept dialect-agnostic and generic (no
+# metric/column name hardcoded) -- any rolling-window pattern, any surrogate
+# key, any dialect.
+_ROLLING_WINDOW_RULE = (
+    "- For rolling/trailing-window patterns (e.g. \"last N months\", \"R12M\", \"trailing period\"): "
+    "check the schema context's column types. If the column you are comparing the window "
+    "boundary against is declared INTEGER/NUMBER (a surrogate key like a month-index or "
+    "date-id column, not DATE/DATETIME), compute the window boundary as an INTEGER "
+    "expression in that same column's domain (e.g. arithmetic on YEAR(...)*12 + MONTH(...)) "
+    "-- never produce a DATE-typed expression (DATEADD, DATE_ADDDAYSTODATE, TO_DATE, "
+    "DATE_TRUNC, CURRENT_DATE, etc.) and then compare or combine it directly with an "
+    "INTEGER/NUMBER column. Only compare a DATE-producing expression against a column "
+    "the schema context marks as DATE or DATETIME."
+)
+
 # Salvaged verbatim from converter/llm_dax_translator.py:239-311 (the
 # CALCULATE-translation-rules section, the DAX-function-mapping rules, and
 # the 9 worked few-shot examples). Dialect-agnostic in intent; the example
@@ -171,10 +194,27 @@ def _load_skill_blocks() -> List[str]:
     return skill_blocks
 
 
-def _schema_text(dataset_col_lookup: Dict[str, set]) -> str:
+def _schema_text(
+    dataset_col_lookup: Dict[str, set],
+    dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None,
+) -> str:
+    """Render the schema-context block for the prompt. When
+    dataset_col_types is available (see TranslationRequest.dataset_col_types
+    / connectors/type_safety_validator.py's build_dataset_col_types), each
+    column is annotated with its declared type -- e.g. "MONTHINDEX
+    (INTEGER)" -- so the model can see which columns are DATE-typed vs.
+    INTEGER/NUMBER-typed instead of guessing from the bare name alone. With
+    no type info at all (dataset_col_types is None/empty, or a given
+    dataset/column isn't in it), a column renders exactly as it always has
+    -- bare name, no annotation -- so this is purely additive."""
     schema_lines = []
     for table, cols in sorted(dataset_col_lookup.items()):
-        schema_lines.append(f"- {table}: {', '.join(sorted(cols)[:80])}")
+        types_for_table = (dataset_col_types or {}).get(table, {})
+        rendered_cols = []
+        for col in sorted(cols)[:80]:
+            col_type = types_for_table.get(col)
+            rendered_cols.append(f"{col} ({col_type})" if col_type else col)
+        schema_lines.append(f"- {table}: {', '.join(rendered_cols)}")
     return "\n".join(schema_lines[:40]) or "- <schema unavailable>"
 
 
@@ -185,7 +225,7 @@ def build_prompt(request: TranslationRequest) -> str:
     dialect = Dialect.coerce(request.dialect)
     target = _DIALECT_TARGET[dialect]
     skill_blocks = _load_skill_blocks()
-    schema_text = _schema_text(request.dataset_col_lookup)
+    schema_text = _schema_text(request.dataset_col_lookup, request.dataset_col_types)
 
     base = (
         f"Dialect: {target}\n"
@@ -199,9 +239,10 @@ def build_prompt(request: TranslationRequest) -> str:
         "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
         "- Do not nest aggregate functions like SUM(MAX(...)).\n"
         "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
+        f"{_ROLLING_WINDOW_RULE}\n"
         f"{_DIALECT_QUOTING_RULE[dialect]}\n"
         "- If a pattern is impossible in a metric expression, return CAST(NULL AS DOUBLE).\n"
-        "Schema context:\n"
+        "Schema context (column types shown in parentheses when known):\n"
         f"{schema_text}\n"
         "DAX:\n"
         f"{request.dax}"
@@ -257,10 +298,13 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
     skill_blocks = _load_skill_blocks()
 
     merged_schema: Dict[str, set] = {}
+    merged_col_types: Dict[str, Dict[str, str]] = {}
     for req in requests:
         for table, cols in (req.dataset_col_lookup or {}).items():
             merged_schema.setdefault(table, set()).update(cols)
-    schema_text = _schema_text(merged_schema)
+        for table, types_for_table in (req.dataset_col_types or {}).items():
+            merged_col_types.setdefault(table, {}).update(types_for_table)
+    schema_text = _schema_text(merged_schema, merged_col_types)
 
     metric_lines = []
     response_shape = {}
@@ -286,9 +330,10 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
         "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
         "- Do not nest aggregate functions like SUM(MAX(...)).\n"
         "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
+        f"{_ROLLING_WINDOW_RULE}\n"
         f"{_DIALECT_QUOTING_RULE[dialect]}\n"
         "- If a pattern is impossible for one metric, use CAST(NULL AS DOUBLE) for just that key.\n"
-        "Schema context:\n"
+        "Schema context (column types shown in parentheses when known):\n"
         f"{schema_text}\n"
         "Metrics (one JSON object per line):\n"
         + "\n".join(metric_lines) + "\n"

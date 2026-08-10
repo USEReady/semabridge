@@ -59,14 +59,21 @@ def test_category3_totalytd_metadata_injection():
 
     # Snowflake semantic-view METRICS clauses do not support window
     # functions (OVER) — TOTALYTD must translate to a scalar CASE WHEN
-    # aggregate bounded by the fact table's MAX_DATE anchor instead.
+    # aggregate instead. With no anchor_flag_map (no live enriched view in
+    # this schema-blind unit-test scope), it's bounded by CURRENT_DATE(),
+    # not a raw MAX_DATE column reference -- MAX_DATE only exists once
+    # _create_enriched_view has actually run for this fact table, and even
+    # then a direct reference to it is rejected by Snowflake's semantic-view
+    # compiler (see dax_ast_parser.py/dax_rule_translator.py comments, and
+    # commit e4c8322) -- CURRENT_DATE() is the safe, always-valid fallback.
     assert result.is_success
     assert result.sql is not None
     assert "OVER (" not in result.sql
     assert "CASE WHEN" in result.sql
     assert "DATE_TRUNC('YEAR'" in result.sql
     assert 'FACT."REVENUE"' in result.sql
-    assert 'FACT."MAX_DATE"' in result.sql
+    assert "CURRENT_DATE()" in result.sql
+    assert "MAX_DATE" not in result.sql
 
 
 def test_category3_totalytd_with_inner_sum_wrapper():

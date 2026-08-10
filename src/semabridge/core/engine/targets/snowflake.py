@@ -85,3 +85,60 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
         SMLSerializer.save(context.sml_model, sml_path)
 
     context.target_artifact_path = str(ddl_path)
+
+
+def _step6b_predict_anchor_flag_columns(self, context: RunContext) -> None:
+    """Predict this model's time-intelligence anchor_flag_map WITHOUT a
+    live Snowflake connection, and upgrade anchor-dependent metrics'
+    `sql_expression` from Stage 1's safe CURRENT_DATE()-anchored fallback
+    to a flag-column reference wherever prediction says a flag column will
+    exist — BEFORE Step 7 persists this model, so a future rollback to
+    this snapshot (see cli/commands/version_history_commands.py's
+    `rollback --sync`, which deploys a persisted `sql_expression`
+    verbatim, with no re-translation) doesn't resurrect the plain
+    fallback rendering forever.
+
+    Snowflake-only: `predict_anchor_flag_map`/`anchor_flag_map` is an
+    inherently Snowflake-specific concept (enriched-view flag columns tied
+    to Snowflake's semantic-view METRICS-clause constraints); every other
+    target is completely unaffected — this is only ever called when
+    `context.target_type == "snowflake"` (see engine.py's `execute()`).
+
+    Uses a throwaway `SnowflakeEmitter` that is never used to `deploy()`
+    — no connection is ever opened, so every eligibility/column check
+    `predict_anchor_flag_map` performs transparently falls back to this
+    model's own declared columns (see
+    `SnowflakeEmitter._resolve_fact_enrichment_date_column`). Never
+    raises: prediction is a best-effort improvement over Stage 1's
+    already-safe fallback, never a correctness requirement — a failure
+    here must not fail an otherwise-successful sync.
+    """
+    if not context.sml_model:
+        return
+    try:
+        from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+        from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
+        from semabridge.converter.dax_translator import DAXTranslator
+
+        emitter = SnowflakeEmitter(context.config.snowflake, behavior=context.behavior)
+        predicted_map = emitter.predict_anchor_flag_map(context.sml_model)
+        if not predicted_map:
+            return
+
+        dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(
+            getattr(context.sml_model, "datasets", []) or []
+        )
+        rerendered = rerender_anchor_dependent_metrics(
+            context.sml_model,
+            predicted_map,
+            dataset_col_lookup,
+            dataset_aliases,
+            label="predicted",
+        )
+        if rerendered:
+            logger.info(
+                "Step 6b: re-rendered %d anchor-dependent metric(s) using a predicted flag map",
+                rerendered,
+            )
+    except Exception as exc:
+        logger.warning("Step 6b anchor-flag-map prediction skipped: %s", exc)

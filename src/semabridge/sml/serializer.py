@@ -420,10 +420,11 @@ class SMLSerializer:
             "is_hidden": metric.is_hidden,
             "sync_enabled": metric.sync_enabled,
             "sync_failure_reason": metric.sync_failure_reason,
+            "advisory_notes": list(metric.advisory_notes or []),
             "depends_on_measures": metric.depends_on_measures,
             "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
         }
-    
+
     @staticmethod
     def _dict_to_metric(data: dict[str, Any]) -> SMLMetric:
         """Convert dictionary to metric."""
@@ -441,6 +442,7 @@ class SMLSerializer:
             is_hidden=data.get("is_hidden", False),
             sync_enabled=data.get("sync_enabled", True),
             sync_failure_reason=data.get("sync_failure_reason"),
+            advisory_notes=list(data.get("advisory_notes") or []),
             depends_on_measures=list(data.get("depends_on_measures") or []),
             synonyms=list(data.get("synonyms") or []),
         )

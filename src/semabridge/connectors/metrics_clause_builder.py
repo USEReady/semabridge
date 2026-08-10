@@ -17,6 +17,10 @@ from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metri
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.utils.null_sentinel import is_null_cast_sql
+from semabridge.connectors.type_safety_validator import (
+    build_dataset_col_types,
+    detect_date_numeric_type_mismatch,
+)
 
 logger = get_logger(__name__)
 
@@ -90,18 +94,13 @@ class MetricsClauseBuilder:
         skipped_metric_names: Set[str] = set()
         expected_metrics: List[Tuple[str, str, str]] = []
 
-        valid_metrics = []
-        for m in model.metrics:
-            if "$" in m.unique_name:
-                self.drop_ledger.record(
-                    "metric", m.unique_name, DropStage.DDL_EMISSION,
-                    "Metric name contains '$', which cannot be represented in a "
-                    "Snowflake semantic-view METRICS clause identifier. Rename the "
-                    "metric (or add a mapping override) to remove the character.",
-                    dataset=getattr(m, "dataset", None),
-                )
-                continue
-            valid_metrics.append(m)
+        # Every metric flows through unconditionally -- identifier_sanitizer's
+        # general character-replacement table (sanitize_alias/sanitize_column)
+        # already turns '$' into 'DOL', the same way it turns '@' into 'AT' and
+        # '#' into 'NUM' for every other metric name. A metric named e.g.
+        # "Sales $" needs no special-case handling here to become SALES_DOL --
+        # dropping it outright used to bypass that path for this one character.
+        valid_metrics = list(model.metrics)
         metric_name_set = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in valid_metrics}
 
         # Build metric name to table alias mapping dynamically as metrics are emitted
@@ -113,7 +112,15 @@ class MetricsClauseBuilder:
             for ds_name, alias in dataset_aliases.items()
             if getattr(dataset_by_name.get(ds_name), "is_fact", False)
         }
-        
+
+        # Declared column types (from the model's own SML/OSI Column
+        # objects) — the type-safety backstop below uses this to catch a
+        # date-producing expression combined with an integer/number column
+        # before it ever reaches Snowflake's DDL. See
+        # type_safety_validator.py's module docstring for the incident this
+        # closes.
+        dataset_col_types = build_dataset_col_types(getattr(model, "datasets", None))
+
         metric_base_totals: Dict[str, int] = {}
         for m in valid_metrics:
             base = self.identifier_sanitizer.sanitize_alias(m.unique_name)
@@ -185,7 +192,8 @@ class MetricsClauseBuilder:
                 dataset_col_lookup, alias_by_raw, metric_name_set,
                 all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
                 fact_aliases=fact_aliases,
-                metric_to_alias=metric_to_alias
+                metric_to_alias=metric_to_alias,
+                dataset_col_types=dataset_col_types,
             )
 
             if expr:
@@ -204,6 +212,21 @@ class MetricsClauseBuilder:
                     dataset=getattr(metric, "dataset", None), detail=expr[:200] if expr else None,
                 )
                 continue
+
+            if expr:
+                type_mismatch_reason = detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
+                if type_mismatch_reason:
+                    logger.warning(
+                        "Skipping metric '%s': %s",
+                        metric.unique_name, type_mismatch_reason,
+                    )
+                    skipped_metric_names.add(metric.unique_name)
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        type_mismatch_reason,
+                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
+                    )
+                    continue
 
             if expr:
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
@@ -536,7 +559,8 @@ class MetricsClauseBuilder:
         model_name: str,
         is_osi: bool,
         fact_aliases: Optional[Set[str]] = None,
-        metric_to_alias: Optional[Dict[str, str]] = None
+        metric_to_alias: Optional[Dict[str, str]] = None,
+        dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> Optional[str]:
         # A by-design-excluded metric (constant expression / string-producing
         # root, classified earlier in the pipeline — see dax_ast_parser.py's
@@ -811,7 +835,8 @@ class MetricsClauseBuilder:
                 all_physical_col_names=all_physical_col_names,
                 emittable_metric_name_set=emittable_metric_name_set,
                 skipped_metric_names=skipped_metric_names,
-                metric_to_alias=metric_to_alias
+                metric_to_alias=metric_to_alias,
+                dataset_col_types=dataset_col_types,
             )
             if translated:
                 # ✅ NEW: Qualify cross-table references in translated SQL

@@ -859,10 +859,22 @@ class SemanticDDLSanitizer:
                 continue
 
             line_norm = line.upper().replace('"', "")
-            contains_invalid = (
-                invalid_norm in line_norm
-                or bool(invalid_token_pattern.search(line_norm))
-            )
+            # Match on the word-bounded token pattern only -- a plain
+            # substring check (``invalid_norm in line_norm``) used to be
+            # OR'd in here as well, but for a short invalid identifier
+            # (e.g. a bare "_") that matches almost every line in the
+            # clause, since most identifiers contain an underscore
+            # somewhere (TOTAL_UNITS, SALESFACT_DATE_DATE_DATE, ...).
+            # invalid_token_pattern already requires non-identifier
+            # characters on both sides, so it correctly isolates a
+            # standalone bad token without also matching underscores (or
+            # any other invalid_norm substring) embedded inside a longer,
+            # perfectly valid identifier. Single-quoted string literals are
+            # scrubbed first so a SQL literal that happens to contain the
+            # token (e.g. a LIKE '_%' wildcard) is never mistaken for an
+            # identifier reference either.
+            line_norm_for_match = re.sub(r"'(?:''|[^'])*'", "''", line_norm)
+            contains_invalid = bool(invalid_token_pattern.search(line_norm_for_match))
 
             if in_tables and contains_invalid:
                 pk_match = table_pk_pattern.match(line)
@@ -922,7 +934,52 @@ class SemanticDDLSanitizer:
             remediated_lines.append(line)
 
         self._normalize_all_clause_commas(remediated_lines)
+        self._strip_empty_optional_clauses(remediated_lines)
         return "\n".join(remediated_lines), changed, nulled_metric_names
+
+    @staticmethod
+    def _strip_empty_optional_clauses(
+        all_lines: list[str],
+        clause_headers: Tuple[str, ...] = ("RELATIONSHIPS (", "DIMENSIONS ("),
+    ) -> None:
+        """Remove a clause's header and closing paren entirely if remediation
+        left it with zero real content lines, mutating ``all_lines`` in place.
+
+        Dropping individual invalid-identifier lines above can leave a clause
+        with nothing between its header and closing paren (e.g.
+        ``RELATIONSHIPS (\\n)``), which is syntactically invalid Snowflake
+        DDL. RELATIONSHIPS and DIMENSIONS are both optional clauses in a
+        CREATE SEMANTIC VIEW statement, so when remediation empties one out
+        the whole clause is removed rather than left dangling — this is
+        defense-in-depth for any invalid-identifier scenario that empties a
+        clause, not just the one that motivated it.
+        """
+        for clause_header in clause_headers:
+            idx = 0
+            while idx < len(all_lines):
+                if all_lines[idx].strip().upper() != clause_header:
+                    idx += 1
+                    continue
+                start = idx + 1
+                end = start
+                depth = 1  # one level inside "CLAUSE_HEADER ("
+                while end < len(all_lines):
+                    line_stripped = all_lines[end].strip()
+                    depth += line_stripped.count('(') - line_stripped.count(')')
+                    if depth <= 0:
+                        break
+                    end += 1
+                if end >= len(all_lines):
+                    # Unterminated clause — leave it alone rather than guess.
+                    idx += 1
+                    continue
+                has_content = any(all_lines[j].strip() for j in range(start, end))
+                if has_content:
+                    idx = end + 1
+                else:
+                    del all_lines[idx:end + 1]
+                    # Don't advance idx — re-scan the same position in case
+                    # deletion moved another occurrence of this header there.
 
     def _normalize_all_clause_commas(self, all_lines: list[str]) -> None:
         """Normalize trailing commas inside semantic-view clause blocks.
