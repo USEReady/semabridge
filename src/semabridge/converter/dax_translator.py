@@ -284,6 +284,7 @@ class DAXTranslator:
                 measure_sql_map=resolved_measures,
                 known_measure_names=self._all_measure_names(metrics_context),
                 anchor_flag_map=anchor_flag_map,
+                primary_table_name=dataset_name,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -303,6 +304,7 @@ class DAXTranslator:
                 measure_sql_map=resolved_measures,
                 known_measure_names=self._all_measure_names(metrics_context),
                 anchor_flag_map=anchor_flag_map,
+                primary_table_name=dataset_name,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -334,6 +336,7 @@ class DAXTranslator:
                 measure_sql_map=resolved_measures,
                 known_measure_names=self._all_measure_names(metrics_context),
                 anchor_flag_map=anchor_flag_map,
+                primary_table_name=dataset_name,
             )
             if general_ast_sql:
                 return DAXTranslationResult(general_ast_sql, 4, clean_dax)
@@ -410,6 +413,7 @@ class DAXTranslator:
                 measure_sql_map=resolved_measures,
                 known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
+                primary_table_name=dataset_name,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -428,6 +432,7 @@ class DAXTranslator:
                 measure_sql_map=resolved_measures,
                 known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
+                primary_table_name=dataset_name,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)

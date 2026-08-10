@@ -44,11 +44,23 @@ def _ast_cache_key(
     measure_sql_map: Optional[Dict[str, str]],
     known_measure_names: Optional[Any] = None,
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
+    primary_table_name: Optional[str] = None,
+    date_table_names: Optional[Any] = None,
 ) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
     names = tuple(sorted(known_measure_names or ()))
     flags = tuple(sorted((anchor_flag_map or {}).items()))
-    return (dax or "", table_alias or "", date_alias or "", items, names, flags)
+    date_tables = tuple(sorted(str(n).casefold() for n in (date_table_names or ())))
+    return (
+        dax or "",
+        table_alias or "",
+        date_alias or "",
+        items,
+        names,
+        flags,
+        primary_table_name or "",
+        date_tables,
+    )
 from semabridge.utils.naming import sanitize_column
 
 logger = get_logger(__name__)
@@ -601,6 +613,13 @@ class DaxSqlRenderer:
     # already-aggregated expression in a second outer aggregate.
     _RENDERED_AGG_PATTERN = re.compile(r"^(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(.+?)\s*\)$", re.IGNORECASE)
 
+    # DAX names conventionally used for the date/calendar dimension across
+    # this codebase (see dax_translator.py's "'Calendar'[Date]" dimension
+    # reference and dax_engine.py's date_alias="calendar" default) — a
+    # ColumnRefNode naming one of these is resolved to date_alias rather
+    # than the primary table.
+    _DEFAULT_DATE_TABLE_NAMES = frozenset({"date", "calendar"})
+
     def __init__(
         self,
         table_alias: str = "T",
@@ -608,11 +627,24 @@ class DaxSqlRenderer:
         measure_sql_map: Optional[Dict[str, str]] = None,
         known_measure_names: Optional[Any] = None,
         anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
+        primary_table_name: Optional[str] = None,
+        date_table_names: Optional[Any] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
         self.measure_sql_map = measure_sql_map or {}
+        # The DAX table name (e.g. "KPI") that table_alias physically
+        # represents for this metric, if the caller knows it. None means
+        # the caller hasn't opted into table-aware column resolution yet —
+        # _resolve_table_alias then preserves the historical
+        # single-table-assumed behavior exactly, so callers that don't pass
+        # this are unaffected.
+        self.primary_table_name = primary_table_name
+        self._date_table_names_cf = {
+            str(n).strip().casefold()
+            for n in (date_table_names or self._DEFAULT_DATE_TABLE_NAMES)
+        }
         # Shape tuple (see converter/time_intelligence_shapes.py, e.g.
         # ("YTD",), ("YTD", "SPLY_YEAR")) -> precomputed boolean flag column
         # name on the enriched view (e.g. "IS_YTD"). When a shape has an
@@ -691,7 +723,39 @@ class DaxSqlRenderer:
 
     def _render_column_ref(self, node: ColumnRefNode) -> str:
         col = sanitize_column(node.column)
-        return f'{self.table_alias}."{col}"'
+        alias = self._resolve_table_alias(node.table)
+        return f'{alias}."{col}"'
+
+    def _resolve_table_alias(self, table_name: str) -> str:
+        """Map a DAX 'TableName' to the SQL alias that owns its columns.
+
+        Bug this closes: a bare 'TableName'[Column] reference used to
+        always resolve to self.table_alias (the metric's own primary
+        table) no matter what table it actually named — e.g. a CALCULATE
+        filter on 'Date'[Running Year] inside a KPI-table measure rendered
+        as kpi."RUNNING_YEAR" instead of the date table's column, silently
+        filtering on the wrong table. Snowflake then either errors on the
+        nonexistent column or (worse) returns wrong numbers if a
+        same-named column happens to exist.
+        """
+        name_cf = str(table_name or "").strip().strip("'").casefold()
+        if not self.primary_table_name:
+            # Caller hasn't told us which DAX table this metric belongs to
+            # (not yet opted into table-aware resolution, or passed an
+            # empty/unknown name) — preserve the historical single-table
+            # assumption rather than fail closed on missing context.
+            return self.table_alias
+        if name_cf == self.primary_table_name.strip().strip("'").casefold():
+            return self.table_alias
+        if name_cf in self._date_table_names_cf:
+            return self.date_alias
+        raise self.DaxRenderError(
+            f"Column reference to table '{table_name}' does not match this "
+            f"metric's own table ('{self.primary_table_name}') or the "
+            "recognized date dimension — refusing to guess its SQL alias "
+            "rather than emit a cross-table column reference that may "
+            "silently compute the wrong thing"
+        )
 
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
         name_cf = node.name.casefold()
@@ -1395,6 +1459,8 @@ def try_ast_translate(
     measure_sql_map: Optional[Dict[str, str]] = None,
     known_measure_names: Optional[Any] = None,
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
+    primary_table_name: Optional[str] = None,
+    date_table_names: Optional[Any] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1417,11 +1483,34 @@ def try_ast_translate(
             preserve the historical inline-MAX_DATE rendering exactly —
             required for the schema-blind dry-run/preview path, which has
             no live enriched view to reference flags on.
+        primary_table_name: the DAX table name (e.g. "KPI") that
+            table_alias represents for this metric. Enables table-aware
+            resolution of 'TableName'[Column] references inside CALCULATE/
+            FILTER predicates: a column named on a table that is neither
+            this one nor date_table_names now fails closed (DaxRenderError,
+            caught by renderer.render -> None) instead of silently
+            qualifying it with table_alias — the bug where a filter like
+            'Date'[Running Year]=1 on a KPI-table measure rendered as
+            kpi."RUNNING_YEAR" (wrong table) rather than the date table's
+            own column. Omit to preserve the historical behavior for
+            callers not yet passing it.
+        date_table_names: DAX names recognized as the date/calendar
+            dimension for alias resolution (default: {"date", "calendar"}).
+            Only consulted when primary_table_name is provided.
 
     Returns:
         SQL string on success, None on failure.
     """
-    cache_key = _ast_cache_key(dax, table_alias, date_alias, measure_sql_map, known_measure_names, anchor_flag_map)
+    cache_key = _ast_cache_key(
+        dax,
+        table_alias,
+        date_alias,
+        measure_sql_map,
+        known_measure_names,
+        anchor_flag_map,
+        primary_table_name,
+        date_table_names,
+    )
     if cache_key in _AST_CACHE:
         return _AST_CACHE[cache_key]
 
@@ -1437,6 +1526,8 @@ def try_ast_translate(
         measure_sql_map=measure_sql_map or {},
         known_measure_names=known_measure_names,
         anchor_flag_map=anchor_flag_map,
+        primary_table_name=primary_table_name,
+        date_table_names=date_table_names,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:
