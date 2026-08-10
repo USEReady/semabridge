@@ -45,6 +45,7 @@ from semabridge.repository.orm.schedule_models import (
 from semabridge.repository.orm.mapping_models import (
     ModelMappingRow,
     SynonymOverride,
+    PrecomputeAggregationOverride,
 )
 from semabridge.repository.orm.infra_models import (
     Credential,
@@ -82,6 +83,7 @@ __all__ = [
     # Field mappings
     "ModelMappingRow",
     "SynonymOverride",
+    "PrecomputeAggregationOverride",
     # Infrastructure
     "Credential",
     "CommandLog",

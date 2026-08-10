@@ -1,9 +1,9 @@
-project_name: 1146-test
+project_name: 1721-test
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1146-test/f6e6750af72f4a1889e0c4ac4fd1639a_Competitive
+  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1721-test/6924f3433e0249bba815a63143915c6d_Competitive
     Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1146-test/f6e6750af72f4a1889e0c4ac4fd1639a_Competitive
+  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1721-test/6924f3433e0249bba815a63143915c6d_Competitive
     Marketing Analysis.pbix
 targets:
 - type: snowflake
@@ -219,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-1146-test
-display_name: 1146-test
+project_id: proj-1721-test
+display_name: 1721-test

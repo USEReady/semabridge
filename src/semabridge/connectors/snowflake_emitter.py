@@ -2248,6 +2248,204 @@ class SnowflakeEmitter(BaseEmitter):
         )
         return path if path is not None else []
 
+    def _resolve_confirmed_pk_columns(self, model: Any, dataset_name: str) -> Optional[set[str]]:
+        """The physical PK column set for *dataset_name*, or None if no PK
+        source the model actually declares (explicit ``is_key`` columns, or
+        another relationship's inbound ``to_columns``) resolves for it.
+
+        Deliberately excludes PrimaryKeyResolver's "heuristic" (naming
+        pattern) and "fallback" (first-column-guess) sources: this check
+        gates whether a cross-table lookup is safe to rewrite as a plain
+        LEFT JOIN in _build_precomputed_column_select below, and a wrong
+        guess there would silently fan out fact rows (duplicate rows,
+        inflated SUM/COUNT metrics) -- worse than the correlated-subquery
+        bug it would replace. Only a genuinely declared key clears that bar.
+        """
+        dataset = self._get_dataset_by_name(model, dataset_name)
+        if dataset is None:
+            return None
+        from semabridge.core.validation.primary_key_resolver import PrimaryKeyResolver
+
+        resolver = PrimaryKeyResolver(self._id, pk_mode="permissive")
+        resolution = resolver.resolve_single(dataset, getattr(model, "relationships", []) or [])
+        if resolution.source not in ("explicit", "relationship"):
+            return None
+        return {c.upper() for c in resolution.pk_columns}
+
+    def _edge_is_pk_safe(self, model: Any, edge: Any) -> bool:
+        """True if *edge* lands on its next_dataset via that dataset's own
+        confirmed primary key -- i.e. at most one next_dataset row can ever
+        match, so a LEFT JOIN on this hop can't fan out the fact grain."""
+        pk_cols = self._resolve_confirmed_pk_columns(model, edge.next_dataset)
+        if not pk_cols:
+            return False
+        next_cols = {
+            self._resolve_model_column_name(model, edge.next_dataset, c).upper()
+            for c in edge.next_columns
+        }
+        return next_cols == pk_cols
+
+    def _make_join_alias(self, dataset_name: str, used_aliases: set[str]) -> str:
+        base = "jl_" + re.sub(r"[^A-Za-z0-9]+", "", str(dataset_name)).lower()
+        if base == "jl_":
+            base = "jl_ds"
+        alias = base
+        suffix = 2
+        while alias in used_aliases:
+            alias = f"{base}{suffix}"
+            suffix += 1
+        return alias
+
+    def _register_join_path(
+        self,
+        model: Any,
+        path: list[Any],
+        join_state: Dict[str, Any],
+    ) -> Optional[str]:
+        """Ensure every hop in *path* has a LEFT JOIN registered in
+        join_state (shared across every precomputed column for one
+        enriched-view build), reusing an already-joined dataset's alias
+        when an earlier column's path already reached it via the exact
+        same key -- e.g. PRODUCT_ISVANARSDEL and MANUFACTURER_MFGISVANARSDEL
+        both hop through Product; Product should be joined once, not twice.
+
+        Returns the final hop's alias (the caller selects its column off
+        this), or None if some dataset in the path is already joined via a
+        *different* key than this path needs -- an ambiguity this refuses
+        to silently resolve by picking one; the caller falls back to the
+        subquery mechanism for that column instead.
+        """
+        aliases: Dict[str, str] = join_state.setdefault("aliases", {})
+        edge_keys: Dict[str, tuple] = join_state.setdefault("edge_keys", {})
+        clauses: list[str] = join_state.setdefault("clauses", [])
+        used_aliases: set[str] = join_state.setdefault("used_aliases", set())
+
+        current_alias = "f"
+        for edge in path:
+            current_col = self._resolve_model_column_name(model, edge.current_dataset, edge.current_columns[0])
+            next_col = self._resolve_model_column_name(model, edge.next_dataset, edge.next_columns[0])
+            next_key = str(edge.next_dataset).casefold()
+            edge_key = (current_alias, current_col, next_key, next_col)
+
+            if next_key in aliases:
+                if edge_keys.get(next_key) != edge_key:
+                    return None
+                current_alias = aliases[next_key]
+                continue
+
+            alias = self._make_join_alias(edge.next_dataset, used_aliases)
+            aliases[next_key] = alias
+            edge_keys[next_key] = edge_key
+            used_aliases.add(alias)
+            clauses.append(
+                f'LEFT JOIN {self._dataset_source_ref(model, edge.next_dataset)} {alias} '
+                f'ON {current_alias}."{current_col}" = {alias}."{next_col}"'
+            )
+            current_alias = alias
+
+        return current_alias
+
+    # Aggregate functions usable to collapse a non-unique cross-table lookup
+    # down to one value per join key before it's ever joined to the fact
+    # table. MODE is a plain Snowflake aggregate ("most frequent value, NULLs
+    # ignored") -- not a window function or a subquery -- so it needs no
+    # special-casing versus AVG/SUM/MIN/MAX beyond the function name itself;
+    # that's what makes this general across numeric and non-numeric columns.
+    _NUMERIC_PRECOMPUTE_AGGREGATIONS = ("AVG", "SUM", "MIN", "MAX")
+    _PRECOMPUTE_AGGREGATION_STRATEGIES = _NUMERIC_PRECOMPUTE_AGGREGATIONS + ("MODE",)
+
+    def _resolve_precompute_aggregation_strategy(
+        self, model: Any, source_dataset: str, source_column: str
+    ) -> str:
+        """Pick the aggregate function used to collapse a non-unique
+        cross-table lookup to one value per join key.
+
+        Data-type driven by default (AVG for numeric columns, MODE for
+        everything else) -- overridable per (dataset, column) via a
+        project's precompute_aggregation_overrides, resolved at conversion
+        time onto SMLColumn.precompute_aggregation (see
+        utils/precompute_aggregation.py and tmsl_to_sml.py), the same
+        override mechanism synonym_overrides uses. An unrecognized override
+        value is logged and ignored rather than trusted blindly.
+        """
+        dataset = self._get_dataset_by_name(model, source_dataset)
+        column = dataset.get_column(source_column) if dataset is not None else None
+
+        override = str(getattr(column, "precompute_aggregation", "") or "").strip().upper()
+        if override in self._PRECOMPUTE_AGGREGATION_STRATEGIES:
+            return override
+        if override:
+            logger.warning(
+                "Unrecognized precompute_aggregation override %r for %s.%s; using the data-type default instead",
+                override, source_dataset, source_column,
+            )
+
+        data_type = getattr(column, "data_type", None)
+        type_name = str(getattr(data_type, "value", data_type) or "").upper()
+        return "AVG" if type_name in ("INTEGER", "DECIMAL", "FLOAT") else "MODE"
+
+    def _build_precompute_aggregation_join(
+        self,
+        model: Any,
+        path: list[Any],
+        source_dataset: str,
+        source_column: str,
+        precomputed_column: str,
+        strategy: str,
+        join_state: Dict[str, Any],
+    ) -> str:
+        """Collapse a non-unique cross-table lookup to one value per join
+        key via a pre-aggregated derived-table LEFT JOIN, instead of a
+        correlated subquery.
+
+        Snowflake accepts an ordinary (uncorrelated) derived table in a
+        view's FROM/JOIN clause -- it only rejects a correlated scalar
+        subquery used as a SELECT-list column expression, which is what
+        this replaces. GROUP BY collapses the related rows to one per key
+        *before* the join, so the join itself can never fan out the fact
+        grain -- same "no fan-out" property _register_join_path's PK-safe
+        path has, just reached via aggregation instead of a real key.
+
+        Reuses the same join-path-walking shape as the legacy subquery
+        fallback below (from_clause + chained joins for multi-hop paths)
+        so it generalizes to any relationship path, not just a one-hop one.
+        """
+        first = path[0]
+        first_current_col = self._resolve_model_column_name(model, first.current_dataset, first.current_columns[0])
+        first_next_col = self._resolve_model_column_name(model, first.next_dataset, first.next_columns[0])
+
+        from_clause = f'FROM {self._dataset_source_ref(model, first.next_dataset)} j1'
+        joins: list[str] = []
+        for idx, edge in enumerate(path[1:], start=2):
+            prev_alias = f"j{idx - 1}"
+            alias = f"j{idx}"
+            prev_col = self._resolve_model_column_name(model, edge.current_dataset, edge.current_columns[0])
+            next_col = self._resolve_model_column_name(model, edge.next_dataset, edge.next_columns[0])
+            joins.append(
+                f'JOIN {self._dataset_source_ref(model, edge.next_dataset)} {alias} '
+                f'ON {prev_alias}."{prev_col}" = {alias}."{next_col}"'
+            )
+        source_alias = f"j{len(path)}"
+        source_col = self._resolve_model_column_name(model, source_dataset, source_column)
+        joins_sql = f' {" ".join(joins)}' if joins else ""
+
+        used_aliases: set[str] = join_state.setdefault("used_aliases", set())
+        alias = self._make_join_alias(f"{source_dataset}_agg", used_aliases)
+        used_aliases.add(alias)
+
+        derived_sql = (
+            f'(\n'
+            f'          SELECT j1."{first_next_col}" AS "{first_next_col}",\n'
+            f'                 {strategy}({source_alias}."{source_col}") AS "{precomputed_column}"\n'
+            f'          {from_clause}{joins_sql}\n'
+            f'          GROUP BY j1."{first_next_col}"\n'
+            f'        )'
+        )
+        join_state.setdefault("clauses", []).append(
+            f'LEFT JOIN {derived_sql} {alias} ON f."{first_current_col}" = {alias}."{first_next_col}"'
+        )
+        return f'\n        , {alias}."{precomputed_column}" AS "{precomputed_column}"'
+
     def _build_precomputed_column_select(
         self,
         model: Any,
@@ -2255,6 +2453,7 @@ class SnowflakeEmitter(BaseEmitter):
         source_dataset: str,
         source_column: str,
         precomputed_column: str,
+        join_state: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         path = self._find_relationship_path(model, target_dataset, source_dataset)
         if not path:
@@ -2267,6 +2466,49 @@ class SnowflakeEmitter(BaseEmitter):
             )
             return None
 
+        # Prefer a real LEFT JOIN over a correlated subquery whenever every
+        # hop in the path lands on a confirmed primary key: Snowflake
+        # rejects a correlated scalar subquery embedded in a CREATE VIEW
+        # column expression once the view is *queried* by Cortex Analyst
+        # ("Unsupported subquery type... cannot be evaluated inside VIEW
+        # object") even though CREATE VIEW itself succeeds -- a plain LEFT
+        # JOIN never hits that error. Only safe when every hop's target key
+        # is genuinely unique, hence the _edge_is_pk_safe gate; an
+        # unconfirmed key could silently fan out fact rows, which would be
+        # worse than the subquery bug it replaces. See the
+        # semabridge_precomputed_column_subquery_view_bug memory note.
+        if join_state is not None and all(self._edge_is_pk_safe(model, edge) for edge in path):
+            source_alias = self._register_join_path(model, path, join_state)
+            if source_alias is not None:
+                source_col = self._resolve_model_column_name(model, source_dataset, source_column)
+                return f'\n        , {source_alias}."{source_col}" AS "{precomputed_column}"'
+            # _register_join_path returns None only on an alias conflict (this
+            # dataset already joined via a different key for another
+            # precomputed column) -- fall through to the subquery below
+            # rather than risk emitting an incorrect join.
+
+        # Non-unique key (e.g. SENTIMENT_SCORE, where SalesFact has no
+        # relationship path to Sentiment via a column that's actually
+        # unique on the Sentiment side -- Sentiment's real PK is DATEID,
+        # but the path routes through COL_DATE/ZIP/MANUFACTURERID, none of
+        # which is unique per Sentiment row): a bare LEFT JOIN there would
+        # duplicate fact rows. Collapse it to one value per key with a
+        # pre-aggregated derived-table JOIN instead -- still not a
+        # correlated subquery, so it doesn't hit the same Snowflake error
+        # the unsafe case is trying to avoid in the first place. Only when
+        # join_state isn't available (no known caller today, kept for
+        # backward compatibility) does this fall through to the legacy
+        # correlated-subquery-with-LIMIT-1 shape below.
+        if join_state is not None:
+            strategy = self._resolve_precompute_aggregation_strategy(model, source_dataset, source_column)
+            return self._build_precompute_aggregation_join(
+                model, path, source_dataset, source_column, precomputed_column, strategy, join_state
+            )
+
+        # Legacy fallback: correlated scalar subquery. Still hits
+        # Snowflake's "Unsupported subquery type... inside VIEW object"
+        # error at query time -- kept only for a caller that doesn't pass
+        # join_state, not as an intentional behavior for the unsafe case.
         first = path[0]
         from_clause = f'FROM {self._dataset_source_ref(model, first.next_dataset)} j1'
         first_current_col = self._resolve_model_column_name(model, first.current_dataset, first.current_columns[0])
@@ -2346,6 +2588,13 @@ class SnowflakeEmitter(BaseEmitter):
 
         select_parts = [f"SELECT f.*"]
 
+        # Shared across every precomputed column below so that columns
+        # reached via an overlapping path (e.g. PRODUCT_ISVANARSDEL and
+        # MANUFACTURER_MFGISVANARSDEL both hop through Product) register
+        # one LEFT JOIN per table, not one per column. See
+        # _register_join_path for the reuse/conflict rules.
+        join_state: Dict[str, Any] = {}
+
         # Add generic cross-dataset precomputed columns into the fact enriched view.
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
         _ = suggestions
@@ -2358,6 +2607,7 @@ class SnowflakeEmitter(BaseEmitter):
                 source_dataset=detail["source_dataset"],
                 source_column=detail["source_column"],
                 precomputed_column=detail["precomputed_column"],
+                join_state=join_state,
             )
             if projection:
                 select_parts.append(projection)
@@ -2489,7 +2739,8 @@ class SnowflakeEmitter(BaseEmitter):
                     projected_cols.add("_CURRENT_FISCAL_PERIOD")
         
         select_parts.append(f"FROM {fact_source_ref} f")
-        
+        select_parts.extend(join_state.get("clauses", []))
+
         create_view_sql = "\n".join(select_parts)
         full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} AS\n{create_view_sql}"
         

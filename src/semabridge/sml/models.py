@@ -155,6 +155,18 @@ class SMLColumn(BaseModel):
     is_enum: bool = Field(default=False, description="True when the column has a small, exhaustive set of values")
     cortex_search_service: Optional[str] = Field(default=None, description="Snowflake Cortex Search Service name linked to this text dimension")
     sample_values: list[str] = Field(default_factory=list, description="Representative sample values for NLP context")
+    precompute_aggregation: Optional[str] = Field(
+        default=None,
+        description=(
+            "Project-level override for the aggregate function used to collapse this "
+            "column to one value per join key when it's pulled cross-table into an "
+            "enriched view via a non-unique relationship (AVG/SUM/MIN/MAX/MODE). "
+            "None means use the data-type-driven default. Resolved from "
+            "precompute_aggregation_overrides at conversion time -- see "
+            "utils/precompute_aggregation.py -- the same override mechanism "
+            "synonym_sources above uses for synonyms."
+        ),
+    )
     
     def model_post_init(self, __context: Any) -> None:
         """Set label from unique_name if not provided."""

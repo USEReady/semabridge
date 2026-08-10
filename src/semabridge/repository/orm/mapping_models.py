@@ -81,3 +81,32 @@ class SynonymOverride(Base):
     def synonyms(self, values: List[str]) -> None:
         cleaned = [str(value).strip() for value in (values or []) if str(value or "").strip()]
         self.synonyms_json = json.dumps(cleaned, ensure_ascii=False)
+
+
+class PrecomputeAggregationOverride(Base):
+    """Project-scoped override for the aggregate function (AVG/SUM/MIN/MAX/
+    MODE) used to collapse a cross-table precomputed column to one value per
+    join key, when the model's own relationship metadata can't confirm the
+    lookup is on a unique key. Same shape as SynonymOverride, keyed on the
+    column being looked up rather than the fact table it's precomputed into
+    (one column's "how to summarize this when joined non-uniquely" choice
+    is a property of the column, not of any one target fact table)."""
+
+    __tablename__ = "precompute_aggregation_overrides"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    column_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    aggregation_strategy: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=True
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        _UTC_DT, server_default=func.now(), onupdate=func.now(), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("project_id", "model_name", "table_name", "column_name"),
+    )

@@ -209,6 +209,37 @@ class TestColumnParsing:
         assert ds.get_column("Amount").data_type == DataType.DECIMAL
         assert ds.get_column("Payload").data_type == DataType.VARIANT
 
+    def test_precompute_aggregation_override_is_resolved_onto_the_column(self, transformer):
+        """A precompute_aggregation_overrides entry for a (model, table,
+        column) must land on that SMLColumn's precompute_aggregation field
+        -- the same injection-for-testing convention synonym_overrides
+        already uses on transform(), so SnowflakeEmitter can later read it
+        without any DB access of its own."""
+        tmsl = {
+            "model": {
+                "name": "Test",
+                "tables": [{
+                    "name": "ScoreDim",
+                    "columns": [
+                        {"name": "Score", "dataType": "double"},
+                        {"name": "Region", "dataType": "string"},
+                    ]
+                }]
+            }
+        }
+
+        sml = transformer.transform(
+            tmsl, "ws-1", "ds-1",
+            precompute_aggregation_overrides={("test", "scoredim", "score"): "MAX"},
+        )
+        ds = sml.get_dataset("ScoreDim")
+
+        assert ds.get_column("Score").precompute_aggregation == "MAX"
+        # A column with no matching override entry stays None -- never a
+        # guessed default baked in at conversion time; the emitter's own
+        # data-type-driven default handles that later.
+        assert ds.get_column("Region").precompute_aggregation is None
+
 
 class TestMeasureParsing:
     """Tests for measure parsing and DAX translation."""

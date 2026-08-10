@@ -32,6 +32,10 @@ from semabridge.utils.synonyms import (
     lookup_synonym_override,
     merge_synonyms,
 )
+from semabridge.utils.precompute_aggregation import (
+    load_precompute_aggregation_overrides,
+    lookup_precompute_aggregation_override,
+)
 from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
@@ -55,6 +59,7 @@ class TMSLTransformer:
     def __init__(self, drop_ledger: Optional[DropLedger] = None):
         self.dax_translator = DAXTranslator()
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
+        self._precompute_aggregation_overrides: Dict[tuple[str, str, str], str] = {}
         self._synonym_model_names: List[str] = []
         self._current_table_name = ""
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
@@ -112,6 +117,7 @@ class TMSLTransformer:
         behavior: Optional[ConnectorBehavior] = None,
         project_id: Optional[str] = None,
         synonym_overrides: Optional[Dict[tuple[str, str, str], List[str]]] = None,
+        precompute_aggregation_overrides: Optional[Dict[tuple[str, str, str], str]] = None,
     ) -> SMLModel:
         """
         Transform TMSL dictionary to SML object.
@@ -132,6 +138,11 @@ class TMSLTransformer:
                 synonym_overrides
                 if isinstance(synonym_overrides, dict)
                 else load_synonym_overrides(project_id or dataset_id)
+            )
+            self._precompute_aggregation_overrides = (
+                precompute_aggregation_overrides
+                if isinstance(precompute_aggregation_overrides, dict)
+                else load_precompute_aggregation_overrides(project_id or dataset_id)
             )
             self._synonym_model_names = [
                 str(value).strip()
@@ -791,6 +802,12 @@ class TMSLTransformer:
                 ),
                 user_defined=user_synonyms,
                 auto_generated=self._auto_synonyms(col_name),
+            ),
+            precompute_aggregation=lookup_precompute_aggregation_override(
+                self._precompute_aggregation_overrides,
+                self._synonym_model_names,
+                self._current_table_name,
+                col_name,
             ),
         )
 
