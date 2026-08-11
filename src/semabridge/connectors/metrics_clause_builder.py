@@ -21,6 +21,11 @@ from semabridge.connectors.type_safety_validator import (
     build_dataset_col_types,
     detect_date_numeric_type_mismatch,
 )
+from semabridge.converter.time_intelligence_shapes import (
+    ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE,
+    enrichment_flag_column_if_referenced,
+    metrics_with_time_intelligence_shapes,
+)
 
 logger = get_logger(__name__)
 
@@ -121,6 +126,14 @@ class MetricsClauseBuilder:
         # closes.
         dataset_col_types = build_dataset_col_types(getattr(model, "datasets", None))
 
+        # Resolved ONCE for the whole model (not per metric -- see
+        # time_intelligence_shapes.py's own note on why) so the DDL-
+        # emission schema-validation failure handler below can recognize
+        # "this unknown column is exactly the enrichment flag column this
+        # metric's own resolved shape predicts" instead of hard-failing
+        # every enrichment-created column dry-run can't see.
+        metric_shapes = metrics_with_time_intelligence_shapes(valid_metrics)
+
         metric_base_totals: Dict[str, int] = {}
         for m in valid_metrics:
             base = self.identifier_sanitizer.sanitize_alias(m.unique_name)
@@ -194,6 +207,7 @@ class MetricsClauseBuilder:
                 fact_aliases=fact_aliases,
                 metric_to_alias=metric_to_alias,
                 dataset_col_types=dataset_col_types,
+                metric_shapes=metric_shapes,
             )
 
             if expr:
@@ -561,6 +575,7 @@ class MetricsClauseBuilder:
         fact_aliases: Optional[Set[str]] = None,
         metric_to_alias: Optional[Dict[str, str]] = None,
         dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None,
+        metric_shapes: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         # A by-design-excluded metric (constant expression / string-producing
         # root, classified earlier in the pipeline — see dax_ast_parser.py's
@@ -776,6 +791,47 @@ class MetricsClauseBuilder:
                 metric_names=metric_name_set,
             )
             if not is_valid:
+                # Before treating this as a genuine failure: is the
+                # "unknown" column actually the enrichment flag column
+                # this metric's own resolved time-intelligence shape
+                # predicts (e.g. IS_YTD)? dry-run's dataset_col_lookup is
+                # always built from the model's declared (pre-enrichment)
+                # columns only -- it can never see a column
+                # _create_enriched_view only creates at real-deploy time,
+                # so a translation this codebase's own enrichment
+                # mechanism already knows how to satisfy must not be
+                # reported as a hard DDL-emission failure. See
+                # time_intelligence_shapes.py's enrichment_flag_column_
+                # if_referenced.
+                shape = (metric_shapes or {}).get(metric.unique_name)
+                predicted_flag_col = enrichment_flag_column_if_referenced(shape, expr)
+                if predicted_flag_col:
+                    honest_note = (
+                        f"Cannot verify in dry-run — resolved by live enrichment at deploy time "
+                        f"(references '{predicted_flag_col}', a flag column "
+                        f"_create_enriched_view creates on '{metric.dataset}' for this metric's "
+                        f"time-intelligence shape; dry-run has no live connection to confirm it "
+                        f"directly)."
+                    )
+                    # OSI metrics (is_osi=True) have no advisory_notes/
+                    # advisory_categories fields at all -- that's an SML-
+                    # only concept (see osi_to_sml.py's own producer for
+                    # the unreachable-dimension advisory). hasattr guards
+                    # this generically rather than branching on is_osi
+                    # directly; either way, returning expr below (not
+                    # None) is the part that actually matters for both.
+                    if hasattr(metric, "advisory_notes") and honest_note not in metric.advisory_notes:
+                        metric.advisory_notes = list(metric.advisory_notes) + [honest_note]
+                        metric.advisory_categories = list(metric.advisory_categories) + [
+                            ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE
+                        ]
+                    logger.info(
+                        "Metric '%s': column '%s' not in dry-run's declared schema, but matches "
+                        "this metric's predicted enrichment flag column — emitting as unverified "
+                        "rather than dropping.",
+                        metric.unique_name, predicted_flag_col,
+                    )
+                    return expr
                 logger.warning(
                     "Metric '%s': skipping invalid SQL expression after normalization: %s",
                     metric.unique_name,

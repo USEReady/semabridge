@@ -389,6 +389,24 @@ function normalizeRows(data) {
         depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
         synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
         synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
+        // Static risk tier (metric-only; null for columns) and the Tier-5
+        // provider's own self-reported estimate (metric-only, Tier-5-
+        // only; null otherwise) -- see utils/riskLabels.js and
+        // project_mapping_engine.py's _compute_static_risk_tier. Passed
+        // through as-is (no renaming/coercion): both are already null
+        // for every row that shouldn't show them, straight from the
+        // backend.
+        static_risk_tier: row?.static_risk_tier ?? null,
+        static_risk_label: row?.static_risk_label ?? null,
+        llm_self_reported_confidence: row?.llm_self_reported_confidence ?? null,
+        // advisory_categories: general-purpose, informational-only tags
+        // (see sml/models.py's SMLMetric.advisory_categories) -- e.g.
+        // 'enrichment_column_unverifiable' (utils/riskLabels.js's
+        // getEnrichmentUnverifiableCaveat). Was already returned by the
+        // backend but silently dropped here before this fix -- same
+        // allowlist-gap pattern as static_risk_tier/llm_self_reported_
+        // confidence above.
+        advisory_categories: Array.isArray(row?.advisory_categories) ? row.advisory_categories : [],
         isDirty: false,
       };
     });

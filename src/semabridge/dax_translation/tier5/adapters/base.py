@@ -116,7 +116,9 @@ class ProviderAdapter(Protocol):
         """True if this provider's API key/config is present."""
         ...
 
-    def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
+    def translate(
+        self, prompt: str, system_message: str, max_tokens: Optional[int] = None
+    ) -> Optional[RawResult]:
         """Call the provider. Returns None on an ordinary failure (missing
         key, network error, empty response, timeout, rate limit) — never
         raises for those. Callers treat None as 'try the next provider',
@@ -126,5 +128,16 @@ class ProviderAdapter(Protocol):
         Raises ProviderAuthError specifically when the provider rejects
         the request for a bad/expired credential — a distinct signal from
         an ordinary failure, since it will recur identically on every
-        later call this run and should not be retried."""
+        later call this run and should not be retried.
+
+        max_tokens: optional override of this adapter's own single-metric
+        default (each adapter hardcodes ~500, sized for one SQL
+        expression). Added after a real incident: Tier5Service.
+        translate_batch() packs many metrics into one JSON response under
+        the SAME flat per-metric default, and a large-enough batch (13
+        metrics, observed live) gets silently truncated mid-response,
+        producing an "unparseable batch response" that discarded every
+        metric in the chunk. None preserves each adapter's existing
+        single-metric behavior exactly -- only translate_batch's caller
+        computes and passes a scaled value."""
         ...

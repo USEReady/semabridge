@@ -102,13 +102,23 @@ class GeminiAdapter:
         import os
         return bool(self.settings.api_key) or bool(os.getenv(self.settings.enabled_env))
 
-    def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
+    def translate(
+        self, prompt: str, system_message: str, max_tokens: Optional[int] = None
+    ) -> Optional[RawResult]:
         if not self.is_available():
             return None
 
         full_prompt = f"{system_message}\n\n{prompt}" if system_message else prompt
         text: Optional[str]
 
+        # Accepted for ProviderAdapter protocol conformance (see its
+        # docstring) but not threaded into either call path below: neither
+        # this adapter's Settings-key path nor its shared-singleton path
+        # sets an explicit max_tokens/max_output_tokens today, so both
+        # already default to the SDK's own generous cap (thousands of
+        # tokens for gemini-1.5-flash) -- unlike the other four adapters'
+        # flat 500-token default, Gemini was never exposed to the real
+        # incident this parameter exists to fix.
         if self.settings.api_key:
             # A Settings-configured key bypasses the shared
             # get_gemini_service() singleton entirely, for two reasons:

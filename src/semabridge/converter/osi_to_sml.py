@@ -7,6 +7,7 @@ intermediate representation, applying semantic enrichment like DAX translation.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from semabridge.core.interfaces import BaseConverter
@@ -177,6 +178,12 @@ class OSIToSMLConverter(BaseConverter):
                             metric.complexity_tier = translation.tier
                             metric.sync_enabled = True
                             metric.sync_failure_reason = None
+                            # Display-only Tier-5 metadata -- None for
+                            # Tiers 1-4, since translation.llm_self_reported_
+                            # confidence/validation_notes are only ever
+                            # populated by Tier5Service (tier == 5).
+                            metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
+                            metric.validation_notes = list(translation.validation_notes or [])
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
                 # Step 3e: one more deterministic-only convergence pass now that
@@ -194,6 +201,24 @@ class OSIToSMLConverter(BaseConverter):
                     dataset_aliases=dax_dataset_aliases,
                     skip_tier5=True,
                 )
+
+                # Step 3f: real incident -- '% Unit Market Share YOY Change'
+                # ([% Units Market Share]-[% Units Market Share SPLY]) kept
+                # showing the stale placeholder reason set BEFORE the batch
+                # even ran ("DAX translation deferred to Tier-5 batch"),
+                # even after the batch completed and genuinely couldn't
+                # resolve it -- nothing in Step 3d/3e ever revisits a
+                # metric's OWN reason once it's known the deferral is over.
+                # Replace that specific stale placeholder (never a more
+                # specific reason something else already set) with the
+                # real, general explanation: either this metric is blocked
+                # by an unresolved DEPENDENCY (the actual cause here --
+                # this metric's own bracket-arithmetic DAX has nothing
+                # wrong with it, it just can't substitute a sibling that
+                # has no SQL of its own) or, if every dependency DID
+                # resolve, the batch attempt for this metric specifically
+                # produced nothing usable.
+                self._replace_stale_tier5_deferred_reason(sml)
 
             # 4. Convert Relationships
             for osi_rel in osi_model.relationships:
@@ -431,6 +456,12 @@ class OSIToSMLConverter(BaseConverter):
                 metric.complexity_tier = translation.tier
                 metric.sync_enabled = True
                 metric.sync_failure_reason = None
+                # skip_tier5=True above means this call never reaches
+                # Tier5Service, so these are always None/empty here --
+                # copied through anyway for consistency with the other two
+                # translation.* -> metric.* assignment sites.
+                metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
+                metric.validation_notes = list(translation.validation_notes or [])
             elif metric.sync_enabled:
                 from semabridge.converter.dax_ast_parser import (
                     dax_context_transition_failure_reason,
@@ -515,6 +546,8 @@ class OSIToSMLConverter(BaseConverter):
                     metric.complexity_tier = translation.tier
                     metric.sync_enabled = True
                     metric.sync_failure_reason = None
+                    metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
+                    metric.validation_notes = list(translation.validation_notes or [])
                     resolved_this_pass += 1
 
             if resolved_this_pass == 0:
@@ -525,6 +558,70 @@ class OSIToSMLConverter(BaseConverter):
                 pass_idx + 1,
                 resolved_this_pass,
             )
+
+    # Real incident: a placeholder reason set BEFORE the Tier-5 batch call
+    # even runs ("DAX translation deferred to Tier-5 batch (Tier N)", see
+    # _convert_metric) is only ever cleared on SUCCESS -- a metric the
+    # batch (and every later convergence pass) still couldn't resolve keeps
+    # showing that placeholder forever, which reads as "still pending"
+    # long after the attempt is over and reveals nothing about why it
+    # actually failed. Matched by substring, not equality, since the
+    # placeholder's own tier number varies.
+    _STALE_TIER5_DEFERRED_MARKER = "deferred to Tier-5 batch"
+
+    def _replace_stale_tier5_deferred_reason(self, sml: SMLModel) -> None:
+        """Replace the stale Tier-5-deferred placeholder on any metric
+        still unresolved after the batch call and every convergence pass,
+        with an honest, general (never metric-name-keyed) explanation:
+
+        - If the metric's own DAX references another metric that itself
+          has no sql_expression, report THAT as the cause — the real,
+          general shape behind '% Unit Market Share YOY Change' ([% Units
+          Market Share]-[% Units Market Share SPLY]): this metric's own
+          bracket-arithmetic DAX has nothing wrong with it, it simply
+          can't substitute a sibling ('% Units Market Share SPLY') that
+          never got SQL of its own (a deterministic-renderer limitation
+          for CALCULATE(SAMEPERIODLASTYEAR)-wrapping-a-ratio-measure —
+          see dax_translator.py's _try_dependency_translation and
+          tmsl_to_sml.py's TIME_INTELLIGENCE failure-reason map).
+        - Otherwise, the metric's OWN Tier-5 batch attempt is what
+          produced nothing usable — say that plainly instead of the
+          stale "deferred" wording.
+        """
+        if not sml.metrics:
+            return
+
+        by_name = {
+            str(m.unique_name or "").casefold(): m
+            for m in sml.metrics
+            if getattr(m, "unique_name", None)
+        }
+
+        for metric in sml.metrics:
+            reason = metric.sync_failure_reason or ""
+            if metric.sql_expression or self._STALE_TIER5_DEFERRED_MARKER not in reason:
+                continue
+
+            unresolved_deps = []
+            for ref in re.findall(r"\[([^\]]+)\]", metric.expression or ""):
+                dep = by_name.get(ref.strip().casefold())
+                if dep is not None and dep is not metric and not dep.sql_expression:
+                    unresolved_deps.append(dep)
+
+            if unresolved_deps:
+                dep_text = "; ".join(
+                    f"'{dep.unique_name}' ({dep.sync_failure_reason or 'no SQL yet'})"
+                    for dep in unresolved_deps
+                )
+                metric.sync_failure_reason = (
+                    f"Cannot compute — depends on unresolved metric(s): {dep_text}. "
+                    f"This metric's own DAX has no translation issue of its own."
+                )
+            else:
+                metric.sync_failure_reason = (
+                    "Tier-5 (LLM) batch translation was attempted for this metric and "
+                    "did not produce a usable result."
+                )
 
     def _flag_unreachable_dimension_calculates(self, sml: SMLModel) -> None:
         """Advisory-only: append a well-explained note to any metric whose
@@ -541,12 +638,24 @@ class OSIToSMLConverter(BaseConverter):
         Deliberately advisory, not corrective: this NEVER sets
         sync_enabled=False, never clears/overwrites sql_expression or
         sync_failure_reason, and never removes the metric from
-        sml.metrics. The metric proceeds through translation, DDL
-        emission, and (if still unreachable) DDL-deployment-time
-        auto-remediation exactly as it would without this check — the
-        only difference is that a user inspecting the model at mapping/
-        dry-run time now sees why, before spending a deploy attempt to
-        find out.
+        sml.metrics. The metric proceeds through translation and DDL
+        emission exactly as it would without this check.
+
+        IMPORTANT — this is NOT caught by DDL-deployment-time auto-
+        remediation. connection_manager.py's _extract_invalid_identifier()
+        only pattern-matches Snowflake's "invalid identifier '...'"
+        (error 000904) and "Invalid metric definition for '...'"
+        (error 010220) message shapes; it does not recognize error 010211
+        ("a metric cannot refer to another dimension from an unrelated
+        entity"), so a metric hitting this case that reaches a real
+        deploy will most likely abort the whole DDL statement rather than
+        being cleanly caught and dropped. This advisory note — surfaced
+        with its structural category via SMLMetric.advisory_categories
+        (see ADVISORY_CATEGORY_UNREACHABLE_DIMENSION) into a distinct
+        "predicted_failure" status by project_mapping_engine.py — is
+        therefore the ONLY pre-deploy signal for this failure class today.
+        A user inspecting the model at mapping/dry-run time sees why,
+        before spending a deploy attempt to find out.
         """
         from semabridge.converter.dax_ast_parser import dax_calculate_filters_unreachable_dimension
 
@@ -573,6 +682,7 @@ class OSIToSMLConverter(BaseConverter):
                 continue
             if hit:
                 metric.advisory_notes.append(hit.reason)
+                metric.advisory_categories.append(hit.category)
 
     def _convert_relationship(self, osi_rel: OSIRelationship) -> Optional[SMLRelationship]:
         try:

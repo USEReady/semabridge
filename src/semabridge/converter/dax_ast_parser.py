@@ -1785,6 +1785,17 @@ def dax_lag_period_of_measure_reference_failure_reason(dax: str) -> Optional[str
 # was written for).
 
 
+# Stable category code for this failure class, carried on
+# UnreachableDimensionFilter.category and mirrored onto
+# SMLMetric.advisory_categories by osi_to_sml.py so downstream consumers
+# (project_mapping_engine.py's predicted-failure status computation) can
+# key off this structural signal instead of matching the free-text reason
+# string. Not specific to any one model's metric names (e.g. KPI01/KPI02) —
+# it fires for any metric on any model whose CALCULATE(...) filters an
+# unreachable table.
+ADVISORY_CATEGORY_UNREACHABLE_DIMENSION = "unreachable_dimension"
+
+
 @dataclass
 class UnreachableDimensionFilter:
     """A CALCULATE(...) filter that references a dimension with no
@@ -1803,6 +1814,7 @@ class UnreachableDimensionFilter:
     # relationship that may not legitimately exist in the source data).
     referenced_measure_has_path: Optional[bool]
     reason: str
+    category: str = ADVISORY_CATEGORY_UNREACHABLE_DIMENSION
 
 
 def _find_all_calculate_nodes(node: DaxNode) -> List[FunctionCallNode]:

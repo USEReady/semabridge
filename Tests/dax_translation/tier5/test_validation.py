@@ -7,6 +7,7 @@ from semabridge.dax_translation.tier5.validation import (
     MetricSqlValidator,
     fix_common_llm_issues,
     _is_scalar_metric_sql,
+    _has_balanced_parentheses,
     _dax_divide_lost_its_division,
     validate_metric_column_references,
     normalize_metric_column_references,
@@ -99,6 +100,28 @@ def test_is_scalar_metric_sql_allows_window_functions_for_databricks():
     windowed = "SUM(`sometable`.`somecolumn`) OVER (PARTITION BY `sometable`.`othercolumn`)"
     assert _is_scalar_metric_sql(windowed, dialect="databricks") is True
     assert _is_scalar_metric_sql(windowed, dialect=Dialect.DATABRICKS) is True
+
+
+def test_is_scalar_metric_sql_rejects_unbalanced_parentheses():
+    """Real incident: a batch response salvaged from a provider that
+    embedded an unescaped quote mid-value (prompt.py's
+    _salvage_partial_batch_json necessarily stops right at the
+    corruption point) produced a syntactically incomplete fragment like
+    "SUM(CASE WHEN x=" -- no forbidden-keyword check catches that, and it
+    has no qualified column reference for schema validation to reject
+    either, so it was silently accepted as a "successful" candidate.
+    A general completeness check closes this, independent of salvage."""
+    assert _is_scalar_metric_sql("SUM(CASE WHEN x=", dialect="snowflake") is False
+    assert _is_scalar_metric_sql("SUM(x))", dialect="snowflake") is False  # extra close
+    assert _is_scalar_metric_sql("SUM(sometable.SOMECOLUMN)", dialect="snowflake") is True
+
+
+def test_has_balanced_parentheses():
+    assert _has_balanced_parentheses("SUM(CASE WHEN x > 1 THEN y ELSE 0 END)") is True
+    assert _has_balanced_parentheses("SUM(CASE WHEN x=") is False
+    assert _has_balanced_parentheses("SUM(x))") is False
+    assert _has_balanced_parentheses(")(") is False
+    assert _has_balanced_parentheses("") is True
 
 
 def test_dax_divide_lost_its_division_detects_missing_slash():

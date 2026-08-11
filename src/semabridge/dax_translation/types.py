@@ -87,6 +87,23 @@ class TranslationResult:
     translation_provider_confidence: float = 1.0
     validation_notes: List[str] = field(default_factory=list)
     source_pipeline: str = ""  # migration bookkeeping only ("A"/"B"/"C"); droppable once unified
+    # The Tier-5 provider's OWN self-reported estimate (0-1) that its SQL
+    # will execute without error, parsed from the structured
+    # {"sql":..., "confidence":...} response (tier5/prompt.py's
+    # verification-checklist-adjacent confidence request). Deliberately a
+    # SEPARATE field from translation_provider_confidence above:
+    # translation_provider_confidence still drives the existing
+    # accept/reject-and-try-next-provider gate against
+    # Tier5Config.min_confidence (unchanged behavior); this field is
+    # display-only and must never feed that gate, the static
+    # three-tier risk label (project_mapping_engine.py's
+    # _compute_static_risk_tier), or any other decision -- an experiment
+    # this session found this self-reported number does not reliably
+    # track actual SQL correctness. None for every Tier 1-4 result
+    # (nothing for a deterministic translation to self-report on) and for
+    # any Tier-5 response that didn't include a parseable confidence
+    # value.
+    llm_self_reported_confidence: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.sql is not None:

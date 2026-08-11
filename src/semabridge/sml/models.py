@@ -327,7 +327,56 @@ class SMLMetric(BaseModel):
         "mapping/dry-run time. Never read by translation or DDL-emission logic and never "
         "changes what happens to the metric — display-only.",
     )
+    # Parallel to advisory_notes (same index correspondence): a short,
+    # stable category code per note (e.g. "unreachable_dimension") so
+    # downstream consumers (project_mapping_engine.py's predicted-failure
+    # status computation) can key off *structure* — "does this metric carry
+    # a note of category X" — instead of matching against the free-text
+    # reason string, which is display-only prose and may be reworded.
+    # Empty string entries are legacy/hand-authored notes that predate this
+    # field and carry no known category.
+    advisory_categories: list[str] = Field(
+        default_factory=list,
+        description="Parallel list to advisory_notes: a stable category code per note "
+        "(e.g. 'unreachable_dimension'), used to key predicted-failure status computation "
+        "on structure rather than note text.",
+    )
     confidence: float = Field(default=1.0, description="Confidence score for auto-detected measures")
+    # NOT the same thing as `confidence` above (that one scores auto-
+    # DETECTION during extraction). This is the Tier-5 LLM PROVIDER's own
+    # self-reported estimate (0-1) that its translated SQL will execute
+    # without error, parsed from the structured {"sql":..., "confidence":
+    # ...} response (see dax_translation/tier5/prompt.py /
+    # types.py's TranslationResult.llm_self_reported_confidence). Always
+    # None for Tier 1-4 metrics (nothing for a deterministic translation
+    # to self-report on) and for any Tier-5 response with no parseable
+    # confidence value. Display-only: never read by DDL-emission,
+    # translation, or the static risk-tier computation in
+    # project_mapping_engine.py's _compute_static_risk_tier — an
+    # experiment found this number does not reliably track actual SQL
+    # correctness.
+    llm_self_reported_confidence: Optional[float] = Field(
+        default=None,
+        description="Tier-5 provider's own self-reported estimate (0-1) that its SQL will "
+        "execute without error. Display-only; None for Tier 1-4. Not used by any "
+        "pass/fail or risk-tier decision.",
+    )
+    # Copied straight from TranslationResult.validation_notes for a Tier-5
+    # result: rejection reasons accumulated across earlier candidate
+    # attempts (from other providers, or the same provider on an earlier
+    # try) BEFORE the SQL that ultimately shipped was accepted. Empty for
+    # every Tier 1-4 metric and for a Tier-5 metric whose first accepted
+    # candidate was also its first attempt. Consumed by
+    # project_mapping_engine.py's _compute_static_risk_tier as one of the
+    # "known risky pattern" signals: a non-empty list here means this
+    # metric was hard enough that at least one candidate failed a static
+    # check before one finally passed.
+    validation_notes: list[str] = Field(
+        default_factory=list,
+        description="Static-check rejection reasons from earlier, unaccepted Tier-5 "
+        "candidates for this metric. Empty for Tier 1-4. Feeds the static risk-tier "
+        "'known risky pattern' signal.",
+    )
     # Cortex Analyst advanced AI / access metadata
     access_modifier: Optional[str] = Field(
         default=None,

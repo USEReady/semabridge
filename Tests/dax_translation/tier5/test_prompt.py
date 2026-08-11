@@ -4,7 +4,10 @@ from semabridge.dax_translation.tier5.prompt import (
     build_prompt,
     build_batch_prompt,
     build_system_message,
+    build_batch_system_message,
     parse_batch_payload,
+    parse_structured_response,
+    _extract_sql_and_confidence,
 )
 
 
@@ -225,46 +228,210 @@ def test_parse_batch_payload_valid_json_is_parsed():
     assert result == {"m0": "SUM(x)", "m1": "AVG(y)"}
 
 
-def test_parse_batch_payload_rejects_trailing_comma():
+def test_parse_batch_payload_recovers_fully_despite_trailing_comma():
+    """A harmless trailing comma before the closing brace is not truncation
+    at all -- both entries are complete. Real incident this whole salvage
+    path exists for: discarding a fully-valid batch over one stray comma
+    would be strictly worse than tolerating it. See
+    _salvage_partial_batch_json."""
     text = '{"m0": "SUM(x)", "m1": "AVG(y)",}'
-    assert parse_batch_payload(text) is None
+    assert parse_batch_payload(text) == {"m0": "SUM(x)", "m1": "AVG(y)"}
 
 
-def test_parse_batch_payload_rejects_unescaped_quote_in_string_value():
+def test_parse_batch_payload_unescaped_quote_salvages_only_the_corrupted_first_entry():
     """A model that emits SQL containing a literal `"` inside a JSON string
     value without escaping it (e.g. a generated string comparison) breaks
-    the enclosing JSON object at that point."""
+    the enclosing JSON at that exact point -- unlike a token-cap
+    truncation (which lands at the END of the response), this is an
+    internal corruption, so the scanner has no reliable way to resync
+    afterward and correctly stops rather than guessing. The recovered
+    value for the corrupted key is itself garbage (cut at the embedded
+    quote) -- Tier5Service's per-metric validation is what actually
+    catches this downstream (see
+    test_service.py's ..._salvage_produces_garbage_that_per_metric_validation_still_rejects),
+    not this function. m1, entirely after the corruption point, is lost."""
     text = '{"m0": "SUM(CASE WHEN x="bad" THEN 1 END)", "m1": "AVG(y)"}'
-    assert parse_batch_payload(text) is None
+    assert parse_batch_payload(text) == {"m0": "SUM(CASE WHEN x="}
 
 
-def test_parse_batch_payload_rejects_truncated_mid_object():
+def test_parse_batch_payload_recovers_leading_entries_from_truncated_mid_object():
     """Simulates hitting the provider's output-token cap partway through
-    the batch response -- the object never closes."""
+    the batch response -- the object never closes. Real incident: a
+    13-metric batch cut off this way used to discard all 13; now the
+    complete entries before the cutoff are recovered."""
     text = '{"m0": "SUM(x)", "m1": "AVG(CASE WHEN x > 1 THEN'
-    assert parse_batch_payload(text) is None
+    assert parse_batch_payload(text) == {"m0": "SUM(x)"}
 
 
-def test_parse_batch_payload_rejects_truncated_mid_string_value():
+def test_parse_batch_payload_recovers_leading_entries_from_truncated_mid_string_value():
     """A narrower truncation than the above: the cutoff lands inside an
-    open string literal rather than between keys."""
+    open string literal rather than between keys. Same recovery."""
     text = '{"m0": "SUM(x)", "m1": "AVG(CASE WHEN x > 1 THEN y ELSE'
-    assert parse_batch_payload(text) is None
+    assert parse_batch_payload(text) == {"m0": "SUM(x)"}
 
 
-def test_parse_batch_payload_none_never_raises_for_any_of_these_shapes():
+def test_parse_batch_payload_recovers_many_leading_entries_from_a_realistic_truncated_batch():
+    """Closer to the real, live incident this session found: a batch of
+    several metrics with realistic (properly-escaped) quoted-identifier
+    SQL, cut off by an output-token cap partway through. Every complete
+    entry before the cutoff must be recovered, not just discarded because
+    the response never closed its outer object."""
+    import json as _json
+
+    entries = {
+        f"m{i}": {"sql": f'SUM(salesfact."UNITS_{i}")', "confidence": 0.8}
+        for i in range(5)
+    }
+    full_response = _json.dumps(entries)
+    # Simulate a hard cutoff partway through the 4th entry's value.
+    cutoff = full_response.index('"m4"') + len('"m4": {"sql": "SUM(sale')
+    truncated = full_response[:cutoff]
+
+    parsed = parse_batch_payload(truncated)
+    assert parsed is not None
+    # The first 4 entries (m0-m3) were fully written before the cutoff.
+    for i in range(4):
+        assert parsed[f"m{i}"] == {"sql": f'SUM(salesfact."UNITS_{i}")', "confidence": 0.8}
+    assert "m4" not in parsed  # cut off mid-value -- correctly not recovered
+
+
+def test_parse_batch_payload_never_raises_for_any_of_these_shapes():
     """Belt-and-suspenders: whatever the specific malformation, the
-    function's contract (documented in its own docstring) is "return None,
-    never raise" -- confirm none of the four bad shapes above escape as an
-    exception instead of a clean None."""
-    bad_shapes = [
+    function's contract is "never raise" -- confirm none of these shapes
+    escape as an exception. Since _salvage_partial_batch_json, the return
+    value for a malformed-but-partially-recoverable shape is now a
+    (possibly partial) dict rather than always None -- see the dedicated
+    tests above for exact per-shape expectations. Only a shape with truly
+    nothing recoverable (empty/whitespace/no '{' at all) still returns
+    None."""
+    recoverable_shapes = [
         '{"m0": "SUM(x)", "m1": "AVG(y)",}',
         '{"m0": "SUM(CASE WHEN x="bad" THEN 1 END)", "m1": "AVG(y)"}',
         '{"m0": "SUM(x)", "m1": "AVG(CASE WHEN x > 1 THEN',
         '{"m0": "SUM(x)", "m1": "AVG(CASE WHEN x > 1 THEN y ELSE',
-        "",
-        "   ",
-        "not json at all",
     ]
-    for text in bad_shapes:
+    for text in recoverable_shapes:
+        result = parse_batch_payload(text)  # must not raise
+        assert isinstance(result, dict) and result  # something was salvaged
+
+    nothing_recoverable_shapes = ["", "   ", "not json at all"]
+    for text in nothing_recoverable_shapes:
         assert parse_batch_payload(text) is None
+
+
+# ---------------------------------------------------------------------------
+# Self-reported confidence contract: build_prompt()/build_batch_prompt()
+# request {"sql":..., "confidence":...} (one-off-experiment-turned-real
+# feature); parse_structured_response()/_extract_sql_and_confidence() parse
+# it back out, tolerating a provider that ignores the format and returns
+# bare SQL instead.
+# ---------------------------------------------------------------------------
+
+def test_single_prompt_requests_the_sql_and_confidence_json_contract():
+    prompt = build_prompt(_request())
+    assert '"sql"' in prompt
+    assert '"confidence"' in prompt
+
+
+def test_single_system_message_requests_the_sql_and_confidence_json_contract():
+    message = build_system_message(Dialect.SNOWFLAKE)
+    assert "sql" in message
+    assert "confidence" in message
+
+
+def test_batch_prompt_requests_the_sql_and_confidence_json_contract_per_key():
+    prompt = build_batch_prompt([_request()])
+    assert '"sql"' in prompt
+    assert '"confidence"' in prompt
+
+
+def test_batch_system_message_requests_the_sql_and_confidence_json_contract():
+    message = build_batch_system_message(Dialect.SNOWFLAKE)
+    assert "sql" in message
+    assert "confidence" in message
+
+
+def test_extract_sql_and_confidence_from_the_requested_dict_shape():
+    sql, confidence = _extract_sql_and_confidence({"sql": "SUM(x)", "confidence": 0.82})
+    assert sql == "SUM(x)"
+    assert confidence == 0.82
+
+
+def test_extract_sql_and_confidence_tolerates_a_bare_string_value():
+    """A provider that ignores the {"sql":..., "confidence":...} contract
+    and returns bare SQL instead is tolerated, not rejected -- confidence
+    is None, never guessed."""
+    sql, confidence = _extract_sql_and_confidence("SUM(x)")
+    assert sql == "SUM(x)"
+    assert confidence is None
+
+
+def test_extract_sql_and_confidence_missing_confidence_key_is_none_not_a_default():
+    sql, confidence = _extract_sql_and_confidence({"sql": "SUM(x)"})
+    assert sql == "SUM(x)"
+    assert confidence is None
+
+
+def test_extract_sql_and_confidence_non_numeric_confidence_is_none():
+    """A malformed confidence value must never crash SQL extraction --
+    only the confidence half is discarded."""
+    sql, confidence = _extract_sql_and_confidence({"sql": "SUM(x)", "confidence": "very confident"})
+    assert sql == "SUM(x)"
+    assert confidence is None
+
+
+def test_extract_sql_and_confidence_bool_confidence_is_rejected_not_coerced():
+    """bool is a subclass of int in Python -- must not silently become 0.0/1.0."""
+    sql, confidence = _extract_sql_and_confidence({"sql": "SUM(x)", "confidence": True})
+    assert sql == "SUM(x)"
+    assert confidence is None
+
+
+def test_extract_sql_and_confidence_unrecognized_shape_returns_none_none():
+    sql, confidence = _extract_sql_and_confidence(12345)
+    assert sql is None
+    assert confidence is None
+
+
+def test_parse_structured_response_valid_json_contract():
+    sql, confidence = parse_structured_response('{"sql": "SUM(x)", "confidence": 0.75}')
+    assert sql == "SUM(x)"
+    assert confidence == 0.75
+
+
+def test_parse_structured_response_tolerates_bare_sql_when_provider_ignores_format():
+    """The exact backward-compatible case: a provider returns plain SQL
+    text, not the requested JSON object. Must still translate -- treated
+    as bare SQL with no self-reported confidence, not a failure."""
+    sql, confidence = parse_structured_response('SUM(sometable."SOMECOLUMN")')
+    assert sql == 'SUM(sometable."SOMECOLUMN")'
+    assert confidence is None
+
+
+def test_parse_structured_response_strips_markdown_fences_and_json_language_tag():
+    sql, confidence = parse_structured_response('```json\n{"sql": "SUM(x)", "confidence": 0.6}\n```')
+    assert sql == "SUM(x)"
+    assert confidence == 0.6
+
+
+def test_parse_structured_response_empty_text_is_none_none():
+    sql, confidence = parse_structured_response("")
+    assert sql is None
+    assert confidence is None
+
+
+def test_parse_batch_payload_accepts_the_new_nested_sql_confidence_shape():
+    text = '{"m0": {"sql": "SUM(x)", "confidence": 0.9}, "m1": {"sql": "AVG(y)", "confidence": 0.4}}'
+    result = parse_batch_payload(text)
+    assert result == {
+        "m0": {"sql": "SUM(x)", "confidence": 0.9},
+        "m1": {"sql": "AVG(y)", "confidence": 0.4},
+    }
+
+
+def test_parse_batch_payload_still_accepts_bare_string_values_for_back_compat():
+    """A provider that ignores the per-key {"sql":..., "confidence":...}
+    contract and returns bare SQL strings for the whole batch must still
+    be tolerated -- same posture as the single-item path."""
+    result = parse_batch_payload('{"m0": "SUM(x)", "m1": "AVG(y)"}')
+    assert result == {"m0": "SUM(x)", "m1": "AVG(y)"}

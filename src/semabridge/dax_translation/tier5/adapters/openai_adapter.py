@@ -62,7 +62,9 @@ class OpenAIAdapter:
     def is_available(self) -> bool:
         return bool(self.settings.api_key or os.getenv(self.settings.enabled_env))
 
-    def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
+    def translate(
+        self, prompt: str, system_message: str, max_tokens: Optional[int] = None
+    ) -> Optional[RawResult]:
         api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
         if not api_key:
             return None
@@ -76,6 +78,11 @@ class OpenAIAdapter:
         model_name = self.settings.model or "gpt-4o-mini"
         timeout = float(self.settings.timeout_seconds or 30)
         max_retries = int(self.settings.max_retries or 2)
+        # See ProviderAdapter.translate's docstring: a batch call passes a
+        # scaled value; a single-metric call passes None and keeps this
+        # provider's existing default exactly as before.
+        if max_tokens is None:
+            max_tokens = int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500"))
 
         sql: Optional[str] = None
         for attempt in range(1, max_retries + 1):
@@ -88,7 +95,7 @@ class OpenAIAdapter:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=float(os.getenv("OPENAI_DAX_TEMPERATURE", "0.1")),
-                    max_tokens=int(os.getenv("OPENAI_DAX_MAX_TOKENS", "500")),
+                    max_tokens=max_tokens,
                     timeout=timeout,
                 )
                 sql = (response.choices[0].message.content or "").strip()

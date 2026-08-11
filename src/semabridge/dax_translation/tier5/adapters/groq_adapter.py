@@ -55,12 +55,18 @@ class GroqAdapter:
     def is_available(self) -> bool:
         return bool(self.settings.api_key or os.getenv(self.settings.enabled_env))
 
-    def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
+    def translate(
+        self, prompt: str, system_message: str, max_tokens: Optional[int] = None
+    ) -> Optional[RawResult]:
         api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
         if not api_key:
             return None
 
         model_name = self.settings.model or "llama-3.3-70b-versatile"
+        # See ProviderAdapter.translate's docstring: a batch call passes a
+        # scaled value; a single-metric call passes None and keeps this
+        # provider's existing default exactly as before.
+        effective_max_tokens = max_tokens if max_tokens is not None else 500
 
         # 1. LangChain ChatGroq
         try:
@@ -70,7 +76,7 @@ class GroqAdapter:
                 api_key=api_key,
                 model=model_name,
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=effective_max_tokens,
                 timeout=float(self.settings.timeout_seconds or 30),
             )
             response = client.invoke([("system", system_message), ("user", prompt)])
@@ -100,7 +106,7 @@ class GroqAdapter:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=effective_max_tokens,
                 timeout=float(self.settings.timeout_seconds or 30),
             )
             sql = strip_markdown_fences(response.choices[0].message.content)

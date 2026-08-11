@@ -10,7 +10,7 @@ candidate from every adapter — no call site can opt out.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.null_sentinel import is_null_cast_sql
@@ -23,6 +23,8 @@ from semabridge.dax_translation.tier5.prompt import (
     build_batch_system_message,
     batch_key,
     parse_batch_payload,
+    parse_structured_response,
+    _extract_sql_and_confidence,
 )
 from semabridge.dax_translation.tier5.validation import (
     fix_common_llm_issues,
@@ -47,6 +49,37 @@ _ADAPTER_CLASSES = {
     "featherless": FeatherlessAdapter,
     "anthropic": AnthropicAdapter,
 }
+
+# Real incident: a 13-metric batch under every non-Gemini adapter's flat
+# single-metric 500-token default got truncated mid-JSON-response,
+# producing "unparseable batch response" and discarding the WHOLE chunk
+# (the confidence-JSON contract made each entry noticeably bigger than a
+# bare SQL string, which is why a batch size that used to just barely fit
+# no longer does). PER_METRIC/OVERHEAD are deliberately generous -- a
+# nested multi-branch CASE WHEN expression plus its JSON wrapper can run
+# a few hundred tokens -- and the ceiling stays well inside what every
+# configured provider's chat-completion API accepts.
+_BATCH_TOKENS_PER_METRIC = 150
+_BATCH_TOKENS_OVERHEAD = 200
+_BATCH_TOKENS_CEILING = 4096
+
+
+def _batch_max_tokens(metric_count: int) -> int:
+    return min(_BATCH_TOKENS_CEILING, _BATCH_TOKENS_OVERHEAD + _BATCH_TOKENS_PER_METRIC * max(1, metric_count))
+
+
+# Closes the "no raw LLM call logging" gap for this specific failure path:
+# the real incident this session investigated had no raw response text
+# anywhere in the logs, only the post-hoc "unparseable" warning -- making
+# root-causing it after the fact impossible. Truncated (not omitted) so a
+# large response doesn't flood the log, but long enough to see the actual
+# JSON shape and where it broke.
+def _truncate_for_log(text: Optional[str], limit: int = 4000) -> str:
+    if not text:
+        return "<empty>"
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"... [truncated, {len(text)} chars total]"
 
 
 def _build_adapters(config: Tier5Config) -> Dict[str, ProviderAdapter]:
@@ -114,7 +147,19 @@ class Tier5Service:
                 )
                 continue
 
-            repaired = fix_common_llm_issues(raw.text, request.dax)
+            # raw.confidence above is the adapter-level accept/reject gate
+            # (placeholder for most providers) -- unchanged. The provider's
+            # OWN self-reported estimate, requested via the structured
+            # {"sql":..., "confidence":...} response contract
+            # (tier5/prompt.py), is parsed here and carried through
+            # separately as llm_self_reported_confidence: display-only,
+            # never used in this gate or any other decision below.
+            parsed_sql, llm_self_reported_confidence = parse_structured_response(raw.text)
+            if not parsed_sql:
+                validation_notes.append(f"{provider_name}: no SQL found in structured response — rejected")
+                continue
+
+            repaired = fix_common_llm_issues(parsed_sql, request.dax)
 
             if is_null_cast_sql(repaired):
                 validation_notes.append(
@@ -144,6 +189,7 @@ class Tier5Service:
                 provider=provider_name,
                 translation_provider_confidence=raw.confidence,
                 validation_notes=validation_notes,
+                llm_self_reported_confidence=llm_self_reported_confidence,
             )
 
         return None
@@ -195,7 +241,9 @@ class Tier5Service:
                 continue
 
             try:
-                raw = adapter.translate(prompt, system_message)
+                raw = adapter.translate(
+                    prompt, system_message, max_tokens=_batch_max_tokens(len(requests))
+                )
             except ProviderAuthError as exc:
                 logger.warning(
                     "Tier5Service.translate_batch: provider %r failed authentication, "
@@ -223,13 +271,36 @@ class Tier5Service:
             # from "some individual metrics didn't validate". Move to the
             # next provider for the whole chunk rather than accepting a
             # response that isn't answering the question asked.
+            #
+            # parse_batch_payload() itself now salvages whatever complete
+            # top-level entries it can from a response that doesn't parse
+            # as a whole (see its docstring) -- a real incident showed a
+            # 13-metric batch getting silently truncated mid-response and
+            # discarding every one of the 13 metrics, even though most of
+            # the response before the cutoff was perfectly good JSON.
+            # `parsed` below can therefore be a non-empty PARTIAL dict
+            # even when the raw text didn't fully parse; only `None` (or a
+            # dict sharing zero keys with this chunk) means truly nothing
+            # was recoverable.
             if parsed is None or not (expected_keys & set(parsed)):
                 logger.warning(
                     "Tier5Service.translate_batch: provider %r returned an unparseable "
-                    "or unrecognizable batch response for %d metrics — trying next provider",
-                    provider_name, len(requests),
+                    "or unrecognizable batch response for %d metrics — trying next "
+                    "provider. Raw response (truncated to 4000 chars): %s",
+                    provider_name, len(requests), _truncate_for_log(raw.text),
                 )
                 continue
+            if len(expected_keys & set(parsed)) < len(expected_keys):
+                logger.warning(
+                    "Tier5Service.translate_batch: provider %r returned a PARTIAL "
+                    "batch response -- recovered %d/%d metrics (likely truncated "
+                    "mid-response under this provider's output-token cap). Using "
+                    "what was recovered instead of discarding the whole batch; the "
+                    "missing metrics will be retried individually by the caller. "
+                    "Raw response (truncated to 4000 chars): %s",
+                    provider_name, len(expected_keys & set(parsed)), len(expected_keys),
+                    _truncate_for_log(raw.text),
+                )
 
             return [
                 self._validate_one_batch_candidate(
@@ -243,17 +314,32 @@ class Tier5Service:
     @staticmethod
     def _validate_one_batch_candidate(
         request: TranslationRequest,
-        raw_sql: Optional[str],
+        raw_value: Any,
         provider_name: str,
         confidence: float,
     ) -> Optional[TranslationResult]:
         """Applies the identical per-item checks translate() applies to a
         single-item response — never a weaker pass just because the
-        candidate arrived inside a batch response."""
-        if not raw_sql:
+        candidate arrived inside a batch response.
+
+        raw_value is whatever parse_batch_payload found at this metric's
+        key -- either a {"sql":..., "confidence":...} dict (the requested
+        per-key contract) or a bare SQL string (a provider that ignored
+        it, tolerated the same way parse_structured_response tolerates it
+        for the single-item path). _extract_sql_and_confidence handles
+        both shapes uniformly.
+
+        `confidence` here is the whole-response adapter-level value
+        (translation_provider_confidence, already used by the caller's
+        min_confidence gate) -- distinct from the per-item
+        llm_self_reported_confidence extracted below, which is
+        display-only and never gates anything.
+        """
+        sql, llm_self_reported_confidence = _extract_sql_and_confidence(raw_value)
+        if not sql:
             return None
 
-        repaired = fix_common_llm_issues(raw_sql, request.dax)
+        repaired = fix_common_llm_issues(sql, request.dax)
         if is_null_cast_sql(repaired):
             return None
         if _dax_divide_lost_its_division(request.dax, repaired):
@@ -272,4 +358,5 @@ class Tier5Service:
             original_dax=request.dax,
             provider=provider_name,
             translation_provider_confidence=confidence,
+            llm_self_reported_confidence=llm_self_reported_confidence,
         )

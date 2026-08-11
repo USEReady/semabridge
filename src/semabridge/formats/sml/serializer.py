@@ -402,7 +402,23 @@ class SMLSerializer:
     
     @staticmethod
     def _metric_to_dict(metric: SMLMetric) -> dict[str, Any]:
-        """Convert metric to dictionary."""
+        """Convert metric to dictionary.
+
+        Real incident: this hand-written field list (a duplicate of
+        semabridge/sml/serializer.py's copy, which had drifted the same
+        way independently) was missing complexity_tier,
+        llm_self_reported_confidence, validation_notes, confidence,
+        access_modifier, synonym_sources, has_report_alias,
+        partition_dimension, group_by_dimensions, requires_time_intel,
+        AND advisory_notes/advisory_categories -- so a dry-run snapshot
+        persisted through THIS serializer lost even more than the other
+        copy (e.g. a metric's Tier-5 self-reported confidence, computed
+        correctly in-memory right after OSIToSMLConverter.from_osi(),
+        never survived into the snapshot the dry-run API response is
+        actually built from). Keep this in sync with SMLMetric's field
+        list AND with the sibling copy in semabridge/sml/serializer.py --
+        there is no model_dump() fallback here to catch a future drift.
+        """
         return {
             "unique_name": metric.unique_name,
             "object_type": "metric",
@@ -416,15 +432,28 @@ class SMLSerializer:
             "format_string": metric.format_string,
             "folder": metric.folder,
             "is_hidden": metric.is_hidden,
+            "complexity_tier": metric.complexity_tier,
+            "requires_time_intel": metric.requires_time_intel,
+            "group_by_dimensions": list(metric.group_by_dimensions or []),
+            "partition_dimension": metric.partition_dimension,
             "sync_enabled": metric.sync_enabled,
             "sync_failure_reason": metric.sync_failure_reason,
+            "advisory_notes": list(metric.advisory_notes or []),
+            "advisory_categories": list(metric.advisory_categories or []),
+            "confidence": metric.confidence,
+            "llm_self_reported_confidence": metric.llm_self_reported_confidence,
+            "validation_notes": list(metric.validation_notes or []),
+            "access_modifier": metric.access_modifier,
             "depends_on_measures": metric.depends_on_measures,
             "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
+            "synonym_sources": dict(metric.synonym_sources or {}),
+            "has_report_alias": metric.has_report_alias,
         }
-    
+
     @staticmethod
     def _dict_to_metric(data: dict[str, Any]) -> SMLMetric:
-        """Convert dictionary to metric."""
+        """Convert dictionary to metric. Kept in sync with _metric_to_dict
+        above — see its docstring for the real incident this matters for."""
         return SMLMetric(
             unique_name=data["unique_name"],
             label=data.get("label", ""),
@@ -437,10 +466,22 @@ class SMLSerializer:
             format_string=data.get("format_string"),
             folder=data.get("folder"),
             is_hidden=data.get("is_hidden", False),
+            complexity_tier=data.get("complexity_tier", 1),
+            requires_time_intel=data.get("requires_time_intel", False),
+            group_by_dimensions=list(data.get("group_by_dimensions") or []),
+            partition_dimension=data.get("partition_dimension"),
             sync_enabled=data.get("sync_enabled", True),
             sync_failure_reason=data.get("sync_failure_reason"),
+            advisory_notes=list(data.get("advisory_notes") or []),
+            advisory_categories=list(data.get("advisory_categories") or []),
+            confidence=data.get("confidence", 1.0),
+            llm_self_reported_confidence=data.get("llm_self_reported_confidence"),
+            validation_notes=list(data.get("validation_notes") or []),
+            access_modifier=data.get("access_modifier"),
             depends_on_measures=list(data.get("depends_on_measures") or []),
             synonyms=list(data.get("synonyms") or []),
+            synonym_sources=dict(data.get("synonym_sources") or {}),
+            has_report_alias=data.get("has_report_alias", False),
         )
     
     @staticmethod

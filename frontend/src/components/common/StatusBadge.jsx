@@ -4,6 +4,12 @@
  *   status  : 'active' | 'success' | 'warning' | 'error' | 'draft' | 'running' | 'failed' | string
  *   label   : override display text (defaults to capitalised status)
  *   size    : 'sm' | 'md'  (default 'md')
+ *   wrap    : when true, allows the label to wrap onto multiple lines instead
+ *             of forcing single-line nowrap — for long labels (e.g. the
+ *             dry-run risk-tier text) rendered inside a fixed-width column,
+ *             where nowrap would force the pill wider than its container and
+ *             bleed into neighboring content. Default false preserves the
+ *             single-line pill everywhere else. (default false)
  */
 const CONFIG = {
   active:  { bg: 'var(--color-success-muted)',  text: 'var(--color-success)',  dot: 'var(--color-success)',  label: 'Active' },
@@ -18,7 +24,7 @@ const CONFIG = {
   disconnected: { bg: 'var(--color-error-muted)', text: 'var(--color-error)', dot: 'var(--color-error)', label: 'Disconnected' },
 };
 
-export default function StatusBadge({ status = 'draft', label, size = 'md' }) {
+export default function StatusBadge({ status = 'draft', label, size = 'md', wrap = false }) {
   const key = (status || 'draft').toLowerCase();
   const cfg = CONFIG[key] ?? {
     bg: 'var(--bg-surface-raised)',
@@ -33,20 +39,25 @@ export default function StatusBadge({ status = 'draft', label, size = 'md' }) {
 
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full font-semibold"
+      className="inline-flex rounded-full font-semibold"
       style={{
         background: cfg.bg,
         color: cfg.text,
         padding: px,
         fontSize,
         lineHeight: '1.4',
-        whiteSpace: 'nowrap',
+        whiteSpace: wrap ? 'normal' : 'nowrap',
+        alignItems: wrap ? 'flex-start' : 'center',
+        gap: '6px',
+        textAlign: wrap ? 'left' : undefined,
+        maxWidth: wrap ? '100%' : undefined,
+        boxSizing: 'border-box',
       }}
     >
       {key === 'running' ? (
         <span
           className="relative inline-flex"
-          style={{ width: 6, height: 6, flexShrink: 0 }}
+          style={{ width: 6, height: 6, flexShrink: 0, marginTop: wrap ? 4 : 0 }}
         >
           <span
             className="absolute inline-flex h-full w-full rounded-full animate-ping"
@@ -65,6 +76,7 @@ export default function StatusBadge({ status = 'draft', label, size = 'md' }) {
             borderRadius: '50%',
             background: cfg.dot,
             flexShrink: 0,
+            marginTop: wrap ? 4 : 0,
           }}
         />
       )}

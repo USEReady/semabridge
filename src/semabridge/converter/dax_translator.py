@@ -19,12 +19,31 @@ logger = get_logger(__name__)
 
 class DAXTranslationResult:
     """Result of a DAX translation attempt."""
-    
-    def __init__(self, sql: Optional[str], tier: int, original_dax: str):
+
+    def __init__(
+        self,
+        sql: Optional[str],
+        tier: int,
+        original_dax: str,
+        *,
+        validation_notes: Optional[List[str]] = None,
+        llm_self_reported_confidence: Optional[float] = None,
+    ):
         self.sql = sql
         self.tier = tier  # 0=Override, 1=Direct, 2=Branching/Arith, 3=Opaque (Failed)
         self.original_dax = original_dax
         self.is_success = sql is not None
+        # Both keyword-only with None/empty defaults so every existing
+        # 3-positional-arg call site in this file (the vast majority --
+        # Tiers 1-4 never populate these) is unaffected. Only the two
+        # Tier-5 wrapping sites below (_try_llm_fallback,
+        # batch_translate_tier5) ever pass real values here -- this is
+        # the shim that carries dax_translation.types.TranslationResult's
+        # validation_notes/llm_self_reported_confidence through to
+        # osi_to_sml.py, which only ever sees this legacy class, never
+        # the newer TranslationResult directly.
+        self.validation_notes: List[str] = list(validation_notes or [])
+        self.llm_self_reported_confidence: Optional[float] = llm_self_reported_confidence
 
 
 class DAXTranslator:
@@ -950,7 +969,16 @@ class DAXTranslator:
                     f"LLM translation accepted for '{metric_name}' "
                     f"(provider={result.provider}, confidence={result.translation_provider_confidence:.2f})"
                 )
-                return DAXTranslationResult(result.sql, 5, dax)
+                return DAXTranslationResult(
+                    result.sql, 5, dax,
+                    # getattr, not a direct attribute read: some test
+                    # doubles for a Tier5Service result (SimpleNamespace
+                    # objects) only set the fields their scenario cares
+                    # about -- these two are new and additive, so a
+                    # minimal double that predates them must still work.
+                    validation_notes=getattr(result, "validation_notes", None),
+                    llm_self_reported_confidence=getattr(result, "llm_self_reported_confidence", None),
+                )
             logger.debug(f"Tier 5 declined for '{metric_name}'")
             return None
         except Exception as exc:
@@ -1058,7 +1086,14 @@ class DAXTranslator:
                 llm_candidates, tier5_results
             ):
                 if tier5_result is not None and tier5_result.is_success and tier5_result.sql:
-                    results[metric_name] = DAXTranslationResult(tier5_result.sql, 5, dax)
+                    results[metric_name] = DAXTranslationResult(
+                        tier5_result.sql, 5, dax,
+                        # getattr -- see _try_llm_fallback's identical
+                        # comment above; test doubles for a batch result
+                        # may predate these two additive fields.
+                        validation_notes=getattr(tier5_result, "validation_notes", None),
+                        llm_self_reported_confidence=getattr(tier5_result, "llm_self_reported_confidence", None),
+                    )
                     logger.debug(
                         f"   ✓ [{metric_name}] LLM translated (provider={tier5_result.provider}, "
                         f"conf={tier5_result.translation_provider_confidence:.2f})"

@@ -10,6 +10,8 @@ from semabridge.converter.time_intelligence_shapes import (
     build_shape_boolean_sql,
     discover_time_intelligence_shapes,
     flag_column_name,
+    enrichment_flag_column_if_referenced,
+    metrics_with_time_intelligence_shapes,
 )
 
 
@@ -119,3 +121,68 @@ def test_build_shape_boolean_sql_month_and_quarter_lag_use_whole_period_equality
 
     quarter_sql = build_shape_boolean_sql(("SPLY_QUARTER",), date_col, anchor)
     assert "QUARTER(D.\"DATE\") = QUARTER(DATEADD(QUARTER, -1, F.\"MAX_DATE\"))" in quarter_sql
+
+
+# ---------------------------------------------------------------------------
+# enrichment_flag_column_if_referenced -- real incident: dry-run's
+# DDL-emission schema check hard-rejected an already-correctly-translated
+# flag-column metric (Total Units YTD -> SUM(CASE WHEN SALESFACT.IS_YTD ...))
+# because IS_YTD only exists on the enriched view at real-deploy time. This
+# is the general detector metrics_clause_builder.py's DDL-emission failure
+# handler uses to recognize that shape instead of hard-failing it.
+# ---------------------------------------------------------------------------
+
+def test_enrichment_flag_column_if_referenced_matches_case_insensitively():
+    shape = ("YTD",)
+    sql = 'SUM(CASE WHEN SALESFACT."IS_YTD" THEN SALESFACT."UNITS" ELSE NULL END)'
+    assert enrichment_flag_column_if_referenced(shape, sql) == "IS_YTD"
+    assert enrichment_flag_column_if_referenced(shape, sql.lower()) == "IS_YTD"
+
+
+def test_enrichment_flag_column_if_referenced_matches_unquoted_reference():
+    shape = ("YTD", "SPLY_YEAR")
+    sql = "SUM(CASE WHEN SALESFACT.IS_YTD_SPLY_YEAR THEN SALESFACT.UNITS ELSE NULL END)"
+    assert enrichment_flag_column_if_referenced(shape, sql) == "IS_YTD_SPLY_YEAR"
+
+
+def test_enrichment_flag_column_if_referenced_no_match_when_column_absent():
+    shape = ("YTD",)
+    sql = "SUM(SALESFACT.UNITS)"  # doesn't reference IS_YTD at all
+    assert enrichment_flag_column_if_referenced(shape, sql) is None
+
+
+def test_enrichment_flag_column_if_referenced_does_not_match_substring_of_a_longer_identifier():
+    """Word-boundary matching -- IS_YTD must not match inside
+    IS_YTD_SPLY_YEAR (a different, longer flag column)."""
+    shape = ("YTD",)
+    sql = "SUM(CASE WHEN SALESFACT.IS_YTD_SPLY_YEAR THEN SALESFACT.UNITS ELSE NULL END)"
+    assert enrichment_flag_column_if_referenced(shape, sql) is None
+
+
+def test_enrichment_flag_column_if_referenced_returns_none_for_no_shape_or_no_sql():
+    assert enrichment_flag_column_if_referenced(None, "SUM(SALESFACT.IS_YTD)") is None
+    assert enrichment_flag_column_if_referenced(("YTD",), None) is None
+    assert enrichment_flag_column_if_referenced(("YTD",), "") is None
+
+
+def test_enrichment_flag_column_if_referenced_uses_the_metrics_own_resolved_shape():
+    """End-to-end through metrics_with_time_intelligence_shapes -- confirms
+    the two functions compose correctly (this is exactly how metrics_
+    clause_builder.py's DDL-emission handler uses them: resolve the whole
+    model's shapes once, then check one metric's SQL against its own
+    resolved shape)."""
+    metrics = [
+        _metric("TOTAL_UNITS", "SUM([Units])"),
+        _metric("TOTAL_UNITS_YTD", "TOTALYTD([TOTAL_UNITS], 'Date'[Date])"),
+    ]
+    shapes_by_name = metrics_with_time_intelligence_shapes(metrics)
+    shape = shapes_by_name.get("TOTAL_UNITS_YTD")
+    assert shape == ("YTD",)
+
+    translated_sql = 'SUM(CASE WHEN SALESFACT."IS_YTD" THEN SALESFACT."UNITS" ELSE NULL END)'
+    assert enrichment_flag_column_if_referenced(shape, translated_sql) == "IS_YTD"
+
+    # A metric with NO time-intelligence shape (e.g. a plain SUM) must
+    # never match, even if its SQL happened to contain the substring "IS_"
+    # some other way -- there's no shape to check against at all.
+    assert shapes_by_name.get("TOTAL_UNITS") is None

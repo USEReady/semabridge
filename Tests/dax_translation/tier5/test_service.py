@@ -40,7 +40,7 @@ class _FakeAdapter:
     def is_available(self) -> bool:
         return True
 
-    def translate(self, prompt: str, system_message: str):
+    def translate(self, prompt: str, system_message: str, max_tokens=None):
         self.call_count += 1
         if self._raises_auth:
             raise ProviderAuthError("fake_provider", RuntimeError("401 invalid_api_key"))
@@ -217,8 +217,8 @@ class _FakeBatchAdapter:
     def is_available(self) -> bool:
         return True
 
-    def translate(self, prompt: str, system_message: str):
-        self.calls.append((prompt, system_message))
+    def translate(self, prompt: str, system_message: str, max_tokens=None):
+        self.calls.append((prompt, system_message, max_tokens))
         if not self._responses:
             return None
         text = self._responses.pop(0)
@@ -317,19 +317,23 @@ def test_translate_batch_malformed_response_falls_through_to_next_provider():
     assert all(r is not None and r.provider == "fake_good" for r in results)
 
 
-def test_translate_batch_falls_through_on_truncated_mid_object_response():
-    """Realistic malformation, not an arbitrary "not json" string: the
-    first provider's response is cut off partway through the batch object
-    -- exactly what hitting a provider's output-token cap mid-response
-    looks like (see the Tier 5 max_tokens=500-per-batch-call finding). Must
-    fall through to the next provider, same as any other malformed batch
-    response, never raise."""
+def test_translate_batch_recovers_partial_results_from_truncated_mid_object_response():
+    """Real, live-confirmed incident this test guards against: a 13-metric
+    batch got cut off mid-response by a flat output-token cap, and the
+    WHOLE chunk was discarded even though most of it was perfectly good
+    JSON (see prompt.py's _salvage_partial_batch_json). The complete
+    entry(ies) before the cutoff must now be accepted directly from the
+    first provider -- NOT by falling through to a second provider, since
+    real, validated SQL was already recovered. The truncated metric
+    resolves to None for the caller to retry individually (matching the
+    real incident's actual downstream behavior: connectors/translator.py's
+    per-metric fallback recovering exactly the metrics a partial batch
+    couldn't)."""
     requests = _batch_requests(2)
-    import json as _json
-    good_response = _json.dumps({f"m{i}": 'SUM(sometable."SOMECOLUMN")' for i in range(2)})
-
-    truncated = _FakeBatchAdapter(None, responses=['{"m0": "SUM(sometable."SOMECOLUMN")", "m1": "AVG(CASE WHEN'])
-    good = _FakeBatchAdapter(None, responses=[good_response])
+    truncated = _FakeBatchAdapter(
+        None, responses=['{"m0": "SUM(sometable.SOMECOLUMN)", "m1": "AVG(CASE WHEN x > 1 THEN']
+    )
+    good = _FakeBatchAdapter(None, responses=["should never be called"])
     config, original = _config_with_fake_adapters(
         {"fake_truncated": lambda settings: truncated, "fake_good": lambda settings: good},
         provider_order=["fake_truncated", "fake_good"],
@@ -340,21 +344,22 @@ def test_translate_batch_falls_through_on_truncated_mid_object_response():
         _restore_adapter_classes(original)
 
     assert len(truncated.calls) == 1
-    assert len(good.calls) == 1
-    assert all(r is not None and r.provider == "fake_good" for r in results)
+    assert len(good.calls) == 0  # never tried -- a usable partial result was already accepted
+    assert results[0] is not None and results[0].is_success and results[0].provider == "fake_truncated"
+    assert results[1] is None  # truncated mid-value -- correctly not recovered
 
 
-def test_translate_batch_falls_through_on_trailing_comma_response():
+def test_translate_batch_recovers_fully_despite_trailing_comma():
     """A provider that (incorrectly) trails every dict with a comma, as if
-    it were emitting a Python literal rather than strict JSON."""
+    it were emitting a Python literal rather than strict JSON -- a
+    harmless malformation with nothing actually missing. Discarding a
+    fully-recoverable batch over one stray comma would be exactly the
+    over-eager rejection this fix closes."""
     requests = _batch_requests(2)
-    import json as _json
-    good_response = _json.dumps({f"m{i}": 'SUM(sometable."SOMECOLUMN")' for i in range(2)})
-
     trailing_comma = _FakeBatchAdapter(
-        None, responses=['{"m0": "SUM(sometable."SOMECOLUMN")", "m1": "AVG(sometable."SOMECOLUMN")",}']
+        None, responses=['{"m0": "SUM(sometable.SOMECOLUMN)", "m1": "AVG(sometable.SOMECOLUMN)",}']
     )
-    good = _FakeBatchAdapter(None, responses=[good_response])
+    good = _FakeBatchAdapter(None, responses=["should never be called"])
     config, original = _config_with_fake_adapters(
         {"fake_trailing_comma": lambda settings: trailing_comma, "fake_good": lambda settings: good},
         provider_order=["fake_trailing_comma", "fake_good"],
@@ -365,21 +370,28 @@ def test_translate_batch_falls_through_on_trailing_comma_response():
         _restore_adapter_classes(original)
 
     assert len(trailing_comma.calls) == 1
-    assert len(good.calls) == 1
-    assert all(r is not None and r.provider == "fake_good" for r in results)
+    assert len(good.calls) == 0  # never tried -- both entries were fully recoverable
+    assert all(r is not None and r.is_success and r.provider == "fake_trailing_comma" for r in results)
 
 
-def test_translate_batch_falls_through_on_unescaped_quote_in_value():
+def test_translate_batch_unescaped_quote_salvage_produces_garbage_that_per_metric_validation_still_rejects():
     """A provider that generates SQL containing a literal `"` inside a
-    string comparison without escaping it, breaking the enclosing JSON."""
+    string comparison without escaping it breaks the enclosing JSON at
+    that exact point -- unlike a token-cap truncation (cutoff at the END),
+    this is an internal corruption, so the salvaged value for the
+    corrupted key is itself garbage (see
+    test_prompt.py's ..._unescaped_quote_salvages_only_the_corrupted_first_entry).
+    This is the safety net that matters: garbage syntactically-unbalanced
+    SQL still goes through the SAME per-metric validation pipeline as any
+    other candidate and gets rejected there, exactly like a fully rejected
+    batch would have -- it is never silently accepted as a real
+    translation just because parse_batch_payload could technically
+    extract *something*."""
     requests = _batch_requests(2)
-    import json as _json
-    good_response = _json.dumps({f"m{i}": 'SUM(sometable."SOMECOLUMN")' for i in range(2)})
-
     bad_quote = _FakeBatchAdapter(
         None, responses=['{"m0": "SUM(CASE WHEN x="bad" THEN 1 END)", "m1": "AVG(y)"}']
     )
-    good = _FakeBatchAdapter(None, responses=[good_response])
+    good = _FakeBatchAdapter(None, responses=["should never be called"])
     config, original = _config_with_fake_adapters(
         {"fake_bad_quote": lambda settings: bad_quote, "fake_good": lambda settings: good},
         provider_order=["fake_bad_quote", "fake_good"],
@@ -390,8 +402,16 @@ def test_translate_batch_falls_through_on_unescaped_quote_in_value():
         _restore_adapter_classes(original)
 
     assert len(bad_quote.calls) == 1
-    assert len(good.calls) == 1
-    assert all(r is not None and r.provider == "fake_good" for r in results)
+    # The corrupted "m0" candidate ("SUM(CASE WHEN x=" -- unbalanced
+    # parens) fails _is_scalar_metric_sql/validation like any other bad
+    # candidate; "m1" was never salvaged at all. Both resolve to None.
+    assert results == [None, None]
+    # Not falling through to a second provider is still correct here: the
+    # chunk-level decision (accept vs. try next provider) is made on
+    # whether ANY expected key was recoverable at all, not on whether the
+    # per-metric validation later accepts it -- same principle as a batch
+    # response that parses perfectly but references an unknown column.
+    assert len(good.calls) == 0
 
 
 def test_translate_batch_returns_all_none_when_every_provider_is_malformed():
@@ -695,3 +715,103 @@ def test_translate_batch_rejects_null_cast_placeholder_per_metric():
 
     assert results[0] is not None and results[0].is_success
     assert results[1] is None
+
+
+# ---------------------------------------------------------------------------
+# Self-reported confidence: parsed from the structured {"sql":...,
+# "confidence":...} response, stored as llm_self_reported_confidence --
+# strictly separate from translation_provider_confidence (raw.confidence),
+# which continues to drive the existing min_confidence accept/reject gate
+# completely unchanged.
+# ---------------------------------------------------------------------------
+
+def test_llm_self_reported_confidence_is_parsed_from_structured_response():
+    factory = lambda settings: _FakeAdapter(
+        settings,
+        response_text='{"sql": "SUM(sometable.\\"SOMECOLUMN\\")", "confidence": 0.82}',
+        confidence=0.9,  # adapter-level (translation_provider_confidence) -- deliberately different number
+    )
+    config, original = _config_with_fake_adapters({"fake_structured": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is not None
+    assert result.translation_provider_confidence == 0.9  # unchanged adapter-level gate value
+    assert result.llm_self_reported_confidence == 0.82  # the new, separate, self-reported value
+
+
+def test_llm_self_reported_confidence_is_none_when_provider_ignores_the_json_contract():
+    """Backward-compatible case: a provider returns bare SQL instead of
+    the requested JSON object. Translation must still succeed;
+    llm_self_reported_confidence is simply None, never guessed."""
+    factory = lambda settings: _FakeAdapter(
+        settings, response_text='SUM(sometable."SOMECOLUMN")', confidence=0.9
+    )
+    config, original = _config_with_fake_adapters({"fake_bare_sql": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is not None
+    assert result.llm_self_reported_confidence is None
+
+
+def test_llm_self_reported_confidence_does_not_affect_the_accept_reject_gate():
+    """A LOW self-reported confidence inside the structured response must
+    NOT be used for the min_confidence accept/reject gate -- that gate
+    reads only raw.confidence (the adapter-level value), which is high
+    here. The translation must be accepted."""
+    factory = lambda settings: _FakeAdapter(
+        settings,
+        response_text='{"sql": "SUM(sometable.\\"SOMECOLUMN\\")", "confidence": 0.01}',
+        confidence=0.9,  # adapter-level -- above min_confidence, so this must be accepted
+    )
+    config, original = _config_with_fake_adapters({"fake_low_self_reported": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
+    assert result is not None
+    assert result.llm_self_reported_confidence == 0.01
+
+
+def test_batch_llm_self_reported_confidence_is_parsed_per_metric():
+    import json as _json
+    response = _json.dumps({
+        "m0": {"sql": 'SUM(sometable."SOMECOLUMN")', "confidence": 0.7},
+        "m1": {"sql": 'AVG(sometable."SOMECOLUMN")', "confidence": 0.3},
+    })
+    fake = _FakeBatchAdapter(None, responses=[response])
+    config, original = _config_with_fake_adapters({"fake_batch": lambda settings: fake})
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(_batch_requests(2))
+    finally:
+        _restore_adapter_classes(original)
+
+    assert results[0] is not None and results[0].llm_self_reported_confidence == 0.7
+    assert results[1] is not None and results[1].llm_self_reported_confidence == 0.3
+
+
+def test_batch_llm_self_reported_confidence_is_none_for_bare_string_values():
+    """Mixed batch: one key follows the new JSON-per-key contract, one key
+    is a bare string (provider partially ignored the format). Both must
+    still resolve to correct SQL; only the bare-string one has
+    llm_self_reported_confidence=None."""
+    import json as _json
+    response = _json.dumps({
+        "m0": {"sql": 'SUM(sometable."SOMECOLUMN")', "confidence": 0.6},
+        "m1": 'AVG(sometable."SOMECOLUMN")',
+    })
+    fake = _FakeBatchAdapter(None, responses=[response])
+    config, original = _config_with_fake_adapters({"fake_batch": lambda settings: fake})
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(_batch_requests(2))
+    finally:
+        _restore_adapter_classes(original)
+
+    assert results[0] is not None and results[0].llm_self_reported_confidence == 0.6
+    assert results[1] is not None and results[1].llm_self_reported_confidence is None

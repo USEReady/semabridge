@@ -714,6 +714,8 @@ def _compat_serialize_auto_map_entity_mappings(
             "measure_source_tables": list(row.get("measure_source_tables") or []),
             "source_expression": str(row.get("source_expression") or ""),
             "status": str(row.get("status") or "auto").strip().lower() or "auto",
+            "advisory_notes": list(row.get("advisory_notes") or []),
+            "advisory_categories": list(row.get("advisory_categories") or []),
             "target_expression": row.get("target_expression") or "",
             "sync_enabled": bool(row.get("sync_enabled")) if row.get("sync_enabled") is not None else True,
             "sync_failure_reason": row.get("sync_failure_reason") or "",
@@ -722,6 +724,13 @@ def _compat_serialize_auto_map_entity_mappings(
             "synonym_sources": dict(row.get("synonym_sources") or {}),
             "has_report_alias": bool(row.get("has_report_alias")),
             "complexity_tier": row.get("complexity_tier"),
+            # Static risk tier (metric-only; None for tables/columns) and
+            # the Tier-5 provider's own self-reported estimate (metric-
+            # only, Tier-5-only; None otherwise) -- see
+            # project_mapping_engine.py's _compute_static_risk_tier.
+            "static_risk_tier": row.get("static_risk_tier"),
+            "static_risk_label": row.get("static_risk_label"),
+            "llm_self_reported_confidence": row.get("llm_self_reported_confidence"),
         })
 
     seen: Dict[str, Dict[str, Any]] = {}

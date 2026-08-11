@@ -25,7 +25,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from semabridge.dax_translation.types import Dialect, TranslationRequest
 
@@ -142,6 +142,35 @@ DAX: IF(ISBLANK([Sales]), 0, [Sales])
 SQL: COALESCE(sales, 0)
 '''.strip()
 
+# Added after this session's incident review: several of the real,
+# documented Tier-5 failures (rolling-window day/month unit confusion,
+# LAG()/window-function misuse, DATE-vs-INTEGER type mixing) were all cases
+# where the model *could* have caught its own mistake before answering, if
+# it had been explicitly told to look for that exact shape. This is a
+# self-verification pass baked into the single prompt/response -- not a
+# second LLM call, not a confidence score, not an agentic loop. It is
+# deliberately positioned after the schema context and few-shot examples
+# (so the model has already seen the column types and translation
+# patterns) and before the actual DAX/metrics request is presented, so the
+# checklist reads as "apply this to what you're about to be asked," not as
+# a postscript the model can skim past. Kept dialect-agnostic and generic
+# (no metric/column name hardcoded), and uniform across every provider --
+# every adapter is handed the exact same built prompt string from
+# service.py, so there is no provider-specific variant to keep in sync.
+_VERIFICATION_CHECKLIST = '''
+═══════════════════════════════════════════
+BEFORE YOU ANSWER, VERIFY
+═══════════════════════════════════════════
+Before finalizing the SQL you are about to return, check it against each of these -- all four are real failure patterns seen in production:
+
+1. Unit/type consistency: if the expression adds or subtracts a time period, is the unit (days vs. months vs. years) correct for what the metric name and DAX describe? A "rolling 12 months" / "R12M" / "trailing N months" pattern must use month-based (or the schema's native surrogate-key) arithmetic -- never day-based date arithmetic that happens to produce a numerically similar range.
+2. Forbidden constructs: does this expression use only plain aggregate functions (SUM, AVG, COUNT, MIN, MAX, CASE WHEN, etc.)? Window functions (LAG, LEAD, ROW_NUMBER, OVER, PARTITION BY) and SELECT/FROM/JOIN/CTEs/subqueries are not valid inside a metric expression here, even if they would look correct in ordinary SQL. If the calculation seems to require one, re-express it as a plain aggregate instead -- if that is genuinely not possible, return CAST(NULL AS DOUBLE) rather than attempting a window function or subquery.
+3. Type compatibility: is a DATE/DATETIME-typed value (per the schema context above) ever being compared against, joined with, or arithmetically combined with a column the schema context marks as INTEGER/NUMBER (e.g. a surrogate key, month-index, or date-id column)? These must never be mixed directly -- only compare a DATE-producing expression against a column the schema marks as DATE or DATETIME, and only do integer arithmetic against INTEGER/NUMBER-typed columns.
+4. Scope/reachability: if the DAX filters by a dimension from a table other than the metric's own base table, is a relationship between those two tables actually visible in the schema context? Do not assume or invent a join path you cannot confirm -- if the filtered table's reachability is unclear, prefer CAST(NULL AS DOUBLE) over a fabricated relationship.
+
+Only return your final SQL after checking all four.
+'''.strip()
+
 # The examples above are written in Databricks' backtick-quoted style (see
 # the module docstring) but are appended regardless of the request's actual
 # dialect — for a non-Databricks request this silently contradicts the
@@ -166,7 +195,13 @@ def _few_shot_section(dialect: Dialect) -> str:
 def build_system_message(dialect: Dialect | str) -> str:
     dialect = Dialect.coerce(dialect)
     target = _DIALECT_SYSTEM_TARGET[dialect]
-    return f"You translate Power BI DAX measures to {target}. Return only one SQL expression. Do not use markdown."
+    return (
+        f"You translate Power BI DAX measures to {target}. Return a single "
+        'JSON object with keys "sql" (the SQL expression) and "confidence" '
+        "(a number 0-1, your own estimate of how likely this exact SQL is "
+        "to execute without a compile-time or runtime error). Return JSON "
+        "only. Do not use markdown."
+    )
 
 
 def _load_skill_blocks() -> List[str]:
@@ -233,7 +268,10 @@ def build_prompt(request: TranslationRequest) -> str:
         f"Default dataset: {request.dataset_name}\n"
         f"Default table alias: {request.table_alias}\n"
         "Rules:\n"
-        "- Return only a single SQL expression, no explanation.\n"
+        "- Return only a single JSON object of the shape "
+        '{"sql": "<the SQL expression>", "confidence": <a number 0-1, '
+        'your own estimate of how likely this exact SQL is to execute '
+        'without error>}, no markdown, no explanation outside the JSON.\n'
         "- Use table aliases and columns from the schema context when known.\n"
         "- Prefer aggregate expressions valid in a semantic-view/metric-view metric.\n"
         "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
@@ -241,11 +279,22 @@ def build_prompt(request: TranslationRequest) -> str:
         "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
         f"{_ROLLING_WINDOW_RULE}\n"
         f"{_DIALECT_QUOTING_RULE[dialect]}\n"
-        "- If a pattern is impossible in a metric expression, return CAST(NULL AS DOUBLE).\n"
+        '- If a pattern is impossible in a metric expression, set "sql" to CAST(NULL AS DOUBLE).\n'
         "Schema context (column types shown in parentheses when known):\n"
-        f"{schema_text}\n"
-        "DAX:\n"
-        f"{request.dax}"
+        f"{schema_text}"
+    )
+
+    # Positioned after the schema context and few-shot examples, and before
+    # the actual DAX request below -- see _VERIFICATION_CHECKLIST's comment.
+    # The JSON-shape reminder is restated right next to the request itself
+    # (same reason build_batch_prompt restates its response_shape next to
+    # the metrics list) -- a format instruction stated once, several
+    # sections earlier, is more likely to be dropped than one restated
+    # immediately before the model has to produce output.
+    final_request = (
+        f"DAX:\n{request.dax}\n\n"
+        "Respond with exactly one JSON object of this shape:\n"
+        '{"sql": "<sql expression>", "confidence": <0.0-1.0>}'
     )
 
     sections = []
@@ -253,7 +302,18 @@ def build_prompt(request: TranslationRequest) -> str:
         sections.append("\n\n".join(b for b in skill_blocks if b))
     sections.append(base)
     sections.append(_few_shot_section(dialect))
+    sections.append(_VERIFICATION_CHECKLIST)
+    sections.append(final_request)
     return "\n\n".join(sections)
+
+
+# Same checklist as build_prompt's, plus one line clarifying that "before
+# you answer" means per-key here, since a batch response covers many
+# metrics at once rather than one DAX expression.
+_VERIFICATION_CHECKLIST_BATCH = (
+    _VERIFICATION_CHECKLIST
+    + "\n\nApply this checklist independently to every metric key above before including its SQL in your response."
+)
 
 
 def batch_key(index: int) -> str:
@@ -271,8 +331,10 @@ def build_batch_system_message(dialect: Dialect | str) -> str:
     target = _DIALECT_SYSTEM_TARGET[dialect]
     return (
         f"You translate Power BI DAX measures to {target}. Return a single "
-        'JSON object mapping each metric\'s "key" to its translated SQL '
-        "expression. Return JSON only. Do not use markdown."
+        'JSON object mapping each metric\'s "key" to an object of the '
+        'shape {"sql": "<the SQL expression>", "confidence": <a number '
+        "0-1, your own estimate of how likely this exact SQL is to "
+        'execute without error>}. Return JSON only. Do not use markdown.'
     )
 
 
@@ -317,13 +379,14 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
             "dataset": req.dataset_name,
             "dax": dax_expr,
         }))
-        response_shape[key] = "<sql>"
+        response_shape[key] = {"sql": "<sql>", "confidence": "<0.0-1.0>"}
 
     base = (
         f"Dialect: {target}\n"
         f"Default table alias: {requests[0].table_alias}\n"
         "Rules:\n"
-        '- Return ONLY a single valid JSON object mapping each metric\'s "key" to its SQL expression.\n'
+        '- Return ONLY a single valid JSON object mapping each metric\'s "key" to an '
+        'object {"sql": "<sql expression>", "confidence": <0.0-1.0>}.\n'
         "- No markdown, no extra keys, no prose.\n"
         "- Use table aliases and columns from the schema context when known.\n"
         "- Prefer aggregate expressions valid in a semantic-view/metric-view metric.\n"
@@ -332,9 +395,15 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
         "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
         f"{_ROLLING_WINDOW_RULE}\n"
         f"{_DIALECT_QUOTING_RULE[dialect]}\n"
-        "- If a pattern is impossible for one metric, use CAST(NULL AS DOUBLE) for just that key.\n"
+        '- If a pattern is impossible for one metric, set "sql" to CAST(NULL AS DOUBLE) for just that key.\n'
         "Schema context (column types shown in parentheses when known):\n"
-        f"{schema_text}\n"
+        f"{schema_text}"
+    )
+
+    # Positioned after the schema context and few-shot examples, and before
+    # the actual per-metric requests below -- see _VERIFICATION_CHECKLIST's
+    # comment. Apply the checklist to EACH metric's key below individually.
+    final_request = (
         "Metrics (one JSON object per line):\n"
         + "\n".join(metric_lines) + "\n"
         "Respond with exactly one JSON object of this shape:\n"
@@ -346,16 +415,77 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
         sections.append("\n\n".join(b for b in skill_blocks if b))
     sections.append(base)
     sections.append(_few_shot_section(dialect))
+    sections.append(_VERIFICATION_CHECKLIST_BATCH)
+    sections.append(final_request)
     return "\n\n".join(sections)
 
 
-def parse_batch_payload(text: str) -> Optional[Dict[str, str]]:
-    """Parse a provider's batch response into {key: sql}.
+def _extract_sql_and_confidence(value: Any) -> Tuple[Optional[str], Optional[float]]:
+    """Pull (sql, confidence) out of one candidate value -- either the
+    requested {"sql":..., "confidence":...} shape, or a bare SQL string
+    from a provider that ignored the output-format instruction (tolerated,
+    same posture parse_batch_payload already takes toward partial key
+    coverage: not everything a provider gets "wrong" about the response
+    contract is a failed translation).
 
-    Returns None only for a genuinely malformed response — not valid JSON,
-    or not a JSON object at all. That is the signal a caller should treat
-    as this provider's whole batch attempt failing (try the next
-    provider). A response that *does* parse but only covers some of the
+    confidence is None whenever it's missing or not a real number --
+    never guessed or defaulted to a placeholder. See
+    TranslationResult.llm_self_reported_confidence's docstring for why
+    that value must stay display-only and how it differs from the
+    existing translation_provider_confidence accept/reject gate.
+    """
+    if isinstance(value, dict):
+        sql = value.get("sql")
+        sql = sql if isinstance(sql, str) else None
+        conf = value.get("confidence")
+        confidence = (
+            float(conf) if isinstance(conf, (int, float)) and not isinstance(conf, bool) else None
+        )
+        return sql, confidence
+    if isinstance(value, str):
+        return value, None
+    return None, None
+
+
+def parse_structured_response(text: str) -> Tuple[Optional[str], Optional[float]]:
+    """Parse a single-metric Tier 5 response into (sql, confidence).
+
+    Tolerates a provider that ignores the {"sql":..., "confidence":...}
+    contract and returns bare SQL text instead: sql=<the cleaned text>,
+    confidence=None in that case -- exactly the value that would have
+    been used before this parsing step existed. Only (None, None) means a
+    genuinely empty response; an unparseable-as-JSON non-empty response is
+    treated as bare SQL, not as failure, since ignoring a response-FORMAT
+    instruction while still answering the actual translation question
+    isn't the same failure as returning nothing.
+    """
+    from semabridge.dax_translation.tier5.adapters.base import strip_markdown_fences
+
+    cleaned = strip_markdown_fences(text).strip()
+    if not cleaned:
+        return None, None
+    normalized = re.sub(r"^json\s*", "", cleaned, flags=re.IGNORECASE).strip()
+    try:
+        parsed = json.loads(normalized)
+    except Exception:
+        return cleaned, None
+    return _extract_sql_and_confidence(parsed)
+
+
+def parse_batch_payload(text: str) -> Optional[Dict[str, Any]]:
+    """Parse a provider's batch response into {key: candidate}, where each
+    candidate is either a string (a provider that ignored the per-key
+    {"sql":..., "confidence":...} contract and returned bare SQL for that
+    key -- tolerated) or a dict of that shape. Callers use
+    _extract_sql_and_confidence() to read whichever shape a given key
+    actually has.
+
+    Returns None only for a genuinely malformed response where NOTHING
+    could be recovered -- not valid JSON at all with no salvageable
+    top-level entries either. That is the signal a caller should treat as
+    this provider's whole batch attempt failing (try the next provider).
+    A response that *does* parse (fully OR partially, see
+    _salvage_partial_batch_json below) but only covers some of the
     requested keys is NOT malformed here — it is returned as-is, and it is
     the caller's job (Tier5Service.translate_batch) to decide whether
     partial key coverage is close enough to a real answer to accept per
@@ -371,7 +501,134 @@ def parse_batch_payload(text: str) -> Optional[Dict[str, str]]:
     try:
         parsed = json.loads(cleaned)
     except Exception:
-        return None
+        # Real incident: a 13-metric batch response was cut off mid-JSON
+        # by the adapter's output-token cap (since fixed separately --
+        # see Tier5Service._batch_max_tokens), and the whole-string
+        # json.loads() above naturally fails on a response that never
+        # closes its outer braces. Before discarding the whole chunk,
+        # try to salvage whatever complete top-level "key": value entries
+        # appear before the truncation point -- almost always most of the
+        # batch, since a token-cap cutoff lands near the END of the
+        # response, not the beginning.
+        salvaged = _salvage_partial_batch_json(cleaned)
+        return salvaged or None
     if not isinstance(parsed, dict):
         return None
-    return {str(k): str(v) for k, v in parsed.items() if isinstance(v, str)}
+    return {
+        str(k): v for k, v in parsed.items()
+        if isinstance(v, str) or isinstance(v, dict)
+    }
+
+
+def _salvage_partial_batch_json(text: str) -> Dict[str, Any]:
+    """Best-effort recovery of complete top-level "key": value entries
+    from a JSON object that failed to parse as a whole -- almost always
+    because the response was cut off mid-object by an output-token cap,
+    not because the model wrote genuinely invalid JSON from the start.
+
+    Manually scans for the outermost '{' and walks forward pairing off
+    complete "key": value entries (value is either a quoted string or a
+    brace-balanced object, respecting escaped quotes inside both), each
+    validated with its own json.loads() call. Stops at the first entry it
+    can't complete -- exactly the truncation point -- and returns
+    everything gathered before it. This is deliberately NOT a general
+    JSON-repair library: it only needs to handle the one real shape this
+    module ever emits (a flat object of string/object values), and a
+    narrow hand-rolled scanner is easier to reason about here than
+    pulling in and trusting a third-party lenient-JSON parser for
+    something this contract-specific.
+
+    Returns {} (never None) when nothing could be salvaged -- e.g. the
+    response wasn't shaped like a JSON object at all, or was cut off
+    before even the first entry completed. Callers treat {} the same as
+    "unparseable".
+    """
+    result: Dict[str, Any] = {}
+    start = text.find("{")
+    if start == -1:
+        return result
+
+    i = start + 1
+    n = len(text)
+
+    def _skip_ws_and_commas(pos: int) -> int:
+        while pos < n and text[pos] in " \t\r\n,":
+            pos += 1
+        return pos
+
+    def _scan_string(pos: int) -> Optional[int]:
+        """pos is at the opening quote. Returns the index just past the
+        closing quote, or None if the string never closes (truncated)."""
+        j = pos + 1
+        while j < n:
+            if text[j] == "\\":
+                j += 2
+                continue
+            if text[j] == '"':
+                return j + 1
+            j += 1
+        return None
+
+    def _scan_object(pos: int) -> Optional[int]:
+        """pos is at the opening '{'. Returns the index just past the
+        matching closing '}', or None if it never balances (truncated)."""
+        depth = 0
+        j = pos
+        while j < n:
+            ch = text[j]
+            if ch == '"':
+                end = _scan_string(j)
+                if end is None:
+                    return None
+                j = end
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return j + 1
+            j += 1
+        return None
+
+    while True:
+        i = _skip_ws_and_commas(i)
+        if i >= n or text[i] == "}":
+            break
+        if text[i] != '"':
+            break  # not a well-formed "key": ... entry -- stop here
+        key_end = _scan_string(i)
+        if key_end is None:
+            break  # truncated inside the key itself
+        key_raw = text[i:key_end]
+        i = _skip_ws_and_commas(key_end)
+        if i >= n or text[i] != ":":
+            break
+        i = _skip_ws_and_commas(i + 1)
+        if i >= n:
+            break
+
+        if text[i] == '"':
+            value_end = _scan_string(i)
+        elif text[i] == "{":
+            value_end = _scan_object(i)
+        else:
+            # Bare literal (number/true/false/null) -- scan to the next
+            # top-level ',' or '}'.
+            j = i
+            while j < n and text[j] not in ",}":
+                j += 1
+            value_end = j if j < n else None
+        if value_end is None:
+            break  # truncated inside the value -- this is the cutoff point
+
+        value_raw = text[i:value_end]
+        try:
+            key = json.loads(key_raw)
+            value = json.loads(value_raw)
+        except Exception:
+            break
+        result[key] = value
+        i = value_end
+
+    return result

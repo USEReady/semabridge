@@ -10,7 +10,7 @@
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight } from 'lucide-react';
+import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight, Info } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import DroppedFieldsPanel from './common/DroppedFieldsPanel';
 import SmartSearchBar from './common/SmartSearchBar';
@@ -30,11 +30,20 @@ import {
   CONVERSION_FACET_LABELS,
   COMPLEXITY_TIER_FACET_LABELS,
 } from '../utils/mappingFilterUtils';
+import { getStaticRiskBadge, getSelfReportedEstimateText, getEnrichmentUnverifiableCaveat } from '../utils/riskLabels';
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 export function isBlockingRow(row) {
   return String(row?.status || '').toLowerCase() === 'collision';
 }
+
+// Shared between TableHeader and MappingRow so the two never drift apart.
+// The Status and Action columns are fixed pixel widths (not fr/minmax) on
+// purpose: Status needs to be wide enough to hold a stacked Status badge +
+// risk badge + confidence/caveat line without any of them bleeding into the
+// Action column, and Action needs to stay put regardless of how much (or
+// how little) content the row stacks above it in Status.
+const MAPPING_ROW_GRID_COLUMNS = '1.5fr 1.5fr minmax(180px, 0.8fr) 172px 170px';
 
 // ─── Type badge ───────────────────────────────────────────────────────────────
 function TypeBadge({ type }) {
@@ -96,7 +105,7 @@ function TableHeader() {
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: '1.5fr 1.5fr minmax(180px, 0.8fr) 120px 100px',
+      gridTemplateColumns: MAPPING_ROW_GRID_COLUMNS,
       gap: '1rem',
       padding: '10px 14px',
       background: 'var(--bg-surface-raised)',
@@ -123,19 +132,32 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
   const badgeCfg = STATUS_BADGE_MAP[String(row.status || '').toLowerCase()]
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
+  // Three SEPARATE, never-blended signals -- see utils/riskLabels.js. Each
+  // is independently null/absent for most rows; none ever substitutes
+  // for another.
+  const staticRiskBadge = getStaticRiskBadge(row);
+  const selfReportedEstimateText = getSelfReportedEstimateText(row);
+  const enrichmentUnverifiableCaveat = getEnrichmentUnverifiableCaveat(row);
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   const hasDetails = isMeasure || (Array.isArray(row.synonyms) && row.synonyms.length > 0);
   const isPanelOpen = (isCollision && expandedCollision === row.id) || (hasDetails && expandedMeasure);
+  // Full text is always available via the native tooltip (title attribute);
+  // only the short form is derived here for the always-visible row label, so
+  // the caveat is shortened for display without ever being dropped.
+  const selfReportedEstimatePct = selfReportedEstimateText?.match(/(\d+)%/)?.[1] ?? null;
 
   return (
     <div style={{ borderBottom: '1px solid var(--border-main)' }}>
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '1.5fr 1.5fr minmax(180px, 0.8fr) 120px 100px',
+        gridTemplateColumns: MAPPING_ROW_GRID_COLUMNS,
         gap: '1rem',
-        padding: '10px 14px',
-        alignItems: 'center',
+        padding: '12px 14px',
+        // Top-aligned, not centered: however many signals Status stacks
+        // (badge / risk badge / confidence / caveat), Action and the other
+        // columns stay pinned to the same y-position at the top of the row.
+        alignItems: 'start',
         background: isCollision ? 'rgba(239, 68, 68, 0.04)' : 'transparent',
       }}
     >
@@ -258,13 +280,90 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
         </button>
       </div>
 
-      {/* Status */}
-      <div style={{ display: 'flex', justifyContent: 'center' }}>
+      {/* Status / Risk / Confidence -- one fixed-width, self-contained
+          column (168px, see MAPPING_ROW_GRID_COLUMNS). minWidth: 0 keeps a
+          long risk-tier label from forcing the grid track itself wider than
+          168px (the default grid-item min-width is content-based, which is
+          exactly what let the risk badge bleed into the Action column). */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
         <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
+        {/* Static risk tier -- metric-only, backend-computed from static
+            validators only (schema-reference check, type-safety
+            validator, unreachable-dimension detector, DropLedger
+            reconciliation). Deliberately its own badge, never merged into
+            the Status badge above: this is "will the SQL run", not
+            "is the identifier mapped/named correctly". wrap lets the
+            longest label ("Failed a static check — predicted failure")
+            break onto multiple lines inside the column instead of forcing
+            the pill (and the column) wider than its allotted width. */}
+        {staticRiskBadge && (
+          <StatusBadge status={staticRiskBadge.status} label={staticRiskBadge.label} size="sm" wrap />
+        )}
+        {/* AI self-reported estimate -- Tier-5-only, never shown for a
+            Tier 1-4 (deterministic) metric since llm_self_reported_
+            confidence is always null there. Deliberately NOT a colored
+            StatusBadge pill: this is the LLM's own unverified guess, not
+            a validated risk signal, and must never be visually confused
+            with the badge above it. Shown as a short always-visible form
+            with the full "(not independently verified)" qualifier moved to
+            the native tooltip (title) -- getSelfReportedEstimateText()
+            still always returns the full qualified string, so the caveat
+            is reachable on hover/focus, never removed, and row height no
+            longer depends on how long that sentence happens to be. */}
+        {selfReportedEstimateText && (
+          <span
+            title={selfReportedEstimateText}
+            tabIndex={0}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              fontSize: 10,
+              fontWeight: 500,
+              fontStyle: 'italic',
+              color: 'var(--text-tertiary)',
+              whiteSpace: 'nowrap',
+              cursor: 'help',
+            }}
+          >
+            AI estimate: {selfReportedEstimatePct}%
+            <Info size={10} style={{ flexShrink: 0 }} />
+          </span>
+        )}
+        {/* Enrichment-column-unverifiable caveat -- a metric whose SQL
+            already translated correctly, referencing a flag column
+            (e.g. IS_YTD) that only exists on the enriched view
+            _create_enriched_view builds at real-deploy time. Dry-run has
+            no live connection to confirm it, so this is neither a risk
+            signal (staticRiskBadge) nor an AI guess
+            (selfReportedEstimateText) -- a third, distinct, non-error
+            tone (info, not warning/error) so it can't be mistaken for
+            either. Same short-label + tooltip treatment as the estimate
+            above, for the same row-height reason; getEnrichmentUnverifiableCaveat()
+            still returns the full sentence, surfaced via title. */}
+        {enrichmentUnverifiableCaveat && (
+          <span
+            title={enrichmentUnverifiableCaveat}
+            tabIndex={0}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              fontSize: 10,
+              fontWeight: 500,
+              color: '#3B82F6',
+              whiteSpace: 'nowrap',
+              cursor: 'help',
+            }}
+          >
+            Enrichment unverifiable
+            <Info size={10} style={{ flexShrink: 0 }} />
+          </span>
+        )}
       </div>
 
       {/* Action */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
         {isCollision ? (
           <button
             type="button"

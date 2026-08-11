@@ -233,7 +233,9 @@ class AnthropicAdapter:
         self._resolved_model = chosen or _FALLBACK_DEFAULT_MODEL
         return self._resolved_model
 
-    def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
+    def translate(
+        self, prompt: str, system_message: str, max_tokens: Optional[int] = None
+    ) -> Optional[RawResult]:
         api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
         if not api_key:
             return None
@@ -246,7 +248,13 @@ class AnthropicAdapter:
 
         timeout = float(self.settings.timeout_seconds or 30)
         max_retries = int(self.settings.max_retries or 2)
-        max_tokens = int(os.getenv("ANTHROPIC_DAX_MAX_TOKENS", "500"))
+        # max_tokens param (from Tier5Service.translate_batch, scaled to
+        # batch size) takes priority over the single-metric env default --
+        # see ProviderAdapter.translate's docstring for the real incident
+        # this closes (a 13-metric batch truncated under the flat 500
+        # default, discarding the whole batch).
+        if max_tokens is None:
+            max_tokens = int(os.getenv("ANTHROPIC_DAX_MAX_TOKENS", "500"))
 
         try:
             model_name = self._resolve_model(Anthropic, api_key, timeout)

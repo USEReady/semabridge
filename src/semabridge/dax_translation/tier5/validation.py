@@ -90,6 +90,19 @@ def _is_scalar_metric_sql(expr: str, dialect: str = "snowflake") -> bool:
     """
     if not expr:
         return False
+    if not _has_balanced_parentheses(expr):
+        # Added after a real incident: a batch response salvaged from a
+        # provider that emitted an unescaped quote mid-value (prompt.py's
+        # _salvage_partial_batch_json necessarily stops scanning right at
+        # the corruption point) can produce a syntactically incomplete
+        # fragment like "SUM(CASE WHEN x=" -- no forbidden keyword above
+        # catches that, and it has no qualified column reference for the
+        # schema-existence check to reject either, so it was silently
+        # accepted as a "successful" candidate. Any genuinely complete,
+        # correct SQL expression this pipeline produces has balanced
+        # parens; this is a cheap, general structural-completeness check,
+        # not a salvage-specific patch.
+        return False
     upper = f" {expr.upper()} "
     forbidden = [
         " SELECT ",
@@ -103,6 +116,18 @@ def _is_scalar_metric_sql(expr: str, dialect: str = "snowflake") -> bool:
     if dialect_value != "databricks":
         forbidden.extend([" OVER ", " PARTITION BY "])
     return not any(token in upper for token in forbidden)
+
+
+def _has_balanced_parentheses(expr: str) -> bool:
+    depth = 0
+    for ch in expr:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
 
 
 # ---------------------------------------------------------------------------

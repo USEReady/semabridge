@@ -7,6 +7,112 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
 from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_UNREACHABLE_DIMENSION
+
+# Structural signal, not a name: any metric whose advisory_categories
+# intersects this set is known to fail at real-deploy time regardless of
+# how cleanly it translated or how its identifier mapped — see
+# osi_to_sml.py's _flag_unreachable_dimension_calculates and
+# dax_ast_parser.py's dax_calculate_filters_unreachable_dimension for the
+# current sole producer. Extend this set (never string-match reason text)
+# as more real-deploy-only failure classes grow a detector.
+REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES = {ADVISORY_CATEGORY_UNREACHABLE_DIMENSION}
+
+# Distinct from "auto"/"manual" (which describe identifier-mapping
+# provenance only): a metric or field structurally known — via
+# REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES or a matching DropLedger record —
+# to fail at real-deploy time even though it mapped/translated cleanly
+# pre-deploy. Never counted as "auto" by callers that sum auto_mapped.
+STATUS_PREDICTED_FAILURE = "predicted_failure"
+
+# ---------------------------------------------------------------------------
+# Static risk tier (dry-run page, metric-only) — see the session's design
+# note: this is a deliberately COARSE, 3-value label, not a smooth 0-100
+# score. With ~10-12 documented real incident categories total across this
+# codebase's history, most already caught by hard boolean checks, there
+# isn't enough real incident volume to calibrate a differentiated numeric
+# score without overstating precision the evidence doesn't support. See
+# STATIC_RISK_* below.
+#
+# STATIC_RISK_PREDICTED_FAILURE is NOT a separate detector — it is a plain
+# alias for STATUS_PREDICTED_FAILURE, computed once by _entity_status()/
+# reconcile_predicted_failures_with_drops() as always. This module never
+# recomputes real-deploy-failure detection a second time; it only adds the
+# middle tier on top of that existing signal.
+STATIC_RISK_NO_KNOWN_RISK = "no_known_risk"
+STATIC_RISK_KNOWN_RISKY_PATTERN = "known_risky_pattern"
+STATIC_RISK_PREDICTED_FAILURE = STATUS_PREDICTED_FAILURE
+
+STATIC_RISK_LABELS = {
+    STATIC_RISK_NO_KNOWN_RISK: "No known risk signals",
+    STATIC_RISK_KNOWN_RISKY_PATTERN: "Known risky pattern detected",
+    STATIC_RISK_PREDICTED_FAILURE: "Failed a static check — predicted failure",
+}
+
+# DAX shapes tied to this session's real, documented Tier-5 incidents
+# (rolling-window day/month unit confusion; LAG()/window-function misuse
+# for a previous-period calc) that reached the LLM fallback instead of a
+# deterministic tier. Matching one of these is NOT proof of a failure —
+# the metric already passed every hard static check above, or it would be
+# STATIC_RISK_PREDICTED_FAILURE instead — it is the same shape that has
+# produced a real incident before. Kept short and explicit rather than a
+# general "complexity" heuristic: every entry here traces to a specific
+# incident, not a guess.
+_ROLLING_WINDOW_KEYWORDS = re.compile(
+    r"\b(DATESINPERIOD|LASTN|ROLLING|TRAILING|R3M|R6M|R12M)\b", re.IGNORECASE
+)
+# tier5/prompt.py's own few-shot rules already say to route these to the
+# deterministic AST renderer, not Tier 5 (see FEW-SHOT rule #10) — one of
+# these still landing on a Tier-5 result is exactly the shape behind the
+# real LAG()/window-function-misuse incident (commit f0cac52 / e8e2ae5).
+_TIME_INTELLIGENCE_FUNCTIONS = re.compile(
+    r"\b(SAMEPERIODLASTYEAR|PREVIOUSYEAR|PREVIOUSMONTH|PREVIOUSQUARTER|"
+    r"PARALLELPERIOD|TOTALYTD|TOTALQTD|TOTALMTD)\s*\(",
+    re.IGNORECASE,
+)
+
+
+def _has_known_risky_dax_pattern(dax_expression: str) -> bool:
+    if not dax_expression:
+        return False
+    return bool(
+        _ROLLING_WINDOW_KEYWORDS.search(dax_expression)
+        or _TIME_INTELLIGENCE_FUNCTIONS.search(dax_expression)
+    )
+
+
+def _compute_static_risk_tier(entity: Dict[str, Any], status: str) -> Optional[str]:
+    """Three-tier, metric-only risk label built ENTIRELY from static
+    signals already computed elsewhere in this pipeline — no new LLM
+    call, no live connection, no dependency on
+    llm_self_reported_confidence (an experiment this session found does
+    not reliably track actual SQL correctness, so it must never influence
+    this label).
+
+    None for non-metric entities — there's nothing to statically risk-
+    assess about a bare column/table mapping.
+    """
+    if str(entity.get("entity_kind") or "").lower() != "metric":
+        return None
+
+    if status == STATUS_PREDICTED_FAILURE:
+        return STATIC_RISK_PREDICTED_FAILURE
+
+    is_tier5 = entity.get("complexity_tier") == 5
+    if is_tier5:
+        validation_notes = entity.get("validation_notes") or []
+        if validation_notes:
+            # At least one earlier candidate for this exact metric was
+            # rejected by a static check before a later attempt produced
+            # the SQL that ultimately shipped — a real, already-collected
+            # signal (tier5/service.py's validation_notes) that this
+            # metric was hard to translate correctly, never previously
+            # surfaced past the log line.
+            return STATIC_RISK_KNOWN_RISKY_PATTERN
+        if _has_known_risky_dax_pattern(str(entity.get("source_expression") or "")):
+            return STATIC_RISK_KNOWN_RISKY_PATTERN
+
+    return STATIC_RISK_NO_KNOWN_RISK
 
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
@@ -297,11 +403,15 @@ def extract_model_entities(
             "target_expression": metric.get("sql_expression"),
             "sync_enabled": metric.get("sync_enabled"),
             "sync_failure_reason": metric.get("sync_failure_reason"),
+            "advisory_notes": list(metric.get("advisory_notes") or []),
+            "advisory_categories": list(metric.get("advisory_categories") or []),
             "depends_on_measures": list(metric.get("depends_on_measures") or []),
             "synonyms": list(metric.get("synonyms") or []),
             "synonym_sources": dict(metric.get("synonym_sources") or {}),
             "has_report_alias": bool(metric.get("has_report_alias")),
             "complexity_tier": metric.get("complexity_tier"),
+            "validation_notes": list(metric.get("validation_notes") or []),
+            "llm_self_reported_confidence": metric.get("llm_self_reported_confidence"),
         })
 
     return entities
@@ -384,6 +494,149 @@ def _validate_target_name(
         "validation_message": "Identifier is valid.",
         "suggested_target_name": resolved_target,
     }
+
+
+def _entity_status(entity: Dict[str, Any], is_manual: bool) -> str:
+    """"auto"/"manual" describe identifier-mapping provenance only —
+    whether the target name was auto-sanitized or user-overridden. That
+    axis is orthogonal to whether the entity will actually deploy, so a
+    metric can map/translate cleanly and still be structurally known to
+    fail at real-deploy time (see REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES).
+    When that structural signal is present, it overrides "manual" too:
+    renaming a target identifier doesn't change whether Snowflake's
+    compiler will accept the metric's underlying expression.
+    """
+    categories = set(entity.get("advisory_categories") or [])
+    if categories & REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES:
+        return STATUS_PREDICTED_FAILURE
+    return "manual" if is_manual else "auto"
+
+
+def _dropped_entity_dataset(parent_source_path: Optional[str]) -> str:
+    """'datasets.TERRITORY' -> 'TERRITORY'; '' when no parent path."""
+    raw = str(parent_source_path or "").strip()
+    return re.sub(r"^datasets\.", "", raw, flags=re.IGNORECASE).split(".")[0]
+
+
+def reconcile_predicted_failures_with_drops(
+    mappings: List[Dict[str, Any]],
+    dropped_entities: List[Dict[str, Any]],
+) -> None:
+    """Mutate `mappings` in place: downgrade to STATUS_PREDICTED_FAILURE
+    any row whose (entity_kind, dataset, source_name) matches a non-
+    by-design DropRecord in `dropped_entities` — even if that row was
+    computed as "auto"/"manual".
+
+    entity_mappings (naming/collision status) and dropped_entities
+    (schema-validation / DDL-emission-time drops from a later, independent
+    pass — see mappings_controller.py's trial DDL-build pass) are built by
+    two separate code paths that don't otherwise cross-check each other,
+    so the same field can silently disagree between them: reported as a
+    clean "auto" mapping while simultaneously listed as dropped. This
+    closes that gap generically, keyed on structural identity (kind +
+    dataset + name), not on any specific model's field names.
+
+    by_design=True drops (e.g. Power BI's own auto-generated date-table
+    shadows) are intentional, expected exclusions, not failures, and are
+    left alone.
+    """
+    if not mappings or not dropped_entities:
+        return
+
+    dropped_keys: set = set()
+    dropped_keys_no_dataset: set = set()
+    for rec in dropped_entities:
+        if not isinstance(rec, dict) or rec.get("by_design"):
+            continue
+        kind = str(rec.get("entity_kind") or "").strip().lower()
+        name = str(rec.get("entity_name") or "").strip().casefold()
+        if not kind or not name:
+            continue
+        dataset = str(rec.get("dataset") or "").strip().casefold()
+        if dataset:
+            dropped_keys.add((kind, dataset, name))
+        else:
+            dropped_keys_no_dataset.add((kind, name))
+
+    if not dropped_keys and not dropped_keys_no_dataset:
+        return
+
+    for row in mappings:
+        kind = str(row.get("entity_kind") or "").strip().lower()
+        name = str(row.get("source_name") or "").strip().casefold()
+        if not kind or not name:
+            continue
+        dataset = _dropped_entity_dataset(row.get("parent_source_path")).casefold()
+        if (kind, dataset, name) in dropped_keys or (kind, name) in dropped_keys_no_dataset:
+            row["status"] = STATUS_PREDICTED_FAILURE
+            # Keep the metric-only static risk tier in sync with `status`
+            # -- it was computed once inside build_entity_mappings, BEFORE
+            # this reconciliation pass runs, so a row promoted to
+            # predicted_failure here (a DropLedger hit, not an advisory
+            # category) would otherwise still show its pre-reconciliation
+            # tier. static_risk_tier is always an alias of `status` for
+            # this outcome, never a second, independently-drifting copy.
+            if kind == "metric":
+                row["static_risk_tier"] = STATIC_RISK_PREDICTED_FAILURE
+                row["static_risk_label"] = STATIC_RISK_LABELS[STATIC_RISK_PREDICTED_FAILURE]
+
+
+def reconcile_enrichment_unverifiable_advisories(
+    mappings: List[Dict[str, Any]],
+    trial_metrics: Optional[Iterable[Any]],
+) -> None:
+    """Mutate `mappings` in place: merge advisory_categories/advisory_notes
+    that only get set during the trial DDL-build pass (metrics_clause_
+    builder.py's ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE tagging,
+    among anything else that mutates a metric object during DDL emission)
+    back onto the already-built mapping row for that metric.
+
+    Real gap this closes: build_entity_mappings() runs BEFORE the trial
+    DDL-build pass (see mappings_controller.py's dry-run flow), against
+    the model snapshot taken at extraction time — it can never see an
+    advisory category a later pass adds to the live `trial_sml` object
+    it's never handed back. Same shape as reconcile_predicted_failures_
+    with_drops() above: a late-discovered signal merged onto an
+    already-built row by structural identity (kind + name), not a second,
+    independently-computed view of the same metric. A union merge, not an
+    overwrite — never drops an advisory the earlier extraction-time pass
+    already found just because the trial metric object doesn't happen to
+    carry it too.
+    """
+    if not mappings or not trial_metrics:
+        return
+
+    by_name: Dict[str, Any] = {}
+    for m in trial_metrics:
+        name = str(getattr(m, "unique_name", "") or "").strip().casefold()
+        if name:
+            by_name[name] = m
+    if not by_name:
+        return
+
+    for row in mappings:
+        if str(row.get("entity_kind") or "").strip().lower() != "metric":
+            continue
+        name = str(row.get("source_name") or "").strip().casefold()
+        trial_metric = by_name.get(name)
+        if trial_metric is None:
+            continue
+
+        trial_categories = list(getattr(trial_metric, "advisory_categories", None) or [])
+        if trial_categories:
+            merged = list(row.get("advisory_categories") or [])
+            for cat in trial_categories:
+                if cat not in merged:
+                    merged.append(cat)
+            row["advisory_categories"] = merged
+
+        trial_notes = list(getattr(trial_metric, "advisory_notes", None) or [])
+        if trial_notes:
+            merged_notes = list(row.get("advisory_notes") or [])
+            for note in trial_notes:
+                if note not in merged_notes:
+                    merged_notes.append(note)
+            row["advisory_notes"] = merged_notes
 
 
 def build_entity_mappings(
@@ -634,6 +887,9 @@ def build_entity_mappings(
                         "semantic_name": _semantic_name(_prior_entry.get("source_name"))
                     }))
 
+        entity_status = _entity_status(entity, is_manual)
+        static_risk_tier = _compute_static_risk_tier(entity, entity_status)
+
         generated_index[source_path] = len(generated)
         generated.append({
             "id": mapping_id,
@@ -653,7 +909,12 @@ def build_entity_mappings(
             "target_path": source_path,
             "target_parent_path": entity.get("parent_source_path"),
             "target_data_type": entity.get("data_type"),
-            "status": "manual" if is_manual else "auto",
+            "status": entity_status,
+            "static_risk_tier": static_risk_tier,
+            "static_risk_label": STATIC_RISK_LABELS.get(static_risk_tier),
+            "llm_self_reported_confidence": entity.get("llm_self_reported_confidence"),
+            "advisory_notes": list(entity.get("advisory_notes") or []),
+            "advisory_categories": list(entity.get("advisory_categories") or []),
             "collision_detected": collision_detected,
             "collision_group": collision_group_val,
             "hash_suffix": hash_suffix,

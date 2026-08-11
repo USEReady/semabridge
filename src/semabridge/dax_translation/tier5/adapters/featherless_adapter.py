@@ -87,10 +87,16 @@ class FeatherlessAdapter:
     def is_available(self) -> bool:
         return bool(self.settings.api_key or os.getenv(self.settings.enabled_env))
 
-    def translate(self, prompt: str, system_message: str) -> Optional[RawResult]:
+    def translate(
+        self, prompt: str, system_message: str, max_tokens: Optional[int] = None
+    ) -> Optional[RawResult]:
         api_key = self.settings.api_key or os.getenv(self.settings.enabled_env)
         if not api_key:
             return None
+        # See ProviderAdapter.translate's docstring: a batch call passes a
+        # scaled value; a single-metric call passes None and keeps this
+        # provider's existing default exactly as before.
+        effective_max_tokens = max_tokens if max_tokens is not None else 500
 
         # A Settings-selected model (singular) means the admin picked one
         # specific model via Discover Models -- honor that exactly, no
@@ -113,7 +119,7 @@ class FeatherlessAdapter:
                     model=model,
                     base_url=_FEATHERLESS_BASE_URL,
                     temperature=0.1,
-                    max_tokens=500,
+                    max_tokens=effective_max_tokens,
                     timeout=timeout,
                 )
                 response = llm.invoke([("system", system_message), ("user", prompt)])

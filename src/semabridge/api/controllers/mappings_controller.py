@@ -326,6 +326,7 @@ async def dry_run_mapping(
         # before deployment. generate_ddls() is pure string-building — no
         # network calls, no writes beyond a local debug .sql file — so this is
         # safe to re-run on every mapping-iteration dry-run call.
+        trial_sml = None
         if sml_blob and target_connector == "snowflake":
             try:
                 from semabridge.sml.serializer import SMLSerializer
@@ -352,6 +353,32 @@ async def dry_run_mapping(
                 dropped_entities.extend(trial_emitter.drop_ledger.to_json())
             except Exception as trial_setup_err:
                 logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
+                trial_sml = None
+
+        # ── Reconcile: a field the trial DDL pass just dropped (e.g. a
+        # live-schema-only column like MonthIndex when no live schema was
+        # available) must not simultaneously show as status "auto" in
+        # entity_mappings — that's the same "two independently-computed
+        # views of success disagree" gap as the advisory-category
+        # override above, closed the same way. Mutates built["mappings"]
+        # in place, so every downstream consumer (entity_mappings below,
+        # filtered_mappings, auto_count) sees the corrected status.
+        from semabridge.api.services.project_mapping_engine import (
+            reconcile_predicted_failures_with_drops,
+            reconcile_enrichment_unverifiable_advisories,
+        )
+        reconcile_predicted_failures_with_drops(built.get("mappings", []), dropped_entities)
+        # ── Reconcile the OTHER direction: the trial pass can also
+        # RESCUE a metric (tag it "cannot verify offline" instead of
+        # dropping it — metrics_clause_builder.py's enrichment-flag-column
+        # handling). That advisory only exists on trial_sml's live metric
+        # objects, mutated after build_entity_mappings already built its
+        # rows from the pre-trial-pass model snapshot — merge it back the
+        # same way, by structural identity, not by re-deriving it here.
+        if trial_sml is not None:
+            reconcile_enrichment_unverifiable_advisories(
+                built.get("mappings", []), getattr(trial_sml, "metrics", None)
+            )
 
         data = {
             "project_id": preview_project_id,
@@ -422,14 +449,32 @@ async def dry_run_mapping(
                 "target_expression": m.get("target_expression", ""),
                 "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
                 "sync_failure_reason": m.get("sync_failure_reason", ""),
+                "advisory_notes": list(m.get("advisory_notes") or []),
+                "advisory_categories": list(m.get("advisory_categories") or []),
                 "depends_on_measures": list(m.get("depends_on_measures") or []),
                 "synonyms": list(m.get("synonyms") or []),
+                "complexity_tier": m.get("complexity_tier"),
+                # Static risk tier + label (metric-only; None for
+                # tables/columns) and the Tier-5 provider's own self-
+                # reported estimate (metric-only, Tier-5-only; None
+                # otherwise). See project_mapping_engine.py's
+                # _compute_static_risk_tier. The frontend gates on these
+                # being non-null rather than on entity_kind, since
+                # normalised_kind above already renamed "metric" to
+                # "measure" for this response.
+                "static_risk_tier": m.get("static_risk_tier"),
+                "static_risk_label": m.get("static_risk_label"),
+                "llm_self_reported_confidence": m.get("llm_self_reported_confidence"),
             })
 
 
         auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
         unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
         collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
+        # Structurally known to fail at real-deploy time (unreachable-dimension
+        # advisory, or reconciled against a trial-DDL-pass drop) even though it
+        # mapped/translated cleanly pre-deploy — never folded into auto_count.
+        predicted_failure_count = sum(1 for m in filtered_mappings if m.get("status") == "predicted_failure")
 
         return {
             "success": True,
@@ -443,6 +488,7 @@ async def dry_run_mapping(
                 "auto_mapped": auto_count,
                 "unmapped": unmapped_count,
                 "collisions": collision_count,
+                "predicted_failures": predicted_failure_count,
                 "extraction_failed": extraction_failed,
             },
         }

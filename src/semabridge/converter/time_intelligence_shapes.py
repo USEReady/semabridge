@@ -36,6 +36,7 @@ though it has no time-intelligence function call of its own.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 from semabridge.converter.dax_ast_parser import (
@@ -84,6 +85,42 @@ def flag_column_name(shape: Shape) -> str:
     the same name from the same shape tuple — this is the single source of
     truth for that naming convention."""
     return "IS_" + "_".join(shape)
+
+
+# Real incident: dry-run's DDL-emission schema-validation step rejected an
+# already-correctly-translated metric (SUM(CASE WHEN SALESFACT.IS_YTD ...))
+# because IS_YTD only exists on the enriched view _create_enriched_view
+# builds at real-deploy time -- dry-run's trial DDL-build pass has no live
+# connection, so its dataset_col_lookup is built from the model's own
+# declared (raw, pre-enrichment) columns only, and IS_YTD is correctly
+# absent from those. The fix is NOT to pretend the column is confirmed --
+# it's to recognize, generically, that THIS specific "unknown column" is
+# exactly the flag column this codebase's own enrichment mechanism is
+# known to produce for this metric's own resolved shape, and report that
+# honestly instead of as a hard failure. See metrics_clause_builder.py's
+# call site.
+ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE = "enrichment_column_unverifiable"
+
+
+def enrichment_flag_column_if_referenced(shape: Optional[Shape], sql_expr: Optional[str]) -> Optional[str]:
+    """If `sql_expr` references (as a distinct identifier, case-
+    insensitively) the canonical flag column for `shape`, return that
+    column's canonical (uppercase) name; otherwise None.
+
+    Deliberately takes an already-resolved `shape` rather than re-deriving
+    it here — callers with many metrics to check (e.g.
+    metrics_clause_builder.py's per-metric DDL-emission loop) should
+    resolve every metric's shape ONCE via metrics_with_time_intelligence_
+    shapes() and pass each one in, rather than re-running discovery per
+    metric. A metric with no resolved shape at all (the vast majority)
+    always returns None here, never a guess.
+    """
+    if not shape or not sql_expr:
+        return None
+    flag_name = flag_column_name(shape)
+    if re.search(rf"\b{re.escape(flag_name)}\b", sql_expr, re.IGNORECASE):
+        return flag_name
+    return None
 
 
 def _resolve_arg0_shape(
