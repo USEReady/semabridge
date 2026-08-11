@@ -38,6 +38,55 @@ class DropStage(str, Enum):
     DDL_DEPLOYMENT = "ddl_deployment"
 
 
+class DropSeverity(str, Enum):
+    """How urgently a human needs to look at this drop.
+
+    CRITICAL: will break the deploy or silently produce wrong/missing data.
+    WARNING: deploys fine, but the entity is gone or degraded -- worth a look.
+    INFO: intentional/by-design, safe to ignore.
+    """
+
+    CRITICAL = "critical"
+    WARNING = "warning"
+    INFO = "info"
+
+
+_STRUCTURALLY_UNEMITTABLE_PATTERNS = (
+    "no table to anchor",
+    "nothing to emit",
+    "select/join/cte",
+    "subquery",
+    "could not resolve",
+)
+
+
+def _classify_severity(stage: DropStage, reason: str, by_design: bool) -> DropSeverity:
+    """Pure classifier, computed once centrally in DropLedger.record() so
+    none of the ~24 existing call sites need to know about severity or risk
+    having their reason/stage strings touched to accommodate it.
+
+    Rule order matters -- by_design is checked first since an intentional
+    exclusion recorded at any stage (including DDL_DEPLOYMENT/DAX_TRANSLATION,
+    which otherwise default to CRITICAL) is never itself the failure.
+    """
+    if by_design:
+        return DropSeverity.INFO
+    if stage == DropStage.DDL_DEPLOYMENT:
+        return DropSeverity.CRITICAL
+    if stage == DropStage.DAX_TRANSLATION:
+        return DropSeverity.CRITICAL
+    if stage == DropStage.SCHEMA_VALIDATION:
+        return DropSeverity.WARNING
+    if stage == DropStage.DDL_EMISSION:
+        reason_lower = (reason or "").lower()
+        if any(p in reason_lower for p in _STRUCTURALLY_UNEMITTABLE_PATTERNS):
+            return DropSeverity.CRITICAL
+        return DropSeverity.WARNING
+    # EXTRACTION (non-by-design) and any future/unrecognized stage: never
+    # silently downgrade to INFO -- an unclassified drop still needs a look.
+    return DropSeverity.WARNING
+
+
 class DropRecord(BaseModel):
     """A single entity excluded from the final deployed DDL, and why."""
 
@@ -51,6 +100,7 @@ class DropRecord(BaseModel):
     # auto-generated date-table shadows) — these are not failures and should
     # be shown separately/de-emphasized rather than alarmed on.
     by_design: bool = False
+    severity: DropSeverity = DropSeverity.WARNING
 
 
 class DropLedger:
@@ -86,6 +136,7 @@ class DropLedger:
                 reason=reason,
                 detail=detail,
                 by_design=by_design,
+                severity=_classify_severity(stage, reason, by_design),
             )
         )
 

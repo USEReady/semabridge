@@ -302,6 +302,7 @@ def extract_model_entities(
             "synonym_sources": dict(metric.get("synonym_sources") or {}),
             "has_report_alias": bool(metric.get("has_report_alias")),
             "complexity_tier": metric.get("complexity_tier"),
+            "translation_confidence": metric.get("translation_confidence"),
         })
 
     return entities
@@ -672,6 +673,7 @@ def build_entity_mappings(
             "synonym_sources": dict(entity.get("synonym_sources") or {}),
             "has_report_alias": bool(entity.get("has_report_alias")),
             "complexity_tier": entity.get("complexity_tier"),
+            "translation_confidence": entity.get("translation_confidence"),
         })
 
     # Pass 2: Declarative Validation (Option B)

@@ -19,12 +19,17 @@ logger = get_logger(__name__)
 
 class DAXTranslationResult:
     """Result of a DAX translation attempt."""
-    
-    def __init__(self, sql: Optional[str], tier: int, original_dax: str):
+
+    def __init__(self, sql: Optional[str], tier: int, original_dax: str, confidence: float = 1.0):
         self.sql = sql
         self.tier = tier  # 0=Override, 1=Direct, 2=Branching/Arith, 3=Opaque (Failed)
         self.original_dax = original_dax
         self.is_success = sql is not None
+        # 1.0 for every deterministic Tier 1-4 result (nothing probabilistic
+        # about a rule/AST translation succeeding or not) -- only Tier 5
+        # (LLM fallback) call sites pass a real value, carrying
+        # Tier5Service's TranslationResult.translation_provider_confidence.
+        self.confidence = confidence
 
 
 class DAXTranslator:
@@ -950,7 +955,7 @@ class DAXTranslator:
                     f"LLM translation accepted for '{metric_name}' "
                     f"(provider={result.provider}, confidence={result.translation_provider_confidence:.2f})"
                 )
-                return DAXTranslationResult(result.sql, 5, dax)
+                return DAXTranslationResult(result.sql, 5, dax, confidence=result.translation_provider_confidence)
             logger.debug(f"Tier 5 declined for '{metric_name}'")
             return None
         except Exception as exc:
@@ -1058,7 +1063,9 @@ class DAXTranslator:
                 llm_candidates, tier5_results
             ):
                 if tier5_result is not None and tier5_result.is_success and tier5_result.sql:
-                    results[metric_name] = DAXTranslationResult(tier5_result.sql, 5, dax)
+                    results[metric_name] = DAXTranslationResult(
+                        tier5_result.sql, 5, dax, confidence=tier5_result.translation_provider_confidence,
+                    )
                     logger.debug(
                         f"   ✓ [{metric_name}] LLM translated (provider={tier5_result.provider}, "
                         f"conf={tier5_result.translation_provider_confidence:.2f})"

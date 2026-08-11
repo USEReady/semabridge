@@ -423,6 +423,11 @@ class SMLSerializer:
             "advisory_notes": list(metric.advisory_notes or []),
             "depends_on_measures": metric.depends_on_measures,
             "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
+            # See formats/sml/serializer.py's twin of this function for why
+            # complexity_tier is added here too -- it was silently dropped
+            # by both copies; fixed in the same pass as translation_confidence.
+            "complexity_tier": metric.complexity_tier,
+            "translation_confidence": metric.translation_confidence,
         }
 
     @staticmethod
@@ -445,6 +450,8 @@ class SMLSerializer:
             advisory_notes=list(data.get("advisory_notes") or []),
             depends_on_measures=list(data.get("depends_on_measures") or []),
             synonyms=list(data.get("synonyms") or []),
+            complexity_tier=data.get("complexity_tier", 1),
+            translation_confidence=data.get("translation_confidence", 1.0),
         )
     
     @staticmethod

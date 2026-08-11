@@ -420,8 +420,17 @@ class SMLSerializer:
             "sync_failure_reason": metric.sync_failure_reason,
             "depends_on_measures": metric.depends_on_measures,
             "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
+            # complexity_tier was missing here entirely -- every dry-run's
+            # persisted snapshot silently lost it on write, even though
+            # downstream code (project_mapping_engine.py, mapping_service.py)
+            # reads metric.get("complexity_tier") as if it survived. Fixing
+            # this as part of adding translation_confidence, since a new
+            # field added without also touching this function would vanish
+            # the exact same way.
+            "complexity_tier": metric.complexity_tier,
+            "translation_confidence": metric.translation_confidence,
         }
-    
+
     @staticmethod
     def _dict_to_metric(data: dict[str, Any]) -> SMLMetric:
         """Convert dictionary to metric."""
@@ -441,6 +450,8 @@ class SMLSerializer:
             sync_failure_reason=data.get("sync_failure_reason"),
             depends_on_measures=list(data.get("depends_on_measures") or []),
             synonyms=list(data.get("synonyms") or []),
+            complexity_tier=data.get("complexity_tier", 1),
+            translation_confidence=data.get("translation_confidence", 1.0),
         )
     
     @staticmethod

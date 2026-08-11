@@ -32,6 +32,7 @@ export function StepMappingOptions({
   primaryTargetConnector,
   // New dry-run → edit → deploy props
   dryRunData,
+  dryRunModels,
   editingRow,
   setEditingRow,
   isSavingEdit,
@@ -47,6 +48,10 @@ export function StepMappingOptions({
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
+  // Multi-report switcher: index 0 is always the primary/preferred model
+  // (identical to detectedMappings/dryRunData), so index 0 never needs a
+  // separate data source. Only indices > 0 read from dryRunModels.
+  const [activeModelIndex, setActiveModelIndex] = useState(0);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const mappingTableRef = useRef(null);
   const dryRunCompleted = dryRunStatus === 'success';
@@ -57,6 +62,13 @@ export function StepMappingOptions({
   useEffect(() => {
     onRowsChange?.(rows);
   }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A fresh dry run replaces dryRunModels wholesale -- reset the active tab
+  // so a stale index from a previous run (e.g. tab 2 selected, then a
+  // re-run returns only 1 model) never points past the new array's end.
+  useEffect(() => {
+    setActiveModelIndex(0);
+  }, [dryRunModels]);
 
   // If AI options change after initial mount, prompt a quick refresh.
   useEffect(() => {
@@ -527,31 +539,65 @@ export function StepMappingOptions({
       )}
 
       {/* ── New DryRunMappingTable — shown after a successful dry run ─────── */}
-      {dryRunStatus === 'success' && detectedMappings.length > 0 && (
-        <div ref={mappingTableRef}>
-          <DryRunMappingTable
-            mappings={detectedMappings}
-            summary={dryRunData?.summary}
-            relationships={(() => {
-              try {
-                const stored = sessionStorage.getItem('detectedRelationships');
-                return stored ? JSON.parse(stored) : [];
-              } catch { return []; }
-            })()}
-            onEdit={(rowId) => {
-              const row = detectedMappings.find(r => r.id === rowId);
-              if (row) setEditingRow(row);
-            }}
-            onBulkResolved={onBulkResolved}
-            onSynonymUpdate={onSynonymUpdate}
-            projectId={projectId}
-            schemaConflicts={dryRunData?.schema_conflicts || []}
-            compatibilityScore={dryRunData?.compatibility_score ?? null}
-            onReSync={onRunDryRun}
-            droppedEntities={dryRunData?.dropped_entities || []}
-          />
-        </div>
-      )}
+      {dryRunStatus === 'success' && detectedMappings.length > 0 && (() => {
+        const hasMultipleModels = Array.isArray(dryRunModels) && dryRunModels.length > 1;
+        const activeModel = hasMultipleModels ? dryRunModels[activeModelIndex] : null;
+        const usingSecondaryModel = hasMultipleModels && activeModelIndex > 0 && activeModel;
+        const tableMappings = usingSecondaryModel ? activeModel.rows : detectedMappings;
+        const tableDryRunData = usingSecondaryModel ? activeModel.raw : dryRunData;
+        return (
+          <div ref={mappingTableRef}>
+            {hasMultipleModels && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                {dryRunModels.map((m, idx) => (
+                  <button
+                    key={`${m.model_name || 'model'}-${idx}`}
+                    type="button"
+                    onClick={() => setActiveModelIndex(idx)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      border: `1px solid ${idx === activeModelIndex ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+                      background: idx === activeModelIndex ? 'var(--accent-blue)14' : 'var(--bg-surface)',
+                      color: idx === activeModelIndex ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {m.model_name || `Report ${idx + 1}`}
+                  </button>
+                ))}
+              </div>
+            )}
+            <DryRunMappingTable
+              mappings={tableMappings}
+              summary={tableDryRunData?.summary}
+              relationships={(() => {
+                try {
+                  const stored = sessionStorage.getItem('detectedRelationships');
+                  return stored ? JSON.parse(stored) : [];
+                } catch { return []; }
+              })()}
+              onEdit={(rowId) => {
+                // Editing is only wired for the primary model today -- a
+                // secondary report's row simply won't be found here, which
+                // is a silent no-op rather than a crash.
+                const row = detectedMappings.find(r => r.id === rowId);
+                if (row) setEditingRow(row);
+              }}
+              onBulkResolved={onBulkResolved}
+              onSynonymUpdate={onSynonymUpdate}
+              projectId={projectId}
+              schemaConflicts={tableDryRunData?.schema_conflicts || []}
+              compatibilityScore={tableDryRunData?.compatibility_score ?? null}
+              onReSync={onRunDryRun}
+              droppedEntities={tableDryRunData?.dropped_entities || []}
+              needsAttention={tableDryRunData?.needs_attention ?? null}
+            />
+          </div>
+        );
+      })()}
 
       {/* ── FieldMappingEditor modal — shown when a row is being edited ───── */}
       {editingRow && (

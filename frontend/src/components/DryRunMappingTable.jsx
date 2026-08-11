@@ -13,6 +13,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { Edit2, GitMerge, Zap, CheckCircle, Tags, AlertTriangle, PlusCircle, SkipForward, X, ChevronRight } from 'lucide-react';
 import StatusBadge from './common/StatusBadge';
 import DroppedFieldsPanel from './common/DroppedFieldsPanel';
+import NeedsAttentionPanel from './common/NeedsAttentionPanel';
 import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
@@ -383,6 +384,40 @@ function synonymSourceLabel(source) {
   return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unknown Source';
 }
 
+// Shared percentage + threshold-color treatment for any confidence value in
+// [0, 1] — used for both a measure's LLM (Tier 5) translation confidence and
+// a relationship's inference confidence. Always shows the real number, never
+// just a color, so the threshold is a visual aid layered on top of the exact
+// value rather than a replacement for it.
+function confidenceDisplay(confidence) {
+  const value = Number(confidence);
+  if (!Number.isFinite(value)) return null;
+  const pct = Math.round(value * 100);
+  const color = pct >= 90 ? 'var(--color-success)' : pct >= 70 ? '#f59e0b' : 'var(--color-error)';
+  return { pct, color };
+}
+
+function ConfidenceBadge({ confidence, title }) {
+  const display = confidenceDisplay(confidence);
+  if (!display) return null;
+  return (
+    <span
+      title={title}
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 7px',
+        borderRadius: 999,
+        background: `${display.color}1a`,
+        color: display.color,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {display.pct}% confidence
+    </span>
+  );
+}
+
 function MeasureTranslationPanel({ row }) {
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason;
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
@@ -445,6 +480,15 @@ function MeasureTranslationPanel({ row }) {
           }}>
             <CheckCircle size={13} style={{ flexShrink: 0 }} />
             <span>Translated successfully to Snowflake SQL</span>
+            {/* Only Tier 5 (LLM fallback) carries a real confidence value —
+                Tiers 1-4 are deterministic rule/AST translation with nothing
+                probabilistic to score, so no badge renders for those rows. */}
+            {row.complexity_tier === 5 && (
+              <ConfidenceBadge
+                confidence={row.translation_confidence}
+                title="How confident the AI translation model was in this SQL — lower values are worth a manual check."
+              />
+            )}
           </div>
         )
       )}
@@ -701,17 +745,24 @@ function RelationshipsSection({ relationships }) {
               <div style={{ fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {rel.target}
               </div>
-              <div style={{
-                fontSize: 10,
-                fontWeight: 600,
-                padding: '2px 7px',
-                borderRadius: 999,
-                background: 'var(--accent-blue)14',
-                color: 'var(--accent-blue)',
-                whiteSpace: 'nowrap',
-              }}>
-                {rel.confidence || 'auto'}
-              </div>
+              {Number.isFinite(Number(rel.confidence)) && Number(rel.confidence) > 0 ? (
+                <ConfidenceBadge
+                  confidence={rel.confidence}
+                  title="How confident the relationship-detection heuristic was in this join — a verified foreign key scores 100%, an unverified guess scores lower."
+                />
+              ) : (
+                <div style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  background: 'var(--accent-blue)14',
+                  color: 'var(--accent-blue)',
+                  whiteSpace: 'nowrap',
+                }}>
+                  auto
+                </div>
+              )}
               {rel.condition && (
                 <div style={{
                   gridColumn: '1 / -1',
@@ -873,6 +924,7 @@ export default function DryRunMappingTable({
   compatibilityScore = null,  // 0–100 float from backend
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
+  needsAttention = null,      // { critical, warning, info, items } — see severity_classifier.py
 }) {
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
@@ -1254,6 +1306,7 @@ export default function DryRunMappingTable({
         )}
       </div>
 
+      <NeedsAttentionPanel summary={needsAttention} />
       <DroppedFieldsPanel entries={droppedEntities} />
 
       {/* ── Controls row: two-tier filter + search + Resolve All ─────────────── */}

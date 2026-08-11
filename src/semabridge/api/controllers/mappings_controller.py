@@ -269,24 +269,187 @@ async def dry_run_mapping(
         # preview project ID — so the project_id lookup would return an empty model.
         from semabridge.api.services.project_mapping_engine import build_entity_mappings
         from semabridge.api.services.project_shared import db_manager as _db_manager
+        from semabridge.api.services.severity_classifier import build_needs_attention_summary
+        from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
 
-        sml_blob: Dict[str, Any] = {}
+        synonym_overrides = load_synonym_overrides(preview_project_id)
 
-        # Try preferred_snapshot_id first (most reliable)
+        def _load_sml_blob_by_snapshot_id(snapshot_id: str) -> Dict[str, Any]:
+            if not snapshot_id:
+                return {}
+            try:
+                snap = _db_manager.get_snapshot(snapshot_id)
+                if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                    return snap.sml_blob
+            except Exception as snap_err:
+                print(f"[DryRun] Failed to load snapshot {snapshot_id}: {snap_err}")
+            return {}
+
+        def _build_model_result(sml_blob_raw: Dict[str, Any], fallback_model_name: str) -> Dict[str, Any]:
+            """Everything from 'given a resolved SML blob' to 'one model's dry-run
+            result dict' -- the same computation this endpoint always did for the
+            single preferred model, now reusable per-model for Feature C's
+            additive `models[]` array. Parameterized purely on data (never on
+            preferred_snapshot_id/request.selected_sources[0] positionally), so
+            calling it once for the preferred model and once per selected source
+            can never diverge in shape.
+            """
+            extraction_failed = not sml_blob_raw
+
+            # Scope to selected sources if specified
+            if sml_blob_raw and request.selected_sources:
+                from semabridge.api.services.project_runs_impl import _compat_scope_model_for_dry_run
+                sml_blob = _compat_scope_model_for_dry_run(sml_blob_raw, request.selected_sources)
+            else:
+                sml_blob = sml_blob_raw
+
+            built = build_entity_mappings(
+                project_id=preview_project_id,
+                model=sml_blob or {"unique_name": "preview", "datasets": [], "metrics": []},
+                existing_mappings={},
+                session_key=f"{preview_project_id}-mapping-session",
+                target_connector=target_connector,
+            )
+            dropped_entities = list(built.get("dropped_entities", []))
+
+            # ── Trial DDL-build pass ──────────────────────────────────────────
+            # Runs the real DDL-emission builders (with placeholder Snowflake
+            # creds, never connecting) purely to surface Tier C / DDL-emission-
+            # time drops (e.g. metrics whose DAX translation failed) in the
+            # dry-run preview, before deployment. generate_ddls() is pure
+            # string-building — no network calls, no writes beyond a local
+            # debug .sql file — so this is safe to re-run on every
+            # mapping-iteration dry-run call.
+            if sml_blob and target_connector == "snowflake":
+                try:
+                    from semabridge.sml.serializer import SMLSerializer
+                    from semabridge.core.settings import SnowflakeConfig
+                    from semabridge.core.behavior import ConnectorBehavior
+                    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+
+                    trial_sml = SMLSerializer._dict_to_model(sml_blob)
+                    target_cfg = request.target_config or {}
+                    trial_cfg = SnowflakeConfig(
+                        account=str(target_cfg.get("account") or "placeholder"),
+                        user=str(target_cfg.get("user") or "placeholder"),
+                        warehouse=str(target_cfg.get("warehouse") or "placeholder"),
+                        database=str(target_cfg.get("database") or "placeholder"),
+                    )
+                    trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=ConnectorBehavior())
+                    try:
+                        trial_emitter.generate_ddls(trial_sml)
+                    except Exception as ddl_err:
+                        # Expected for models with unresolvable drops (e.g. every
+                        # metric fails translation) — the ledger is still populated
+                        # incrementally by the sub-builders before such a raise.
+                        logger.info("[DryRun] Trial DDL-build pass raised (non-fatal): %s", ddl_err)
+                    dropped_entities.extend(trial_emitter.drop_ledger.to_json())
+                except Exception as trial_setup_err:
+                    logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
+
+            entity_mappings = _compat_serialize_auto_map_entity_mappings(
+                built.get("mappings", []),
+                target_connector=target_connector,
+            )
+
+            # ── 5. Filter to field-level only (columns + measures, no table rows) ──
+            # entity_kind values from the mapping engine: "column", "metric" (measures), "table"
+            # "metric" is the canonical kind for measures — include it alongside "column".
+            FIELD_KINDS = {"field", "column", "measure", "metric"}
+            filtered_mappings = []
+            model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
+            for m in entity_mappings:
+                if not isinstance(m, dict):
+                    continue
+                kind = str(m.get("entity_kind") or "").lower()
+                if kind not in FIELD_KINDS:
+                    continue
+                # Normalise "metric" → "measure" so the frontend field_type split works
+                normalised_kind = "measure" if kind in ("metric", "measure") else kind
+                source_name = str(m.get("source_name", "") or "").strip()
+                source_table = str(m.get("source_table", m.get("source_entity", "")) or "").strip()
+                measure_source_tables = list(m.get("measure_source_tables") or [])
+                if normalised_kind == "measure" and not source_table and measure_source_tables:
+                    source_table = str(measure_source_tables[0] or "").strip()
+                filtered_mappings.append({
+                    "id": m.get("id", f"field_{len(filtered_mappings)}"),
+                    "project_id": preview_project_id,
+                    "model_name": model_name,
+                    "entity_kind": normalised_kind,
+                    "source_name": source_name,
+                    "source_data_type": m.get("source_data_type", "unknown"),
+                    "source_table": source_table,
+                    "source_path": m.get("source_path", ""),
+                    "source_qualified_path": m.get("source_qualified_path", ""),
+                    "target_name": m.get("target_name", ""),
+                    "target_data_type": m.get("target_data_type", m.get("source_data_type", "unknown")),
+                    "mapping_status": m.get("status", "auto"),
+                    "status": m.get("status", "auto"),
+                    "suggested_target_name": m.get("suggested_target_name", ""),
+                    "collision_detected": bool(m.get("collision_detected")),
+                    "validation_status": m.get("validation_status", "valid"),
+                    "validation_code": m.get("validation_code", "OK"),
+                    "validation_message": m.get("validation_message", ""),
+                    "measure_source_tables": measure_source_tables,
+                    "source_expression": m.get("source_expression", ""),
+                    "synonym_overrides": lookup_synonym_override(
+                        synonym_overrides,
+                        [model_name],
+                        source_table,
+                        source_name,
+                    ),
+                    "target_expression": m.get("target_expression", ""),
+                    "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
+                    "sync_failure_reason": m.get("sync_failure_reason", ""),
+                    "depends_on_measures": list(m.get("depends_on_measures") or []),
+                    "synonyms": list(m.get("synonyms") or []),
+                    "complexity_tier": m.get("complexity_tier"),
+                    "translation_confidence": m.get("translation_confidence"),
+                })
+
+            auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
+            unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
+            collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
+
+            needs_attention = build_needs_attention_summary(dropped_entities, filtered_mappings)
+
+            return {
+                "model_name": model_name,
+                "entity_mappings": filtered_mappings,
+                "extraction_failed": extraction_failed,
+                "dropped_entities": dropped_entities,
+                "needs_attention": needs_attention,
+                "summary": {
+                    "total_fields": len(filtered_mappings),
+                    "auto_mapped": auto_count,
+                    "unmapped": unmapped_count,
+                    "collisions": collision_count,
+                    "extraction_failed": extraction_failed,
+                },
+            }
+
+        # ── Resolve the preferred model's SML blob — unchanged from before this
+        # feature: try preferred_snapshot_id first, then fall back to ANY loadable
+        # result's snapshot. This exact resolution (including the fallback) is
+        # preserved only for the single top-level/"preferred" result, since it's
+        # a best-effort "show something" behavior that wouldn't make sense
+        # generalized to the per-model entries in `models[]` below (each of
+        # those should reflect its OWN model, not silently substitute another
+        # one's data if its own snapshot failed to load).
+        sml_blob_primary: Dict[str, Any] = {}
         if preferred_snapshot_id:
             try:
                 snap = _db_manager.get_snapshot(preferred_snapshot_id)
                 if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                    sml_blob = snap.sml_blob
+                    sml_blob_primary = snap.sml_blob
                     print(f"[DryRun] Loaded SML blob from preferred_snapshot_id={preferred_snapshot_id[:12]}")
-                    print(f"[DryRun] SML unique_name={sml_blob.get('unique_name')!r}")
-                    print(f"[DryRun] datasets={[d.get('unique_name') for d in sml_blob.get('datasets', [])]}")
-                    print(f"[DryRun] metrics={[m.get('unique_name') for m in sml_blob.get('metrics', [])]}")
+                    print(f"[DryRun] SML unique_name={sml_blob_primary.get('unique_name')!r}")
+                    print(f"[DryRun] datasets={[d.get('unique_name') for d in sml_blob_primary.get('datasets', [])]}")
+                    print(f"[DryRun] metrics={[m.get('unique_name') for m in sml_blob_primary.get('metrics', [])]}")
             except Exception as snap_err:
                 print(f"[DryRun] Failed to load preferred snapshot: {snap_err}")
 
-        # Fallback: try each result's snapshot
-        if not sml_blob:
+        if not sml_blob_primary:
             for result_row in (sync_result.get("results") or []):
                 sid = str((result_row.get("summary") or {}).get("sml_snapshot_id") or "").strip()
                 if not sid:
@@ -294,158 +457,56 @@ async def dry_run_mapping(
                 try:
                     snap = _db_manager.get_snapshot(sid)
                     if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                        sml_blob = snap.sml_blob
+                        sml_blob_primary = snap.sml_blob
                         print(f"[DryRun] Loaded SML blob from fallback snapshot={sid[:12]}")
                         break
                 except Exception:
                     continue
 
-        extraction_failed = not sml_blob
-        if extraction_failed:
+        if not sml_blob_primary:
             sync_status = str((sync_result or {}).get("status") or "unknown")
             logger.warning("[DryRun] No SML blob found for project=%s sync_status=%s — extraction may have failed", preview_project_id, sync_status)
 
-        # Scope to selected sources if specified
-        if sml_blob and request.selected_sources:
-            from semabridge.api.services.project_runs_impl import _compat_scope_model_for_dry_run
-            sml_blob = _compat_scope_model_for_dry_run(sml_blob, request.selected_sources)
-
-        built = build_entity_mappings(
-            project_id=preview_project_id,
-            model=sml_blob or {"unique_name": "preview", "datasets": [], "metrics": []},
-            existing_mappings={},
-            session_key=f"{preview_project_id}-mapping-session",
-            target_connector=target_connector,
-        )
-        dropped_entities = list(built.get("dropped_entities", []))
-
-        # ── Trial DDL-build pass ──────────────────────────────────────────────
-        # Runs the real DDL-emission builders (with placeholder Snowflake creds,
-        # never connecting) purely to surface Tier C / DDL-emission-time drops
-        # (e.g. metrics whose DAX translation failed) in the dry-run preview,
-        # before deployment. generate_ddls() is pure string-building — no
-        # network calls, no writes beyond a local debug .sql file — so this is
-        # safe to re-run on every mapping-iteration dry-run call.
-        if sml_blob and target_connector == "snowflake":
-            try:
-                from semabridge.sml.serializer import SMLSerializer
-                from semabridge.core.settings import SnowflakeConfig
-                from semabridge.core.behavior import ConnectorBehavior
-                from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
-
-                trial_sml = SMLSerializer._dict_to_model(sml_blob)
-                target_cfg = request.target_config or {}
-                trial_cfg = SnowflakeConfig(
-                    account=str(target_cfg.get("account") or "placeholder"),
-                    user=str(target_cfg.get("user") or "placeholder"),
-                    warehouse=str(target_cfg.get("warehouse") or "placeholder"),
-                    database=str(target_cfg.get("database") or "placeholder"),
-                )
-                trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=ConnectorBehavior())
-                try:
-                    trial_emitter.generate_ddls(trial_sml)
-                except Exception as ddl_err:
-                    # Expected for models with unresolvable drops (e.g. every
-                    # metric fails translation) — the ledger is still populated
-                    # incrementally by the sub-builders before such a raise.
-                    logger.info("[DryRun] Trial DDL-build pass raised (non-fatal): %s", ddl_err)
-                dropped_entities.extend(trial_emitter.drop_ledger.to_json())
-            except Exception as trial_setup_err:
-                logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
-
-        data = {
-            "project_id": preview_project_id,
-            "mappings": built.get("mappings", []),
-            "source_fields": built.get("source_fields", []),
-            "target_fields": built.get("target_fields", []),
-            "collisions": built.get("collisions", []),
-            "dropped_entities": dropped_entities,
-        }
-
-        entity_mappings = _compat_serialize_auto_map_entity_mappings(
-            data.get("mappings", []),
-            target_connector=target_connector,
-        )
-
-        # ── 5. Filter to field-level only (columns + measures, no table rows) ────
-        # entity_kind values from the mapping engine: "column", "metric" (measures), "table"
-        # "metric" is the canonical kind for measures — include it alongside "column".
-        FIELD_KINDS = {"field", "column", "measure", "metric"}
-        filtered_mappings = []
         if request.selected_sources:
-            fallback_model_name = request.selected_sources[0]
+            primary_fallback_name = request.selected_sources[0]
         else:
-            fallback_model_name = "default"
-        model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
-        from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
-        synonym_overrides = load_synonym_overrides(preview_project_id)
-        for m in entity_mappings:
-            if not isinstance(m, dict):
-                continue
-            kind = str(m.get("entity_kind") or "").lower()
-            if kind not in FIELD_KINDS:
-                continue
-            # Normalise "metric" → "measure" so the frontend field_type split works
-            normalised_kind = "measure" if kind in ("metric", "measure") else kind
-            source_name = str(m.get("source_name", "") or "").strip()
-            source_table = str(m.get("source_table", m.get("source_entity", "")) or "").strip()
-            measure_source_tables = list(m.get("measure_source_tables") or [])
-            if normalised_kind == "measure" and not source_table and measure_source_tables:
-                source_table = str(measure_source_tables[0] or "").strip()
-            filtered_mappings.append({
-                "id": m.get("id", f"field_{len(filtered_mappings)}"),
-                "project_id": preview_project_id,
-                "model_name": model_name,
-                "entity_kind": normalised_kind,
-                "source_name": source_name,
-                "source_data_type": m.get("source_data_type", "unknown"),
-                "source_table": source_table,
-                "source_path": m.get("source_path", ""),
-                "source_qualified_path": m.get("source_qualified_path", ""),
-                "target_name": m.get("target_name", ""),
-                "target_data_type": m.get("target_data_type", m.get("source_data_type", "unknown")),
-                "mapping_status": m.get("status", "auto"),
-                "status": m.get("status", "auto"),
-                "suggested_target_name": m.get("suggested_target_name", ""),
-                "collision_detected": bool(m.get("collision_detected")),
-                "validation_status": m.get("validation_status", "valid"),
-                "validation_code": m.get("validation_code", "OK"),
-                "validation_message": m.get("validation_message", ""),
-                "measure_source_tables": measure_source_tables,
-                "source_expression": m.get("source_expression", ""),
-                "synonym_overrides": lookup_synonym_override(
-                    synonym_overrides,
-                    [model_name],
-                    source_table,
-                    source_name,
-                ),
-                "target_expression": m.get("target_expression", ""),
-                "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
-                "sync_failure_reason": m.get("sync_failure_reason", ""),
-                "depends_on_measures": list(m.get("depends_on_measures") or []),
-                "synonyms": list(m.get("synonyms") or []),
-            })
+            primary_fallback_name = "default"
 
+        primary_result = _build_model_result(sml_blob_primary, primary_fallback_name)
 
-        auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
-        unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
-        collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
+        # ── Additive: build a result for every selected source, not just the
+        # preferred one, so a multi-report dry-run can show all of them. Only
+        # attempted when there's more than one selected source -- the
+        # single-source case (the overwhelming majority of dry runs) never
+        # enters this block, so the response has no `models` key at all and
+        # is byte-for-byte identical to before this feature.
+        models_list: Optional[List[Dict[str, Any]]] = None
+        if len(request.selected_sources) > 1:
+            results_by_model = {
+                str(r.get("model") or "").strip().lower(): r
+                for r in (sync_result.get("results") or [])
+                if isinstance(r, dict)
+            }
+            models_list = []
+            for source_name in request.selected_sources:
+                result_row = results_by_model.get(str(source_name).strip().lower())
+                sid = str((result_row.get("summary") or {}).get("sml_snapshot_id") or "").strip() if result_row else ""
+                if sid and sid == preferred_snapshot_id:
+                    # Same snapshot as the preferred one already built above --
+                    # reuse it rather than recomputing, guaranteeing models[]'s
+                    # entry for this source is identical to the top-level keys.
+                    models_list.append(primary_result)
+                else:
+                    models_list.append(_build_model_result(_load_sml_blob_by_snapshot_id(sid), source_name))
 
-        return {
+        response: Dict[str, Any] = {
             "success": True,
             "project_id": preview_project_id,
-            "model_name": model_name,
-            "entity_mappings": filtered_mappings,
-            "extraction_failed": extraction_failed,
-            "dropped_entities": data.get("dropped_entities", []),
-            "summary": {
-                "total_fields": len(filtered_mappings),
-                "auto_mapped": auto_count,
-                "unmapped": unmapped_count,
-                "collisions": collision_count,
-                "extraction_failed": extraction_failed,
-            },
+            **primary_result,
         }
+        if models_list is not None:
+            response["models"] = models_list
+        return response
 
     except Exception as e:
         print(f"[Dry Run Error] {str(e)}")

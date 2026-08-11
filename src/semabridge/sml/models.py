@@ -291,6 +291,19 @@ class SMLMetric(BaseModel):
     
     # DAX Sync Metadata (Complex Measure Support)
     complexity_tier: int = Field(default=1, description="DAX complexity tier: 1=simple agg, 2=arithmetic, 3=time intel, 4=complex")
+    # Distinct from `confidence` below (which scores auto-detected measures,
+    # a different signal): this is the DAX->SQL *translation's* own
+    # confidence. 1.0 for every deterministic Tier 1-4 result (there's
+    # nothing probabilistic about a rule/AST translation succeeding or not);
+    # only Tier 5 (LLM fallback) ever sets this below 1.0, carrying
+    # Tier5Service's TranslationResult.translation_provider_confidence
+    # through to the metric.
+    translation_confidence: float = Field(
+        default=1.0,
+        description="Confidence in the DAX→SQL translation: always 1.0 for "
+        "deterministic Tier 1-4 results; Tier5Service's LLM-provider "
+        "confidence for Tier 5 fallback translations.",
+    )
     requires_time_intel: bool = Field(default=False, description="Uses Time Intelligence functions")
     group_by_dimensions: list[str] = Field(default_factory=list, description="Required dimensions for sync evaluation context")
     partition_dimension: Optional[str] = Field(default=None, description="Column for query partitioning to avoid row limits")

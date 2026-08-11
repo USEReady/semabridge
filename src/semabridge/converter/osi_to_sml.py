@@ -183,6 +183,7 @@ class OSIToSMLConverter(BaseConverter):
                         if translation and translation.is_success:
                             metric.sql_expression = translation.sql
                             metric.complexity_tier = translation.tier
+                            metric.translation_confidence = getattr(translation, "confidence", 1.0)
                             metric.sync_enabled = True
                             metric.sync_failure_reason = None
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
@@ -437,6 +438,7 @@ class OSIToSMLConverter(BaseConverter):
             if translation.is_success:
                 metric.sql_expression = translation.sql
                 metric.complexity_tier = translation.tier
+                metric.translation_confidence = getattr(translation, "confidence", 1.0)
                 metric.sync_enabled = True
                 metric.sync_failure_reason = None
             elif metric.sync_enabled:
@@ -521,6 +523,7 @@ class OSIToSMLConverter(BaseConverter):
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql
                     metric.complexity_tier = translation.tier
+                    metric.translation_confidence = getattr(translation, "confidence", 1.0)
                     metric.sync_enabled = True
                     metric.sync_failure_reason = None
                     resolved_this_pass += 1

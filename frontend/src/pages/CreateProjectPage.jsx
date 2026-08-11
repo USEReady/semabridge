@@ -389,6 +389,8 @@ function normalizeRows(data) {
         depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
         synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
         synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
+        complexity_tier: row?.complexity_tier ?? null,
+        translation_confidence: typeof row?.translation_confidence === 'number' ? row.translation_confidence : null,
         isDirty: false,
       };
     });
@@ -693,6 +695,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
   // Step 4 — dry-run → edit → deploy flow
   const [dryRunData, setDryRunData] = useState(null);
+  // Multi-report dry-run: only populated when the response carries a
+  // `models` array with more than one entry (i.e. more than one selected
+  // source) — see handleDryRun below. null/single-entry means "this feature
+  // doesn't apply here", and every existing consumer of detectedMappings/
+  // dryRunData keeps reading those exactly as before.
+  const [dryRunModels, setDryRunModels] = useState(null);
   const [editingRow, setEditingRow] = useState(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
@@ -1635,6 +1643,16 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       const rows = normalizeRows(response);
       setDetectedMappings(rows);
       setDryRunData(response);
+      // Additive: only set when the backend actually returned more than one
+      // model's worth of results (see mappings_controller.py's `models[]`).
+      // Each entry has the same shape normalizeRows already knows how to
+      // read, since models[i] is built by the same per-model function as
+      // the top-level response.
+      setDryRunModels(
+        Array.isArray(response?.models) && response.models.length > 1
+          ? response.models.map((m) => ({ model_name: m?.model_name || '', rows: normalizeRows(m), raw: m }))
+          : null
+      );
       setMappingDryRunStatus('success');
       setMappingDryRunSignature(currentMappingSignature);
       setUnmappedAcknowledged(false);
@@ -2044,6 +2062,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onClearMappings={() => {
                   setDetectedMappings([]);
                   setDetectedEntityMappings([]);
+                  setDryRunModels(null);
                 }}
                 onRowsChange={(rows) => {
                   setDetectedEntityMappings(
@@ -2064,6 +2083,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onProceed={goNext}
                 primaryTargetConnector={[...targetConnectors][0] || ''}
                 dryRunData={dryRunData}
+                dryRunModels={dryRunModels}
                 editingRow={editingRow}
                 setEditingRow={setEditingRow}
                 isSavingEdit={isSavingEdit}
