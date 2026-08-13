@@ -1,5 +1,11 @@
 version: "3.0"
 
+# NOTE: this whole `default:` block is not read by ConnectorBehavior
+# (core/behavior.py) -- it has no top-level `default` field, so these
+# keys are silently discarded on load, same as the four below under
+# `snowflake:`. Kept here only as a record of intent; see the note on
+# `snowflake:` below for where DAX-translation behavior is actually
+# controlled today.
 default:
   sync_mode: "copy"
   parallelism: 4
@@ -8,6 +14,15 @@ default:
   llm_provider: "openai"
   translation_priority: "llm_first"
 
+# NOTE: deterministic_translation_enabled / enable_llm_dax_translation /
+# llm_provider below are NOT read for the Snowflake path -- SnowflakeBehavior
+# (core/behavior.py) declares no such fields, so pydantic silently discards
+# them on load. They're only real for `databricks:` further down (read at
+# databricks_publisher.py:4567). For Snowflake, whether Tier-5/LLM DAX
+# fallback runs is controlled solely by whether a provider is configured
+# (env var or Settings-page key) in semabridge.dax_translation.tier5.config
+# -- not by any key in this file. Kept here (rather than deleted) as a
+# record of intent pending a real wire-up.
 snowflake:
   apply_inferred_types: true
   deterministic_translation_enabled: true

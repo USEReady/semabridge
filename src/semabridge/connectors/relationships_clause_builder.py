@@ -180,5 +180,37 @@ class RelationshipsClauseBuilder:
                 rel_lines.append(f'  {rel_name} AS {from_alias} ({from_ref}) REFERENCES {ref_clause}')
             else:
                 rel_lines.append(f'  {from_alias} ({from_ref}) REFERENCES {ref_clause}')
-        
+
+            # Snowflake's semantic-view RELATIONSHIPS grammar has no
+            # cardinality/cross-filter-direction keyword -- it's always
+            # emitted as a plain REFERENCES join above regardless of what
+            # rel.cardinality/rel.cross_filter say, so a many-to-many
+            # relationship (or a bidirectional one, which behaves like
+            # many-to-many for join fan-out purposes since either side can
+            # match multiple rows on the other) can silently multiply rows
+            # for any metric that ends up joined across it, with no signal
+            # anywhere today that this risk exists. Log-only, advisory:
+            # nothing here changes the emitted DDL or drops anything, since
+            # there's no way to represent the risk IN the DDL itself.
+            # .value first: Cardinality/CrossFilterDirection are `str, Enum`
+            # mixins, and plain str(enum_member) renders as "Cardinality.
+            # MANY_TO_MANY" (the ClassName.MEMBER form), not the actual
+            # "many-to-many" value, on this codebase's Python version --
+            # str()-ing the enum directly would silently never match below.
+            # getattr(..., "value", ...) also degrades safely for a plain
+            # string or None (neither has .value, so the default is used).
+            cardinality_raw = getattr(rel, "cardinality", None)
+            cardinality = str(getattr(cardinality_raw, "value", cardinality_raw) or "").lower()
+            cross_filter_raw = getattr(rel, "cross_filter", None)
+            cross_filter = str(getattr(cross_filter_raw, "value", cross_filter_raw) or "").lower()
+            if "many-to-many" in cardinality or "both" in cross_filter:
+                logger.warning(
+                    "Relationship '%s' -> '%s' is %s (cross_filter=%s). Snowflake semantic "
+                    "views have no cardinality-aware join semantics, so metrics that get "
+                    "joined across this relationship at query time may double-count rows "
+                    "due to fan-out. No automatic fix exists for this -- consider a bridge/"
+                    "junction table or a precomputed aggregate if this shows up in results.",
+                    rel.from_dataset, rel.to_dataset, cardinality or "many-to-many", cross_filter,
+                )
+
         return rel_lines

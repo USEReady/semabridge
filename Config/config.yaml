@@ -7,6 +7,14 @@ database:
   backend: orm
   connection_url_env: SEMABRIDGE_DATABASE_URL
   writer_thread_queue: true
+# NOTE: this block is not currently wired into the live DAX-to-SQL
+# translation pipeline (verified: LLMConfigManager/GlobalConfigManager,
+# the only readers of `llm.*`, have no callers anywhere else in the
+# codebase). Toggling `enabled` here has no effect on Snowflake or
+# Databricks Tier-5/LLM DAX fallback. The actual switch for that is
+# whether a provider is configured (env var or Settings-page key) in
+# semabridge.dax_translation.tier5.config — see Docs or the Settings
+# page's "LLM Providers" section.
 llm:
   enabled: false
   model: gpt-4o-mini

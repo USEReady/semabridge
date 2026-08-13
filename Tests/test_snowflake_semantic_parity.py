@@ -86,6 +86,75 @@ def test_relationship_builder_keeps_inactive_fabric_relationships():
     ]
 
 
+def test_relationship_builder_warns_on_many_to_many_fan_out_risk(caplog):
+    """Snowflake's RELATIONSHIPS clause grammar has no cardinality/cross-
+    filter keyword -- cardinality and cross_filter are captured on
+    OSIRelationship/SMLRelationship and survive OSI->SML conversion, but
+    relationships_clause_builder.py used to discard them silently at
+    DDL-emission time with no signal anywhere that a many-to-many (or
+    bidirectional) relationship can fan out rows for metrics joined across
+    it. This pins the new advisory log line; the emitted DDL itself is
+    unchanged either way (no way to represent the risk IN the DDL)."""
+    from semabridge.sml.models import Cardinality, CrossFilterDirection
+
+    builder = RelationshipsClauseBuilder(IdentifierSanitizer(), _Schema(), _DDL())
+    rel = SimpleNamespace(
+        unique_name="bridge_rel",
+        is_active=True,
+        from_dataset="product",
+        to_dataset="customer",
+        from_columns=["Product_Key"],
+        to_columns=["Customer_Key"],
+        cardinality=Cardinality.MANY_TO_MANY,
+        cross_filter=CrossFilterDirection.SINGLE,
+    )
+
+    with caplog.at_level("WARNING"):
+        lines = builder.build_for_osi(
+            SimpleNamespace(relationships=[rel]),
+            dataset_aliases={"product": "PRODUCT", "customer": "CUSTOMER"},
+            dataset_by_name={"product": SimpleNamespace(), "customer": SimpleNamespace()},
+            dataset_col_lookup={"product": {"PRODUCT_KEY"}, "customer": {"CUSTOMER_KEY"}},
+            declared_pk_by_alias={},
+            relationship_target_alias={},
+        )
+
+    assert len(lines) == 1
+    assert "REFERENCES" in lines[0]  # DDL itself is unaffected
+    assert any("fan-out" in r.message and "product" in r.message for r in caplog.records)
+
+
+def test_relationship_builder_does_not_warn_on_ordinary_many_to_one(caplog):
+    """Negative control for the fan-out advisory above: an ordinary
+    many-to-one, single-cross-filter relationship (the common case) must
+    not trigger the warning."""
+    from semabridge.sml.models import Cardinality, CrossFilterDirection
+
+    builder = RelationshipsClauseBuilder(IdentifierSanitizer(), _Schema(), _DDL())
+    rel = SimpleNamespace(
+        unique_name="spend_fact_date_rel",
+        is_active=True,
+        from_dataset="spend_fact",
+        to_dataset="date",
+        from_columns=["Posting_Date"],
+        to_columns=["Cal_Date"],
+        cardinality=Cardinality.MANY_TO_ONE,
+        cross_filter=CrossFilterDirection.SINGLE,
+    )
+
+    with caplog.at_level("WARNING"):
+        builder.build_for_osi(
+            SimpleNamespace(relationships=[rel]),
+            dataset_aliases={"spend_fact": "SPEND_FACT", "date": "COL_DATE"},
+            dataset_by_name={"spend_fact": SimpleNamespace(), "date": SimpleNamespace()},
+            dataset_col_lookup={"spend_fact": {"POSTING_DATE"}, "date": {"CAL_DATE"}},
+            declared_pk_by_alias={},
+            relationship_target_alias={},
+        )
+
+    assert not any("fan-out" in r.message for r in caplog.records)
+
+
 def test_openai_dax_translation_is_attempted_when_key_is_configured(monkeypatch):
     calls = []
 

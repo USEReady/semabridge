@@ -1,4 +1,4 @@
-from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.connectors.synonym_clause import comment_clause, synonyms_clause
 from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 from semabridge.utils.synonyms import merge_synonyms, synonym_override_key
 
@@ -15,6 +15,21 @@ def test_merge_synonyms_prioritizes_ui_then_tmsl_then_auto():
 def test_synonyms_clause_escapes_quotes_and_omits_empty():
     assert synonyms_clause([]) == ""
     assert synonyms_clause(["Sales", "O'Brien"]) == " WITH SYNONYMS = ('Sales', 'O''Brien')"
+
+
+def test_comment_clause_escapes_quotes_and_omits_empty():
+    """Source-authored descriptions (Power BI's per-column/measure
+    "Description" property, carried through OSI/SML unchanged -- see
+    tmsl_to_osi.py's description=col_def.get("description") /
+    description=measure_def.get("description")) used to be captured on
+    the model and then silently discarded at DDL-emission time: neither
+    dimensions_clause_builder.py nor metrics_clause_builder.py read the
+    field. This pins the now-wired COMMENT fragment's exact shape."""
+    assert comment_clause(None) == ""
+    assert comment_clause("") == ""
+    assert comment_clause("   ") == ""
+    assert comment_clause("Total units sold") == " COMMENT 'Total units sold'"
+    assert comment_clause("Bob's total") == " COMMENT 'Bob''s total'"
 
 
 def test_tmsl_to_osi_extracts_column_and_measure_synonyms_with_overrides():

@@ -14,7 +14,7 @@ from semabridge.connectors.ddl_helpers import (
     extract_expr_key_osi,
 )
 from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metric_sql
-from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.connectors.synonym_clause import synonyms_clause, comment_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.connectors.type_safety_validator import (
@@ -50,6 +50,23 @@ class MetricsClauseBuilder:
         self.config = config
         self.dup_name_repo = dup_name_repo
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+
+    def _no_tier5_provider_configured(self) -> bool:
+        """True when zero LLM providers are available for Tier-5 fallback
+        (no Settings-page key, no env var for any provider in
+        Tier5Config.provider_order) — see dax_translation/tier5/config.py.
+
+        Best-effort/advisory only: any failure here (DB unavailable, import
+        error, etc.) must never affect whether a metric drops, only the
+        wording of the drop reason if it does — so this degrades to False
+        (i.e. "don't claim no provider is configured") rather than raising.
+        """
+        try:
+            from semabridge.dax_translation.tier5.config import Tier5Config
+            return not Tier5Config.resolve().enabled_provider_order()
+        except Exception as exc:
+            logger.debug("Tier5 provider-availability check skipped (non-fatal): %s", exc)
+            return False
 
     def build_for_sml(
         self,
@@ -134,6 +151,15 @@ class MetricsClauseBuilder:
         # every enrichment-created column dry-run can't see.
         metric_shapes = metrics_with_time_intelligence_shapes(valid_metrics)
 
+        # Resolved ONCE for the whole model, same rationale as metric_shapes
+        # above: lets the generic "could not be translated" drop message
+        # further down distinguish "no LLM provider is configured at all"
+        # (a one-setting fix: add a key under Settings -> LLM Providers)
+        # from "a provider was tried and still couldn't translate this" —
+        # today both collapse into one identical message with no way for a
+        # user to tell which applies without reading server logs.
+        no_llm_provider_configured = self._no_tier5_provider_configured()
+
         metric_base_totals: Dict[str, int] = {}
         for m in valid_metrics:
             base = self.identifier_sanitizer.sanitize_alias(m.unique_name)
@@ -208,6 +234,7 @@ class MetricsClauseBuilder:
                 metric_to_alias=metric_to_alias,
                 dataset_col_types=dataset_col_types,
                 metric_shapes=metric_shapes,
+                no_llm_provider_configured=no_llm_provider_configured,
             )
 
             if expr:
@@ -254,6 +281,7 @@ class MetricsClauseBuilder:
                 metrics_lines.append(
                     f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
                     f'{synonyms_clause(list(getattr(metric, "synonyms", []) or []))}'
+                    f'{comment_clause(getattr(metric, "description", None))}'
                 )
                 metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
                 emittable_metric_name_set.add(self.identifier_sanitizer.sanitize_alias(metric.unique_name))
@@ -576,6 +604,7 @@ class MetricsClauseBuilder:
         metric_to_alias: Optional[Dict[str, str]] = None,
         dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None,
         metric_shapes: Optional[Dict[str, Any]] = None,
+        no_llm_provider_configured: bool = False,
     ) -> Optional[str]:
         # A by-design-excluded metric (constant expression / string-producing
         # root, classified earlier in the pipeline — see dax_ast_parser.py's
@@ -926,11 +955,20 @@ class MetricsClauseBuilder:
                 "Skipping metric to prevent DDL compilation failure.",
                 metric.unique_name, dax_expr[:100]
             )
-            self.drop_ledger.record(
-                "metric", metric.unique_name, DropStage.DAX_TRANSLATION,
+            reason = (
                 "DAX expression could not be translated to SQL at DDL-emission time "
-                "(deterministic, rule-based, and LLM translation tiers were all "
-                "unsuccessful or unavailable).",
+                "(deterministic and rule-based tiers were unsuccessful, and "
+            )
+            reason += (
+                "no LLM provider is configured, so Tier-5 fallback was never "
+                "attempted — add a provider key under Settings → LLM Providers "
+                "(or the corresponding env var) to let this metric fall back to "
+                "LLM translation)."
+                if no_llm_provider_configured else
+                "the configured LLM provider(s) were also unable to translate it)."
+            )
+            self.drop_ledger.record(
+                "metric", metric.unique_name, DropStage.DAX_TRANSLATION, reason,
                 dataset=getattr(metric, "dataset", None), detail=dax_expr[:200] if dax_expr else None,
             )
             return None

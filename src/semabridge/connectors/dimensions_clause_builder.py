@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Set, Tuple, Optional
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
-from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.connectors.synonym_clause import synonyms_clause, comment_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
@@ -155,6 +155,7 @@ class DimensionsClauseBuilder:
                         f'  {alias}."{emitted_name}" AS '
                         f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                         f'{synonyms_clause(col_synonyms)}'
+                        f'{comment_clause(getattr(attr, "description", None))}'
                     )
                     added_dimensions.add(dim_key)
                     added_physical_dimensions.add(physical_dim_key)
@@ -272,6 +273,7 @@ class DimensionsClauseBuilder:
                     f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                     f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
+                    f'{comment_clause(getattr(col, "description", None))}'
                 )
                 added_dimensions.add(dim_key)
                 added_physical_dimensions.add(physical_dim_key)
@@ -369,6 +371,7 @@ class DimensionsClauseBuilder:
                     f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
                     f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
+                    f'{comment_clause(getattr(col, "description", None))}'
                 )
                 return
 
