@@ -1,19 +1,15 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { 
-    Hexagon, 
-    Settings, 
-    LogOut, 
-    Search, 
-    Layers, 
+import {
+    Hexagon,
+    Settings,
+    Search,
+    Layers,
     Target,
     ChevronUp,
     Zap,
-    Database,
-    Activity,
-    Info
+    Activity
 } from 'lucide-react';
 import { useWorkspace } from '../context/WorkspaceContext';
-import { useAuth } from '../context/AuthContext';
 import { useConfiguration } from '../context/ConfigurationContext';
 import SearchableSelect from './common/SearchableSelect';
 import { getSmartQueryMode } from './common/smartSearchQuery.js';
@@ -22,7 +18,6 @@ import { createPortal } from 'react-dom';
 
 export default function ContextBadge({ searchQuery = '', onOpenSettings, variant = 'footer', isCollapsed = false }) {
     const { workspaces, activeWorkspace, selectWorkspace, isLoading: workspacesLoading } = useWorkspace();
-    const { user, logout } = useAuth();
     const { config } = useConfiguration();
     const [isOpen, setIsOpen] = useState(false);
     const panelRef = useRef(null);
@@ -153,10 +148,10 @@ export default function ContextBadge({ searchQuery = '', onOpenSettings, variant
                                 <Activity size={24} />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <h3 className="text-xs font-black text-primary uppercase tracking-widest leading-none mb-1">Context Pulse</h3>
+                                <h3 className="text-xs font-black text-white uppercase tracking-widest leading-none mb-1">Context Pulse</h3>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-tertiary font-medium">{activeName}</span>
-                                    <div className="w-1 h-1 rounded-full bg-tertiary/30" />
+                                    <span className="text-[10px] text-white/60 font-medium">{activeName}</span>
+                                    <div className="w-1 h-1 rounded-full bg-white/30" />
                                     <span className="text-[10px] text-accent-blue font-bold uppercase tracking-tighter">Live</span>
                                 </div>
                             </div>
@@ -166,29 +161,10 @@ export default function ContextBadge({ searchQuery = '', onOpenSettings, variant
                         <div className="space-y-3">
                             <div className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-white/5">
                                 <div className="flex items-center gap-2">
-                                    <Info size={14} className="text-tertiary" />
-                                    <span className="text-[10px] font-bold text-secondary uppercase">Index Status</span>
+                                    <searchMode.icon size={14} style={{ color: searchMode.color || 'rgba(255,255,255,0.6)' }} />
+                                    <span className="text-[10px] font-bold text-white/70 uppercase">Active Mode</span>
                                 </div>
-                                <span className="text-[10px] font-mono text-primary bg-white/10 px-2 py-0.5 rounded">10,240 items</span>
-                            </div>
-
-                            <div className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <searchMode.icon size={14} style={{ color: searchMode.color || 'var(--text-tertiary)' }} />
-                                    <span className="text-[10px] font-bold text-secondary uppercase">Active Mode</span>
-                                </div>
-                                <span className="text-[10px] font-mono text-primary">{searchMode.mode}</span>
-                            </div>
-
-                            <div className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <Database size={14} className="text-tertiary" />
-                                    <span className="text-[10px] font-bold text-secondary uppercase">Backend</span>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                    <span className="text-[10px] font-mono text-primary">PostgreSQL</span>
-                                </div>
+                                <span className="text-[10px] font-mono text-white">{searchMode.mode}</span>
                             </div>
                         </div>
 
@@ -196,17 +172,10 @@ export default function ContextBadge({ searchQuery = '', onOpenSettings, variant
                         <div className="mt-5 pt-4 border-t border-white/5 flex gap-2">
                             <button
                                 onClick={(e) => { e.stopPropagation(); setIsOpen(false); onOpenSettings?.(); }}
-                                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-secondary hover:bg-white/10 hover:text-primary transition-all border border-white/5"
+                                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-white/70 hover:bg-white/10 hover:text-white transition-all border border-white/5"
                             >
                                 <Settings size={12} />
                                 Config
-                            </button>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setIsOpen(false); logout(); }}
-                                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-danger hover:bg-danger/10 transition-all border border-danger/10"
-                            >
-                                <LogOut size={12} />
-                                Exit
                             </button>
                         </div>
                     </div>

@@ -1422,7 +1422,10 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                                     <button
-                                        onClick={() => setInspectorResetToken(v => v + 1)}
+                                        onClick={() => {
+                                            setSelectedTableId('__all__');
+                                            setInspectorResetToken(v => v + 1);
+                                        }}
                                         style={{
                                             ...iconBtnStyle,
                                             border: '1px solid var(--border-color)',

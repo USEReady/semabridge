@@ -118,7 +118,7 @@ function writeCachedList(key, value) {
 
 /* ─── Main Page ─── */
 export default function ProjectsPage() {
-  const { loading: authLoading, token } = useAuth();
+  const { loading: authLoading, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(null);
@@ -162,11 +162,16 @@ export default function ProjectsPage() {
   } = useQuery({
     queryKey: ['projects'],
     initialData: () => readCachedList(PROJECTS_CACHE_KEY),
+    // Cached/localStorage data is only a placeholder to avoid a flash of
+    // empty state — mark it as already stale (epoch 0) so the query always
+    // performs a real fetch as soon as it becomes enabled, instead of
+    // treating the placeholder as fresh for the first `staleTime` window.
+    initialDataUpdatedAt: 0,
     staleTime: hasRunning ? 0 : 5000,
     refetchOnWindowFocus: true,
     refetchInterval: hasRunning ? 5000 : false,
     retry: 0,
-    enabled: !authLoading && !!token,
+    enabled: !authLoading && isAuthenticated,
     queryFn: async () => {
       const data = await api.listProjects();
       writeCachedList(PROJECTS_CACHE_KEY, data);
@@ -182,9 +187,10 @@ export default function ProjectsPage() {
   } = useQuery({
     queryKey: ['folders'],
     initialData: () => readCachedList(FOLDERS_CACHE_KEY),
+    initialDataUpdatedAt: 0,
     staleTime: 5000,
     retry: 0,
-    enabled: !authLoading && !!token,
+    enabled: !authLoading && isAuthenticated,
     queryFn: async () => {
       const data = await api.listFolders();
       writeCachedList(FOLDERS_CACHE_KEY, data);
@@ -321,9 +327,12 @@ export default function ProjectsPage() {
       if (!hasAllTags) return false;
     }
     
-    // Filter out auto-generated test projects
+    // Filter out auto-generated test projects, but never hide a project that has
+    // actually been run (or attempted) - success or failure should always surface here.
     const projectName = (p.name || '').trim().toLowerCase();
-    const isTestProject = (
+    const projectStatus = (p.status || '').trim().toLowerCase();
+    const hasRunHistory = projectStatus !== '' && projectStatus !== 'idle' && projectStatus !== 'draft';
+    const isTestProject = !hasRunHistory && (
       projectName === 'test' ||
       projectName === 'teste' ||
       projectName === 'test project' ||

@@ -530,12 +530,17 @@ export function StepConnectorConfig({
                   }}
                   onDrop={handlePbixDrop}
                   style={{
-                    border: '1px dashed var(--accent-blue)',
+                    border: `1px dashed ${pbixUploadError ? 'var(--color-error)' : pbixUploadPath ? 'var(--color-success)' : 'var(--accent-blue)'}`,
                     borderRadius: 12,
                     padding: 18,
-                    background: pbixDragOver ? 'var(--accent-blue)14' : 'var(--accent-blue)08',
+                    background: pbixUploadError
+                      ? 'var(--color-error)14'
+                      : pbixUploadPath
+                        ? 'var(--color-success)14'
+                        : pbixDragOver ? 'var(--accent-blue)14' : 'var(--accent-blue)08',
                     color: 'var(--text-secondary)',
                     cursor: pbixUploading ? 'progress' : 'pointer',
+                    transition: 'border-color 0.2s ease, background 0.2s ease',
                   }}
                 >
                   <input
@@ -551,8 +556,11 @@ export function StepConnectorConfig({
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                     Drag and drop a `.pbix` file here or click to browse
                     {pbixUploading && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
+                    {!pbixUploading && pbixUploadPath && !pbixUploadError && (
+                      <Check size={14} style={{ color: 'var(--color-success)' }} />
+                    )}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  <div style={{ fontSize: 12, color: pbixUploadPath && !pbixUploadError ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
                     {pbixUploading
                       ? 'Saving file to server...'
                       : pbixUploadPath

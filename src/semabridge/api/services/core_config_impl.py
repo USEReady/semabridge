@@ -193,59 +193,63 @@ async def get_history():
 async def validate_live(payload: Dict[str, Any] = None):
     errors: list[dict] = []
     warnings: list[dict] = []
+    conn = None
     try:
         conn = db_manager._get_connection()
-        try:
-            rows = conn.execute(
-                """
-                WITH RankedVersions AS (
-                    SELECT model_id, snapshot, created_at,
-                           ROW_NUMBER() OVER(PARTITION BY model_id ORDER BY created_at DESC) as rn
-                    FROM model_versions
-                )
-                SELECT model_id, snapshot
-                FROM RankedVersions
-                WHERE rn = 1
-                """
-            ).fetchall()
+        rows = conn.execute(
+            """
+            WITH RankedVersions AS (
+                SELECT model_id, snapshot, created_at,
+                       ROW_NUMBER() OVER(PARTITION BY model_id ORDER BY created_at DESC) as rn
+                FROM model_versions
+            )
+            SELECT model_id, snapshot
+            FROM RankedVersions
+            WHERE rn = 1
+            """
+        ).fetchall()
 
-            for model_id, snapshot_data in rows:
-                if isinstance(snapshot_data, str):
-                    try:
-                        data = json.loads(snapshot_data)
-                    except Exception as e:
-                        errors.append({"model": model_id, "severity": "error", "message": f"Failed to parse JSON: {e}"})
-                        continue
-                else:
-                    data = snapshot_data or {}
-                if not isinstance(data, dict):
+        for model_id, snapshot_data in rows:
+            if isinstance(snapshot_data, str):
+                try:
+                    data = json.loads(snapshot_data)
+                except Exception as e:
+                    errors.append({"model": model_id, "severity": "error", "message": f"Failed to parse JSON: {e}"})
                     continue
-                display_model_name = (
-                    str(data.get("model_name") or "").strip()
-                    or str(data.get("name") or "").strip()
-                    or str(data.get("label") or "").strip()
-                    or str(data.get("unique_name") or "").strip()
-                    or model_id
-                )
-                # Pre-calculate datasets that have metrics to avoid false-positive "no columns" warnings on measure tables.
-                datasets_with_metrics = {m.get("dataset") for m in data.get("metrics", []) if m.get("dataset")}
+            else:
+                data = snapshot_data or {}
+            if not isinstance(data, dict):
+                continue
+            display_model_name = (
+                str(data.get("model_name") or "").strip()
+                or str(data.get("name") or "").strip()
+                or str(data.get("label") or "").strip()
+                or str(data.get("unique_name") or "").strip()
+                or model_id
+            )
+            # Pre-calculate datasets that have metrics to avoid false-positive "no columns" warnings on measure tables.
+            datasets_with_metrics = {m.get("dataset") for m in data.get("metrics", []) if m.get("dataset")}
 
-                for ds in data.get("datasets", []):
-                    tbl = ds.get("source_table") or ds.get("table", "")
-                    cols = ds.get("columns", [])
-                    ds_name = ds.get("unique_name") or ds.get("name") or "?"
-                    display_ds_name = ds.get("name") or ds.get("unique_name") or "?"
-                    
-                    if not tbl:
-                        warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{display_ds_name}' has no source_table defined"})
-                    
-                    # Only warn about missing columns if there are also no metrics referencing this dataset.
-                    # Measure-only tables are valid architectural constructs in Fabric/TMSL models.
-                    if not cols and ds_name not in datasets_with_metrics:
-                        warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{display_ds_name}' has no columns defined"})
-        finally:
-            conn.close()
+            for ds in data.get("datasets", []):
+                tbl = ds.get("source_table") or ds.get("table", "")
+                cols = ds.get("columns", [])
+                ds_name = ds.get("unique_name") or ds.get("name") or "?"
+                display_ds_name = ds.get("name") or ds.get("unique_name") or "?"
+
+                if not tbl:
+                    warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{display_ds_name}' has no source_table defined"})
+
+                # Only warn about missing columns if there are also no metrics referencing this dataset.
+                # Measure-only tables are valid architectural constructs in Fabric/TMSL models.
+                if not cols and ds_name not in datasets_with_metrics:
+                    warnings.append({"model": display_model_name, "severity": "warning", "message": f"Dataset '{display_ds_name}' has no columns defined"})
     except Exception as e:
         errors.append({"model": "system", "severity": "error", "message": str(e)})
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings, "total_issues": len(errors) + len(warnings)}

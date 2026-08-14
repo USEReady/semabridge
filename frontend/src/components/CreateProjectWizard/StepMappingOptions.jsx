@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Loader2, AlertTriangle, Play, Database, Cloud, Snowflake, Zap, Table2, ChevronDown, RefreshCw, Settings, Info } from 'lucide-react';
+import { Loader2, AlertTriangle, Play, Database, Cloud, Snowflake, Zap, Table2, ChevronDown, RefreshCw, Info } from 'lucide-react';
 import SmartSearchBar from '../common/SmartSearchBar';
 import { matchesSmartQuery } from '../common/smartSearchQuery';
 import { resolveSourceTableName, sanitizeMappingName, isBlockingRow } from '../../utils/projectHelpers';
@@ -333,11 +333,8 @@ export function StepMappingOptions({
 
         <div style={{ gridColumn: 'span 4', display: 'grid', gap: 12 }}>
           <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase' }}>AI Enhancements</div>
-              <button type="button" title="Configure AI semantic matching and prompt behavior." style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
-                <Settings size={14} color="var(--text-tertiary)" />
-              </button>
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
               <ToggleOption
@@ -383,7 +380,6 @@ export function StepMappingOptions({
                   </button>
                 )}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Unsupported types:</strong> 0</div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Estimated Volume:</strong> {estimatedVolume}</div>
             </div>
           </div>

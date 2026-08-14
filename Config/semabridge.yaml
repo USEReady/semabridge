@@ -1,16 +1,16 @@
-project_name: 1721-test
+project_name: fanta
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1721-test/6924f3433e0249bba815a63143915c6d_Competitive
+  pbix_path: C:/Users/Sabiha Anjum/AppData/Local/Temp/semabridge/projects/proj-fanta/f0b308183732460a80a339cfdc2f4ef0_Competitive
     Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1721-test/6924f3433e0249bba815a63143915c6d_Competitive
+  pbix_file_path: C:/Users/Sabiha Anjum/AppData/Local/Temp/semabridge/projects/proj-fanta/f0b308183732460a80a339cfdc2f4ef0_Competitive
     Marketing Analysis.pbix
 targets:
 - type: snowflake
-  database: SEMABRIDGE
-  schema: SEMABRIDGE_WORKSPACE
+  database: ACCELERATOR_2
+  schema: CONVERT
   warehouse: DI_OTH_POC_WH
-  identity_id: 1da75202-4a20-4ed5-a9eb-aadf6392c367
+  identity_id: 3087b78e-a69c-487d-a403-77225dc7af23
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY
@@ -219,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-1721-test
-display_name: 1721-test
+project_id: proj-fanta
+display_name: fanta
