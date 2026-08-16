@@ -24,7 +24,7 @@ from semabridge.api.services.project_shared import (
     _compat_snapshot_groups,
     _compat_project_snapshots,
 )
-from semabridge.core.run_helpers import elapsed_ms, normalize_sync_mode, resolve_run_status
+from semabridge.core.run_helpers import elapsed_ms, mask_run_for_display, normalize_sync_mode, resolve_run_status
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 # Backward-compatible alias
@@ -338,6 +338,13 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
         run["status"] = resolve_run_status(sync_result or {})
+        # Effective demo_mode for this run, echoed back from the engine's own
+        # resolved ConnectorBehavior (see core/engine/finalize.py, which
+        # already ANDs the project's opt-in with the server-wide
+        # SEMABRIDGE_DEMO_MODE env var) — never re-derived independently
+        # here, so there is exactly one source of truth for whether display
+        # masking applies to this run.
+        run["demo_mode"] = bool(((sync_result or {}).get("summary") or {}).get("demo_mode"))
         # Propagate run result back to in-memory project so the Projects page
         # shows the real status instead of the initial "draft" placeholder.
         _run_final_status = run["status"]
@@ -347,9 +354,17 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             "partial": "warning",
             "failed": "failed",
         }
+        # The Projects grid is a display surface like any other run status
+        # badge — mask it the same way (see run_helpers.mask_run_for_display)
+        # so a demo-mode-masked run doesn't show the project as broken.
+        _display_status = (
+            "success"
+            if (run["demo_mode"] and _run_final_status in ("failed", "warning"))
+            else _run_final_status
+        )
         if project_id in _compat_projects:
             _compat_projects[project_id]["status"] = _project_status_map.get(
-                _run_final_status, _run_final_status
+                _display_status, _display_status
             )
             # Persist the updated status so the store file has the correct value
             # on the next server start (avoids reverting to "draft" on restart).
@@ -438,6 +453,12 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             )
         )
 
+        if run.get("demo_mode") and run["status"] in ("failed", "warning"):
+            logger.warning(
+                "DEMO_MODE_MASKED_FAILURE project_id=%s run_id=%s true_status=%s error=%s",
+                project_id, run.get("run_id"), run["status"], run["message"],
+            )
+
         try:
             preferred_snapshot_id = str((run.get("summary") or {}).get("sml_snapshot_id") or "")
             _compat_capture_snapshots_for_run(
@@ -491,6 +512,23 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         run["message"] = str(exc)
         run["completed_at"] = _compat_now_iso()
         run["logs"] = [f"ERROR Execution failed: {exc}"]
+        # This failure happened outside the engine's own run (e.g. sync_models
+        # itself raised before any per-model RunSummary was produced), so
+        # there's no engine-resolved demo_mode to echo back — best-effort
+        # re-derive it directly from this project's own config YAML.
+        try:
+            from semabridge.core.demo_mode import resolve_effective_demo_mode
+            _parsed_cfg = _compat_parse_project_cfg_dict(project_cfg)
+            _raw_behavior = _parsed_cfg.get("behavior") if isinstance(_parsed_cfg.get("behavior"), dict) else {}
+            _raw_features = _raw_behavior.get("features") if isinstance(_raw_behavior.get("features"), dict) else {}
+            run["demo_mode"] = resolve_effective_demo_mode(bool(_raw_features.get("demo_mode", False)))
+        except Exception:
+            run["demo_mode"] = False
+        if run.get("demo_mode"):
+            logger.warning(
+                "DEMO_MODE_MASKED_FAILURE project_id=%s run_id=%s true_status=failed error=%s",
+                project_id, run.get("run_id"), run["message"],
+            )
         try:
             from semabridge.api.services.snapshot_service import _compat_capture_snapshots_for_run
             _compat_capture_snapshots_for_run(
@@ -541,7 +579,7 @@ async def get_project_runs_compat(project_id: str):
 
     runs = _compat_project_runs.get(pid, [])
     if runs:
-        return runs
+        return [mask_run_for_display(r) for r in runs]
 
     try:
         from semabridge.repository.orm.models import Run
@@ -583,15 +621,55 @@ async def get_project_runs_compat(project_id: str):
                     "before_target_snapshot_ids": before_ids,
                     "after_target_snapshot_ids": after_ids,
                     "after_tgt_snapshots": after_ids,
+                    "demo_mode": bool(getattr(row, "demo_mode", False)),
                 }
                 results.append(run_data)
 
             if results:
                 _compat_project_runs[pid] = results
 
-            return results
+            return [mask_run_for_display(r) for r in results]
     except Exception as exc:
         logger.error("Failed to retrieve runs from ORM: %s", exc)
+        return []
+
+
+def list_demo_masked_failures(since: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Read-only, out-of-band lookup of every run whose true failure was
+    masked for display by demo mode. Not exposed through any API route or
+    UI — deliberately a direct-call/DB-query mechanism only (see decision on
+    truth visibility: DB + logs, no in-app view), for reviewing after a demo
+    what actually broke.
+
+    ``since``, if given, is an ISO-8601 timestamp string; only runs
+    completed at or after it are returned.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        from semabridge.repository.orm.models import Run
+        from sqlalchemy import select
+        from semabridge.repository.orm.session_factory import db_manager
+
+        with db_manager.get_session() as session:
+            stmt = select(Run).where(Run.demo_masked == True).order_by(Run.completed_at.desc())  # noqa: E712
+            if since:
+                from datetime import datetime as _dt
+                stmt = stmt.where(Run.completed_at >= _dt.fromisoformat(since))
+            rows = session.execute(stmt).scalars().all()
+            return [
+                {
+                    "run_id": row.run_id,
+                    "project_id": row.project_id,
+                    "true_status": row.status,
+                    "error_message": row.error_message,
+                    "started_at": row.started_at.isoformat() if row.started_at else None,
+                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                }
+                for row in rows
+            ]
+    except Exception as exc:
+        logger.error("Failed to list demo-masked failures: %s", exc)
         return []
 
 

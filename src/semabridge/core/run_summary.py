@@ -98,6 +98,13 @@ class RunSummary(BaseModel):
 
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
+
+    # Effective demo_mode for this run (server env var AND project opt-in
+    # both true — see core/demo_mode.resolve_effective_demo_mode). Stamped
+    # once at finalize time from the resolved ConnectorBehavior actually
+    # used, so callers downstream (e.g. record_run_complete) don't need to
+    # re-parse project config to know whether display masking applies.
+    demo_mode: bool = False
     
     def add_step(
         self,

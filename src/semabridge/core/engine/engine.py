@@ -214,6 +214,7 @@ class ExecutionEngine:
                 dataset_id,
                 config_path,
                 sync_mode=sync_mode,
+                config_dict=config_dict,
             )
             context.config_path = config_path
             context.config_payload = config_dict

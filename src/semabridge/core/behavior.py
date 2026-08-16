@@ -394,6 +394,19 @@ class FeatureFlags(BaseModel):
         default="output/debug/raw_fabric_model.json",
         description="Path to local Fabric model JSON used when offline_mode is enabled"
     )
+    demo_mode: bool = Field(
+        default=False,
+        description=(
+            "STRICTLY OPT-IN, for live demos only. On its own this flag does "
+            "nothing — it is inert unless the server process was ALSO started "
+            "with SEMABRIDGE_DEMO_MODE=true (see core/demo_mode.py). When "
+            "both are true and a run genuinely fails, the run's true "
+            "status/error is still recorded in the runs table and logs, but "
+            "the API/UI response for that run is masked to look like a "
+            "normal successful completion. Never changes what gets deployed "
+            "— a failed deploy still fails; only the display is affected."
+        ),
+    )
 
 class LegacyCleanup(BaseModel):
     """Cleanup options for old features."""

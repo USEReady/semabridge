@@ -315,6 +315,7 @@ def _step2_init_identifiers(
     dataset_id: Optional[str],
     config_path: Optional[Path] = None,
     sync_mode: str = "copy",
+    config_dict: Optional[Dict[str, Any]] = None,
 ) -> RunContext:
     """
     Step 2: Initialize identifiers.
@@ -371,6 +372,20 @@ def _step2_init_identifiers(
                 logger.warning(
                     f"behavior.yaml could not be parsed, using defaults: {_be}"
                 )
+
+    # Per-project demo_mode opt-in from this run's own config_dict (project
+    # YAML). `behavior` above may be `config.behavior` — a reference into
+    # the process-wide @lru_cache'd Settings singleton — so we must NEVER
+    # mutate it in place (that would leak one project's demo_mode across
+    # every other run sharing that cached instance, including concurrent
+    # runs under the parallel-model ThreadPoolExecutor). Instead, only ever
+    # override on a deep copy scoped to this run's own context.
+    if config_dict:
+        raw_behavior = config_dict.get("behavior") if isinstance(config_dict.get("behavior"), dict) else {}
+        raw_features = raw_behavior.get("features") if isinstance(raw_behavior.get("features"), dict) else {}
+        if "demo_mode" in raw_features:
+            behavior = behavior.model_copy(deep=True)
+            behavior.features.demo_mode = bool(raw_features["demo_mode"])
 
     # Generate unique run_id
     run_id = str(uuid.uuid4())

@@ -73,3 +73,12 @@ class RunContext:
     # schema-less preview emitter) but succeeded in this real deploy isn't
     # reported as dropped just because nothing else ever retracted it.
     deployed_ddl_text: Optional[str] = None
+
+    # Paths for the Cortex/DDL artifacts Step 8 wrote to a STAGING location
+    # rather than the canonical output/reverse/<project>/ directory directly.
+    # Step 10 (finalize.py) promotes staging -> canonical only when the run's
+    # final status is SUCCESS, so a run that fails after Step 8 (e.g. Step 9
+    # deploy failure) can never leave the last known-good deployed artifact
+    # corrupted with content describing a model that was never actually
+    # deployed. None whenever Step 8 didn't run (dry run, no target).
+    staged_target_artifact_paths: Optional[Dict[str, Any]] = None

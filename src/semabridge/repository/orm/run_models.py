@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from semabridge.repository.orm.base import Base
@@ -42,6 +42,16 @@ class Run(Base):
     restored_from_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     before_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     after_target_snapshot_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Demo mode: was this run's effective demo_mode on at start (stamped once,
+    # so later toggling the flag doesn't retroactively relabel history), and
+    # was the true outcome actually masked for display (demo_mode active AND
+    # the true status was failed/partial). `status`/`error_message` above are
+    # ALWAYS the true, unmasked outcome — these two columns are audit
+    # metadata about display-layer masking, never a place to store a masked
+    # value.
+    demo_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    demo_masked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="runs")

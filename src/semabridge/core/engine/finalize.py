@@ -230,6 +230,36 @@ def _step10_finalize(
     self._summary.sml_snapshot_id = context.sml_snapshot_id
     self._summary.target_artifact_path = context.target_artifact_path
     self._summary.routing_summary = context.routing_summary
+    try:
+        from semabridge.core.demo_mode import resolve_effective_demo_mode
+        self._summary.demo_mode = resolve_effective_demo_mode(
+            getattr(context.behavior.features, "demo_mode", False)
+        )
+    except Exception as _demo_exc:
+        logger.debug("demo_mode resolution skipped (non-fatal): %s", _demo_exc)
+
+    # Promote Step 8's staged Cortex/DDL artifacts to their canonical
+    # output/reverse/<project>/ location ONLY on a genuine success -- on
+    # FAILED/PARTIAL the last known-good artifact there is left completely
+    # untouched (see targets/snowflake.py's _convert_to_snowflake_target).
+    # This never triggers any additional deploy/upload -- it only decides
+    # whether files already generated locally this run get copied into the
+    # canonical local path; unaffected by demo_mode.
+    staged_paths = getattr(context, "staged_target_artifact_paths", None)
+    if staged_paths and status == RunStatus.SUCCESS:
+        try:
+            import shutil
+            for staged_key, final_key in (("ddl", "final_ddl"), ("yaml", "final_yaml")):
+                staged_file = staged_paths.get(staged_key)
+                final_file = staged_paths.get(final_key)
+                if staged_file and final_file and Path(staged_file).exists():
+                    shutil.copy2(staged_file, final_file)
+        except Exception as _promote_exc:
+            logger.warning(
+                "Failed to promote staged Cortex/DDL artifacts to canonical "
+                "path (non-fatal, last known-good artifact preserved): %s",
+                _promote_exc,
+            )
     if context.drop_ledger.records:
         self._summary.dropped_entities = _reconcile_dropped_entities(context)
 

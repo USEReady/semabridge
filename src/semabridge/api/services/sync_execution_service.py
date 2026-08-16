@@ -365,6 +365,35 @@ def _run_single_job(
         summary_data = summary.model_dump(mode="json")
         job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
 
+        # Persist the TRUE run outcome to the `runs` table. This was
+        # previously only wired up on the deprecated CLIExecutor path — the
+        # modern engine (used here) never updated a run's row past its
+        # initial "running" status. `status`/`error_message` below are
+        # always the real outcome; `demo_mode`/`demo_masked` only record
+        # whether a later display-layer masking pass (see
+        # core/run_helpers.mask_run_for_display) is expected to apply — they
+        # never change what's stored here.
+        _run_id_for_record = summary_data.get("run_id")
+        if _run_id_for_record:
+            try:
+                _true_status = str(summary_data.get("status") or "").lower()
+                _demo_mode_active = bool(summary_data.get("demo_mode"))
+                _errors = summary_data.get("errors") or []
+                repository.record_run_complete(
+                    run_id=str(_run_id_for_record),
+                    status=_true_status,
+                    final_step=int(summary_data.get("last_successful_step") or 0),
+                    duration_ms=int(summary_data.get("duration_ms") or 0),
+                    error_message=(_errors[0].get("message") if _errors else None),
+                    demo_mode=_demo_mode_active,
+                    demo_masked=(_demo_mode_active and _true_status in ("failed", "partial")),
+                )
+            except Exception as record_exc:
+                logger.error(
+                    "Failed to persist true run completion for run_id=%s: %s",
+                    _run_id_for_record, record_exc,
+                )
+
         if job_ok and deploy_enabled:
             try:
                 _persist_model_version(repository, config, summary_data, model_label, resolved_workspace_id)

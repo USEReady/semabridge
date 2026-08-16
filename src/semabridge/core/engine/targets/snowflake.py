@@ -72,19 +72,38 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     full_ddl = "\n\n".join(ddls)
     yaml_out = emitter.generate_cortex_yaml(context.sml_model)
 
-    ddl_path = output_dir / "semantic_view.sql"
-    yaml_path = output_dir / "cortex_analyst.yaml"
+    # Write to a STAGING location, not the canonical output/reverse/<project>/
+    # path directly. If Step 9 (deploy) subsequently fails, the last known-good
+    # cortex_analyst.yaml/semantic_view.sql at the canonical path must remain
+    # untouched -- Step 10 (finalize.py) only promotes staging -> canonical on
+    # a genuine SUCCESS. Writing here unconditionally would otherwise corrupt
+    # the last-good artifact with content describing a model that was never
+    # actually deployed.
+    staging_dir = self._model_output_dir("reverse", ".staging", model_name=context.project_id)
+    staged_ddl_path = staging_dir / "semantic_view.sql"
+    staged_yaml_path = staging_dir / "cortex_analyst.yaml"
 
-    with open(ddl_path, "w", encoding="utf-8") as f:
+    with open(staged_ddl_path, "w", encoding="utf-8") as f:
         f.write(full_ddl)
-    with open(yaml_path, "w", encoding="utf-8") as f:
+    with open(staged_yaml_path, "w", encoding="utf-8") as f:
         f.write(yaml_out)
 
     if isinstance(context.sml_model, SMLModel):
         sml_path = output_dir / "sml" / "model.yaml"
         SMLSerializer.save(context.sml_model, sml_path)
 
-    context.target_artifact_path = str(ddl_path)
+    final_ddl_path = output_dir / "semantic_view.sql"
+    final_yaml_path = output_dir / "cortex_analyst.yaml"
+    context.staged_target_artifact_paths = {
+        "ddl": staged_ddl_path,
+        "yaml": staged_yaml_path,
+        "final_ddl": final_ddl_path,
+        "final_yaml": final_yaml_path,
+    }
+    # Reported path is the eventual canonical destination -- if this run
+    # fails before promotion, it still correctly points at whatever artifact
+    # is actually live (the previous successful run's).
+    context.target_artifact_path = str(final_ddl_path)
 
 
 def _step6b_predict_anchor_flag_columns(self, context: RunContext) -> None:

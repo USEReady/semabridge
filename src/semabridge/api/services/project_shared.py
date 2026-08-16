@@ -478,6 +478,13 @@ def _compat_assembled_project_config(project_id: str, project_cfg: Dict[str, Any
     }
     if model_names:
         assembled["source"]["models"] = model_names
+    # Pass through project-level `behavior` (e.g. `behavior.features.demo_mode`)
+    # unchanged -- this dict is otherwise rebuilt field-by-field from
+    # project_cfg/profile_cfg, so a project author's behavior overrides would
+    # silently vanish for any project using a mapping_profile.
+    raw_behavior = project_cfg.get("behavior")
+    if isinstance(raw_behavior, dict):
+        assembled["behavior"] = raw_behavior
     return assembled
 
 

@@ -121,6 +121,10 @@ def _apply_schema_compatibility_fixes() -> None:
             pending_alters.append("ALTER TABLE runs ADD COLUMN before_target_snapshot_ids TEXT")
         if "after_target_snapshot_ids" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN after_target_snapshot_ids TEXT")
+        if "demo_mode" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN demo_mode BOOLEAN NOT NULL DEFAULT FALSE")
+        if "demo_masked" not in run_columns:
+            pending_alters.append("ALTER TABLE runs ADD COLUMN demo_masked BOOLEAN NOT NULL DEFAULT FALSE")
 
     # In PostgreSQL, migrate the unique constraint from `tag` to `(owner_id, tag)`
     if dialect == "postgresql":

@@ -21,6 +21,7 @@ from semabridge.api.services.project_shared import (
     _compat_save_store,
     scheduler_service,
 )
+from semabridge.core.run_helpers import mask_run_for_display
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 
@@ -29,7 +30,7 @@ async def list_job_runs_compat():
     for runs in _compat_project_runs.values():
         all_runs.extend(runs)
     all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
-    return all_runs
+    return [mask_run_for_display(r) for r in all_runs]
 
 
 async def get_jobs_config_compat():

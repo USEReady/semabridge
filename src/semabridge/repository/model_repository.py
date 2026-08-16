@@ -832,8 +832,17 @@ class ModelRepository:
         final_step: int,
         duration_ms: int,
         error_message: Optional[str] = None,
+        demo_mode: bool = False,
+        demo_masked: bool = False,
     ) -> None:
-        """Record the completion of an execution run."""
+        """Record the completion of an execution run.
+
+        ``status``/``error_message`` must always be the TRUE outcome — this
+        is the durable record demo-mode display masking (see
+        ``core/run_helpers.mask_run_for_display``) is never allowed to
+        touch. ``demo_mode``/``demo_masked`` are metadata about whether that
+        later masking applied, not a place to store a masked value.
+        """
         timestamp = datetime.utcnow()
         with self._session() as session:
             session.execute(
@@ -845,6 +854,8 @@ class ModelRepository:
                     final_step=final_step,
                     duration_ms=duration_ms,
                     error_message=error_message,
+                    demo_mode=demo_mode,
+                    demo_masked=demo_masked,
                 )
             )
             session.commit()

@@ -81,3 +81,67 @@ def resolve_run_status(sync_result: Dict[str, Any]) -> str:
     if overall == "partial":
         return "warning"
     return "failed"
+
+
+_DEMO_SUCCESS_MESSAGE = "Execution completed successfully."
+_DEMO_SUCCESS_LOG_LINE = "SUCCESS Execution completed successfully."
+
+
+def mask_run_for_display(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a run dict shaped for consumer-facing API/UI responses.
+
+    Demo mode only ever affects what gets DISPLAYED here — it never changes
+    what's stored. The caller's own dict (e.g. the same object referenced by
+    the in-memory run-history cache) is never mutated; the true status,
+    error, and logs are recorded durably elsewhere (the ``runs`` DB table
+    via ``ModelRepository.record_run_complete``, plus a
+    ``DEMO_MODE_MASKED_FAILURE`` log line) and are never round-tripped back
+    into this masked dict — checking the real outcome is a deliberate,
+    out-of-band action (DB query or log grep), not something the running
+    app ever displays, even to an admin/presenter view.
+
+    A no-op (returns *run* unchanged) unless ``run["demo_mode"]`` is true
+    AND the run's own status is anything other than a genuine success —
+    i.e. there is nothing to mask for the overwhelming majority of runs.
+    """
+    true_status = str(run.get("status") or "").strip().lower()
+    if not run.get("demo_mode") or true_status in ("success", "running", ""):
+        return run
+
+    masked = dict(run)
+    masked["status"] = "success"
+    masked["message"] = _DEMO_SUCCESS_MESSAGE
+    masked.pop("error", None)
+    masked["logs"] = [_DEMO_SUCCESS_LOG_LINE]
+    masked["stage_states"] = [
+        {**stage, "status": "success"}
+        for stage in (run.get("stage_states") or [])
+        if isinstance(stage, dict)
+    ]
+
+    summary = run.get("summary")
+    if isinstance(summary, dict):
+        masked_summary = dict(summary)
+        masked_summary["status"] = "SUCCESS"
+        masked_summary.pop("errors", None)
+        masked["summary"] = masked_summary
+
+    results = run.get("results")
+    if isinstance(results, list):
+        masked_results = []
+        for item in results:
+            if not isinstance(item, dict):
+                masked_results.append(item)
+                continue
+            new_item = dict(item)
+            new_item["status"] = "success"
+            item_summary = item.get("summary")
+            if isinstance(item_summary, dict):
+                new_item_summary = dict(item_summary)
+                new_item_summary["status"] = "SUCCESS"
+                new_item_summary["errors"] = []
+                new_item["summary"] = new_item_summary
+            masked_results.append(new_item)
+        masked["results"] = masked_results
+
+    return masked
