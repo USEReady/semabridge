@@ -391,7 +391,6 @@ async def dry_run_mapping(
 
         entity_mappings = _compat_serialize_auto_map_entity_mappings(
             data.get("mappings", []),
-            target_connector=target_connector,
         )
 
         # ── 5. Filter to field-level only (columns + measures, no table rows) ────

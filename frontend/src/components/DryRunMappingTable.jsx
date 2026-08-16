@@ -30,7 +30,7 @@ import {
   CONVERSION_FACET_LABELS,
   COMPLEXITY_TIER_FACET_LABELS,
 } from '../utils/mappingFilterUtils';
-import { getStaticRiskBadge, getSelfReportedEstimateText, getEnrichmentUnverifiableCaveat } from '../utils/riskLabels';
+import { getStaticRiskBadge, getSelfReportedEstimateText, getEnrichmentUnverifiableCaveat, summarizeRowHealth } from '../utils/riskLabels';
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 export function isBlockingRow(row) {
@@ -1243,6 +1243,10 @@ export default function DryRunMappingTable({
   }, [fieldGroups, activeFieldType, filterRow]);
 
   // ── Summary bar values ──────────────────────────────────────────────────────
+  // Over the full unfiltered row set (not scopedRows) -- this is meant to
+  // answer "how healthy is this whole dry run," not "how healthy is the
+  // currently-filtered view."
+  const rowHealth = useMemo(() => summarizeRowHealth(mappings), [mappings]);
   const totalFields  = summary?.total_fields  ?? mappings.length;
   const autoMapped   = summary?.auto_mapped   ?? counts.auto;
   const unmappedCnt  = summary?.unmapped      ?? counts.unmapped;
@@ -1348,6 +1352,17 @@ export default function DryRunMappingTable({
             <span style={{ color: 'var(--text-tertiary)' }}>·</span>
             <span style={{ color: '#f59e0b', fontWeight: 600 }}>
               {schemaConflicts.length} schema issue{schemaConflicts.length !== 1 ? 's' : ''}
+            </span>
+          </>
+        )}
+        {rowHealth.at_risk > 0 && (
+          <>
+            <span style={{ color: 'var(--text-tertiary)' }}>·</span>
+            <span
+              style={{ color: '#f59e0b', fontWeight: 700 }}
+              title="Mapped/translated, but flagged by a static check or advisory as likely to fail at real deploy time, or otherwise needing a closer look"
+            >
+              {rowHealth.at_risk} at risk
             </span>
           </>
         )}

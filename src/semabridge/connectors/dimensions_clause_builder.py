@@ -23,6 +23,7 @@ class DimensionsClauseBuilder:
         translator: Any,
         behavior: Any,
         drop_ledger: Optional[DropLedger] = None,
+        dup_name_repo: Any = None,
     ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -30,6 +31,14 @@ class DimensionsClauseBuilder:
         self.translator = translator
         self.behavior = behavior
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        # Persists dimension-alias collision assignments across syncs so the
+        # same source column keeps the same emitted alias across redeploys,
+        # regardless of dataset/column iteration order. Without this, two
+        # source columns that normalize to the same semantic name (e.g. from
+        # different tables sharing a flat DIMENSIONS namespace) get
+        # disambiguated purely by in-memory iteration order — see
+        # _resolve_unique_dimension_alias.
+        self.dup_name_repo = dup_name_repo
 
     def build_for_sml(
         self,

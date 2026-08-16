@@ -15,6 +15,9 @@ import StatusBadge from '../components/common/StatusBadge';
 import EmptyState from '../components/common/EmptyState';
 import ProjectDetailModal from '../components/projects/ProjectDetailModal';
 import ImportProjectModal from '../components/projects/ImportProjectModal';
+import BatchImportPbixModal from '../components/projects/BatchImportPbixModal';
+import BulkDryRunSummaryModal from '../components/projects/BulkDryRunSummaryModal';
+import { summarizeRowHealth } from '../utils/riskLabels';
 import SmartSearchBar from '../components/common/SmartSearchBar';
 import { getSmartQueryMode, matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
@@ -98,6 +101,24 @@ const SOURCE_TARGET_OPTIONS = [
 const PROJECTS_CACHE_KEY = 'semabridge:cache:projects';
 const FOLDERS_CACHE_KEY = 'semabridge:cache:folders';
 
+function statusRollupText(projects) {
+  const counts = projects.reduce((acc, p) => {
+    const s = (p.status || 'idle').toLowerCase();
+    acc[s] = (acc[s] || 0) + 1;
+    return acc;
+  }, {});
+  const successLike = (counts.success || 0) + (counts.active || 0);
+  const failedLike = (counts.failed || 0) + (counts.error || 0);
+  const pendingLike = projects.length - successLike - failedLike - (counts.running || 0);
+
+  const parts = [];
+  if (successLike > 0) parts.push(`${successLike} deployed`);
+  if (counts.running > 0) parts.push(`${counts.running} running`);
+  if (failedLike > 0) parts.push(`${failedLike} failed`);
+  if (pendingLike > 0) parts.push(`${pendingLike} pending`);
+  return parts.join(', ') || 'no runs yet';
+}
+
 function readCachedList(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -125,6 +146,7 @@ export default function ProjectsPage() {
   const [detailProject, setDetailProject] = useState(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [batchImportOpen, setBatchImportOpen] = useState(false);
   const [newFolderMode, setNewFolderMode] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [renameFolderId, setRenameFolderId] = useState(null);
@@ -134,6 +156,9 @@ export default function ProjectsPage() {
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isResizing, setIsResizing] = useState(false);
   const [runningProjectIds, setRunningProjectIds] = useState(new Set());
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDryRunPending, setBulkDryRunPending] = useState(false);
+  const [bulkDryRunResults, setBulkDryRunResults] = useState(null);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const searchQuery = useUIStore(state => state.searchQuery);
   const setSearchQuery = useUIStore(state => state.setSearchQuery);
@@ -441,6 +466,111 @@ export default function ProjectsPage() {
   };
 
   const handleImported = useCallback(() => { refreshData(); }, [refreshData]);
+
+  /* ── Multi-select + bulk actions ── */
+  const toggleSelected = useCallback((projectId) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds(new Set(filtered.map(p => p.id)));
+  }, [filtered]);
+
+  const selectedProjects = useMemo(
+    () => filtered.filter(p => selectedIds.has(p.id)),
+    [filtered, selectedIds],
+  );
+
+  const handleBulkRun = async () => {
+    const targets = selectedProjects;
+    clearSelection();
+    for (const project of targets) {
+      await handleRunNow(project);
+    }
+  };
+
+  const handleBulkDryRun = async () => {
+    const targets = selectedProjects;
+    if (targets.length === 0) return;
+    // Deliberately NOT clearing selection until the loop finishes (unlike
+    // handleBulkRun/handleBulkDelete above) -- this is the one bulk action
+    // that can take several seconds per project with no other visual
+    // indicator anywhere in the UI that a dry run is in flight (deploy runs
+    // at least get a "Running" badge on the card; dry runs get nothing),
+    // so the progress bar below would otherwise disappear the instant you
+    // click it and give zero feedback until the final alert.
+    setBulkDryRunPending({ done: 0, total: targets.length });
+    const results = [];
+    for (const project of targets) {
+      try {
+        // Built from the project's own already-persisted source/target --
+        // this is "run dry-run as the project is configured today," not a
+        // fresh wizard walkthrough, so none of CreateProjectPage's
+        // client-side wizard state (fabricAccountId, selectedModelNames,
+        // etc.) applies here; those are already baked into source_config/
+        // targets when the project has them.
+        const sourceConfig = project.source_config || { type: project.source };
+        const targetConfig = (Array.isArray(project.targets) && project.targets[0])
+          || project.target
+          || { type: project.target_type };
+        const response = await api.runProjectDryRun(project.id, {
+          source_config: sourceConfig,
+          target_config: targetConfig,
+          selected_sources: [],
+          reset_manual: true,
+        });
+        results.push({
+          projectId: project.id,
+          projectName: project.name,
+          status: 'success',
+          health: summarizeRowHealth(response?.entity_mappings),
+          compatibilityScore: typeof response?.compatibility_score === 'number' ? response.compatibility_score : null,
+        });
+      } catch (err) {
+        results.push({
+          projectId: project.id,
+          projectName: project.name,
+          status: 'error',
+          error: err?.message || 'Unknown error',
+        });
+      }
+      setBulkDryRunPending(prev => (prev ? { ...prev, done: prev.done + 1 } : prev));
+    }
+    setBulkDryRunPending(false);
+    clearSelection();
+    setBulkDryRunResults(results);
+  };
+
+  const handleBulkExport = async () => {
+    const ids = selectedProjects.map(p => p.id);
+    if (ids.length === 0) return;
+    await api.exportProjectsBulk(ids);
+    clearSelection();
+  };
+
+  const handleBulkDelete = async () => {
+    const targets = selectedProjects;
+    if (targets.length === 0) return;
+    if (!confirm(`Delete ${targets.length} selected project${targets.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    const deletedIds = new Set();
+    for (const project of targets) {
+      try {
+        await api.deleteProject(project.id);
+        deletedIds.add(project.id);
+      } catch (err) {
+        console.error(`Delete failed for project ${project.id}:`, err);
+      }
+    }
+    setProjects(prev => prev.filter(p => !deletedIds.has(p.id)));
+    clearSelection();
+  };
 
   const handleRunNow = useCallback(async (projectOrId) => {
     const projectId = typeof projectOrId === 'object' ? (projectOrId?.id || projectOrId?.project_id) : projectOrId;
@@ -774,11 +904,15 @@ export default function ProjectsPage() {
               </h1>
               <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
                 {filtered.length} project{filtered.length !== 1 ? 's' : ''}
+                {filtered.length > 0 && ` · ${statusRollupText(filtered)}`}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={() => setImportOpen(true)} style={btnStyle('secondary')}>
                 <Upload size={13} /> Import
+              </button>
+              <button onClick={() => setBatchImportOpen(true)} style={btnStyle('secondary')}>
+                <Layers size={13} /> Batch Import PBIX
               </button>
               {filtered.length > 0 && (
                 <button onClick={handleExportAll} style={btnStyle('secondary')}>
@@ -790,6 +924,50 @@ export default function ProjectsPage() {
               </button>
             </div>
           </div>
+
+          {selectedIds.size > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 12px', marginBottom: 12, borderRadius: 8,
+              background: 'var(--accent-blue)10', border: '1px solid var(--accent-blue)30',
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {selectedIds.size} selected
+              </span>
+              <button onClick={selectAllVisible} style={{ ...btnStyle('secondary'), padding: '4px 10px', fontSize: 11 }}>
+                Select all {filtered.length}
+              </button>
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={handleBulkDryRun}
+                disabled={!!bulkDryRunPending}
+                title="Run dry-run mapping detection for every selected project, using each project's own saved source/target config"
+                style={{
+                  ...btnStyle('secondary'), padding: '4px 10px', fontSize: 11,
+                  cursor: bulkDryRunPending ? 'not-allowed' : 'pointer',
+                  opacity: bulkDryRunPending ? 0.6 : 1,
+                }}
+              >
+                {bulkDryRunPending ? `Running Dry Run… (${bulkDryRunPending.done}/${bulkDryRunPending.total})` : 'Run Dry Run Selected'}
+              </button>
+              <button onClick={handleBulkRun} disabled={!!bulkDryRunPending} style={{ ...btnStyle('secondary'), padding: '4px 10px', fontSize: 11, opacity: bulkDryRunPending ? 0.5 : 1 }}>
+                <Play size={11} fill="currentColor" /> Run Selected
+              </button>
+              <button onClick={handleBulkExport} disabled={!!bulkDryRunPending} style={{ ...btnStyle('secondary'), padding: '4px 10px', fontSize: 11, opacity: bulkDryRunPending ? 0.5 : 1 }}>
+                <Download size={11} /> Export Selected
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={!!bulkDryRunPending}
+                style={{ ...btnStyle('secondary'), padding: '4px 10px', fontSize: 11, color: 'var(--color-error)', borderColor: 'var(--color-error)40', opacity: bulkDryRunPending ? 0.5 : 1 }}
+              >
+                <Trash2 size={11} /> Delete Selected
+              </button>
+              <button onClick={clearSelection} disabled={!!bulkDryRunPending} style={{ ...btnStyle('secondary'), padding: '4px 10px', fontSize: 11, opacity: bulkDryRunPending ? 0.5 : 1 }}>
+                <X size={11} /> Clear
+              </button>
+            </div>
+          )}
 
           {/* Search + filter bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -994,6 +1172,8 @@ export default function ProjectsPage() {
           handleDragEnd={handleDragEnd}
           setProjectListScrollTop={setProjectListScrollTop}
           projectListScrollTop={projectListScrollTop}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelected}
         />
       </div>
 
@@ -1008,6 +1188,22 @@ export default function ProjectsPage() {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={handleImported}
+      />
+      <BatchImportPbixModal
+        open={batchImportOpen}
+        onClose={() => setBatchImportOpen(false)}
+        projects={projects}
+        folders={folders}
+        onImported={handleImported}
+      />
+      <BulkDryRunSummaryModal
+        open={!!bulkDryRunResults}
+        onClose={() => setBulkDryRunResults(null)}
+        results={bulkDryRunResults || []}
+        onOpenProject={(projectId) => {
+          setBulkDryRunResults(null);
+          navigate(`/projects/${projectId}/edit`);
+        }}
       />
     </div>
   );
@@ -1177,6 +1373,7 @@ const ProjectCard = React.memo(function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   onDragStart, onDragEnd,
+  selected = false, onToggleSelect,
 }) {
   const navigate = useNavigate();
   const isOpen = menuOpen === project.id;
@@ -1203,7 +1400,7 @@ const ProjectCard = React.memo(function ProjectCard({
       onDragEnd={onDragEnd}
       style={{
         background: 'var(--bg-surface)',
-        border: '1px solid var(--border-main)',
+        border: `1px solid ${selected ? 'var(--accent-blue)' : 'var(--border-main)'}`,
         borderRadius: 10, padding: 18,
         display: 'flex', flexDirection: 'column',
         cursor: 'pointer', position: 'relative',
@@ -1221,6 +1418,18 @@ const ProjectCard = React.memo(function ProjectCard({
       {/* Top row */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+          <div
+            onClick={e => { e.stopPropagation(); onToggleSelect?.(project.id); }}
+            title={selected ? 'Deselect' : 'Select'}
+            style={{
+              width: 18, height: 18, borderRadius: 5, flexShrink: 0, cursor: 'pointer',
+              border: `1.5px solid ${selected ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+              background: selected ? 'var(--accent-blue)' : 'transparent',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            {selected && <Check size={12} color="#fff" />}
+          </div>
           <div style={{
             width: 40, height: 40, borderRadius: 10,
             background: 'var(--color-accent-faint)',
@@ -1410,6 +1619,7 @@ function VirtualProjectGrid({
   handleDuplicate, handleExportSingle, handleDelete,
   handleDragStart, handleDragEnd,
   setProjectListScrollTop, projectListScrollTop,
+  selectedIds, onToggleSelect,
 }) {
   const scrollRef = useRef(null);
 
@@ -1516,6 +1726,8 @@ function VirtualProjectGrid({
                   onDelete={() => handleDelete(project)}
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
+                  selected={selectedIds.has(project.id)}
+                  onToggleSelect={onToggleSelect}
                 />
               ))}
             </div>

@@ -162,19 +162,15 @@ def deterministic_hash_suffix(*parts: str, size: int = 8) -> str:
     return digest[: max(1, size)]
 
 
-def apply_collision_suffix(
-    sanitized_name: str,
-    *,
-    fingerprint: str,
-    max_length: int = 120,
-    size: int = 8,
-) -> Tuple[str, str]:
-    suffix = deterministic_hash_suffix(fingerprint, size=size)
-    # stem_max must be at least 1 so we always produce a valid identifier even
-    # when max_length is pathologically small (e.g. max_length <= size + 1).
-    stem_max = max(1, max_length - size - 1)
-    stem = sanitized_name[:stem_max].rstrip("_") or sanitized_name[:1] or "X"
-    return f"{stem}_{suffix}", suffix
+def collision_suggestion_hash(entity_name: str, field_name: str) -> str:
+    """4-char suffix using the same algorithm/seed format as the DDL/deploy-time
+    resolver (ddl_builder.py's _generate_deterministic_hash), so a dry-run's top
+    collision suggestion for a brand-new collision matches what deploy
+    independently computes for the same entity — instead of the unrelated
+    SHA-1/8-char scheme deterministic_hash_suffix() produces above.
+    """
+    seed = f"{entity_name}{field_name}".encode("utf-8")
+    return hashlib.sha256(seed).hexdigest()[:4].upper()
 
 
 def _iter_datasets(model: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
@@ -729,11 +725,13 @@ def build_entity_mappings(
                         #      "datasets.TERRITORY.columns" → "TERRITORY"
                         _stripped = re.sub(r"^datasets\.", "", _parent_path, flags=re.IGNORECASE).split(".")[0]
                         _table_name = sanitize_identifier(_stripped)
-                    # Let's derive hash suffix
-                    entity_seed = str(entity.get("parent_source_path") or entity.get("model_name") or "").strip()
+                    # entity_name matches ddl_builder.py's collision-hash seed
+                    # (source_table/dataset name, not the full "datasets.X" path)
+                    # so this suggestion agrees with what deploy will compute.
+                    entity_seed = _table_name or str(entity.get("model_name") or "").strip()
                     field_seed = source_name
-                    hash_suffix_val = deterministic_hash_suffix(f"{entity_seed}::{field_seed}")
-                    
+                    hash_suffix_val = collision_suggestion_hash(entity_seed, field_seed)
+
                     if _table_name and _table_name.upper() != sanitized.upper():
                         suggestions.append(f"{_table_name}_{sanitized}")
                         suggestions.append(f"{_table_name}_{sanitized}_{hash_suffix_val}")
@@ -854,11 +852,11 @@ def build_entity_mappings(
                         _prior_stripped = re.sub(r"^datasets\.", "", _prior_parent, flags=re.IGNORECASE).split(".")[0]
                         _prior_table = sanitize_identifier(_prior_stripped)
                     _prior_sanitized = _prior_entry.get("sanitized_name") or _prior_entry.get("target_name") or ""
-                    
-                    _prior_seed = str(_prior_entry.get("parent_source_path") or _prior_entry.get("model_name") or "").strip()
-                    _prior_field = _prior_entry.get("source_name")
-                    _prior_hash = deterministic_hash_suffix(f"{_prior_seed}::{_prior_field}")
-                    
+
+                    _prior_seed = _prior_table or str(_prior_entry.get("model_name") or "").strip()
+                    _prior_field = str(_prior_entry.get("source_name") or "")
+                    _prior_hash = collision_suggestion_hash(_prior_seed, _prior_field)
+
                     _prior_suggestions = []
                     if _prior_table and _prior_table.upper() != _prior_sanitized.upper():
                         _prior_suggestions.append(f"{_prior_table}_{_prior_sanitized}")
@@ -966,11 +964,11 @@ def build_entity_mappings(
                         _stripped = re.sub(r"^datasets\.", "", _parent_path, flags=re.IGNORECASE).split(".")[0]
                         _table_name = sanitize_identifier(_stripped)
                     sanitized_name = row.get("sanitized_name") or sanitize_identifier(row.get("source_name"))
-                    
-                    _seed = str(row.get("parent_source_path") or row.get("model_name") or "").strip()
-                    _field = row.get("source_name")
-                    _hash = deterministic_hash_suffix(f"{_seed}::{_field}")
-                    
+
+                    _seed = _table_name or str(row.get("model_name") or "").strip()
+                    _field = str(row.get("source_name") or "")
+                    _hash = collision_suggestion_hash(_seed, _field)
+
                     _suggestions = []
                     if _table_name and _table_name.upper() != sanitized_name.upper():
                         _suggestions.append(f"{_table_name}_{sanitized_name}")

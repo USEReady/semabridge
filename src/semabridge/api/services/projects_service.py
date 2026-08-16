@@ -1,5 +1,6 @@
 from semabridge.api.services.project_domain_service import (
     create_project_compat,
+    create_projects_batch_from_pbix,
     delete_project_compat,
     get_project_compat,
     get_project_config_compat,

@@ -808,9 +808,10 @@ class MetricsClauseBuilder:
             
             # Then normalize and validate
             expr = self.translator._normalize_metric_column_references(
-                expr, metric.unique_name, dataset_col_lookup, dataset_aliases, 
+                expr, metric.unique_name, dataset_col_lookup, dataset_aliases,
                 metric_names=metric_name_set, preferred_table_alias=alias,
-                metric_to_alias=metric_to_alias
+                metric_to_alias=metric_to_alias,
+                original_dax=getattr(metric, "expression", None),
             )
             is_valid, reason = self.translator._validate_metric_column_references(
                 expr,

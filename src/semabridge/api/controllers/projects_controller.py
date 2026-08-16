@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -79,6 +79,7 @@ from semabridge.api.services.project_domain_service import (
 )
 from semabridge.api.services.projects_service import (
     create_project_compat,
+    create_projects_batch_from_pbix,
     delete_project_compat,
     get_project_compat,
     get_project_config_compat,
@@ -147,6 +148,47 @@ async def create_project(request: Request, payload: CreateProjectRequest):
             len(payload_dict.get("targets") or []),
         )
     return await create_project_compat(payload_dict)
+
+
+@router.post("/api/projects/batch-import-pbix")
+async def batch_import_pbix(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    targets: str = Form("[]"),
+    folder_id: Optional[str] = Form(None),
+):
+    """Create one project per uploaded .pbix file in a single request.
+
+    Same per-project data model as POST /api/projects + POST /api/projects/
+    {id}/upload done once per file (see create_projects_batch_from_pbix) --
+    this just batches the trip so a user migrating several .pbix files
+    doesn't have to go through the wizard once per file. `targets` is the
+    shared Snowflake target config applied to every created project;
+    `folder_id` (optional) drops them all into the same existing folder so
+    ProjectsPage's folder view becomes the single place to see the batch.
+    """
+    user_id = require_request_user_id(request)
+    try:
+        targets_list = json.loads(targets) if targets else []
+        if not isinstance(targets_list, list):
+            targets_list = []
+    except (json.JSONDecodeError, TypeError, ValueError):
+        targets_list = []
+
+    if user_id and targets_list:
+        validate_project_connector_accounts_belong_to_user(
+            user_id, {"source": {"type": "pbix"}, "targets": targets_list}
+        )
+
+    result = await create_projects_batch_from_pbix(
+        files, targets_list, folder_id, str(user_id) if user_id else None,
+    )
+    status_code = (
+        207 if result["failed_count"] and result["created_count"]
+        else 400 if result["failed_count"] and not result["created_count"]
+        else 200
+    )
+    return JSONResponse(status_code=status_code, content=result)
 
 
 @router.get("/api/projects/{project_id}")

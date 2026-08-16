@@ -1886,6 +1886,24 @@ export const api = {
         return handleResponse(res);
     },
 
+    async batchImportPbix(files, { targets, folderId } = {}) {
+        invalidateApiCache('projects:list');
+        const form = new FormData();
+        for (const file of files) {
+            form.append('files', file);
+        }
+        form.append('targets', JSON.stringify(targets || []));
+        if (folderId) {
+            form.append('folder_id', folderId);
+        }
+        const res = await authFetch(`${API_BASE_URL}/projects/batch-import-pbix`, {
+            method: 'POST',
+            body: form,
+            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
+        });
+        return handleResponse(res);
+    },
+
     // ── Folders ───────────────────────────────────────────────────────────
 
     async listFolders() {

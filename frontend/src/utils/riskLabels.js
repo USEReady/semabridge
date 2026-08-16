@@ -85,3 +85,56 @@ export function getEnrichmentUnverifiableCaveat(row) {
   }
   return 'Cannot verify in dry-run — resolved by live enrichment at deploy time';
 }
+
+/**
+ * Three-bucket health classification for a single dry-run row, combining
+ * signals that already exist independently elsewhere in this file/backend
+ * but were never rolled up into one "is this row okay" answer:
+ *
+ *   - 'at_risk'       — status === 'predicted_failure' (a DropLedger-backed
+ *                       hit, or a metric structurally known to fail at real
+ *                       deploy time — see project_mapping_engine.py's
+ *                       REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES), OR
+ *                       static_risk_tier === 'predicted_failure'/
+ *                       'known_risky_pattern', OR it carries any
+ *                       advisory_categories at all (e.g. the enrichment-
+ *                       unverifiable caveat). Checked FIRST and takes
+ *                       priority over the row's base status, because a row
+ *                       can be status: 'auto' (it translated and mapped
+ *                       cleanly) and still be flagged risky by one of these
+ *                       independent checks.
+ *   - 'needs_resolve' — status is 'unmapped' or 'collision': blocking,
+ *                       requires an explicit user action before this field
+ *                       maps at all (same definition as isBlockingRow plus
+ *                       unmapped).
+ *   - 'success'       — everything else (auto / auto_resolved / manual with
+ *                       no risk flags).
+ *
+ * Framework-free on purpose (matches this file's existing style) so it's
+ * reusable both inside DryRunMappingTable (one project) and in a
+ * multi-project bulk-dry-run summary (ProjectsPage) without either one
+ * re-deriving the categorization differently.
+ */
+export function getRowHealthBucket(row) {
+  const status = String(row?.status || '').toLowerCase().trim();
+  const staticRiskTier = row?.static_risk_tier;
+  const hasAdvisory = Array.isArray(row?.advisory_categories) && row.advisory_categories.length > 0;
+
+  if (status === 'predicted_failure' || staticRiskTier === 'predicted_failure'
+    || staticRiskTier === 'known_risky_pattern' || hasAdvisory) {
+    return 'at_risk';
+  }
+  if (status === 'unmapped' || status === 'collision') {
+    return 'needs_resolve';
+  }
+  return 'success';
+}
+
+/** { success, needs_resolve, at_risk } counts across a set of dry-run rows. */
+export function summarizeRowHealth(rows) {
+  const counts = { success: 0, needs_resolve: 0, at_risk: 0 };
+  (rows || []).forEach((row) => {
+    counts[getRowHealthBucket(row)] += 1;
+  });
+  return counts;
+}

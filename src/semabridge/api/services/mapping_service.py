@@ -13,10 +13,8 @@ from fastapi import Response
 
 from semabridge.api.services.project_mapping_engine import (
     _extract_metric_source_tables,
-    _semantic_name,
     build_entity_mappings,
     sanitize_identifier,
-    deterministic_hash_suffix,
 )
 from semabridge.api.services.project_shared import (
     _compat_ensure_loaded,
@@ -30,12 +28,6 @@ from semabridge.api.services.project_shared import (
 from semabridge.domain.exceptions import ExternalServiceError, NotFoundError, ValidationError
 from semabridge.utils.identifiers import IdentifierSanitizer
 
-AUTO_MAP_SNOWFLAKE_RESERVED = {
-    "SELECT", "GROUP", "ORDER", "TABLE", "COLUMN", "DATE", "FROM", "WHERE",
-    "BY", "JOIN", "VIEW", "UNION", "INSERT", "UPDATE", "DELETE", "CREATE",
-    "DROP", "HAVING", "LIMIT", "OFFSET", "INTO", "PRIMARY", "FOREIGN",
-    "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
-}
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 
 
@@ -641,20 +633,9 @@ def _compat_is_field_entity(mapping: Dict[str, Any]) -> bool:
     return kind in {"column", "metric", "measure"} or kind not in {"", "table", "dataset", "model"}
 
 
-def _compat_hash_suffix(value: str) -> str:
-    return deterministic_hash_suffix(str(value or ""), size=4)
-
-
-def _compat_collision_fallback_name(source_name: str) -> str:
-    return re.sub(r"[^A-Z0-9]+", "_", str(source_name or "").upper()).strip("_") or "UNNAMED"
-
-
 def _compat_serialize_auto_map_entity_mappings(
     mappings: List[Dict[str, Any]],
-    *,
-    target_connector: str = "",
 ) -> List[Dict[str, Any]]:
-    connector = str(target_connector or "").strip().lower()
     entity_mappings: List[Dict[str, Any]] = []
 
     for index, row in enumerate(mappings):
@@ -671,30 +652,15 @@ def _compat_serialize_auto_map_entity_mappings(
         validation_code = str(row.get("validation_code") or "OK").strip().upper() or "OK"
         validation_message = str(row.get("validation_message") or "").strip()
         suggested_target_name = str(row.get("suggested_target_name") or target_name).strip()
+        # Trust build_entity_mappings()'s collision/reserved-keyword verdict
+        # (project_mapping_engine.py) rather than re-deriving it here — a
+        # second, independently-scoped check was the source of dry-run vs
+        # deploy naming drift this serializer used to introduce.
         collision_detected = bool(row.get("collision_detected"))
         if validation_code in {"RESERVED_KEYWORD", "COLLISION", "NAME_COLLISION"} or validation_status == "collision":
             collision_detected = True
         if validation_code == "OK" and validation_status == "valid":
             validation_message = ""
-        if connector == "snowflake" and target_name.upper() in AUTO_MAP_SNOWFLAKE_RESERVED:
-            suggested_target_name = f"COL_{target_name.upper()}"
-            collision_detected = True
-            validation_status = "invalid"
-            validation_code = "RESERVED_KEYWORD"
-            validation_message = f"'{source_name}' is a Snowflake reserved keyword."
-
-            import json
-            print(json.dumps({
-                "layer": "_compat_serialize_auto_map_entity_mappings",
-                "source_name": source_name,
-                "source_path": source_path,
-                "target_name": target_name,
-                "suggested_target_name": suggested_target_name,
-                "collision_reason": "RESERVED_KEYWORD",
-                "collision_group": "",
-                "validation_code": "RESERVED_KEYWORD",
-                "semantic_name": _semantic_name(source_name)
-            }))
 
         entity_mappings.append({
             "id": str(row.get("id") or f"mapping-{index + 1}"),
@@ -733,35 +699,7 @@ def _compat_serialize_auto_map_entity_mappings(
             "llm_self_reported_confidence": row.get("llm_self_reported_confidence"),
         })
 
-    seen: Dict[str, Dict[str, Any]] = {}
     for mapping in entity_mappings:
-        target_key = str(mapping.get("target_name") or "").strip().upper()
-        if not target_key:
-            continue
-        if target_key in seen:
-            first = seen[target_key]
-            # Only flag as a real collision when the two source names are
-            # semantically different.
-            prior_semantic = _semantic_name(str(first.get("source_name") or ""))
-            current_semantic = _semantic_name(str(mapping.get("source_name") or ""))
-            if prior_semantic == current_semantic:
-                seen[target_key] = mapping
-                continue
-            first["collision_detected"] = True
-            first["validation_status"] = "invalid"
-            first["validation_code"] = "COLLISION"
-            first["validation_message"] = "Duplicate target name detected."
-
-            mapping["collision_detected"] = True
-            mapping["validation_status"] = "invalid"
-            mapping["validation_code"] = "COLLISION"
-            mapping["validation_message"] = "Duplicate target name detected."
-        else:
-            seen[target_key] = mapping
-
-    for mapping in entity_mappings:
-        if mapping.get("collision_detected") and not str(mapping.get("suggested_target_name") or "").strip():
-            mapping["suggested_target_name"] = _compat_collision_fallback_name(str(mapping.get("source_name") or ""))
         if not str(mapping.get("validation_status") or "").strip():
             mapping["validation_status"] = "invalid" if mapping.get("collision_detected") else "valid"
         if not str(mapping.get("validation_code") or "").strip():
@@ -923,7 +861,6 @@ async def auto_map_compat(payload: dict):
     grouped_mappings = _compat_format_mapping_groups(data)
     entity_mappings = _compat_serialize_auto_map_entity_mappings(
         data.get("mappings", []),
-        target_connector=target_connector,
     )
     collision_names = [
         str(mapping.get("source_name") or mapping.get("target_name") or "").strip()

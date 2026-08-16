@@ -306,6 +306,127 @@ class DuplicateNameMappingRepository:
                 self._used_names_cache.setdefault(base_key, set()).add(assigned_name)
             return assigned_name
 
+    def peek_assigned_name(
+        self,
+        *,
+        scope_type: str,
+        namespace_key: str,
+        dataset_key: str,
+        normalized_base: str,
+        source_signature: str,
+        preferred_name: Optional[str] = None,
+    ) -> str:
+        """Predict what get_or_create_assigned_name would return, without persisting anything.
+
+        Lets dry-run flows show the name that will actually be assigned at deploy
+        time (same repository, same collision rules) instead of guessing independently.
+        """
+        base_key = (scope_type, namespace_key, dataset_key, normalized_base)
+        signature_key = (
+            scope_type,
+            namespace_key,
+            dataset_key,
+            normalized_base,
+            source_signature,
+        )
+
+        with self._cache_lock:
+            cached = self._mapping_cache.get(signature_key)
+            if cached:
+                return cached
+
+        if self._use_duckdb and self._duckdb_conn is not None:
+            existing = self._duckdb_conn.execute(
+                """
+                SELECT assigned_name
+                FROM duplicate_name_mappings
+                WHERE scope_type = ?
+                  AND namespace_key = ?
+                  AND dataset_key = ?
+                  AND normalized_base = ?
+                  AND source_signature = ?
+                LIMIT 1
+                """,
+                [scope_type, namespace_key, dataset_key, normalized_base, source_signature],
+            ).fetchone()
+            if existing and existing[0]:
+                return str(existing[0])
+
+            used_rows = self._duckdb_conn.execute(
+                """
+                SELECT assigned_name
+                FROM duplicate_name_mappings
+                WHERE scope_type = ?
+                  AND namespace_key = ?
+                  AND dataset_key = ?
+                  AND normalized_base = ?
+                """,
+                [scope_type, namespace_key, dataset_key, normalized_base],
+            ).fetchall()
+            used_names = {str(r[0]) for r in used_rows if r and r[0]}
+        else:
+            from sqlalchemy import text
+
+            with self._engine.connect() as conn:
+                existing = conn.execute(
+                    text(
+                        """
+                        SELECT assigned_name
+                        FROM duplicate_name_mappings
+                        WHERE scope_type = :scope_type
+                          AND namespace_key = :namespace_key
+                          AND dataset_key = :dataset_key
+                          AND normalized_base = :normalized_base
+                          AND source_signature = :source_signature
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "scope_type": scope_type,
+                        "namespace_key": namespace_key,
+                        "dataset_key": dataset_key,
+                        "normalized_base": normalized_base,
+                        "source_signature": source_signature,
+                    },
+                ).fetchone()
+                if existing and existing[0]:
+                    return str(existing[0])
+
+                used_rows = conn.execute(
+                    text(
+                        """
+                        SELECT assigned_name
+                        FROM duplicate_name_mappings
+                        WHERE scope_type = :scope_type
+                          AND namespace_key = :namespace_key
+                          AND dataset_key = :dataset_key
+                          AND normalized_base = :normalized_base
+                        """
+                    ),
+                    {
+                        "scope_type": scope_type,
+                        "namespace_key": namespace_key,
+                        "dataset_key": dataset_key,
+                        "normalized_base": normalized_base,
+                    },
+                ).fetchall()
+                used_names = {str(r[0]) for r in used_rows if r and r[0]}
+
+        with self._cache_lock:
+            cache_used = self._used_names_cache.get(base_key)
+            if cache_used:
+                used_names.update(cache_used)
+
+        if preferred_name and preferred_name not in used_names:
+            return preferred_name
+
+        idx = 1
+        while True:
+            candidate = f"{normalized_base}_{idx}"
+            if candidate not in used_names:
+                return candidate
+            idx += 1
+
     def _get_or_create_assigned_name_duckdb(
         self,
         *,

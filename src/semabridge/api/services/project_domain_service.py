@@ -37,6 +37,7 @@ from semabridge.api.services.project_projects_impl import (
     _extract_snapshot_connectors,
     _snapshot_graph_payload,
     create_project_compat,
+    create_projects_batch_from_pbix,
     delete_project_compat,
     get_project_compat,
     get_project_config_compat,

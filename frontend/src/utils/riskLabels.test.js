@@ -12,6 +12,8 @@ import {
   getStaticRiskBadge,
   getSelfReportedEstimateText,
   getEnrichmentUnverifiableCaveat,
+  getRowHealthBucket,
+  summarizeRowHealth,
   STATIC_RISK_BADGE_CONFIG,
 } from './riskLabels.js';
 
@@ -143,4 +145,65 @@ test('getEnrichmentUnverifiableCaveat is independent of the static risk badge an
     getEnrichmentUnverifiableCaveat(row),
     'Cannot verify in dry-run — resolved by live enrichment at deploy time'
   );
+});
+
+// ---------------------------------------------------------------------------
+// getRowHealthBucket / summarizeRowHealth -- the three-bucket rollup used by
+// both the single-project summary bar and the multi-project bulk dry-run
+// summary, so success/needs-resolve/at-risk always mean the same thing in
+// both places.
+// ---------------------------------------------------------------------------
+
+test('getRowHealthBucket: clean auto/manual rows with no risk flags are success', () => {
+  assert.equal(getRowHealthBucket({ status: 'auto' }), 'success');
+  assert.equal(getRowHealthBucket({ status: 'auto_resolved' }), 'success');
+  assert.equal(getRowHealthBucket({ status: 'manual' }), 'success');
+});
+
+test('getRowHealthBucket: unmapped/collision are needs_resolve', () => {
+  assert.equal(getRowHealthBucket({ status: 'unmapped' }), 'needs_resolve');
+  assert.equal(getRowHealthBucket({ status: 'collision' }), 'needs_resolve');
+});
+
+test('getRowHealthBucket: predicted_failure status is at_risk even though it is not unmapped/collision', () => {
+  assert.equal(getRowHealthBucket({ status: 'predicted_failure' }), 'at_risk');
+});
+
+test('getRowHealthBucket: a status:"auto" row can still be at_risk via static_risk_tier or advisory_categories', () => {
+  // The real KPI01/KPI02 case: translated and mapped cleanly (status: auto),
+  // but structurally known to fail at real-deploy time.
+  assert.equal(getRowHealthBucket({ status: 'auto', static_risk_tier: 'predicted_failure' }), 'at_risk');
+  assert.equal(getRowHealthBucket({ status: 'auto', static_risk_tier: 'known_risky_pattern' }), 'at_risk');
+  assert.equal(
+    getRowHealthBucket({ status: 'auto', advisory_categories: ['enrichment_column_unverifiable'] }),
+    'at_risk',
+  );
+});
+
+test('getRowHealthBucket: at_risk takes priority over needs_resolve when both signals are present', () => {
+  assert.equal(
+    getRowHealthBucket({ status: 'collision', static_risk_tier: 'predicted_failure' }),
+    'at_risk',
+  );
+});
+
+test('getRowHealthBucket: no_known_risk tier does not itself trigger at_risk', () => {
+  assert.equal(getRowHealthBucket({ status: 'auto', static_risk_tier: 'no_known_risk' }), 'success');
+});
+
+test('summarizeRowHealth: counts buckets across a mixed row set', () => {
+  const rows = [
+    { status: 'auto' },
+    { status: 'auto_resolved' },
+    { status: 'unmapped' },
+    { status: 'collision' },
+    { status: 'predicted_failure' },
+    { status: 'auto', static_risk_tier: 'known_risky_pattern' },
+  ];
+  assert.deepEqual(summarizeRowHealth(rows), { success: 2, needs_resolve: 2, at_risk: 2 });
+});
+
+test('summarizeRowHealth: empty/absent input never throws', () => {
+  assert.deepEqual(summarizeRowHealth([]), { success: 0, needs_resolve: 0, at_risk: 0 });
+  assert.deepEqual(summarizeRowHealth(undefined), { success: 0, needs_resolve: 0, at_risk: 0 });
 });

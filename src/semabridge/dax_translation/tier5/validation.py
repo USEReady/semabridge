@@ -137,6 +137,15 @@ def _has_balanced_parentheses(expr: str) -> bool:
 # IdentifierSanitizer is created here rather than injected by the emitter).
 # ---------------------------------------------------------------------------
 
+# Mirrors connectors/translator.py's _DAX_QUALIFIED_COLUMN_PATTERN exactly
+# (kept in sync deliberately, same as every other method in this file) --
+# see MetricExpressionTranslator._extract_dax_table_hints's docstring for
+# the real-incident motivation: Tier-5 output can be a fully "valid"-looking
+# alias.column reference (real alias, real column there) that still
+# disagrees with the table the source DAX explicitly named.
+_DAX_QUALIFIED_COLUMN_PATTERN = re.compile(r"'([^']+)'\[([^\]]+)\]|\b([A-Za-z_][\w ]*)\[([^\]]+)\]")
+
+
 class MetricSqlValidator:
     """Schema-aware metric SQL validator and repair pass — verbatim salvage."""
 
@@ -665,6 +674,48 @@ class MetricSqlValidator:
         logger.debug(f"Metric '{metric_name}': All column references valid")
         return True, None
 
+    def _extract_dax_table_hints(self, dax: Optional[str]) -> Dict[str, str]:
+        """Mirrors MetricExpressionTranslator._extract_dax_table_hints
+        (connectors/translator.py) verbatim in behavior — see its docstring."""
+        hints: Dict[str, str] = {}
+        if not dax or not self._id:
+            return hints
+        for m in _DAX_QUALIFIED_COLUMN_PATTERN.finditer(dax):
+            table_name = (m.group(1) or m.group(3) or "").strip()
+            col_name = (m.group(2) or m.group(4) or "").strip()
+            if not table_name or not col_name:
+                continue
+            hints[self._id.sanitize_column(col_name)] = table_name
+        return hints
+
+    def _resolve_dax_hinted_dataset(
+        self,
+        sanitized_col_name: str,
+        current_dataset_name: Optional[str],
+        dax_table_hints: Optional[Dict[str, str]],
+        dataset_aliases: Dict[str, str],
+        dataset_col_lookup: Dict[str, set],
+    ) -> Optional[str]:
+        """Mirrors MetricExpressionTranslator._resolve_dax_hinted_dataset
+        (connectors/translator.py) verbatim in behavior — see its docstring."""
+        if not dax_table_hints:
+            return None
+        hinted_table = dax_table_hints.get(sanitized_col_name)
+        if not hinted_table:
+            return None
+        hinted_cf = hinted_table.strip().strip("'").casefold()
+        hinted_dataset = next(
+            (ds for ds in dataset_aliases if ds.strip().casefold() == hinted_cf),
+            None,
+        )
+        if not hinted_dataset or hinted_dataset == current_dataset_name:
+            return None
+        if not self._resolve_column_name_for_dataset(
+            dataset_col_lookup.get(hinted_dataset, set()), sanitized_col_name
+        ):
+            return None
+        return hinted_dataset
+
     def _normalize_metric_column_references(
         self,
         metric_sql: str,
@@ -675,10 +726,12 @@ class MetricSqlValidator:
         preferred_table_alias: Optional[str] = None,
         metric_to_alias: Optional[Dict[str, str]] = None,
         dialect: str = "snowflake",
+        original_dax: Optional[str] = None,
     ) -> str:
         alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
         alias_to_dataset.update({str(v).lower(): k for k, v in dataset_aliases.items()})
         alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
+        dax_table_hints = self._extract_dax_table_hints(original_dax)
         normalized_sql = metric_sql
         normalized_sql = self._normalize_display_name_metric_references(normalized_sql, metric_names)
 
@@ -710,14 +763,20 @@ class MetricSqlValidator:
         for match in re.finditer(quoted_pattern, normalized_sql):
             table_alias = match.group(1) or match.group(2)
             col_name = match.group(4)
+            sanitized_col_name = self._id.sanitize_column(col_name)
             dataset_name = alias_to_dataset.get(table_alias)
-            if not dataset_name:
+            hinted_dataset = self._resolve_dax_hinted_dataset(
+                sanitized_col_name, dataset_name, dax_table_hints, dataset_aliases, dataset_col_lookup,
+            )
+            if hinted_dataset:
+                dataset_name = hinted_dataset
+                table_alias = dataset_aliases.get(hinted_dataset, table_alias)
+            elif not dataset_name:
                 dataset_name = self._heal_unknown_alias(table_alias, col_name, dataset_aliases, dataset_col_lookup, metric_names)
                 if dataset_name:
                     table_alias = dataset_aliases.get(dataset_name, table_alias)
             if not dataset_name:
                 continue
-            sanitized_col_name = self._id.sanitize_column(col_name)
             known_columns = dataset_col_lookup.get(dataset_name, set())
             resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
@@ -760,14 +819,20 @@ class MetricSqlValidator:
         for match in re.finditer(unquoted_pattern, normalized_sql):
             table_alias = match.group(1) or match.group(2)
             col_name = match.group(3)
+            sanitized_col_name = self._id.sanitize_column(col_name)
             dataset_name = alias_to_dataset.get(table_alias)
-            if not dataset_name:
+            hinted_dataset = self._resolve_dax_hinted_dataset(
+                sanitized_col_name, dataset_name, dax_table_hints, dataset_aliases, dataset_col_lookup,
+            )
+            if hinted_dataset:
+                dataset_name = hinted_dataset
+                table_alias = dataset_aliases.get(hinted_dataset, table_alias)
+            elif not dataset_name:
                 dataset_name = self._heal_unknown_alias(table_alias, col_name, dataset_aliases, dataset_col_lookup, metric_names)
                 if dataset_name:
                     table_alias = dataset_aliases.get(dataset_name, table_alias)
             if not dataset_name:
                 continue
-            sanitized_col_name = self._id.sanitize_column(col_name)
             known_columns = dataset_col_lookup.get(dataset_name, set())
             resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
@@ -937,5 +1002,6 @@ def normalize_metric_column_references(
         metric_names,
         preferred_table_alias=request.table_alias,
         dialect=dialect,
+        original_dax=request.dax,
     )
     return _from_snowflake_style_quoting(normalized, dialect)

@@ -3,7 +3,7 @@ import json
 import re
 import time as _time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 from fastapi import Query
@@ -590,6 +590,74 @@ async def create_project_compat(request: dict):
     _compat_project_runs.setdefault(project_id, [])
     await asyncio.to_thread(_compat_save_store)
     return project
+
+
+async def create_projects_batch_from_pbix(
+    files: List[Any],
+    targets: Optional[List[Dict[str, Any]]] = None,
+    folder_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Batch-create one project per uploaded .pbix file.
+
+    Loops the same two calls the UI already makes once per project
+    (create_project_compat then upload_project_pbix, see
+    CreateProjectPage.jsx's submit handler) so several .pbix files become
+    several independent projects in one request instead of one trip through
+    the wizard per file. Each project/file pair is still fully independent
+    afterward -- same data model as any project created one at a time, just
+    created together and (optionally) dropped into the same folder so
+    ProjectsPage's existing folder view is the "unified view" across them.
+
+    Per-file failures don't abort the batch (mirrors import_projects'
+    partial-success shape) -- a bad file shouldn't block the good ones.
+    """
+    from semabridge.api.services.pbix_service import upload_project_pbix
+
+    results: List[Dict[str, Any]] = []
+    for upload in files:
+        filename = Path(getattr(upload, "filename", None) or "model.pbix").name
+        project_name = Path(filename).stem.strip() or filename
+        try:
+            payload: Dict[str, Any] = {
+                "name": project_name,
+                "source": {"type": "pbix"},
+                "targets": targets or [],
+                "folder_id": folder_id,
+            }
+            if user_id:
+                payload["user_id"] = str(user_id)
+
+            project = await create_project_compat(payload)
+            project_id = project.get("project_id") or project.get("id")
+            if not project_id:
+                raise ValueError("Project was created without a project_id")
+
+            upload_result = await upload_project_pbix(project_id, upload)
+
+            results.append({
+                "filename": filename,
+                "project_id": project_id,
+                "project_name": project.get("name") or project_name,
+                "status": "success",
+                "path": upload_result.get("path"),
+            })
+        except Exception as exc:
+            logger.warning("Batch pbix import failed for '%s': %s", filename, exc)
+            results.append({
+                "filename": filename,
+                "project_id": None,
+                "project_name": project_name,
+                "status": "error",
+                "error": str(exc),
+            })
+
+    return {
+        "results": results,
+        "created_count": sum(1 for r in results if r["status"] == "success"),
+        "failed_count": sum(1 for r in results if r["status"] == "error"),
+    }
+
 
 async def get_project_compat(project_id: str):
     await asyncio.to_thread(_compat_ensure_loaded)
