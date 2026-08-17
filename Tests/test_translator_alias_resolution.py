@@ -84,6 +84,78 @@ def test_pick_preferred_aggregate_column_returns_sole_non_key_candidate():
     assert result == "WIDGET_TOTAL"
 
 
+def test_normalize_metric_column_references_prefers_dax_hinted_table_over_wrong_alias():
+    """Regression for a real deploy failure: a Tier-5-translated metric's SQL
+    already looked "valid" by every existing check — 'selector' is a real
+    alias, "YEAR_FLAG" is a real column there too — but the original DAX
+    explicitly qualified that same column against 'CalendarTable', a
+    DIFFERENT table that also happens to physically have it. Snowflake later
+    rejected the deployed metric with "cannot refer to another dimension
+    from an unrelated entity" because the metric's own dataset (Selector)
+    had no relationship path to reach whatever the wrong alias implied.
+    Structurally confirmed (the hinted table really does have the column),
+    not a blind string swap."""
+    t = _translator()
+    col_lookup = {
+        "SelectorTable": {"MODE", "YEAR_FLAG"},
+        "CalendarTable": {"CAL_DATE", "YEAR_FLAG"},
+        "FactTable": {"AMOUNT"},
+    }
+    aliases = {"SelectorTable": "selector", "CalendarTable": "cal", "FactTable": "fact"}
+    dax = "IF(SUM('SelectorTable'[MODE])=3,CALCULATE([SomeMeasure],'CalendarTable'[Year Flag]=1))"
+    sql = 'CASE WHEN SUM(selector."MODE") = 3 THEN SUM(CASE WHEN selector."YEAR_FLAG" = 1 THEN fact."AMOUNT" ELSE NULL END) END'
+
+    normalized = t._normalize_metric_column_references(
+        sql, "Metric_A", col_lookup, aliases, preferred_table_alias="selector", original_dax=dax,
+    )
+
+    assert 'cal.YEAR_FLAG' in normalized
+    assert 'selector.YEAR_FLAG' not in normalized
+
+
+def test_normalize_metric_column_references_ignores_dax_hint_without_bracket_refs():
+    """Negative control: no 'Table'[Column] reference anywhere in the DAX ->
+    dax_table_hints is empty -> behavior is identical to omitting
+    original_dax entirely (the overwhelming majority of existing callers)."""
+    t = _translator()
+    col_lookup = {"SelectorTable": {"MODE", "YEAR_FLAG"}, "CalendarTable": {"CAL_DATE", "YEAR_FLAG"}}
+    aliases = {"SelectorTable": "selector", "CalendarTable": "cal"}
+    sql = 'selector."YEAR_FLAG"'
+
+    with_dax = t._normalize_metric_column_references(
+        sql, "Metric_A", col_lookup, aliases, original_dax="SUM([SomeColumn])",
+    )
+    without_dax = t._normalize_metric_column_references(sql, "Metric_A", col_lookup, aliases)
+
+    # Quote-stripping for a plain (non-reserved, no-"$") column name happens
+    # regardless of original_dax -- that's pre-existing _format_metric_ref
+    # behavior, not something this test is about. The point here is that
+    # passing an original_dax with no bracket references changes nothing
+    # relative to not passing one at all, and the alias stays "selector"
+    # either way (no spurious override).
+    assert with_dax == without_dax == 'selector.YEAR_FLAG'
+
+
+def test_normalize_metric_column_references_ignores_hint_the_hinted_table_cant_confirm():
+    """Negative control: the DAX names a table for this column, but that
+    table doesn't structurally have it (dataset_col_lookup disagrees) --
+    e.g. it's a genuinely SelectorTable-only column and the hint is stale/
+    wrong. Must NOT override in that case; only a hint confirmed by the
+    real schema is trusted (same standard _heal_unknown_alias already
+    holds itself to elsewhere in this file)."""
+    t = _translator()
+    col_lookup = {"SelectorTable": {"MODE", "YEAR_FLAG"}, "CalendarTable": {"CAL_DATE"}}
+    aliases = {"SelectorTable": "selector", "CalendarTable": "cal"}
+    dax = "CALCULATE([SomeMeasure],'CalendarTable'[Year Flag]=1)"
+    sql = 'selector."YEAR_FLAG"'
+
+    normalized = t._normalize_metric_column_references(
+        sql, "Metric_A", col_lookup, aliases, original_dax=dax,
+    )
+
+    assert normalized == 'selector.YEAR_FLAG'
+
+
 def test_normalize_metric_column_references_resolves_mixed_case_unquoted_column():
     """Regression: the unquoted-identifier regex's character class used to
     be [A-ZaZ0-9_$] — matching uppercase A-Z, the literal characters 'a'
