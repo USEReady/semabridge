@@ -20,6 +20,7 @@ from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.connectors.type_safety_validator import (
     build_dataset_col_types,
     detect_date_numeric_type_mismatch,
+    detect_nested_aggregate,
 )
 from semabridge.converter.time_intelligence_shapes import (
     ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE,
@@ -238,6 +239,21 @@ class MetricsClauseBuilder:
                     self.drop_ledger.record(
                         "metric", metric.unique_name, DropStage.DDL_EMISSION,
                         type_mismatch_reason,
+                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
+                    )
+                    continue
+
+            if expr:
+                nested_aggregate_reason = detect_nested_aggregate(expr)
+                if nested_aggregate_reason:
+                    logger.warning(
+                        "Skipping metric '%s': %s",
+                        metric.unique_name, nested_aggregate_reason,
+                    )
+                    skipped_metric_names.add(metric.unique_name)
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        nested_aggregate_reason,
                         dataset=getattr(metric, "dataset", None), detail=expr[:200],
                     )
                     continue

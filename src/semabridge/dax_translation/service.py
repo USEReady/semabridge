@@ -10,13 +10,19 @@ from typing import List, Optional
 
 from semabridge.dax_translation.types import TranslationRequest, TranslationResult
 from semabridge.dax_translation.tiers_1_4 import translate_tiers_1_4
+from semabridge.dax_translation.tier5.cache import default_persistent_cache
 from semabridge.dax_translation.tier5.config import Tier5Config
 from semabridge.dax_translation.tier5.service import Tier5Service
 
 
 class DaxTranslationService:
     def __init__(self, tier5_config: Optional[Tier5Config] = None) -> None:
-        self._tier5 = Tier5Service(tier5_config)
+        # The persistent, cross-run cache -- keyed purely on (DAX text,
+        # dialect, schema shape), never a project/model/metric name -- so a
+        # translation validated for one project is reused for any other
+        # project whose DAX+schema shape matches, instead of every sync
+        # re-asking the LLM fresh. See tier5/cache.py's module docstring.
+        self._tier5 = Tier5Service(tier5_config, cache=default_persistent_cache())
 
     def translate_metric(self, request: TranslationRequest) -> TranslationResult:
         deterministic_result = translate_tiers_1_4(request)

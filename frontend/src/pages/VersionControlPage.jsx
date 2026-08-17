@@ -33,7 +33,8 @@ import {
     GitBranch,
     Table,
     ListTree,
-    Pin
+    Pin,
+    Download
 } from 'lucide-react';
 import { api, formatDate } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
@@ -884,6 +885,19 @@ export default function VersionControlPage() {
         }
     };
 
+    // Downloads the Markdown run-summary report for the currently selected
+    // run. Available for every run regardless of outcome -- write_run_report
+    // is called unconditionally (success, warning, partial, or failed) from
+    // the backend's finally block, so there is always a report to fetch here.
+    const handleDownloadReport = async (run) => {
+        if (!run?.run_id) return;
+        try {
+            await api.downloadRunReport(selectedProjectId, run.run_id);
+        } catch (error) {
+            addLog('error', 'VC', 'Report download failed: ' + error.message);
+        }
+    };
+
     const handleCompare = async () => {
         if (diffSelection.length !== 2) return;
         setIsComparing(true);
@@ -1115,12 +1129,20 @@ export default function VersionControlPage() {
                                                 >
                                                     <RotateCcw size={18} /> Rollback
                                                 </ActionButton>
-                                                <ActionButton 
-                                                    variant="ghost" 
+                                                <ActionButton
+                                                    variant="ghost"
                                                     onClick={() => setViewMode('mappings')}
                                                     className="px-8 py-3.5"
                                                 >
                                                     <ListTree size={18} /> View Mappings
+                                                </ActionButton>
+                                                <ActionButton
+                                                    variant="ghost"
+                                                    onClick={() => handleDownloadReport(selectedRun)}
+                                                    className="px-8 py-3.5"
+                                                    title="Download the run-summary report (available for every run, success or failure)"
+                                                >
+                                                    <Download size={18} /> Download Report
                                                 </ActionButton>
                                             </div>
                                         </div>

@@ -1,5 +1,7 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
+import { buildRunReportUrl, resolveReportFilename } from './runReportDownload.js';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 // Fabric MSAL token is kept in memory only — not persisted to localStorage.
 // This prevents XSS exfiltration of the Fabric OAuth token. On page reload the
@@ -1796,6 +1798,26 @@ export const api = {
             before_tgt_snapshots: run.before_target_snapshot_ids || [],
             after_tgt_snapshots: run.after_target_snapshot_ids || run.after_tgt_snapshots || [],
         }));
+    },
+
+    // Downloads the Markdown run-summary report written by the backend's
+    // write_run_report() (see run_report_service.py) for one run. Mirrors
+    // exportProject()'s fetch -> Content-Disposition -> _triggerDownload
+    // pattern below. Works identically for a successful, warning, partial,
+    // or failed run -- write_run_report runs unconditionally from
+    // _perform_project_run's `finally` block, so every run has a report to
+    // download, not just successful ones. URL/filename resolution is
+    // extracted to runReportDownload.js so it's unit-testable without a
+    // fetch/DOM environment.
+    async downloadRunReport(projectId, runId) {
+        const res = await authFetch(buildRunReportUrl(API_BASE_URL, projectId, runId));
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Report download failed: ${txt}`);
+        }
+        const blob = await res.blob();
+        const filename = resolveReportFilename(res.headers.get('Content-Disposition'), projectId, runId);
+        _triggerDownload(blob, filename);
     },
 
     async runProjectNow(projectId, payload = null) {

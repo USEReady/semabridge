@@ -1,4 +1,5 @@
-"""General type-safety check for metric SQL expressions before DDL emission.
+"""General type-safety and structural-shape checks for metric SQL expressions
+before DDL emission.
 
 Built after a real production incident: a Tier-5 (Anthropic) translation for
 a rolling-12-month metric (R12M) produced
@@ -30,6 +31,20 @@ had. It does not attempt to resolve types through nested expressions,
 subqueries, or metric-to-metric references — a false negative there just
 means Snowflake's own compile-time check is the backstop, same as today;
 this validator is an *additional* earlier gate, not a replacement for it.
+
+A second incident of the same shape motivated `detect_nested_aggregate`
+below: a Tier-5 translation for a different set of rolling-window metrics
+produced `SUM(CASE WHEN MAX(COL_DATE.MONTHINDEX) - COL_DATE.MONTHINDEX < 12
+THEN ... END)` — an aggregate (`MAX`) evaluated inside the row-level
+expression of another aggregate (`SUM`). Snowflake's semantic-view compiler
+rejects this with "A metric must have a single aggregate over another
+row-level expression..." (010218), again crashing the whole DDL statement.
+Like the date/integer check, this is driven purely by SQL structure (does
+one aggregate function's argument list contain a call to another aggregate
+function, regardless of what CASE/arithmetic/COALESCE wrapping sits between
+them) — never by a specific metric name, model, or DAX pattern. Two sibling
+aggregates that are NOT nested in each other (e.g. `SUM(x) / NULLIF(SUM(y),
+0)`, the normal ratio-metric shape) are explicitly not flagged.
 """
 from __future__ import annotations
 
@@ -70,6 +85,23 @@ NUMERIC_TYPE_TOKENS = frozenset({
 DATE_TYPE_TOKENS = frozenset({
     "DATE", "DATETIME", "TIMESTAMP",
     "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ",
+})
+
+# Aggregate functions recognized in generated Snowflake/Databricks SQL.
+# General over any aggregate pair — not scoped to SUM/MAX or any metric
+# shape. Covers the common statistical/approximate aggregates both dialects
+# support so a future rolling-window or ranking metric that happens to nest,
+# say, MEDIAN inside COUNT is caught the same way as SUM-inside-SUM.
+AGGREGATE_FUNCTIONS = frozenset({
+    "SUM", "MIN", "MAX", "AVG", "COUNT", "COUNT_IF", "COUNTIF",
+    "MEDIAN", "MODE", "ANY_VALUE",
+    "STDDEV", "STDDEV_POP", "STDDEV_SAMP",
+    "VARIANCE", "VAR_POP", "VAR_SAMP",
+    "ARRAY_AGG", "LISTAGG",
+    "APPROX_COUNT_DISTINCT", "APPROX_PERCENTILE",
+    "PERCENTILE_CONT", "PERCENTILE_DISC",
+    "BOOLAND_AGG", "BOOLOR_AGG", "BOOLXOR_AGG",
+    "CORR", "COVAR_POP", "COVAR_SAMP",
 })
 
 _COMPARISON_OPS = ("<=", ">=", "<>", "!=", "=", "<", ">", "+", "-")
@@ -193,6 +225,68 @@ def detect_date_numeric_type_mismatch(
                 return (
                     f"Type mismatch: expression produces DATE but is compared against "
                     f"an INTEGER column ('{alias}.{col_name}', declared type {col_type})"
+                )
+
+    return None
+
+
+def _find_aggregate_call_spans(sql: str):
+    """Yield (name, start, end) for every aggregate function call in `sql`,
+    where `start` is the index of the function name and `end` is the index
+    just past its balanced closing parenthesis.
+
+    Purely structural (name + brace-matching) — does not care what's inside
+    the call, so it finds calls regardless of any CASE/arithmetic/COALESCE
+    wrapping around or inside them.
+    """
+    names = sorted(AGGREGATE_FUNCTIONS, key=len, reverse=True)
+    call_pattern = re.compile(r'\b(' + "|".join(re.escape(n) for n in names) + r')\s*\(', re.IGNORECASE)
+    for m in call_pattern.finditer(sql):
+        depth = 1
+        i = m.end()
+        while i < len(sql) and depth > 0:
+            if sql[i] == '(':
+                depth += 1
+            elif sql[i] == ')':
+                depth -= 1
+            i += 1
+        yield m.group(1).upper(), m.start(), i
+
+
+def detect_nested_aggregate(sql: str) -> Optional[str]:
+    """Returns a clear, human-readable reason string if `sql` contains an
+    aggregate function call nested inside the argument list of another
+    aggregate function call — the shape Snowflake's semantic-view compiler
+    rejects with "A metric must have a single aggregate over another
+    row-level expression..." (010218). Returns None if no such nesting is
+    found (does NOT mean the SQL is otherwise valid — this is one targeted
+    structural check, not a general SQL validator).
+
+    General over any pair of aggregate functions (SUM/MAX/MIN/AVG/COUNT/...)
+    and any amount of CASE/arithmetic/COALESCE wrapping in between — nesting
+    is detected purely by one call's span being fully contained inside
+    another's, never by matching a specific function-name pair or metric
+    shape. Two aggregates that are merely SIBLINGS under a non-aggregate
+    wrapper (e.g. `SUM(x) / NULLIF(SUM(y), 0)`, the normal ratio-metric
+    shape) are not nested in each other and are correctly not flagged.
+    """
+    if not sql:
+        return None
+
+    spans = list(_find_aggregate_call_spans(sql))
+    if len(spans) < 2:
+        return None
+
+    for outer_name, outer_start, outer_end in spans:
+        for inner_name, inner_start, inner_end in spans:
+            if inner_start == outer_start and inner_end == outer_end:
+                continue
+            if outer_start < inner_start and inner_end < outer_end:
+                return (
+                    f"Nested aggregate: {inner_name}(...) appears inside the "
+                    f"row-level argument of {outer_name}(...), which Snowflake's "
+                    "semantic-view METRICS clause does not allow — a metric "
+                    "must be a single aggregate over a row-level expression."
                 )
 
     return None

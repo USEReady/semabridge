@@ -1,9 +1,9 @@
-project_name: competitive marketing
+project_name: summary-test
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitive-marketing/cbbf3405e6454e29a3d6cda9a692734a_Competitive
+  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-summary-test/059b74d7a70f4d9f907782a124841fe6_Competitive
     Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitive-marketing/cbbf3405e6454e29a3d6cda9a692734a_Competitive
+  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-summary-test/059b74d7a70f4d9f907782a124841fe6_Competitive
     Marketing Analysis.pbix
 targets:
 - type: snowflake
@@ -219,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-competitive-marketing
-display_name: competitive marketing
+project_id: proj-summary-test
+display_name: summary-test

@@ -531,8 +531,13 @@ def test_auth_failure_is_cached_and_skipped_for_rest_of_run_without_calling_adap
         assert good_adapter.call_count == 1
 
         # Second call, same instance/run: the bad-key provider must be
-        # skipped without another translate() invocation.
-        result_2 = service.translate(_request(metric_name="Metric_B"))
+        # skipped without another translate() invocation. Uses a DIFFERENT
+        # dax than the first call so this is a genuine second translation
+        # attempt, not a Tier5TranslationCache hit on the first call's
+        # result -- metric_name alone is deliberately NOT part of the cache
+        # key (see tier5/cache.py), so two requests differing only in
+        # metric_name would otherwise be indistinguishable to the cache.
+        result_2 = service.translate(_request(metric_name="Metric_B", dax="AVG('SomeTable'[SomeColumn])"))
         assert result_2 is not None and result_2.provider == "fake_good"
         assert bad_adapter.call_count == 1  # unchanged — no second attempt
         assert good_adapter.call_count == 2
