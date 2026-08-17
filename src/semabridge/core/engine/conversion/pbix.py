@@ -62,12 +62,37 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     ws_id = "local"
     ds_id = context.project_id
 
+    # The deployed Snowflake semantic view name must come from THIS file's own
+    # filename — never from context.project_id. project_id is computed once
+    # per sync request and shared, unchanged, across every job in a multi-PBIX
+    # batch (see _build_sync_jobs/_run_single_job in sync_execution_service.py),
+    # so using it here would collapse every file in the batch onto the same
+    # unique_name and therefore the same "CREATE OR REPLACE SEMANTIC VIEW"
+    # name — each job's DDL would silently overwrite the previous job's view
+    # instead of producing N independent views.
+    #
+    # Sanitized with the same IdentifierSanitizer.sanitize_table_name() that
+    # get_pbix_deployment_view_name() (name_translator.py) uses for the
+    # pre-deploy collision check, so the collision check and the name actually
+    # baked into the DDL agree on the same computation — not two disconnected
+    # ones that can disagree about whether a collision exists.
+    pbix_source_path = getattr(sf, "pbix_path", None)
+    file_display_name = None
+    if pbix_source_path:
+        from semabridge.utils.identifiers import IdentifierSanitizer
+
+        file_display_name = IdentifierSanitizer().sanitize_table_name(Path(pbix_source_path).stem)
+
     # Phase 1: TMSL → OSI
     source_data = {
         "tmsl": sf.tmsl_definition,
         "workspace_id": ws_id,
         "dataset_id": ds_id,
         "project_id": context.project_id,
+        # Consumed by TMSLToOSIConverter.to_osi() as the top-priority source
+        # for both OSIModel.unique_name (drives the deployed view name) and
+        # OSIModel.label — see tmsl_to_osi.py's `resolved_unique_name`.
+        "display_name": file_display_name,
         "field_aliases": getattr(sf, "field_aliases", []),
         # Stamped onto every OSIColumn/OSIMetric this conversion produces (see
         # TMSLToOSIConverter.to_osi) so a multi-PBIX project's per-file dry-run
