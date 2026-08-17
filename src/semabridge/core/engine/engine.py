@@ -464,6 +464,7 @@ ExecutionEngine._step9_deploy                        = _dep_base._step9_deploy
 ExecutionEngine._deploy_to_fabric                    = _dep_fab._deploy_to_fabric
 ExecutionEngine._deploy_to_snowflake                 = _dep_sf._deploy_to_snowflake
 ExecutionEngine._do_snowflake_deploy                 = _dep_sf._do_snowflake_deploy
+ExecutionEngine._update_snowflake_view_metadata_on_failure = _dep_sf._update_snowflake_view_metadata_on_failure
 ExecutionEngine._export_inferred_osi_artifacts       = _dep_sf._export_inferred_osi_artifacts
 ExecutionEngine._should_sync_measures                = _dep_sf._should_sync_measures
 ExecutionEngine._sync_fabric_measures                = _dep_sf._sync_fabric_measures

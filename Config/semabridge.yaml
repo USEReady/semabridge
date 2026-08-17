@@ -1,16 +1,18 @@
-project_name: 1721-test
+project_name: sync-test
+behavior:
+  features: {}
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1721-test/6924f3433e0249bba815a63143915c6d_Competitive
+  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-sync-test/9da23522540f484e844e2a411222ef65_Competitive
     Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-1721-test/6924f3433e0249bba815a63143915c6d_Competitive
+  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-sync-test/9da23522540f484e844e2a411222ef65_Competitive
     Marketing Analysis.pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
   schema: SEMABRIDGE_WORKSPACE
   warehouse: DI_OTH_POC_WH
-  identity_id: 1da75202-4a20-4ed5-a9eb-aadf6392c367
+  identity_id: ae8ff276-b411-4903-89cc-cad94e1f65d1
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY
@@ -219,5 +221,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-1721-test
-display_name: 1721-test
+project_id: proj-sync-test
+display_name: sync-test

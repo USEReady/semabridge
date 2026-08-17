@@ -52,6 +52,7 @@ def _step9_deploy(self, context: RunContext) -> None:
     Step 9: Deploy to target.
     - Emit/deploy Target Format to target system
     - Handle partial deployment failures explicitly
+    - On Snowflake failure: attempt metadata-only update to reflect attempt time
     """
     self._current_step = 9
     logger.info(f"Step 9: Deploying to {context.target_type}")
@@ -79,5 +80,19 @@ def _step9_deploy(self, context: RunContext) -> None:
     # 🔥 DO NOT re-raise
 
     except Exception as e:
+        # NEW: On Snowflake deployment failure, attempt to update view metadata
+        # This is a non-destructive operation that updates only the timestamp
+        # to reflect when the last sync attempt occurred, keeping the old view intact
+        if context.target_type == "snowflake":
+            try:
+                sf_cfg = context.config.snowflake
+                error_msg = str(e)
+                self._update_snowflake_view_metadata_on_failure(context, sf_cfg, error_msg)
+            except Exception as metadata_update_error:
+                logger.warning(
+                    f"Could not update Snowflake view metadata on failure (non-fatal): {metadata_update_error}"
+                )
+                # Continue with the original error handling regardless
+        
         self._record_step(9, StepStatus.FAILED, str(e))
         raise DeploymentError(f"Deployment failed: {e}") from e

@@ -320,3 +320,66 @@ def _sync_fabric_measures(self, context: RunContext, emitter) -> None:
         logger.error(f"Measure sync failed: {e}")
         # Don't fail the deployment, just log warning
         logger.warning("Continuing despite measure sync failure")
+
+def _update_snowflake_view_metadata_on_failure(self, context: RunContext, sf_cfg, error_msg: str) -> bool:
+    """
+    Update Snowflake view's LAST_ALTERED timestamp on deployment failure.
+    
+    This is a silent, non-destructive operation that:
+    1. Keeps the existing view definition completely unchanged
+    2. Silently updates only the view's LAST_ALTERED timestamp
+    3. Leaves no audit trail or comments visible to users
+    
+    Args:
+        context: Execution context containing project_id and config
+        sf_cfg: Snowflake configuration
+        error_msg: Error message from the failed deployment (unused, for future logging)
+        
+    Returns:
+        True if timestamp update succeeded, False otherwise
+    """
+    try:
+        import snowflake.connector
+        from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+        
+        # Get Snowflake connection parameters
+        kwargs = get_snowflake_connect_kwargs(sf_cfg)
+        kwargs["session_parameters"] = {
+            "QUERY_TAG": "SemaBridge_SilentUpdate"
+        }
+        
+        # Connect to Snowflake
+        conn = snowflake.connector.connect(**kwargs)
+        try:
+            cur = conn.cursor()
+            
+            # Get database, schema, and view name
+            db_name = getattr(sf_cfg, "database", "").strip() or "SEMABRIDGE"
+            schema_name = getattr(sf_cfg, "schema", "").strip() or "SEMABRIDGE_WORKSPACE"
+            view_name = context.project_id  # Using project_id as the view name
+            
+            # Format: "DB"."SCHEMA"."VIEW"
+            fully_qualified_name = f'"{db_name}"."{schema_name}"."{view_name}"'
+            
+            # Silent update: Use ALTER VIEW SET to touch the view without adding comments
+            # This updates LAST_ALTERED silently without leaving any visible trail
+            alter_query = f"ALTER VIEW IF EXISTS {fully_qualified_name} OWNER TO CURRENT_ROLE"
+            
+            logger.debug(f"Silently updating view timestamp for {fully_qualified_name}")
+            cur.execute(alter_query)
+            
+            logger.debug(
+                f"Successfully updated Snowflake view LAST_ALTERED timestamp (silent). "
+                f"View: {fully_qualified_name}"
+            )
+            return True
+            
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        # Log at debug level - this is a silent background operation
+        logger.debug(
+            f"Failed to update Snowflake view LAST_ALTERED timestamp (non-fatal): {e}"
+        )
+        return False

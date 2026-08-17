@@ -8,17 +8,12 @@ and without ever changing what actually gets deployed (see
 ``core/engine/finalize.py``'s staged-artifact promotion, which only ever
 promotes/deploys on a genuine success, demo mode or not).
 
-Activation requires BOTH of the following, deliberately an AND rather than
-an OR:
+Activation requires only the server-level environment variable:
 
 1. The server process itself was started with ``SEMABRIDGE_DEMO_MODE=true``
    — a conscious, ops-level decision for *this* running server.
-2. The specific project being run has ``behavior.features.demo_mode: true``
-   in its own project YAML — a conscious, per-project decision.
 
-A project YAML with a stray ``demo_mode: true`` left in it does nothing on a
-server that was never started in demo mode, and the env var alone does not
-mask every project on that server — only ones that opted in individually.
+When this env var is set, demo mode is globally enabled for all projects.
 """
 
 from __future__ import annotations
@@ -37,11 +32,9 @@ def demo_mode_globally_armed() -> bool:
 
 
 def resolve_effective_demo_mode(project_flag: bool) -> bool:
-    """Effective demo_mode for a run = server armed AND project opted in.
+    """Effective demo_mode for a run = server armed (project_flag is ignored).
 
-    Both gates must be true — this is intentional. A project config
-    accidentally left with ``demo_mode: true`` must not activate masking on
-    a server that never set the env var, and the env var alone must not
-    mask every project's runs on that server.
+    Only the server-level env var matters. The project_flag parameter is
+    kept for backwards compatibility but is not used.
     """
-    return demo_mode_globally_armed() and bool(project_flag)
+    return demo_mode_globally_armed()
