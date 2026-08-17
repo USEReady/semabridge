@@ -119,6 +119,32 @@ export const COMPLEXITY_TIER_FACET_LABELS = {
 };
 
 /**
+ * Full path to the .pbix file this row was extracted from. null for
+ * single-file dry-runs (today's flow never populates it) and for any row
+ * predating this field. See semabridge/intermediate/models.py's
+ * OSIColumn.source_file / OSIMetric.source_file for where this originates.
+ */
+export function rowSourceFile(row) {
+  const path = row?.source_file;
+  return typeof path === 'string' && path.trim() ? path.trim() : null;
+}
+
+/**
+ * Display-friendly filename (basename, .pbix stripped) for rowSourceFile —
+ * what the UI should render; the full path is often long and machine-specific.
+ */
+export function rowSourceFileName(row) {
+  const path = rowSourceFile(row);
+  if (!path) return null;
+  const basename = path.split(/[\\/]/).pop() || path;
+  return basename.replace(/\.pbix$/i, '');
+}
+
+export function hasSourceFileData(rows) {
+  return rows.some((row) => rowSourceFile(row) !== null);
+}
+
+/**
  * A row needs review when its status isn't in the known-clean set, or when
  * it has an expression that failed to convert (even if its status is clean).
  */

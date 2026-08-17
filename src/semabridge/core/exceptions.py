@@ -453,3 +453,48 @@ class SchemaEvolutionError(SyncError):
             full_details["model_name"] = model_name
         super().__init__(message, job_id=job_id, details=full_details)
         self.model_name = model_name
+
+
+class AmbiguousColumnReferenceError(SemaBridgeError):
+    """
+    Raised when a raw/un-suffixed column reference cannot be resolved to a
+    single physical column because two or more distinct columns in the same
+    dataset are genuinely indistinguishable from that reference alone (e.g.
+    two duplicate-named physical columns disambiguated with a `_1`/`_2`
+    suffix by schema_manager._collect_physical_source_columns, where the
+    reference itself gives no way to tell which sibling was meant).
+
+    This exists specifically so an indeterminate case fails closed with a
+    clear reason instead of silently guessing one of the candidates (which
+    could reference the wrong physical column's data) -- see
+    schema_manager._resolve_duplicate_sibling_physical_name, the resolver
+    that raises it.
+
+    Args:
+        message: Error description.
+        dataset_name: Dataset the ambiguous reference belongs to.
+        raw_col_name: The raw/un-suffixed reference that couldn't be resolved.
+        candidates: Physical (possibly suffixed) names of every column the
+            reference could plausibly mean.
+        details: Optional additional context.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        dataset_name: Optional[str] = None,
+        raw_col_name: Optional[str] = None,
+        candidates: Optional[List[str]] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        full_details = details or {}
+        if dataset_name:
+            full_details["dataset_name"] = dataset_name
+        if raw_col_name:
+            full_details["raw_col_name"] = raw_col_name
+        if candidates:
+            full_details["candidates"] = candidates
+        super().__init__(message, full_details)
+        self.dataset_name = dataset_name
+        self.raw_col_name = raw_col_name
+        self.candidates = candidates or []

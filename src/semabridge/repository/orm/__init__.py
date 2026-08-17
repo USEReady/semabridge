@@ -31,6 +31,10 @@ from semabridge.repository.orm.run_models import (
     SyncConflictRow,
     SyncCheckpointRow,
 )
+from semabridge.repository.orm.dry_run_job_models import (
+    DryRunJob,
+    DryRunJobFile,
+)
 from semabridge.repository.orm.snapshot_models import (
     SnapshotRow,
     Change,
@@ -71,6 +75,9 @@ __all__ = [
     "SourceArtifact",
     "SyncConflictRow",
     "SyncCheckpointRow",
+    # Multi-PBIX background dry-run jobs
+    "DryRunJob",
+    "DryRunJobFile",
     # Version snapshots
     "SnapshotRow",
     "Change",

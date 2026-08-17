@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from semabridge.converter.measure_triage import TriageResult
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior, SnowflakeBehavior
-from semabridge.core.exceptions import ConnectorError
+from semabridge.core.exceptions import ConnectorError, AmbiguousColumnReferenceError
 from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, SMLDimension, SMLRelationship, AggregationType, DataType
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.snowflake_emitter_parts.exceptions import MissingSourceTableWarning
@@ -575,6 +575,74 @@ class SnowflakeSchemaManager:
 
         return selected
 
+    def _resolve_duplicate_sibling_physical_name(
+        self, dataset: SMLDataset, raw_col_name: str
+    ) -> Optional[str]:
+        """Resolve a raw/un-suffixed column reference back to the correct
+        suffixed physical name when `_collect_physical_source_columns` had to
+        disambiguate a genuine same-sanitized-name collision for this dataset.
+
+        Matches by the ORIGINAL column object each resolved entry came from
+        (exact `unique_name` first, then case-insensitive), never by
+        re-deriving/guessing from the sanitized string a second time --
+        that's exactly what steps 3-6 of `_resolve_physical_column_name`
+        already do, and is why they can't tell two suffixed siblings apart.
+
+        Returns:
+            The resolved (possibly suffixed) physical name when exactly one
+            original column unambiguously matches `raw_col_name`. None when
+            no column matches at all (the caller should fall through to its
+            own remaining resolution steps).
+
+        Raises:
+            AmbiguousColumnReferenceError: when two or more distinct column
+                objects genuinely can't be told apart from `raw_col_name`
+                alone (e.g. the dataset legitimately has two columns sharing
+                the exact same `unique_name`, both disambiguated into
+                siblings). Fails closed rather than guessing which sibling
+                was meant -- silently picking one risks emitting SQL against
+                the wrong physical column's data.
+        """
+        try:
+            selected = self._collect_physical_source_columns(dataset)
+        except Exception:
+            return None
+
+        exact_matches = [
+            (resolved_name, col) for resolved_name, col in selected.items()
+            if getattr(col, "unique_name", None) == raw_col_name
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0][0]
+        if len(exact_matches) > 1:
+            raise AmbiguousColumnReferenceError(
+                f"Column reference '{raw_col_name}' matches {len(exact_matches)} "
+                "distinct duplicate-named physical columns and cannot be resolved "
+                "unambiguously.",
+                dataset_name=dataset.unique_name,
+                raw_col_name=raw_col_name,
+                candidates=[name for name, _ in exact_matches],
+            )
+
+        raw_upper = str(raw_col_name).upper()
+        case_insensitive_matches = [
+            (resolved_name, col) for resolved_name, col in selected.items()
+            if str(getattr(col, "unique_name", "") or "").upper() == raw_upper
+        ]
+        if len(case_insensitive_matches) == 1:
+            return case_insensitive_matches[0][0]
+        if len(case_insensitive_matches) > 1:
+            raise AmbiguousColumnReferenceError(
+                f"Column reference '{raw_col_name}' matches "
+                f"{len(case_insensitive_matches)} distinct duplicate-named physical "
+                "columns differing only in casing and cannot be resolved unambiguously.",
+                dataset_name=dataset.unique_name,
+                raw_col_name=raw_col_name,
+                candidates=[name for name, _ in case_insensitive_matches],
+            )
+
+        return None
+
     def _resolve_column_via_relationship(self, model: Any, dataset: Any, raw_col_name: str) -> Optional[str]:
         """Borrow a physical column name from an active FK relationship partner
         whose own schema IS confirmed (live or modeled), instead of guessing
@@ -671,6 +739,28 @@ class SnowflakeSchemaManager:
         live_cols_upper = {c.upper(): c for c in live_cols}
         if raw_upper in live_cols_upper:
             return live_cols_upper[raw_upper]
+
+        # 2b. raw_col_name may be the ORIGINAL, un-suffixed reference to a
+        # column that _collect_physical_source_columns had to disambiguate
+        # with a `_1`/`_2`-style suffix because it collided (after
+        # sanitization) with another distinct physical column in this same
+        # dataset -- see that method's docstring, and
+        # project_mapping_engine.py's _column_identity_signature for the
+        # upstream half of this fix. When that happens, raw_col_name can
+        # never appear as a key in live_cols (only the suffixed siblings
+        # do), so steps 1/2 above always miss here even though the column
+        # genuinely exists. Resolve it by matching the ORIGINAL column
+        # object the reference identifies, not by re-guessing from the
+        # sanitized string a second time (which is all steps 3-6 below can
+        # do, and is exactly how this class of miss produced "not found in
+        # the known physical schema" for a column that was actually present).
+        # Only meaningful in the modeled-fallback path (has_confirmed_live_schema
+        # False) -- a real Snowflake schema has no such internal suffix
+        # bookkeeping to resolve against.
+        if not has_confirmed_live_schema:
+            resolved_sibling = self._resolve_duplicate_sibling_physical_name(dataset, raw_col_name)
+            if resolved_sibling is not None:
+                return resolved_sibling
 
         # 3. Date/time pattern mappings (dynamic resolution from candidates)
         date_patterns = {

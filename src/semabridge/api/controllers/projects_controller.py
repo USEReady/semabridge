@@ -11,6 +11,9 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
+from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
+
 
 class CreateProjectRequest(BaseModel):
     name: Optional[str] = None
@@ -73,6 +76,7 @@ from semabridge.api.services.project_domain_service import (
     delete_project_snapshots_compat,
     get_project_runs_compat,
     get_project_storage_stats,
+    get_run_report_compat,
     list_project_snapshots_compat,
     list_snapshot_groups_compat,
     restore_project_version_compat,
@@ -134,6 +138,16 @@ async def list_project_discovery(request: Request):
 async def create_project(request: Request, payload: CreateProjectRequest):
     user_id = require_request_user_id(request)
     payload_dict = payload.model_dump(exclude_none=False)
+    src_for_validation = payload_dict.get("source") if isinstance(payload_dict.get("source"), dict) else {}
+    validation_source_type = str(src_for_validation.get("type") or "")
+    validate_pbix_model_list(src_for_validation.get("models"), source_type=validation_source_type)
+    validation_models = src_for_validation.get("models")
+    if validation_source_type.strip().lower() == "pbix" and validation_models:
+        # Earliest possible feedback: catch a naming collision before the user
+        # even gets to a dry-run. _build_sync_jobs() re-checks this at
+        # execution time as defense-in-depth (covers dry-run and deploy alike,
+        # and configs edited after creation).
+        validate_no_pbix_view_name_collisions(validation_models)
     if user_id:
         payload_dict["user_id"] = str(user_id)
         validate_project_connector_accounts_belong_to_user(user_id, payload_dict)
@@ -297,6 +311,21 @@ async def get_project_runs(project_id: str, request: Request):
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     return await get_project_runs_compat(project_id)
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/report")
+async def download_run_report(project_id: str, run_id: str, request: Request):
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    report = await get_run_report_compat(project_id, run_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"No report found for run {run_id}")
+
+    return Response(
+        content=report["content"].encode("utf-8"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{report["filename"]}"'},
+    )
 
 
 @router.get("/api/projects/{project_id}/vc/stats")

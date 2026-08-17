@@ -1604,6 +1604,41 @@ export const api = {
     },
 
     /**
+     * Multi-PBIX background dry-run jobs — background-job-plus-polling
+     * pattern so an N-file batch never risks the HTTP timeout a single
+     * long, synchronous runProjectDryRun() request would. Each of these
+     * calls is fast (job creation / a status read / a rerun trigger); the
+     * actual per-file pipeline work happens server-side in the background
+     * and is observed via polling createDryRunJob's returned job_id with
+     * getDryRunJobStatus.
+     */
+    async createDryRunJob(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async getDryRunJobStatus(projectId, jobId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs/${jobId}`);
+        return handleResponse(res);
+    },
+
+    async getDryRunJobFile(projectId, jobId, fileId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs/${jobId}/files/${fileId}`);
+        return handleResponse(res);
+    },
+
+    async rerunDryRunJobFile(projectId, jobId, fileId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs/${jobId}/files/${fileId}/rerun`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    /**
      * Auto-add a missing dimension column to the Snowflake physical table.
      * Called from the dry-run conflict UI when the user clicks "Auto-add to Snowflake".
      * After this succeeds the caller should trigger a re-sync.

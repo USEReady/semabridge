@@ -289,6 +289,7 @@ class OSIToSMLConverter(BaseConverter):
             synonyms=list(osi_col.synonyms),
             synonym_sources=dict(osi_col.synonym_sources),
             has_report_alias=osi_col.has_report_alias,
+            source_file=osi_col.source_file,
             is_enum=osi_col.is_enum,
             cortex_search_service=osi_col.cortex_search_service,
             sample_values=list(osi_col.sample_values),
@@ -353,6 +354,7 @@ class OSIToSMLConverter(BaseConverter):
                 synonyms=list(osi_metric.synonyms),
                 synonym_sources=dict(osi_metric.synonym_sources),
                 has_report_alias=osi_metric.has_report_alias,
+                source_file=osi_metric.source_file,
             )
             if _tier == 0:
                 metric.sync_failure_reason = "SQL→DAX reverse translation not available for this expression; raw SQL preserved"
@@ -403,6 +405,7 @@ class OSIToSMLConverter(BaseConverter):
                     synonyms=list(osi_metric.synonyms),
                     synonym_sources=dict(osi_metric.synonym_sources),
                     has_report_alias=osi_metric.has_report_alias,
+                    source_file=osi_metric.source_file,
                 )
                 return metric
 
@@ -481,6 +484,7 @@ class OSIToSMLConverter(BaseConverter):
         metric.synonyms = list(osi_metric.synonyms)
         metric.synonym_sources = dict(osi_metric.synonym_sources)
         metric.has_report_alias = osi_metric.has_report_alias
+        metric.source_file = osi_metric.source_file
 
         return metric
 

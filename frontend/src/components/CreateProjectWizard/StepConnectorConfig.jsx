@@ -3,6 +3,7 @@ import { Check, ChevronDown, RefreshCw, Loader2 } from 'lucide-react';
 import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
+import MultiPbixUpload from './MultiPbixUpload';
 import { CONNECTOR_TYPES, TARGET_CONNECTOR_TYPES, PBIX_SOURCE_MODES } from '../../utils/constants';
 
 const SECTION_CARD = {
@@ -65,6 +66,9 @@ export function StepConnectorConfig({
   selectedLocalFolderId,
   setSelectedLocalFolderId,
   onUploadSuccess,
+  pbixMultiFileMode = false,
+  setPbixMultiFileMode = () => {},
+  setPbixFilePaths = () => {},
   workspaces,
   workspacesLoading,
   isRefreshingWorkspaces,
@@ -516,7 +520,40 @@ export function StepConnectorConfig({
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <label style={LABEL}>PBIX Upload</label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={LABEL}>PBIX Upload</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[
+                      { value: false, label: 'Single file' },
+                      { value: true, label: 'Multiple files' },
+                    ].map((opt) => {
+                      const active = pbixMultiFileMode === opt.value;
+                      return (
+                        <button
+                          key={String(opt.value)}
+                          type="button"
+                          onClick={() => setPbixMultiFileMode(opt.value)}
+                          style={{
+                            border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+                            background: active ? 'var(--accent-blue)14' : 'var(--bg-surface)',
+                            color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {pbixMultiFileMode ? (
+                  <MultiPbixUpload onFilesChange={setPbixFilePaths} maxFiles={10} />
+                ) : (
                 <label
                   onDragOver={(event) => {
                     event.preventDefault();
@@ -572,6 +609,7 @@ export function StepConnectorConfig({
                     </div>
                   )}
                 </label>
+                )}
               </div>
             )}
           </div>

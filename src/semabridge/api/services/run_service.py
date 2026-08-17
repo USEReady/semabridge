@@ -5,6 +5,7 @@ manual deploy, project lineage, and clear-job-runs.
 """
 import json
 import time as _time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -499,6 +500,15 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         except Exception as snap_exc:
             logger.debug("Post-failure snapshot capture skipped for %s: %s", project_id, snap_exc)
     finally:
+        # Unconditional -- runs on both the success and exception paths
+        # above, so a failed run still gets a downloadable report. Never
+        # allowed to affect the run's own recorded outcome (write_run_report
+        # swallows its own errors and returns None on failure).
+        try:
+            from semabridge.api.services.run_report_service import write_run_report
+            run["report_path"] = write_run_report(run, project_cfg)
+        except Exception as report_exc:
+            logger.debug("Run report generation skipped for %s: %s", project_id, report_exc)
         _compat_save_store()
     return run
 
@@ -655,6 +665,43 @@ async def run_project_now_compat(
     run["force"] = force
     background_tasks.add_task(_run_project_background, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
+
+
+async def get_run_report_compat(project_id: str, run_id: str) -> Optional[Dict[str, str]]:
+    """Locate and read the Markdown report written by write_run_report for
+    one run. Returns {"content": ..., "filename": ...} or None if no report
+    exists (e.g. the run predates this feature, or generation failed).
+    """
+    from semabridge.api.services.run_report_service import REPORTS_ROOT
+
+    _compat_ensure_loaded()
+    report_path = None
+    project_name = project_id
+    for run in _compat_project_runs.get(project_id, []):
+        if str(run.get("run_id") or run.get("id") or "") == run_id:
+            report_path = run.get("report_path")
+            project_name = run.get("project_name") or project_id
+            break
+
+    if not report_path:
+        # In-memory compat record may have been evicted by a restart since
+        # the run completed -- the file itself still lives at the fixed,
+        # run_id-scoped path write_run_report always uses.
+        candidate = REPORTS_ROOT / project_id / f"{run_id}.md"
+        if candidate.exists():
+            report_path = str(candidate)
+
+    if not report_path:
+        return None
+    path = Path(report_path)
+    if not path.exists():
+        return None
+
+    safe_project_name = str(project_name).strip().replace(" ", "_") or project_id
+    return {
+        "content": path.read_text(encoding="utf-8"),
+        "filename": f"{safe_project_name}_{run_id}_report.md",
+    }
 
 
 async def get_run_conflicts_compat(run_id: str):

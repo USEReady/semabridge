@@ -59,6 +59,13 @@ class TMSLToOSIConverter(BaseConverter):
         self._synonym_model_names: List[str] = []
         self._field_alias_lookup: Optional[Dict[Tuple[str, str, Optional[str]], List[str]]] = None
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        # Full path to the source .pbix file this conversion run is processing,
+        # stamped onto every OSIColumn/OSIMetric produced (see to_osi()). None
+        # for Fabric sources, which have no local file. A fresh converter
+        # instance is created per model run (see core/engine/conversion/pbix.py
+        # and fabric.py), so this never leaks across files in a multi-PBIX
+        # project's parallel per-file runs.
+        self._source_file: Optional[str] = None
 
     def to_osi(self, source_data: Dict[str, Any]) -> OSIModel:
         """
@@ -80,6 +87,7 @@ class TMSLToOSIConverter(BaseConverter):
             tmsl_json = source_data.get("tmsl", {})
             workspace_id = source_data.get("workspace_id")
             dataset_id = source_data.get("dataset_id")
+            self._source_file = source_data.get("source_file")
 
             if not tmsl_json or not dataset_id:
                 raise ConversionError(
@@ -368,6 +376,7 @@ class TMSLToOSIConverter(BaseConverter):
                     is_hidden=col.is_hidden,
                     access_modifier="public_access",
                     synonyms=list(getattr(col, "synonyms", []) or []),
+                    source_file=getattr(col, "source_file", None),
                 )
             )
         return metrics
@@ -523,6 +532,7 @@ class TMSLToOSIConverter(BaseConverter):
             synonyms=synonyms,
             synonym_sources=synonym_sources,
             has_report_alias=has_report_alias,
+            source_file=self._source_file,
             is_enum=is_enum,
         )
 
@@ -817,6 +827,7 @@ class TMSLToOSIConverter(BaseConverter):
             synonyms=synonyms,
             synonym_sources=synonym_sources,
             has_report_alias=has_report_alias,
+            source_file=self._source_file,
         )
 
     @staticmethod

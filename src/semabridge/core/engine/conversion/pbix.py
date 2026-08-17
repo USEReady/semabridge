@@ -69,6 +69,14 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         "dataset_id": ds_id,
         "project_id": context.project_id,
         "field_aliases": getattr(sf, "field_aliases", []),
+        # Stamped onto every OSIColumn/OSIMetric this conversion produces (see
+        # TMSLToOSIConverter.to_osi) so a multi-PBIX project's per-file dry-run
+        # results are never ambiguous about which .pbix file they came from.
+        # getattr, not direct access: context.source_format is a real
+        # SourceFormat in production (always has pbix_path, defaulting to
+        # None), but some tests substitute a lighter-weight stand-in that
+        # doesn't set every SourceFormat attribute.
+        "source_file": getattr(sf, "pbix_path", None),
     }
     osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model

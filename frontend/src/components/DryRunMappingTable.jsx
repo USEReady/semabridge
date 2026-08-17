@@ -4,7 +4,25 @@
  * Shows columns and measures separately, and displays detected relationships.
  *
  * Props:
- *   mappings      : NormalizedRow[]  — array of normalised field mapping rows
+ *   mappings      : NormalizedRow[]  — array of normalised field mapping rows.
+ *                   MUST be the output of utils/normalizeRows.js, never a raw
+ *                   API response's `entity_mappings` array passed straight
+ *                   through. The raw shape uses different field names
+ *                   (source_name/target_name/source_expression/...) than this
+ *                   component reads (source_field/target_field/
+ *                   measure_expression/...) -- passing it unnormalized doesn't
+ *                   error, it just silently renders blank DAX expressions and
+ *                   "fx Measure"/"unknown"/"-- unmapped --" placeholders on
+ *                   every row, even for fields that mapped and translated
+ *                   successfully. This has already happened once (the
+ *                   multi-file drill-in view, MultiFileDryRunStatus.jsx,
+ *                   originally skipped normalizeRows() entirely) -- see
+ *                   DryRunMappingTable.guardrail.test.js, which statically
+ *                   scans every caller of this component and fails the build
+ *                   if any `mappings` prop expression accesses a raw
+ *                   `*.entity_mappings` field directly instead of going
+ *                   through normalizeRows() first, and the dev-only runtime
+ *                   check a few lines below.
  *   onEdit        : (rowId: string) => void  — called when user clicks Edit/Map
  *   summary       : { total_fields, auto_mapped, unmapped, collisions }
  *   relationships : Array<{ source, target, joinType, condition, confidence }>
@@ -27,6 +45,8 @@ import {
   hasComplexityTierData,
   rowComplexityTier,
   rowNeedsReview,
+  rowSourceFile,
+  rowSourceFileName,
   CONVERSION_FACET_LABELS,
   COMPLEXITY_TIER_FACET_LABELS,
 } from '../utils/mappingFilterUtils';
@@ -191,6 +211,29 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
               textOverflow: 'ellipsis',
             }}>
               {row.source_table_name}
+            </span>
+          )}
+          {rowSourceFileName(row) && (
+            // Only ever renders for a multi-PBIX project — null for the
+            // existing single-file flow, so this is invisible today by
+            // construction. See mappingFilterUtils.js's rowSourceFileName().
+            <span
+              title={rowSourceFile(row)}
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: 'rgba(168, 85, 247, 0.12)',
+                color: '#c4b5fd',
+                border: '1px solid rgba(168, 85, 247, 0.35)',
+                whiteSpace: 'nowrap',
+                maxWidth: 120,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {rowSourceFileName(row)}
             </span>
           )}
         </div>
@@ -479,7 +522,7 @@ const SYNONYM_SOURCE_LABELS = {
 function synonymSourceLabel(source) {
   if (SYNONYM_SOURCE_LABELS[source]) return SYNONYM_SOURCE_LABELS[source];
   const word = String(source || '').replace(/[_-]+/g, ' ').trim();
-  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unknown Source';
+  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
 
 function MeasureTranslationPanel({ row }) {
@@ -973,6 +1016,25 @@ export default function DryRunMappingTable({
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
 }) {
+  // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
+  // Heuristic: a raw /dry-run API row has `source_name`/`target_name` keys;
+  // a NormalizedRow (utils/normalizeRows.js's output) never does -- it renames
+  // those to source_field/target_field. If we see the raw key shape here, some
+  // caller skipped normalizeRows() and every row will silently render blank
+  // DAX expressions plus "fx Measure"/"unknown"/"-- unmapped --" placeholders
+  // (see the comment on the `mappings` prop above). This only runs in dev
+  // builds (import.meta.env.DEV) so it costs nothing in production.
+  if (import.meta.env.DEV && mappings.length > 0) {
+    const rawShaped = mappings.find((row) => row && ('source_name' in row || 'target_name' in row) && !('source_field' in row));
+    if (rawShaped) {
+      console.error(
+        '[DryRunMappingTable] Received un-normalized row(s) -- pass `mappings` through ' +
+        'utils/normalizeRows.js before rendering this component. Offending row:',
+        rawShaped,
+      );
+    }
+  }
+
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
   const [activeStatuses, setActiveStatuses] = useState(() => new Set());

@@ -319,6 +319,137 @@ class TestPBIXDiscovery:
         assert len(result["raw_tmsl"]["model"]["tables"]) == 1
         assert result["raw_tmsl"]["model"]["tables"][0]["name"] == "FactSales"
 
+    def test_extract_with_pbixray_logs_exception_type_and_traceback_on_failure(
+        self, pbix_file: Path, monkeypatch, caplog
+    ) -> None:
+        """When the pbixray fallback itself raises (e.g. a malformed/unsupported
+        PBIX binary DataModel whose schema table is missing expected columns --
+        the real failure mode traced for project preview-15521cd5f819, where
+        pandas raised `KeyError("None of [Index(['TableName', 'ColumnName',
+        'Cardinality'], ...)] are in the [columns]")` deep inside pbixray's own
+        MetadataHandler._compute_statistics()), the connector must log both the
+        exception TYPE and a full traceback -- not just str(exc) -- so a future
+        occurrence doesn't require mining the raw log file to even learn what
+        kind of exception it was, the way this one did.
+        """
+        import pbixray
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_file)})
+        connector.authenticate()
+
+        class _FakePBIXRay:
+            def __init__(self, path: str) -> None:
+                # Mirrors the real failure: pbixray raises while constructing
+                # its model wrapper, before any of schema/dax_measures/etc.
+                # are ever accessed.
+                raise KeyError(
+                    "None of [Index(['TableName', 'ColumnName', 'Cardinality'], "
+                    "dtype='object')] are in the [columns]"
+                )
+
+        monkeypatch.setattr(pbixray, "PBIXRay", _FakePBIXRay)
+        # Force the empty-model probe to be inconclusive -- this test is about
+        # the OTHER branch (a genuine, non-empty-model failure), covered
+        # separately by test_extract_with_pbixray_returns_empty_result_for_confirmed_empty_model.
+        monkeypatch.setattr(connector, "_is_confirmed_empty_semantic_model", lambda: False)
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="semabridge.connectors.local_pbix_connector"):
+            result = connector._extract_with_pbixray()
+
+        assert result is None, "must still fail gracefully (return None), not raise"
+
+        matching_records = [r for r in caplog.records if "pbixray fallback failed" in r.message]
+        assert len(matching_records) == 1, "expected exactly one 'pbixray fallback failed' log record"
+        record = matching_records[0]
+
+        assert "KeyError" in record.message, (
+            "the exception TYPE must be logged, not just str(exc) -- "
+            f"got: {record.message!r}"
+        )
+        assert record.exc_info is not None, (
+            "exc_info must be attached so a full traceback reaches the log, not just a one-line message"
+        )
+
+    def test_extract_with_pbixray_returns_empty_result_for_confirmed_empty_model(
+        self, pbix_file: Path, monkeypatch, caplog
+    ) -> None:
+        """When PBIXRay(...) raises the same KeyError AND the independent
+        metadata-catalog probe confirms the model genuinely has zero tables/
+        columns/measures (as verified for real against project
+        preview-15521cd5f819's annual.pbix -- DBPROPERTIES.MAXID == 1, every
+        catalog table has 0 rows), the connector must return a valid EMPTY
+        extraction result (not None) -- this is "extraction succeeded, there's
+        nothing here", not an extraction failure. Downstream (mappings_controller)
+        must be able to tell an empty-but-real model apart from a genuinely
+        unparseable one.
+        """
+        import logging
+        import pbixray
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_file)})
+        connector.authenticate()
+
+        class _FakePBIXRay:
+            def __init__(self, path: str) -> None:
+                raise KeyError(
+                    "None of [Index(['TableName', 'ColumnName', 'Cardinality'], "
+                    "dtype='object')] are in the [columns]"
+                )
+
+        monkeypatch.setattr(pbixray, "PBIXRay", _FakePBIXRay)
+        monkeypatch.setattr(connector, "_is_confirmed_empty_semantic_model", lambda: True)
+
+        with caplog.at_level(logging.WARNING, logger="semabridge.connectors.local_pbix_connector"):
+            result = connector._extract_with_pbixray()
+
+        assert result is not None, "a confirmed-empty model must return a valid result, not None"
+        assert result["tables"] == []
+        assert result["measures"] == []
+        assert result["relationships"] == []
+        assert result["models"][0]["name"] == Path(str(connector._pbix_path)).stem
+
+        # Must NOT be logged as a failure -- it isn't one.
+        failure_records = [r for r in caplog.records if "pbixray fallback failed" in r.message]
+        assert failure_records == [], "a confirmed-empty model must not be logged as a fallback failure"
+        empty_model_records = [r for r in caplog.records if "genuinely empty semantic model" in r.message]
+        assert len(empty_model_records) == 1
+
+    def test_discover_end_to_end_succeeds_for_confirmed_empty_model_instead_of_raising(
+        self, pbix_file: Path, monkeypatch
+    ) -> None:
+        """End-to-end: discover() must complete successfully (0 tables/measures/
+        relationships, no exception) for a confirmed-empty model, exercising the
+        same call path mappings_controller._run_dry_run_pipeline() uses -- this
+        is what turns "No SML blob found ... extraction may have failed" into a
+        real (empty) SML blob instead, for this specific failure mode.
+        """
+        import pbixray
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_file)})
+        connector.authenticate()
+
+        def _raise_schema_error() -> Dict[str, Any]:
+            raise PBIXParsingError("json parse failed", pbix_path=str(pbix_file))
+
+        class _FakePBIXRay:
+            def __init__(self, path: str) -> None:
+                raise KeyError(
+                    "None of [Index(['TableName', 'ColumnName', 'Cardinality'], "
+                    "dtype='object')] are in the [columns]"
+                )
+
+        monkeypatch.setattr(connector, "_extract_data_model_schema", _raise_schema_error)
+        monkeypatch.setattr(pbixray, "PBIXRay", _FakePBIXRay)
+        monkeypatch.setattr(connector, "_is_confirmed_empty_semantic_model", lambda: True)
+
+        result = connector.discover()
+
+        assert result["tables"] == []
+        assert result["measures"] == []
+        assert result["relationships"] == []
+        assert result["metadata"]["parser"] == "pbixray"
+
 
 # ---------------------------------------------------------------------------
 # Connection Classification Tests

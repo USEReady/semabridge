@@ -315,8 +315,10 @@ class LocalPBIXConnector(BaseConnector):
         """Fallback extraction path for PBIX files that store binary DataModel.
 
         Returns:
-            Parsed semantic model fields in connector output shape, or None when
-            fallback is unavailable or parsing fails.
+            Parsed semantic model fields in connector output shape (possibly
+            with empty tables/measures/relationships lists -- see the
+            confirmed-empty-model handling below), or None when fallback is
+            unavailable or parsing genuinely fails.
         """
         try:
             from pbixray import PBIXRay  # type: ignore[import-untyped]
@@ -332,7 +334,62 @@ class LocalPBIXConnector(BaseConnector):
             power_query_df = model.power_query.copy()
             metadata_df = model.metadata.copy()
         except Exception as exc:
-            logger.warning(f"pbixray fallback failed: {exc}")
+            # pbixray's own MetadataHandler._compute_statistics() unconditionally
+            # does schema_df[['TableName', 'ColumnName', 'Cardinality']] with no
+            # guard for a semantic model that has zero tables/columns ever
+            # defined -- when that's the case, its underlying SQL join legitimately
+            # returns a columnless (0, 0) DataFrame and that column-selection
+            # raises KeyError, which used to surface here as an opaque, generic
+            # "extraction failed" for a file that isn't actually corrupt or an
+            # unsupported format -- it's just empty. Traced end-to-end for
+            # project preview-15521cd5f819 (annual.pbix): confirmed via direct
+            # inspection of the file's embedded metadata.sqlitedb that its
+            # Table/Column/Measure/Relationship catalogs all have zero rows
+            # (DBPROPERTIES.MAXID = 1 -- only the Model object itself was ever
+            # created), not any encryption/decoding failure or unrecognized PBIX
+            # variant. Independently reconfirm that here (via the model's own
+            # metadata catalog, not by pattern-matching this exception's text)
+            # before treating it as "nothing to extract" rather than a real
+            # failure -- an ambiguous/inconclusive probe always falls through
+            # to the existing fail-safe below.
+            if self._is_confirmed_empty_semantic_model():
+                logger.warning(
+                    "PBIX '%s' has a genuinely empty semantic model (zero tables/columns/"
+                    "measures ever defined) -- pbixray's statistics computation cannot run "
+                    "against an empty schema catalog (%s: %s). Treating this as a valid, "
+                    "empty extraction result rather than an extraction failure.",
+                    self._pbix_path,
+                    type(exc).__name__,
+                    exc,
+                )
+                return {
+                    "models": [{
+                        "name": self._pbix_path.stem,
+                        "description": "",
+                        "compatibility_level": None,
+                        "culture": "en-US",
+                    }],
+                    "tables": [],
+                    "measures": [],
+                    "relationships": [],
+                    "m_code": [],
+                }
+
+            # Log the exception type and full traceback, not just str(exc) --
+            # this is the last extraction attempt for a binary-DataModel PBIX
+            # (the JSON DataModelSchema path already failed by the time we get
+            # here), so once this is swallowed there is no further diagnostic
+            # signal anywhere for why the file couldn't be read. Kept at
+            # WARNING (this path fails gracefully -- discover() falls back to
+            # the original JSON parse error, or an empty model), but with
+            # exc_info=True so the traceback still reaches the log for
+            # post-mortem debugging instead of being reduced to one line.
+            logger.warning(
+                "pbixray fallback failed: %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return None
 
         tables_by_name: Dict[str, Dict[str, Any]] = {}
@@ -440,6 +497,68 @@ class LocalPBIXConnector(BaseConnector):
             "relationships": relationships,
             "m_code": m_code,
         }
+
+    def _is_confirmed_empty_semantic_model(self) -> bool:
+        """Independently confirm a PBIX's semantic model has zero tables,
+        columns, and measures, by querying its embedded metadata catalog
+        directly -- bypassing pbixray's own `PBIXRay(...)` constructor, which
+        is exactly what crashes for this case (see `_extract_with_pbixray`).
+
+        This re-implements the same handful of read-only steps `PBIXRay.__init__`
+        itself takes before reaching the crashing statistics computation
+        (unpack the archive, locate the embedded `metadata.sqlitedb` slice,
+        open it), using pbixray's own internal modules -- so this stays a
+        genuine structural check (actual row counts in the model's own Table/
+        Column/Measure catalog tables), not a guess based on this exception's
+        message text or this file's name.
+
+        Deliberately conservative: any failure while probing (missing
+        internal modules, a non-PBIX file type, a catalog query error, an
+        empty/garbled metadata slice) returns False rather than raising --
+        an inconclusive probe must fall through to the existing fail-safe
+        (log + return None) in the caller, never be treated as "confirmed
+        empty" by default.
+        """
+        try:
+            from pbixray.meta.sqlite_handler import SQLiteHandler  # type: ignore[import-untyped]
+            from pbixray.pbix_unpacker import PbixUnpacker  # type: ignore[import-untyped]
+            from pbixray.utils import get_data_slice  # type: ignore[import-untyped]
+
+            unpacker = PbixUnpacker(str(self._pbix_path))
+            data_model = unpacker.data_model
+            if getattr(data_model, "file_type", None) != "pbix":
+                # The XLSX path uses a different metadata source (XmlMetadataQuery)
+                # with no equivalent metadata.sqlitedb slice to probe -- treat as
+                # inconclusive rather than assuming emptiness.
+                return False
+
+            sqlite_buffer = get_data_slice(data_model, "metadata.sqlitedb")
+            if not sqlite_buffer:
+                return False
+
+            handler = SQLiteHandler(sqlite_buffer)
+            try:
+                counts = handler.execute_query(
+                    "SELECT "
+                    "(SELECT COUNT(*) FROM [Table]) AS table_count, "
+                    "(SELECT COUNT(*) FROM Column) AS column_count, "
+                    "(SELECT COUNT(*) FROM Measure) AS measure_count"
+                )
+            finally:
+                handler.close_connection()
+
+            if counts is None or counts.empty:
+                return False
+
+            row = counts.iloc[0]
+            return bool(row["table_count"] == 0 and row["column_count"] == 0 and row["measure_count"] == 0)
+        except Exception as probe_exc:
+            logger.debug(
+                "Empty-model probe inconclusive (treating as not confirmed): %s: %s",
+                type(probe_exc).__name__,
+                probe_exc,
+            )
+            return False
 
     def _build_tmsl_from_fallback(self, fallback_result: Dict[str, Any]) -> Dict[str, Any]:
         """Build a Fabric-like TMSL payload from pbixray fallback fields.

@@ -10,6 +10,7 @@ import { api } from '../../utils/api';
 import { ToggleOption } from '../WizardUIComponents';
 import DryRunMappingTable from '../DryRunMappingTable';
 import FieldMappingEditor from '../FieldMappingEditor';
+import MultiFileDryRunStatus from './MultiFileDryRunStatus';
 
 export function StepMappingOptions({
   autoRelationships,
@@ -44,6 +45,10 @@ export function StepMappingOptions({
   onSynonymUpdate,
   projectId,
   onProceed,
+  // Multi-PBIX-per-project (Part C): when set, a background dry-run job is
+  // in flight/complete for N files — render the per-file status list
+  // instead of the single-file DryRunMappingTable below.
+  multiDryRunJob,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -526,8 +531,22 @@ export function StepMappingOptions({
         </div>
       )}
 
+      {/* ── Multi-PBIX per-file status list — replaces the single-file table
+           entirely when a background dry-run job is active for this
+           project (see CreateProjectPage.jsx's handleDryRun). ─────────── */}
+      {multiDryRunJob?.job_id && (
+        <MultiFileDryRunStatus
+          projectId={projectId}
+          jobId={multiDryRunJob.job_id}
+          onEdit={(rowId) => {
+            const row = (detectedMappings || []).find(r => r.id === rowId);
+            if (row) setEditingRow(row);
+          }}
+        />
+      )}
+
       {/* ── New DryRunMappingTable — shown after a successful dry run ─────── */}
-      {dryRunStatus === 'success' && detectedMappings.length > 0 && (
+      {!multiDryRunJob?.job_id && dryRunStatus === 'success' && detectedMappings.length > 0 && (
         <div ref={mappingTableRef}>
           <DryRunMappingTable
             mappings={detectedMappings}

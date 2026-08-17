@@ -152,6 +152,11 @@ class SMLColumn(BaseModel):
         description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
     )
     has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
+    source_file: Optional[str] = Field(
+        default=None,
+        description="Full path to the source .pbix file this field was extracted from — "
+        "disambiguates rows across a multi-PBIX project. Propagated from OSIColumn.source_file.",
+    )
     is_enum: bool = Field(default=False, description="True when the column has a small, exhaustive set of values")
     cortex_search_service: Optional[str] = Field(default=None, description="Snowflake Cortex Search Service name linked to this text dimension")
     sample_values: list[str] = Field(default_factory=list, description="Representative sample values for NLP context")
@@ -388,12 +393,17 @@ class SMLMetric(BaseModel):
         description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
     )
     has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
+    source_file: Optional[str] = Field(
+        default=None,
+        description="Full path to the source .pbix file this metric was extracted from — "
+        "disambiguates rows across a multi-PBIX project. Propagated from OSIMetric.source_file.",
+    )
 
     def model_post_init(self, __context: Any) -> None:
         """Set label and generate expression if not provided."""
         if not self.label:
             self.label = self.unique_name
-        
+
         # Generate expression if source_column is provided but expression is empty
         if self.source_column and not self.expression:
             self.expression = self._generate_expression()

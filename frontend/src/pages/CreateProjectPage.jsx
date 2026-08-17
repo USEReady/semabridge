@@ -33,6 +33,7 @@ import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
 import { buildDryRunPayload } from '../utils/dryRunPayload';
+import { normalizeRows } from '../utils/normalizeRows';
 import { escapeYamlString } from '../utils/yaml';
 import { StepBasicInfo } from '../components/CreateProjectWizard/StepBasicInfo';
 import { StepConnectorConfig } from '../components/CreateProjectWizard/StepConnectorConfig';
@@ -272,24 +273,6 @@ function SourceTableBadge({ tables, hasIssue = false }) {
   );
 }
 
-function normalizeStatus(item) {
-  const validationStatus = String(item?.validation_status || '').toLowerCase();
-  const validationCode = String(item?.validation_code || '').toUpperCase();
-  const explicit = String(item?.status || '').toLowerCase();
-  const targetField = String(item?.target_field || item?.target_name || item?.target || '').trim();
-
-  if (
-    item?.collision_detected === true ||
-    validationStatus === 'invalid' ||
-    validationStatus === 'collision' ||
-    (validationCode && validationCode !== 'OK')
-  ) return 'collision';
-
-  if (!targetField) return 'unmapped';
-  if (explicit === 'manual') return 'manual';
-  return 'auto';
-}
-
 function isBlockingRow(row) {
   const status = String(row?.status || '').toLowerCase();
   if (status === 'collision' || status === 'unmapped') return true;
@@ -299,165 +282,6 @@ function isBlockingRow(row) {
 
   const validationCode = String(row?.validation_code || '').toUpperCase();
   return Boolean(validationCode && validationCode !== 'OK');
-}
-
-function parseDatasetFromPath(pathValue) {
-  const path = String(pathValue || '').trim();
-  if (!path) return '';
-  const direct = /^datasets\.([^.]+)$/i.exec(path);
-  if (direct?.[1]) return String(direct[1]).trim();
-  const nested = /^datasets\.([^.]+)\./i.exec(path);
-  if (nested?.[1]) return String(nested[1]).trim();
-  return '';
-}
-
-function resolveMeasureSourceTables(row) {
-  const fromRow = Array.isArray(row?.measure_source_tables)
-    ? row.measure_source_tables.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
-  if (fromRow.length > 0) return [...new Set(fromRow)];
-
-  const fallback = parseDatasetFromPath(row?.parent_source_path);
-  return fallback ? [fallback] : [];
-}
-
-function resolveColumnSourceTable(row, parentTable = '') {
-  const fromPath = parseDatasetFromPath(row?.source_path);
-  if (fromPath) return fromPath;
-
-  const fromParentPath = parseDatasetFromPath(row?.parent_source_path);
-  if (fromParentPath) return fromParentPath;
-
-  return String(parentTable || row?.parent_table || row?.source_table_name || '').trim();
-}
-
-function resolveMeasureExpression(row) {
-  return String(row?.source_expression || row?.measure_expression || row?.expression || '').trim();
-}
-
-function normalizeRows(data) {
-  console.log('[normalizeRows] Input data:', data);
-  const entityRows = Array.isArray(data?.entity_mappings) ? data.entity_mappings : [];
-  console.log('[normalizeRows] Total entity rows:', entityRows.length);
-  console.log('[normalizeRows] Entity kinds:', entityRows.map(r => r?.entity_kind));
-
-  if (entityRows.length > 0) {
-    const fieldRows = entityRows.filter((row) => {
-      const kind = String(row?.entity_kind || '').toLowerCase();
-      const isTable = kind === 'table';
-      if (isTable) {
-        console.log('[normalizeRows] Filtering out table row:', row?.source_entity || row?.source_name);
-      }
-      return !isTable;
-    });
-
-    console.log('[normalizeRows] Field rows after filtering:', fieldRows.length);
-    if (fieldRows.length === 0 && entityRows.length > 0) {
-      console.error('[normalizeRows] No field rows! Entity kinds present:',
-        [...new Set(entityRows.map(r => r?.entity_kind))]);
-    }
-
-    return fieldRows.map((row, index) => {
-      const kind = String(row?.entity_kind || 'column').toLowerCase();
-      const isMeasure = kind === 'metric' || kind === 'measure';
-      const sourceName = String(row?.source_name || row?.name || '').trim();
-      const targetName = String(row?.target_name || row?.name || '').trim();
-      return {
-        id: String(row?.id || `entity-${index}`),
-        project_id: String(row?.project_id || data?.project_id || ''),
-        model_name: String(row?.model_name || data?.model_name || data?.semantic_model_name || ''),
-        source_field: sourceName || `field_${index + 1}`,
-        source_path: String(row?.source_path || '').trim(),
-        entity_kind: kind,
-        parent_source_path: String(row?.parent_source_path || '').trim(),
-        source_type: String(row?.source_data_type || row?.data_type || kind || 'unknown'),
-        field_type: isMeasure ? 'measure' : 'column',
-        measure_source_tables: isMeasure ? resolveMeasureSourceTables(row) : [],
-        source_table_name: !isMeasure ? resolveColumnSourceTable(row) : '',
-        measure_expression: isMeasure ? resolveMeasureExpression(row) : '',
-        target_field: targetName,
-        target_type: String(row?.target_data_type || row?.source_data_type || row?.data_type || 'unknown'),
-        status: row?.collision_detected ? 'collision' : normalizeStatus({ ...row, target_field: targetName }),
-        validation_status: String(row?.validation_status || ''),
-        validation_code: String(row?.validation_code || ''),
-        validation_message: String(row?.validation_message || ''),
-        suggested_target_name: String(row?.suggested_target_name || ''),
-        collision_detected: Boolean(row?.collision_detected),
-        target_expression: row?.target_expression || '',
-        sync_enabled: row?.sync_enabled !== false,
-        sync_failure_reason: row?.sync_failure_reason || '',
-        depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
-        synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
-        synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
-        // Static risk tier (metric-only; null for columns) and the Tier-5
-        // provider's own self-reported estimate (metric-only, Tier-5-
-        // only; null otherwise) -- see utils/riskLabels.js and
-        // project_mapping_engine.py's _compute_static_risk_tier. Passed
-        // through as-is (no renaming/coercion): both are already null
-        // for every row that shouldn't show them, straight from the
-        // backend.
-        static_risk_tier: row?.static_risk_tier ?? null,
-        static_risk_label: row?.static_risk_label ?? null,
-        llm_self_reported_confidence: row?.llm_self_reported_confidence ?? null,
-        // advisory_categories: general-purpose, informational-only tags
-        // (see sml/models.py's SMLMetric.advisory_categories) -- e.g.
-        // 'enrichment_column_unverifiable' (utils/riskLabels.js's
-        // getEnrichmentUnverifiableCaveat). Was already returned by the
-        // backend but silently dropped here before this fix -- same
-        // allowlist-gap pattern as static_risk_tier/llm_self_reported_
-        // confidence above.
-        advisory_categories: Array.isArray(row?.advisory_categories) ? row.advisory_categories : [],
-        isDirty: false,
-      };
-    });
-  }
-
-  const rows = [];
-  const tableMappings = Array.isArray(data?.mappings) ? data.mappings : [];
-  tableMappings.forEach((table, tableIndex) => {
-    const tableSource = String(table?.source || table?.name || '').trim();
-    const columns = Array.isArray(table?.columns) ? table.columns : [];
-
-    if (columns.length === 0) {
-      return;
-    }
-
-    columns.forEach((column, columnIndex) => {
-      const colSource = String(column?.source || column?.name || '').trim();
-      const colTarget = String(column?.target || '').trim();
-      const fieldType = String(column?.field_type || '').toLowerCase() === 'measure' ? 'measure' : 'column';
-      rows.push({
-        id: `${table?.id || tableSource || `t${tableIndex}`}::${column?.source_path || colSource || columnIndex}`,
-        project_id: String(column?.project_id || data?.project_id || ''),
-        model_name: String(column?.model_name || data?.model_name || data?.semantic_model_name || ''),
-        source_field: colSource || `column_${columnIndex + 1}`,
-        source_path: String(column?.source_path || '').trim(),
-        entity_kind: String(column?.entity_kind || 'column').toLowerCase(),
-        source_type: String(column?.type || column?.data_type || 'unknown'),
-        field_type: fieldType,
-        source_table_name: resolveColumnSourceTable(column, tableSource),
-        measure_source_tables: [],
-        measure_expression: '',
-        target_field: colTarget,
-        target_type: String(column?.type || column?.data_type || 'unknown'),
-        status: normalizeStatus({ ...column, target_field: colTarget }),
-        validation_status: String(column?.validation_status || ''),
-        validation_code: String(column?.validation_code || ''),
-        validation_message: String(column?.validation_message || ''),
-        suggested_target_name: String(column?.suggested_target_name || ''),
-        collision_detected: Boolean(column?.collision_detected),
-        target_expression: column?.target_expression || '',
-        sync_enabled: column?.sync_enabled !== false,
-        sync_failure_reason: column?.sync_failure_reason || '',
-        depends_on_measures: Array.isArray(column?.depends_on_measures) ? column.depends_on_measures : [],
-        parent_table: tableSource,
-        synonym_overrides: Array.isArray(column?.synonym_overrides) ? column.synonym_overrides : [],
-        isDirty: false,
-      });
-    });
-  });
-
-  return rows;
 }
 
 function countResponseFields(data) {
@@ -656,6 +480,18 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [pbixFile, setPbixFile] = useState(null);
   const [pbixUploadPath, setPbixUploadPath] = useState('');
   const [pbixUploading, setPbixUploading] = useState(false);
+
+  // Multi-PBIX-per-project (Part C): when the user picks "Multiple files" in
+  // StepConnectorConfig, pbixFilePaths holds the resolved absolute paths of
+  // every uploaded file (via MultiPbixUpload) instead of the single
+  // pbixUploadPath above. buildSourceConfig()/handleDryRun() prefer this list
+  // whenever it has more than one entry; a single file still flows through
+  // the existing pbix_path field unchanged.
+  const [pbixMultiFileMode, setPbixMultiFileMode] = useState(false);
+  const [pbixFilePaths, setPbixFilePaths] = useState([]);
+  // Per-file dry-run job state (Part B/C): null until a multi-file dry-run
+  // job has been created; then polled via getDryRunJobStatus.
+  const [multiDryRunJob, setMultiDryRunJob] = useState(null);
 
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
@@ -1154,7 +990,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       return;
     }
 
-    if (sourceConnector === 'pbix' && !resolvedPbixPath) {
+    const hasMultiPbixFiles = pbixMultiFileMode && pbixFilePaths.length > 0;
+    if (sourceConnector === 'pbix' && !resolvedPbixPath && !hasMultiPbixFiles) {
       setCreateError(pbixSourceMode === 'TAG'
         ? 'Select a PBIX file from the tagged folder before finishing.'
         : 'Upload a .pbix file before finishing.');
@@ -1351,7 +1188,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
 
     if (sourceConnector === 'pbix') {
-      if (pbixSourceMode === 'TAG') {
+      if (pbixMultiFileMode && pbixFilePaths.length > 1) {
+        // Multi-PBIX project: each path becomes its own independent
+        // dry-run/deploy job (see _build_sync_jobs()'s source.models list)
+        // and its own semantic view, named from its own filename — never
+        // the project name. A single-file selection still falls through to
+        // the pbix_path branch below, unchanged.
+        source.models = pbixFilePaths;
+      } else if (pbixSourceMode === 'TAG') {
         if (selectedLocalFolderId) source.local_folder_id = selectedLocalFolderId;
         if (selectedLocalFolderTag) source.local_folder_tag = selectedLocalFolderTag;
         if (selectedPbixFile?.name) source.file_name = selectedPbixFile.name;
@@ -1359,9 +1203,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         source.file_name = pbixFile.name;
       }
 
-      if (resolvedPbixPath) {
-        source.pbix_path = resolvedPbixPath;
-        source.pbix_file_path = resolvedPbixPath;
+      const effectiveSinglePath = pbixMultiFileMode && pbixFilePaths.length === 1
+        ? pbixFilePaths[0]
+        : resolvedPbixPath;
+      if (!source.models && effectiveSinglePath) {
+        source.pbix_path = effectiveSinglePath;
+        source.pbix_file_path = effectiveSinglePath;
       }
     }
 
@@ -1609,9 +1456,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const handleDryRun = useCallback(async () => {
     setMappingDryRunStatus('loading');
     setMappingError('');
+    setMultiDryRunJob(null);
 
     const projectId = createdProject?.id || createdProject?.project_id || 'preview';
     const effectivePbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
+    const isMultiPbix = sourceConnector === 'pbix' && pbixMultiFileMode && pbixFilePaths.length > 1;
     const { sourceConfig, targetConfig } = buildDryRunPayload({
       sourceConnector,
       targetConnectors,
@@ -1620,10 +1469,31 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeDatabase,
       targetDatabase,
       selectedModelNames,
-      pbixPath: effectivePbixPath,
+      pbixPath: isMultiPbix ? '' : effectivePbixPath,
     });
 
-    const selectedSources = selectedModelNames;
+    const selectedSources = isMultiPbix ? pbixFilePaths : selectedModelNames;
+
+    if (isMultiPbix) {
+      // N-file batch: use the background-job-plus-polling endpoint instead
+      // of the synchronous one below, so a large/slow batch can never time
+      // out the HTTP request — see MultiFileDryRunStatus for the polling
+      // and per-file drill-in/retry UI this feeds.
+      try {
+        const job = await api.createDryRunJob(projectId, {
+          source_config: sourceConfig,
+          target_config: targetConfig,
+          selected_sources: selectedSources,
+        });
+        setMultiDryRunJob(job);
+        setMappingDryRunStatus('success');
+        setMappingDryRunSignature(currentMappingSignature);
+      } catch (err) {
+        setMappingError(err?.message || 'Failed to start the multi-file dry-run job.');
+        setMappingDryRunStatus('error');
+      }
+      return;
+    }
 
     try {
       const response = await api.runProjectDryRun(projectId, {
@@ -1668,6 +1538,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
     targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
     pbixSourceMode, selectedPbixFilePath, pbixUploadPath, fabricAccountId,
+    pbixMultiFileMode, pbixFilePaths,
   ]);
 
   // ── handleFieldEdit — saves a single field mapping edit via the API ──────────
@@ -1986,6 +1857,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 if (file) setPbixFile(file);
                 setPbixUploadPath(String(path || '').trim());
               }}
+              pbixMultiFileMode={pbixMultiFileMode}
+              setPbixMultiFileMode={setPbixMultiFileMode}
+              setPbixFilePaths={setPbixFilePaths}
               workspaces={liveFabricWorkspaces}
               workspacesLoading={isRefreshingWorkspaces}
               isRefreshingWorkspaces={isRefreshingWorkspaces}
@@ -2093,6 +1967,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onBulkResolved={handleBulkResolved}
                 onSynonymUpdate={handleSynonymUpdate}
                 projectId={createdProject?.id || createdProject?.project_id || dryRunData?.project_id || 'preview'}
+                multiDryRunJob={multiDryRunJob}
               />
             </ErrorBoundary>
           )}

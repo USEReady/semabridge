@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -199,6 +200,72 @@ def test_build_sync_jobs_raises_validation_error_on_missing_pbix_path():
         ses._build_sync_jobs(
             {"source": source_cfg, "targets": [{"type": "snowflake"}]}
         )
+
+
+def test_build_sync_jobs_resolves_multi_pbix_full_paths_without_glob(tmp_path):
+    """Multi-PBIX source.models entries are full absolute paths; _build_sync_jobs
+    must resolve them via its existing literal-path exact-match branch (lines
+    ~224-234) with zero code changes — this is the integration point the
+    multi-PBIX feature relies on, so it must be proven, not assumed.
+    """
+    file_a = tmp_path / "Sales Report.pbix"
+    file_b = tmp_path / "Marketing Analysis.pbix"
+    file_a.write_bytes(b"fake-pbix-a")
+    file_b.write_bytes(b"fake-pbix-b")
+
+    source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b)]}
+    jobs, source_type, target_type, resolved_source_cfg, resolved_target_cfg = ses._build_sync_jobs(
+        {"source": source_cfg, "targets": [{"type": "snowflake"}]}
+    )
+
+    assert source_type == "pbix"
+    assert len(jobs) == 2
+    assert jobs[0]["pbix_path"] == str(file_a.resolve())
+    assert jobs[1]["pbix_path"] == str(file_b.resolve())
+    # Each job carries its own distinct path — proves the jobs are independently
+    # addressable, which is what per-file parallel dry-run/deploy (Part B/C)
+    # needs from this layer.
+    assert jobs[0]["pbix_path"] != jobs[1]["pbix_path"]
+
+
+def test_build_sync_jobs_multi_pbix_never_invokes_glob_fallback(tmp_path, monkeypatch):
+    """Literal full-path resolution must not depend on the glob fallback at all.
+
+    Asserts Path.glob is never invoked when a model entry is already a full,
+    existing path — proving the multi-PBIX feature avoids the non-deterministic
+    "first match wins" glob heuristic entirely, by construction.
+    """
+    file_a = tmp_path / "Report One.pbix"
+    file_a.write_bytes(b"fake-pbix")
+
+    def _tracking_glob(self, pattern):
+        raise AssertionError(
+            f"Path.glob() must not be called for a literal full-path model entry (pattern={pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", _tracking_glob)
+
+    source_cfg = {"type": "pbix", "models": [str(file_a)]}
+    jobs, *_ = ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
+    assert jobs[0]["pbix_path"] == str(file_a.resolve())
+
+
+def test_build_sync_jobs_rejects_more_than_max_batch_models(tmp_path):
+    """Confirms the pre-existing MAX_BATCH_MODELS cap (10) still applies once
+    models are full paths, not just stems — the multi-PBIX UI's 1-10 file cap
+    (Part C) is enforced here too, not only by pbix_source_validation.
+    """
+    from semabridge.domain.exceptions import ValidationError
+
+    files = []
+    for i in range(ses.MAX_BATCH_MODELS + 1):
+        f = tmp_path / f"Report {i}.pbix"
+        f.write_bytes(b"x")
+        files.append(str(f))
+
+    source_cfg = {"type": "pbix", "models": files}
+    with pytest.raises(ValidationError, match="Batch sync currently supports up to"):
+        ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
 
 
 def test_build_config_yaml_from_request_propagates_pbix_path():

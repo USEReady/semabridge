@@ -731,6 +731,7 @@ def _compat_serialize_auto_map_entity_mappings(
             "static_risk_tier": row.get("static_risk_tier"),
             "static_risk_label": row.get("static_risk_label"),
             "llm_self_reported_confidence": row.get("llm_self_reported_confidence"),
+            "source_file": row.get("source_file"),
         })
 
     seen: Dict[str, Dict[str, Any]] = {}

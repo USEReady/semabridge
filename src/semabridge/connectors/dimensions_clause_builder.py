@@ -8,6 +8,7 @@ from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.core.exceptions import AmbiguousColumnReferenceError
 
 logger = get_logger(__name__)
 
@@ -72,6 +73,49 @@ class DimensionsClauseBuilder:
             is_osi=True, live_col_lookup=live_col_lookup or {},
         )
 
+    def _safe_resolve_physical_column_name(
+        self,
+        dataset: Any,
+        raw_col_name: str,
+        *,
+        entity_unique_name: str,
+        dataset_name: str,
+    ) -> Optional[str]:
+        """Resolve a raw column reference to its physical name, routing a
+        genuinely ambiguous duplicate-sibling reference (schema_manager's
+        AmbiguousColumnReferenceError -- e.g. two physical columns sharing
+        the exact same name, both disambiguated with a suffix by
+        _collect_physical_source_columns, with no way to tell from this
+        reference alone which one was meant) through the SAME drop_ledger
+        "record a clear reason and skip this one entity" pattern already
+        used for every other schema-validation miss in this builder just
+        below -- never let it propagate as an uncaught exception and fail
+        the whole DIMENSIONS build (or the whole dry-run/deploy) over one
+        unresolvable dimension.
+
+        Deliberately does NOT add the ambiguous reference to `missing_dims`:
+        that structure feeds `auto_add_missing_dims`'s ALTER TABLE ADD COLUMN
+        flow (see snowflake_emitter.py), which expects a specific, confident
+        physical column name -- attempting to add a column under a name we
+        aren't even sure is correct would be worse than just dropping it.
+
+        Returns the resolved physical column name, or None when the
+        reference was genuinely ambiguous (already recorded to drop_ledger;
+        the caller must `continue` past this entity).
+        """
+        try:
+            return self.schema_manager._resolve_physical_column_name(dataset, raw_col_name)
+        except AmbiguousColumnReferenceError as exc:
+            candidates = ", ".join(exc.candidates) if exc.candidates else "unknown"
+            self.drop_ledger.record(
+                "column", entity_unique_name, DropStage.SCHEMA_VALIDATION,
+                f"Column reference '{raw_col_name}' is ambiguous in dataset '{dataset_name}' -- "
+                f"it matches {len(exc.candidates)} distinct duplicate-named physical columns "
+                f"({candidates}) and cannot be resolved to one without guessing.",
+                dataset=dataset_name,
+            )
+            return None
+
     def _build_dimensions(
         self,
         dimensions: List[Any],
@@ -107,8 +151,13 @@ class DimensionsClauseBuilder:
                     dataset_obj = dataset_by_name.get(attr.dataset)
                     if not dataset_obj:
                         continue
-                    phys_col = self.schema_manager._resolve_physical_column_name(dataset_obj, raw_col)
-                
+                    phys_col = self._safe_resolve_physical_column_name(
+                        dataset_obj, raw_col,
+                        entity_unique_name=attr.unique_name, dataset_name=attr.dataset,
+                    )
+                    if phys_col is None:
+                        continue
+
                 # Prefer live (confirmed Snowflake) schema over modeled fallback.
                 _live = (live_col_lookup or {}).get(attr.dataset)
                 if _live is not None:
@@ -202,7 +251,12 @@ class DimensionsClauseBuilder:
                 if is_osi:
                     phys_col = self.identifier_sanitizer.sanitize_column(col.unique_name)
                 else:
-                    phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
+                    phys_col = self._safe_resolve_physical_column_name(
+                        dataset, col.unique_name,
+                        entity_unique_name=col.unique_name, dataset_name=dataset.unique_name,
+                    )
+                    if phys_col is None:
+                        continue
 
                 # Synthetic date-intelligence columns (MONTHINDEX etc.) are only safe
                 # to emit when the live Snowflake schema confirms they exist.

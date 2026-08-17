@@ -10,6 +10,7 @@ from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.domain.exceptions import NotFoundError, ValidationError
+from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
 
 logger = logging.getLogger("semabridge.api")
 
@@ -265,6 +266,21 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     }
                 )
 
+            # Defense-in-depth naming-collision check: this runs for BOTH dry-run
+            # and real-deploy requests, because both funnel through this one
+            # function via execute_sync_request() — there is no separate
+            # "deploy-only" job-construction path for this to drift out of sync
+            # with. A second, earlier check also runs at project-configuration
+            # time (see pbix_source_validation-adjacent call in
+            # projects_controller.create_project and mappings_controller.
+            # dry_run_mapping) so a collision is caught before the user even
+            # gets to a dry-run, not just before a deploy.
+            if len(sync_jobs) > 1:
+                validate_no_pbix_view_name_collisions(
+                    [job["pbix_path"] for job in sync_jobs if job.get("pbix_path")],
+                    platform=target_type,
+                )
+
     elif source_type in ("snowflake", "snowflake_semantic_view"):
         model_list = source_cfg.get("models") or []
         if not model_list:
@@ -382,7 +398,12 @@ def _run_single_job(
             "dropped_entities": summary_data.get("dropped_entities") or [],
         }
     except Exception as exc:
-        logger.error("Sync failed for model '%s': %s", model_label, exc)
+        # exc_info=True so an uncaught failure at this outermost layer of
+        # per-model sync execution still leaves a full traceback in the log,
+        # not just str(exc) -- see local_pbix_connector.py's
+        # _extract_with_pbixray for the same fix applied one layer down, at
+        # the actual extraction call site.
+        logger.error("Sync failed for model '%s': %s", model_label, exc, exc_info=True)
         summary_data = {
             "errors": [
                 {

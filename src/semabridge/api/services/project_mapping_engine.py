@@ -6,8 +6,11 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
+from semabridge.utils.logger import get_logger
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_UNREACHABLE_DIMENSION
+
+logger = get_logger(__name__)
 
 # Structural signal, not a name: any metric whose advisory_categories
 # intersects this set is known to fail at real-deploy time regardless of
@@ -277,6 +280,55 @@ def _is_imported_physical_column(col: Dict[str, Any]) -> bool:
     return True
 
 
+# Raw, structural identity fields checked by _column_identity_signature() --
+# deliberately excludes every display-name field (unique_name/name/label/...),
+# since a differently-cased duplicate is EXACTLY two records that differ only
+# in display name and must still be recognized as one real column.
+_COLUMN_IDENTITY_FIELDS: Tuple[str, ...] = (
+    "source_expression", "expression", "formula",
+    "source_column", "source_path", "column_id", "field_id", "id",
+)
+
+
+def _column_identity_signature(col: Dict[str, Any]) -> Optional[Tuple[str, ...]]:
+    """Structural identity signature for a physical column, used to tell a
+    genuinely duplicated column (same real column, reported twice under
+    different casing) apart from two genuinely different columns whose
+    names merely collide after sanitization.
+
+    Built ONLY from raw source-of-truth fields the connector may have
+    populated (see _COLUMN_IDENTITY_FIELDS) plus data_type -- never from the
+    display name, which is exactly the field that legitimately differs for a
+    true duplicate. Two columns are only safe to collapse into one entity
+    when both signatures are present (non-None) AND equal.
+
+    Returns None when the column carries no identity signal at all (every
+    checked field blank) -- callers MUST treat None as "not proven identical"
+    rather than as a match, so an indeterminate case disambiguates (keeps
+    both, suffixed) instead of silently collapsing and risking real data loss.
+    This is the fix for the design gap where two distinct columns that merely
+    collided on their sanitized target identifier were previously discarded
+    as if they were the same column, with no identity check at all.
+    """
+    parts: List[str] = []
+    has_signal = False
+    for field in _COLUMN_IDENTITY_FIELDS:
+        value = col.get(field)
+        text = str(value).strip().lower() if value not in (None, "") else ""
+        if text:
+            has_signal = True
+        parts.append(text)
+
+    data_type = str(col.get("data_type") or "").strip().lower()
+    if data_type:
+        has_signal = True
+    parts.append(data_type)
+
+    if not has_signal:
+        return None
+    return tuple(parts)
+
+
 def extract_model_entities(
     model: Dict[str, Any],
     target_connector: Optional[str] = None,
@@ -314,17 +366,39 @@ def extract_model_entities(
             else:
                 other_cols.append(col)
 
-        dedup_cols: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
-        removed_cols = []
+        # dedup_cols is keyed by the RESOLVED (uppercase) target identifier --
+        # either a column's own natural normalized_identifier, or a suffixed
+        # identifier assigned below when disambiguating. Keying it this way
+        # (rather than the original tuple of (dataset_name, normalized_identifier,
+        # "column") -- redundant anyway since this whole block already runs once
+        # per dataset) means a THIRD column whose own natural identifier happens
+        # to equal an already-assigned suffix (e.g. a real column literally named
+        # "BASE_2") is still detected as a collision against it, instead of
+        # silently double-claiming that identifier.
+        dedup_cols: Dict[str, Dict[str, Any]] = {}
+        kept_signatures: Dict[str, Optional[Tuple[str, ...]]] = {}
+        removed_cols = []         # proven identical duplicates, collapsed away
+        disambiguated_cols = []   # genuinely distinct columns, kept under a suffixed identifier
         for col in physical_cols:
             cname = _column_name(col)
             if not cname:
                 continue
             normalized_identifier = _default_target_identifier(cname, normalized_target_connector)
-            dedup_key = (dataset_name, normalized_identifier, "column")
+            signature = _column_identity_signature(col)
+            dedup_key = normalized_identifier.upper()
 
-            if dedup_key in dedup_cols:
-                existing_col = dedup_cols[dedup_key]
+            if dedup_key not in dedup_cols:
+                dedup_cols[dedup_key] = col
+                kept_signatures[dedup_key] = signature
+                continue
+
+            existing_col = dedup_cols[dedup_key]
+            existing_signature = kept_signatures[dedup_key]
+
+            if existing_signature is not None and signature is not None and existing_signature == signature:
+                # Proven identical metadata (matching source_expression/
+                # data_type/source_path/... -- see _column_identity_signature)
+                # -- same collapse + canonical-case tiebreak as before this fix.
                 existing_name = _column_name(existing_col)
                 existing_is_canonical = (existing_name.upper() == normalized_identifier.upper())
                 current_is_canonical = (cname.upper() == normalized_identifier.upper())
@@ -332,10 +406,36 @@ def extract_model_entities(
                 if current_is_canonical and not existing_is_canonical:
                     removed_cols.append(existing_col)
                     dedup_cols[dedup_key] = col
+                    kept_signatures[dedup_key] = signature
                 else:
                     removed_cols.append(col)
-            else:
-                dedup_cols[dedup_key] = col
+                continue
+
+            # Not provably the same column -- disambiguate with a numeric
+            # suffix and KEEP BOTH, matching the proven collision-handling
+            # pattern already used for dimension-alias and metric-name
+            # collisions (snowflake_emitter_parts/identifier_utilities.py's
+            # resolve_unique_dimension_alias / resolve_unique_metric_alias).
+            # Discarding here was the original design gap: same-sanitized-name
+            # was treated as proof of "same real column" with no check against
+            # actual source identity, silently losing whichever entry lost the
+            # canonical-case tiebreak even when it was a genuinely different
+            # column.
+            suffix_idx = 2
+            candidate_identifier = f"{normalized_identifier}_{suffix_idx}"
+            while candidate_identifier.upper() in dedup_cols:
+                suffix_idx += 1
+                candidate_identifier = f"{normalized_identifier}_{suffix_idx}"
+
+            logger.warning(
+                "Physical column collision for '%s' (base '%s'); using '%s'",
+                cname, normalized_identifier, candidate_identifier,
+            )
+            disambiguated_col = dict(col)
+            disambiguated_col["disambiguated_target_identifier"] = candidate_identifier
+            dedup_cols[candidate_identifier.upper()] = disambiguated_col
+            kept_signatures[candidate_identifier.upper()] = signature
+            disambiguated_cols.append(disambiguated_col)
 
         if removed_cols:
             import json
@@ -356,7 +456,9 @@ def extract_model_entities(
                     dataset=dataset_name,
                 )
 
-        # The final columns list preserves the deduplicated physical columns and keeps other columns untouched
+        # The final columns list preserves the deduplicated physical columns,
+        # any disambiguated (never discarded) collision siblings, and keeps
+        # other columns untouched.
         dedup_columns = list(dedup_cols.values()) + other_cols
         column_name_counts: Dict[str, int] = {}
         for col in dedup_columns:
@@ -384,6 +486,12 @@ def extract_model_entities(
                 "synonyms": list(column.get("synonyms") or []),
                 "synonym_sources": dict(column.get("synonym_sources") or {}),
                 "has_report_alias": bool(column.get("has_report_alias")),
+                "source_file": column.get("source_file"),
+                # Set only for a column disambiguated above (a genuinely
+                # different column that collided with another after
+                # sanitization) -- None for every other column, including
+                # ones that survived a proven-duplicate collapse.
+                "disambiguated_target_identifier": column.get("disambiguated_target_identifier"),
             })
 
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
@@ -412,6 +520,7 @@ def extract_model_entities(
             "complexity_tier": metric.get("complexity_tier"),
             "validation_notes": list(metric.get("validation_notes") or []),
             "llm_self_reported_confidence": metric.get("llm_self_reported_confidence"),
+            "source_file": metric.get("source_file"),
         })
 
     return entities
@@ -933,6 +1042,7 @@ def build_entity_mappings(
             "synonym_sources": dict(entity.get("synonym_sources") or {}),
             "has_report_alias": bool(entity.get("has_report_alias")),
             "complexity_tier": entity.get("complexity_tier"),
+            "source_file": entity.get("source_file"),
         })
 
     # Pass 2: Declarative Validation (Option B)

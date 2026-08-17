@@ -437,6 +437,7 @@ export default function ProjectConfigPage() {
     pbix_path: '',
     pbix_folder: '',
     pbix_uploaded_path: '',
+    pbix_models: [],
     identity_id: '',
     workspace_id: '',
     database: '',
@@ -854,6 +855,7 @@ export default function ProjectConfigPage() {
           pbix_path: '',
           pbix_folder: '',
           pbix_uploaded_path: '',
+          pbix_models: [],
           identity_id: '',
           workspace_id: '',
           database: '',
@@ -886,11 +888,19 @@ export default function ProjectConfigPage() {
     const ui = tree.ui && typeof tree.ui === 'object' ? tree.ui : {};
     const options = tree.options && typeof tree.options === 'object' ? tree.options : {};
 
+    const resolvedSourceType = String(source.type || fallbackSource).toLowerCase();
     const sourceModels = Array.isArray(source.models) ? source.models.map(v => String(v).trim()).filter(Boolean) : [];
     const sourceModel = source.model ? String(source.model).trim() : '';
-    const allowModels = sourceModels.length
-      ? sourceModels
-      : (sourceModel && sourceModel !== '*' ? [sourceModel] : []);
+    // For pbix sources, `source.models` is a list of PBIX file paths (one
+    // semantic view per file — see CreateProjectPage.jsx's buildSourceConfig),
+    // not a Fabric/Snowflake model-name allow-list. Keep the two concepts
+    // separate so a multi-PBIX project's file list isn't misread as empty
+    // pbix_path/pbix_folder (which previously blocked Sync Now) nor as an
+    // allow-list of model names to filter.
+    const pbixModels = resolvedSourceType === 'pbix' ? sourceModels : [];
+    const allowModels = resolvedSourceType === 'pbix'
+      ? []
+      : (sourceModels.length ? sourceModels : (sourceModel && sourceModel !== '*' ? [sourceModel] : []));
 
     const blockedModelsRaw = options.exclude_model;
     const blockedModels = Array.isArray(blockedModelsRaw)
@@ -900,12 +910,13 @@ export default function ProjectConfigPage() {
     return {
       tree,
       form: {
-        source_type: String(source.type || fallbackSource).toLowerCase(),
+        source_type: resolvedSourceType,
         target_type: String(target.type || fallbackTarget).toLowerCase(),
         output_format: String(ui.intermediate_format || ui.output_format || 'osi').toLowerCase(),
         pbix_path: String(source.pbix_path || source.pbix_file_path || source.source_path || source.file_path || ''),
         pbix_folder: String(source.pbix_folder || ''),
         pbix_uploaded_path: String(projectMeta?.pbix_file_path || source.pbix_file_path || source.pbix_path || ''),
+        pbix_models: pbixModels,
         identity_id: String(source.identity_id || ''),
         workspace_id: String(source.workspace_id || ''),
         database: String(source.database || ''),
@@ -1009,8 +1020,15 @@ export default function ProjectConfigPage() {
 
     if (formToUse.source_type === 'pbix') {
       // PBIX extraction resolves model from file path/folder; do not force model fields.
+      // Exception: a multi-PBIX project (created via the multi-file wizard step)
+      // stores its file list in source.models — preserve it on save instead of
+      // wiping it, since this page has no UI of its own to reconstruct it.
       delete nextTree.source.model;
-      delete nextTree.source.models;
+      if (Array.isArray(formToUse.pbix_models) && formToUse.pbix_models.length > 0) {
+        nextTree.source.models = formToUse.pbix_models;
+      } else {
+        delete nextTree.source.models;
+      }
     } else if (formToUse.source_type === 'fabric') {
       if (allow.length) {
         nextTree.source.models = allow;
@@ -1164,6 +1182,7 @@ export default function ProjectConfigPage() {
       String(configForm.source_type || '').toLowerCase() === 'pbix'
       && !String(configForm.pbix_path || '').trim()
       && !String(configForm.pbix_folder || '').trim()
+      && !(Array.isArray(configForm.pbix_models) && configForm.pbix_models.length > 0)
     ) {
       const msg = 'PBIX source requires PBIX File Path or PBIX Folder before Sync Now.';
       addLog('error', 'Sync', msg);
@@ -2846,6 +2865,12 @@ function FormEditor({
                 placeholder="C:/models"
               />
             </div>
+            {Array.isArray(value.pbix_models) && value.pbix_models.length > 0 && (
+              <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                Multi-PBIX project — {value.pbix_models.length} file{value.pbix_models.length === 1 ? '' : 's'} configured
+                from project creation (each becomes its own semantic view): {value.pbix_models.join(', ')}
+              </div>
+            )}
           </div>
         )}
       </div>

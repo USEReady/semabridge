@@ -79,6 +79,8 @@ class DaxTokenType(Enum):
     MEASURE_REF = auto()   # [MeasureName]
     FUNC_NAME = auto()     # SUM, CALCULATE, FILTER, etc.
     IDENTIFIER = auto()    # bare word
+    VAR = auto()           # VAR keyword (variable-definition block)
+    RETURN = auto()        # RETURN keyword (variable-definition block)
     # Operators
     PLUS = auto()
     MINUS = auto()
@@ -226,6 +228,14 @@ class DaxLexer:
             self.pos += 1
         word = self.text[start : self.pos]
         word_lower = word.lower()
+        # VAR/RETURN are structural keywords, not functions — they mark a
+        # variable-definition block's boundaries, so the parser needs to
+        # recognize them distinctly from an ordinary FUNC_NAME/IDENTIFIER
+        # to know when a VAR block starts/ends (see _parse_var_block).
+        if word_lower == "var":
+            return DaxToken(DaxTokenType.VAR, word, start)
+        if word_lower == "return":
+            return DaxToken(DaxTokenType.RETURN, word, start)
         if word_lower in _DAX_FUNCTIONS:
             return DaxToken(DaxTokenType.FUNC_NAME, word, start)
         # Boolean / logical keywords
@@ -332,6 +342,36 @@ class UnaryOpNode(DaxNode):
     operand: DaxNode = field(default_factory=lambda: LiteralNode(0))
 
 
+@dataclass
+class VarNode(DaxNode):
+    """VAR <name> = <expr> [VAR <name2> = <expr2> ...] RETURN <body>.
+
+    DAX's variable-definition block. `variables` holds each VAR's (name,
+    definition-expression) pair in source order; `body` is the RETURN
+    expression. Any column/measure/table reference inside EITHER a
+    variable's own definition OR the RETURN body counts as a real data
+    dependency for the whole block — a variable is just a named
+    sub-expression, not a boundary that hides what it references. Every
+    AST walker that needs to see "everything this expression touches"
+    (dax_has_zero_data_dependencies, the CALCULATE/ALLEXCEPT detector, the
+    unreachable-dimension detector, etc.) must descend into both parts;
+    walkers that only care about "the outermost/root operation" (e.g.
+    dax_root_is_string_producing) should unwrap to `body` instead, since
+    that's what the expression ultimately evaluates to.
+    """
+    variables: List[Tuple[str, DaxNode]] = field(default_factory=list)
+    body: DaxNode = field(default_factory=lambda: LiteralNode(0))
+
+
+def unwrap_var_body(node: Optional[DaxNode]) -> Optional[DaxNode]:
+    """Follow a (possibly nested) VarNode chain down to its innermost
+    RETURN body — the node an expression actually evaluates to once its
+    VAR definitions are resolved. A no-op for any non-VarNode root."""
+    while isinstance(node, VarNode):
+        node = node.body
+    return node
+
+
 # ---------------------------------------------------------------------------
 # Recursive-Descent Parser
 # ---------------------------------------------------------------------------
@@ -412,7 +452,39 @@ class DaxAstParser:
     # ------------------------------------------------------------------
 
     def _parse_expr(self) -> DaxNode:
+        # A VAR/RETURN block can appear anywhere a DAX expression is valid
+        # — as the whole measure body, nested inside a function argument
+        # (e.g. CALCULATE(VAR x = ... RETURN ..., filter)), or as a VAR's
+        # own definition — since _parse_expr is the entry point every one
+        # of those call sites funnels through, checking here (rather than
+        # only at the top-level parse() call) makes VAR/RETURN parse
+        # correctly at any nesting depth, for any variables/body it holds.
+        if self._match(DaxTokenType.VAR):
+            return self._parse_var_block()
         return self._parse_or()
+
+    def _parse_var_block(self) -> DaxNode:
+        """VAR <name> = <expr> [VAR <name2> = <expr2> ...] RETURN <body>.
+
+        Structural parse only — no assumption about what any variable is
+        named or what its definition/RETURN body computes, so this covers
+        any VAR/RETURN shape DAX allows, not just single-variable ones.
+        """
+        variables: List[Tuple[str, DaxNode]] = []
+        while self._match(DaxTokenType.VAR):
+            self._advance()  # consume VAR
+            name_tok = self._peek()
+            if name_tok.type not in (DaxTokenType.IDENTIFIER, DaxTokenType.FUNC_NAME):
+                raise DaxParseError(
+                    f"Expected variable name after VAR, got {name_tok.type}({name_tok.value!r})"
+                )
+            self._advance()  # consume the variable name
+            self._expect(DaxTokenType.EQ)
+            value_expr = self._parse_expr()
+            variables.append((name_tok.value, value_expr))
+        self._expect(DaxTokenType.RETURN)
+        body = self._parse_expr()
+        return VarNode(variables=variables, body=body)
 
     def _parse_or(self) -> DaxNode:
         left = self._parse_and()
@@ -1575,7 +1647,7 @@ def dax_root_is_string_producing(dax: str) -> bool:
     classified as a dimension/attribute instead, not attempted as a metric
     translation.
     """
-    node = DaxAstParser().parse(dax)
+    node = unwrap_var_body(DaxAstParser().parse(dax))
     if isinstance(node, LiteralNode):
         return isinstance(node.value, str)
     if isinstance(node, FunctionCallNode):
@@ -1606,6 +1678,16 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
             return _refs_data(n.operand)
         if isinstance(n, FunctionCallNode):
             return any(_refs_data(a) for a in n.args)
+        if isinstance(n, VarNode):
+            # A VAR is a named sub-expression, not a boundary that hides
+            # what it references — a reference inside a variable's own
+            # definition (e.g. `VAR _today = [Today]`) is just as much a
+            # real data dependency as one in the RETURN body. Check both,
+            # for however many variables this block defines.
+            return (
+                any(_refs_data(value_expr) for _, value_expr in n.variables)
+                or _refs_data(n.body)
+            )
         return False
 
     return not _refs_data(node)
@@ -1650,6 +1732,11 @@ def _calculate_has_direct_all_or_allexcept_modifier(node: DaxNode) -> bool:
         )
     if isinstance(node, UnaryOpNode):
         return _calculate_has_direct_all_or_allexcept_modifier(node.operand)
+    if isinstance(node, VarNode):
+        return any(
+            _calculate_has_direct_all_or_allexcept_modifier(value_expr)
+            for _, value_expr in node.variables
+        ) or _calculate_has_direct_all_or_allexcept_modifier(node.body)
     return False
 
 
@@ -1717,6 +1804,12 @@ def _calculate_lag_period_of_measure_reference(node: DaxNode) -> Optional[str]:
         )
     if isinstance(node, UnaryOpNode):
         return _calculate_lag_period_of_measure_reference(node.operand)
+    if isinstance(node, VarNode):
+        for _, value_expr in node.variables:
+            found = _calculate_lag_period_of_measure_reference(value_expr)
+            if found:
+                return found
+        return _calculate_lag_period_of_measure_reference(node.body)
     return None
 
 
@@ -1835,6 +1928,10 @@ def _find_all_calculate_nodes(node: DaxNode) -> List[FunctionCallNode]:
             _walk(n.right)
         elif isinstance(n, UnaryOpNode):
             _walk(n.operand)
+        elif isinstance(n, VarNode):
+            for _, value_expr in n.variables:
+                _walk(value_expr)
+            _walk(n.body)
 
     _walk(node)
     return found
@@ -1861,6 +1958,10 @@ def _collect_column_ref_tables(node: DaxNode) -> Set[str]:
         elif isinstance(n, FunctionCallNode):
             for a in n.args:
                 _walk(a)
+        elif isinstance(n, VarNode):
+            for _, value_expr in n.variables:
+                _walk(value_expr)
+            _walk(n.body)
 
     _walk(node)
     return tables

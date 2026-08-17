@@ -29,6 +29,9 @@ from semabridge.api.services.project_ownership_service import (
     require_request_user_id,
     validate_project_connector_accounts_belong_to_user,
 )
+from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
+from semabridge.domain.exceptions import ValidationError
+from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
 
 # --- Request Models ---
 
@@ -137,16 +140,31 @@ def _build_config_yaml_from_request(
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
 
 
-@router.post("/api/projects/{project_id}/dry-run")
-async def dry_run_mapping(
+async def _run_dry_run_pipeline(
+    *,
     project_id: str,
-    http_request: Request,
-    request: DryRunRequest,
-    service: MappingService = Depends(get_mapping_service)
-):
-    """
-    Execute a dry run by running the full semantic pipeline (extraction → OSI → SML)
-    WITHOUT deployment, then return the real field-level mappings (columns + measures).
+    request_user_id,
+    source_config: Dict[str, Any],
+    target_config: Dict[str, Any],
+    selected_sources: List[str],
+) -> Dict[str, Any]:
+    """The actual dry-run pipeline: builds a preview project, runs the real
+    extraction -> OSI -> SML pipeline with dry_run=True, builds entity
+    mappings, runs the trial-DDL pass, and returns the response shape
+    dry_run_mapping() has always returned.
+
+    Extracted verbatim out of dry_run_mapping() (no behavior change — every
+    line below is unchanged except request.xxx -> the equivalent parameter)
+    so it can be invoked two ways:
+      - Synchronously, in-request, by dry_run_mapping() itself — today's
+        flow, unchanged, still fully synchronous for a single call.
+      - Once per file, from a background job (see dry_run_job_service.py),
+        for the multi-PBIX background-job-plus-polling flow that avoids an
+        HTTP timeout on a parallel multi-file batch. Each background
+        invocation passes selected_sources=[one_file_path] and its own
+        project_id, so this function has no awareness of "multi-file" at
+        all — every file's run is a fully independent call, matching the
+        "no merging" requirement structurally rather than by convention.
     """
     from semabridge.api.services.core_domain_service import sync_models
     from semabridge.api.services.mapping_service import (
@@ -157,6 +175,355 @@ async def dry_run_mapping(
     import semabridge.api.services.project_shared as project_shared
     from semabridge.api.services.project_mapping_engine import sanitize_identifier
 
+    source_account_id = str(
+        source_config.get("identity_id")
+        or source_config.get("account_id")
+        or ""
+    ).strip() or None
+    target_account_id = str(
+        target_config.get("identity_id")
+        or target_config.get("account_id")
+        or ""
+    ).strip() or None
+    # ── 1. Resolve or create a stable preview project in the compat store ──
+    # Use a deterministic project id based on source+models so repeated dry
+    # runs for the same wizard session reuse the same project slot.
+    user_seed = str(request_user_id or "").strip()
+    seed = (
+        f"{user_seed}-"
+        f"{source_config.get('type','')}-"
+        f"{source_config.get('workspace_id','')}-"
+        f"{'|'.join(sorted(selected_sources))}"
+    )
+    preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
+
+    project_shared._compat_ensure_loaded()
+    preview_project = project_shared._compat_projects.get(preview_project_id)
+    if not isinstance(preview_project, dict):
+        preview_project = {
+            "id": preview_project_id,
+            "project_id": preview_project_id,
+            "created_at": project_shared._compat_now_iso(),
+        }
+    preview_project.update({
+        "name": "dry-run-preview",
+        "updated_at": project_shared._compat_now_iso(),
+        "status": "preview",
+        "is_transient_preview": True,
+        "preview_kind": "dry-run",
+        "owner_user_id": str(request_user_id).strip() if request_user_id is not None else None,
+        "user_id": str(request_user_id).strip() if request_user_id is not None else None,
+        "account_id": source_account_id or target_account_id,
+        "source_account_id": source_account_id,
+        "target_account_id": target_account_id,
+        "source": dict(source_config),
+        "target": dict(target_config),
+        "targets": [dict(target_config)],
+    })
+    project_shared._compat_projects[preview_project_id] = preview_project
+    project_shared._compat_save_store()
+    logger.info(
+        "[PreviewProject] prepared preview_project_id=%s user_id=%s source_account_id=%s target_account_id=%s selected_sources=%s",
+        preview_project_id,
+        request_user_id,
+        source_account_id,
+        target_account_id,
+        selected_sources,
+    )
+
+    # ── 2. Build a real config YAML from the wizard's source/target config ─
+    config_yaml = _build_config_yaml_from_request(
+        source_config=source_config,
+        target_config=target_config,
+        selected_sources=selected_sources,
+        project_name="dry-run-preview",
+    )
+    project_shared._compat_project_configs[preview_project_id] = config_yaml
+
+    # ── 3. Run the real pipeline with dry_run=True (no deployment) ──────────
+    #    This runs: connector extraction → OSI conversion → SML generation
+    #    and stores the resulting SML snapshot so entity mappings can be built.
+    sync_result = await sync_models({
+        "project_id": preview_project_id,
+        "content": config_yaml,
+        "dry_run": True,
+        # Pass account_id and user_id so credential scoping works for the
+        # transient preview project (not in ORM, so sync_models can't resolve
+        # account_id automatically via the DB lookup).
+        "account_id": source_account_id or target_account_id,
+        "user_id": str(request_user_id) if request_user_id is not None else None,
+    })
+
+    preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(
+        sync_result, selected_sources
+    )
+
+    # Debug: log what we got from the sync result
+    print(f"[DryRun] sync_result status: {sync_result.get('status')}")
+    print(f"[DryRun] preferred_snapshot_id: {preferred_snapshot_id!r}")
+    results = sync_result.get("results") or []
+    for r in results:
+        summary = r.get("summary") or {}
+        print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
+
+    # ── 4. Build entity mappings from the real SML snapshot ──────────────────
+    target_connector = str(target_config.get("type") or "snowflake").strip().lower()
+
+    # Read the SML blob directly from the snapshot by snapshot_id.
+    # We cannot use _compat_build_project_entity_mappings because the snapshot
+    # is stored under the Fabric dataset_id (e.g. "d32e8900-..."), not our
+    # preview project ID — so the project_id lookup would return an empty model.
+    from semabridge.api.services.project_mapping_engine import build_entity_mappings
+    from semabridge.api.services.project_shared import db_manager as _db_manager
+
+    sml_blob: Dict[str, Any] = {}
+
+    # Try preferred_snapshot_id first (most reliable)
+    if preferred_snapshot_id:
+        try:
+            snap = _db_manager.get_snapshot(preferred_snapshot_id)
+            if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                sml_blob = snap.sml_blob
+                print(f"[DryRun] Loaded SML blob from preferred_snapshot_id={preferred_snapshot_id[:12]}")
+                print(f"[DryRun] SML unique_name={sml_blob.get('unique_name')!r}")
+                print(f"[DryRun] datasets={[d.get('unique_name') for d in sml_blob.get('datasets', [])]}")
+                print(f"[DryRun] metrics={[m.get('unique_name') for m in sml_blob.get('metrics', [])]}")
+        except Exception as snap_err:
+            print(f"[DryRun] Failed to load preferred snapshot: {snap_err}")
+
+    # Fallback: try each result's snapshot
+    if not sml_blob:
+        for result_row in (sync_result.get("results") or []):
+            sid = str((result_row.get("summary") or {}).get("sml_snapshot_id") or "").strip()
+            if not sid:
+                continue
+            try:
+                snap = _db_manager.get_snapshot(sid)
+                if snap and isinstance(getattr(snap, "sml_blob", None), dict):
+                    sml_blob = snap.sml_blob
+                    print(f"[DryRun] Loaded SML blob from fallback snapshot={sid[:12]}")
+                    break
+            except Exception:
+                continue
+
+    extraction_failed = not sml_blob
+    if extraction_failed:
+        sync_status = str((sync_result or {}).get("status") or "unknown")
+        logger.warning("[DryRun] No SML blob found for project=%s sync_status=%s — extraction may have failed", preview_project_id, sync_status)
+
+    # Scope to selected sources if specified
+    if sml_blob and selected_sources:
+        from semabridge.api.services.project_runs_impl import _compat_scope_model_for_dry_run
+        sml_blob = _compat_scope_model_for_dry_run(sml_blob, selected_sources)
+
+    built = build_entity_mappings(
+        project_id=preview_project_id,
+        model=sml_blob or {"unique_name": "preview", "datasets": [], "metrics": []},
+        existing_mappings={},
+        session_key=f"{preview_project_id}-mapping-session",
+        target_connector=target_connector,
+    )
+    dropped_entities = list(built.get("dropped_entities", []))
+
+    # ── Trial DDL-build pass ──────────────────────────────────────────────
+    # Runs the real DDL-emission builders (with placeholder Snowflake creds,
+    # never connecting) purely to surface Tier C / DDL-emission-time drops
+    # (e.g. metrics whose DAX translation failed) in the dry-run preview,
+    # before deployment. generate_ddls() is pure string-building — no
+    # network calls, no writes beyond a local debug .sql file — so this is
+    # safe to re-run on every mapping-iteration dry-run call.
+    trial_sml = None
+    if sml_blob and target_connector == "snowflake":
+        try:
+            from semabridge.sml.serializer import SMLSerializer
+            from semabridge.core.settings import SnowflakeConfig
+            from semabridge.core.behavior import ConnectorBehavior
+            from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+
+            trial_sml = SMLSerializer._dict_to_model(sml_blob)
+            target_cfg = target_config or {}
+            trial_cfg = SnowflakeConfig(
+                account=str(target_cfg.get("account") or "placeholder"),
+                user=str(target_cfg.get("user") or "placeholder"),
+                warehouse=str(target_cfg.get("warehouse") or "placeholder"),
+                database=str(target_cfg.get("database") or "placeholder"),
+            )
+            trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=ConnectorBehavior())
+            try:
+                trial_emitter.generate_ddls(trial_sml)
+            except Exception as ddl_err:
+                # Expected for models with unresolvable drops (e.g. every
+                # metric fails translation) — the ledger is still populated
+                # incrementally by the sub-builders before such a raise.
+                logger.info("[DryRun] Trial DDL-build pass raised (non-fatal): %s", ddl_err)
+            dropped_entities.extend(trial_emitter.drop_ledger.to_json())
+        except Exception as trial_setup_err:
+            logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
+            trial_sml = None
+
+    # ── Reconcile: a field the trial DDL pass just dropped (e.g. a
+    # live-schema-only column like MonthIndex when no live schema was
+    # available) must not simultaneously show as status "auto" in
+    # entity_mappings — that's the same "two independently-computed
+    # views of success disagree" gap as the advisory-category
+    # override above, closed the same way. Mutates built["mappings"]
+    # in place, so every downstream consumer (entity_mappings below,
+    # filtered_mappings, auto_count) sees the corrected status.
+    from semabridge.api.services.project_mapping_engine import (
+        reconcile_predicted_failures_with_drops,
+        reconcile_enrichment_unverifiable_advisories,
+    )
+    reconcile_predicted_failures_with_drops(built.get("mappings", []), dropped_entities)
+    # ── Reconcile the OTHER direction: the trial pass can also
+    # RESCUE a metric (tag it "cannot verify offline" instead of
+    # dropping it — metrics_clause_builder.py's enrichment-flag-column
+    # handling). That advisory only exists on trial_sml's live metric
+    # objects, mutated after build_entity_mappings already built its
+    # rows from the pre-trial-pass model snapshot — merge it back the
+    # same way, by structural identity, not by re-deriving it here.
+    if trial_sml is not None:
+        reconcile_enrichment_unverifiable_advisories(
+            built.get("mappings", []), getattr(trial_sml, "metrics", None)
+        )
+
+    data = {
+        "project_id": preview_project_id,
+        "mappings": built.get("mappings", []),
+        "source_fields": built.get("source_fields", []),
+        "target_fields": built.get("target_fields", []),
+        "collisions": built.get("collisions", []),
+        "dropped_entities": dropped_entities,
+    }
+
+    entity_mappings = _compat_serialize_auto_map_entity_mappings(
+        data.get("mappings", []),
+        target_connector=target_connector,
+    )
+
+    # ── 5. Filter to field-level only (columns + measures, no table rows) ────
+    # entity_kind values from the mapping engine: "column", "metric" (measures), "table"
+    # "metric" is the canonical kind for measures — include it alongside "column".
+    FIELD_KINDS = {"field", "column", "measure", "metric"}
+    filtered_mappings = []
+    if selected_sources:
+        fallback_model_name = selected_sources[0]
+    else:
+        fallback_model_name = "default"
+    model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
+    from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
+    synonym_overrides = load_synonym_overrides(preview_project_id)
+    for m in entity_mappings:
+        if not isinstance(m, dict):
+            continue
+        kind = str(m.get("entity_kind") or "").lower()
+        if kind not in FIELD_KINDS:
+            continue
+        # Normalise "metric" → "measure" so the frontend field_type split works
+        normalised_kind = "measure" if kind in ("metric", "measure") else kind
+        source_name = str(m.get("source_name", "") or "").strip()
+        source_table = str(m.get("source_table", m.get("source_entity", "")) or "").strip()
+        measure_source_tables = list(m.get("measure_source_tables") or [])
+        if normalised_kind == "measure" and not source_table and measure_source_tables:
+            source_table = str(measure_source_tables[0] or "").strip()
+        filtered_mappings.append({
+            "id": m.get("id", f"field_{len(filtered_mappings)}"),
+            "project_id": preview_project_id,
+            "model_name": model_name,
+            "entity_kind": normalised_kind,
+            "source_name": source_name,
+            "source_data_type": m.get("source_data_type", "unknown"),
+            "source_table": source_table,
+            "source_path": m.get("source_path", ""),
+            "source_qualified_path": m.get("source_qualified_path", ""),
+            "target_name": m.get("target_name", ""),
+            "target_data_type": m.get("target_data_type", m.get("source_data_type", "unknown")),
+            "mapping_status": m.get("status", "auto"),
+            "status": m.get("status", "auto"),
+            "suggested_target_name": m.get("suggested_target_name", ""),
+            "collision_detected": bool(m.get("collision_detected")),
+            "validation_status": m.get("validation_status", "valid"),
+            "validation_code": m.get("validation_code", "OK"),
+            "validation_message": m.get("validation_message", ""),
+            "measure_source_tables": measure_source_tables,
+            "source_expression": m.get("source_expression", ""),
+            "synonym_overrides": lookup_synonym_override(
+                synonym_overrides,
+                [model_name],
+                source_table,
+                source_name,
+            ),
+            "target_expression": m.get("target_expression", ""),
+            "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
+            "sync_failure_reason": m.get("sync_failure_reason", ""),
+            "advisory_notes": list(m.get("advisory_notes") or []),
+            "advisory_categories": list(m.get("advisory_categories") or []),
+            "depends_on_measures": list(m.get("depends_on_measures") or []),
+            "synonyms": list(m.get("synonyms") or []),
+            "complexity_tier": m.get("complexity_tier"),
+            # Static risk tier + label (metric-only; None for
+            # tables/columns) and the Tier-5 provider's own self-
+            # reported estimate (metric-only, Tier-5-only; None
+            # otherwise). See project_mapping_engine.py's
+            # _compute_static_risk_tier. The frontend gates on these
+            # being non-null rather than on entity_kind, since
+            # normalised_kind above already renamed "metric" to
+            # "measure" for this response.
+            "static_risk_tier": m.get("static_risk_tier"),
+            "static_risk_label": m.get("static_risk_label"),
+            "llm_self_reported_confidence": m.get("llm_self_reported_confidence"),
+            # Which .pbix file this row came from — required so a multi-PBIX
+            # project's per-file dry-run results are never ambiguous. This is
+            # the exact layer where has_report_alias was previously dropped
+            # silently (populated through project_mapping_engine.py and
+            # mapping_service.py, then never added to this dict) — see
+            # Tests/test_source_file_attribution.py for the regression test
+            # that specifically guards this response boundary.
+            "source_file": m.get("source_file"),
+        })
+
+    auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
+    unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
+    collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
+    # Structurally known to fail at real-deploy time (unreachable-dimension
+    # advisory, or reconciled against a trial-DDL-pass drop) even though it
+    # mapped/translated cleanly pre-deploy — never folded into auto_count.
+    predicted_failure_count = sum(1 for m in filtered_mappings if m.get("status") == "predicted_failure")
+
+    return {
+        "success": True,
+        "project_id": preview_project_id,
+        "model_name": model_name,
+        "entity_mappings": filtered_mappings,
+        "extraction_failed": extraction_failed,
+        "dropped_entities": data.get("dropped_entities", []),
+        "summary": {
+            "total_fields": len(filtered_mappings),
+            "auto_mapped": auto_count,
+            "unmapped": unmapped_count,
+            "collisions": collision_count,
+            "predicted_failures": predicted_failure_count,
+            "extraction_failed": extraction_failed,
+        },
+    }
+
+
+@router.post("/api/projects/{project_id}/dry-run")
+async def dry_run_mapping(
+    project_id: str,
+    http_request: Request,
+    request: DryRunRequest,
+    service: MappingService = Depends(get_mapping_service)
+):
+    """
+    Execute a dry run by running the full semantic pipeline (extraction → OSI → SML)
+    WITHOUT deployment, then return the real field-level mappings (columns + measures).
+
+    Synchronous, in-request — unchanged from before the multi-PBIX feature.
+    For N-file parallel dry-run without a request timeout risk, see the
+    dry_run_jobs_controller.py background-job endpoints, which call
+    _run_dry_run_pipeline() (the function this delegates to) once per file
+    from a background task instead of once, inline, here.
+    """
     try:
         request_user_id = require_request_user_id(http_request)
         validate_project_connector_accounts_belong_to_user(
@@ -169,330 +536,39 @@ async def dry_run_mapping(
         )
         if project_id not in ("preview", ""):
             _assert_project_access(project_id, request_user_id)
-        source_account_id = str(
-            request.source_config.get("identity_id")
-            or request.source_config.get("account_id")
-            or ""
-        ).strip() or None
-        target_account_id = str(
-            request.target_config.get("identity_id")
-            or request.target_config.get("account_id")
-            or ""
-        ).strip() or None
-        # ── 1. Resolve or create a stable preview project in the compat store ──
-        # Use a deterministic project id based on source+models so repeated dry
-        # runs for the same wizard session reuse the same project slot.
-        user_seed = str(request_user_id or "").strip()
-        seed = (
-            f"{user_seed}-"
-            f"{request.source_config.get('type','')}-"
-            f"{request.source_config.get('workspace_id','')}-"
-            f"{'|'.join(sorted(request.selected_sources))}"
-        )
-        preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
-
-        project_shared._compat_ensure_loaded()
-        preview_project = project_shared._compat_projects.get(preview_project_id)
-        if not isinstance(preview_project, dict):
-            preview_project = {
-                "id": preview_project_id,
-                "project_id": preview_project_id,
-                "created_at": project_shared._compat_now_iso(),
-            }
-        preview_project.update({
-            "name": "dry-run-preview",
-            "updated_at": project_shared._compat_now_iso(),
-            "status": "preview",
-            "is_transient_preview": True,
-            "preview_kind": "dry-run",
-            "owner_user_id": str(request_user_id).strip() if request_user_id is not None else None,
-            "user_id": str(request_user_id).strip() if request_user_id is not None else None,
-            "account_id": source_account_id or target_account_id,
-            "source_account_id": source_account_id,
-            "target_account_id": target_account_id,
-            "source": dict(request.source_config),
-            "target": dict(request.target_config),
-            "targets": [dict(request.target_config)],
-        })
-        project_shared._compat_projects[preview_project_id] = preview_project
-        project_shared._compat_save_store()
-        logger.info(
-            "[PreviewProject] prepared preview_project_id=%s user_id=%s source_account_id=%s target_account_id=%s selected_sources=%s",
-            preview_project_id,
-            request_user_id,
-            source_account_id,
-            target_account_id,
+        validate_pbix_model_list(
             request.selected_sources,
+            source_type=str(request.source_config.get("type") or ""),
         )
-
-        # ── 2. Build a real config YAML from the wizard's source/target config ─
-        config_yaml = _build_config_yaml_from_request(
+        if str(request.source_config.get("type") or "").strip().lower() == "pbix" and request.selected_sources:
+            # Same check _build_sync_jobs() re-runs at execution time (defense
+            # in depth) — checked here too so a collision surfaces at dry-run
+            # time, before the (potentially long-running, see Part B) pipeline
+            # is even started, not just before a real deploy.
+            validate_no_pbix_view_name_collisions(request.selected_sources)
+        return await _run_dry_run_pipeline(
+            project_id=project_id,
+            request_user_id=request_user_id,
             source_config=request.source_config,
             target_config=request.target_config,
             selected_sources=request.selected_sources,
-            project_name="dry-run-preview",
-        )
-        project_shared._compat_project_configs[preview_project_id] = config_yaml
-
-        # ── 3. Run the real pipeline with dry_run=True (no deployment) ──────────
-        #    This runs: connector extraction → OSI conversion → SML generation
-        #    and stores the resulting SML snapshot so entity mappings can be built.
-        sync_result = await sync_models({
-            "project_id": preview_project_id,
-            "content": config_yaml,
-            "dry_run": True,
-            # Pass account_id and user_id so credential scoping works for the
-            # transient preview project (not in ORM, so sync_models can't resolve
-            # account_id automatically via the DB lookup).
-            "account_id": source_account_id or target_account_id,
-            "user_id": str(request_user_id) if request_user_id is not None else None,
-        })
-
-        preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(
-            sync_result, request.selected_sources
         )
 
-        # Debug: log what we got from the sync result
-        print(f"[DryRun] sync_result status: {sync_result.get('status')}")
-        print(f"[DryRun] preferred_snapshot_id: {preferred_snapshot_id!r}")
-        results = sync_result.get("results") or []
-        for r in results:
-            summary = r.get("summary") or {}
-            print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
-
-        # ── 4. Build entity mappings from the real SML snapshot ──────────────────
-        target_connector = str(request.target_config.get("type") or "snowflake").strip().lower()
-
-        # Read the SML blob directly from the snapshot by snapshot_id.
-        # We cannot use _compat_build_project_entity_mappings because the snapshot
-        # is stored under the Fabric dataset_id (e.g. "d32e8900-..."), not our
-        # preview project ID — so the project_id lookup would return an empty model.
-        from semabridge.api.services.project_mapping_engine import build_entity_mappings
-        from semabridge.api.services.project_shared import db_manager as _db_manager
-
-        sml_blob: Dict[str, Any] = {}
-
-        # Try preferred_snapshot_id first (most reliable)
-        if preferred_snapshot_id:
-            try:
-                snap = _db_manager.get_snapshot(preferred_snapshot_id)
-                if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                    sml_blob = snap.sml_blob
-                    print(f"[DryRun] Loaded SML blob from preferred_snapshot_id={preferred_snapshot_id[:12]}")
-                    print(f"[DryRun] SML unique_name={sml_blob.get('unique_name')!r}")
-                    print(f"[DryRun] datasets={[d.get('unique_name') for d in sml_blob.get('datasets', [])]}")
-                    print(f"[DryRun] metrics={[m.get('unique_name') for m in sml_blob.get('metrics', [])]}")
-            except Exception as snap_err:
-                print(f"[DryRun] Failed to load preferred snapshot: {snap_err}")
-
-        # Fallback: try each result's snapshot
-        if not sml_blob:
-            for result_row in (sync_result.get("results") or []):
-                sid = str((result_row.get("summary") or {}).get("sml_snapshot_id") or "").strip()
-                if not sid:
-                    continue
-                try:
-                    snap = _db_manager.get_snapshot(sid)
-                    if snap and isinstance(getattr(snap, "sml_blob", None), dict):
-                        sml_blob = snap.sml_blob
-                        print(f"[DryRun] Loaded SML blob from fallback snapshot={sid[:12]}")
-                        break
-                except Exception:
-                    continue
-
-        extraction_failed = not sml_blob
-        if extraction_failed:
-            sync_status = str((sync_result or {}).get("status") or "unknown")
-            logger.warning("[DryRun] No SML blob found for project=%s sync_status=%s — extraction may have failed", preview_project_id, sync_status)
-
-        # Scope to selected sources if specified
-        if sml_blob and request.selected_sources:
-            from semabridge.api.services.project_runs_impl import _compat_scope_model_for_dry_run
-            sml_blob = _compat_scope_model_for_dry_run(sml_blob, request.selected_sources)
-
-        built = build_entity_mappings(
-            project_id=preview_project_id,
-            model=sml_blob or {"unique_name": "preview", "datasets": [], "metrics": []},
-            existing_mappings={},
-            session_key=f"{preview_project_id}-mapping-session",
-            target_connector=target_connector,
-        )
-        dropped_entities = list(built.get("dropped_entities", []))
-
-        # ── Trial DDL-build pass ──────────────────────────────────────────────
-        # Runs the real DDL-emission builders (with placeholder Snowflake creds,
-        # never connecting) purely to surface Tier C / DDL-emission-time drops
-        # (e.g. metrics whose DAX translation failed) in the dry-run preview,
-        # before deployment. generate_ddls() is pure string-building — no
-        # network calls, no writes beyond a local debug .sql file — so this is
-        # safe to re-run on every mapping-iteration dry-run call.
-        trial_sml = None
-        if sml_blob and target_connector == "snowflake":
-            try:
-                from semabridge.sml.serializer import SMLSerializer
-                from semabridge.core.settings import SnowflakeConfig
-                from semabridge.core.behavior import ConnectorBehavior
-                from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
-
-                trial_sml = SMLSerializer._dict_to_model(sml_blob)
-                target_cfg = request.target_config or {}
-                trial_cfg = SnowflakeConfig(
-                    account=str(target_cfg.get("account") or "placeholder"),
-                    user=str(target_cfg.get("user") or "placeholder"),
-                    warehouse=str(target_cfg.get("warehouse") or "placeholder"),
-                    database=str(target_cfg.get("database") or "placeholder"),
-                )
-                trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=ConnectorBehavior())
-                try:
-                    trial_emitter.generate_ddls(trial_sml)
-                except Exception as ddl_err:
-                    # Expected for models with unresolvable drops (e.g. every
-                    # metric fails translation) — the ledger is still populated
-                    # incrementally by the sub-builders before such a raise.
-                    logger.info("[DryRun] Trial DDL-build pass raised (non-fatal): %s", ddl_err)
-                dropped_entities.extend(trial_emitter.drop_ledger.to_json())
-            except Exception as trial_setup_err:
-                logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
-                trial_sml = None
-
-        # ── Reconcile: a field the trial DDL pass just dropped (e.g. a
-        # live-schema-only column like MonthIndex when no live schema was
-        # available) must not simultaneously show as status "auto" in
-        # entity_mappings — that's the same "two independently-computed
-        # views of success disagree" gap as the advisory-category
-        # override above, closed the same way. Mutates built["mappings"]
-        # in place, so every downstream consumer (entity_mappings below,
-        # filtered_mappings, auto_count) sees the corrected status.
-        from semabridge.api.services.project_mapping_engine import (
-            reconcile_predicted_failures_with_drops,
-            reconcile_enrichment_unverifiable_advisories,
-        )
-        reconcile_predicted_failures_with_drops(built.get("mappings", []), dropped_entities)
-        # ── Reconcile the OTHER direction: the trial pass can also
-        # RESCUE a metric (tag it "cannot verify offline" instead of
-        # dropping it — metrics_clause_builder.py's enrichment-flag-column
-        # handling). That advisory only exists on trial_sml's live metric
-        # objects, mutated after build_entity_mappings already built its
-        # rows from the pre-trial-pass model snapshot — merge it back the
-        # same way, by structural identity, not by re-deriving it here.
-        if trial_sml is not None:
-            reconcile_enrichment_unverifiable_advisories(
-                built.get("mappings", []), getattr(trial_sml, "metrics", None)
-            )
-
-        data = {
-            "project_id": preview_project_id,
-            "mappings": built.get("mappings", []),
-            "source_fields": built.get("source_fields", []),
-            "target_fields": built.get("target_fields", []),
-            "collisions": built.get("collisions", []),
-            "dropped_entities": dropped_entities,
-        }
-
-        entity_mappings = _compat_serialize_auto_map_entity_mappings(
-            data.get("mappings", []),
-            target_connector=target_connector,
-        )
-
-        # ── 5. Filter to field-level only (columns + measures, no table rows) ────
-        # entity_kind values from the mapping engine: "column", "metric" (measures), "table"
-        # "metric" is the canonical kind for measures — include it alongside "column".
-        FIELD_KINDS = {"field", "column", "measure", "metric"}
-        filtered_mappings = []
-        if request.selected_sources:
-            fallback_model_name = request.selected_sources[0]
-        else:
-            fallback_model_name = "default"
-        model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
-        from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
-        synonym_overrides = load_synonym_overrides(preview_project_id)
-        for m in entity_mappings:
-            if not isinstance(m, dict):
-                continue
-            kind = str(m.get("entity_kind") or "").lower()
-            if kind not in FIELD_KINDS:
-                continue
-            # Normalise "metric" → "measure" so the frontend field_type split works
-            normalised_kind = "measure" if kind in ("metric", "measure") else kind
-            source_name = str(m.get("source_name", "") or "").strip()
-            source_table = str(m.get("source_table", m.get("source_entity", "")) or "").strip()
-            measure_source_tables = list(m.get("measure_source_tables") or [])
-            if normalised_kind == "measure" and not source_table and measure_source_tables:
-                source_table = str(measure_source_tables[0] or "").strip()
-            filtered_mappings.append({
-                "id": m.get("id", f"field_{len(filtered_mappings)}"),
-                "project_id": preview_project_id,
-                "model_name": model_name,
-                "entity_kind": normalised_kind,
-                "source_name": source_name,
-                "source_data_type": m.get("source_data_type", "unknown"),
-                "source_table": source_table,
-                "source_path": m.get("source_path", ""),
-                "source_qualified_path": m.get("source_qualified_path", ""),
-                "target_name": m.get("target_name", ""),
-                "target_data_type": m.get("target_data_type", m.get("source_data_type", "unknown")),
-                "mapping_status": m.get("status", "auto"),
-                "status": m.get("status", "auto"),
-                "suggested_target_name": m.get("suggested_target_name", ""),
-                "collision_detected": bool(m.get("collision_detected")),
-                "validation_status": m.get("validation_status", "valid"),
-                "validation_code": m.get("validation_code", "OK"),
-                "validation_message": m.get("validation_message", ""),
-                "measure_source_tables": measure_source_tables,
-                "source_expression": m.get("source_expression", ""),
-                "synonym_overrides": lookup_synonym_override(
-                    synonym_overrides,
-                    [model_name],
-                    source_table,
-                    source_name,
-                ),
-                "target_expression": m.get("target_expression", ""),
-                "sync_enabled": m.get("sync_enabled") != False if m.get("sync_enabled") is not None else True,
-                "sync_failure_reason": m.get("sync_failure_reason", ""),
-                "advisory_notes": list(m.get("advisory_notes") or []),
-                "advisory_categories": list(m.get("advisory_categories") or []),
-                "depends_on_measures": list(m.get("depends_on_measures") or []),
-                "synonyms": list(m.get("synonyms") or []),
-                "complexity_tier": m.get("complexity_tier"),
-                # Static risk tier + label (metric-only; None for
-                # tables/columns) and the Tier-5 provider's own self-
-                # reported estimate (metric-only, Tier-5-only; None
-                # otherwise). See project_mapping_engine.py's
-                # _compute_static_risk_tier. The frontend gates on these
-                # being non-null rather than on entity_kind, since
-                # normalised_kind above already renamed "metric" to
-                # "measure" for this response.
-                "static_risk_tier": m.get("static_risk_tier"),
-                "static_risk_label": m.get("static_risk_label"),
-                "llm_self_reported_confidence": m.get("llm_self_reported_confidence"),
-            })
-
-
-        auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
-        unmapped_count = sum(1 for m in filtered_mappings if m.get("status") == "unmapped")
-        collision_count = sum(1 for m in filtered_mappings if m.get("status") == "collision")
-        # Structurally known to fail at real-deploy time (unreachable-dimension
-        # advisory, or reconciled against a trial-DDL-pass drop) even though it
-        # mapped/translated cleanly pre-deploy — never folded into auto_count.
-        predicted_failure_count = sum(1 for m in filtered_mappings if m.get("status") == "predicted_failure")
-
-        return {
-            "success": True,
-            "project_id": preview_project_id,
-            "model_name": model_name,
-            "entity_mappings": filtered_mappings,
-            "extraction_failed": extraction_failed,
-            "dropped_entities": data.get("dropped_entities", []),
-            "summary": {
-                "total_fields": len(filtered_mappings),
-                "auto_mapped": auto_count,
-                "unmapped": unmapped_count,
-                "collisions": collision_count,
-                "predicted_failures": predicted_failure_count,
-                "extraction_failed": extraction_failed,
+    except ValidationError as e:
+        # Bad multi-file request input (e.g. malformed source.models) — a client
+        # error, not a pipeline crash. Same response shape as the generic handler
+        # below so existing frontend error-reading code keeps working, just with
+        # the correct 400 status instead of a misleading 500.
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": str(e),
+                "entity_mappings": [],
+                "dropped_entities": [],
+                "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},
             },
-        }
-
+        )
     except Exception as e:
         print(f"[Dry Run Error] {str(e)}")
         import traceback
