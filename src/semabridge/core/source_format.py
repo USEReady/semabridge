@@ -336,8 +336,12 @@ def from_pbix_tmsl(
         pbix_path: Absolute path to the source .pbix file.
         field_aliases: Optional list of report layout aliases (measures and columns).
     """
+    from semabridge.utils.identifiers import clean_pbix_model_name
+
     model = tmsl.get("model", {})
-    dataset_name = model.get("name", "")
+    raw_name = model.get("name", "")
+    cleaned_name = clean_pbix_model_name(pbix_path) if pbix_path else raw_name
+    dataset_name = cleaned_name or raw_name or project_id
 
     return SourceFormat(
         source_type="pbix",

@@ -1791,6 +1791,14 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getRunReport(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
+        if (!res.ok) {
+            throw new Error(`Report request failed with status ${res.status}`);
+        }
+        return res.text();
+    },
+
     async downloadRunReport(projectId, runId) {
         const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
         if (!res.ok) {

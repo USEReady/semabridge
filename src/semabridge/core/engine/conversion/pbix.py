@@ -56,17 +56,23 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     """
     from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
     from semabridge.converter.osi_to_sml import OSIToSMLConverter
+    from semabridge.utils.identifiers import clean_pbix_model_name
 
     sf = context.source_format
-    # PBIX has no workspace/dataset IDs — use sentinel values
     ws_id = "local"
-    ds_id = context.project_id
+    display_name = (
+        clean_pbix_model_name(sf.pbix_path)
+        if sf and getattr(sf, "pbix_path", None)
+        else getattr(sf, "dataset_name", None)
+    )
+    ds_id = display_name or context.project_id
 
     # Phase 1: TMSL → OSI
     source_data = {
-        "tmsl": sf.tmsl_definition,
+        "tmsl": sf.tmsl_definition if sf else None,
         "workspace_id": ws_id,
         "dataset_id": ds_id,
+        "display_name": display_name or ds_id,
         "project_id": context.project_id,
         "field_aliases": getattr(sf, "field_aliases", []),
     }

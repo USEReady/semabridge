@@ -367,7 +367,8 @@ export function StepMappingOptions({
             </div>
           </div>
 
-          <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)', height: '100%' }}>
+          {/* Scope Verification — Commented out per user request */}
+          {/* <div style={{ borderRadius: 10, border: '1px solid var(--border-main)', padding: 14, background: 'var(--bg-surface)', height: '100%' }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', marginBottom: 10 }}>Scope Verification</div>
             <div style={{ display: 'grid', gap: 8 }}>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Explicitly selected:</strong> {explicitTables.length > 0 ? explicitTables.join(', ') : 'None'}</div>
@@ -386,7 +387,7 @@ export function StepMappingOptions({
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Unsupported types:</strong> 0</div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}><strong>Estimated Volume:</strong> {estimatedVolume}</div>
             </div>
-          </div>
+          </div> */}
         </div>
 
         <div style={{ gridColumn: 'span 12' }}>

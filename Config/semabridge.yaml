@@ -1,11 +1,9 @@
-project_name: sync-test
-behavior:
-  features: {}
+project_name: competitve-test
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-sync-test/9da23522540f484e844e2a411222ef65_Competitive
+  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitve-test/ab738b42e68349d2aa6e4b71668ba602_Competitive
     Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-sync-test/9da23522540f484e844e2a411222ef65_Competitive
+  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitve-test/ab738b42e68349d2aa6e4b71668ba602_Competitive
     Marketing Analysis.pbix
 targets:
 - type: snowflake
@@ -221,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-sync-test
-display_name: sync-test
+project_id: proj-competitve-test
+display_name: competitve-test
