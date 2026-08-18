@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import usePageCache from '../hooks/usePageCache';
-import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
@@ -549,17 +549,48 @@ export default function ProjectJobsPage() {
                           <InfoCard label="Message" value={run.message || run.error || '—'} />
                         </div>
 
+                        {Boolean(run.has_report || run.report_path) && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, marginBottom: 8 }}>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  await api.downloadRunReport(run.project_id, run.id);
+                                } catch (err) {
+                                  console.error('Failed to download report:', err);
+                                }
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: '6px 12px',
+                                borderRadius: 6,
+                                fontSize: 12,
+                                fontWeight: 600,
+                                background: 'var(--bg-surface-raised)',
+                                color: 'var(--text-primary)',
+                                border: '1px solid var(--border-main)',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <Download size={14} /> Download Report
+                            </button>
+                          </div>
+                        )}
+
                         {run.status === 'success' && (
                           <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
 
-                        <div style={{ marginBottom: 14 }}>
+                        {/* <div style={{ marginBottom: 14 }}>
                           <DroppedFieldsPanel
                             entries={(Array.isArray(run.results) ? run.results : []).flatMap(
                               (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : [])
                             )}
                           />
-                        </div>
+                        </div> */}
 
                         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
                           Execution Stages For Selected Run

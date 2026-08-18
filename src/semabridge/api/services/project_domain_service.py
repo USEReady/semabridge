@@ -62,6 +62,7 @@ from semabridge.api.services.project_runs_impl import (
     delete_project_schedule_compat,
     get_jobs_config_compat,
     get_project_runs_compat,
+    get_run_report_compat,
     get_project_schedule_compat,
     list_folders_compat,
     list_job_runs_compat,

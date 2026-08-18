@@ -197,31 +197,33 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
       </div>
 
       {/* Target Field */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: row.target_field ? 'var(--text-primary)' : 'var(--text-tertiary)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontStyle: row.target_field ? 'normal' : 'italic',
-          flexShrink: 0,
-        }}>
-          {row.target_field || '— unmapped —'}
-        </div>
-        {row.target_type && !isMeasure && (
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <TypeBadge type={row.target_type} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <div style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: row.target_field ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontStyle: row.target_field ? 'normal' : 'italic',
+            flexShrink: 0,
+          }}>
+            {row.target_field || '— unmapped —'}
           </div>
-        )}
+          {row.target_type && !isMeasure && (
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <TypeBadge type={row.target_type} />
+            </div>
+          )}
+        </div>
         {isCollision && (() => {
           // Only show a suggestion chip if it differs from the conflicting target name
           const { suggestions } = suggestCollisionResolutions(row, allRows);
           const best = suggestions.find(s => s.id !== 'hash');
           if (!best || best.label === row.target_field) return null;
           return (
-            <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 600, marginLeft: 8, whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 600, marginTop: 2, whiteSpace: 'nowrap' }}>
               → {best.label}
             </div>
           );
@@ -1353,9 +1355,8 @@ export default function DryRunMappingTable({
         )}
       </div>
 
-      <DroppedFieldsPanel entries={droppedEntities} />
+      {/* <DroppedFieldsPanel entries={droppedEntities} /> */}
 
-      {/* ── Controls row: two-tier filter + search + Resolve All ─────────────── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* Tier 1 — field type (single-select), built from whatever field types are in the data */}
