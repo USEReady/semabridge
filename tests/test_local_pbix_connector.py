@@ -785,10 +785,12 @@ class TestPBIXPresentationMetadata:
                                     "vcObjects": {"title": [{"properties": {"text": {"value": "Partial Success"}}}]}
                                 }
                             }),
-                            # query is malformed JSON, filters is valid
+                            # query is malformed JSON, filters is valid and
+                            # carries its field reference inside a Select
+                            # clause, matching real PBIX query shape.
                             "query": "malformed JSON {",
                             "filters": json.dumps({
-                                "Measure": {"Property": "Revenue"}
+                                "Select": [{"Measure": {"Property": "Revenue"}}]
                             })
                         }
                     ]
@@ -1120,4 +1122,75 @@ class TestPBIXPresentationMetadata:
         assert fa[0]["field_type"] == "column"
         assert fa[0]["table"] is None
         assert fa[0]["aliases"] == ["Unresolvable Alias"]
+
+    def test_single_field_card_title_becomes_alias_but_multi_field_chart_title_does_not(self, tmp_path: Path) -> None:
+        """A card bound to exactly one measure legitimately inherits its
+        title as an alias (e.g. a card titled "R1" bound only to "Revenue").
+        A chart combining a measure with a dimension (e.g. titled
+        "Total Sales by Channel", bound to both a "Total Sales" measure and
+        a "Channel" column) must NOT propagate its title to either field —
+        the title describes their combination, not one field alone."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        # Single-field card: title -> alias for Revenue only.
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "R1"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        # Multi-field bar chart: measure + dimension. Title
+                        # must not become an alias for either field.
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "barChart",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Sales by Channel"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "c", "Entity": "Sales", "Type": 0}],
+                                    "Select": [
+                                        {"Measure": {"Property": "Total Sales"}},
+                                        {"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Channel"}},
+                                    ],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "single_vs_multi_field.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        # Only the single-field card contributes an entry; the multi-field
+        # chart's two field refs are both skipped.
+        assert len(pm) == 1
+        assert pm[0]["field"] == "Revenue"
+        assert pm[0]["title"] == "R1"
+
+        fa = result["field_aliases"]
+        aliases_by_field = {(item["field"], item["field_type"]): item["aliases"] for item in fa}
+        assert aliases_by_field.get(("Revenue", "measure")) == ["R1"]
+        # Neither "Total Sales" nor "Channel" gets the chart title as an alias.
+        assert ("Total Sales", "measure") not in aliases_by_field
+        assert ("Channel", "column") not in aliases_by_field
 

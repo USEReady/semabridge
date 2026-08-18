@@ -901,6 +901,18 @@ class LocalPBIXConnector(BaseConnector):
             {"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isVanArsdel"}}
             {"Measure": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Total Units"}}
 
+        Only references found inside a ``Select`` clause are extracted —
+        that's the query's field-projection list, i.e. what the visual
+        actually displays. References inside a ``Where`` clause (filter
+        conditions applied to the visual) are deliberately excluded: on
+        real reports, a visual almost always carries filter context bound
+        to fields it never displays (e.g. a KPI card filtered to a specific
+        Date/Category), and including those would make nearly every visual
+        look "multi-field" even when it displays a single measure —
+        confirmed empirically against a real-world report, where field
+        counts dropped from double digits per visual to the visual's true
+        display-field count once ``Where`` was excluded.
+
         Args:
             visual: Visual container dictionary.
 
@@ -954,32 +966,35 @@ class LocalPBIXConnector(BaseConnector):
                         return alias_to_entity.get(alias)
             return None
 
-        def _traverse(data: Any) -> None:
+        def _traverse(data: Any, in_select: bool = False) -> None:
             if isinstance(data, dict):
-                # Case 1: Measure -> Property, or Column -> Property (identical shape)
-                for node_key, field_kind in (("Measure", "measure"), ("Column", "column")):
-                    node = data.get(node_key)
-                    if isinstance(node, dict):
-                        prop = node.get("Property")
-                        if isinstance(prop, str) and prop.strip():
-                            cleaned = _clean_field_name(prop)
-                            if cleaned:
-                                table_name = _resolve_table(node) if field_kind == "column" else None
-                                fields.add((cleaned, field_kind, table_name))
+                if in_select:
+                    # Case 1: Measure -> Property, or Column -> Property (identical shape)
+                    for node_key, field_kind in (("Measure", "measure"), ("Column", "column")):
+                        node = data.get(node_key)
+                        if isinstance(node, dict):
+                            prop = node.get("Property")
+                            if isinstance(prop, str) and prop.strip():
+                                cleaned = _clean_field_name(prop)
+                                if cleaned:
+                                    table_name = _resolve_table(node) if field_kind == "column" else None
+                                    fields.add((cleaned, field_kind, table_name))
 
-                # Case 2: queryRef (no adjacent Measure/Column node — confirmed
-                # empirically to never carry a resolvable table either)
-                query_ref = data.get("queryRef")
-                if isinstance(query_ref, str) and query_ref.strip():
-                    cleaned = _clean_field_name(query_ref)
-                    if cleaned:
-                        fields.add((cleaned, "unknown", None))
+                    # Case 2: queryRef (no adjacent Measure/Column node — confirmed
+                    # empirically to never carry a resolvable table either)
+                    query_ref = data.get("queryRef")
+                    if isinstance(query_ref, str) and query_ref.strip():
+                        cleaned = _clean_field_name(query_ref)
+                        if cleaned:
+                            fields.add((cleaned, "unknown", None))
 
-                for val in data.values():
-                    _traverse(val)
+                for key, val in data.items():
+                    if key == "Where":
+                        continue
+                    _traverse(val, in_select=(in_select or key == "Select"))
             elif isinstance(data, list):
                 for item in data:
-                    _traverse(item)
+                    _traverse(item, in_select=in_select)
 
         # Parse the four visual container JSON properties once, then run two
         # passes over them: first collect every From-clause alias->table
@@ -1017,6 +1032,13 @@ class LocalPBIXConnector(BaseConnector):
 
     def _parse_presentation_metadata(self, layout: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parse report layout sections and visual containers to extract presentation metadata.
+
+        Only visuals bound to exactly one field are considered — a visual's
+        title describes what it shows as a whole, which is only an
+        unambiguous stand-in for a single field's name when that field is
+        the visual's sole binding (e.g. a KPI card). Multi-field visuals
+        (e.g. a chart combining a measure and a dimension) are skipped so
+        their title never gets attributed to any one field.
 
         Args:
             layout: Parsed layout JSON dictionary.
@@ -1107,6 +1129,20 @@ class LocalPBIXConnector(BaseConnector):
                 #    recursive traversal helper
                 field_refs = self._extract_field_references(visual)
                 if not field_refs:
+                    continue
+
+                # A visual's title describes what the visual as a whole shows,
+                # not any single field in isolation. For a card/KPI bound to
+                # exactly one field, the title genuinely is a synonym for that
+                # field (e.g. a card titled "R1" bound only to "Revenue"). But
+                # a chart combining a measure with a dimension (e.g. a bar
+                # chart titled "Total Sales by Channel" showing measure
+                # "Total Sales" broken down by column "Channel") has a title
+                # describing their combination — attributing it to either
+                # field individually is wrong (e.g. "Channel" would wrongly
+                # inherit "Total Sales by Channel" as an alias). Only
+                # single-field visuals are unambiguous enough to trust.
+                if len(field_refs) != 1:
                     continue
 
                 # 5. Populate and deduplicate tuples

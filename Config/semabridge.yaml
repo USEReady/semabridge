@@ -1,23 +1,22 @@
-project_name: sync-test
-behavior:
-  features: {}
+project_name: try_syn
+description: dsfds
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-sync-test/9da23522540f484e844e2a411222ef65_Competitive
-    Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-sync-test/9da23522540f484e844e2a411222ef65_Competitive
-    Marketing Analysis.pbix
+  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-try_syn/f294ce5f69e34d059bcb1205716d19ee_Competitive
+    Marketing Analysis (1).pbix
+  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-try_syn/f294ce5f69e34d059bcb1205716d19ee_Competitive
+    Marketing Analysis (1).pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
   schema: SEMABRIDGE_WORKSPACE
   warehouse: DI_OTH_POC_WH
-  identity_id: ae8ff276-b411-4903-89cc-cad94e1f65d1
+  identity_id: fe779bef-d844-4d57-ae4a-40a7cea2f201
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY
-- source_path: datasets.Category.columns.Channel
-  target_name: CHANNEL
+- source_path: datasets.Category.columns.Ch
+  target_name: CH
 - source_path: datasets.Category.columns.Sort
   target_name: CATEGORY_SORT
 - source_path: datasets.Date.columns.Date
@@ -221,5 +220,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-sync-test
-display_name: sync-test
+project_id: proj-try_syn
+display_name: try_syn

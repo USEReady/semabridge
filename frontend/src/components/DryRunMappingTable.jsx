@@ -233,31 +233,39 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
       {/* Synonyms */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden' }}>
-          {(row.synonym_overrides || row.synonymOverrides || []).slice(0, 2).map((synonym) => (
-            <span
-              key={synonym}
-              title={synonym}
-              style={{
-                maxWidth: 78,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontSize: 10,
-                fontWeight: 700,
-                padding: '2px 6px',
-                borderRadius: 999,
-                border: '1px solid rgba(56, 189, 248, 0.35)',
-                background: 'rgba(56, 189, 248, 0.12)',
-                color: '#7dd3fc',
-              }}
-            >
-              {synonym}
+          {(row.synonym_overrides || row.synonymOverrides || []).length === 0 ? (
+            <span style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+              No synonym
             </span>
-          ))}
-          {(row.synonym_overrides || row.synonymOverrides || []).length > 2 && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
-              +{(row.synonym_overrides || row.synonymOverrides || []).length - 2}
-            </span>
+          ) : (
+            <>
+              {(row.synonym_overrides || row.synonymOverrides || []).slice(0, 2).map((synonym) => (
+                <span
+                  key={synonym}
+                  title={synonym}
+                  style={{
+                    maxWidth: 78,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: '2px 6px',
+                    borderRadius: 999,
+                    border: '1px solid rgba(56, 189, 248, 0.35)',
+                    background: 'rgba(56, 189, 248, 0.12)',
+                    color: '#7dd3fc',
+                  }}
+                >
+                  {synonym}
+                </span>
+              ))}
+              {(row.synonym_overrides || row.synonymOverrides || []).length > 2 && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+                  +{(row.synonym_overrides || row.synonymOverrides || []).length - 2}
+                </span>
+              )}
+            </>
           )}
         </div>
         <button
@@ -548,6 +556,14 @@ function MeasureTranslationPanel({ row }) {
             <span>Translated successfully to Snowflake SQL</span>
           </div>
         )
+      )}
+
+      {/* ── No synonyms at all for this field — say so explicitly rather
+          than silently omitting both sections below. ── */}
+      {allSynonyms.length === 0 && (
+        <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
+          No synonym
+        </div>
       )}
 
       {/* ── Report Aliases (Columns and Measures if present) — genuine
