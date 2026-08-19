@@ -10,7 +10,7 @@ targets:
   database: SEMABRIDGE
   schema: SEMABRIDGE_WORKSPACE
   warehouse: DI_OTH_POC_WH
-  identity_id: ae8ff276-b411-4903-89cc-cad94e1f65d1
+  identity_id: fe779bef-d844-4d57-ae4a-40a7cea2f201
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY

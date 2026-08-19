@@ -550,6 +550,7 @@ export function StepMappingOptions({
             compatibilityScore={dryRunData?.compatibility_score ?? null}
             onReSync={onRunDryRun}
             droppedEntities={dryRunData?.dropped_entities || []}
+            unresolvedReportFieldReferences={dryRunData?.unresolved_report_field_references || []}
           />
         </div>
       )}

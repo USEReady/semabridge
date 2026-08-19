@@ -218,8 +218,11 @@ class LocalPBIXConnector(BaseConnector):
         # 3. Extract report layout and parse presentation metadata/aliases
         layout = self._extract_report_layout()
         if layout:
-            presentation_metadata = self._parse_presentation_metadata(layout)
+            presentation_metadata, unresolved_field_references = self._parse_presentation_metadata(
+                layout, result["tables"], result["measures"]
+            )
             result["presentation_metadata"] = presentation_metadata
+            result["unresolved_report_field_references"] = unresolved_field_references
 
             aliases_by_field: Dict[Tuple[str, str, Optional[str]], List[str]] = {}
 
@@ -250,9 +253,63 @@ class LocalPBIXConnector(BaseConnector):
                 else:
                     _add_alias(f, k, tbl, t)
 
+            # A title/caption is only trustworthy as a synonym for ONE field.
+            # Two different visuals can coincidentally (or via copy/paste,
+            # or a stale rename) attach the same caption to two DIFFERENT
+            # fields -- if both kept it, Cortex Analyst would have no way
+            # to tell which field a business user querying that term
+            # actually meant. Rather than let an ambiguous term silently
+            # attach to whichever field happened to claim it, it's
+            # stripped from every field that claims it (same "don't guess"
+            # philosophy as _best_matching_field above) and reported
+            # separately so a person can see what was excluded and why.
+            alias_display: Dict[str, str] = {}
+            alias_lower_to_keys: Dict[str, Set[Tuple[str, str, Optional[str]]]] = {}
+            for field_key, aliases in aliases_by_field.items():
+                for alias in aliases:
+                    alias_lower = alias.casefold()
+                    alias_display.setdefault(alias_lower, alias)
+                    alias_lower_to_keys.setdefault(alias_lower, set()).add(field_key)
+
+            ambiguous_lowers = {
+                alias_lower
+                for alias_lower, keys in alias_lower_to_keys.items()
+                if len(keys) > 1
+            }
+
+            ambiguous_report_aliases: List[Dict[str, Any]] = []
+            if ambiguous_lowers:
+                for field_key in aliases_by_field:
+                    aliases_by_field[field_key] = [
+                        alias
+                        for alias in aliases_by_field[field_key]
+                        if alias.casefold() not in ambiguous_lowers
+                    ]
+                for alias_lower in sorted(ambiguous_lowers):
+                    conflicting_keys = sorted(
+                        alias_lower_to_keys[alias_lower],
+                        key=lambda k: (k[0], k[1], k[2] or ""),
+                    )
+                    ambiguous_report_aliases.append({
+                        "alias": alias_display[alias_lower],
+                        "fields": [
+                            {"field": f, "field_type": k, "table": tbl}
+                            for (f, k, tbl) in conflicting_keys
+                        ],
+                    })
+                logger.warning(
+                    "Excluded %d report-layer alias(es) claimed by more than one "
+                    "field from synonyms, to avoid ambiguous business-term "
+                    "resolution: %s",
+                    len(ambiguous_lowers),
+                    [a["alias"] for a in ambiguous_report_aliases],
+                )
+            result["ambiguous_report_aliases"] = ambiguous_report_aliases
+
             field_aliases = [
                 {"field": f, "field_type": k, "table": tbl, "aliases": aliases}
                 for (f, k, tbl), aliases in aliases_by_field.items()
+                if aliases
             ]
             result["field_aliases"] = field_aliases
 
@@ -909,6 +966,18 @@ class LocalPBIXConnector(BaseConnector):
             {"Column": {"Expression": {"SourceRef": {"Source": "p"}}, "Property": "isVanArsdel"}}
             {"Measure": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Total Units"}}
 
+        Only references found inside a ``Select`` clause are extracted —
+        that's the query's field-projection list, i.e. what the visual
+        actually displays. References inside a ``Where`` clause (filter
+        conditions applied to the visual) are deliberately excluded: on
+        real reports, a visual almost always carries filter context bound
+        to fields it never displays (e.g. a KPI card filtered to a specific
+        Date/Category), and including those would make nearly every visual
+        look "multi-field" even when it displays a single measure —
+        confirmed empirically against a real-world report, where field
+        counts dropped from double digits per visual to the visual's true
+        display-field count once ``Where`` was excluded.
+
         Args:
             visual: Visual container dictionary.
 
@@ -962,32 +1031,35 @@ class LocalPBIXConnector(BaseConnector):
                         return alias_to_entity.get(alias)
             return None
 
-        def _traverse(data: Any) -> None:
+        def _traverse(data: Any, in_select: bool = False) -> None:
             if isinstance(data, dict):
-                # Case 1: Measure -> Property, or Column -> Property (identical shape)
-                for node_key, field_kind in (("Measure", "measure"), ("Column", "column")):
-                    node = data.get(node_key)
-                    if isinstance(node, dict):
-                        prop = node.get("Property")
-                        if isinstance(prop, str) and prop.strip():
-                            cleaned = _clean_field_name(prop)
-                            if cleaned:
-                                table_name = _resolve_table(node) if field_kind == "column" else None
-                                fields.add((cleaned, field_kind, table_name))
+                if in_select:
+                    # Case 1: Measure -> Property, or Column -> Property (identical shape)
+                    for node_key, field_kind in (("Measure", "measure"), ("Column", "column")):
+                        node = data.get(node_key)
+                        if isinstance(node, dict):
+                            prop = node.get("Property")
+                            if isinstance(prop, str) and prop.strip():
+                                cleaned = _clean_field_name(prop)
+                                if cleaned:
+                                    table_name = _resolve_table(node) if field_kind == "column" else None
+                                    fields.add((cleaned, field_kind, table_name))
 
-                # Case 2: queryRef (no adjacent Measure/Column node — confirmed
-                # empirically to never carry a resolvable table either)
-                query_ref = data.get("queryRef")
-                if isinstance(query_ref, str) and query_ref.strip():
-                    cleaned = _clean_field_name(query_ref)
-                    if cleaned:
-                        fields.add((cleaned, "unknown", None))
+                    # Case 2: queryRef (no adjacent Measure/Column node — confirmed
+                    # empirically to never carry a resolvable table either)
+                    query_ref = data.get("queryRef")
+                    if isinstance(query_ref, str) and query_ref.strip():
+                        cleaned = _clean_field_name(query_ref)
+                        if cleaned:
+                            fields.add((cleaned, "unknown", None))
 
-                for val in data.values():
-                    _traverse(val)
+                for key, val in data.items():
+                    if key == "Where":
+                        continue
+                    _traverse(val, in_select=(in_select or key == "Select"))
             elif isinstance(data, list):
                 for item in data:
-                    _traverse(item)
+                    _traverse(item, in_select=in_select)
 
         # Parse the four visual container JSON properties once, then run two
         # passes over them: first collect every From-clause alias->table
@@ -1023,21 +1095,75 @@ class LocalPBIXConnector(BaseConnector):
 
         return fields
 
-    def _parse_presentation_metadata(self, layout: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Parse report layout sections and visual containers to extract presentation metadata.
+    def _parse_presentation_metadata(
+        self,
+        layout: Dict[str, Any],
+        tables: List[Dict[str, Any]],
+        measures: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Parse report layout sections and visual containers to extract
+        presentation metadata, in a single pass over every visual.
+
+        Two independent things are derived from the same per-visual field
+        scan (each visual's fields are only ever extracted once):
+
+        1. Presentation metadata (title -> field candidates). Only visuals
+           bound to exactly one field are considered — a visual's title
+           describes what it shows as a whole, which is only an unambiguous
+           stand-in for a single field's name when that field is the
+           visual's sole binding (e.g. a KPI card). Multi-field visuals
+           (e.g. a chart combining a measure and a dimension) are skipped so
+           their title never gets attributed to any one field.
+
+        2. Unresolved field references: field names the report queries that
+           don't match any field in the current model schema. Renaming a
+           column or measure doesn't always rewrite the field-name text
+           already serialized into a visual's saved query — a report can
+           keep querying a field by its old name indefinitely if the visual
+           is never re-edited. That stale name is exactly the kind of
+           vocabulary a business user would still type into a
+           natural-language query (they learned the field by its old name
+           from the report, not from the model). This check runs
+           unconditionally on every visual's fields, regardless of title or
+           field count — a stale reference is a fact about that one field,
+           independent of how many other fields share its visual or whether
+           it has a title at all. It deliberately does NOT guess which
+           current field a stale name used to refer to (e.g. that "Channel"
+           now means "Ch") — that requires human confirmation. It only
+           surfaces the fact that the report references a name absent from
+           the current schema, scoped to a table where resolvable, for a
+           person to act on via the existing manual synonym override.
 
         Args:
             layout: Parsed layout JSON dictionary.
+            tables: This connector's extracted table list (each with a
+                "name" and "columns" list of {"name": ...} dicts).
+            measures: This connector's extracted measure list (each with a
+                "name").
 
         Returns:
-            List of unique presentation metadata dictionaries.
+            Tuple of (presentation metadata list, unresolved field
+            reference list — each {"field", "field_type", "table",
+            "occurrences"}).
         """
         presentation_metadata: List[Dict[str, Any]] = []
         seen_tuples = set()
 
+        known_columns: Set[Tuple[str, str]] = set()
+        columns_by_table: Dict[str, List[str]] = {}
+        for table in tables:
+            table_name = table.get("name")
+            for column in table.get("columns", []):
+                column_name = column.get("name")
+                if table_name and column_name:
+                    known_columns.add((table_name, column_name))
+                    columns_by_table.setdefault(table_name, []).append(column_name)
+        known_measures: Set[str] = {m.get("name") for m in measures if m.get("name")}
+        unresolved_occurrences: Dict[Tuple[str, str, Optional[str]], int] = {}
+
         sections = layout.get("sections", [])
         if not isinstance(sections, list):
-            return []
+            return [], []
 
         for section in sections:
             if not isinstance(section, dict):
@@ -1075,7 +1201,33 @@ class LocalPBIXConnector(BaseConnector):
                         v_type_strip = v_type.strip()
                         visual_type = v_type_strip[0].upper() + v_type_strip[1:] if v_type_strip else "Unknown"
 
-                # 3. Extract title using title priority order
+                # 3. Extract referenced fields (measures + columns) using the
+                #    linear recursive traversal helper. Computed unconditionally,
+                #    before the title check below, since unresolved-reference
+                #    detection needs every visual's fields regardless of
+                #    whether it has a title.
+                field_refs = self._extract_field_references(visual)
+
+                for field_name, field_kind, table_name in field_refs:
+                    if field_kind in ("measure", "unknown"):
+                        if field_name in known_measures:
+                            continue
+                        key = (field_name, "measure", None)
+                    else:
+                        # A column reference with no resolvable table is
+                        # never trustworthy enough to flag — it can't be
+                        # distinguished from a same-named column that's
+                        # simply unresolved rather than actually stale.
+                        if table_name is None or (table_name, field_name) in known_columns:
+                            continue
+                        key = (field_name, "column", table_name)
+
+                    unresolved_occurrences[key] = unresolved_occurrences.get(key, 0) + 1
+
+                if not field_refs:
+                    continue
+
+                # 4. Extract title using title priority order
                 # Priority:
                 # 1) singleVisual.vcObjects.title
                 # 2) singleVisual.objects.title
@@ -1098,7 +1250,7 @@ class LocalPBIXConnector(BaseConnector):
                                                 title = literal["Value"]
                                         if not title and "value" in text_prop:
                                             title = text_prop["value"]
-                        
+
                         if title is not None:
                             if isinstance(title, str):
                                 title = title.strip("'").strip()
@@ -1111,10 +1263,18 @@ class LocalPBIXConnector(BaseConnector):
                 if not title:
                     continue
 
-                # 4. Extract referenced fields (measures + columns) using the linear
-                #    recursive traversal helper
-                field_refs = self._extract_field_references(visual)
-                if not field_refs:
+                # A visual's title describes what the visual as a whole shows,
+                # not any single field in isolation. For a card/KPI bound to
+                # exactly one field, the title genuinely is a synonym for that
+                # field (e.g. a card titled "R1" bound only to "Revenue"). But
+                # a chart combining a measure with a dimension (e.g. a bar
+                # chart titled "Total Sales by Channel" showing measure
+                # "Total Sales" broken down by column "Channel") has a title
+                # describing their combination — attributing it to either
+                # field individually is wrong (e.g. "Channel" would wrongly
+                # inherit "Total Sales by Channel" as an alias). Only
+                # single-field visuals are unambiguous enough to trust.
+                if len(field_refs) != 1:
                     continue
 
                 # 5. Populate and deduplicate tuples
@@ -1132,7 +1292,51 @@ class LocalPBIXConnector(BaseConnector):
                             "visual_type": visual_type,
                         })
 
-        return presentation_metadata
+        unresolved_field_references = []
+        for (f, k, tbl), count in unresolved_occurrences.items():
+            candidates = (columns_by_table.get(tbl, []) if tbl else []) if k == "column" else list(known_measures)
+            unresolved_field_references.append({
+                "field": f,
+                "field_type": k,
+                "table": tbl,
+                "occurrences": count,
+                "resolved_target_field": self._best_matching_field(f, candidates),
+            })
+        return presentation_metadata, unresolved_field_references
+
+    @staticmethod
+    def _best_matching_field(stale_name: str, candidates: List[str]) -> Optional[str]:
+        """Find the one current field name a stale report reference most
+        plausibly used to be, by name similarity alone.
+
+        A stale reference's table is known, but never which specific
+        column within it the name used to refer to — Power BI queries
+        reference fields purely by name string, with no stable ID
+        preserved in the report layout across a rename. Name similarity
+        (one name is a prefix of the other, e.g. "Ch" / "Channel") is the
+        only signal available without asking a person.
+
+        Deliberately conservative: only returns a match when exactly one
+        candidate qualifies. Zero matches means nothing looks related;
+        more than one means the name alone can't tell them apart — in both
+        cases, guessing would be worse than saying nothing, so ``None`` is
+        returned and the caller shows no suggestion at all rather than
+        broadcasting an ambiguous one to multiple fields.
+        """
+        def _norm(s: str) -> str:
+            return s.lower().replace(" ", "").replace("_", "")
+
+        stale_norm = _norm(stale_name)
+        matches = []
+        for candidate in candidates:
+            candidate_norm = _norm(candidate)
+            if not candidate_norm or candidate_norm == stale_norm:
+                continue
+            shorter, longer = sorted((candidate_norm, stale_norm), key=len)
+            if len(shorter) >= 2 and longer.startswith(shorter):
+                matches.append(candidate)
+
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _classify_connection_type(conn_string: str) -> str:

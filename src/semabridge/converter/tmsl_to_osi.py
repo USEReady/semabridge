@@ -478,7 +478,6 @@ class TMSLToOSIConverter(BaseConverter):
                 col_name,
             ),
             user_defined=user_synonyms,
-            auto_generated=self._auto_synonyms(col_name),
         )
         # Columns have no separate display-name heuristic distinct from
         # col_name (unlike measures), so the same name is used for both
@@ -706,44 +705,6 @@ class TMSLToOSIConverter(BaseConverter):
         # Default for Fabric dateTime is datetime.
         return OSIDataType.DATETIME
 
-    @staticmethod
-    def _auto_synonyms(name: str) -> List[str]:
-        """
-        Generate simple synonym candidates from a column/measure name.
-
-        Example: "CustomerID" → ["Customer ID", "Client ID"]
-                 "sale_amount" → ["Sale Amount", "Sales Amount"]
-        """
-        # Convert snake_case and PascalCase to title-case words
-        # e.g. "sale_amount" → "Sale Amount"
-        snake_separated = name.replace("_", " ").strip()
-        # Insert space before uppercase letters following lowercase (PascalCase)
-        import re as _re
-        camel_separated = _re.sub(r"(?<=[a-z])(?=[A-Z])", " ", snake_separated)
-        title_form = camel_separated.title().strip()
-
-        synonyms: List[str] = []
-        if title_form and title_form.lower() != name.lower():
-            synonyms.append(title_form)
-
-        # Common business abbreviation expansions
-        _abbrev_map = {
-            "Cust": "Customer", "Acct": "Account", "Amt": "Amount",
-            "Qty": "Quantity", "Num": "Number", "Id": "ID",
-            "Desc": "Description", "Dt": "Date", "Yr": "Year",
-            "Mth": "Month", "Qtr": "Quarter", "Wk": "Week",
-        }
-        for abbrev, expansion in _abbrev_map.items():
-            if abbrev in title_form:
-                synonyms.append(title_form.replace(abbrev, expansion))
-
-        # Return deduplicated list (up to 3 synonyms)
-        seen: List[str] = []
-        for s in synonyms:
-            if s not in seen and s.lower() != name.lower():
-                seen.append(s)
-        return seen[:3]
-
     def _parse_metric(self, measure_def: Dict[str, Any], dataset_name: str) -> OSIMetric:
         """Parse a TMSL measure into OSIMetric with Cortex AI metadata."""
         dax = self._extract_measure_expression(measure_def)
@@ -789,7 +750,6 @@ class TMSLToOSIConverter(BaseConverter):
                 name,
             ),
             user_defined=user_synonyms,
-            auto_generated=TMSLToOSIConverter._auto_synonyms(display_name),
         )
 
         synonyms, has_report_alias, matched_aliases = self._resolve_report_aliases(

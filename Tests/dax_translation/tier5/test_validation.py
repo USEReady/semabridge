@@ -324,6 +324,73 @@ def test_heal_unknown_alias_returns_none_when_column_is_ambiguous():
     assert resolved is None
 
 
+def test_normalize_metric_column_references_prefers_dax_hinted_table_over_wrong_alias():
+    """Mirrors connectors/translator.py's identical regression test — this
+    file's validator body is a verbatim salvage of that one, so the fix and
+    its test are kept in sync deliberately (see this file's own docstring).
+
+    Real deploy failure this closes: Tier-5 output already looked "valid"
+    by every existing check (real alias, real column there too) but
+    disagreed with the table the source DAX explicitly named for that same
+    column, and Snowflake later rejected the deployed metric with "cannot
+    refer to another dimension from an unrelated entity" as a result."""
+    v = _validator()
+    col_lookup = {
+        "SelectorTable": {"MODE", "YEAR_FLAG"},
+        "CalendarTable": {"CAL_DATE", "YEAR_FLAG"},
+        "FactTable": {"AMOUNT"},
+    }
+    aliases = {"SelectorTable": "selector", "CalendarTable": "cal", "FactTable": "fact"}
+    dax = "IF(SUM('SelectorTable'[MODE])=3,CALCULATE([SomeMeasure],'CalendarTable'[Year Flag]=1))"
+    sql = 'CASE WHEN SUM(selector."MODE") = 3 THEN SUM(CASE WHEN selector."YEAR_FLAG" = 1 THEN fact."AMOUNT" ELSE NULL END) END'
+
+    normalized = v._normalize_metric_column_references(
+        sql, "Metric_A", col_lookup, aliases, preferred_table_alias="selector", original_dax=dax,
+    )
+
+    assert 'cal.YEAR_FLAG' in normalized
+    assert 'selector.YEAR_FLAG' not in normalized
+
+
+def test_normalize_metric_column_references_ignores_hint_the_hinted_table_cant_confirm():
+    """Negative control: the DAX names a table for this column, but that
+    table doesn't structurally have it — must not override on an
+    unconfirmed hint."""
+    v = _validator()
+    col_lookup = {"SelectorTable": {"MODE", "YEAR_FLAG"}, "CalendarTable": {"CAL_DATE"}}
+    aliases = {"SelectorTable": "selector", "CalendarTable": "cal"}
+    dax = "CALCULATE([SomeMeasure],'CalendarTable'[Year Flag]=1)"
+    sql = 'selector."YEAR_FLAG"'
+
+    normalized = v._normalize_metric_column_references(sql, "Metric_A", col_lookup, aliases, original_dax=dax)
+
+    assert normalized == 'selector.YEAR_FLAG'
+
+
+def test_module_level_normalize_uses_request_dax_to_fix_misattributed_table():
+    """Same scenario as above, through the actual module-level wrapper and
+    TranslationRequest shape Tier5Service really calls (service.py:178,350)
+    -- proves the fix is wired end-to-end for the real call path, not just
+    reachable via the lower-level validator method directly."""
+    col_lookup = {
+        "SelectorTable": {"MODE", "YEAR_FLAG"},
+        "CalendarTable": {"CAL_DATE", "YEAR_FLAG"},
+    }
+    aliases = {"SelectorTable": "selector", "CalendarTable": "cal"}
+    request = TranslationRequest(
+        dax="IF(SUM('SelectorTable'[MODE])=3,CALCULATE([SomeMeasure],'CalendarTable'[Year Flag]=1))",
+        dataset_name="SelectorTable",
+        table_alias="selector",
+        dataset_col_lookup=col_lookup,
+        dataset_aliases=aliases,
+        metric_name="Metric_A",
+    )
+
+    normalized = normalize_metric_column_references('selector."YEAR_FLAG"', request)
+
+    assert normalized == "cal.YEAR_FLAG"
+
+
 def test_qualify_bare_column_identifiers_leaves_ambiguous_column_unqualified():
     """Two synthetic datasets — neither named anything like 'FACT' — both
     declare the same column. With the old code, this only resolved when

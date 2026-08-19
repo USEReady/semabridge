@@ -230,6 +230,13 @@ def _step10_finalize(
     self._summary.sml_snapshot_id = context.sml_snapshot_id
     self._summary.target_artifact_path = context.target_artifact_path
     self._summary.routing_summary = context.routing_summary
+    if context.source_format is not None:
+        self._summary.unresolved_report_field_references = getattr(
+            context.source_format, "unresolved_report_field_references", []
+        )
+        self._summary.ambiguous_report_aliases = getattr(
+            context.source_format, "ambiguous_report_aliases", []
+        )
     try:
         from semabridge.core.demo_mode import resolve_effective_demo_mode
         self._summary.demo_mode = resolve_effective_demo_mode(

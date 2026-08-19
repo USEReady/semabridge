@@ -17,6 +17,16 @@ from semabridge.utils.null_sentinel import is_null_cast_sql
 
 logger = get_logger(__name__)
 
+# Matches a DAX qualified column reference, e.g. 'Date'[Running Year] or
+# Date[Running Year] -- used to build a column-name -> DAX-source-table hint
+# map (see MetricExpressionTranslator._extract_dax_table_hints) so that when
+# a metric's SQL (Tier-5/LLM output, most often) contains an ALREADY-
+# qualified reference like kpi."RUNNING_YEAR" for a column the DAX
+# unambiguously wrote as 'Date'[Running Year], normalization can catch the
+# misattribution instead of accepting it silently just because "kpi" is a
+# real alias and "RUNNING_YEAR" happens to also be a real column there.
+_DAX_QUALIFIED_COLUMN_PATTERN = re.compile(r"'([^']+)'\[([^\]]+)\]|\b([A-Za-z_][\w ]*)\[([^\]]+)\]")
+
 
 class MetricExpressionTranslator:
     def __init__(self, identifier_sanitizer: Any = None, dialect: str = "snowflake", behavior: Any = None, *args, **kwargs) -> None:
@@ -435,6 +445,7 @@ class MetricExpressionTranslator:
                     metric_names=metric_name_set,
                     preferred_table_alias=table_alias,
                     metric_to_alias=metric_to_alias,
+                    original_dax=dax_expression,
                 )
                 is_valid, issues = self._validate_metric_column_references(
                     normalized_rule_sql, metric_name, dataset_col_lookup, dataset_aliases, metric_name_set
@@ -477,6 +488,7 @@ class MetricExpressionTranslator:
                     metric_names=metric_name_set,
                     preferred_table_alias=table_alias,
                     metric_to_alias=metric_to_alias,
+                    original_dax=dax_expression,
                 )
                 is_valid, _ = self._validate_metric_column_references(
                     expr, metric.unique_name, dataset_col_lookup, dataset_aliases, metric_names=metric_name_set,
@@ -917,6 +929,74 @@ class MetricExpressionTranslator:
         logger.debug(f"Metric '{metric_name}': All column references valid")
         return True, None
 
+    def _extract_dax_table_hints(self, dax: Optional[str]) -> Dict[str, str]:
+        """Sanitized-column-name -> DAX-source-table-name, from every
+        'Table'[Column] / Table[Column] reference in the original DAX.
+
+        Best-effort only: if the same sanitized column name is qualified
+        against two different tables within one expression (rare -- most
+        DAX measures reference a given column against a single table),
+        the last one found wins; this is a hint used only to catch an
+        already-qualified reference that disagrees with it, never a hard
+        routing decision on its own (see _resolve_dax_hinted_dataset).
+        """
+        hints: Dict[str, str] = {}
+        if not dax or not self._id:
+            return hints
+        for m in _DAX_QUALIFIED_COLUMN_PATTERN.finditer(dax):
+            table_name = (m.group(1) or m.group(3) or "").strip()
+            col_name = (m.group(2) or m.group(4) or "").strip()
+            if not table_name or not col_name:
+                continue
+            hints[self._id.sanitize_column(col_name)] = table_name
+        return hints
+
+    def _resolve_dax_hinted_dataset(
+        self,
+        sanitized_col_name: str,
+        current_dataset_name: Optional[str],
+        dax_table_hints: Optional[Dict[str, str]],
+        dataset_aliases: Dict[str, str],
+        dataset_col_lookup: Dict[str, set[str]],
+    ) -> Optional[str]:
+        """Real fix for the bug this closes: a metric's SQL can already be
+        fully, "validly" qualified (a real alias, a real column on that
+        alias's dataset) and still be WRONG relative to the DAX it came
+        from -- e.g. Tier-5 output referencing kpi."RUNNING_YEAR" when the
+        DAX explicitly wrote CALCULATE(..., 'Date'[Running Year]=1). Every
+        existing check here only asks "does this alias/column combination
+        exist," which this case already satisfies, so nothing upstream
+        catches it. This asks a different, narrower question instead: does
+        the DAX name a *different* table for this exact column, and does
+        THAT table structurally have it too?
+
+        Deliberately conservative -- never returns a dataset the hint
+        merely names; only one confirmed (via dataset_col_lookup) to
+        actually declare the column, same standard _heal_unknown_alias
+        already holds itself to. Returns None (no override) whenever the
+        hinted table doesn't resolve to a real dataset, that dataset
+        doesn't have the column, or the hint agrees with what's already
+        there -- so a metric with no bracket-qualified DAX references (the
+        overwhelming majority) is completely unaffected by this check.
+        """
+        if not dax_table_hints:
+            return None
+        hinted_table = dax_table_hints.get(sanitized_col_name)
+        if not hinted_table:
+            return None
+        hinted_cf = hinted_table.strip().strip("'").casefold()
+        hinted_dataset = next(
+            (ds for ds in dataset_aliases if ds.strip().casefold() == hinted_cf),
+            None,
+        )
+        if not hinted_dataset or hinted_dataset == current_dataset_name:
+            return None
+        if not self._resolve_column_name_for_dataset(
+            dataset_col_lookup.get(hinted_dataset, set()), sanitized_col_name
+        ):
+            return None
+        return hinted_dataset
+
     def _normalize_metric_column_references(
         self,
         metric_sql: str,
@@ -925,11 +1005,16 @@ class MetricExpressionTranslator:
         dataset_aliases: Dict[str, str],
         metric_names: Optional[set[str]] = None,
         preferred_table_alias: Optional[str] = None,
-        metric_to_alias: Optional[Dict[str, str]] = None
+        metric_to_alias: Optional[Dict[str, str]] = None,
+        original_dax: Optional[str] = None,
     ) -> str:
         alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
         alias_to_dataset.update({str(v).lower(): k for k, v in dataset_aliases.items()})
         alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
+        # Empty when original_dax is None (the default for every existing
+        # caller that hasn't opted in) -- _resolve_dax_hinted_dataset is then
+        # a guaranteed no-op below, so this parameter is purely additive.
+        dax_table_hints = self._extract_dax_table_hints(original_dax)
         normalized_sql = metric_sql
         normalized_sql = self._normalize_display_name_metric_references(normalized_sql, metric_names)
 
@@ -961,14 +1046,20 @@ class MetricExpressionTranslator:
         for match in re.finditer(quoted_pattern, normalized_sql):
             table_alias = match.group(1) or match.group(2)
             col_name = match.group(4)
+            sanitized_col_name = self._id.sanitize_column(col_name)
             dataset_name = alias_to_dataset.get(table_alias)
-            if not dataset_name:
+            hinted_dataset = self._resolve_dax_hinted_dataset(
+                sanitized_col_name, dataset_name, dax_table_hints, dataset_aliases, dataset_col_lookup,
+            )
+            if hinted_dataset:
+                dataset_name = hinted_dataset
+                table_alias = dataset_aliases.get(hinted_dataset, table_alias)
+            elif not dataset_name:
                 dataset_name = self._heal_unknown_alias(table_alias, col_name, dataset_aliases, dataset_col_lookup, metric_names)
                 if dataset_name:
                     table_alias = dataset_aliases.get(dataset_name, table_alias)
             if not dataset_name:
                 continue
-            sanitized_col_name = self._id.sanitize_column(col_name)
             known_columns = dataset_col_lookup.get(dataset_name, set())
             resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
@@ -1011,14 +1102,20 @@ class MetricExpressionTranslator:
         for match in re.finditer(unquoted_pattern, normalized_sql):
             table_alias = match.group(1) or match.group(2)
             col_name = match.group(3)
+            sanitized_col_name = self._id.sanitize_column(col_name)
             dataset_name = alias_to_dataset.get(table_alias)
-            if not dataset_name:
+            hinted_dataset = self._resolve_dax_hinted_dataset(
+                sanitized_col_name, dataset_name, dax_table_hints, dataset_aliases, dataset_col_lookup,
+            )
+            if hinted_dataset:
+                dataset_name = hinted_dataset
+                table_alias = dataset_aliases.get(hinted_dataset, table_alias)
+            elif not dataset_name:
                 dataset_name = self._heal_unknown_alias(table_alias, col_name, dataset_aliases, dataset_col_lookup, metric_names)
                 if dataset_name:
                     table_alias = dataset_aliases.get(dataset_name, table_alias)
             if not dataset_name:
                 continue
-            sanitized_col_name = self._id.sanitize_column(col_name)
             known_columns = dataset_col_lookup.get(dataset_name, set())
             resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:

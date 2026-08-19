@@ -312,12 +312,12 @@ class TestPBIXAliasOSIPropagation:
 
         osi = converter.to_osi(source)
         metric = osi.metrics[0]
-        # Verify user synonym "Sales Revenue" and auto-generated "Total Revenue" are present
-        assert "Sales Revenue" in metric.synonyms
-        assert "Total Revenue" in metric.synonyms
+        # The TMSL-authored synonym is present; no auto-generated synonym is
+        # produced from the name alone (removed -- a mechanical name split
+        # is not evidence of a name actually used anywhere).
+        assert metric.synonyms == ["Sales Revenue"]
         assert metric.has_report_alias is False
         assert metric.synonym_sources["Sales Revenue"] == "tmsl_authored"
-        assert metric.synonym_sources["Total Revenue"] == "auto_generated"
 
     def test_multiple_measures_mapping(self, converter):
         """Verify report aliases are correctly mapped to their respective target measures."""
@@ -498,9 +498,12 @@ class TestSynonymProvenance:
             if syn != "Genuine Report Title":
                 assert tag != "report_alias"
 
-    def test_auto_generated_only_synonym_not_labeled_as_report_alias(self, converter):
-        """A field with zero report-layer match must have has_report_alias=False
-        and every synonym tagged as something other than 'report_alias'."""
+    def test_no_synonyms_when_no_authored_or_report_layer_evidence(self, converter):
+        """A field with no TMSL-authored synonyms, no manual override, and
+        no report-layer match must end up with zero synonyms -- a
+        mechanical name split (removed 'auto_generated' source) is not
+        evidence of a name actually used anywhere, so it must not
+        contribute a synonym just because the field has a name."""
         source = {
             "tmsl": {"model": {"name": "GenericModel", "tables": [{
                 "name": "GenericTable",
@@ -512,7 +515,8 @@ class TestSynonymProvenance:
         osi = converter.to_osi(source)
         metric = osi.metrics[0]
         assert metric.has_report_alias is False
-        assert all(tag != "report_alias" for tag in metric.synonym_sources.values())
+        assert metric.synonyms == []
+        assert metric.synonym_sources == {}
 
     def test_manual_and_tmsl_authored_synonyms_tagged_distinctly(self, converter):
         """UI-override and TMSL-authored synonyms must be tagged with their
