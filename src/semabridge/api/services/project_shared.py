@@ -362,12 +362,35 @@ def _compat_repo_root() -> Path:
 
 
 def _compat_config_roots() -> List[Path]:
+    """Candidate config roots, deduplicated by filesystem identity.
+
+    (Path.cwd(), repo_root) x ("config", "Config") produces up to four
+    candidate paths, but on a case-insensitive filesystem (the macOS
+    default) "config" and "Config" are different strings pointing at the
+    SAME physical directory -- a plain `root not in roots` check compares
+    path components, not filesystem identity, so both survive and every
+    project YAML under that one real directory gets scanned twice (once
+    per casing), logging a spurious "duplicate project_id" warning for
+    every project on every listing. Deduping by (st_dev, st_ino) instead
+    collapses same-directory candidates regardless of casing; a candidate
+    that doesn't exist yet has no inode to compare, so it's kept as-is
+    (existing not-found handling elsewhere already skips it).
+    """
     roots: List[Path] = []
+    seen_identity: set = set()
     for base in (Path.cwd(), _compat_repo_root()):
         for name in ("config", "Config"):
             root = base / name
-            if root not in roots:
-                roots.append(root)
+            try:
+                stat_result = os.stat(root)
+                identity = (stat_result.st_dev, stat_result.st_ino)
+            except OSError:
+                identity = None
+            key = identity if identity is not None else root
+            if key in seen_identity:
+                continue
+            seen_identity.add(key)
+            roots.append(root)
     return roots
 
 

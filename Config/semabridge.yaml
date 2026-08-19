@@ -1,16 +1,16 @@
-project_name: competitve-test
+project_name: vfofod
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitve-test/ab738b42e68349d2aa6e4b71668ba602_Competitive
-    Marketing Analysis.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitve-test/ab738b42e68349d2aa6e4b71668ba602_Competitive
-    Marketing Analysis.pbix
+  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-vfofod/f582f485a7dc478ebd1a63d8c9e732d9_Competitive
+    Marketing Analysis (More Synonyms) (1).pbix
+  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-vfofod/f582f485a7dc478ebd1a63d8c9e732d9_Competitive
+    Marketing Analysis (More Synonyms) (1).pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
   schema: SEMABRIDGE_WORKSPACE
   warehouse: DI_OTH_POC_WH
-  identity_id: fe779bef-d844-4d57-ae4a-40a7cea2f201
+  identity_id: 333eb227-b7fe-4798-84da-8d39950b3725
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY
@@ -219,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-competitve-test
-display_name: competitve-test
+project_id: proj-vfofod
+display_name: vfofod

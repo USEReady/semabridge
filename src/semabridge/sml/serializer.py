@@ -299,7 +299,22 @@ class SMLSerializer:
     
     @staticmethod
     def _column_to_dict(column: SMLColumn) -> dict[str, Any]:
-        """Convert column to dictionary."""
+        """Convert column to dictionary.
+
+        Real incident (see _metric_to_dict's docstring for the metric-side
+        version of the same bug): this hand-written field list had
+        silently drifted behind SMLColumn's actual fields --
+        synonym_sources, has_report_alias, is_enum, cortex_search_service,
+        sample_values, and precompute_aggregation were ALL missing, so
+        every dry-run snapshot persisted through this serializer
+        permanently lost them (e.g. a column's report-layer synonym
+        provenance was resolved correctly in-memory, right after
+        OSIToSMLConverter.from_osi(), but never survived into the snapshot
+        the dry-run API response is actually built from -- every synonym
+        showed as "Unknown Source" regardless of its real provenance).
+        Keep this in sync with SMLColumn's field list -- there is no
+        model_dump() fallback here to catch a future drift the same way.
+        """
         return {
             "unique_name": column.unique_name,
             "label": column.label,
@@ -312,8 +327,14 @@ class SMLSerializer:
             "format_string": column.format_string,
             "folder": column.folder,
             "synonyms": list(column.synonyms or []) if column.synonyms else [],
+            "synonym_sources": dict(column.synonym_sources or {}),
+            "has_report_alias": column.has_report_alias,
+            "is_enum": column.is_enum,
+            "cortex_search_service": column.cortex_search_service,
+            "sample_values": list(column.sample_values or []),
+            "precompute_aggregation": column.precompute_aggregation,
         }
-    
+
     @staticmethod
     def _dict_to_column(data: dict[str, Any]) -> SMLColumn:
         """Convert dictionary to column."""
@@ -329,6 +350,12 @@ class SMLSerializer:
             format_string=data.get("format_string"),
             folder=data.get("folder"),
             synonyms=list(data.get("synonyms") or []),
+            synonym_sources=dict(data.get("synonym_sources") or {}),
+            has_report_alias=data.get("has_report_alias", False),
+            is_enum=data.get("is_enum", False),
+            cortex_search_service=data.get("cortex_search_service"),
+            sample_values=list(data.get("sample_values") or []),
+            precompute_aggregation=data.get("precompute_aggregation"),
         )
     
     @staticmethod

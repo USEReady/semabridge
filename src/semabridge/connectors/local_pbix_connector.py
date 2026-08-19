@@ -951,7 +951,165 @@ class LocalPBIXConnector(BaseConnector):
 
         if attempted:
             logger.warning("Failed to parse report layout JSON from PBIX archive")
-        return None
+
+        # Recent Power BI Desktop versions can save a report using the
+        # newer PBIR (enhanced report) format even inside a plain .pbix
+        # container -- replacing the single Report/Layout file above with
+        # a Report/definition/ folder tree. Still a completely valid
+        # .pbix; just a different internal representation of the same
+        # report, so it's a fallback here rather than a separate connector.
+        return self._extract_report_layout_pbir()
+
+    def _extract_report_layout_pbir(self) -> Optional[Dict[str, Any]]:
+        """Fallback layout extraction for the PBIR (Power BI enhanced
+        report) format: one page.json per page and one visual.json per
+        visual under Report/definition/, instead of a single Report/Layout
+        file. Reconstructs the same {"sections": [...]} shape
+        _parse_presentation_metadata already expects, so that function and
+        _extract_field_references need no changes to support either
+        format.
+
+        Returns:
+            Parsed layout dictionary in the legacy shape, or None if this
+            archive doesn't use the PBIR format either.
+        """
+        if not self._archive:
+            return None
+
+        pages_data = self._read_archive_file("Report/definition/pages/pages.json")
+        if not pages_data:
+            return None
+
+        pages_meta = self._parse_json_candidate(pages_data)
+        page_order = pages_meta.get("pageOrder") if pages_meta else None
+        if not isinstance(page_order, list) or not page_order:
+            return None
+
+        archive_names = self._archive.namelist()
+        sections: List[Dict[str, Any]] = []
+
+        for page_id in page_order:
+            if not isinstance(page_id, str) or not page_id:
+                continue
+            page_prefix = f"Report/definition/pages/{page_id}/"
+            page_json_data = self._read_archive_file(f"{page_prefix}page.json")
+            page_meta = self._parse_json_candidate(page_json_data) if page_json_data else None
+            display_name = (page_meta or {}).get("displayName") or page_id
+
+            visuals_prefix = f"{page_prefix}visuals/"
+            visual_containers: List[Dict[str, Any]] = []
+            for name in archive_names:
+                if not (name.startswith(visuals_prefix) and name.endswith("/visual.json")):
+                    continue
+                visual_entry = self._parse_json_candidate(self._archive.read(name))
+                if not visual_entry:
+                    continue
+                config_str, query_str = self._pbir_visual_to_legacy_shape(visual_entry)
+                visual_containers.append({
+                    "config": config_str,
+                    "query": query_str,
+                    "filters": "[]",
+                })
+
+            sections.append({
+                "displayName": display_name,
+                "visualContainers": visual_containers,
+            })
+
+        if not sections:
+            return None
+
+        logger.info(
+            "Report layout extracted successfully from PBIR-format Report/definition/ tree (%d pages)",
+            len(sections),
+        )
+        return {"sections": sections}
+
+    @staticmethod
+    def _pbir_visual_to_legacy_shape(visual_entry: Dict[str, Any]) -> Tuple[str, str]:
+        """Translate one PBIR visual.json into the legacy config/query JSON
+        string shape _parse_presentation_metadata and
+        _extract_field_references already parse.
+
+        PBIR differs from the legacy Report/Layout shape in two ways that
+        matter here:
+          - the title lives under "visualContainerObjects" instead of
+            "vcObjects" (identical nested shape otherwise, so it's copied
+            through unchanged under the legacy key name);
+          - a field binding's SourceRef carries the table name directly
+            ({"SourceRef": {"Entity": "SalesFact"}}) instead of an alias
+            resolved via a separate "From" clause. A synthetic "From"
+            entry and alias are fabricated per distinct entity referenced,
+            so the existing alias-resolution logic in
+            _extract_field_references needs no changes for either format.
+        """
+        visual = visual_entry.get("visual") if isinstance(visual_entry, dict) else None
+        if not isinstance(visual, dict):
+            visual = {}
+
+        visual_type = visual.get("visualType", "")
+        vco = visual.get("visualContainerObjects")
+        title = vco.get("title") if isinstance(vco, dict) else None
+
+        config: Dict[str, Any] = {
+            "singleVisual": {
+                "visualType": visual_type,
+                "vcObjects": {"title": title} if title is not None else {},
+            }
+        }
+
+        query_node = visual.get("query")
+        query_state = query_node.get("queryState") if isinstance(query_node, dict) else None
+        projections: List[Dict[str, Any]] = []
+        if isinstance(query_state, dict):
+            for role in query_state.values():
+                if isinstance(role, dict):
+                    role_projections = role.get("projections")
+                    if isinstance(role_projections, list):
+                        projections.extend(role_projections)
+
+        entity_alias: Dict[str, str] = {}
+        select_items: List[Dict[str, Any]] = []
+        for proj in projections:
+            if not isinstance(proj, dict):
+                continue
+            field = proj.get("field")
+            if not isinstance(field, dict):
+                continue
+            for node_key in ("Measure", "Column"):
+                node = field.get(node_key)
+                if not isinstance(node, dict):
+                    continue
+                expr = node.get("Expression")
+                source_ref = expr.get("SourceRef") if isinstance(expr, dict) else None
+                entity = source_ref.get("Entity") if isinstance(source_ref, dict) else None
+                if not isinstance(entity, str) or not entity:
+                    continue
+                if entity not in entity_alias:
+                    entity_alias[entity] = f"e{len(entity_alias) + 1}"
+                select_items.append({
+                    node_key: {
+                        "Expression": {"SourceRef": {"Source": entity_alias[entity]}},
+                        "Property": node.get("Property"),
+                    },
+                    "Name": proj.get("queryRef", ""),
+                })
+
+        query = {
+            "Commands": [
+                {
+                    "SemanticQuery": {
+                        "From": [
+                            {"Name": alias, "Entity": entity, "Type": 0}
+                            for entity, alias in entity_alias.items()
+                        ],
+                        "Select": select_items,
+                    }
+                }
+            ]
+        }
+
+        return json.dumps(config), json.dumps(query)
 
     def _extract_field_references(self, visual: Dict[str, Any]) -> Set[Tuple[str, str, Optional[str]]]:
         """Recursively traverse a visual container's fields to extract measure

@@ -1508,3 +1508,135 @@ class TestPBIXPresentationMetadata:
             {"field": "Beta", "field_type": "measure", "table": None},
         ]
 
+    def test_pbir_format_layout_extracts_the_same_aliases_as_legacy_layout(
+        self, tmp_path: Path
+    ) -> None:
+        """Recent Power BI Desktop versions can save a report using the
+        newer PBIR (enhanced report) format -- Report/definition/pages/
+        with one page.json/visual.json per page/visual -- instead of a
+        single Report/Layout file, even inside a plain .pbix container.
+        The same single-field-visual title must still surface as a
+        field_aliases entry via the PBIR fallback path."""
+        pages_json = {"pageOrder": ["PageA"]}
+        page_json = {"displayName": "Revenue Page"}
+        visual_json = {
+            "visual": {
+                "visualType": "card",
+                "query": {
+                    "queryState": {
+                        "Values": {
+                            "projections": [
+                                {
+                                    "field": {
+                                        "Measure": {
+                                            "Expression": {"SourceRef": {"Entity": "Sales"}},
+                                            "Property": "Total Revenue",
+                                        }
+                                    },
+                                    "queryRef": "Sales.Total Revenue",
+                                }
+                            ]
+                        }
+                    }
+                },
+                "visualContainerObjects": {
+                    "title": [
+                        {"properties": {"text": {"expr": {"Literal": {"Value": "'Revenue Snapshot'"}}}}}
+                    ]
+                },
+            }
+        }
+
+        pbix_path = tmp_path / "pbir_format.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/definition/pages/pages.json", json.dumps(pages_json))
+            zf.writestr("Report/definition/pages/PageA/page.json", json.dumps(page_json))
+            zf.writestr(
+                "Report/definition/pages/PageA/visuals/v1/visual.json",
+                json.dumps(visual_json),
+            )
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        assert len(pm) == 1
+        assert pm[0]["field"] == "Total Revenue"
+        assert pm[0]["field_type"] == "measure"
+        assert pm[0]["title"] == "Revenue Snapshot"
+        assert pm[0]["page"] == "Revenue Page"
+
+        fa = result["field_aliases"]
+        assert len(fa) == 1
+        assert fa[0]["field"] == "Total Revenue"
+        assert fa[0]["aliases"] == ["Revenue Snapshot"]
+
+    def test_pbir_format_multi_field_visual_is_not_trusted_for_aliasing(
+        self, tmp_path: Path
+    ) -> None:
+        """The single-field-visual trust rule must apply identically under
+        PBIR: a visual binding a Measure AND a Column (e.g. Category plus
+        Values roles on a chart) must not attribute its title to either
+        field, matching the legacy-format behavior."""
+        pages_json = {"pageOrder": ["PageA"]}
+        page_json = {"displayName": "Chart Page"}
+        visual_json = {
+            "visual": {
+                "visualType": "barChart",
+                "query": {
+                    "queryState": {
+                        "Category": {
+                            "projections": [
+                                {
+                                    "field": {
+                                        "Column": {
+                                            "Expression": {"SourceRef": {"Entity": "Customer"}},
+                                            "Property": "Name",
+                                        }
+                                    },
+                                    "queryRef": "Customer.Name",
+                                }
+                            ]
+                        },
+                        "Values": {
+                            "projections": [
+                                {
+                                    "field": {
+                                        "Measure": {
+                                            "Expression": {"SourceRef": {"Entity": "Sales"}},
+                                            "Property": "Total Revenue",
+                                        }
+                                    },
+                                    "queryRef": "Sales.Total Revenue",
+                                }
+                            ]
+                        },
+                    }
+                },
+                "visualContainerObjects": {
+                    "title": [
+                        {"properties": {"text": {"expr": {"Literal": {"Value": "'Revenue by Customer'"}}}}}
+                    ]
+                },
+            }
+        }
+
+        pbix_path = tmp_path / "pbir_multi_field.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/definition/pages/pages.json", json.dumps(pages_json))
+            zf.writestr("Report/definition/pages/PageA/page.json", json.dumps(page_json))
+            zf.writestr(
+                "Report/definition/pages/PageA/visuals/v1/visual.json",
+                json.dumps(visual_json),
+            )
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        assert result["presentation_metadata"] == []
+        assert result["field_aliases"] == []
+

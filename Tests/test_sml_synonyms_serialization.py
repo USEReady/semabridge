@@ -160,6 +160,72 @@ def test_formats_sml_serializer_round_trips_complexity_tier_and_self_reported_co
     assert met.advisory_notes == ["Cannot verify in dry-run — resolved by live enrichment at deploy time."]
 
 
+# ---------------------------------------------------------------------------
+# Real incident: both serializers' hand-written _column_to_dict/_dict_to_column
+# field lists had drifted behind SMLColumn's actual fields the same way
+# _metric_to_dict had -- synonym_sources and has_report_alias (among others)
+# were silently dropped on every dry-run snapshot round-trip, for columns
+# specifically, through EITHER serializer -- confirmed live: a real dry-run
+# API response showed every column synonym as unattributable ("Unknown
+# Source" in the UI) regardless of whether it was actually a genuine
+# report-layer alias, a manual override, or auto-generated.
+# ---------------------------------------------------------------------------
+
+def _column_with_report_alias():
+    return SMLColumn(
+        unique_name="category_col",
+        label="Category",
+        data_type=DataType.STRING,
+        synonyms=["Product Category"],
+        synonym_sources={"Product Category": "report_alias"},
+        has_report_alias=True,
+    )
+
+
+def _model_with_aliased_column():
+    dataset = SMLDataset(unique_name="sales_dataset", columns=[_column_with_report_alias()])
+    return SMLModel(unique_name="sales_model", datasets=[dataset])
+
+
+def test_core_sml_serializer_round_trips_column_synonym_sources():
+    model = _model_with_aliased_column()
+    deserialized = CoreSMLSerializer.from_yaml(CoreSMLSerializer.to_yaml(model))
+
+    col = deserialized.datasets[0].columns[0]
+    assert col.synonyms == ["Product Category"]
+    assert col.synonym_sources == {"Product Category": "report_alias"}
+    assert col.has_report_alias is True
+
+
+def test_formats_sml_serializer_round_trips_column_synonym_sources():
+    """The formats/sml copy is the ACTUAL serializer
+    repository/model_repository.py uses to persist a dry-run snapshot --
+    this is the copy that mattered for the real, live-observed bug."""
+    model = _model_with_aliased_column()
+    deserialized = FormatsSMLSerializer.from_yaml(FormatsSMLSerializer.to_yaml(model))
+
+    col = deserialized.datasets[0].columns[0]
+    assert col.synonyms == ["Product Category"]
+    assert col.synonym_sources == {"Product Category": "report_alias"}
+    assert col.has_report_alias is True
+
+
+def test_column_with_no_report_alias_round_trips_empty_provenance():
+    """Negative control: a column with no detected report alias must still
+    round-trip synonym_sources as {} and has_report_alias as False -- the
+    fix must not fabricate provenance for fields that never had any."""
+    column = SMLColumn(unique_name="plain_col", data_type=DataType.STRING, synonyms=["Alt Name"])
+    dataset = SMLDataset(unique_name="sales_dataset", columns=[column])
+    model = SMLModel(unique_name="m", datasets=[dataset])
+
+    for serializer in (CoreSMLSerializer, FormatsSMLSerializer):
+        deserialized = serializer.from_yaml(serializer.to_yaml(model))
+        col = deserialized.datasets[0].columns[0]
+        assert col.synonyms == ["Alt Name"]
+        assert col.synonym_sources == {}
+        assert col.has_report_alias is False
+
+
 def test_tier_1_4_metric_has_no_self_reported_confidence_after_round_trip():
     """Negative control: a deterministic (non-Tier-5) metric must still
     round-trip as None/default -- the fix must not fabricate a value."""

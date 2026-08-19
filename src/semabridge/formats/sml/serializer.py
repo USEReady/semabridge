@@ -299,7 +299,23 @@ class SMLSerializer:
     
     @staticmethod
     def _column_to_dict(column: SMLColumn) -> dict[str, Any]:
-        """Convert column to dictionary."""
+        """Convert column to dictionary.
+
+        Real incident (see _metric_to_dict's docstring for the metric-side
+        version of the same bug, already fixed in this file and in the
+        sibling semabridge/sml/serializer.py copy): this hand-written
+        field list was missing is_measure_candidate, synonym_sources,
+        has_report_alias, is_enum, cortex_search_service, sample_values,
+        and precompute_aggregation -- so a dry-run snapshot persisted
+        through THIS serializer (the one repository/model_repository.py
+        actually uses) lost all of them, e.g. every column synonym's real
+        provenance (report_alias / tmsl_authored / manual_override /
+        auto_generated) was resolved correctly in-memory right after
+        OSIToSMLConverter.from_osi(), but showed as unattributable
+        ("Unknown Source") in the dry-run API response regardless of its
+        actual source. Keep this in sync with SMLColumn's field list AND
+        with the sibling copy in semabridge/sml/serializer.py.
+        """
         return {
             "unique_name": column.unique_name,
             "label": column.label,
@@ -308,14 +324,22 @@ class SMLSerializer:
             "description": column.description,
             "is_hidden": column.is_hidden,
             "is_key": column.is_key,
+            "is_measure_candidate": column.is_measure_candidate,
             "format_string": column.format_string,
             "folder": column.folder,
             "synonyms": list(column.synonyms or []) if column.synonyms else [],
+            "synonym_sources": dict(column.synonym_sources or {}),
+            "has_report_alias": column.has_report_alias,
+            "is_enum": column.is_enum,
+            "cortex_search_service": column.cortex_search_service,
+            "sample_values": list(column.sample_values or []),
+            "precompute_aggregation": column.precompute_aggregation,
         }
-    
+
     @staticmethod
     def _dict_to_column(data: dict[str, Any]) -> SMLColumn:
-        """Convert dictionary to column."""
+        """Convert dictionary to column. Kept in sync with _column_to_dict
+        above — see its docstring for the real incident this matters for."""
         return SMLColumn(
             unique_name=data["unique_name"],
             label=data.get("label", ""),
@@ -324,9 +348,16 @@ class SMLSerializer:
             description=data.get("description", ""),
             is_hidden=data.get("is_hidden", False),
             is_key=data.get("is_key", False),
+            is_measure_candidate=data.get("is_measure_candidate", False),
             format_string=data.get("format_string"),
             folder=data.get("folder"),
             synonyms=list(data.get("synonyms") or []),
+            synonym_sources=dict(data.get("synonym_sources") or {}),
+            has_report_alias=data.get("has_report_alias", False),
+            is_enum=data.get("is_enum", False),
+            cortex_search_service=data.get("cortex_search_service"),
+            sample_values=list(data.get("sample_values") or []),
+            precompute_aggregation=data.get("precompute_aggregation"),
         )
     
     @staticmethod
