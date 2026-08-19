@@ -15,22 +15,36 @@ from semabridge.api.services.project_shared import (
     _compat_ensure_loaded,
     _compat_job_config,
     _compat_now_iso,
-    _compat_project_runs,
     _compat_project_schedules,
     _compat_projects,
     _compat_save_store,
     scheduler_service,
 )
-from semabridge.core.run_helpers import mask_run_for_display
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 
 async def list_job_runs_compat():
+    """Aggregate run history across every known project.
+
+    Delegates to get_project_runs_compat() per project rather than reading
+    _compat_project_runs directly. That in-memory dict is only ever
+    populated from the JSON compat-store cache file at process startup, or
+    by a run triggered during this same process's lifetime -- it has no
+    database fallback. get_project_runs_compat() does (it queries the
+    `runs` ORM table and warms the cache when empty), so a run that's
+    safely recorded in the database but not yet warm in memory -- e.g.
+    right after a server restart, before anyone has opened that specific
+    project's own run-history view -- would otherwise be silently missing
+    from this aggregate list even though it exists.
+    """
+    from semabridge.api.services.run_service import get_project_runs_compat
+
+    _compat_ensure_loaded()
     all_runs: List[Dict[str, Any]] = []
-    for runs in _compat_project_runs.values():
-        all_runs.extend(runs)
+    for project_id in list(_compat_projects.keys()):
+        all_runs.extend(await get_project_runs_compat(project_id))
     all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
-    return [mask_run_for_display(r) for r in all_runs]
+    return all_runs
 
 
 async def get_jobs_config_compat():
