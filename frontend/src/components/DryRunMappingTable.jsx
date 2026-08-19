@@ -343,7 +343,10 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
           168px (the default grid-item min-width is content-based, which is
           exactly what let the risk badge bleed into the Action column). */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
-        <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
+        {/* 'Auto' status badge disabled/hidden per user request */}
+        {String(row.status || '').toLowerCase() !== 'auto' && (
+          <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
+        )}
         {/* Static risk tier -- metric-only, backend-computed from static
             validators only (schema-reference check, type-safety
             validator, unreachable-dimension detector, DropLedger

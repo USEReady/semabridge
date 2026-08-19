@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.core.exceptions import ConnectorError, PBIXParsingError
 from semabridge.core.interfaces import BaseConnector
+from semabridge.utils.identifiers import clean_pbix_model_name
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -177,8 +178,15 @@ class LocalPBIXConnector(BaseConnector):
             result["tables"] = self._parse_tables(schema)
             result["measures"] = self._parse_measures(schema)
             result["relationships"] = self._parse_relationships(schema)
+            raw_schema_name = str(schema.get("name") or "").strip()
+            resolved_model_name = (
+                clean_pbix_model_name(self._pbix_path)
+                if (not raw_schema_name or raw_schema_name.lower() in {"model", "pbix", "fabric", "snowflake", "databricks"})
+                else raw_schema_name
+            ) or clean_pbix_model_name(self._pbix_path) or "Model"
+
             result["models"] = [{
-                "name": schema.get("name", self._pbix_path.stem),
+                "name": resolved_model_name,
                 "description": schema.get("description", ""),
                 "compatibility_level": schema.get("compatibilityLevel"),
                 "culture": schema.get("culture", "en-US"),
@@ -461,7 +469,7 @@ class LocalPBIXConnector(BaseConnector):
                 }
             )
 
-        model_name = self._pbix_path.stem
+        model_name = clean_pbix_model_name(self._pbix_path)
         compatibility_level: Optional[int] = None
         culture = "en-US"
 
@@ -505,7 +513,7 @@ class LocalPBIXConnector(BaseConnector):
         JSON DataModelSchema parsing fails but fallback extraction succeeds.
         """
         model_meta = ((fallback_result.get("models") or [{}])[0])
-        model_name = model_meta.get("name") or self._pbix_path.stem
+        model_name = model_meta.get("name") or clean_pbix_model_name(self._pbix_path)
 
         tables_by_name: Dict[str, Dict[str, Any]] = {}
         for table in fallback_result.get("tables", []) or []:

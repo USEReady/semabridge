@@ -100,14 +100,20 @@ def _step6a_extract_target_for_upsert(self, context: RunContext, target: str) ->
         from semabridge.converter.semantic_view_to_osi import SemanticViewToOSIConverter
         from semabridge.converter.osi_to_sml import OSIToSMLConverter
         from semabridge.utils.name_translator import get_target_deployment_name
+        from semabridge.utils.identifiers import clean_pbix_model_name
         
         emitter = SnowflakeEmitter(context.config.snowflake, behavior=context.behavior)
         
         # Resolve the target semantic view name using the same deployment naming path.
+        sf = getattr(context, "source_format", None)
+        pbix_path = getattr(sf, "pbix_path", None)
+        cleaned_pbix_name = clean_pbix_model_name(pbix_path) if pbix_path else None
+
         view_name_raw = (
             context.semantic_view_name_override
-            or getattr(getattr(context, "source_format", None), "semantic_view_name", None)
-            or getattr(getattr(context, "source_format", None), "dataset_name", None)
+            or getattr(sf, "semantic_view_name", None)
+            or getattr(sf, "dataset_name", None)
+            or cleaned_pbix_name
             or context.project_id
         )
         view_name = get_target_deployment_name(view_name_raw, "snowflake")

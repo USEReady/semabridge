@@ -1,9 +1,9 @@
-project_name: try
+project_name: competitve-test
 source:
   type: pbix
-  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-try/6d49021e18644b0db6db4e4a0f5de720_Competitive
+  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitve-test/ab738b42e68349d2aa6e4b71668ba602_Competitive
     Marketing Analysis.pbix
-  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-try/6d49021e18644b0db6db4e4a0f5de720_Competitive
+  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-competitve-test/ab738b42e68349d2aa6e4b71668ba602_Competitive
     Marketing Analysis.pbix
 targets:
 - type: snowflake
@@ -219,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-try
-display_name: try
+project_id: proj-competitve-test
+display_name: competitve-test
