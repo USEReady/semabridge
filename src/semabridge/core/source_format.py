@@ -84,6 +84,16 @@ class SourceFormat(BaseModel):
     # For PBIX source
     pbix_path: Optional[str] = None
     field_aliases: List[Dict[str, Any]] = Field(default_factory=list)
+    # Report-layer field references that don't match any current column/
+    # measure (e.g. the model was renamed after the report was built).
+    # Table-scoped only, not entity-scoped — see LocalPBIXConnector
+    # docstring for why this is never auto-attached to a specific field.
+    unresolved_report_field_references: List[Dict[str, Any]] = Field(default_factory=list)
+    # Report-layer aliases claimed by more than one field (e.g. two visuals
+    # coincidentally titled the same thing over different measures/columns)
+    # — excluded from synonyms so Cortex Analyst never has to guess which
+    # field a business user meant. See LocalPBIXConnector.discover().
+    ambiguous_report_aliases: List[Dict[str, Any]] = Field(default_factory=list)
     
     # Row counts for classification
     row_counts: Dict[str, int] = Field(default_factory=dict)
@@ -322,6 +332,8 @@ def from_pbix_tmsl(
     tmsl: Dict[str, Any],
     pbix_path: str,
     field_aliases: Optional[List[Dict[str, Any]]] = None,
+    unresolved_report_field_references: Optional[List[Dict[str, Any]]] = None,
+    ambiguous_report_aliases: Optional[List[Dict[str, Any]]] = None,
 ) -> SourceFormat:
     """
     Create SourceFormat from local PBIX DataModelSchema extraction.
@@ -335,9 +347,17 @@ def from_pbix_tmsl(
         tmsl: Raw DataModelSchema dict extracted from the .pbix archive.
         pbix_path: Absolute path to the source .pbix file.
         field_aliases: Optional list of report layout aliases (measures and columns).
+        unresolved_report_field_references: Optional list of report-layer
+            field references that don't match any current column/measure.
+        ambiguous_report_aliases: Optional list of report-layer aliases
+            excluded from synonyms because more than one field claimed them.
     """
+    from semabridge.utils.identifiers import clean_pbix_model_name
+
     model = tmsl.get("model", {})
-    dataset_name = model.get("name", "")
+    raw_name = model.get("name", "")
+    cleaned_name = clean_pbix_model_name(pbix_path) if pbix_path else raw_name
+    dataset_name = cleaned_name or raw_name or project_id
 
     return SourceFormat(
         source_type="pbix",
@@ -347,4 +367,6 @@ def from_pbix_tmsl(
         dataset_name=dataset_name,
         pbix_path=pbix_path,
         field_aliases=field_aliases or [],
+        unresolved_report_field_references=unresolved_report_field_references or [],
+        ambiguous_report_aliases=ambiguous_report_aliases or [],
     )

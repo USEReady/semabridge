@@ -40,6 +40,12 @@ export function LogsProvider({ children }) {
 
     // --- Core: add a log entry + auto-toast for warnings/errors ---
     const addLog = useCallback((severity, source, message) => {
+        if (
+            source === 'semabridge.auth.encryption' ||
+            (typeof message === 'string' && message.includes('SEMABRIDGE_ENCRYPTION_KEY'))
+        ) {
+            return;
+        }
         const entry = {
             id: Date.now() + Math.random(),
             timestamp: new Date().toLocaleTimeString(),

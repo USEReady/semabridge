@@ -116,6 +116,8 @@ def _extract_pbix(
         tmsl=tmsl,
         pbix_path=pbix_path,
         field_aliases=discovered.get("field_aliases", []),
+        unresolved_report_field_references=discovered.get("unresolved_report_field_references", []),
+        ambiguous_report_aliases=discovered.get("ambiguous_report_aliases", []),
     )
 
     table_count = len(tmsl.get("model", {}).get("tables", []))

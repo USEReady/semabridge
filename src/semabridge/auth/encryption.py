@@ -41,8 +41,8 @@ def _get_fernet() -> Fernet:
                 "SEMABRIDGE_ENCRYPTION_KEY environment variable must be set. "
                 "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
             )
-        # Dev/test mode: warn loudly but continue with a deterministic dev key
-        _encryption_logger.warning(
+        # Dev/test mode: continue with a deterministic dev key
+        _encryption_logger.debug(
             "SECURITY WARNING: SEMABRIDGE_ENCRYPTION_KEY is not set. "
             "Using an insecure dev key — DO NOT use this in production. "
             "Set AUTH_ENABLED=true or SEMABRIDGE_ENCRYPTION_KEY to suppress this warning."

@@ -785,10 +785,12 @@ class TestPBIXPresentationMetadata:
                                     "vcObjects": {"title": [{"properties": {"text": {"value": "Partial Success"}}}]}
                                 }
                             }),
-                            # query is malformed JSON, filters is valid
+                            # query is malformed JSON, filters is valid and
+                            # carries its field reference inside a Select
+                            # clause, matching real PBIX query shape.
                             "query": "malformed JSON {",
                             "filters": json.dumps({
-                                "Measure": {"Property": "Revenue"}
+                                "Select": [{"Measure": {"Property": "Revenue"}}]
                             })
                         }
                     ]
@@ -1120,4 +1122,389 @@ class TestPBIXPresentationMetadata:
         assert fa[0]["field_type"] == "column"
         assert fa[0]["table"] is None
         assert fa[0]["aliases"] == ["Unresolvable Alias"]
+
+    def test_single_field_card_title_becomes_alias_but_multi_field_chart_title_does_not(self, tmp_path: Path) -> None:
+        """A card bound to exactly one measure legitimately inherits its
+        title as an alias (e.g. a card titled "R1" bound only to "Revenue").
+        A chart combining a measure with a dimension (e.g. titled
+        "Total Sales by Channel", bound to both a "Total Sales" measure and
+        a "Channel" column) must NOT propagate its title to either field —
+        the title describes their combination, not one field alone."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        # Single-field card: title -> alias for Revenue only.
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "R1"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        # Multi-field bar chart: measure + dimension. Title
+                        # must not become an alias for either field.
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "barChart",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Sales by Channel"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "c", "Entity": "Sales", "Type": 0}],
+                                    "Select": [
+                                        {"Measure": {"Property": "Total Sales"}},
+                                        {"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Channel"}},
+                                    ],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "single_vs_multi_field.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        pm = result["presentation_metadata"]
+        # Only the single-field card contributes an entry; the multi-field
+        # chart's two field refs are both skipped.
+        assert len(pm) == 1
+        assert pm[0]["field"] == "Revenue"
+        assert pm[0]["title"] == "R1"
+
+        fa = result["field_aliases"]
+        aliases_by_field = {(item["field"], item["field_type"]): item["aliases"] for item in fa}
+        assert aliases_by_field.get(("Revenue", "measure")) == ["R1"]
+        # Neither "Total Sales" nor "Channel" gets the chart title as an alias.
+        assert ("Total Sales", "measure") not in aliases_by_field
+        assert ("Channel", "column") not in aliases_by_field
+
+    def test_unresolved_field_reference_flags_renamed_column_and_measure(self, tmp_path: Path) -> None:
+        """A report can keep querying a field by a name that no longer
+        exists in the model (the column/measure was renamed and the
+        visual's saved query was never rewritten). This must be surfaced as
+        an unresolved reference, scoped to its table where resolvable, and
+        must NOT be raised for fields that still exist or for a
+        table-less column reference (which can't be trusted)."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            # References "Discount" in Sales -- no such
+                            # column exists (Sales has OrderID, Amount).
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Discount Slicer"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "s", "Entity": "Sales", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Discount"}}],
+                                }}]
+                            })
+                        },
+                        {
+                            # References "Discount" again on a different page
+                            # -- same unresolved key, count accumulates.
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Discount Card"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "s", "Entity": "Sales", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Discount"}}],
+                                }}]
+                            })
+                        },
+                        {
+                            # References a measure that no longer exists.
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Old Measure Card"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Old Revenue Measure"}}]}}]
+                            })
+                        },
+                        {
+                            # References the real "Amount" column and real
+                            # "Total Revenue" measure -- must NOT be flagged.
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Real Fields"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "s", "Entity": "Sales", "Type": 0}],
+                                    "Select": [
+                                        {"Column": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Amount"}},
+                                        {"Measure": {"Property": "Total Revenue"}},
+                                    ],
+                                }}]
+                            })
+                        },
+                        {
+                            # Column reference with no resolvable table --
+                            # must NOT be flagged (can't be trusted).
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Orphan Slicer"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "z"}}, "Property": "Untraceable"}}],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "unresolved_refs.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        unresolved = result["unresolved_report_field_references"]
+        by_key = {(u["field"], u["field_type"], u["table"]): u for u in unresolved}
+
+        assert by_key.get(("Discount", "column", "Sales"))["occurrences"] == 2
+        # Sales only has OrderID/Amount -- neither resembles "Discount", so
+        # no confident target is guessed rather than picking one at random.
+        assert by_key.get(("Discount", "column", "Sales"))["resolved_target_field"] is None
+        assert by_key.get(("Old Revenue Measure", "measure", None))["resolved_target_field"] is None
+        assert by_key.get(("Old Revenue Measure", "measure", None))["occurrences"] == 1
+        assert ("Amount", "column", "Sales") not in by_key
+        assert ("Total Revenue", "measure", None) not in by_key
+        assert ("Untraceable", "column", None) not in by_key
+        assert len(unresolved) == 2
+
+    def test_best_matching_field_only_resolves_when_unambiguous(self) -> None:
+        """The name-similarity matcher behind resolved_target_field must
+        resolve a clear single prefix match, but refuse to guess when zero
+        or multiple candidates are equally plausible."""
+        best_matching_field = LocalPBIXConnector._best_matching_field
+
+        # "Ch" is an unambiguous prefix of "Channel" among these candidates.
+        assert best_matching_field("Channel", ["Category", "Ch", "Sort"]) == "Ch"
+        # No candidate resembles "Channel" at all.
+        assert best_matching_field("Channel", ["Category", "Sort"]) is None
+        # Two candidates both prefix-match -- genuinely ambiguous, no guess.
+        assert best_matching_field("Channel", ["Ch", "Chan"]) is None
+        # Works in the other direction too (candidate longer than stale name).
+        assert best_matching_field("Mo", ["Month", "Year"]) == "Month"
+
+    def test_unresolved_reference_resolves_to_single_matching_column(self, tmp_path: Path) -> None:
+        """When exactly one column in the resolved table is name-similar to
+        the stale reference, it must be surfaced as resolved_target_field
+        -- and NOT be broadcast against unrelated columns in the same
+        table that share no name resemblance."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "slicer",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Cust Slicer"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {
+                                    "From": [{"Name": "c", "Entity": "Customer", "Type": 0}],
+                                    "Select": [{"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Cust"}}],
+                                }}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "resolved_match.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        unresolved = result["unresolved_report_field_references"]
+        assert len(unresolved) == 1
+        entry = unresolved[0]
+        assert entry["field"] == "Cust"
+        assert entry["table"] == "Customer"
+        # Customer has CustomerID and Name -- "Cust" is a prefix of
+        # CustomerID only, so that's the sole confident match.
+        assert entry["resolved_target_field"] == "CustomerID"
+
+    def test_alias_claimed_by_two_different_fields_is_excluded_from_both(self, tmp_path: Path) -> None:
+        """A caption that coincidentally lands on two different measures
+        (e.g. copy-pasted cards, or a rename that left a stale duplicate)
+        must NOT be kept as a synonym for either -- Cortex Analyst would
+        have no way to tell which field a business user querying that term
+        actually meant. Both fields must lose the alias, and the conflict
+        must be reported in ambiguous_report_aliases."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Metric"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Revenue"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Metric"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Profit"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "ambiguous_alias.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        # Both fields' only alias was the ambiguous one -- neither keeps a
+        # (now-empty) entry in field_aliases.
+        assert result["field_aliases"] == []
+
+        ambiguous = result["ambiguous_report_aliases"]
+        assert len(ambiguous) == 1
+        assert ambiguous[0]["alias"] == "Total Metric"
+        assert ambiguous[0]["fields"] == [
+            {"field": "Profit", "field_type": "measure", "table": None},
+            {"field": "Revenue", "field_type": "measure", "table": None},
+        ]
+
+    def test_ambiguous_alias_excluded_case_insensitively_leaves_other_aliases_intact(
+        self, tmp_path: Path
+    ) -> None:
+        """Collision detection must be case-insensitive (matching how
+        Cortex Analyst/NL matching treats synonyms), and excluding the
+        ambiguous alias must not disturb a field's OTHER, non-conflicting
+        aliases."""
+        layout_dict = {
+            "sections": [
+                {
+                    "displayName": "Dashboard",
+                    "visualContainers": [
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Total Metric"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Alpha"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "Extra Name"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Alpha"}}]}}]
+                            })
+                        },
+                        {
+                            "config": json.dumps({
+                                "singleVisual": {
+                                    "visualType": "card",
+                                    "vcObjects": {"title": [{"properties": {"text": {"value": "total metric"}}}]}
+                                }
+                            }),
+                            "query": json.dumps({
+                                "Commands": [{"SemanticQuery": {"Select": [{"Measure": {"Property": "Beta"}}]}}]
+                            })
+                        }
+                    ]
+                }
+            ]
+        }
+
+        pbix_path = tmp_path / "ambiguous_alias_case.pbix"
+        with zipfile.ZipFile(str(pbix_path), "w") as zf:
+            zf.writestr("DataModelSchema", json.dumps(_create_data_model_schema()))
+            zf.writestr("Report/Layout", json.dumps(layout_dict))
+
+        connector = LocalPBIXConnector({"pbix_path": str(pbix_path)})
+        connector.authenticate()
+        result = connector.discover()
+
+        fa = result["field_aliases"]
+        # Beta's only alias was the ambiguous one -- it disappears entirely.
+        assert len(fa) == 1
+        assert fa[0]["field"] == "Alpha"
+        # "Total Metric" is stripped, but Alpha's other alias survives.
+        assert fa[0]["aliases"] == ["Extra Name"]
+
+        ambiguous = result["ambiguous_report_aliases"]
+        assert len(ambiguous) == 1
+        assert ambiguous[0]["alias"] == "Total Metric"
+        assert ambiguous[0]["fields"] == [
+            {"field": "Alpha", "field_type": "measure", "table": None},
+            {"field": "Beta", "field_type": "measure", "table": None},
+        ]
 

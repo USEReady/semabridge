@@ -129,6 +129,12 @@ function TableHeader() {
 // ─── Single mapping row ───────────────────────────────────────────────────────
 function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpandedCollision, allRows, pendingRenames, setPendingRenames, applyingRename, onApplyRename }) {
   const [expandedMeasure, setExpandedMeasure] = useState(false);
+  // Clicking the "N detected" pill is the explicit, deliberate action that
+  // reveals non-report-alias synonyms (see MeasureTranslationPanel) --
+  // without this, "N detected" is only ever a count with no visible path
+  // to the actual names short of a native-tooltip hover or discovering the
+  // separately-collapsed "Show all synonym sources" toggle inside details.
+  const [revealSynonymsOnOpen, setRevealSynonymsOnOpen] = useState(false);
   const badgeCfg = STATUS_BADGE_MAP[String(row.status || '').toLowerCase()]
     ?? { status: 'draft', label: row.status };
   const isCollision = String(row.status || '').toLowerCase() === 'collision';
@@ -197,31 +203,33 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
       </div>
 
       {/* Target Field */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: row.target_field ? 'var(--text-primary)' : 'var(--text-tertiary)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontStyle: row.target_field ? 'normal' : 'italic',
-          flexShrink: 0,
-        }}>
-          {row.target_field || '— unmapped —'}
-        </div>
-        {row.target_type && !isMeasure && (
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <TypeBadge type={row.target_type} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <div style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: row.target_field ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontStyle: row.target_field ? 'normal' : 'italic',
+            flexShrink: 0,
+          }}>
+            {row.target_field || '— unmapped —'}
           </div>
-        )}
+          {row.target_type && !isMeasure && (
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <TypeBadge type={row.target_type} />
+            </div>
+          )}
+        </div>
         {isCollision && (() => {
           // Only show a suggestion chip if it differs from the conflicting target name
           const { suggestions } = suggestCollisionResolutions(row, allRows);
           const best = suggestions.find(s => s.id !== 'hash');
           if (!best || best.label === row.target_field) return null;
           return (
-            <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 600, marginLeft: 8, whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 600, marginTop: 2, whiteSpace: 'nowrap' }}>
               → {best.label}
             </div>
           );
@@ -231,32 +239,81 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
       {/* Synonyms */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden' }}>
-          {(row.synonym_overrides || row.synonymOverrides || []).slice(0, 2).map((synonym) => (
-            <span
-              key={synonym}
-              title={synonym}
-              style={{
-                maxWidth: 78,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontSize: 10,
-                fontWeight: 700,
-                padding: '2px 6px',
-                borderRadius: 999,
-                border: '1px solid rgba(56, 189, 248, 0.35)',
-                background: 'rgba(56, 189, 248, 0.12)',
-                color: '#7dd3fc',
-              }}
-            >
-              {synonym}
-            </span>
-          ))}
-          {(row.synonym_overrides || row.synonymOverrides || []).length > 2 && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
-              +{(row.synonym_overrides || row.synonymOverrides || []).length - 2}
-            </span>
-          )}
+          {(() => {
+            const overrides = row.synonym_overrides || row.synonymOverrides || [];
+            const allSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
+
+            if (overrides.length > 0) {
+              // Confirmed via manual override -- the trustworthy, curated case.
+              return (
+                <>
+                  {overrides.slice(0, 2).map((synonym) => (
+                    <span
+                      key={synonym}
+                      title={synonym}
+                      style={{
+                        maxWidth: 78,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: '2px 6px',
+                        borderRadius: 999,
+                        border: '1px solid rgba(56, 189, 248, 0.35)',
+                        background: 'rgba(56, 189, 248, 0.12)',
+                        color: '#7dd3fc',
+                      }}
+                    >
+                      {synonym}
+                    </span>
+                  ))}
+                  {overrides.length > 2 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+                      +{overrides.length - 2}
+                    </span>
+                  )}
+                </>
+              );
+            }
+
+            if (allSynonyms.length > 0) {
+              // Detected from another source (report alias, auto-generated,
+              // etc.) but not yet confirmed as an override -- must not read
+              // as "No synonym" just because nobody has confirmed it yet.
+              // Clickable (not just hoverable) so the actual names are
+              // reachable in one click -- see hasDetails/View Details below.
+              return (
+                <button
+                  type="button"
+                  title={allSynonyms.join(', ')}
+                  onClick={() => {
+                    setRevealSynonymsOnOpen(true);
+                    setExpandedMeasure(true);
+                  }}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '2px 6px',
+                    borderRadius: 999,
+                    border: '1px dashed var(--text-tertiary)',
+                    background: 'transparent',
+                    color: 'var(--text-secondary)',
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {allSynonyms.length} detected
+                </button>
+              );
+            }
+
+            return (
+              <span style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+                No synonym
+              </span>
+            );
+          })()}
         </div>
         <button
           type="button"
@@ -286,7 +343,10 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
           168px (the default grid-item min-width is content-based, which is
           exactly what let the risk badge bleed into the Action column). */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, minWidth: 0, width: '100%', boxSizing: 'border-box' }}>
-        <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
+        {/* 'Auto' status badge disabled/hidden per user request */}
+        {String(row.status || '').toLowerCase() !== 'auto' && (
+          <StatusBadge status={badgeCfg.status} label={badgeCfg.label} size="sm" />
+        )}
         {/* Static risk tier -- metric-only, backend-computed from static
             validators only (schema-reference check, type-safety
             validator, unreachable-dimension detector, DropLedger
@@ -395,7 +455,11 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
             {hasDetails && (
               <button
                 type="button"
-                onClick={() => setExpandedMeasure(!expandedMeasure)}
+                onClick={() => {
+                  const next = !expandedMeasure;
+                  setExpandedMeasure(next);
+                  if (!next) setRevealSynonymsOnOpen(false);
+                }}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -461,7 +525,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
     {/* ── Inline measure translation panel ── */}
     {hasDetails && expandedMeasure && (
       <div style={{ padding: '0 14px 10px' }}>
-        <MeasureTranslationPanel row={row} />
+        <MeasureTranslationPanel row={row} forceRevealSynonyms={revealSynonymsOnOpen} />
       </div>
     )}
     </div>
@@ -474,6 +538,7 @@ const SYNONYM_SOURCE_LABELS = {
   tmsl_authored: 'TMSL-Authored',
   auto_generated: 'Auto-Generated',
   report_alias: 'Report Alias',
+  renamed_field_reference: 'Renamed Field',
 };
 
 function synonymSourceLabel(source) {
@@ -482,10 +547,14 @@ function synonymSourceLabel(source) {
   return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unknown Source';
 }
 
-function MeasureTranslationPanel({ row }) {
+function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
   const isFailed = row.sync_enabled === false || !!row.sync_failure_reason;
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
-  const [showAllSynonymSources, setShowAllSynonymSources] = useState(false);
+  // Opening the panel via the row's "N detected" pill IS the explicit,
+  // deliberate action the toggle below normally requires -- so it starts
+  // already revealed in that case, instead of requiring a second click to
+  // find the same synonyms the pill's count was just about.
+  const [showAllSynonymSources, setShowAllSynonymSources] = useState(forceRevealSynonyms);
 
   // A synonym only shows under "Report Aliases" when its source is confirmed
   // as a genuine PBIX report-layer visual alias. Anything else (manual
@@ -546,6 +615,14 @@ function MeasureTranslationPanel({ row }) {
             <span>Translated successfully to Snowflake SQL</span>
           </div>
         )
+      )}
+
+      {/* ── No synonyms at all for this field — say so explicitly rather
+          than silently omitting both sections below. ── */}
+      {allSynonyms.length === 0 && (
+        <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-tertiary)' }}>
+          No synonym
+        </div>
       )}
 
       {/* ── Report Aliases (Columns and Measures if present) — genuine
@@ -972,6 +1049,7 @@ export default function DryRunMappingTable({
   compatibilityScore = null,  // 0–100 float from backend
   onReSync,                   // () => void — trigger a re-sync after auto-add
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
+  unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
@@ -1001,6 +1079,58 @@ export default function DryRunMappingTable({
     });
     return { columns: cols, measures: meas };
   }, [mappings]);
+
+  // ── Unresolved report-layer field references, grouped by table ─────────────
+  // Backend already resolves each stale name to at most one current
+  // column/measure by name similarity (LocalPBIXConnector
+  // ._best_matching_field) — entries with no confident resolution
+  // (`resolved_target_field` is null, or ambiguous) are dropped here too,
+  // so nothing ever gets broadcast across multiple rows. Columns are keyed
+  // by "table::resolvedField" (a name can repeat across tables); measures
+  // have no table to scope by, so they're keyed by "measure::resolvedField"
+  // (measure names are globally unique). Displayed through the same
+  // synonyms/synonym_sources mechanism every other source already uses
+  // (see `enrichRowWithUnresolvedRefs` below) -- no bespoke UI, just
+  // another entry under "Show all synonym sources," same as an
+  // auto-generated or TMSL-authored one.
+  const unresolvedNamesByRowKey = useMemo(() => {
+    const byKey = {};
+    unresolvedReportFieldReferences.forEach((ref) => {
+      if (!ref?.resolved_target_field) return;
+      const isColumn = ref.field_type === 'column';
+      if (isColumn && !ref.table) return;
+      const rowKey = isColumn
+        ? `${ref.table}::${ref.resolved_target_field}`
+        : `measure::${ref.resolved_target_field}`;
+      (byKey[rowKey] ||= []).push(ref.field);
+    });
+    return byKey;
+  }, [unresolvedReportFieldReferences]);
+
+  const rowSuggestionKey = useCallback((row) => (
+    ['measure', 'metric'].includes(String(row.field_type || row.entity_kind || '').toLowerCase())
+      ? `measure::${row.source_field}`
+      : `${row.source_table_name}::${row.source_field}`
+  ), []);
+
+  // Merge in resolved renamed-field names as ordinary synonyms, tagged with
+  // their own source so they display (behind "Show all synonym sources,"
+  // same as auto-generated/TMSL-authored) without any new UI.
+  const enrichRowWithUnresolvedRefs = useCallback((row) => {
+    const staleNames = unresolvedNamesByRowKey[rowSuggestionKey(row)];
+    if (!staleNames || staleNames.length === 0) return row;
+    const existingSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
+    const newNames = staleNames.filter((n) => !existingSynonyms.includes(n));
+    if (newNames.length === 0) return row;
+    return {
+      ...row,
+      synonyms: [...existingSynonyms, ...newNames],
+      synonym_sources: {
+        ...(row.synonym_sources || {}),
+        ...Object.fromEntries(newNames.map((n) => [n, 'renamed_field_reference'])),
+      },
+    };
+  }, [unresolvedNamesByRowKey, rowSuggestionKey]);
 
   // ── Reset both filter tiers whenever a *new* dry run lands (not on row edits —
   //    edits only touch `mappings`/`detectedMappings`, never the `summary` object).
@@ -1353,9 +1483,8 @@ export default function DryRunMappingTable({
         )}
       </div>
 
-      <DroppedFieldsPanel entries={droppedEntities} />
+      {/* <DroppedFieldsPanel entries={droppedEntities} /> */}
 
-      {/* ── Controls row: two-tier filter + search + Resolve All ─────────────── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* Tier 1 — field type (single-select), built from whatever field types are in the data */}
@@ -1540,7 +1669,7 @@ export default function DryRunMappingTable({
                   group.filteredRows.map(row => (
                     <MappingRow
                       key={row.id}
-                      row={row}
+                      row={enrichRowWithUnresolvedRefs(row)}
                       onEdit={onEdit}
                       onSynonymEdit={openSynonymModal}
                       allRows={mappings}

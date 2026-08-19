@@ -357,14 +357,14 @@ export default function SettingsPage() {
         />
 
 
-      {/* Configuration Syncing Dual-View */}
-      <div className="mb-8">
+      {/* Configuration Syncing Dual-View — Commented out per user request */}
+      {/* <div className="mb-8">
         <h2 className="text-primary font-semibold mb-4" style={{ fontSize: 15, margin: '0 0 16px' }}>Project Configuration</h2>
         <ConfigEditor />
-      </div>
+      </div> */}
 
-      {/* Local Folder Management */}
-      <div className="mb-8">
+      {/* Local Folder Management — Commented out per user request */}
+      {/* <div className="mb-8">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
           <div>
             <h2 className="text-primary font-semibold mb-1" style={{ fontSize: 15, margin: 0 }}>Local Folder Management</h2>
@@ -428,7 +428,7 @@ export default function SettingsPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </div> */}
 
       {/* Connector Configuration (Flattened) */}
       <div className="mb-8">
@@ -504,8 +504,8 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* API Secrets */}
-      <SecretsPanel />
+      {/* API Secrets — Commented out per user request */}
+      {/* <SecretsPanel /> */}
 
       {/* LLM Providers (Tier 5 DAX translation) */}
       <LlmProvidersPanel />

@@ -593,32 +593,6 @@ class TMSLTransformer:
             source_table=source_table
         )
 
-    @staticmethod
-    def _auto_synonyms(name: str) -> List[str]:
-        snake_separated = str(name or "").replace("_", " ").strip()
-        camel_separated = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", snake_separated)
-        title_form = camel_separated.title().strip()
-
-        synonyms: List[str] = []
-        if title_form and title_form.lower() != str(name or "").lower():
-            synonyms.append(title_form)
-
-        abbrev_map = {
-            "Cust": "Customer", "Acct": "Account", "Amt": "Amount",
-            "Qty": "Quantity", "Num": "Number", "Id": "ID",
-            "Desc": "Description", "Dt": "Date", "Yr": "Year",
-            "Mth": "Month", "Qtr": "Quarter", "Wk": "Week",
-        }
-        for abbrev, expansion in abbrev_map.items():
-            if abbrev in title_form:
-                synonyms.append(title_form.replace(abbrev, expansion))
-
-        seen: List[str] = []
-        for synonym in synonyms:
-            if synonym not in seen and synonym.lower() != str(name or "").lower():
-                seen.append(synonym)
-        return seen[:3]
-
     @classmethod
     def _is_auto_hidden_table_name(cls, table_name: str) -> bool:
         return any(
@@ -801,7 +775,6 @@ class TMSLTransformer:
                     col_name,
                 ),
                 user_defined=user_synonyms,
-                auto_generated=self._auto_synonyms(col_name),
             ),
             precompute_aggregation=lookup_precompute_aggregation_override(
                 self._precompute_aggregation_overrides,
@@ -936,7 +909,6 @@ class TMSLTransformer:
                         measure_def["name"],
                     ),
                     user_defined=empty_user_synonyms,
-                    auto_generated=self._auto_synonyms(empty_display_name),
                 ),
             )
         
@@ -991,7 +963,6 @@ class TMSLTransformer:
                         measure_def["name"],
                     ),
                     user_defined=by_design_user_synonyms,
-                    auto_generated=self._auto_synonyms(by_design_display_name),
                 ),
             )
 
@@ -1066,7 +1037,6 @@ class TMSLTransformer:
                     measure_def["name"],
                 ),
                 user_defined=user_synonyms,
-                auto_generated=self._auto_synonyms(display_name or measure_def["name"]),
             ),
         )
 

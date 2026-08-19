@@ -1791,6 +1791,29 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getRunReport(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
+        if (!res.ok) {
+            throw new Error(`Report request failed with status ${res.status}`);
+        }
+        return res.text();
+    },
+
+    async downloadRunReport(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
+        if (!res.ok) {
+            throw new Error(`Report download failed with status ${res.status}`);
+        }
+        const blob = await res.blob();
+        const disposition = res.headers.get('content-disposition');
+        let filename = `${projectId}_${runId}_report.md`;
+        if (disposition && disposition.includes('filename=')) {
+            const match = disposition.match(/filename="?([^";]+)"?/);
+            if (match && match[1]) filename = match[1];
+        }
+        _triggerDownload(blob, filename);
+    },
+
     async listProjectSnapshots(projectId, options = {}) {
         const params = new URLSearchParams();
         if (options.role) params.set('role', String(options.role));

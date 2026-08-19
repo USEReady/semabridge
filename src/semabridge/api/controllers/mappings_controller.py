@@ -256,9 +256,23 @@ async def dry_run_mapping(
         print(f"[DryRun] sync_result status: {sync_result.get('status')}")
         print(f"[DryRun] preferred_snapshot_id: {preferred_snapshot_id!r}")
         results = sync_result.get("results") or []
+        # PBIX only: report-layer field references that don't match any
+        # current column/measure (see SourceFormat.unresolved_report_field_references).
+        # Table-scoped, not entity-scoped, so it's collected separately from
+        # entity_mappings below rather than attached to any one row.
+        unresolved_report_field_references: List[Dict[str, Any]] = []
+        # PBIX only: report-layer aliases claimed by more than one field and
+        # therefore excluded from synonyms (see SourceFormat.ambiguous_report_aliases).
+        ambiguous_report_aliases: List[Dict[str, Any]] = []
         for r in results:
             summary = r.get("summary") or {}
             print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
+            unresolved_report_field_references.extend(
+                summary.get("unresolved_report_field_references") or []
+            )
+            ambiguous_report_aliases.extend(
+                summary.get("ambiguous_report_aliases") or []
+            )
 
         # ── 4. Build entity mappings from the real SML snapshot ──────────────────
         target_connector = str(request.target_config.get("type") or "snowflake").strip().lower()
@@ -453,6 +467,7 @@ async def dry_run_mapping(
                 "advisory_categories": list(m.get("advisory_categories") or []),
                 "depends_on_measures": list(m.get("depends_on_measures") or []),
                 "synonyms": list(m.get("synonyms") or []),
+                "synonym_sources": dict(m.get("synonym_sources") or {}),
                 "complexity_tier": m.get("complexity_tier"),
                 # Static risk tier + label (metric-only; None for
                 # tables/columns) and the Tier-5 provider's own self-
@@ -483,6 +498,8 @@ async def dry_run_mapping(
             "entity_mappings": filtered_mappings,
             "extraction_failed": extraction_failed,
             "dropped_entities": data.get("dropped_entities", []),
+            "unresolved_report_field_references": unresolved_report_field_references,
+            "ambiguous_report_aliases": ambiguous_report_aliases,
             "summary": {
                 "total_fields": len(filtered_mappings),
                 "auto_mapped": auto_count,

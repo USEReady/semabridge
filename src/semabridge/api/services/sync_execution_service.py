@@ -10,6 +10,7 @@ from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.domain.exceptions import NotFoundError, ValidationError
+from semabridge.utils.identifiers import clean_pbix_model_name
 
 logger = logging.getLogger("semabridge.api")
 
@@ -202,7 +203,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                 {
                     "dataset_id": None,
                     "pbix_path": explicit_pbix,
-                    "model_label": Path(explicit_pbix).stem,
+                    "model_label": clean_pbix_model_name(explicit_pbix),
                 }
             )
         else:
@@ -261,7 +262,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     {
                         "dataset_id": None,
                         "pbix_path": pbix_path,
-                        "model_label": model_name or Path(pbix_path).stem,
+                        "model_label": clean_pbix_model_name(model_name or pbix_path),
                     }
                 )
 

@@ -37,6 +37,7 @@ from semabridge.sync.models import (
 )
 from semabridge.sync.repository import SyncRepository
 from semabridge.sync.schema_evolution import SchemaEvolutionTracker
+from semabridge.utils.identifiers import clean_pbix_model_name
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import RelationshipNameTracker
 
@@ -392,7 +393,7 @@ class SyncOrchestrator:
                 SyncJobItem(
                     item_id=_new_id(),
                     job_id=job_id,
-                    model_name=pbix_path.stem,
+                    model_name=clean_pbix_model_name(pbix_path),
                     source_path=str(pbix_path),
                 )
             )

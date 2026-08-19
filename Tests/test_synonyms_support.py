@@ -58,6 +58,7 @@ def test_tmsl_to_osi_extracts_column_and_measure_synonyms_with_overrides():
     column = osi.datasets[0].columns[0]
     metric = osi.metrics[0]
 
-    assert column.synonyms[:2] == ["SKU", "Product Number"]
-    assert "Product Id" in column.synonyms
-    assert metric.synonyms[:2] == ["Income", "Sales Total"]
+    # Override then TMSL-authored, in that order -- no auto-generated
+    # synonym is produced from the name alone (removed as a source).
+    assert column.synonyms == ["SKU", "Product Number"]
+    assert metric.synonyms == ["Income", "Sales Total"]

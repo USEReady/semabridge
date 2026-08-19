@@ -99,6 +99,17 @@ class RunSummary(BaseModel):
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
 
+    # PBIX only: report-layer field references that don't match any current
+    # column/measure (see SourceFormat.unresolved_report_field_references
+    # and LocalPBIXConnector docstring). Table-scoped, not entity-scoped —
+    # surfaced as a suggestion for a person to confirm, never auto-applied.
+    unresolved_report_field_references: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # PBIX only: report-layer aliases claimed by more than one field, and
+    # therefore excluded from every field's synonyms (see
+    # SourceFormat.ambiguous_report_aliases and LocalPBIXConnector.discover()).
+    ambiguous_report_aliases: List[Dict[str, Any]] = Field(default_factory=list)
+
     # Effective demo_mode for this run (server env var AND project opt-in
     # both true — see core/demo_mode.resolve_effective_demo_mode). Stamped
     # once at finalize time from the resolved ConnectorBehavior actually
