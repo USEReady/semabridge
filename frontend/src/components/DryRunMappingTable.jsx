@@ -145,7 +145,8 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
   const selfReportedEstimateText = getSelfReportedEstimateText(row);
   const enrichmentUnverifiableCaveat = getEnrichmentUnverifiableCaveat(row);
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
-  const hasDetails = isMeasure || (Array.isArray(row.synonyms) && row.synonyms.length > 0);
+  const allSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
+  const hasDetails = isMeasure || allSynonyms.length > 0;
   const isPanelOpen = (isCollision && expandedCollision === row.id) || (hasDetails && expandedMeasure);
   // Full text is always available via the native tooltip (title attribute);
   // only the short form is derived here for the always-visible row label, so
@@ -288,19 +289,21 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
                   type="button"
                   title={allSynonyms.join(', ')}
                   onClick={() => {
-                    setRevealSynonymsOnOpen(true);
-                    setExpandedMeasure(true);
+                    const next = !expandedMeasure;
+                    setExpandedMeasure(next);
+                    setRevealSynonymsOnOpen(next);
                   }}
                   style={{
                     fontSize: 10,
                     fontWeight: 600,
                     padding: '2px 6px',
                     borderRadius: 999,
-                    border: '1px dashed var(--text-tertiary)',
-                    background: 'transparent',
-                    color: 'var(--text-secondary)',
+                    border: expandedMeasure ? '1px solid rgba(56, 189, 248, 0.55)' : '1px dashed var(--text-tertiary)',
+                    background: expandedMeasure ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                    color: expandedMeasure ? '#7dd3fc' : 'var(--text-secondary)',
                     whiteSpace: 'nowrap',
                     cursor: 'pointer',
+                    transition: 'all 0.2s',
                   }}
                 >
                   {allSynonyms.length} detected
@@ -452,7 +455,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 6 }}>
-            {hasDetails && (
+            {isMeasure && (
               <button
                 type="button"
                 onClick={() => {
@@ -480,7 +483,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
                   transition: 'all 0.2s',
                 }}
               >
-                {expandedMeasure ? (isMeasure ? 'Hide SQL' : 'Hide Details') : (isMeasure ? 'View SQL' : 'View Details')}
+                {expandedMeasure ? 'Hide SQL' : 'View SQL'}
               </button>
             )}
             <button
@@ -544,7 +547,7 @@ const SYNONYM_SOURCE_LABELS = {
 function synonymSourceLabel(source) {
   if (SYNONYM_SOURCE_LABELS[source]) return SYNONYM_SOURCE_LABELS[source];
   const word = String(source || '').replace(/[_-]+/g, ' ').trim();
-  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unknown Source';
+  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
 
 function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
@@ -692,25 +695,30 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
               color: 'var(--text-secondary)',
               fontSize: 12,
             }}>
-              {otherSynonyms.map((alias, index) => (
-                <div key={`${row.id}-other-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: 'var(--text-tertiary)' }}>•</span>
-                  <span>{alias}</span>
-                  <span style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.03em',
-                    color: 'var(--text-tertiary)',
-                    border: '1px solid var(--border-main)',
-                    borderRadius: 4,
-                    padding: '1px 5px',
-                    marginLeft: 'auto',
-                  }}>
-                    {synonymSourceLabel(synonymSources[alias])}
-                  </span>
-                </div>
-              ))}
+              {otherSynonyms.map((alias, index) => {
+                const labelText = synonymSourceLabel(synonymSources[alias]);
+                return (
+                  <div key={`${row.id}-other-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>•</span>
+                    <span>{alias}</span>
+                    {labelText && (
+                      <span style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.03em',
+                        color: 'var(--text-tertiary)',
+                        border: '1px solid var(--border-main)',
+                        borderRadius: 4,
+                        padding: '1px 5px',
+                        marginLeft: 'auto',
+                      }}>
+                        {labelText}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1150,31 +1158,48 @@ export default function DryRunMappingTable({
     return group ? group.rows : mappings;
   }, [fieldGroups, activeFieldType, mappings]);
 
-  // ── Tier 2 options: real statuses present in scope, plus conversion outcome
-  //    facets (only if this scope actually has expressions to convert), plus
-  //    the always-present schema-issues toggle (structurally not a row status) ──
-  const statusFacets = useMemo(() => computeStatusFacets(scopedRows), [scopedRows]);
   const showConversionFacets = useMemo(() => hasConversionData(scopedRows), [scopedRows]);
-  const showComplexityTierFacets = useMemo(() => hasComplexityTierData(scopedRows), [scopedRows]);
   const tier2Options = useMemo(() => {
-    const options = statusFacets.map((f) => ({ ...f, kind: 'status' }));
+    const options = [];
+
+    // 1. Collision
+    const collisionCount = scopedRows.filter(r => String(r?.status || '').toLowerCase() === 'collision').length;
+    if (collisionCount > 0) {
+      options.push({ key: 'collision', label: 'Collision', count: collisionCount, kind: 'status' });
+    }
+
+    // 2. Predicted Failure (Failed a static check — predicted failure)
+    const predictedFailureCount = scopedRows.filter(r => r?.static_risk_tier === 'predicted_failure').length;
+    if (predictedFailureCount > 0) {
+      options.push({ key: 'predicted_failure', label: 'Predicted Failure', count: predictedFailureCount, kind: 'risk' });
+    }
+
+    // 3. No Risk Signals (No known risk signals)
+    const noRiskCount = scopedRows.filter(r => 
+      r?.static_risk_tier === 'no_known_risk' ||
+      (!r?.static_risk_tier && String(r?.status || '').toLowerCase() !== 'collision' && r?.sync_enabled !== false && !String(r?.sync_failure_reason || '').trim())
+    ).length;
+    if (noRiskCount > 0) {
+      options.push({ key: 'no_risk_signals', label: 'No Risk Signals', count: noRiskCount, kind: 'risk' });
+    }
+
+    // 4. Expression Converted / Not Converted
     if (showConversionFacets) {
-      Object.entries(CONVERSION_FACET_LABELS).forEach(([key, label]) => {
-        const count = scopedRows.filter((r) => rowConversionOutcome(r) === key).length;
-        if (count > 0) options.push({ key, label, count, kind: 'conversion' });
-      });
+      const convertedCount = scopedRows.filter((r) => rowConversionOutcome(r) === 'conversion_success').length;
+      if (convertedCount > 0) {
+        options.push({ key: 'conversion_success', label: 'Expression Converted', count: convertedCount, kind: 'conversion' });
+      }
+      const notConvertedCount = scopedRows.filter((r) => rowConversionOutcome(r) === 'conversion_failed').length;
+      if (notConvertedCount > 0) {
+        options.push({ key: 'conversion_failed', label: 'Expression Not Converted', count: notConvertedCount, kind: 'conversion' });
+      }
     }
-    if (showComplexityTierFacets) {
-      Object.entries(COMPLEXITY_TIER_FACET_LABELS).forEach(([key, label]) => {
-        const count = scopedRows.filter((r) => rowComplexityTier(r) === key).length;
-        if (count > 0) options.push({ key, label, count, kind: 'complexity_tier' });
-      });
-    }
+
     if (schemaConflicts.length > 0) {
       options.push({ key: 'schema_issues', label: 'Schema Issues', count: schemaConflicts.length, kind: 'schema' });
     }
     return options;
-  }, [statusFacets, showConversionFacets, showComplexityTierFacets, scopedRows, schemaConflicts.length]);
+  }, [scopedRows, showConversionFacets, schemaConflicts.length]);
 
   const needsReviewCount = useMemo(() => scopedRows.filter(rowNeedsReview).length, [scopedRows]);
 
@@ -1330,25 +1355,38 @@ export default function DryRunMappingTable({
   }, [synonymModal, onSynonymUpdate]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────────
-  // Tier 2 is OR-across-selections; an empty selection means "show all" for that tier.
   const matchesTier2 = useCallback((row) => {
     if (activeStatuses.size === 0) return true;
-    const status = String(row?.status || '').toLowerCase().trim() || 'unknown';
-    if (activeStatuses.has(status)) return true;
-    const conversionKey = rowConversionOutcome(row);
-    if (conversionKey && activeStatuses.has(conversionKey)) return true;
-    const tierKey = rowComplexityTier(row);
-    if (tierKey && activeStatuses.has(tierKey)) return true;
-    // 'schema_issues' never matches a row — it has no per-row status; selecting it
-    // alongside real statuses still shows those via OR, selecting it alone shows none
-    // (the always-visible schema-conflicts panel below carries that information instead).
+
+    for (const key of activeStatuses) {
+      if (key === 'collision' && String(row?.status || '').toLowerCase() === 'collision') {
+        return true;
+      }
+      if (key === 'predicted_failure' && row?.static_risk_tier === 'predicted_failure') {
+        return true;
+      }
+      if (key === 'no_risk_signals') {
+        const isNoRisk = row?.static_risk_tier === 'no_known_risk' ||
+          (!row?.static_risk_tier && String(row?.status || '').toLowerCase() !== 'collision' && row?.sync_enabled !== false && !String(row?.sync_failure_reason || '').trim());
+        if (isNoRisk) return true;
+      }
+      if (key === 'conversion_success' && rowConversionOutcome(row) === 'conversion_success') {
+        return true;
+      }
+      if (key === 'conversion_failed' && rowConversionOutcome(row) === 'conversion_failed') {
+        return true;
+      }
+      if (String(row?.status || '').toLowerCase().trim() === key) {
+        return true;
+      }
+    }
+
     return false;
   }, [activeStatuses]);
 
   const filterRow = useCallback((row) => {
     if (activeFieldType !== 'all' && normalizeFieldTypeKey(row) !== activeFieldType) return false;
     if (!matchesTier2(row)) return false;
-    if (needsReviewOnly && !rowNeedsReview(row)) return false;
     if (search.trim()) {
       const haystack = [
         row.source_field,
@@ -1363,7 +1401,7 @@ export default function DryRunMappingTable({
       if (!matchesSmartQuery(haystack, search, useRegex)) return false;
     }
     return true;
-  }, [activeFieldType, matchesTier2, needsReviewOnly, search, useRegex]);
+  }, [activeFieldType, matchesTier2, search, useRegex]);
 
   // ── Visible field-type sections: the selected Tier 1 group, or all of them ──
   const visibleGroups = useMemo(() => {
@@ -1457,14 +1495,6 @@ export default function DryRunMappingTable({
         <span style={{ color: '#7dd3fc', fontWeight: 600 }}>
           {measures.length} measure{measures.length !== 1 ? 's' : ''}
         </span>
-        <span style={{ color: 'var(--text-tertiary)' }}>·</span>
-        <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-          {autoMapped} auto
-        </span>
-        <span style={{ color: 'var(--text-tertiary)' }}>·</span>
-        <span style={{ color: 'var(--text-tertiary)', fontWeight: 600 }}>
-          {unmappedCnt} unmapped
-        </span>
         {collisionCnt > 0 && (
           <>
             <span style={{ color: 'var(--text-tertiary)' }}>·</span>
@@ -1509,13 +1539,6 @@ export default function DryRunMappingTable({
               a "Needs Review" quick toggle. Options here are whatever statuses/conversion
               outcomes are actually present — nothing is hardcoded to a known connector. */}
           <div className="filter-checks">
-            <button
-              type="button"
-              className={`filter-check needs-review${needsReviewOnly ? ' active' : ''}`}
-              onClick={() => setNeedsReviewOnly((prev) => !prev)}
-            >
-              Needs Review ({needsReviewCount})
-            </button>
             {tier2Options.map((option) => {
               const checked = activeStatuses.has(option.key);
               return (

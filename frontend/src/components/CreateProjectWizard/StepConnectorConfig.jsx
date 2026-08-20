@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Check, ChevronDown, RefreshCw, Loader2 } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, RefreshCw, Loader2 } from 'lucide-react';
 import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
@@ -459,35 +459,56 @@ export function StepConnectorConfig({
           </div>
         )}
 
-        {sourceConnector === 'pbix' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <label style={LABEL}>PBIX Source Mode</label>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {PBIX_SOURCE_MODES.map(mode => {
-                  const active = pbixSourceMode === mode.value;
-                  return (
-                    <button
-                      key={mode.value}
-                      type="button"
-                      onClick={() => setPbixSourceMode(mode.value)}
-                      style={{
-                        border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
-                        background: active ? 'var(--accent-blue)14' : 'var(--bg-surface)',
-                        color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                        borderRadius: 999,
-                        padding: '7px 12px',
-                        cursor: 'pointer',
-                        fontSize: 12,
-                        fontWeight: 700,
-                      }}
-                    >
-                      {mode.label}
-                    </button>
-                  );
-                })}
+        {sourceConnector === 'pbix' && (() => {
+          const hasUploadedPbix = Boolean(pbixUploadPath || pbixFile) && !pbixUploading && !pbixUploadError;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={LABEL}>PBIX Source Mode</label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {PBIX_SOURCE_MODES.map(mode => {
+                    const active = pbixSourceMode === mode.value;
+                    const isManualTab = mode.value === 'MANUAL';
+                    const isSuccessTab = isManualTab && hasUploadedPbix;
+
+                    let borderStyle = `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`;
+                    let bgStyle = active ? 'var(--accent-blue)14' : 'var(--bg-surface)';
+                    let colorStyle = active ? 'var(--accent-blue)' : 'var(--text-secondary)';
+
+                    if (isSuccessTab) {
+                      borderStyle = active ? '1px solid #22c55e' : '1px solid rgba(34, 197, 94, 0.6)';
+                      bgStyle = active ? 'rgba(34, 197, 94, 0.25)' : 'rgba(34, 197, 94, 0.12)';
+                      colorStyle = '#86efac';
+                    }
+
+                    return (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        onClick={() => setPbixSourceMode(mode.value)}
+                        style={{
+                          border: borderStyle,
+                          background: bgStyle,
+                          color: colorStyle,
+                          borderRadius: 999,
+                          padding: '7px 14px',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'all 0.2s ease',
+                          boxShadow: isSuccessTab ? '0 0 10px rgba(34, 197, 94, 0.25)' : 'none',
+                        }}
+                      >
+                        {isSuccessTab && <CheckCircle2 size={13} style={{ color: '#4ade80' }} />}
+                        {mode.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
 
             {pbixSourceMode === 'TAG' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -530,12 +551,19 @@ export function StepConnectorConfig({
                   }}
                   onDrop={handlePbixDrop}
                   style={{
-                    border: '1px dashed var(--accent-blue)',
+                    border: hasUploadedPbix
+                      ? '1px dashed #22c55e'
+                      : '1px dashed var(--accent-blue)',
                     borderRadius: 12,
                     padding: 18,
-                    background: pbixDragOver ? 'var(--accent-blue)14' : 'var(--accent-blue)08',
+                    background: pbixDragOver
+                      ? 'var(--accent-blue)14'
+                      : hasUploadedPbix
+                        ? 'rgba(34, 197, 94, 0.08)'
+                        : 'var(--accent-blue)08',
                     color: 'var(--text-secondary)',
                     cursor: pbixUploading ? 'progress' : 'pointer',
+                    transition: 'all 0.2s ease',
                   }}
                 >
                   <input
@@ -549,10 +577,27 @@ export function StepConnectorConfig({
                     }}
                   />
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    Drag and drop a `.pbix` file here or click to browse
+                    <span>Drag and drop a `.pbix` file here or click to browse</span>
                     {pbixUploading && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
+                    {hasUploadedPbix && (
+                      <span style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: '#4ade80',
+                        background: 'rgba(34, 197, 94, 0.22)',
+                        border: '1px solid rgba(34, 197, 94, 0.45)',
+                        borderRadius: 6,
+                        padding: '2px 8px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        marginLeft: 'auto',
+                      }}>
+                        <CheckCircle2 size={12} /> Uploaded Successfully
+                      </span>
+                    )}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  <div style={{ fontSize: 12, color: hasUploadedPbix ? '#86efac' : 'var(--text-tertiary)', wordBreak: 'break-all', fontWeight: hasUploadedPbix ? 500 : 400 }}>
                     {pbixUploading
                       ? 'Saving file to server...'
                       : pbixUploadPath
@@ -575,7 +620,8 @@ export function StepConnectorConfig({
               </div>
             )}
           </div>
-        )}
+        );
+        })()}
 
         {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && sourceConnector !== 'pbix' && (
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>

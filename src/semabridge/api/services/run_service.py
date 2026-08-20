@@ -407,10 +407,11 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
                     "ddl_error": recon.ddl_error,
                 }
                 if not recon.is_clean():
-                    logger.warning(
-                        "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
-                        project_id, recon.unaccounted,
-                    )
+                    # Commented out warning log for unaccounted metrics (can re-enable later if needed)
+                    # logger.warning(
+                    #     "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
+                    #     project_id, recon.unaccounted,
+                    # )
                     unaccounted_entries = [
                         {
                             "entity_kind": "metric",
