@@ -45,12 +45,36 @@ from semabridge.sml.models import (
     SourcePlatform,
 )
 from semabridge.converter.dax_translator import DAXTranslator
+from semabridge.converter.dax_ast_parser import (
+    ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK,
+)
 from semabridge.connectors.inference_engine import SmlInferenceEngine
 from semabridge.connectors.measure_detector import MeasureDetector
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import to_alias
 
 logger = get_logger(__name__)
+
+# Maps translation.advisory_categories entries to the advisory_notes text
+# appended in lockstep (advisory_notes/advisory_categories are same-index
+# parallel lists -- see SMLMetric.advisory_categories docstring).
+_TRANSLATION_ADVISORY_NOTES = {
+    ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK: ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK,
+}
+
+
+def _apply_translation_advisories(metric, translation) -> None:
+    """Mirror translation.advisory_categories onto metric.advisory_categories/notes.
+
+    Idempotent (checked by category membership) so re-running a convergence
+    pass over an already-translated metric doesn't duplicate entries.
+    """
+    for category in translation.advisory_categories or []:
+        if category in metric.advisory_categories:
+            continue
+        metric.advisory_categories.append(category)
+        metric.advisory_notes.append(_TRANSLATION_ADVISORY_NOTES.get(category, category))
 
 
 class OSIToSMLConverter(BaseConverter):
@@ -184,6 +208,7 @@ class OSIToSMLConverter(BaseConverter):
                             # populated by Tier5Service (tier == 5).
                             metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
                             metric.validation_notes = list(translation.validation_notes or [])
+                            _apply_translation_advisories(metric, translation)
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
                 # Step 3e: one more deterministic-only convergence pass now that
@@ -462,6 +487,7 @@ class OSIToSMLConverter(BaseConverter):
                 # translation.* -> metric.* assignment sites.
                 metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
                 metric.validation_notes = list(translation.validation_notes or [])
+                _apply_translation_advisories(metric, translation)
             elif metric.sync_enabled:
                 from semabridge.converter.dax_ast_parser import (
                     dax_context_transition_failure_reason,
@@ -548,6 +574,7 @@ class OSIToSMLConverter(BaseConverter):
                     metric.sync_failure_reason = None
                     metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
                     metric.validation_notes = list(translation.validation_notes or [])
+                    _apply_translation_advisories(metric, translation)
                     resolved_this_pass += 1
 
             if resolved_this_pass == 0:

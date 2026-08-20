@@ -725,6 +725,252 @@ class TestLagPeriodOfMeasureReferenceShiftsWholeWindow:
         ) is None
 
 
+class TestLagPeriodOfMeasureReferenceGeneralizesToAnyCombiningStructure:
+    """_inject_case_filter_into_rendered_aggregate used to only handle a
+    bare aggregate or a top-level '+'/'-' split (e.g. [A] - [B]) — a
+    ratio measure like [% Units Market Share] = IF([Total]=0, 0,
+    DIVIDE([VanArsdel], [Total])) declined outright when wrapped in
+    SAMEPERIODLASTYEAR/PREVIOUSYEAR/etc, the exact real shape behind
+    '% Units Market Share SPLY' failing with a generic "not automatically
+    translatable" reason. The general fix finds and filters every leaf
+    SUM/AVG/MIN/MAX/COUNT call wherever it appears, leaving the
+    surrounding IF/CASE/division structure untouched — this is
+    mathematically correct for any combination of same-grain aggregates,
+    not just addition/subtraction."""
+
+    def test_division_only_base_measure_resolves(self):
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "CALCULATE([Market_Share], SAMEPERIODLASTYEAR('Date'[Date]))"
+        sql = try_ast_translate(
+            dax,
+            table_alias="sometable",
+            measure_sql_map={
+                "Market_Share": 'SUM(sometable."VAN_UNITS"::FLOAT) / SUM(sometable."TOTAL_UNITS"::FLOAT)'
+            },
+            known_measure_names={"Market_Share"},
+        )
+        assert sql is not None
+        assert '"Market_Share"' not in sql
+        # Both the numerator and denominator aggregates must be
+        # independently filtered -- not just one side, and not the
+        # whole ratio wrapped in one outer aggregate.
+        assert sql.upper().count("SUM(CASE WHEN") == 2
+        assert "VAN_UNITS" in sql.upper() and "TOTAL_UNITS" in sql.upper()
+
+    def test_if_guarded_ratio_resolves_the_exact_pct_units_market_share_shape(self):
+        """The exact real shape behind '% Units Market Share SPLY'
+        failing: IF(<agg>=0, 0, DIVIDE(<agg>, <agg>)). All three
+        aggregate leaves (the guard's own check, and both sides of the
+        division) must be filtered identically."""
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "CALCULATE([Market_Share], SAMEPERIODLASTYEAR('Date'[Date]))"
+        sql = try_ast_translate(
+            dax,
+            table_alias="sometable",
+            measure_sql_map={
+                "Market_Share": (
+                    'CASE WHEN SUM(sometable."TOTAL_UNITS"::FLOAT) = 0 THEN 0 '
+                    'ELSE SUM(sometable."VAN_UNITS"::FLOAT) / SUM(sometable."TOTAL_UNITS"::FLOAT) END'
+                )
+            },
+            known_measure_names={"Market_Share"},
+        )
+        assert sql is not None
+        assert sql.upper().count("SUM(CASE WHEN") == 3
+        assert "VAN_UNITS" in sql.upper() and "TOTAL_UNITS" in sql.upper()
+        # The IF/CASE guard structure itself must survive untouched.
+        assert "= 0 THEN 0 ELSE" in sql
+
+    def test_if_guarded_ratio_executes_and_returns_the_correct_prior_year_value(self):
+        """Real SQL execution (DuckDB), not just "doesn't crash" — proves
+        the shifted, leaf-filtered ratio actually computes the correct
+        prior-year value and excludes the current year's row, the same
+        standard test_shifted_window_executes_and_returns_the_correct_
+        prior_year_sum above already holds the plain-aggregate case to."""
+        import re
+        import duckdb
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "CALCULATE([Market_Share], SAMEPERIODLASTYEAR('Date'[Date]))"
+        sql = try_ast_translate(
+            dax,
+            table_alias="sometable",
+            date_alias="calendar",
+            measure_sql_map={
+                "Market_Share": (
+                    'CASE WHEN SUM(sometable."TOTAL_UNITS"::FLOAT) = 0 THEN 0 '
+                    'ELSE SUM(sometable."VAN_UNITS"::FLOAT) / SUM(sometable."TOTAL_UNITS"::FLOAT) END'
+                )
+            },
+            known_measure_names={"Market_Share"},
+        )
+        assert sql is not None
+
+        sql = sql.replace("CURRENT_DATE()", "DATE '2024-06-15'")
+
+        def _convert_dateadd(expr: str) -> str:
+            out, i = [], 0
+            pattern = re.compile(r"DATEADD\s*\(")
+            while True:
+                m = pattern.search(expr, i)
+                if not m:
+                    out.append(expr[i:])
+                    break
+                out.append(expr[i:m.start()])
+                depth, j = 0, m.end() - 1
+                start_args = m.end()
+                while True:
+                    if expr[j] == "(":
+                        depth += 1
+                    elif expr[j] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                unit, amount, inner_expr = [p.strip() for p in expr[start_args:j].split(",", 2)]
+                sign = "-" if int(amount) < 0 else "+"
+                out.append(f"({inner_expr} {sign} INTERVAL {abs(int(amount))} {unit})")
+                i = j + 1
+            return "".join(out)
+
+        sql = _convert_dateadd(sql)
+        sql = sql.replace('calendar."COL_DATE"', "combined.col_date")
+        sql = sql.replace('sometable."TOTAL_UNITS"', "combined.total_units")
+        sql = sql.replace('sometable."VAN_UNITS"', "combined.van_units")
+
+        con = duckdb.connect()
+        con.execute("CREATE TABLE combined (col_date DATE, total_units DOUBLE, van_units DOUBLE)")
+        con.executemany(
+            "INSERT INTO combined VALUES (?, ?, ?)",
+            [
+                ("2023-02-01", 100.0, 40.0),   # last year -> counts
+                ("2023-05-01", 100.0, 30.0),   # last year -> counts (running: 70/200)
+                ("2024-03-01", 999.0, 999.0),  # THIS year -> must NOT count
+            ],
+        )
+        result = con.execute(f"SELECT {sql} FROM combined").fetchone()[0]
+        assert result is not None
+        assert abs(result - 0.35) < 1e-9, f"expected 70/200=0.35, got {result}"
+
+    def test_nested_aggregate_still_fails_closed(self):
+        """A rendered SQL where one aggregate's own argument contains
+        ANOTHER aggregate call (e.g. a mistaken SUM(AVG(x))) must still be
+        declined, not rewritten -- this shape means it isn't simple
+        leaf-level aggregation, and guessing would risk producing
+        SUM(...SUM(...)...), which Snowflake disallows."""
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        dax = "CALCULATE([Weird_Measure], SAMEPERIODLASTYEAR('Date'[Date]))"
+        sql = try_ast_translate(
+            dax,
+            table_alias="sometable",
+            measure_sql_map={"Weird_Measure": 'SUM(AVG(sometable."SOMECOLUMN"))'},
+            known_measure_names={"Weird_Measure"},
+        )
+        assert sql is None
+
+
+class TestLagPeriodUnshiftedFallbackIsOptInOnly:
+    """allow_unshifted_fallback lets a lag-period-of-measure-reference
+    shape this renderer can't safely date-filter (e.g. a nested aggregate)
+    ship the referenced measure's own unmodified SQL instead of failing
+    closed -- valid SQL, but the CURRENT period's value, not shifted to the
+    requested prior period. Must be strictly opt-in: every existing caller
+    (allow_unshifted_fallback defaulted/omitted) keeps failing closed
+    exactly as before."""
+
+    _NESTED_AGG_DAX = "CALCULATE([Weird_Measure], SAMEPERIODLASTYEAR('Date'[Date]))"
+    _NESTED_AGG_MAP = {"Weird_Measure": 'SUM(AVG(sometable."SOMECOLUMN"))'}
+
+    def test_default_still_fails_closed_unchanged(self):
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        sql = try_ast_translate(
+            self._NESTED_AGG_DAX,
+            table_alias="sometable",
+            measure_sql_map=self._NESTED_AGG_MAP,
+            known_measure_names={"Weird_Measure"},
+        )
+        assert sql is None
+
+    def test_opted_in_ships_the_unshifted_base_sql_and_records_the_advisory(self):
+        from semabridge.converter.dax_ast_parser import (
+            try_ast_translate,
+            ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+        )
+
+        advisories = []
+        sql = try_ast_translate(
+            self._NESTED_AGG_DAX,
+            table_alias="sometable",
+            measure_sql_map=self._NESTED_AGG_MAP,
+            known_measure_names={"Weird_Measure"},
+            allow_unshifted_fallback=True,
+            advisory_categories=advisories,
+        )
+        assert sql is not None
+        assert 'SUM(AVG(sometable."SOMECOLUMN"))' in sql
+        # Genuinely unshifted -- no CASE WHEN date-range filter was injected.
+        assert "CASE WHEN" not in sql
+        assert advisories == [ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK]
+
+    def test_cache_hit_still_replays_the_advisory_category(self):
+        """The module-level AST cache must not let the advisory flag get
+        silently dropped on a second call with a fresh advisory_categories
+        list -- only the render pass that first produced this cache entry
+        would otherwise ever populate it."""
+        from semabridge.converter.dax_ast_parser import (
+            try_ast_translate,
+            ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+        )
+
+        first = []
+        try_ast_translate(
+            self._NESTED_AGG_DAX,
+            table_alias="sometable",
+            measure_sql_map=self._NESTED_AGG_MAP,
+            known_measure_names={"Weird_Measure"},
+            allow_unshifted_fallback=True,
+            advisory_categories=first,
+        )
+        second = []
+        sql = try_ast_translate(
+            self._NESTED_AGG_DAX,
+            table_alias="sometable",
+            measure_sql_map=self._NESTED_AGG_MAP,
+            known_measure_names={"Weird_Measure"},
+            allow_unshifted_fallback=True,
+            advisory_categories=second,
+        )
+        assert sql is not None
+        assert second == [ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK]
+
+    def test_same_dax_without_fallback_is_unaffected_by_a_prior_fallback_call(self):
+        """The cache key must distinguish allow_unshifted_fallback=True
+        from False for otherwise-identical calls -- a prior opted-in call
+        populating the cache must never leak its result to a caller that
+        did not opt in."""
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+
+        try_ast_translate(
+            self._NESTED_AGG_DAX,
+            table_alias="sometable",
+            measure_sql_map=self._NESTED_AGG_MAP,
+            known_measure_names={"Weird_Measure"},
+            allow_unshifted_fallback=True,
+            advisory_categories=[],
+        )
+        sql = try_ast_translate(
+            self._NESTED_AGG_DAX,
+            table_alias="sometable",
+            measure_sql_map=self._NESTED_AGG_MAP,
+            known_measure_names={"Weird_Measure"},
+        )
+        assert sql is None
+
+
 class TestTotalPeriodToDateOfMeasureReferenceNeverLeaksBareName:
     """TOTALYTD/TOTALMTD/TOTALQTD([SomeMeasure], 'Date'[Date]) — found while
     reconciling Item 4 against a real deploy: translate_time_intelligence_with_anchors
@@ -1341,6 +1587,27 @@ class TestTimeIntelligenceCarriesADateRangeFilter:
             "flatly rejected before any tier runs"
         )
         assert "OVER" not in result.sql.upper()
+
+    def test_lag_period_of_unshiftable_measure_ships_advisory_flagged_fallback_instead_of_failing(self):
+        """DAXTranslator.translate()'s Tier-3 time-intel call site opts into
+        allow_unshifted_fallback=True -- a lag-period function wrapping a
+        measure this renderer can't safely date-filter (e.g. a nested
+        aggregate) now succeeds with the base measure's own unmodified SQL,
+        tagged via DAXTranslationResult.advisory_categories, instead of
+        falling through to Tier 4/5."""
+        translator = DAXTranslator()
+        metrics_context = [_metric("Weird_Measure", 'SUM(AVG(sometable."SOMECOLUMN"))')]
+        dax = "CALCULATE([Weird_Measure], SAMEPERIODLASTYEAR('Date'[Date]))"
+
+        result = translator.translate(dax, "sometable", "SomeTable", metrics_context=metrics_context)
+
+        assert result.is_success
+        assert result.sql is not None
+        assert result.tier == 3
+        assert 'SUM(AVG(sometable."SOMECOLUMN"))' in result.sql
+        assert "CASE WHEN" not in result.sql.upper()
+        from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK
+        assert result.advisory_categories == [ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK]
 
 
 class TestGetRequiredDimensionsNeverHardcodesOrSubstringMatches:

@@ -7,7 +7,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
 from semabridge.core.drop_ledger import DropLedger, DropStage
-from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_UNREACHABLE_DIMENSION
+from semabridge.converter.dax_ast_parser import (
+    ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
+    ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+)
 
 # Structural signal, not a name: any metric whose advisory_categories
 # intersects this set is known to fail at real-deploy time regardless of
@@ -18,12 +21,32 @@ from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_UNREACHABLE_DI
 # as more real-deploy-only failure classes grow a detector.
 REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES = {ADVISORY_CATEGORY_UNREACHABLE_DIMENSION}
 
+# Distinct from the above: a metric here translated to real, valid SQL and
+# WILL deploy — it's just not the SQL the DAX asked for (an unshifted
+# approximation standing in for a time-intelligence shift the renderer
+# couldn't safely apply), so a human should confirm it's acceptable before
+# trusting it. Never counted as a real-deploy failure.
+REVIEW_REQUIRED_ADVISORY_CATEGORIES = {ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK}
+
 # Distinct from "auto"/"manual" (which describe identifier-mapping
 # provenance only): a metric or field structurally known — via
 # REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES or a matching DropLedger record —
 # to fail at real-deploy time even though it mapped/translated cleanly
 # pre-deploy. Never counted as "auto" by callers that sum auto_mapped.
 STATUS_PREDICTED_FAILURE = "predicted_failure"
+
+# A metric that translated to valid, deployable SQL but via a fallback a
+# human should double-check (see REVIEW_REQUIRED_ADVISORY_CATEGORIES). Not
+# in CLEAN_STATUSES on the frontend (mappingFilterUtils.js), so once it
+# reaches DryRunMappingTable's row.status it's automatically caught by the
+# existing "Needs Attention" filter chip. It does NOT reach that point for
+# free, though: CreateProjectPage.jsx's normalizeStatus() collapses any
+# unrecognized status to 'auto' before rows ever reach mappingFilterUtils.js
+# -- it has an explicit `if (explicit === 'needs_review') return
+# 'needs_review';` branch to let this value through, and
+# DryRunMappingTable's STATUS_BADGE_MAP has a matching entry so it's also
+# visible as a tag, not just filterable.
+STATUS_NEEDS_REVIEW = "needs_review"
 
 # ---------------------------------------------------------------------------
 # Static risk tier (dry-run page, metric-only) — see the session's design
@@ -96,6 +119,16 @@ def _compute_static_risk_tier(entity: Dict[str, Any], status: str) -> Optional[s
         return None
 
     if status == STATUS_PREDICTED_FAILURE:
+        return STATIC_RISK_PREDICTED_FAILURE
+
+    # A metric whose own DAX->SQL translation failed (sync_enabled=False,
+    # e.g. it depends on an unresolved metric or an untranslatable DAX
+    # shape) is a CERTAIN static-check failure, not merely a predicted one
+    # -- without this check it fell through to STATIC_RISK_NO_KNOWN_RISK,
+    # directly contradicting the same row's own Expression-Not-Converted
+    # bucket (rowConversionOutcome) and Translation Warning banner, both
+    # driven by this exact signal.
+    if entity.get("sync_enabled") is False or str(entity.get("sync_failure_reason") or "").strip():
         return STATIC_RISK_PREDICTED_FAILURE
 
     is_tier5 = entity.get("complexity_tier") == 5
@@ -501,14 +534,18 @@ def _entity_status(entity: Dict[str, Any], is_manual: bool) -> str:
     whether the target name was auto-sanitized or user-overridden. That
     axis is orthogonal to whether the entity will actually deploy, so a
     metric can map/translate cleanly and still be structurally known to
-    fail at real-deploy time (see REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES).
-    When that structural signal is present, it overrides "manual" too:
-    renaming a target identifier doesn't change whether Snowflake's
-    compiler will accept the metric's underlying expression.
+    fail at real-deploy time (see REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES) or
+    to need a human's review despite deploying fine (see
+    REVIEW_REQUIRED_ADVISORY_CATEGORIES). Both structural signals override
+    "manual" too: renaming a target identifier doesn't change whether
+    Snowflake's compiler will accept the metric's underlying expression,
+    or whether an unshifted time-intelligence approximation needs a look.
     """
     categories = set(entity.get("advisory_categories") or [])
     if categories & REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES:
         return STATUS_PREDICTED_FAILURE
+    if categories & REVIEW_REQUIRED_ADVISORY_CATEGORIES:
+        return STATUS_NEEDS_REVIEW
     return "manual" if is_manual else "auto"
 
 

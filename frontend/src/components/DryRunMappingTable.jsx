@@ -21,14 +21,10 @@ import { suggestCollisionResolutions, sanitizeMappingName, shortDeterministicHas
 import {
   groupRowsByFieldType,
   normalizeFieldTypeKey,
-  computeStatusFacets,
-  hasConversionData,
   rowConversionOutcome,
-  hasComplexityTierData,
-  rowComplexityTier,
-  rowNeedsReview,
-  CONVERSION_FACET_LABELS,
-  COMPLEXITY_TIER_FACET_LABELS,
+  rowIsCollision,
+  rowNeedsAttention,
+  buildFilterOptions,
 } from '../utils/mappingFilterUtils';
 import { getStaticRiskBadge, getSelfReportedEstimateText, getEnrichmentUnverifiableCaveat } from '../utils/riskLabels';
 
@@ -98,6 +94,7 @@ const STATUS_BADGE_MAP = {
   auto_resolved: { status: 'success', label: 'Auto-Resolved' },
   unmapped:  { status: 'draft',   label: 'Unmapped' },
   collision: { status: 'error',   label: 'Collision' },
+  needs_review: { status: 'warning', label: 'Needs Review' },
 };
 
 // ─── Shared table header ──────────────────────────────────────────────────────
@@ -1054,7 +1051,6 @@ export default function DryRunMappingTable({
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
   const [activeStatuses, setActiveStatuses] = useState(() => new Set());
-  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [bulkResolving, setBulkResolving] = useState(false);
@@ -1141,7 +1137,6 @@ export default function DryRunMappingTable({
     setLastSummary(summary);
     setActiveFieldType('all');
     setActiveStatuses(new Set());
-    setNeedsReviewOnly(false);
   }
 
   // ── Rows in scope for Tier 2 facet computation (the selected Tier 1 group) ──
@@ -1150,33 +1145,17 @@ export default function DryRunMappingTable({
     return group ? group.rows : mappings;
   }, [fieldGroups, activeFieldType, mappings]);
 
-  // ── Tier 2 options: real statuses present in scope, plus conversion outcome
-  //    facets (only if this scope actually has expressions to convert), plus
-  //    the always-present schema-issues toggle (structurally not a row status) ──
-  const statusFacets = useMemo(() => computeStatusFacets(scopedRows), [scopedRows]);
-  const showConversionFacets = useMemo(() => hasConversionData(scopedRows), [scopedRows]);
-  const showComplexityTierFacets = useMemo(() => hasComplexityTierData(scopedRows), [scopedRows]);
+  // ── Tier 2 options: a small, fixed, non-overlapping set (Collisions,
+  //    Expression Converted, Expression Not Converted, Needs Attention),
+  //    plus the always-present schema-issues toggle (structurally not a
+  //    row status, so it isn't part of buildFilterOptions) ──
   const tier2Options = useMemo(() => {
-    const options = statusFacets.map((f) => ({ ...f, kind: 'status' }));
-    if (showConversionFacets) {
-      Object.entries(CONVERSION_FACET_LABELS).forEach(([key, label]) => {
-        const count = scopedRows.filter((r) => rowConversionOutcome(r) === key).length;
-        if (count > 0) options.push({ key, label, count, kind: 'conversion' });
-      });
-    }
-    if (showComplexityTierFacets) {
-      Object.entries(COMPLEXITY_TIER_FACET_LABELS).forEach(([key, label]) => {
-        const count = scopedRows.filter((r) => rowComplexityTier(r) === key).length;
-        if (count > 0) options.push({ key, label, count, kind: 'complexity_tier' });
-      });
-    }
+    const options = buildFilterOptions(scopedRows);
     if (schemaConflicts.length > 0) {
       options.push({ key: 'schema_issues', label: 'Schema Issues', count: schemaConflicts.length, kind: 'schema' });
     }
     return options;
-  }, [statusFacets, showConversionFacets, showComplexityTierFacets, scopedRows, schemaConflicts.length]);
-
-  const needsReviewCount = useMemo(() => scopedRows.filter(rowNeedsReview).length, [scopedRows]);
+  }, [scopedRows, schemaConflicts.length]);
 
   const toggleStatus = useCallback((key) => {
     setActiveStatuses((prev) => {
@@ -1333,12 +1312,10 @@ export default function DryRunMappingTable({
   // Tier 2 is OR-across-selections; an empty selection means "show all" for that tier.
   const matchesTier2 = useCallback((row) => {
     if (activeStatuses.size === 0) return true;
-    const status = String(row?.status || '').toLowerCase().trim() || 'unknown';
-    if (activeStatuses.has(status)) return true;
+    if (activeStatuses.has('collision') && rowIsCollision(row)) return true;
     const conversionKey = rowConversionOutcome(row);
     if (conversionKey && activeStatuses.has(conversionKey)) return true;
-    const tierKey = rowComplexityTier(row);
-    if (tierKey && activeStatuses.has(tierKey)) return true;
+    if (activeStatuses.has('needs_attention') && rowNeedsAttention(row)) return true;
     // 'schema_issues' never matches a row — it has no per-row status; selecting it
     // alongside real statuses still shows those via OR, selecting it alone shows none
     // (the always-visible schema-conflicts panel below carries that information instead).
@@ -1348,7 +1325,6 @@ export default function DryRunMappingTable({
   const filterRow = useCallback((row) => {
     if (activeFieldType !== 'all' && normalizeFieldTypeKey(row) !== activeFieldType) return false;
     if (!matchesTier2(row)) return false;
-    if (needsReviewOnly && !rowNeedsReview(row)) return false;
     if (search.trim()) {
       const haystack = [
         row.source_field,
@@ -1363,7 +1339,7 @@ export default function DryRunMappingTable({
       if (!matchesSmartQuery(haystack, search, useRegex)) return false;
     }
     return true;
-  }, [activeFieldType, matchesTier2, needsReviewOnly, search, useRegex]);
+  }, [activeFieldType, matchesTier2, search, useRegex]);
 
   // ── Visible field-type sections: the selected Tier 1 group, or all of them ──
   const visibleGroups = useMemo(() => {
@@ -1505,24 +1481,18 @@ export default function DryRunMappingTable({
             })}
           </div>
 
-          {/* Tier 2 — status (multi-select, OR), scoped to the selected Tier 1 group, plus
-              a "Needs Review" quick toggle. Options here are whatever statuses/conversion
-              outcomes are actually present — nothing is hardcoded to a known connector. */}
+          {/* Tier 2 — status (multi-select, OR), scoped to the selected Tier 1 group.
+              A small fixed set (Collisions, Expression Converted, Expression Not
+              Converted, Needs Attention, Schema Issues) — see buildFilterOptions —
+              each option's row-set is mutually exclusive with the others. */}
           <div className="filter-checks">
-            <button
-              type="button"
-              className={`filter-check needs-review${needsReviewOnly ? ' active' : ''}`}
-              onClick={() => setNeedsReviewOnly((prev) => !prev)}
-            >
-              Needs Review ({needsReviewCount})
-            </button>
             {tier2Options.map((option) => {
               const checked = activeStatuses.has(option.key);
               return (
                 <button
                   key={option.key}
                   type="button"
-                  className={`filter-check${checked ? ' active' : ''}${option.key === 'collision' ? ' collision-check' : ''}`}
+                  className={`filter-check${checked ? ' active' : ''}${option.key === 'collision' ? ' collision-check' : ''}${option.key === 'needs_attention' ? ' attention-check' : ''}`}
                   onClick={() => toggleStatus(option.key)}
                 >
                   {option.label} ({option.count})

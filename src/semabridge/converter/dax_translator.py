@@ -28,22 +28,28 @@ class DAXTranslationResult:
         *,
         validation_notes: Optional[List[str]] = None,
         llm_self_reported_confidence: Optional[float] = None,
+        advisory_categories: Optional[List[str]] = None,
     ):
         self.sql = sql
         self.tier = tier  # 0=Override, 1=Direct, 2=Branching/Arith, 3=Opaque (Failed)
         self.original_dax = original_dax
         self.is_success = sql is not None
-        # Both keyword-only with None/empty defaults so every existing
+        # All three keyword-only with None/empty defaults so every existing
         # 3-positional-arg call site in this file (the vast majority --
         # Tiers 1-4 never populate these) is unaffected. Only the two
         # Tier-5 wrapping sites below (_try_llm_fallback,
-        # batch_translate_tier5) ever pass real values here -- this is
-        # the shim that carries dax_translation.types.TranslationResult's
-        # validation_notes/llm_self_reported_confidence through to
-        # osi_to_sml.py, which only ever sees this legacy class, never
-        # the newer TranslationResult directly.
+        # batch_translate_tier5) ever pass validation_notes/llm_self_
+        # reported_confidence -- this is the shim that carries
+        # dax_translation.types.TranslationResult's fields through to
+        # osi_to_sml.py, which only ever sees this legacy class, never the
+        # newer TranslationResult directly. advisory_categories is
+        # populated only by the Tier-3 time-intelligence call site, when
+        # try_ast_translate's allow_unshifted_fallback shipped an
+        # unshifted-approximation SQL instead of failing closed (see
+        # dax_ast_parser.ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK).
         self.validation_notes: List[str] = list(validation_notes or [])
         self.llm_self_reported_confidence: Optional[float] = llm_self_reported_confidence
+        self.advisory_categories: List[str] = list(advisory_categories or [])
 
 
 class DAXTranslator:
@@ -132,11 +138,34 @@ class DAXTranslator:
     
     # Time Intelligence functions that require Date dimension context
     TIME_INTEL_FUNCTIONS = [
-        "TOTALYTD", "TOTALMTD", "TOTALQTD", 
+        "TOTALYTD", "TOTALMTD", "TOTALQTD",
         "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
         "DATEADD", "DATESYTD", "DATESMTD", "DATESQTD",
         "PARALLELPERIOD", "OPENINGBALANCEYEAR", "CLOSINGBALANCEYEAR"
     ]
+
+    # Functions dax_ast_parser.DaxSqlRenderer._render_lag_period actually
+    # implements today (a CASE-WHEN-bounded scalar aggregate, fixed by
+    # commits f0cac52/e8e2ae5 after two real Snowflake METRICS-clause
+    # incidents -- see that module's docstrings). analyze_complexity below
+    # must not pre-judge these as untranslatable: TIME_INTEL_PATTERNS was
+    # never extended to cover them (it only has TOTALYTD/MTD/QTD), so
+    # every DAX containing one of these unconditionally got sync_enabled
+    # =False and a generic "not automatically translatable" reason here --
+    # even though the real translate() call a few lines later in
+    # osi_to_sml.py already succeeds for the common case. Because that
+    # call only overwrites the *reason* when sync_enabled was still True
+    # going in (osi_to_sml.py's `elif metric.sync_enabled:` branch), a
+    # metric that genuinely can't translate (e.g. a ratio/conditional base
+    # measure) was stuck showing this stale generic reason instead of the
+    # AST renderer's own, more specific
+    # dax_lag_period_of_measure_reference_failure_reason(). Deferring
+    # entirely to the real attempt fixes both: simple cases stop
+    # transiently lying about failing, and genuinely-failing cases get an
+    # accurate reason.
+    LAG_PERIOD_FUNCTIONS = frozenset({
+        "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
+    })
 
     # TOTALYTD/MTD/QTD are included here (not just the SAMEPERIODLASTYEAR-style
     # offset functions) so that _try_strict_translation's own TOTALYTD branch —
@@ -296,6 +325,17 @@ class DAXTranslator:
         if is_time_intel:
             from semabridge.converter.dax_ast_parser import try_ast_translate
             resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
+            # allow_unshifted_fallback: opt in ONLY here (the time-intelligence
+            # tier) -- a lag-period function (SAMEPERIODLASTYEAR/PREVIOUSYEAR/
+            # PREVIOUSMONTH/PREVIOUSQUARTER) wrapping a measure reference this
+            # renderer can't safely date-filter (e.g. a ratio measure's own
+            # CASE-guarded division, or a nested aggregate) would otherwise
+            # fail this metric closed entirely. Shipping the base measure's
+            # own unmodified SQL instead -- valid, but the CURRENT period's
+            # value, not the requested prior period -- is only acceptable
+            # because it's flagged via advisory_categories for a human to
+            # confirm before trusting it, never silently.
+            time_intel_advisories: List[str] = []
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
@@ -304,9 +344,13 @@ class DAXTranslator:
                 known_measure_names=self._all_measure_names(metrics_context),
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
+                allow_unshifted_fallback=True,
+                advisory_categories=time_intel_advisories,
             )
             if ast_sql:
-                return DAXTranslationResult(ast_sql, 3, clean_dax)
+                return DAXTranslationResult(
+                    ast_sql, 3, clean_dax, advisory_categories=time_intel_advisories
+                )
 
         # Tier 4: Complex CALCULATE / FILTER / ALL / ALLEXCEPT — attempt AST translation
         is_complex = any(
@@ -1356,14 +1400,20 @@ class DAXTranslator:
                 result["requires_time_intel"] = True
                 # Time Intelligence requires Date dimension for proper evaluation
                 result["group_by_dimensions"] = ["'Calendar'[Date]"]
-                
+
+                if func in self.LAG_PERIOD_FUNCTIONS:
+                    # The AST renderer actually handles these -- leave
+                    # sync_enabled/failure_reason for the real translate()
+                    # attempt to decide, instead of pre-judging it here.
+                    break
+
                 # Check if we can translate this specific pattern
                 can_translate = False
                 for period_type, pattern in self.TIME_INTEL_PATTERNS.items():
                     if pattern.search(clean_dax):
                         can_translate = True
                         break
-                
+
                 if not can_translate:
                     # Complex Time Intelligence we can't translate
                     result["sync_enabled"] = False

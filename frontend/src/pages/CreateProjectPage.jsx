@@ -287,6 +287,12 @@ function normalizeStatus(item) {
 
   if (!targetField) return 'unmapped';
   if (explicit === 'manual') return 'manual';
+  // needs_review: a metric that translated to real, deployable SQL via a
+  // fallback (e.g. an unshifted time-intelligence approximation) that a
+  // human should double-check -- passed through as-is (not collapsed to
+  // 'auto') so rowNeedsAttention() in mappingFilterUtils.js can catch it,
+  // since 'needs_review' isn't in that file's CLEAN_STATUSES set.
+  if (explicit === 'needs_review') return 'needs_review';
   return 'auto';
 }
 
@@ -389,6 +395,14 @@ function normalizeRows(data) {
         depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
         synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
         synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
+        // Provenance per synonym ('report_alias' | 'tmsl_authored' |
+        // 'manual_override' | 'auto_generated') -- the backend has sent
+        // this correctly all along; it was silently dropped here by the
+        // same allowlist-gap pattern as static_risk_tier/advisory_categories
+        // below, so DryRunMappingTable's synonymSources lookup always saw
+        // undefined and rendered every synonym as "Unknown Source".
+        synonym_sources: (row?.synonym_sources && typeof row.synonym_sources === 'object') ? row.synonym_sources : {},
+        has_report_alias: Boolean(row?.has_report_alias),
         // Static risk tier (metric-only; null for columns) and the Tier-5
         // provider's own self-reported estimate (metric-only, Tier-5-
         // only; null otherwise) -- see utils/riskLabels.js and

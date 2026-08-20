@@ -33,7 +33,14 @@ from semabridge.utils.logger import get_logger
 from semabridge.converter.function_registry import FunctionRegistry
 from semabridge.utils.relationship_graph import has_relationship_path
 
-_AST_CACHE: dict[tuple, Optional[str]] = {}
+# Cached value is (sql, advisory_categories) rather than a bare sql string
+# so a cache HIT still replays whatever advisory categories the render that
+# first produced this SQL recorded (e.g.
+# ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK) — a hit that returned
+# just the sql string would silently drop that flag for every call after
+# the first, since the renderer (and its _advisory_categories list) never
+# runs again on a cache hit.
+_AST_CACHE: dict[tuple, Tuple[Optional[str], Tuple[str, ...]]] = {}
 _AST_CACHE_MAX = 1024
 
 
@@ -46,6 +53,7 @@ def _ast_cache_key(
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
     primary_table_name: Optional[str] = None,
     date_table_names: Optional[Any] = None,
+    allow_unshifted_fallback: bool = False,
 ) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
     names = tuple(sorted(known_measure_names or ()))
@@ -60,6 +68,7 @@ def _ast_cache_key(
         flags,
         primary_table_name or "",
         date_tables,
+        allow_unshifted_fallback,
     )
 from semabridge.utils.naming import sanitize_column
 
@@ -562,6 +571,31 @@ class DaxAstParser:
 # ---------------------------------------------------------------------------
 
 
+# Stable category code for the "unshifted fallback" a lag-period function
+# (SAMEPERIODLASTYEAR/PREVIOUSYEAR/PREVIOUSMONTH/PREVIOUSQUARTER) falls back
+# to when it wraps a measure reference whose own resolved SQL isn't a shape
+# _inject_case_filter_into_rendered_aggregate can safely apply a date-range
+# filter to (e.g. a nested aggregate) — see DaxSqlRenderer._render_lag_period.
+# Opt-in only (allow_unshifted_fallback=True): the metric still ships real,
+# valid SQL rather than being hard-blocked, but that SQL is the CURRENT
+# period's value, not actually shifted to the requested prior period — a
+# human must confirm this is acceptable before trusting it. Mirrored onto
+# SMLMetric.advisory_categories by osi_to_sml.py, same convention as
+# ADVISORY_CATEGORY_UNREACHABLE_DIMENSION below, so downstream consumers
+# (project_mapping_engine.py's status computation) can key off this
+# structural signal instead of matching a free-text reason string.
+ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK = "lag_period_unshifted_fallback"
+
+# Human-readable counterpart appended to SMLMetric.advisory_notes in lockstep
+# with the category above (same-index parallel lists), matching the
+# note/category pairing convention advisory_notes documents.
+ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK = (
+    "Time-intelligence function (e.g. SAMEPERIODLASTYEAR/PREVIOUSYEAR) could not be "
+    "safely date-shifted for this measure, so it was translated as the base measure's "
+    "current-period value instead. Needs review before trusting the shifted comparison."
+)
+
+
 class DaxSqlRenderer:
     """
     Walks a parsed DAX AST and emits Snowflake-compatible SQL.
@@ -607,12 +641,6 @@ class DaxSqlRenderer:
         "COUNTA": "COUNT",
     }
 
-    # Matches an already-rendered SQL aggregate call, e.g. SUM(fact."AMOUNT")
-    # or SUM(fact."AMOUNT"::FLOAT) — used to inject a date-range CASE filter
-    # into a referenced measure's own aggregate instead of wrapping an
-    # already-aggregated expression in a second outer aggregate.
-    _RENDERED_AGG_PATTERN = re.compile(r"^(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(.+?)\s*\)$", re.IGNORECASE)
-
     # DAX names conventionally used for the date/calendar dimension across
     # this codebase (see dax_translator.py's "'Calendar'[Date]" dimension
     # reference and dax_engine.py's date_alias="calendar" default) — a
@@ -629,6 +657,8 @@ class DaxSqlRenderer:
         anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
         primary_table_name: Optional[str] = None,
         date_table_names: Optional[Any] = None,
+        allow_unshifted_fallback: bool = False,
+        advisory_categories: Optional[List[str]] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
@@ -679,6 +709,19 @@ class DaxSqlRenderer:
             str(name).casefold() for name in self.known_measure_names
         }
         self._func_registry = FunctionRegistry()
+        # Opt-in only -- False preserves the historical fail-closed
+        # behavior exactly for every existing caller. Only a caller that
+        # explicitly wants "ship an unshifted approximation, flagged for
+        # review" instead of a hard translation failure sets this True
+        # (see _render_lag_period's two DaxRenderError sites).
+        self._allow_unshifted_fallback = allow_unshifted_fallback
+        # Caller-provided list is mutated in place (same collector pattern
+        # as DropLedger elsewhere in this codebase) so the caller can read
+        # it back after render() returns; a fresh list is used internally
+        # either way so this attribute is never None.
+        self._advisory_categories: List[str] = (
+            advisory_categories if advisory_categories is not None else []
+        )
 
     def render(self, node: Optional[DaxNode]) -> Optional[str]:
         """
@@ -974,15 +1017,17 @@ class DaxSqlRenderer:
         cast = "::FLOAT" if func in ("SUM", "AVERAGE") else ""
         return f"{sql_func}({case_expr}{cast})"
 
+    _AGG_CALL_START = re.compile(r"\b(SUM|AVG|MIN|MAX|COUNT)\s*\(", re.IGNORECASE)
+
     @staticmethod
-    def _split_top_level_additive(expr: str) -> Optional[Tuple[str, str, str]]:
-        """Split `expr` at the first top-level (paren-depth 0, outside
-        string literals) '+' or '-' operator. Returns (left, op, right), or
-        None if there is no such split point (a leading unary sign is not
-        treated as one)."""
+    def _find_balanced_close_paren(expr: str, open_paren_index: int) -> Optional[int]:
+        """Return the index of the ')' matching the '(' at
+        open_paren_index, tracking nesting depth and skipping single-
+        quoted string literals. None if the parens never balance."""
         depth = 0
         in_string = False
-        for i, ch in enumerate(expr):
+        for i in range(open_paren_index, len(expr)):
+            ch = expr[i]
             if ch == "'":
                 in_string = not in_string
                 continue
@@ -992,47 +1037,67 @@ class DaxSqlRenderer:
                 depth += 1
             elif ch == ")":
                 depth -= 1
-            elif ch in ("+", "-") and depth == 0 and i > 0:
-                left = expr[:i].strip()
-                right = expr[i + 1:].strip()
-                if left and right:
-                    return left, ch, right
+                if depth == 0:
+                    return i
         return None
 
     def _inject_case_filter_into_rendered_aggregate(self, rendered_sql: str, condition_sql: str) -> Optional[str]:
-        """Rewrite an already-rendered SQL aggregate (e.g. from inlining a
-        referenced measure's own SQL) to apply `condition_sql` inside its
-        argument, instead of wrapping the whole already-aggregated
-        expression in a second outer aggregate.
+        """Rewrite an already-rendered SQL expression (e.g. from inlining a
+        referenced measure's own SQL) so every leaf SUM/AVG/MIN/MAX/COUNT
+        call in it is filtered by `condition_sql`, instead of wrapping the
+        whole already-aggregated expression in a second outer aggregate.
 
-        Recurses through top-level '+'/'-' (e.g. a measure defined as
-        [A] - [B], each side its own aggregate) so the filter reaches every
-        aggregate leaf. Returns None if `rendered_sql` isn't something this
-        can safely rewrite that way — callers should fail closed rather
-        than risk emitting a nested aggregate (SUM(...SUM(...)...)), which
-        Snowflake (and this codebase's own metric-SQL rules) disallow.
+        Finds and rewrites EVERY bare aggregate call wherever it appears —
+        not just at the top level — so this handles a measure defined as
+        [A] - [B] (each side its own aggregate), a ratio like
+        DIVIDE([A], [B]), an IF(...)-guarded ratio, or any other
+        combination of aggregates, uniformly: applying a row-level date
+        filter to a formula built purely from same-grain aggregates is
+        mathematically equivalent whether applied to the whole formula or
+        to each of its aggregate leaves individually, regardless of what
+        arithmetic/conditional structure combines them. Only the
+        aggregates' own arguments are rewritten; everything else (IF/CASE
+        structure, division, comparisons) is left untouched.
+
+        Returns None (fail closed) if `rendered_sql` contains a NESTED
+        aggregate (a call whose own argument contains another aggregate
+        call) — that shape means this isn't simple leaf-level aggregation,
+        and rewriting it here would risk producing SUM(...SUM(...)...),
+        which Snowflake (and this codebase's own metric-SQL rules)
+        disallow — or if no aggregate call is found at all (nothing to
+        filter).
         """
         clean = (rendered_sql or "").strip()
         if clean.startswith("(") and clean.endswith(")"):
             clean = clean[1:-1].strip()
 
-        match = self._RENDERED_AGG_PATTERN.match(clean)
-        if match:
-            func = match.group(1).upper()
-            arg = match.group(2).strip()
-            if re.search(r"\b(SUM|AVG|MIN|MAX|COUNT)\s*\(", arg, re.IGNORECASE):
-                return None  # arg still contains a nested call — not safe to assume simple
-            return f"{func}(CASE WHEN {condition_sql} THEN {arg} ELSE NULL END)"
+        calls: List[Tuple[int, int, str, str]] = []
+        for m in self._AGG_CALL_START.finditer(clean):
+            func = m.group(1).upper()
+            open_idx = m.end() - 1
+            close_idx = self._find_balanced_close_paren(clean, open_idx)
+            if close_idx is None:
+                return None  # unbalanced parens — malformed, fail closed
+            arg = clean[open_idx + 1 : close_idx].strip()
+            calls.append((m.start(), close_idx, func, arg))
 
-        split = self._split_top_level_additive(clean)
-        if split:
-            left, op, right = split
-            left_rewritten = self._inject_case_filter_into_rendered_aggregate(left, condition_sql)
-            right_rewritten = self._inject_case_filter_into_rendered_aggregate(right, condition_sql)
-            if left_rewritten and right_rewritten:
-                return f"({left_rewritten}) {op} ({right_rewritten})"
+        if not calls:
+            return None
 
-        return None
+        # A call nested inside another call's argument span means this
+        # isn't a flat leaf-level formula (e.g. SUM(AVG(x))) — fail closed
+        # rather than guess which one should actually be filtered.
+        for i, (s1, e1, _f1, _a1) in enumerate(calls):
+            for j, (s2, e2, _f2, _a2) in enumerate(calls):
+                if i != j and s2 > s1 and e2 < e1:
+                    return None
+
+        rewritten = clean
+        for start, end, func, arg in sorted(calls, key=lambda c: c[0], reverse=True):
+            replacement = f"{func}(CASE WHEN {condition_sql} THEN {arg} ELSE NULL END)"
+            rewritten = rewritten[:start] + replacement + rewritten[end + 1 :]
+
+        return rewritten
 
     def _render_calculate(self, args: List[DaxNode]) -> str:
         """
@@ -1250,6 +1315,24 @@ class DaxSqlRenderer:
     # Must stay in sync with converter/time_intelligence_shapes.py's LAG_FUNCS.
     _LAG_COMPONENT = {"year": "SPLY_YEAR", "quarter": "SPLY_QUARTER", "month": "SPLY_MONTH"}
 
+    def _lag_period_unshifted_fallback_or_raise(self, agg_sql: str, error_message: str) -> str:
+        """Called at a lag-period DaxRenderError site instead of raising
+        directly. Default (allow_unshifted_fallback=False): raises exactly
+        as before -- no behavior change for any existing caller. Opted in:
+        ships `agg_sql` completely unmodified (the referenced measure's
+        real, valid SQL, just not shifted to the requested prior period)
+        and records ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK instead
+        of failing the whole metric closed. The caller (dax_translator.py)
+        is responsible for surfacing that category so a human reviews this
+        specific metric before trusting it -- this method only decides
+        whether to ship the approximation, never hides that it did.
+        """
+        if not self._allow_unshifted_fallback:
+            raise self.DaxRenderError(error_message)
+        if ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK not in self._advisory_categories:
+            self._advisory_categories.append(ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK)
+        return agg_sql
+
     def _render_lag_period(
         self, args: List[DaxNode], interval: str, amount: int
     ) -> str:
@@ -1355,9 +1438,10 @@ class DaxSqlRenderer:
                 )
                 if rewritten:
                     return rewritten
-                raise self.DaxRenderError(
+                return self._lag_period_unshifted_fallback_or_raise(
+                    agg_sql,
                     f"Period function base expression '{agg_sql}' is not a simple aggregate this "
-                    "renderer can safely apply a date-range filter to without risking a nested aggregate"
+                    "renderer can safely apply a date-range filter to without risking a nested aggregate",
                 )
             # No flag provisioned for this exact shape (discovery pass and
             # enrichment disagree, or this shape wasn't anticipated) — fall
@@ -1426,9 +1510,10 @@ class DaxSqlRenderer:
         rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, condition_sql)
         if rewritten:
             return rewritten
-        raise self.DaxRenderError(
+        return self._lag_period_unshifted_fallback_or_raise(
+            agg_sql,
             f"Period function base expression '{agg_sql}' is not a simple aggregate this "
-            "renderer can safely apply a date-range filter to without risking a nested aggregate"
+            "renderer can safely apply a date-range filter to without risking a nested aggregate",
         )
 
     def _render_dateadd(self, args: List[DaxNode]) -> str:
@@ -1461,6 +1546,8 @@ def try_ast_translate(
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
     primary_table_name: Optional[str] = None,
     date_table_names: Optional[Any] = None,
+    allow_unshifted_fallback: bool = False,
+    advisory_categories: Optional[List[str]] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1497,6 +1584,22 @@ def try_ast_translate(
         date_table_names: DAX names recognized as the date/calendar
             dimension for alias resolution (default: {"date", "calendar"}).
             Only consulted when primary_table_name is provided.
+        allow_unshifted_fallback: opt-in only (default False preserves
+            historical fail-closed behavior for every existing caller). A
+            lag-period function (SAMEPERIODLASTYEAR/PREVIOUSYEAR/PREVIOUSMONTH/
+            PREVIOUSQUARTER) wrapping a measure reference whose own SQL
+            isn't a shape the renderer can safely apply a date-range filter
+            to (e.g. a nested aggregate) normally fails closed (returns
+            None). Set True to instead ship that measure's own unmodified
+            SQL — real, valid, but the CURRENT period's value, not shifted
+            to the requested prior period — and record
+            ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK in
+            `advisory_categories` so the caller can flag it for human
+            review instead of silently trusting it.
+        advisory_categories: caller-provided list, appended to in place
+            (same pattern as DropLedger elsewhere in this codebase) with
+            any advisory category codes produced by this translation
+            attempt. Ignored unless allow_unshifted_fallback is True.
 
     Returns:
         SQL string on success, None on failure.
@@ -1510,14 +1613,20 @@ def try_ast_translate(
         anchor_flag_map,
         primary_table_name,
         date_table_names,
+        allow_unshifted_fallback,
     )
     if cache_key in _AST_CACHE:
-        return _AST_CACHE[cache_key]
+        cached_sql, cached_categories = _AST_CACHE[cache_key]
+        if advisory_categories is not None:
+            for category in cached_categories:
+                if category not in advisory_categories:
+                    advisory_categories.append(category)
+        return cached_sql
 
     parser = DaxAstParser()
     ast = parser.parse(dax)
     if ast is None:
-        _AST_CACHE[cache_key] = None
+        _AST_CACHE[cache_key] = (None, ())
         return None
 
     renderer = DaxSqlRenderer(
@@ -1528,11 +1637,17 @@ def try_ast_translate(
         anchor_flag_map=anchor_flag_map,
         primary_table_name=primary_table_name,
         date_table_names=date_table_names,
+        allow_unshifted_fallback=allow_unshifted_fallback,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:
         _AST_CACHE.clear()
-    _AST_CACHE[cache_key] = sql
+    produced_categories = tuple(renderer._advisory_categories)
+    _AST_CACHE[cache_key] = (sql, produced_categories)
+    if advisory_categories is not None:
+        for category in produced_categories:
+            if category not in advisory_categories:
+                advisory_categories.append(category)
     return sql
 
 

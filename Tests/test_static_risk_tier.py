@@ -49,6 +49,55 @@ def test_tier_1_4_metric_with_clean_status_is_no_known_risk():
     assert STATIC_RISK_LABELS[tier] == "No known risk signals"
 
 
+def test_metric_with_failed_own_translation_is_predicted_failure_not_no_known_risk():
+    """Real incident: a metric whose own DAX->SQL translation failed
+    (sync_enabled=False, e.g. it depends on an unresolved metric using a
+    time-intelligence function that isn't auto-translatable) kept
+    `status == "auto"` -- so this function fell through to
+    STATIC_RISK_NO_KNOWN_RISK, directly contradicting the same row's own
+    Expression-Not-Converted bucket (rowConversionOutcome, frontend) and
+    Translation Warning banner, both driven by sync_enabled/
+    sync_failure_reason. A failed translation is a CERTAIN static-check
+    failure, not a clean bill of health."""
+    entity = {
+        "entity_kind": "metric",
+        "complexity_tier": 1,
+        "sync_enabled": False,
+        "sync_failure_reason": "Cannot compute — depends on unresolved metric(s)",
+        "source_expression": "[% Units Market Share]-[% Units Market Share SPLY]",
+    }
+    tier = _compute_static_risk_tier(entity, status="auto")
+    assert tier == STATIC_RISK_PREDICTED_FAILURE
+
+
+def test_metric_with_sync_failure_reason_but_sync_enabled_unset_is_still_predicted_failure():
+    """sync_failure_reason alone (without an explicit sync_enabled=False)
+    must trigger the same check -- matches rowConversionOutcome's own
+    OR condition on the frontend."""
+    entity = {
+        "entity_kind": "metric",
+        "complexity_tier": 1,
+        "sync_failure_reason": "Complex Time Intelligence (SAMEPERIODLASTYEAR) not automatically translatable",
+        "source_expression": "SAMEPERIODLASTYEAR('Date'[Date])",
+    }
+    tier = _compute_static_risk_tier(entity, status="auto")
+    assert tier == STATIC_RISK_PREDICTED_FAILURE
+
+
+def test_metric_with_successful_translation_and_sync_enabled_true_is_unaffected():
+    """Negative control: a metric that translated successfully
+    (sync_enabled=True, no failure reason) must not be swept up by the
+    new check -- only genuinely failed conversions are."""
+    entity = {
+        "entity_kind": "metric",
+        "complexity_tier": 1,
+        "sync_enabled": True,
+        "sync_failure_reason": "",
+        "source_expression": "SUM(Fact[Amount])",
+    }
+    assert _compute_static_risk_tier(entity, status="auto") == STATIC_RISK_NO_KNOWN_RISK
+
+
 def test_clean_tier5_metric_with_no_retries_and_no_risky_dax_is_no_known_risk():
     entity = {
         "entity_kind": "metric",

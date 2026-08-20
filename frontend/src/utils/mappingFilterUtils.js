@@ -10,7 +10,7 @@ const FIELD_TYPE_ALIASES = { metric: 'measure' };
 
 // Statuses currently known to represent a "no action needed" outcome.
 // Anything not in this set — including a status no connector has produced
-// yet — is treated as actionable by rowNeedsReview().
+// yet — is treated as actionable by rowNeedsAttention().
 const CLEAN_STATUSES = new Set(['auto', 'auto_resolved']);
 
 export function normalizeFieldTypeKey(row) {
@@ -31,11 +31,6 @@ export function humanizeGroupLabel(key) {
   return /s$/i.test(titled) ? titled : `${titled}s`;
 }
 
-export function humanizeStatusLabel(key) {
-  const word = String(key || '').replace(/[_-]+/g, ' ').trim();
-  return word ? titleCase(word) : 'Unknown';
-}
-
 /**
  * Groups rows by normalized field type, in first-seen order, with an
  * always-first synthetic 'all' group holding every row.
@@ -53,18 +48,6 @@ export function groupRowsByFieldType(rows) {
   });
   const groups = order.map((key) => ({ key, label: humanizeGroupLabel(key), rows: buckets.get(key) }));
   return [{ key: 'all', label: 'All', rows }, ...groups];
-}
-
-/** Distinct status values present in `rows`, in first-seen order, with counts. */
-export function computeStatusFacets(rows) {
-  const order = [];
-  const counts = new Map();
-  rows.forEach((row) => {
-    const key = String(row?.status || '').toLowerCase().trim() || 'unknown';
-    counts.set(key, (counts.get(key) || 0) + 1);
-    if (!order.includes(key)) order.push(key);
-  });
-  return order.map((key) => ({ key, label: humanizeStatusLabel(key), count: counts.get(key) }));
 }
 
 /**
@@ -92,38 +75,55 @@ export const CONVERSION_FACET_LABELS = {
   conversion_failed: 'Expression Not Converted',
 };
 
-/**
- * null when the row isn't a measure with a known DAX complexity tier;
- * otherwise buckets tiers 1-4 (rule-based translation) vs tier 5 (LLM
- * fallback) so the UI can flag AI-assisted conversions for manual review.
- */
-export function rowComplexityTier(row) {
-  if (normalizeFieldTypeKey(row) !== 'measure') return null;
-  // Only a metric that was actually, successfully converted gets a trust
-  // tier — a by-design-excluded or genuinely-failed metric must never show
-  // up as "Tier 1, trustworthy" just because complexity_tier defaulted to a
-  // low number. Those surface only in the conversion-outcome facet instead.
-  if (rowConversionOutcome(row) !== 'conversion_success') return null;
-  const tier = Number(row?.complexity_tier);
-  if (!Number.isFinite(tier) || tier <= 0) return null;
-  return tier >= 5 ? 'tier_ai_assisted' : 'tier_rule_based';
+export function rowIsCollision(row) {
+  return String(row?.status || '').toLowerCase().trim() === 'collision';
 }
 
-export function hasComplexityTierData(rows) {
-  return rows.some((row) => rowComplexityTier(row) !== null);
-}
-
-export const COMPLEXITY_TIER_FACET_LABELS = {
-  tier_rule_based: 'Converted (rule-based)',
-  tier_ai_assisted: 'Converted (AI-assisted, review recommended)',
-};
-
 /**
- * A row needs review when its status isn't in the known-clean set, or when
- * it has an expression that failed to convert (even if its status is clean).
+ * A row needs attention for some reason OTHER than the two that already get
+ * their own dedicated chip (Collisions, Expression Not Converted) — e.g. an
+ * unmapped field, a manual-pending edit, a predicted deploy-time failure, or
+ * any other non-clean status a connector emits. Deliberately excludes
+ * collision and conversion-failed rows so this chip's set never duplicates
+ * theirs — see buildFilterOptions below.
  */
-export function rowNeedsReview(row) {
+export function rowNeedsAttention(row) {
+  if (rowIsCollision(row)) return false;
+  if (rowConversionOutcome(row) === 'conversion_failed') return false;
   const status = String(row?.status || '').toLowerCase().trim();
-  if (!CLEAN_STATUSES.has(status)) return true;
-  return rowConversionOutcome(row) === 'conversion_failed';
+  return !CLEAN_STATUSES.has(status);
+}
+
+/**
+ * The Tier 2 status filter row, reduced to a small, fixed, non-overlapping
+ * set: Collisions, Expression Converted, Expression Not Converted, and
+ * Needs Attention (everything else non-clean). Earlier this row grew one
+ * chip per distinct raw status value plus a separately-computed "Needs
+ * Review" toggle and a DAX-complexity-tier breakdown — several of those
+ * chips ended up covering the exact same rows (e.g. for a columns-only
+ * view with no other statuses, "Needs Review" and "Collision" were
+ * literally identical sets), which is confusing rather than informative.
+ * A chip is only included when its count is non-zero.
+ */
+export function buildFilterOptions(rows) {
+  const options = [];
+
+  const collisionCount = rows.filter(rowIsCollision).length;
+  if (collisionCount > 0) {
+    options.push({ key: 'collision', label: 'Collisions', count: collisionCount, kind: 'status' });
+  }
+
+  if (hasConversionData(rows)) {
+    Object.entries(CONVERSION_FACET_LABELS).forEach(([key, label]) => {
+      const count = rows.filter((r) => rowConversionOutcome(r) === key).length;
+      if (count > 0) options.push({ key, label, count, kind: 'conversion' });
+    });
+  }
+
+  const attentionCount = rows.filter(rowNeedsAttention).length;
+  if (attentionCount > 0) {
+    options.push({ key: 'needs_attention', label: 'Needs Attention', count: attentionCount, kind: 'attention' });
+  }
+
+  return options;
 }
