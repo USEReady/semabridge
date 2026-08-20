@@ -107,6 +107,7 @@ class ReconciliationReport:
     snapshot_metric_names: list[str]                  # raw unique_name values from the Stage 6 snapshot
     deployed_live_metrics: set[str]                   # DDL-emitted names, real expression
     deployed_dead_metrics: set[str]                   # DDL-emitted names, deploy-time CAST(NULL AS DOUBLE)
+    deployed_dimensions: set[str] = field(default_factory=set)  # DDL-emitted DIMENSIONS clause names
     drop_records: list[dict[str, Any]] = field(default_factory=list)  # raw metric DropRecords
     ddl_error: Optional[str] = None                   # set if DDL generation raised (ledger is still populated)
     sanitizer: IdentifierSanitizer = field(default_factory=IdentifierSanitizer, repr=False)
@@ -192,6 +193,22 @@ class ReconciliationReport:
         """
         return _normalize(entity_name, self.sanitizer) in self.deployed_live_metrics
 
+    def is_dimension_live(self, entity_name: str) -> bool:
+        """True if *entity_name* (a raw/unsanitized column name, e.g. a
+        DropRecord's ``entity_name`` for ``entity_kind == "column"``)
+        normalizes to a name present in ``deployed_dimensions`` -- i.e.
+        genuinely emitted in the DIMENSIONS clause of the DDL this report
+        was computed against.
+
+        Same rationale as ``is_metric_live``: a column can legitimately be
+        dropped by an earlier, schema-less pass (no live schema fetched
+        yet to confirm it) and then successfully emitted once a later pass
+        has a real live-schema connection. Without this check, that earlier
+        drop record is never retracted even though the column deployed
+        fine -- see ``core/engine/finalize.py``'s Step 10.
+        """
+        return _normalize(entity_name, self.sanitizer) in self.deployed_dimensions
+
     def summary(self) -> str:
         unaccounted = self.unaccounted
         lines = [
@@ -251,6 +268,31 @@ def _extract_deployed_metric_names(ddl_text: str) -> tuple[set[str], set[str]]:
     return live, dead
 
 
+def _extract_deployed_dimension_names(ddl_text: str) -> set[str]:
+    """Parse every DIMENSIONS( ... ) clause in *ddl_text* into a set of
+    emitted semantic dimension names -- same line shape as the METRICS
+    clause (``ALIAS."NAME" AS <expr>,``), so this reuses the same
+    definition/close regexes with the clause header swapped.
+    """
+    names: set[str] = set()
+    in_dims = False
+    for line in (ddl_text or "").splitlines():
+        stripped_upper = line.strip().upper()
+        if stripped_upper.startswith("DIMENSIONS ("):
+            in_dims = True
+            continue
+        if in_dims and _CLAUSE_CLOSE_RE.match(line):
+            in_dims = False
+            continue
+        if not in_dims:
+            continue
+        m = _METRIC_DEF_RE.match(line)
+        if not m:
+            continue
+        names.add(m.group(1).upper())
+    return names
+
+
 def compute_reconciliation(
     *,
     run_id: str,
@@ -270,6 +312,7 @@ def compute_reconciliation(
     """
     sanitizer = sanitizer or IdentifierSanitizer()
     live, dead = _extract_deployed_metric_names(deployed_ddl_text)
+    dimensions = _extract_deployed_dimension_names(deployed_ddl_text)
     metric_drop_records = [r for r in drop_records if r.get("entity_kind") == "metric"]
 
     return ReconciliationReport(
@@ -279,6 +322,7 @@ def compute_reconciliation(
         snapshot_metric_names=[n for n in snapshot_metric_names if n],
         deployed_live_metrics=live,
         deployed_dead_metrics=dead,
+        deployed_dimensions=dimensions,
         drop_records=metric_drop_records,
         ddl_error=ddl_error,
         sanitizer=sanitizer,

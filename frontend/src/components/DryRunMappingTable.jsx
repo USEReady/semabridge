@@ -142,7 +142,8 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
   const selfReportedEstimateText = getSelfReportedEstimateText(row);
   const enrichmentUnverifiableCaveat = getEnrichmentUnverifiableCaveat(row);
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
-  const hasDetails = isMeasure || (Array.isArray(row.synonyms) && row.synonyms.length > 0);
+  const allSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
+  const hasDetails = isMeasure || allSynonyms.length > 0;
   const isPanelOpen = (isCollision && expandedCollision === row.id) || (hasDetails && expandedMeasure);
   // Full text is always available via the native tooltip (title attribute);
   // only the short form is derived here for the always-visible row label, so
@@ -285,19 +286,21 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
                   type="button"
                   title={allSynonyms.join(', ')}
                   onClick={() => {
-                    setRevealSynonymsOnOpen(true);
-                    setExpandedMeasure(true);
+                    const next = !expandedMeasure;
+                    setExpandedMeasure(next);
+                    setRevealSynonymsOnOpen(next);
                   }}
                   style={{
                     fontSize: 10,
                     fontWeight: 600,
                     padding: '2px 6px',
                     borderRadius: 999,
-                    border: '1px dashed var(--text-tertiary)',
-                    background: 'transparent',
-                    color: 'var(--text-secondary)',
+                    border: expandedMeasure ? '1px solid rgba(56, 189, 248, 0.55)' : '1px dashed var(--text-tertiary)',
+                    background: expandedMeasure ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                    color: expandedMeasure ? '#7dd3fc' : 'var(--text-secondary)',
                     whiteSpace: 'nowrap',
                     cursor: 'pointer',
+                    transition: 'all 0.2s',
                   }}
                 >
                   {allSynonyms.length} detected
@@ -449,7 +452,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 6 }}>
-            {hasDetails && (
+            {isMeasure && (
               <button
                 type="button"
                 onClick={() => {
@@ -477,7 +480,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
                   transition: 'all 0.2s',
                 }}
               >
-                {expandedMeasure ? (isMeasure ? 'Hide SQL' : 'Hide Details') : (isMeasure ? 'View SQL' : 'View Details')}
+                {expandedMeasure ? 'Hide SQL' : 'View SQL'}
               </button>
             )}
             <button
@@ -541,7 +544,7 @@ const SYNONYM_SOURCE_LABELS = {
 function synonymSourceLabel(source) {
   if (SYNONYM_SOURCE_LABELS[source]) return SYNONYM_SOURCE_LABELS[source];
   const word = String(source || '').replace(/[_-]+/g, ' ').trim();
-  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unknown Source';
+  return word ? word.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
 
 function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
@@ -689,25 +692,30 @@ function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
               color: 'var(--text-secondary)',
               fontSize: 12,
             }}>
-              {otherSynonyms.map((alias, index) => (
-                <div key={`${row.id}-other-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: 'var(--text-tertiary)' }}>•</span>
-                  <span>{alias}</span>
-                  <span style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.03em',
-                    color: 'var(--text-tertiary)',
-                    border: '1px solid var(--border-main)',
-                    borderRadius: 4,
-                    padding: '1px 5px',
-                    marginLeft: 'auto',
-                  }}>
-                    {synonymSourceLabel(synonymSources[alias])}
-                  </span>
-                </div>
-              ))}
+              {otherSynonyms.map((alias, index) => {
+                const labelText = synonymSourceLabel(synonymSources[alias]);
+                return (
+                  <div key={`${row.id}-other-${alias}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>•</span>
+                    <span>{alias}</span>
+                    {labelText && (
+                      <span style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.03em',
+                        color: 'var(--text-tertiary)',
+                        border: '1px solid var(--border-main)',
+                        borderRadius: 4,
+                        padding: '1px 5px',
+                        marginLeft: 'auto',
+                      }}>
+                        {labelText}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1146,11 +1154,19 @@ export default function DryRunMappingTable({
   }, [fieldGroups, activeFieldType, mappings]);
 
   // ── Tier 2 options: a small, fixed, non-overlapping set (Collisions,
-  //    Expression Converted, Expression Not Converted, Needs Attention),
-  //    plus the always-present schema-issues toggle (structurally not a
-  //    row status, so it isn't part of buildFilterOptions) ──
+  //    Expression Converted, Expression Not Converted, Needs Attention) from
+  //    buildFilterOptions, plus Predicted Failure -- kept as its own chip
+  //    (not folded into buildFilterOptions) because it's keyed off
+  //    static_risk_tier, an orthogonal signal from a different computation
+  //    (see getStaticRiskBadge/riskLabels.js) than row.status, so its
+  //    row-set can never duplicate another chip's -- plus the always-present
+  //    schema-issues toggle (structurally not a row status either) ──
   const tier2Options = useMemo(() => {
     const options = buildFilterOptions(scopedRows);
+    const predictedFailureCount = scopedRows.filter((r) => r?.static_risk_tier === 'predicted_failure').length;
+    if (predictedFailureCount > 0) {
+      options.push({ key: 'predicted_failure', label: 'Predicted Failure', count: predictedFailureCount, kind: 'risk' });
+    }
     if (schemaConflicts.length > 0) {
       options.push({ key: 'schema_issues', label: 'Schema Issues', count: schemaConflicts.length, kind: 'schema' });
     }
@@ -1309,13 +1325,13 @@ export default function DryRunMappingTable({
   }, [synonymModal, onSynonymUpdate]);
 
   // ── Filtered rows ───────────────────────────────────────────────────────────
-  // Tier 2 is OR-across-selections; an empty selection means "show all" for that tier.
   const matchesTier2 = useCallback((row) => {
     if (activeStatuses.size === 0) return true;
     if (activeStatuses.has('collision') && rowIsCollision(row)) return true;
     const conversionKey = rowConversionOutcome(row);
     if (conversionKey && activeStatuses.has(conversionKey)) return true;
     if (activeStatuses.has('needs_attention') && rowNeedsAttention(row)) return true;
+    if (activeStatuses.has('predicted_failure') && row?.static_risk_tier === 'predicted_failure') return true;
     // 'schema_issues' never matches a row — it has no per-row status; selecting it
     // alongside real statuses still shows those via OR, selecting it alone shows none
     // (the always-visible schema-conflicts panel below carries that information instead).
@@ -1432,14 +1448,6 @@ export default function DryRunMappingTable({
         <span style={{ color: 'var(--text-tertiary)' }}>·</span>
         <span style={{ color: '#7dd3fc', fontWeight: 600 }}>
           {measures.length} measure{measures.length !== 1 ? 's' : ''}
-        </span>
-        <span style={{ color: 'var(--text-tertiary)' }}>·</span>
-        <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>
-          {autoMapped} auto
-        </span>
-        <span style={{ color: 'var(--text-tertiary)' }}>·</span>
-        <span style={{ color: 'var(--text-tertiary)', fontWeight: 600 }}>
-          {unmappedCnt} unmapped
         </span>
         {collisionCnt > 0 && (
           <>

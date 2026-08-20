@@ -407,10 +407,11 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
                     "ddl_error": recon.ddl_error,
                 }
                 if not recon.is_clean():
-                    logger.warning(
-                        "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
-                        project_id, recon.unaccounted,
-                    )
+                    # Commented out warning log for unaccounted metrics (can re-enable later if needed)
+                    # logger.warning(
+                    #     "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
+                    #     project_id, recon.unaccounted,
+                    # )
                     unaccounted_entries = [
                         {
                             "entity_kind": "metric",
@@ -799,6 +800,46 @@ async def get_run_report_compat(project_id: str, run_id: str) -> Optional[Dict[s
         "content": path.read_text(encoding="utf-8"),
         "filename": f"{safe_project_name}_{run_id}_report.md",
     }
+
+
+async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+    """JSON counterpart to get_run_report_compat, for the frontend's
+    accordion-style summary view: finds the same in-memory run record and
+    calls build_run_report_data(run, project_cfg) instead of reading the
+    rendered Markdown file.
+
+    project_cfg here is the project's CURRENT config, not necessarily the
+    exact one active when the run happened -- the run record itself never
+    persisted project_cfg (only the Markdown file baked it in at write
+    time), and the project's source config practically never changes
+    between runs anyway. Only affects header display fields (source_kind/
+    source_files); counts/sections come entirely from the run's own
+    persisted snapshot+drop-ledger data, unaffected either way.
+
+    Returns None if no in-memory run record exists (e.g. after a restart
+    evicted it) -- there is no file-based fallback for this JSON view the
+    way get_run_report_compat has for the Markdown file, since JSON is
+    always freshly recomputed, never persisted to disk.
+    """
+    _compat_ensure_loaded()
+    run = None
+    for candidate in _compat_project_runs.get(project_id, []):
+        if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
+            run = candidate
+            break
+    if run is None:
+        return None
+
+    from semabridge.api.services.run_report_service import build_run_report_data
+
+    modular_bundle = project_shared._compat_load_modular_project(project_id)
+    project_cfg = (
+        (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+        or _compat_project_configs.get(project_id)
+        or _compat_load_repo_yaml_text()
+        or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+    )
+    return build_run_report_data(run, project_cfg)
 
 
 async def get_run_conflicts_compat(run_id: str):

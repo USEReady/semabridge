@@ -1,9 +1,9 @@
-project_name: vfofod
+project_name: dem
 source:
   type: pbix
-  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-vfofod/f582f485a7dc478ebd1a63d8c9e732d9_Competitive
+  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-dem/fea4f83506a04faeab856bf3e5210c26_Competitive
     Marketing Analysis (More Synonyms) (1).pbix
-  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-vfofod/f582f485a7dc478ebd1a63d8c9e732d9_Competitive
+  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-dem/fea4f83506a04faeab856bf3e5210c26_Competitive
     Marketing Analysis (More Synonyms) (1).pbix
 targets:
 - type: snowflake
@@ -212,6 +212,14 @@ mappings_overrides:
   target_name: AVERAGE_OF_SCORE
 - source_path: metrics.New Demo Measure
   target_name: NEW_DEMO_MEASURE
+- source_path: metrics.KPI01_BRANCH_1
+  target_name: KPI01_BRANCH_1
+- source_path: metrics.KPI01_BRANCH_2
+  target_name: KPI01_BRANCH_2
+- source_path: metrics.KPI02_BRANCH_1
+  target_name: KPI02_BRANCH_1
+- source_path: metrics.KPI02_BRANCH_2
+  target_name: KPI02_BRANCH_2
 ui:
   intermediate_format: osi
   editor_mode: form
@@ -219,5 +227,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-vfofod
-display_name: vfofod
+project_id: proj-dem
+display_name: dem

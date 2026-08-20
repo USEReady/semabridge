@@ -166,7 +166,7 @@ Before finalizing the SQL you are about to return, check it against each of thes
 1. Unit/type consistency: if the expression adds or subtracts a time period, is the unit (days vs. months vs. years) correct for what the metric name and DAX describe? A "rolling 12 months" / "R12M" / "trailing N months" pattern must use month-based (or the schema's native surrogate-key) arithmetic -- never day-based date arithmetic that happens to produce a numerically similar range.
 2. Forbidden constructs: does this expression use only plain aggregate functions (SUM, AVG, COUNT, MIN, MAX, CASE WHEN, etc.)? Window functions (LAG, LEAD, ROW_NUMBER, OVER, PARTITION BY) and SELECT/FROM/JOIN/CTEs/subqueries are not valid inside a metric expression here, even if they would look correct in ordinary SQL. If the calculation seems to require one, re-express it as a plain aggregate instead -- if that is genuinely not possible, return CAST(NULL AS DOUBLE) rather than attempting a window function or subquery.
 3. Type compatibility: is a DATE/DATETIME-typed value (per the schema context above) ever being compared against, joined with, or arithmetically combined with a column the schema context marks as INTEGER/NUMBER (e.g. a surrogate key, month-index, or date-id column)? These must never be mixed directly -- only compare a DATE-producing expression against a column the schema marks as DATE or DATETIME, and only do integer arithmetic against INTEGER/NUMBER-typed columns.
-4. Scope/reachability: if the DAX filters by a dimension from a table other than the metric's own base table, is a relationship between those two tables actually visible in the schema context? Do not assume or invent a join path you cannot confirm -- if the filtered table's reachability is unclear, prefer CAST(NULL AS DOUBLE) over a fabricated relationship.
+4. Scope/reachability: if the DAX filters by a dimension from a table other than the metric's own base table, check the "Tables reachable via a declared relationship" list (single-metric requests) or this metric's own "reachable_tables" field (batch requests). If the filtered table is listed there, you MAY reference its column directly using the alias shown -- e.g. that_alias."COLUMN" inside a CASE WHEN -- this is not a forbidden JOIN; Snowflake resolves the join itself via the semantic view's own declared relationship. If the filtered table is NOT listed there, its reachability is unconfirmed -- do not assume or invent a join path; prefer CAST(NULL AS DOUBLE) instead.
 
 Only return your final SQL after checking all four.
 '''.strip()
@@ -253,6 +253,20 @@ def _schema_text(
     return "\n".join(schema_lines[:40]) or "- <schema unavailable>"
 
 
+def _reachable_tables_text(reachable_table_aliases: Optional[Dict[str, str]]) -> str:
+    """Render the "safe to cross-reference" table list for a single-metric
+    prompt. Empty/None renders an explicit "<none>" line rather than
+    omitting the section entirely -- see _VERIFICATION_CHECKLIST item 4,
+    which tells the model to treat an unlisted table as unconfirmed; an
+    absent section could otherwise read as "not checked" rather than
+    "checked, nothing reachable"."""
+    if not reachable_table_aliases:
+        return "- <none other than the default table above>"
+    return "\n".join(
+        f"- {table} (alias: {alias})" for table, alias in sorted(reachable_table_aliases.items())
+    )
+
+
 def build_prompt(request: TranslationRequest) -> str:
     """Build the unified Tier 5 user prompt: schema-grounded base rules
     (dialect-parameterized) + the salvaged few-shot/DAX-semantics section,
@@ -261,6 +275,7 @@ def build_prompt(request: TranslationRequest) -> str:
     target = _DIALECT_TARGET[dialect]
     skill_blocks = _load_skill_blocks()
     schema_text = _schema_text(request.dataset_col_lookup, request.dataset_col_types)
+    reachable_text = _reachable_tables_text(request.reachable_table_aliases)
 
     base = (
         f"Dialect: {target}\n"
@@ -281,7 +296,11 @@ def build_prompt(request: TranslationRequest) -> str:
         f"{_DIALECT_QUOTING_RULE[dialect]}\n"
         '- If a pattern is impossible in a metric expression, set "sql" to CAST(NULL AS DOUBLE).\n'
         "Schema context (column types shown in parentheses when known):\n"
-        f"{schema_text}"
+        f"{schema_text}\n"
+        "Tables reachable from the default dataset via a declared relationship "
+        "(safe to reference directly using the alias shown -- no JOIN needed, "
+        "Snowflake resolves it via the relationship):\n"
+        f"{reachable_text}"
     )
 
     # Positioned after the schema context and few-shot examples, and before
@@ -378,6 +397,14 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
             "name": req.metric_name or key,
             "dataset": req.dataset_name,
             "dax": dax_expr,
+            # Per-metric, NOT merged across the batch like merged_schema
+            # above -- different metrics in one batch can have different
+            # base datasets, each with a different reachable-table set;
+            # merging them would let the model assume a table reachable
+            # for metric A is also reachable for metric B, which may be
+            # false. Empty dict (not omitted) for the same "checked,
+            # nothing reachable" reason as _reachable_tables_text.
+            "reachable_tables": req.reachable_table_aliases or {},
         }))
         response_shape[key] = {"sql": "<sql>", "confidence": "<0.0-1.0>"}
 
@@ -393,6 +420,10 @@ def build_batch_prompt(requests: List[TranslationRequest]) -> str:
         "- Do not use SELECT, FROM, JOIN, CTEs, subqueries, OVER/window functions, DDL, or DML.\n"
         "- Do not nest aggregate functions like SUM(MAX(...)).\n"
         "- For CALCULATE/FILTER equality predicates, use SUM(CASE WHEN ... THEN measure_column ELSE 0 END).\n"
+        "- Each metric below carries its own \"reachable_tables\" ({table: alias}) -- "
+        "a table listed there for THAT metric may be referenced directly via the "
+        "alias shown (no JOIN needed); a table not listed there (for that metric) "
+        "has unconfirmed reachability -- see the verification checklist.\n"
         f"{_ROLLING_WINDOW_RULE}\n"
         f"{_DIALECT_QUOTING_RULE[dialect]}\n"
         '- If a pattern is impossible for one metric, set "sql" to CAST(NULL AS DOUBLE) for just that key.\n'

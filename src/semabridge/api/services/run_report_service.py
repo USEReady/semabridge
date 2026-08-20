@@ -220,13 +220,35 @@ _ADVISORY_FALLBACK_MESSAGE = (
 
 
 def _advisory_category_messages() -> Dict[str, str]:
-    from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_UNREACHABLE_DIMENSION
+    from semabridge.converter.dax_ast_parser import (
+        ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
+        ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+        ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT,
+        ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED,
+    )
 
     return {
         ADVISORY_CATEGORY_UNREACHABLE_DIMENSION: (
             "This calculation references data from a different part of "
             "your source model that isn't connected to it. It converted, "
             "but we recommend double-checking this number."
+        ),
+        ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK: (
+            "This calculation compares a value to a prior period (e.g. last "
+            "year), but we couldn't safely shift the date range — it shows "
+            "this period's value instead. Please confirm this is acceptable."
+        ),
+        ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT: (
+            "This calculation couldn't be converted during this preview, "
+            "but may succeed on a real deployment once your data is fully "
+            "connected. Please re-check after deploying."
+        ),
+        ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED: (
+            "This calculation mixed a selector value with data from an "
+            "unrelated table, which isn't possible to compute as one item. "
+            "It has been split into separate, working calculations instead "
+            "— recreate the original switch in your reporting tool using "
+            "those."
         ),
     }
 
@@ -287,24 +309,32 @@ def _load_snapshot_data(sml_snapshot_id: Optional[str]) -> Optional[Dict[str, An
 
 
 def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """Split a snapshot's metrics into Standard / Standard-with-a-flag /
-    AI-assisted, reusing the same risky-DAX-pattern check the dry-run page's
+    """Split a snapshot's metrics into Standard / AI-assisted / Needs
+    Review, reusing the same risky-DAX-pattern check the dry-run page's
     three-tier risk label already uses (project_mapping_engine.py) rather
     than reimplementing it.
 
     "known risky pattern" in _compute_static_risk_tier is structurally
     reachable ONLY inside its `if is_tier5:` branch -- so that signal is
     folded into the AI-assisted entries below, not a separate section.
-    advisory_notes/advisory_categories (osi_to_sml.py's unreachable-
-    dimension check), however, run over every metric regardless of tier --
-    so a Standard-conversion metric can carry a real flag too, and does get
-    one here.
+
+    Needs Review is checked FIRST, independent of tier: a metric carrying
+    an advisory_category in REVIEW_REQUIRED_ADVISORY_CATEGORIES (e.g. an
+    unshifted time-intelligence fallback, or a decomposed disconnected-
+    selector branch) goes there regardless of whether it's tier 1-4 or
+    tier 5 -- the same signal dry-run's "Needs Attention" chip already
+    keys off, now surfaced post-run too, instead of blending into Standard/
+    AI-assisted with just a generic advisory message tacked on.
     """
-    from semabridge.api.services.project_mapping_engine import _has_known_risky_dax_pattern
+    from semabridge.api.services.project_mapping_engine import (
+        _has_known_risky_dax_pattern,
+        REVIEW_REQUIRED_ADVISORY_CATEGORIES,
+    )
 
     advisory_messages = _advisory_category_messages()
     standard: List[Dict[str, Any]] = []
     ai_assisted: List[Dict[str, Any]] = []
+    needs_review: List[Dict[str, Any]] = []
 
     for metric in sml_metrics:
         if not metric.get("sync_enabled", True):
@@ -317,7 +347,9 @@ def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         if not advisory_msgs and notes_present:
             advisory_msgs = [_ADVISORY_FALLBACK_MESSAGE]
 
-        if tier == 5:
+        if set(categories) & REVIEW_REQUIRED_ADVISORY_CATEGORIES:
+            needs_review.append({"name": name, "advisory_msgs": advisory_msgs})
+        elif tier == 5:
             is_risky = bool(metric.get("validation_notes")) or _has_known_risky_dax_pattern(
                 str(metric.get("expression") or "")
             )
@@ -332,7 +364,7 @@ def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         else:
             standard.append({"name": name, "advisory_msgs": advisory_msgs})
 
-    return {"standard": standard, "ai_assisted": ai_assisted}
+    return {"standard": standard, "ai_assisted": ai_assisted, "needs_review": needs_review}
 
 
 # ---------------------------------------------------------------------------
@@ -414,33 +446,27 @@ def _format_duration(duration_ms: Any) -> Optional[str]:
     return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
 
 
-def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
+def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Single source of truth for a run's report data -- computed once here,
+    rendered two ways (generate_run_report_markdown's text, and
+    build_run_report_data's JSON-friendly structure for the frontend's
+    accordion summary view) so the two views can never silently disagree.
+
+    Returns {"crashed": True, "error": str} if the run never reached
+    ExecutionEngine.execute() (no RunSummary at all to report on).
+    Otherwise: {"crashed": False, "target_type": str, "counts": {...},
+    "standard": [...], "ai_assisted": [...], "needs_review": [...],
+    "dropped_by_stage": {stage: [DropRecord dict, ...]},
+    "excluded_by_design_by_stage": {stage: [DropRecord dict, ...]}}.
+
+    Split into two separate groupings, not one list with a per-item
+    "(expected — not an error)" suffix: a by_design=True record (an
+    auto-generated Power BI date table, a calculation group, ...) was
+    never something the user needed included -- mixing it into the same
+    "what went wrong" count/section as a genuine translation/deployment
+    failure reads as more problems than actually exist.
+    """
     project_name = str(run.get("project_name") or run.get("project_id") or "Project")
-    run_id = str(run.get("run_id") or run.get("id") or "unknown")
-    status = str(run.get("status") or "failed").lower()
-    status_label, status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
-    source_kind, source_files = _describe_source(project_cfg, run)
-
-    lines: List[str] = [
-        f"# Run Report — {project_name}",
-        "",
-        f"**{status_icon} {status_label}**",
-        "",
-        f"- **Project:** {project_name}",
-        f"- **Source:** {source_kind} — " + ", ".join(source_files or ["(unavailable)"]),
-    ]
-    started, completed = run.get("started_at"), run.get("completed_at")
-    when = f"- **Started:** {started}" if started else ""
-    if completed:
-        when += f"  ·  **Completed:** {completed}"
-    if when:
-        lines.append(when)
-    duration_label = _format_duration(run.get("duration_ms"))
-    if duration_label:
-        lines.append(f"- **Duration:** {duration_label}")
-    lines.append(f"- **Run ID:** `{run_id}`")
-    lines.append("")
-
     model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
     if not model_results:
         top_summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
@@ -457,19 +483,18 @@ def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
         # Crashed before ExecutionEngine.execute() was even reached (bad
         # config, connection error, ...) -- there is no RunSummary at all,
         # so there is nothing to report on beyond the header and the error.
-        lines.append("## What happened")
-        lines.append("")
-        lines.append("This run did not reach the point of reading your source file.")
-        lines.append("")
-        lines.append(f"**Error:** {run.get('error') or run.get('message') or 'Unknown error.'}")
-        lines.append("")
-        return "\n".join(lines)
+        return {
+            "crashed": True,
+            "error": str(run.get("error") or run.get("message") or "Unknown error."),
+        }
 
     multi_model = len(model_results) > 1
     dataset_count = column_count = metric_count = relationship_count = 0
     standard: List[Dict[str, Any]] = []
     ai_assisted: List[Dict[str, Any]] = []
+    needs_review: List[Dict[str, Any]] = []
     dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     target_type = ""
 
     for result in model_results:
@@ -509,28 +534,90 @@ def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
                 standard.append({**entry, "name": f"{prefix}{entry['name']}"})
             for entry in classified["ai_assisted"]:
                 ai_assisted.append({**entry, "name": f"{prefix}{entry['name']}"})
+            for entry in classified["needs_review"]:
+                needs_review.append({**entry, "name": f"{prefix}{entry['name']}"})
 
         for record in model_dropped:
             stage = str(record.get("stage") or "unknown")
-            dropped_by_stage.setdefault(stage, []).append(record)
+            target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
+            target_group.setdefault(stage, []).append(record)
+
+    return {
+        "crashed": False,
+        "target_type": target_type,
+        "counts": {
+            "datasets": dataset_count,
+            "columns": column_count,
+            "metrics": metric_count,
+            "relationships": relationship_count,
+        },
+        "standard": standard,
+        "ai_assisted": ai_assisted,
+        "needs_review": needs_review,
+        "dropped_by_stage": dropped_by_stage,
+        "excluded_by_design_by_stage": excluded_by_design_by_stage,
+    }
+
+
+def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
+    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    run_id = str(run.get("run_id") or run.get("id") or "unknown")
+    status = str(run.get("status") or "failed").lower()
+    status_label, status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
+    source_kind, source_files = _describe_source(project_cfg, run)
+
+    lines: List[str] = [
+        f"# Run Report — {project_name}",
+        "",
+        f"**{status_icon} {status_label}**",
+        "",
+        f"- **Project:** {project_name}",
+        f"- **Source:** {source_kind} — " + ", ".join(source_files or ["(unavailable)"]),
+    ]
+    started, completed = run.get("started_at"), run.get("completed_at")
+    when = f"- **Started:** {started}" if started else ""
+    if completed:
+        when += f"  ·  **Completed:** {completed}"
+    if when:
+        lines.append(when)
+    duration_label = _format_duration(run.get("duration_ms"))
+    if duration_label:
+        lines.append(f"- **Duration:** {duration_label}")
+    lines.append(f"- **Run ID:** `{run_id}`")
+    lines.append("")
+
+    data = _gather_run_report_data(run)
+    if data["crashed"]:
+        lines.append("## What happened")
+        lines.append("")
+        lines.append("This run did not reach the point of reading your source file.")
+        lines.append("")
+        lines.append(f"**Error:** {data['error']}")
+        lines.append("")
+        return "\n".join(lines)
+
+    counts = data["counts"]
+    standard, ai_assisted, needs_review = data["standard"], data["ai_assisted"], data["needs_review"]
+    dropped_by_stage, target_type = data["dropped_by_stage"], data["target_type"]
+    excluded_by_design_by_stage = data["excluded_by_design_by_stage"]
 
     # --- What we found in your source ------------------------------------
     lines.append("## What we found in your source")
     lines.append("")
     lines.append("| | Count |")
     lines.append("|---|---:|")
-    lines.append(f"| Tables | {dataset_count} |")
-    lines.append(f"| Columns | {column_count} |")
-    lines.append(f"| Calculations | {metric_count} |")
-    if relationship_count:
-        lines.append(f"| Relationships between tables | {relationship_count} |")
+    lines.append(f"| Tables | {counts['datasets']} |")
+    lines.append(f"| Columns | {counts['columns']} |")
+    lines.append(f"| Calculations | {counts['metrics']} |")
+    if counts["relationships"]:
+        lines.append(f"| Relationships between tables | {counts['relationships']} |")
     lines.append("")
 
     # --- What converted successfully --------------------------------------
-    total_converted = len(standard) + len(ai_assisted)
+    total_converted = len(standard) + len(ai_assisted) + len(needs_review)
     lines.append("## What converted successfully")
     lines.append("")
-    lines.append(f"**{total_converted} of {metric_count} calculations converted.**")
+    lines.append(f"**{total_converted} of {counts['metrics']} calculations converted.**")
     lines.append("")
     if standard:
         lines.append(f"### Standard conversion ({len(standard)})")
@@ -568,18 +655,30 @@ def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
                 sentence += f" {msg}"
             lines.append(f"- **{entry['name']}** — {sentence}")
         lines.append("")
-    if not standard and not ai_assisted:
+    if needs_review:
+        lines.append(f"### Needs review ({len(needs_review)})")
+        lines.append("")
+        lines.append(
+            "These calculations converted, but need a quick human check before "
+            "you rely on the numbers."
+        )
+        lines.append("")
+        for entry in needs_review:
+            sentence = " ".join(entry.get("advisory_msgs") or []) or _ADVISORY_FALLBACK_MESSAGE
+            lines.append(f"- **{entry['name']}** — {sentence}")
+        lines.append("")
+    if not standard and not ai_assisted and not needs_review:
         lines.append("_Nothing converted successfully in this run._")
         lines.append("")
 
     # --- What we couldn't include, and why --------------------------------
+    target_label = target_type.title() if target_type else "the destination"
     lines.append("## What we couldn't include, and why")
     lines.append("")
     if not dropped_by_stage:
         lines.append("Everything found in your source file was successfully converted and deployed.")
         lines.append("")
     else:
-        target_label = target_type.title() if target_type else "the destination"
         ordered_stages = _STAGE_ORDER + [s for s in dropped_by_stage if s not in _STAGE_ORDER]
         for stage in ordered_stages:
             records = dropped_by_stage.get(stage)
@@ -589,12 +688,120 @@ def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
             lines.append("")
             for record in records:
                 name = record.get("entity_name") or "(unnamed)"
-                plain = humanize_drop_reason(record)
-                suffix = "  _(expected — not an error)_" if record.get("by_design") else ""
-                lines.append(f"- **{name}** — {plain}{suffix}")
+                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
+            lines.append("")
+
+    # --- Excluded by design (not errors) -----------------------------------
+    # Deliberately a separate section, not folded into the one above with a
+    # per-item suffix: these were never things the user needed included
+    # (an auto-generated Power BI date table, a calculation group, ...), so
+    # mixing them into "what went wrong" reads as more problems than
+    # actually exist.
+    if excluded_by_design_by_stage:
+        lines.append("## No action needed")
+        lines.append("")
+        lines.append(
+            "These weren't included on purpose — they're not part of your "
+            "real business data, so there's nothing to review here."
+        )
+        lines.append("")
+        ordered_stages = _STAGE_ORDER + [s for s in excluded_by_design_by_stage if s not in _STAGE_ORDER]
+        for stage in ordered_stages:
+            records = excluded_by_design_by_stage.get(stage)
+            if not records:
+                continue
+            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
+            lines.append("")
+            for record in records:
+                name = record.get("entity_name") or "(unnamed)"
+                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
             lines.append("")
 
     return "\n".join(lines)
+
+
+def build_run_report_data(run: Dict[str, Any], project_cfg: str) -> Dict[str, Any]:
+    """JSON-friendly counterpart to generate_run_report_markdown, for the
+    frontend's accordion-style summary view (collapsed: clean counts per
+    category; expanded: full per-item detail) -- built from the exact same
+    _gather_run_report_data() computation the markdown report uses, so the
+    two views can never disagree.
+    """
+    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    run_id = str(run.get("run_id") or run.get("id") or "unknown")
+    status = str(run.get("status") or "failed").lower()
+    status_label, _status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
+    source_kind, source_files = _describe_source(project_cfg, run)
+
+    header = {
+        "run_id": run_id,
+        "project_name": project_name,
+        "status": status,
+        "status_label": status_label,
+        "source_kind": source_kind,
+        "source_files": source_files,
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "duration_label": _format_duration(run.get("duration_ms")),
+    }
+
+    data = _gather_run_report_data(run)
+    if data["crashed"]:
+        return {**header, "crashed": True, "error": data["error"]}
+
+    counts = data["counts"]
+    standard, ai_assisted, needs_review = data["standard"], data["ai_assisted"], data["needs_review"]
+    dropped_by_stage, target_type = data["dropped_by_stage"], data["target_type"]
+    excluded_by_design_by_stage = data["excluded_by_design_by_stage"]
+    target_label = target_type.title() if target_type else "the destination"
+
+    def _stage_sections(by_stage: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        ordered_stages = _STAGE_ORDER + [s for s in by_stage if s not in _STAGE_ORDER]
+        sections = []
+        for stage in ordered_stages:
+            records = by_stage.get(stage)
+            if not records:
+                continue
+            sections.append({
+                "stage": stage,
+                "label": stage_group_label(stage, target_label),
+                "items": [
+                    {
+                        "name": record.get("entity_name") or "(unnamed)",
+                        "entity_kind": record.get("entity_kind"),
+                        "reason": humanize_drop_reason(record),
+                    }
+                    for record in records
+                ],
+            })
+        return sections
+
+    dropped_count = sum(len(records) for records in dropped_by_stage.values())
+    excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
+
+    return {
+        **header,
+        "crashed": False,
+        "counts": {
+            "tables": counts["datasets"],
+            "columns": counts["columns"],
+            "calculations": counts["metrics"],
+            "relationships": counts["relationships"],
+            "converted_total": len(standard) + len(ai_assisted) + len(needs_review),
+            "standard": len(standard),
+            "ai_assisted": len(ai_assisted),
+            "needs_review": len(needs_review),
+            "dropped": dropped_count,
+            "excluded_by_design": excluded_by_design_count,
+        },
+        "sections": {
+            "standard": standard,
+            "ai_assisted": ai_assisted,
+            "needs_review": needs_review,
+            "dropped": _stage_sections(dropped_by_stage),
+            "excluded_by_design": _stage_sections(excluded_by_design_by_stage),
+        },
+    }
 
 
 def write_run_report(run: Dict[str, Any], project_cfg: str) -> Optional[str]:

@@ -2083,3 +2083,392 @@ def dax_calculate_filters_unreachable_dimension(
             )
 
     return None
+
+
+# Distinct from ADVISORY_CATEGORY_UNREACHABLE_DIMENSION: that one fires when
+# NO relationship path exists (a real, unfixable-without-a-new-relationship
+# 010211 failure). This one fires for the opposite outcome -- a relationship
+# path DOES exist -- for a metric whose translation nonetheless failed today,
+# because dry-run's translators can't yet exploit that path (see
+# dax_calculate_filters_reachable_dimension_pending_enrichment's docstring).
+# Mirrored onto SMLMetric.advisory_categories by osi_to_sml.py and mapped to
+# STATUS_NEEDS_REVIEW (not STATUS_PREDICTED_FAILURE) by
+# project_mapping_engine.py, since a real deploy has a genuine chance of
+# resolving this where dry-run could not.
+ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT = "pending_live_schema_enrichment"
+
+
+@dataclass
+class ReachableDimensionFilterPendingEnrichment:
+    """A CALCULATE(...) filter that references a dimension WITH a
+    relationship path from the calling metric's own base table, whose
+    translation still failed -- see module docstring above
+    ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT."""
+
+    filtered_table: str
+    reason: str
+    category: str = ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT
+
+
+def dax_calculate_filters_reachable_dimension_pending_enrichment(
+    dax: str,
+    calling_dataset: str,
+    relationships: Iterable[Any],
+) -> Optional["ReachableDimensionFilterPendingEnrichment"]:
+    """Detect a CALCULATE(...) filter that references a table OTHER than
+    `calling_dataset`, but one THAT IS reachable from it via
+    `relationships` -- the shape dry-run's deterministic AST renderer
+    declines (DaxSqlRenderer._resolve_table_alias refuses to guess a
+    cross-table SQL alias) and Tier-5's LLM fallback also declines (its
+    prompt is never given relationship/alias information for any table
+    but the metric's own, so it correctly treats reachability as
+    "unclear" and emits a NULL-cast placeholder per its own verification
+    checklist).
+
+    Unlike that failure, this one has a real fix path at real-deploy time:
+    connectors/metrics_clause_builder.py's precomputed-cross-dataset-
+    column rewrite (_rewrite_cross_dataset_dax_refs_to_precomputed) runs
+    against the live-schema-derived enriched view -- built only when a
+    real Snowflake connection is available -- and can resolve exactly
+    this reference by substituting a same-table precomputed column before
+    handing the DAX back to the same deterministic renderer for a second,
+    easier attempt. Dry-run has no live connection, so it can never
+    exercise that rewrite; a metric hitting this shape may well succeed
+    at real deploy even though dry-run could not translate it.
+
+    Only called (see osi_to_sml.py's
+    _flag_reachable_dimension_filters_pending_enrichment) for a metric
+    whose translation already failed -- if some tier already produced
+    valid SQL, this note would be misleading noise, not a signal.
+
+    Returns the FIRST such filter found (walking CALCULATE nodes in
+    document order), or None if no CALCULATE in this expression filters
+    by a reachable-but-different table — including the ordinary
+    same-table case and the unreachable case
+    (dax_calculate_filters_unreachable_dimension's shape, not this one).
+    """
+    if not dax or not calling_dataset:
+        return None
+    node = DaxAstParser().parse(dax)
+    if node is None:
+        return None
+
+    calling_dataset_cf = str(calling_dataset).strip().strip("'").casefold()
+
+    for calc_node in _find_all_calculate_nodes(node):
+        if not calc_node.args:
+            continue
+        filtered_tables: Set[str] = set()
+        for filter_arg in calc_node.args[1:]:
+            filtered_tables |= _collect_column_ref_tables(filter_arg)
+
+        for filtered_table in sorted(filtered_tables):
+            if str(filtered_table or "").strip().strip("'").casefold() == calling_dataset_cf:
+                continue  # same table -- not a cross-table reference at all
+            if not has_relationship_path(relationships, calling_dataset, filtered_table):
+                continue  # unreachable -- dax_calculate_filters_unreachable_dimension's shape, not this one
+
+            reason = (
+                f"This metric's CALCULATE(...) filters by table '{filtered_table}', "
+                f"which IS reachable from '{calling_dataset}' via a declared "
+                f"relationship, but dry-run's translators cannot resolve a "
+                f"cross-table reference without a live connection's schema "
+                f"enrichment. This metric may succeed at real deploy time even "
+                f"though it could not be translated here — review before "
+                f"assuming it will fail."
+            )
+            return ReachableDimensionFilterPendingEnrichment(
+                filtered_table=filtered_table,
+                reason=reason,
+            )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Disconnected-selector-table decomposition
+# ---------------------------------------------------------------------------
+# A distinct, THIRD shape from the two detectors above: a metric declared on
+# a small selector/parameter table (e.g. a Power BI "field parameter"/
+# "what-if" table with no real business key) whose DAX is an IF-chain that
+# switches between OTHER tables' real aggregates based on the selector's own
+# value -- e.g. IF(SUM('KPI'[KPI])=1, [MeasureA], IF(SUM('KPI'[KPI])=2, " ",
+# CALCULATE([MeasureB], 'Date'[Year]=1))). DAX can do this with no
+# relationship at all, because each branch evaluates independently in its
+# own filter context and the results are just combined afterward -- but a
+# single Snowflake METRICS-clause expression cannot: it must be one SQL
+# aggregate validated against ONE base table's relationship graph, and
+# there is no relationship to declare here (the selector table is
+# deliberately disconnected, not merely mis-anchored).
+#
+# Unlike ADVISORY_CATEGORY_UNREACHABLE_DIMENSION (a dead end -- no fix
+# short of a relationship that may not legitimately exist) this shape is
+# actually resolvable: every non-trivial branch, with its selector
+# condition stripped away, is a self-contained expression that doesn't
+# reference the selector table at all -- e.g. `[MeasureB]` filtered by
+# 'Date'[Year]=1 only needs SalesFact/Date, never KPI. Decomposing each
+# branch into its OWN standalone metric lets those real values deploy
+# normally; the original metric still can't be one metric (recorded as an
+# advisory, not silently dropped), and a human recreates the selector
+# switch itself one layer up, in the reporting tool, using the new
+# per-branch metrics.
+ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED = "disconnected_selector_decomposed"
+
+
+@dataclass
+class DecomposedSelectorBranch:
+    """One branch extracted from a disconnected-selector IF-chain, ready to
+    become its own standalone metric."""
+
+    condition_dax: str  # human-readable, e.g. "SUM('KPI'[KPI])=1" or "otherwise" for a terminal else
+    branch_dax: str      # best-effort re-serialized DAX text for the branch's own value expression
+    branch_dataset: str  # the single, unambiguous dataset this branch's expression is anchored on
+
+
+@dataclass
+class DisconnectedSelectorDecomposition:
+    selector_table: str
+    branches: List[DecomposedSelectorBranch]
+    skipped_trivial_count: int  # e.g. a bare " " literal branch -- nothing to decompose there
+
+
+def _walk_if_chain(node: DaxNode) -> Tuple[List[Tuple[DaxNode, DaxNode]], Optional[DaxNode]]:
+    """Follow a right-linear chain of IF(cond, true_val, next_if_or_else)
+    calls. Returns (list of (cond, true_val) pairs in order, terminal else
+    node or None if the chain ends without one / stops at a non-IF node)."""
+    pairs: List[Tuple[DaxNode, DaxNode]] = []
+    current: Optional[DaxNode] = node
+    while isinstance(current, FunctionCallNode) and current.func == "IF" and len(current.args) >= 2:
+        pairs.append((current.args[0], current.args[1]))
+        current = current.args[2] if len(current.args) >= 3 else None
+    return pairs, current
+
+
+def _node_contains_measure_ref(node: DaxNode) -> bool:
+    if isinstance(node, MeasureRefNode):
+        return True
+    if isinstance(node, BinaryOpNode):
+        return _node_contains_measure_ref(node.left) or _node_contains_measure_ref(node.right)
+    if isinstance(node, UnaryOpNode):
+        return _node_contains_measure_ref(node.operand)
+    if isinstance(node, FunctionCallNode):
+        return any(_node_contains_measure_ref(a) for a in node.args)
+    return False
+
+
+def _node_is_pure_literal(node: DaxNode) -> bool:
+    """True if `node` has no column/measure/function reference anywhere --
+    a compile-time constant like " " or 42, nothing worth its own metric."""
+    if isinstance(node, LiteralNode):
+        return True
+    if isinstance(node, BinaryOpNode):
+        return _node_is_pure_literal(node.left) and _node_is_pure_literal(node.right)
+    if isinstance(node, UnaryOpNode):
+        return _node_is_pure_literal(node.operand)
+    return False
+
+
+def _collect_measure_ref_names(node: DaxNode) -> Set[str]:
+    """Every distinct measure name referenced by a MeasureRefNode anywhere
+    in this subtree -- same walk shape as _collect_column_ref_tables."""
+    names: Set[str] = set()
+
+    def _walk(n: DaxNode) -> None:
+        if isinstance(n, MeasureRefNode):
+            names.add(n.name)
+        elif isinstance(n, BinaryOpNode):
+            _walk(n.left)
+            _walk(n.right)
+        elif isinstance(n, UnaryOpNode):
+            _walk(n.operand)
+        elif isinstance(n, FunctionCallNode):
+            for a in n.args:
+                _walk(a)
+
+    _walk(node)
+    return names
+
+
+def _resolve_single_branch_dataset(
+    node: DaxNode, calling_dataset: str, metric_datasets_ci: Dict[str, str]
+) -> Optional[str]:
+    """The one, unambiguous dataset the new standalone metric should be
+    anchored on. Prefers the dataset of a referenced MEASURE (e.g.
+    CALCULATE([Total Category Volume], 'Date'[Running Year]=1) anchors on
+    'Total Category Volume''s own dataset, SalesFact) over any bare column
+    reference in the same branch (here, 'Date') -- a branch commonly
+    references its own anchor's related tables too (a filter on the date
+    dimension, say), and that's fine: whether THOSE are actually reachable
+    from the chosen anchor is verified naturally when the new metric goes
+    through the normal translation pipeline afterward, the same as any
+    other metric -- this function only decides which table OWNS the new
+    metric, not whether every reference in it is valid.
+
+    None if measure references resolve to more than one distinct dataset
+    (ambiguous), or if there's no measure reference at all and bare column
+    references don't collapse to exactly one table either -- the caller
+    must decline decomposing that branch rather than guess.
+    """
+    measure_datasets = set()
+    for measure_name in _collect_measure_ref_names(node):
+        resolved = metric_datasets_ci.get(str(measure_name).casefold())
+        if resolved:
+            measure_datasets.add(resolved)
+    measure_datasets.discard(calling_dataset)
+    if len(measure_datasets) == 1:
+        return next(iter(measure_datasets))
+    if measure_datasets:
+        return None
+
+    tables = set(_collect_column_ref_tables(node))
+    tables.discard(calling_dataset)
+    if len(tables) != 1:
+        return None
+    return next(iter(tables))
+
+
+def _dax_text(node: DaxNode) -> str:
+    """Best-effort DAX pretty-printer -- the inverse of DaxAstParser, used
+    only to give an auto-decomposed branch a readable, round-trippable DAX
+    expression (fed back through the normal translation pipeline exactly
+    like any hand-authored metric). Not a byte-exact reproduction of the
+    original source text (whitespace/quote-style may differ), only
+    semantically equivalent DAX."""
+    if isinstance(node, LiteralNode):
+        if isinstance(node.value, bool):
+            return "TRUE" if node.value else "FALSE"
+        if isinstance(node.value, str):
+            escaped = node.value.replace('"', '""')
+            return f'"{escaped}"'
+        return str(node.value)
+    if isinstance(node, ColumnRefNode):
+        return f"'{node.table}'[{node.column}]"
+    if isinstance(node, MeasureRefNode):
+        return f"[{node.name}]"
+    if isinstance(node, IdentifierNode):
+        return node.name
+    if isinstance(node, FunctionCallNode):
+        return f"{node.func}({', '.join(_dax_text(a) for a in node.args)})"
+    if isinstance(node, BinaryOpNode):
+        return f"{_dax_text(node.left)}{node.op}{_dax_text(node.right)}"
+    if isinstance(node, UnaryOpNode):
+        return f"{node.op}{_dax_text(node.operand)}"
+    return "BLANK()"
+
+
+def try_decompose_disconnected_selector_metric(
+    dax: str,
+    calling_dataset: str,
+    relationships: Iterable[Any],
+    metric_datasets: Optional[Dict[str, str]] = None,
+) -> Optional[DisconnectedSelectorDecomposition]:
+    """Detect the disconnected-selector-table IF-chain shape (see module
+    comment above ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED) and,
+    if it matches, extract each non-trivial branch as a standalone,
+    self-contained DAX expression ready to become its own metric.
+
+    IMPORTANT: this codebase's own AST renderer does NOT validate
+    cross-table reachability for an INLINED MEASURE reference (only for a
+    bare ColumnRefNode, via _resolve_table_alias) -- it just splices in
+    the referenced measure's already-resolved SQL verbatim. So a metric
+    matching this exact shape typically translates "successfully"
+    (sql_expression populated, sync_enabled=True) by this codebase's own
+    check, even though the emitted SQL mixes columns from a table
+    unrelated to the metric's own base table -- something Snowflake's
+    real semantic-view compiler WILL reject at actual deploy time (error
+    010211). That's why this function takes `relationships` and requires
+    calling_dataset to have NO path to each non-trivial branch's own
+    dataset: without that check, this would also "decompose" an ordinary,
+    already-valid multi-table metric (one Snowflake would happily accept
+    because a real relationship exists) that merely happens to match the
+    IF-chain shape syntactically -- unnecessary and wasteful.
+
+    Deliberately conservative -- bails (returns None) entirely rather than
+    partially decomposing, on ANY sign this isn't cleanly the shape
+    understood here:
+      - the metric's WHOLE expression must be a top-level IF(...) call
+        (not IF nested inside some other operation);
+      - every condition in the chain must reference ONLY calling_dataset
+        (and never a measure reference, which could hide another table)
+        -- and at least one condition must actually reference it, or this
+        isn't a "selector on this table" shape at all;
+      - every non-trivial branch value must NOT reference calling_dataset
+        anywhere, must resolve to exactly one other, unambiguous dataset
+        (via _resolve_single_branch_dataset), AND that dataset must be
+        genuinely UNREACHABLE from calling_dataset (has_relationship_path
+        returns False) -- any branch that's ambiguous, still depends on
+        calling_dataset, or IS actually reachable means the whole metric
+        declines, not just that branch, since guessing here risks a
+        silently wrong (or unnecessary) decomposition.
+
+    A trivial branch (a bare literal like " ", per _node_is_pure_literal)
+    is simply skipped (counted in skipped_trivial_count), never given its
+    own metric -- there's nothing to translate.
+
+    Returns None if the chain has fewer than 2 conditioned branches, or if
+    every branch turned out trivial/skippable (nothing usable to
+    decompose) -- the caller's existing advisory-only handling applies
+    unchanged in either case.
+    """
+    if not dax or not calling_dataset:
+        return None
+    node = DaxAstParser().parse(dax)
+    if node is None:
+        return None
+    if not (isinstance(node, FunctionCallNode) and node.func == "IF"):
+        return None
+
+    pairs, terminal = _walk_if_chain(node)
+    if len(pairs) < 2:
+        return None
+
+    metric_datasets_ci = {str(k).casefold(): v for k, v in (metric_datasets or {}).items()}
+
+    saw_calling_dataset_condition = False
+    for cond, _true_val in pairs:
+        if _node_contains_measure_ref(cond):
+            return None
+        cond_tables = _collect_column_ref_tables(cond)
+        if cond_tables - {calling_dataset}:
+            return None
+        if calling_dataset in cond_tables:
+            saw_calling_dataset_condition = True
+    if not saw_calling_dataset_condition:
+        return None
+
+    values_to_check: List[Tuple[Optional[DaxNode], DaxNode]] = list(pairs)
+    if terminal is not None:
+        values_to_check.append((None, terminal))
+
+    branches: List[DecomposedSelectorBranch] = []
+    skipped_trivial = 0
+    for cond, value_node in values_to_check:
+        if _node_is_pure_literal(value_node):
+            skipped_trivial += 1
+            continue
+        if calling_dataset in _collect_column_ref_tables(value_node):
+            return None
+        branch_dataset = _resolve_single_branch_dataset(value_node, calling_dataset, metric_datasets_ci)
+        if not branch_dataset:
+            return None
+        if has_relationship_path(relationships, calling_dataset, branch_dataset):
+            # Genuinely reachable -- this branch's table isn't actually
+            # disconnected from calling_dataset, so the original metric
+            # may well be valid Snowflake SQL as written. Decline the
+            # whole decomposition rather than second-guess a metric that
+            # might already deploy correctly.
+            return None
+        branches.append(DecomposedSelectorBranch(
+            condition_dax=_dax_text(cond) if cond is not None else "otherwise",
+            branch_dax=_dax_text(value_node),
+            branch_dataset=branch_dataset,
+        ))
+
+    if not branches:
+        return None
+
+    return DisconnectedSelectorDecomposition(
+        selector_table=calling_dataset,
+        branches=branches,
+        skipped_trivial_count=skipped_trivial,
+    )

@@ -21,11 +21,13 @@ from semabridge.api.services.project_mapping_engine import (
     REVIEW_REQUIRED_ADVISORY_CATEGORIES,
     STATUS_NEEDS_REVIEW,
     STATUS_PREDICTED_FAILURE,
+    _compute_static_risk_tier,
     _entity_status,
     build_entity_mappings,
 )
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT,
     ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
 )
 
@@ -76,6 +78,37 @@ def test_real_deploy_only_category_wins_over_needs_review_if_both_present():
 
 def test_the_two_advisory_category_sets_are_disjoint():
     assert not (REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES & REVIEW_REQUIRED_ADVISORY_CATEGORIES)
+
+
+def test_pending_live_schema_enrichment_category_yields_needs_review():
+    entity = {
+        "entity_kind": "metric",
+        "advisory_categories": [ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT],
+    }
+    assert _entity_status(entity, is_manual=False) == STATUS_NEEDS_REVIEW
+
+
+# ---------------------------------------------------------------------------
+# _compute_static_risk_tier must not contradict needs_review with a
+# "predicted failure" badge driven by the same underlying sync_enabled=False
+# signal that produced needs_review in the first place.
+# ---------------------------------------------------------------------------
+
+def test_needs_review_status_gets_no_static_risk_badge_even_though_sync_failed():
+    """The exact bug this fix closes: a metric whose CALCULATE(...) filters
+    a relationship-reachable table fails translation at dry-run
+    (sync_enabled=False, sync_failure_reason set) -- the SAME raw signal
+    _compute_static_risk_tier used to unconditionally read as
+    STATIC_RISK_PREDICTED_FAILURE. Once _entity_status has already
+    resolved this to needs_review, the risk tier must defer to that,
+    not re-derive predicted_failure from the raw sync fields."""
+    entity = {
+        "entity_kind": "metric",
+        "sync_enabled": False,
+        "sync_failure_reason": "Tier-5 (LLM) batch translation was attempted for this metric and did not produce a usable result.",
+        "advisory_categories": [ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT],
+    }
+    assert _compute_static_risk_tier(entity, status=STATUS_NEEDS_REVIEW) is None
 
 
 # ---------------------------------------------------------------------------

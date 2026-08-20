@@ -155,9 +155,10 @@ def _reconcile_dropped_entities(context: RunContext) -> list[DropRecord]:
     that reconciliation confirms is genuinely live in that DDL.
 
     Only ever REMOVES entries proven live -- never adds or invents any --
-    and only for entity_kind == "metric" (the only kind reconciliation.py
-    knows how to check against DDL text; tables/columns/relationships pass
-    through untouched). Falls back to the full, unreconciled ledger whenever
+    and only for entity_kind in ("metric", "column") (the two kinds
+    reconciliation.py knows how to check against DDL text, via the METRICS
+    and DIMENSIONS clauses respectively; tables/relationships pass through
+    untouched). Falls back to the full, unreconciled ledger whenever
     there's no live deployed DDL to check against (dry run, no target
     configured, or the real deploy itself failed) or reconciliation itself
     raises -- this can only ever degrade to today's existing behavior, never
@@ -187,16 +188,20 @@ def _reconcile_dropped_entities(context: RunContext) -> list[DropRecord]:
         )
         return records
 
-    reconciled = [
-        r for r in records
-        if not (r.entity_kind == "metric" and r.entity_name and report.is_metric_live(r.entity_name))
-    ]
+    def _proven_live(r: DropRecord) -> bool:
+        if r.entity_kind == "metric":
+            return bool(r.entity_name) and report.is_metric_live(r.entity_name)
+        if r.entity_kind == "column":
+            return bool(r.entity_name) and report.is_dimension_live(r.entity_name)
+        return False
+
+    reconciled = [r for r in records if not _proven_live(r)]
     removed = len(records) - len(reconciled)
     if removed:
         logger.info(
-            "Step 10: reconciliation confirmed %d metric drop-ledger record(s) "
-            "are actually live in the deployed DDL -- removing them from this "
-            "run's reported dropped_entities.",
+            "Step 10: reconciliation confirmed %d metric/column drop-ledger "
+            "record(s) are actually live in the deployed DDL -- removing "
+            "them from this run's reported dropped_entities.",
             removed,
         )
     return reconciled

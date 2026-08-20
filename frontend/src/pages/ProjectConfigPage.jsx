@@ -263,6 +263,7 @@ function ProjectDashboard({ project, configForm, setConfigForm }) {
             />
           </div>
 
+          {/* Workspace Identity / ID and Include Models (Allow-list) fields hidden as requested
           <div style={{ gridColumn: 'span 2' }}>
              <div style={{ display: 'flex', alignItems: 'center' }}>
                <FormLabel>Workspace Identity / ID</FormLabel>
@@ -286,6 +287,7 @@ function ProjectDashboard({ project, configForm, setConfigForm }) {
               placeholder="model1, model2 or * for all"
             />
           </div>
+          */}
         </div>
       </FormCard>
 
@@ -1833,6 +1835,7 @@ export default function ProjectConfigPage() {
 
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {/* Copy Presets section hidden as requested
           <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
             <label style={LABEL}>Copy Presets from Another Project</label>
             <SearchableSelect
@@ -1846,6 +1849,7 @@ export default function ProjectConfigPage() {
               clearable
             />
           </div>
+          */}
 
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
             <MappingPreviewPanel

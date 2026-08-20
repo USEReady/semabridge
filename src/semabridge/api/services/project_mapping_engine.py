@@ -10,6 +10,8 @@ from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
     ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT,
+    ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED,
 )
 
 # Structural signal, not a name: any metric whose advisory_categories
@@ -26,7 +28,17 @@ REAL_DEPLOY_ONLY_ADVISORY_CATEGORIES = {ADVISORY_CATEGORY_UNREACHABLE_DIMENSION}
 # approximation standing in for a time-intelligence shift the renderer
 # couldn't safely apply), so a human should confirm it's acceptable before
 # trusting it. Never counted as a real-deploy failure.
-REVIEW_REQUIRED_ADVISORY_CATEGORIES = {ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK}
+REVIEW_REQUIRED_ADVISORY_CATEGORIES = {
+    ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT,
+    # A metric that mixed a disconnected selector table with another
+    # table's aggregate (no single Snowflake metric possible) was
+    # decomposed into standalone, deployable branch metrics -- both the
+    # original (still not one metric, but now actionable) and its new
+    # companions carry this category. See osi_to_sml.py's
+    # _decompose_disconnected_selector_metrics.
+    ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED,
+}
 
 # Distinct from "auto"/"manual" (which describe identifier-mapping
 # provenance only): a metric or field structurally known — via
@@ -120,6 +132,19 @@ def _compute_static_risk_tier(entity: Dict[str, Any], status: str) -> Optional[s
 
     if status == STATUS_PREDICTED_FAILURE:
         return STATIC_RISK_PREDICTED_FAILURE
+
+    # needs_review means "translation failed here, but may well succeed at
+    # real deploy" (see ADVISORY_CATEGORY_PENDING_LIVE_SCHEMA_ENRICHMENT) --
+    # checked BEFORE the sync_enabled/sync_failure_reason fallback below,
+    # or that fallback would unconditionally relabel it
+    # STATIC_RISK_PREDICTED_FAILURE (a claim this status specifically
+    # exists to avoid making) using the exact same signal that already
+    # produced needs_review. No separate STATIC_RISK_* badge for this case
+    # -- STATUS_BADGE_MAP's own "Needs Review" tag (driven by row.status)
+    # already surfaces it; a second, differently-worded badge here would
+    # just be redundant.
+    if status == STATUS_NEEDS_REVIEW:
+        return None
 
     # A metric whose own DAX->SQL translation failed (sync_enabled=False,
     # e.g. it depends on an unresolved metric or an untranslatable DAX

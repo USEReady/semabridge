@@ -325,6 +325,10 @@ class DAXTranslator:
         if is_time_intel:
             from semabridge.converter.dax_ast_parser import try_ast_translate
             resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
+            all_measure_names = self._all_measure_names(metrics_context)
+            resolved_measures, all_measure_names = self._consistent_ast_measure_args(
+                clean_dax, resolved_measures, all_measure_names
+            )
             # allow_unshifted_fallback: opt in ONLY here (the time-intelligence
             # tier) -- a lag-period function (SAMEPERIODLASTYEAR/PREVIOUSYEAR/
             # PREVIOUSMONTH/PREVIOUSQUARTER) wrapping a measure reference this
@@ -335,16 +339,39 @@ class DAXTranslator:
             # value, not the requested prior period -- is only acceptable
             # because it's flagged via advisory_categories for a human to
             # confirm before trusting it, never silently.
+            #
+            # Gated on metrics_context being non-empty: without any measure
+            # registry at all, the base measure reference inside the lag-period
+            # wrapper can NEVER be resolved -- the "unshifted" branch always
+            # fires, silently and permanently, not just when a genuine
+            # unshiftable shape (e.g. a ratio) is hit. osi_to_sml.py's very
+            # first per-metric translate() attempt (before Step 3c's
+            # multi-pass, full-model-context resolution) calls this with no
+            # metrics_context at all -- if allowed to "succeed" here, the
+            # bogus fallback SQL gets baked into metric.sql_expression, and
+            # _resolve_metric_dependencies's `if metric.sql_expression:
+            # continue` guard means the metric is never retried with real
+            # context later. Real-world case: TOTAL_UNITS_YTD_SPLY
+            # (CALCULATE([TOTAL_UNITS_YTD], SAMEPERIODLASTYEAR(...))) silently
+            # "resolved" to a same-period reference to TOTAL_UNITS_YTD itself
+            # on this first pass, which then poisoned every metric downstream
+            # (TOTAL_UNITS_YTD_VAR, _VAR_PCT, _VAR_PCT2, ...) with a wrong
+            # value AND a Snowflake 010218 error, because the citation looked
+            # like a normal metric reference but was really a stuck fallback.
+            # Deferring here costs nothing: the later, full-context pass
+            # either resolves it correctly (as it does for this real case) or
+            # falls back to the exact same unshifted SQL, now for a genuine
+            # reason.
             time_intel_advisories: List[str] = []
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
-                known_measure_names=self._all_measure_names(metrics_context),
+                known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
-                allow_unshifted_fallback=True,
+                allow_unshifted_fallback=bool(metrics_context),
                 advisory_categories=time_intel_advisories,
             )
             if ast_sql:
@@ -360,12 +387,16 @@ class DAXTranslator:
         if is_complex:
             from semabridge.converter.dax_ast_parser import try_ast_translate
             resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
+            all_measure_names = self._all_measure_names(metrics_context)
+            resolved_measures, all_measure_names = self._consistent_ast_measure_args(
+                clean_dax, resolved_measures, all_measure_names
+            )
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
-                known_measure_names=self._all_measure_names(metrics_context),
+                known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
             )
@@ -464,6 +495,9 @@ class DAXTranslator:
 
         resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
         all_measure_names = self._all_measure_names(metrics_context)
+        resolved_measures, all_measure_names = self._consistent_ast_measure_args(
+            clean_dax, resolved_measures, all_measure_names
+        )
 
         is_time_intel = any(func.upper() in clean_dax.upper() for func in self.TIME_INTEL_FUNCTIONS)
         if is_time_intel:
@@ -501,6 +535,80 @@ class DAXTranslator:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
 
         return None
+
+    def _has_inconsistent_measure_resolution(
+        self, dax: str, resolved_measures: Dict[str, str], all_measure_names: set
+    ) -> bool:
+        """True if `dax` references at least one known measure that IS in
+        `resolved_measures` (so the AST renderer will inline it) AND at
+        least one known measure that is NOT (so the renderer instead falls
+        back to a bare column reference for it, later fixed up into a
+        by-name metric citation by
+        connectors/translator.py:_qualify_bare_metric_references).
+
+        That mix -- one sibling measure reference fully inlined as raw SQL,
+        another left as a bare-then-qualified metric citation, in the SAME
+        top-level expression -- produces a shape Snowflake's semantic view
+        validator rejects with error 010218 ("a metric must have a single
+        aggregate over another row-level expression ... at its own or a
+        lower level of granularity"): it is neither "one aggregate over
+        row-level columns" (one operand is a raw aggregate, fine) nor "a
+        pure reference to other metrics" (the OTHER operand is inlined raw
+        SQL, not a citation) -- it's an inconsistent hybrid of both.
+        Real-world case: TOTAL_UNITS_YTD_VAR_PCT2/TOTAL_UNITS_YTD_VAR and
+        their dependents.
+
+        Unlike `_has_unresolved_bracket_reference` (deliberately over-broad
+        for its own narrower use), this only counts brackets that are
+        actually tracked as measures -- a plain `[Column]` argument to
+        SUM(...) must never trigger this, or currently-working metrics that
+        merely aggregate a physical column alongside an already-resolved
+        measure reference would regress.
+        """
+        if not dax or not all_measure_names:
+            return False
+        resolved_lower = {str(k).casefold() for k in (resolved_measures or {}).keys()}
+        known_lower = {str(k).casefold() for k in all_measure_names}
+        saw_resolved = False
+        saw_unresolved = False
+        for match in self._MEASURE_REF_PATTERN.finditer(dax):
+            start = match.start()
+            if start > 0 and dax[start - 1] == "'":
+                continue  # table-qualified 'Table'[Column] ref, not a bracket-only ref
+            name = match.group(1).strip().casefold()
+            if not name or name not in known_lower:
+                continue
+            if name in resolved_lower:
+                saw_resolved = True
+            else:
+                saw_unresolved = True
+            if saw_resolved and saw_unresolved:
+                return True
+        return False
+
+    def _consistent_ast_measure_args(
+        self, dax: str, resolved_measures: Dict[str, str], all_measure_names: set
+    ) -> Tuple[Dict[str, str], set]:
+        """Neutralize inline-vs-citation inconsistency for a single AST
+        render call -- see `_has_inconsistent_measure_resolution`.
+
+        When this metric's own DAX mixes resolved and unresolved measure
+        references, clearing BOTH maps forces every reference in this
+        expression through the AST renderer's bare-column fallback
+        uniformly (see dax_ast_parser.py:_render_measure_ref), so all of
+        them get fixed up identically by the later qualification pass
+        instead of some being inlined and others cited. Clearing only
+        `measure_sql_map` and leaving `known_measure_names` populated would
+        make the renderer fail closed (raise) on the very references this
+        is meant to rescue -- both must be cleared together.
+
+        Returns the args unchanged when there's no inconsistency, so every
+        already-working metric (fully resolved, or fully unresolved) is
+        completely unaffected.
+        """
+        if self._has_inconsistent_measure_resolution(dax, resolved_measures, all_measure_names):
+            return {}, set()
+        return resolved_measures, all_measure_names
 
     def _has_unresolved_bracket_reference(
         self, dax: str, resolved_measures: Dict[str, str]
@@ -1033,7 +1141,8 @@ class DAXTranslator:
     def batch_translate_tier5(self,
                              metrics_list: List[Tuple[str, str, str, str]],
                              dataset_col_lookup: Optional[Dict[str, set]] = None,
-                             dataset_aliases: Optional[Dict[str, str]] = None) -> Dict[str, Optional[DAXTranslationResult]]:
+                             dataset_aliases: Optional[Dict[str, str]] = None,
+                             relationships: Optional[List[Any]] = None) -> Dict[str, Optional[DAXTranslationResult]]:
         """Thin shim onto DaxTranslationService's Tier 5, batch form (Step 3
         of the approved consolidation migration). Same signature (two new
         optional trailing kwargs), same Dict[str, Optional[DAXTranslationResult]]
@@ -1048,6 +1157,18 @@ class DAXTranslator:
         dataset_col_lookup/dataset_aliases: see _try_llm_fallback's
         docstring — same rationale, built once per model by the caller via
         DAXTranslator.build_schema_lookup() and passed through here.
+
+        relationships: optional, additive (None preserves existing prompt
+        behavior exactly — no reachable-table info offered, so the LLM
+        declines any cross-table filter as before). When supplied (e.g.
+        osi_model.relationships — anything utils.relationship_graph.
+        has_relationship_path accepts), each candidate's TranslationRequest
+        gets a per-metric reachable_table_aliases map: every other dataset
+        in dataset_aliases that has_relationship_path confirms is reachable
+        from that metric's own dataset_name. This lets Tier 5 legally
+        reference a relationship-reachable dimension's column directly
+        (see tier5/prompt.py's reachable-tables rendering) instead of
+        always declining cross-table filters as "reachability unclear."
 
         Batching restored (previously noted as a real cost/latency
         regression from the Step 3 cutover — Tier5Service now had a
@@ -1108,6 +1229,17 @@ class DAXTranslator:
             # reverting to a Pipeline-A-specific batch prompt.
             try:
                 from semabridge.dax_translation.types import TranslationRequest
+                from semabridge.utils.relationship_graph import has_relationship_path
+
+                def _reachable_table_aliases_for(dataset_name: str) -> Dict[str, str]:
+                    if not relationships or not dataset_aliases:
+                        return {}
+                    return {
+                        other_dataset: alias
+                        for other_dataset, alias in dataset_aliases.items()
+                        if other_dataset != dataset_name
+                        and has_relationship_path(relationships, dataset_name, other_dataset)
+                    }
 
                 requests = [
                     TranslationRequest(
@@ -1118,6 +1250,7 @@ class DAXTranslator:
                         dataset_aliases=dataset_aliases or {},
                         metric_name=metric_name,
                         dialect="snowflake",
+                        reachable_table_aliases=_reachable_table_aliases_for(dataset_name),
                     )
                     for metric_name, dax, table_alias, dataset_name in llm_candidates
                 ]

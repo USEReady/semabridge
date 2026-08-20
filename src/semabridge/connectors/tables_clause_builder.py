@@ -237,8 +237,27 @@ class TablesClauseBuilder:
 
             source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
             _unq_src = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
-            source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src).upper()
-            live_cols = self.live_schema_metadata.get(source_key, set())
+            safe_source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src)
+            source_key = safe_source_key.upper()
+            # live_schema_metadata's own keys may be a bare sanitized name, its
+            # upper-cased form, or the raw (unsanitized) source name -- a
+            # single-shot lookup here silently missed the live schema entirely
+            # for any dataset whose sanitized/uppercased key didn't happen to
+            # match, causing every "live-schema-only" column on that dataset
+            # (e.g. a real, physically-existing MONTHINDEX) to be dropped as
+            # "no live schema was available" on every real deploy, even
+            # though the live schema WAS fetched and DID contain it -- just
+            # under a different key form. Mirrors the same multi-variant
+            # fallback already proven in this file's own
+            # _build_source_query_with_anchors (see its comment above
+            # _live_cols) rather than inventing a new lookup strategy.
+            live_cols = (
+                self.live_schema_metadata.get(source_key)
+                or self.live_schema_metadata.get(safe_source_key)
+                or self.live_schema_metadata.get(_unq_src.upper())
+                or self.live_schema_metadata.get(_unq_src)
+                or set()
+            )
             dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
             if live_cols:
                 live_col_lookup[dataset.unique_name] = set(live_cols)

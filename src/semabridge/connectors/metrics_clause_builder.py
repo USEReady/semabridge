@@ -111,6 +111,40 @@ class MetricsClauseBuilder:
         # Build metric name to table alias mapping dynamically as metrics are emitted
         metric_to_alias: Dict[str, str] = {}
 
+        # Pre-seed every metric's PROVISIONAL alias (its own dataset's alias)
+        # before the main loop below processes metrics in plain source
+        # order. Without this, a metric appearing earlier in the model that
+        # references a LATER metric by name (e.g. a selector-table metric
+        # referencing [Total Units YTD]) would have its bare reference
+        # qualified against a map that doesn't have that later metric in it
+        # yet -- _qualify_bare_metric_references (translator.py) simply has
+        # no substitution rule for that name, so the token is left
+        # completely unqualified in the emitted SQL. Snowflake then rejects
+        # the WHOLE DDL statement with "invalid identifier", and the
+        # deploy-time remediation sweep (semantic_ddl_sanitizer.py) nulls
+        # out every metric whose line happens to contain that same bare
+        # token -- including other, perfectly valid metrics that were never
+        # actually broken (a real incident: one bad selector-table metric
+        # collaterally nulled three unrelated, correctly-computing ones).
+        #
+        # The real, final alias -- computed per metric below via
+        # _resolve_metric_emission_alias, which can differ from the
+        # metric's own dataset for a handful of ambiguous-anchor cases --
+        # overwrites this provisional guess once that metric is actually
+        # processed (see the assignment a few dozen lines down), so any
+        # metric processed AFTER a correction still sees the accurate
+        # value. Only a metric BOTH processed earlier AND referencing one
+        # of those rare divergent cases would see a provisional-but-wrong
+        # alias -- still a real, existing table alias (safe, diagnosable if
+        # wrong) rather than a bare, always-broken reference.
+        for _seed_metric in valid_metrics:
+            _provisional_alias = dataset_aliases.get(_seed_metric.dataset)
+            if _provisional_alias:
+                metric_to_alias.setdefault(
+                    self.identifier_sanitizer.sanitize_alias(_seed_metric.unique_name),
+                    _provisional_alias,
+                )
+
         # Build set of fact-table aliases so metric prefix resolution prefers them
         fact_aliases: Set[str] = {
             alias

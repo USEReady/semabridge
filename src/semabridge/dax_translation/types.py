@@ -69,6 +69,19 @@ class TranslationRequest:
     # (the real incident type_safety_validator.py's DDL-emission check
     # catches after the fact -- this is the earlier, prevention-side half).
     dataset_col_types: Optional[Dict[str, Dict[str, str]]] = None
+    # {dataset_name: alias} for every OTHER dataset relationship-reachable
+    # from `dataset_name` (excluding dataset_name itself) -- e.g. a
+    # dimension table joinable via the semantic view's own declared
+    # RELATIONSHIPS clause. None/empty preserves existing prompt behavior
+    # exactly: no cross-table alias is ever offered, so the LLM has no
+    # legal way to reference another table's column and correctly declines
+    # any cross-table filter per the verification checklist. Populated, it
+    # lets the LLM reference that table's column directly (alias."COLUMN",
+    # no JOIN needed -- Snowflake resolves the join via the relationship),
+    # instead of always treating cross-table reachability as unconfirmed.
+    # See tier5/prompt.py's reachable-tables rendering and
+    # DAXTranslator.batch_translate_tier5's relationships param.
+    reachable_table_aliases: Optional[Dict[str, str]] = None
 
     def __post_init__(self) -> None:
         self.dialect = Dialect.coerce(self.dialect)

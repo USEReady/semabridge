@@ -74,6 +74,7 @@ from semabridge.api.services.project_domain_service import (
     get_project_runs_compat,
     get_project_storage_stats,
     get_run_report_compat,
+    get_run_report_data_compat,
     list_project_snapshots_compat,
     list_snapshot_groups_compat,
     restore_project_version_compat,
@@ -320,6 +321,27 @@ async def download_run_report(project_id: str, run_id: str, request: Request):
     except Exception as exc:
         logger.exception("Failed to serve run report for project=%s run=%s: %s", project_id, run_id, exc)
         raise HTTPException(status_code=500, detail=f"Failed to generate report download: {exc}") from exc
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/report-summary")
+async def get_run_report_summary(project_id: str, run_id: str, request: Request):
+    """JSON counterpart to download_run_report, for the frontend's
+    accordion-style summary view (clean counts collapsed, full per-item
+    detail on expand) -- built fresh from the run's own snapshot/drop-
+    ledger data rather than parsing the rendered Markdown file."""
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    try:
+        data = await get_run_report_data_compat(project_id, run_id)
+        if not data:
+            logger.warning("Run report summary requested but not found for project=%s run=%s", project_id, run_id)
+            raise HTTPException(status_code=404, detail=f"No report found for run {run_id}")
+        return data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to build run report summary for project=%s run=%s: %s", project_id, run_id, exc)
+        raise HTTPException(status_code=500, detail=f"Failed to build report summary: {exc}") from exc
 
 
 @router.get("/api/projects/{project_id}/vc/stats")

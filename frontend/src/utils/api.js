@@ -1799,6 +1799,14 @@ export const api = {
         return res.text();
     },
 
+    async getRunReportSummary(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report-summary`);
+        if (!res.ok) {
+            throw new Error(`Report summary request failed with status ${res.status}`);
+        }
+        return handleResponse(res);
+    },
+
     async downloadRunReport(projectId, runId) {
         const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
         if (!res.ok) {

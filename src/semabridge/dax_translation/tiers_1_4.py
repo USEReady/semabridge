@@ -83,6 +83,9 @@ def translate_tiers_1_4(request: TranslationRequest) -> Optional[TranslationResu
 
     resolved_measures = _translator._build_resolved_measures_map(table_alias, metrics_context)
     all_measure_names = _translator._all_measure_names(metrics_context)
+    resolved_measures, all_measure_names = _translator._consistent_ast_measure_args(
+        clean_dax, resolved_measures, all_measure_names
+    )
 
     # Tier 3: Time intelligence (TOTALYTD/MTD/QTD, SAMEPERIODLASTYEAR, etc.)
     # via the AST renderer's CASE-WHEN-bounded translation.

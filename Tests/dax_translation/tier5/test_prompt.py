@@ -134,6 +134,38 @@ def test_batch_prompt_merges_column_types_across_requests():
     assert "MAX_DATE (DATE)" in prompt
 
 
+def test_prompt_has_no_reachable_tables_when_none_supplied():
+    """None (the default) preserves existing behavior exactly -- no
+    cross-table alias is ever offered."""
+    prompt = build_prompt(_request())
+    assert "<none other than the default table above>" in prompt
+
+
+def test_prompt_lists_reachable_table_and_its_alias_when_supplied():
+    request = _request(reachable_table_aliases={"Product": "product"})
+    prompt = build_prompt(request)
+    assert "Product (alias: product)" in prompt
+    assert "<none other than the default table above>" not in prompt
+
+
+def test_verification_checklist_explains_how_to_use_reachable_tables():
+    prompt = build_prompt(_request())
+    assert "Tables reachable via a declared relationship" in prompt
+
+
+def test_batch_prompt_includes_per_metric_reachable_tables_field():
+    """Deliberately per-metric (not merged like the schema context) --
+    different metrics in one batch can have different base datasets, each
+    with a different reachable-table set."""
+    requests = [
+        _request(metric_name="Metric_A", reachable_table_aliases={"Product": "product"}),
+        _request(metric_name="Metric_B"),
+    ]
+    prompt = build_batch_prompt(requests)
+    assert '"reachable_tables": {"Product": "product"}' in prompt
+    assert '"reachable_tables": {}' in prompt
+
+
 def test_prompt_includes_dax_and_metric_name():
     prompt = build_prompt(_request())
     assert "SUM('SomeTable'[SomeColumn])" in prompt

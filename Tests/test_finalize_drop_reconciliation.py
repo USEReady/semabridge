@@ -127,10 +127,12 @@ def test_mixed_run_only_removes_the_confirmed_live_ones():
     assert kept_names == {"KPI02", "DateTableTemplate_abc"}
 
 
-def test_non_metric_entity_kinds_pass_through_untouched():
-    """reconciliation.py only knows how to check metric names against DDL
-    text -- table/column/relationship drops must never be filtered, no
-    matter what the deployed DDL contains."""
+def test_non_metric_non_column_entity_kinds_pass_through_untouched():
+    """reconciliation.py only knows how to check metric and column names
+    against DDL text (METRICS/DIMENSIONS clauses respectively) -- table and
+    relationship drops must never be filtered, no matter what the deployed
+    DDL contains. A column drop with no DIMENSIONS clause at all in the
+    deployed DDL is genuinely absent too, so it also survives."""
     ledger = DropLedger()
     ledger.record("column", "MonthIndex", DropStage.SCHEMA_VALIDATION, "No live schema to confirm.")
     ledger.record("relationship", "KPI -> Date", DropStage.DDL_EMISSION, "Relationship dropped.")
@@ -143,6 +145,58 @@ def test_non_metric_entity_kinds_pass_through_untouched():
     reconciled = _reconcile_dropped_entities(context)
 
     assert {r.entity_name for r in reconciled} == {"MonthIndex", "KPI -> Date"}
+
+
+def test_column_that_failed_early_but_is_live_in_deployed_dimensions_is_removed():
+    """Reproduces the real proj-1942-test/customer bug: an earlier,
+    schema-less pass (Step 8) records a column drop (e.g. MonthIndex, only
+    confirmed live via a later live-schema fetch) before the real, connected
+    deploy (Step 9) actually emits it in the DIMENSIONS clause. That earlier
+    record must be retracted once reconciliation proves the column is live,
+    exactly like the existing metric-level behavior."""
+    ledger = DropLedger()
+    ledger.record(
+        "column", "MonthIndex", DropStage.SCHEMA_VALIDATION,
+        "Column 'MONTHINDEX' is present in the model but not found in the "
+        "live Snowflake schema for dataset 'Date'",
+    )
+    context = _make_context(
+        metric_names=[],
+        deployed_ddl_text=(
+            'CREATE OR REPLACE SEMANTIC VIEW "DB"."SCHEMA"."MODEL"\n'
+            "DIMENSIONS (\n"
+            '  COL_DATE."MONTHINDEX" AS COL_DATE."MONTHINDEX"\n'
+            ")"
+        ),
+    )
+    context.drop_ledger.extend(ledger)
+
+    reconciled = _reconcile_dropped_entities(context)
+
+    assert reconciled == []
+
+
+def test_column_genuinely_absent_from_deployed_dimensions_still_appears():
+    """A column drop must survive reconciliation when the deployed DDL's
+    DIMENSIONS clause genuinely does not contain it -- only PROVEN-live
+    entries are removed."""
+    ledger = DropLedger()
+    ledger.record("column", "MonthIndex", DropStage.SCHEMA_VALIDATION, "No live schema to confirm.")
+    context = _make_context(
+        metric_names=[],
+        deployed_ddl_text=(
+            'CREATE OR REPLACE SEMANTIC VIEW "DB"."SCHEMA"."MODEL"\n'
+            "DIMENSIONS (\n"
+            '  COL_DATE."YEAR" AS COL_DATE."YEAR"\n'
+            ")"
+        ),
+    )
+    context.drop_ledger.extend(ledger)
+
+    reconciled = _reconcile_dropped_entities(context)
+
+    assert len(reconciled) == 1
+    assert reconciled[0].entity_name == "MonthIndex"
 
 
 def test_no_deployed_ddl_falls_back_to_unreconciled_ledger():

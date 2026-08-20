@@ -6,6 +6,7 @@ import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
 import DroppedFieldsPanel from '../components/common/DroppedFieldsPanel';
 import Modal from '../components/common/Modal';
+import RunReportSummary from '../components/RunReportSummary';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
@@ -183,23 +184,50 @@ export default function ProjectJobsPage() {
   const [reportContent, setReportContent] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState(null);
+  // Clean accordion summary is the default view; raw Markdown is a toggle
+  // away for anyone who wants the full downloadable-style text instead.
+  const [reportViewMode, setReportViewMode] = useState('summary');
+  const [reportSummary, setReportSummary] = useState(null);
+  const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
+  const [reportSummaryError, setReportSummaryError] = useState(null);
 
   const openReportModal = async (run) => {
     const pid = run.project_id;
     const rid = run.id || run.run_id;
     setReportModalRun(run);
+    setReportViewMode('summary');
     setReportLoading(true);
     setReportError(null);
     setReportContent('');
-    try {
-      const text = await api.getRunReport(pid, rid);
-      setReportContent(text);
-    } catch (err) {
-      console.error('Failed to load report preview:', err);
-      setReportError(err.message || 'Failed to load report content.');
-    } finally {
-      setReportLoading(false);
-    }
+    setReportSummaryLoading(true);
+    setReportSummaryError(null);
+    setReportSummary(null);
+    // Both fetched up front (not lazily on toggle) so switching between
+    // Summary/Raw is instant once the modal has finished loading.
+    await Promise.all([
+      (async () => {
+        try {
+          const text = await api.getRunReport(pid, rid);
+          setReportContent(text);
+        } catch (err) {
+          console.error('Failed to load report preview:', err);
+          setReportError(err.message || 'Failed to load report content.');
+        } finally {
+          setReportLoading(false);
+        }
+      })(),
+      (async () => {
+        try {
+          const summary = await api.getRunReportSummary(pid, rid);
+          setReportSummary(summary);
+        } catch (err) {
+          console.error('Failed to load report summary:', err);
+          setReportSummaryError(err.message || 'Failed to load report summary.');
+        } finally {
+          setReportSummaryLoading(false);
+        }
+      })(),
+    ]);
   };
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -694,7 +722,43 @@ export default function ProjectJobsPage() {
           </div>
         }
       >
-        {reportLoading ? (
+        <div style={{ display: 'flex', gap: 4, padding: '0 4px 12px 4px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 8 }}>
+          {[
+            { key: 'summary', label: 'Summary' },
+            { key: 'markdown', label: 'Raw Report' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setReportViewMode(tab.key)}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                background: reportViewMode === tab.key ? 'var(--accent-primary, #3b82f6)' : 'transparent',
+                color: reportViewMode === tab.key ? '#ffffff' : 'var(--text-secondary)',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {reportViewMode === 'summary' ? (
+          reportSummaryLoading ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
+              Loading summary...
+            </div>
+          ) : reportSummaryError ? (
+            <div style={{ padding: 24, color: 'var(--color-error)' }}>
+              {reportSummaryError}
+            </div>
+          ) : (
+            <RunReportSummary data={reportSummary} />
+          )
+        ) : reportLoading ? (
           <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
             Loading report...
           </div>

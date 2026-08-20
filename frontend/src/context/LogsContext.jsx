@@ -55,7 +55,8 @@ export function LogsProvider({ children }) {
         };
         setLogs(prev => [entry, ...prev].slice(0, 500));
 
-        if (severity === 'success' || severity === 'warning' || severity === 'error' || severity === 'critical') {
+        // Commented out 'warning' so warning toasts do not pop up on the screen/frontend (can re-enable later if needed)
+        if (severity === 'success' || /* severity === 'warning' || */ severity === 'error' || severity === 'critical') {
             const toast = { ...entry, visible: true };
             setToasts(prev => [...prev, toast]);
             setTimeout(() => {

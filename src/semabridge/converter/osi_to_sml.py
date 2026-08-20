@@ -48,6 +48,7 @@ from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
     ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED,
 )
 from semabridge.connectors.inference_engine import SmlInferenceEngine
 from semabridge.connectors.measure_detector import MeasureDetector
@@ -191,6 +192,14 @@ class OSIToSMLConverter(BaseConverter):
                     tier5_candidates,
                     dataset_col_lookup=dax_dataset_col_lookup,
                     dataset_aliases=dax_dataset_aliases,
+                    # osi_model.relationships (not sml.relationships) --
+                    # available from the start, before "4. Convert
+                    # Relationships" below runs. Lets Tier 5 legally
+                    # reference a relationship-reachable dimension's
+                    # column directly instead of always declining
+                    # cross-table filters (see batch_translate_tier5's
+                    # docstring).
+                    relationships=osi_model.relationships,
                 )
                 
                 # Apply batch translation results back to metrics
@@ -263,6 +272,35 @@ class OSIToSMLConverter(BaseConverter):
             # sync_failure_reason/sql_expression — this changes only what
             # a user sees at mapping/dry-run time, never what deploys.
             self._flag_unreachable_dimension_calculates(sml)
+
+            # 4a2. Decompose "disconnected selector table" metrics (e.g. a
+            # Power BI field-parameter/what-if table with no real business
+            # key) whose DAX switches between OTHER tables' aggregates
+            # based on the selector's own value -- a shape no single
+            # Snowflake metric can express, but whose individual branches
+            # (selector condition stripped) are real, deployable metrics
+            # on their own. Must run AFTER 4a (needs sml.relationships to
+            # confirm genuine disconnection -- see
+            # try_decompose_disconnected_selector_metric's docstring on why
+            # translation "succeeding" doesn't mean this metric is safe)
+            # and takes priority over 4a's generic advisory for any metric
+            # it successfully handles (removes it, see below) -- a
+            # successful decomposition is a strictly more specific,
+            # actionable diagnosis than a bare "unreachable dimension" note
+            # with no real fix.
+            self._decompose_disconnected_selector_metrics(
+                sml,
+                dataset_col_lookup=dax_dataset_col_lookup,
+                dataset_aliases=dax_dataset_aliases,
+            )
+
+            # 4b. Advisory-only, opposite outcome of 4a: a metric whose
+            # CALCULATE(...) filters a table that DOES have a relationship
+            # path, but whose translation still failed today because
+            # dry-run has no live connection to exploit that path (see
+            # _flag_reachable_dimension_filters_pending_enrichment). Must
+            # run after 4a and after Step 3 for the same reasons.
+            self._flag_reachable_dimension_filters_pending_enrichment(sml)
 
             # 4b. Fabric/PBIX extractions can legitimately surface 0 explicit
             # measures in TMSL. Reuse the older heuristic detector so downstream
@@ -650,6 +688,162 @@ class OSIToSMLConverter(BaseConverter):
                     "did not produce a usable result."
                 )
 
+    def _decompose_disconnected_selector_metrics(
+        self,
+        sml: SMLModel,
+        dataset_col_lookup: Optional[Dict[str, set]] = None,
+        dataset_aliases: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """For any metric whose DAX matches the disconnected-selector-table
+        IF-chain shape (see dax_ast_parser.try_decompose_disconnected_
+        selector_metric), create one new, standalone metric per
+        decomposable branch -- each translated and deployed exactly like
+        any ordinary metric -- and record an advisory on the original
+        pointing at its new companions.
+
+        Deliberately NOT gated on translation having already failed: this
+        codebase's own AST renderer doesn't validate cross-table
+        reachability for an inlined measure reference, so a metric
+        matching this shape typically translates "successfully"
+        (sql_expression populated, sync_enabled=True) by this codebase's
+        own check even though it's genuinely broken -- confirmed against
+        a real customer deploy where Snowflake rejected exactly this shape
+        at DDL-execution time (error 010211) despite dry-run showing it as
+        clean. The detector itself (via has_relationship_path) is what
+        makes this safe to attempt broadly: it declines unless every
+        non-trivial branch's table is genuinely unreachable from the
+        metric's own dataset.
+
+        The original metric's sync_enabled/sql_expression are left
+        completely untouched either way (matching
+        _flag_unreachable_dimension_calculates' same discipline) -- only
+        advisory_categories/advisory_notes change. When a decomposition
+        succeeds, the now-redundant, less-specific
+        ADVISORY_CATEGORY_UNREACHABLE_DIMENSION entry (if 4a already added
+        one) is removed and replaced with this one, since a working set of
+        replacement metrics is a strictly more actionable diagnosis than a
+        bare "this will fail, no real fix" note.
+
+        Only ever ADDS metrics to sml.metrics; never mutates or removes an
+        existing one apart from its own advisory fields, so this cannot
+        change what any other metric does.
+        """
+        from semabridge.converter.dax_ast_parser import (
+            try_decompose_disconnected_selector_metric,
+            ADVISORY_CATEGORY_UNREACHABLE_DIMENSION,
+        )
+
+        if not sml.metrics:
+            return
+
+        metric_datasets = {m.unique_name: m.dataset for m in sml.metrics if m.dataset}
+        existing_names_cf = {m.unique_name.casefold() for m in sml.metrics}
+
+        for metric in list(sml.metrics):  # snapshot -- this loop appends to sml.metrics
+            if not metric.expression or not metric.dataset:
+                continue
+
+            try:
+                decomposition = try_decompose_disconnected_selector_metric(
+                    metric.expression, metric.dataset, sml.relationships, metric_datasets,
+                )
+            except Exception as exc:  # noqa: BLE001 - best-effort, never fail conversion over it
+                logger.debug(
+                    "Disconnected-selector decomposition skipped for '%s' (non-fatal): %s",
+                    metric.unique_name, exc,
+                )
+                continue
+            if not decomposition:
+                continue
+
+            companion_names: List[str] = []
+            for index, branch in enumerate(decomposition.branches, start=1):
+                base_name = f"{metric.unique_name}_BRANCH_{index}"
+                new_name = base_name
+                suffix = 2
+                while new_name.casefold() in existing_names_cf:
+                    new_name = f"{base_name}_{suffix}"
+                    suffix += 1
+                existing_names_cf.add(new_name.casefold())
+
+                new_metric = SMLMetric(
+                    unique_name=new_name,
+                    label=f"{metric.label or metric.unique_name} ({branch.condition_dax})",
+                    description=(
+                        f"Auto-generated from '{metric.unique_name}' -- the value shown "
+                        f"when {branch.condition_dax}."
+                    ),
+                    dataset=branch.branch_dataset,
+                    expression=branch.branch_dax,
+                    aggregation=SMLAggregationType.NONE,
+                    complexity_tier=1,
+                    sync_enabled=True,
+                )
+
+                safe_alias = to_alias(branch.branch_dataset)
+                translation = self.dax_translator.translate(
+                    branch.branch_dax,
+                    safe_alias,
+                    branch.branch_dataset,
+                    metric_name=new_metric.unique_name,
+                    metrics_context=sml.metrics,
+                    dataset_col_lookup=dataset_col_lookup,
+                    dataset_aliases=dataset_aliases,
+                    skip_tier5=False,
+                )
+                if translation.is_success:
+                    new_metric.sql_expression = translation.sql
+                    new_metric.complexity_tier = translation.tier
+                    new_metric.sync_enabled = True
+                    new_metric.sync_failure_reason = None
+                    new_metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
+                    new_metric.validation_notes = list(translation.validation_notes or [])
+                    _apply_translation_advisories(new_metric, translation)
+                else:
+                    new_metric.sync_enabled = False
+                    new_metric.sync_failure_reason = (
+                        f"Auto-generated branch of '{metric.unique_name}' could not be "
+                        "translated on its own either."
+                    )
+
+                new_metric.advisory_categories.append(ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED)
+                new_metric.advisory_notes.append(
+                    f"Auto-generated from '{metric.unique_name}', which mixes a selector "
+                    f"value from '{decomposition.selector_table}' with an aggregate from "
+                    "a different, unrelated table in one expression -- something "
+                    "Snowflake cannot compile as a single metric. This is the real "
+                    f"value for the '{branch.condition_dax}' branch, standing alone."
+                )
+                sml.metrics.append(new_metric)
+                companion_names.append(new_name)
+
+            if companion_names:
+                # Supersede 4a's generic advisory, if it already fired for
+                # this metric -- remove the (note, category) pair together
+                # (they're parallel, same-index lists) so this metric ends
+                # up with exactly one, more specific/actionable diagnosis
+                # instead of two overlapping ones.
+                if ADVISORY_CATEGORY_UNREACHABLE_DIMENSION in metric.advisory_categories:
+                    stale_index = metric.advisory_categories.index(ADVISORY_CATEGORY_UNREACHABLE_DIMENSION)
+                    metric.advisory_categories.pop(stale_index)
+                    if stale_index < len(metric.advisory_notes):
+                        metric.advisory_notes.pop(stale_index)
+                metric.advisory_categories.append(ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED)
+                skipped_note = (
+                    f" ({decomposition.skipped_trivial_count} branch(es) were a "
+                    "constant value with nothing to translate, and were skipped)"
+                    if decomposition.skipped_trivial_count else ""
+                )
+                metric.advisory_notes.append(
+                    f"This metric mixes a selector value from '{decomposition.selector_table}' "
+                    "with an aggregate from a different, unrelated table in one "
+                    "expression, which Snowflake cannot compile as a single metric. "
+                    f"It has been decomposed into standalone metrics: "
+                    f"{', '.join(companion_names)}{skipped_note}. Recreate the "
+                    "original selector logic in your reporting layer using these "
+                    "instead."
+                )
+
     def _flag_unreachable_dimension_calculates(self, sml: SMLModel) -> None:
         """Advisory-only: append a well-explained note to any metric whose
         DAX contains CALCULATE(...) filtering by a table its own dataset
@@ -704,6 +898,55 @@ class OSIToSMLConverter(BaseConverter):
             except Exception as exc:  # noqa: BLE001 - advisory-only, never fail conversion over it
                 logger.debug(
                     "Unreachable-dimension advisory check skipped for '%s' (non-fatal): %s",
+                    metric.unique_name, exc,
+                )
+                continue
+            if hit:
+                metric.advisory_notes.append(hit.reason)
+                metric.advisory_categories.append(hit.category)
+
+    def _flag_reachable_dimension_filters_pending_enrichment(self, sml: SMLModel) -> None:
+        """Advisory-only, mirrors _flag_unreachable_dimension_calculates
+        but for the opposite reachability outcome: a metric whose
+        CALCULATE(...) filters a table that DOES have a relationship path,
+        yet whose translation still failed today — dry-run has no live
+        connection, so it can't exploit the same precomputed-column
+        rewrite that resolves this shape at real-deploy time (see
+        dax_calculate_filters_reachable_dimension_pending_enrichment's
+        docstring). A real deploy may well succeed where dry-run could
+        not, so this is surfaced as STATUS_NEEDS_REVIEW, not
+        STATUS_PREDICTED_FAILURE (see project_mapping_engine.py).
+
+        Only fires for a metric whose translation actually failed — if
+        some tier already produced valid SQL, this note would be
+        misleading noise, not a signal. Never touches sync_enabled/
+        sync_failure_reason/sql_expression itself.
+        """
+        from semabridge.converter.dax_ast_parser import (
+            dax_calculate_filters_reachable_dimension_pending_enrichment,
+        )
+
+        if not sml.metrics:
+            return
+
+        for metric in sml.metrics:
+            if not metric.expression or not metric.dataset:
+                continue
+            if metric.sql_expression:
+                continue  # translation already succeeded -- nothing to flag
+            if metric.sync_enabled is not False and not str(metric.sync_failure_reason or "").strip():
+                continue  # not actually a failed metric
+            if ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED in metric.advisory_categories:
+                continue  # already handled with a more specific diagnosis -- see the sibling check above
+            try:
+                hit = dax_calculate_filters_reachable_dimension_pending_enrichment(
+                    metric.expression,
+                    metric.dataset,
+                    sml.relationships,
+                )
+            except Exception as exc:  # noqa: BLE001 - advisory-only, never fail conversion over it
+                logger.debug(
+                    "Pending-enrichment advisory check skipped for '%s' (non-fatal): %s",
                     metric.unique_name, exc,
                 )
                 continue
