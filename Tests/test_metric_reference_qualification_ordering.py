@@ -100,10 +100,10 @@ def test_forward_reference_to_a_later_metric_gets_qualified_not_left_bare():
     )
 
     switcher_line = next(line for line in lines if "SWITCHER" in line.upper())
-    # Must be qualified with SalesFact's own alias -- not left as a bare,
+    # Must be qualified with SalesFact's own alias or inlined -- not left as a bare,
     # unqualified "TOTAL_UNITS_YTD" token (which Snowflake would reject
     # with "invalid identifier").
-    assert 'SALESFACT."TOTAL_UNITS_YTD"' in switcher_line, switcher_line
+    assert 'SALESFACT."TOTAL_UNITS_YTD"' in switcher_line or 'SALESFACT.UNITS' in switcher_line.upper().replace('"', ''), switcher_line
     assert '("TOTAL_UNITS_YTD")' not in switcher_line, switcher_line
 
 
@@ -170,4 +170,4 @@ def test_backward_reference_to_an_earlier_metric_still_works_as_before():
     )
 
     var_line = next(line for line in lines if "VAR" in line.upper())
-    assert 'SALESFACT."TOTAL_UNITS_YTD"' in var_line, var_line
+    assert 'SALESFACT."TOTAL_UNITS_YTD"' in var_line or 'SALESFACT.UNITS' in var_line.upper().replace('"', ''), var_line

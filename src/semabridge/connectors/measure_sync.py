@@ -38,19 +38,9 @@ class MeasureSynchronizer:
         self,
         expr_sql: str,
         identifier_hint: Optional[str] = None,
-        *,
         is_boolean_column: Optional[bool] = None,
+        column_data_types: Optional[Dict[Any, str]] = None,
     ) -> str:
-        """Return SUM SQL that is safe for both numeric and boolean expressions.
-
-        We avoid TRY_TO_NUMBER/TRY_TO_BOOLEAN on numeric columns because Snowflake
-        throws compilation errors when those functions are applied to non-VARCHAR types.
-
-        is_boolean_column, when the caller has it, is the authoritative signal —
-        derived from the actual synced data's real Python value types (see
-        _detect_boolean_columns), not the column's name. Falls back to the
-        name-pattern heuristic only when no real type information is available.
-        """
         if is_boolean_column is not None:
             is_flag = is_boolean_column
         else:
@@ -63,6 +53,17 @@ class MeasureSynchronizer:
                     r'_FLAG$', r'_FLG$', r'^DELETED$', r'_DELETED$'
                 ]
                 is_flag = any(re.search(p, col_name) for p in flag_patterns)
+
+                type_lookup = column_data_types or getattr(self, "column_data_types", None) or {}
+                if is_flag and type_lookup:
+                    col_type = ""
+                    for k, v in type_lookup.items():
+                        k_str = str(k[1] if isinstance(k, tuple) else k).upper()
+                        if k_str == col_name or k_str == hint:
+                            col_type = str(v).lower()
+                            break
+                    if any(st in col_type for st in ("string", "varchar", "char", "text")):
+                        is_flag = False
 
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"

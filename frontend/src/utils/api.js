@@ -1458,6 +1458,14 @@ export const api = {
         });
     },
 
+    async clearJobRuns(before = null) {
+        const query = before ? `?before=${encodeURIComponent(before)}` : '';
+        const res = await authFetch(`${API_BASE_URL}/jobs/runs${query}`, { method: 'DELETE' });
+        const result = await handleResponse(res);
+        invalidateApiCache('jobs:runs');
+        return result;
+    },
+
     async listJobSchedules() {
         const cacheKey = 'jobs:schedules';
         const cached = getCachedApiValue(cacheKey);

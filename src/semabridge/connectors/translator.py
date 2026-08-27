@@ -815,7 +815,7 @@ class MetricExpressionTranslator:
         )
 
     def _is_safe_llm_metric_sql(self, sql: str) -> bool:
-        if not sql:
+        if not sql or "{" in sql or "}" in sql:
             return False
         upper = sql.upper()
         forbidden = (
@@ -839,6 +839,15 @@ class MetricExpressionTranslator:
         if re.search(r"\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\([^)]*\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\(", sql, re.IGNORECASE | re.DOTALL):
             return False
         return True
+
+    def _get_effective_known_columns(self, dataset_name: str, dataset_col_lookup: Dict[str, Set[str]]) -> Set[str]:
+        cols = set(dataset_col_lookup.get(dataset_name, set()))
+        if getattr(self, "anchor_flag_map", None):
+            ds_flags = self.anchor_flag_map.get(str(dataset_name or "").casefold()) or {}
+            for flag_val in ds_flags.values():
+                if isinstance(flag_val, str) and flag_val:
+                    cols.add(flag_val)
+        return cols
 
     def _validate_metric_column_references(
         self,
@@ -898,7 +907,7 @@ class MetricExpressionTranslator:
                 logger.warning(f"Metric '{metric_name}': {error}")
                 return False, error
 
-            known_columns = dataset_col_lookup.get(dataset_name, set())
+            known_columns = self._get_effective_known_columns(dataset_name, dataset_col_lookup)
             sanitized_col_name = self._id.sanitize_column(col_name)
             resolved_metric_ref = self._resolve_metric_reference_name(
                 metric_names,
@@ -1060,7 +1069,7 @@ class MetricExpressionTranslator:
                     table_alias = dataset_aliases.get(dataset_name, table_alias)
             if not dataset_name:
                 continue
-            known_columns = dataset_col_lookup.get(dataset_name, set())
+            known_columns = self._get_effective_known_columns(dataset_name, dataset_col_lookup)
             resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
                 owners = [ds for ds, cols in dataset_col_lookup.items() if self._resolve_column_name_for_dataset(cols, sanitized_col_name)]
@@ -1116,7 +1125,7 @@ class MetricExpressionTranslator:
                     table_alias = dataset_aliases.get(dataset_name, table_alias)
             if not dataset_name:
                 continue
-            known_columns = dataset_col_lookup.get(dataset_name, set())
+            known_columns = self._get_effective_known_columns(dataset_name, dataset_col_lookup)
             resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
                 owners = [ds for ds, cols in dataset_col_lookup.items() if self._resolve_column_name_for_dataset(cols, sanitized_col_name)]
@@ -1180,6 +1189,7 @@ class MetricExpressionTranslator:
         normalized_sql = self._normalize_rolling_monthindex_max_predicates(normalized_sql)
         normalized_sql = self._qualify_bare_metric_references(normalized_sql, metric_to_alias)
         normalized_sql = self._route_qualified_metric_owner_refs(normalized_sql, metric_to_alias)
+        normalized_sql = self._normalize_string_boolean_comparisons(normalized_sql)
 
         return normalized_sql
 
@@ -1428,7 +1438,12 @@ class MetricExpressionTranslator:
 
         return agg_pattern.sub(_replace, metric_sql)
 
-    def _build_safe_sum_sql(self, expr_sql: str, identifier_hint: Optional[str] = None) -> str:
+    def _build_safe_sum_sql(
+        self,
+        expr_sql: str,
+        identifier_hint: Optional[str] = None,
+        column_data_types: Optional[Dict[Any, str]] = None,
+    ) -> str:
         is_flag = False
         if identifier_hint:
             hint = identifier_hint.strip().upper().replace('"', '')
@@ -1436,12 +1451,54 @@ class MetricExpressionTranslator:
             flag_patterns = [r'^IS_', r'^HAS_', r'^WAS_', r'^DID_', r'^DOES_', r'_FLAG$', r'_FLG$', r'^DELETED$', r'_DELETED$']
             is_flag = any(re.search(p, col_name) for p in flag_patterns)
 
+            # Prevent false-positive boolean flag matching for string-typed columns
+            type_lookup = column_data_types or getattr(self, "column_data_types", None) or {}
+            if is_flag and type_lookup:
+                col_type = ""
+                for k, v in type_lookup.items():
+                    k_str = str(k[1] if isinstance(k, tuple) else k).upper()
+                    if k_str == col_name or k_str == hint:
+                        col_type = str(v).lower()
+                        break
+                if any(st in col_type for st in ("string", "varchar", "char", "text")):
+                    is_flag = False
+
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"
 
         if expr_sql.strip().upper().endswith("::FLOAT"):
             return f"SUM({expr_sql})"
         return f"SUM({expr_sql}::FLOAT)"
+
+    def _normalize_string_boolean_comparisons(
+        self,
+        sql: str,
+        column_data_types: Optional[Dict[Any, str]] = None,
+    ) -> str:
+        if not sql or ("= TRUE" not in sql.upper() and "= FALSE" not in sql.upper()):
+            return sql
+
+        type_lookup = column_data_types or getattr(self, "column_data_types", None) or {}
+        if not type_lookup:
+            return sql
+
+        string_cols = set()
+        for k, v in type_lookup.items():
+            col_name = str(k[1] if isinstance(k, tuple) else k).upper()
+            col_type = str(v).lower()
+            if any(st in col_type for st in ("string", "varchar", "char", "text")):
+                string_cols.add(col_name)
+
+        if not string_cols:
+            return sql
+
+        for col in string_cols:
+            pattern_true = re.compile(rf'((?:[A-Za-z0-9_]+\.)?"?{re.escape(col)}"?) = TRUE', re.IGNORECASE)
+            pattern_false = re.compile(rf'((?:[A-Za-z0-9_]+\.)?"?{re.escape(col)}"?) = FALSE', re.IGNORECASE)
+            sql = pattern_true.sub(r"\1 = 'Yes'", sql)
+            sql = pattern_false.sub(r"\1 = 'No'", sql)
+
+        return sql
 
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
         if not known_columns: return None

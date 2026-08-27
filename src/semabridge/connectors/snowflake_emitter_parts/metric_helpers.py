@@ -169,6 +169,17 @@ def try_llm_metric_fallback_expression(
     return None
 
 
+def _get_effective_known_columns(emitter, dataset_name: str, dataset_col_lookup: Dict[str, set[str]]) -> set[str]:
+    cols = set(dataset_col_lookup.get(dataset_name, set()))
+    translator = getattr(emitter, "translator", None) if emitter else None
+    if translator and getattr(translator, "anchor_flag_map", None):
+        ds_flags = translator.anchor_flag_map.get(str(dataset_name or "").casefold()) or {}
+        for flag_val in ds_flags.values():
+            if isinstance(flag_val, str) and flag_val:
+                cols.add(flag_val)
+    return cols
+
+
 def validate_metric_column_references(
     emitter,
     metric_sql: str,
@@ -195,7 +206,7 @@ def validate_metric_column_references(
         if not dataset_name:
             return False, f"Alias '{table_alias}' not found in dataset mapping"
 
-        known_columns = dataset_col_lookup.get(dataset_name, set())
+        known_columns = _get_effective_known_columns(emitter, dataset_name, dataset_col_lookup)
         sanitized_col_name = emitter._sanitize_col_name(col_name)
         resolved_metric_ref = resolve_metric_reference_name(metric_names, sanitized_col_name, allow_fuzzy=False)
         if resolved_metric_ref:
@@ -243,7 +254,7 @@ def normalize_metric_column_references(
         if resolved_metric_ref:
             normalized_sql = normalized_sql.replace(match.group(0), resolved_metric_ref)
             continue
-        known_columns = dataset_col_lookup.get(dataset_name, set())
+        known_columns = _get_effective_known_columns(emitter, dataset_name, dataset_col_lookup)
         resolved_col = resolve_column_name_for_dataset(known_columns, sanitized_col_name)
         if not resolved_col:
             fuzzy_metric_ref = resolve_metric_reference_name(metric_names, sanitized_col_name, allow_fuzzy=True)
@@ -280,7 +291,7 @@ def normalize_metric_column_references(
         if resolved_metric_ref:
             normalized_sql = normalized_sql.replace(match.group(0), resolved_metric_ref)
             continue
-        known_columns = dataset_col_lookup.get(dataset_name, set())
+        known_columns = _get_effective_known_columns(emitter, dataset_name, dataset_col_lookup)
         resolved_col = resolve_column_name_for_dataset(known_columns, sanitized_col_name)
         if not resolved_col:
             fuzzy_metric_ref = resolve_metric_reference_name(metric_names, sanitized_col_name, allow_fuzzy=True)

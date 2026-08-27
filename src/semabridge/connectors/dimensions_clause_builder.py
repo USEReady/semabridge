@@ -91,7 +91,7 @@ class DimensionsClauseBuilder:
         missing_dims: Dict[str, List[str]] = {}
         added_dimensions = set()
         added_physical_dimensions = set()
-        used_dimension_aliases: Set[str] = set()
+        used_dimension_aliases_by_dataset: Dict[str, Set[str]] = {}
 
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
@@ -143,8 +143,9 @@ class DimensionsClauseBuilder:
                     continue
                 
                 if dim_key not in added_dimensions and physical_dim_key not in added_physical_dimensions:
+                    ds_used = used_dimension_aliases_by_dataset.setdefault(alias, set())
                     emitted_name = self._resolve_unique_dimension_alias(
-                        semantic_name, used_dimension_aliases, attr.unique_name
+                        semantic_name, ds_used, attr.unique_name
                     )
                     col_synonyms = self._lookup_attribute_synonyms(
                         attr,
@@ -165,26 +166,10 @@ class DimensionsClauseBuilder:
             if not alias:
                 continue
                 
-            # Synthetic/projected columns injected by the enriched-view builder —
-            # these are scalar subqueries, not physical base-table columns, and
-            # Snowflake rejects them in semantic view DIMENSIONS clauses.
-            # Also exclude date-intelligence anchor columns (MAX_MONTHINDEX, MONTHINDEX
-            # when used as a synthetic rolling-period anchor) — these are computed at
-            # runtime in enriched views via scalar subqueries, not base table columns.
-            # MONTHINDEX is a valid *real* column name too, so it is only excluded here
-            # when the live schema is unknown (modeled_cols fallback path); when live_cols
-            # are available the known_phys filter below handles it correctly.
-            # When live Snowflake schema confirms a column exists, it will pass
-            # the _live filter above. _SYNTHETIC_COLS only blocks columns that are
-            # NEVER real physical columns in target tables.
             _SYNTHETIC_COLS = {
                 "MAX_DATE", "_CURRENT_FISCAL_PERIOD",
                 "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX",
             }
-            # Columns that are synthetic date-intelligence anchors NOT present in
-            # physical base tables.  Only skip these when live schema is absent (we
-            # can't confirm they exist).  If live schema confirms them, the _live
-            # filter above will allow them through.
             _LIVE_ONLY_COLS = {"MONTHINDEX", "YEARINDEX", "QUARTERINDEX", "WEEKINDEX"}
             _has_live = dataset.unique_name in (live_col_lookup or {})
 
@@ -194,18 +179,11 @@ class DimensionsClauseBuilder:
                 if col.unique_name.upper() in _SYNTHETIC_COLS:
                     continue
 
-                # Compute phys_col up front so every skip branch below —
-                # including the _LIVE_ONLY_COLS check — reports the column
-                # that actually triggered it, not a stale value left over
-                # from the previous loop iteration (phys_col used to be
-                # computed further down, after this check already read it).
                 if is_osi:
                     phys_col = self.identifier_sanitizer.sanitize_column(col.unique_name)
                 else:
                     phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
 
-                # Synthetic date-intelligence columns (MONTHINDEX etc.) are only safe
-                # to emit when the live Snowflake schema confirms they exist.
                 if not _has_live and col.unique_name.upper() in _LIVE_ONLY_COLS:
                     missing_dims.setdefault(dataset.unique_name, [])
                     if phys_col not in missing_dims[dataset.unique_name]:
@@ -226,7 +204,6 @@ class DimensionsClauseBuilder:
                 semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
                 semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
 
-                # Prefer live (confirmed Snowflake) schema when available.
                 _live = (live_col_lookup or {}).get(dataset.unique_name)
                 if _live is not None:
                     if phys_col not in _live:
@@ -265,8 +242,9 @@ class DimensionsClauseBuilder:
                     if not sync_all:
                         continue
                 
+                ds_used = used_dimension_aliases_by_dataset.setdefault(alias, set())
                 emitted_name = self._resolve_unique_dimension_alias(
-                    semantic_name, used_dimension_aliases, semantic_source_name
+                    semantic_name, ds_used, semantic_source_name
                 )
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS '
@@ -276,9 +254,53 @@ class DimensionsClauseBuilder:
                 added_dimensions.add(dim_key)
                 added_physical_dimensions.add(physical_dim_key)
 
+        # 3. Add extra physical/synthetic columns present in live_col_lookup / dataset_col_lookup
+        for dataset in datasets:
+            alias = dataset_aliases.get(dataset.unique_name)
+            if not alias:
+                continue
+
+            candidate_cols: Set[str] = set()
+            if live_col_lookup and dataset.unique_name in live_col_lookup:
+                candidate_cols.update(live_col_lookup[dataset.unique_name])
+            if dataset_col_lookup and dataset.unique_name in dataset_col_lookup:
+                candidate_cols.update(dataset_col_lookup[dataset.unique_name])
+
+            if self.translator and getattr(self.translator, "anchor_flag_map", None):
+                ds_flags = self.translator.anchor_flag_map.get(str(dataset.unique_name or "").casefold()) or {}
+                for flag_val in ds_flags.values():
+                    if isinstance(flag_val, str) and flag_val:
+                        candidate_cols.add(flag_val)
+
+            for phys_col in sorted(candidate_cols):
+                if not phys_col or phys_col.startswith("RowNumber") or phys_col.startswith("_"):
+                    continue
+
+                physical_dim_key = (alias, phys_col)
+                if physical_dim_key in added_physical_dimensions:
+                    continue
+
+                semantic_name = self.sanitizer.sanitize_semantic_name(phys_col)
+                dim_key = (alias, semantic_name, phys_col)
+                if dim_key in added_dimensions:
+                    continue
+
+                ds_used = used_dimension_aliases_by_dataset.setdefault(alias, set())
+                emitted_name = self._resolve_unique_dimension_alias(
+                    semantic_name, ds_used, phys_col
+                )
+                dims_lines.append(
+                    f'  {alias}."{emitted_name}" AS '
+                    f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                )
+                added_dimensions.add(dim_key)
+                added_physical_dimensions.add(physical_dim_key)
+
         # Fallback
         if not dims_lines and datasets:
-            self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, used_dimension_aliases, dims_lines, model_name, is_osi)
+            fallback_alias = dataset_aliases.get(datasets[0].unique_name, "")
+            ds_used = used_dimension_aliases_by_dataset.setdefault(fallback_alias, set())
+            self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, ds_used, dims_lines, model_name, is_osi)
 
         return dims_lines, missing_dims
 

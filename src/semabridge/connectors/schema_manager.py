@@ -630,6 +630,42 @@ class SnowflakeSchemaManager:
 
         return None
 
+    def _resolve_source_column_name(self, dataset: SMLDataset, raw_col_name: str, model: Any = None) -> str:
+        """Resolve column name specifically to the physical source column name as it exists on the raw database table.
+
+        Distinct from `_resolve_physical_column_name` (which resolves target/mapped column names
+        for DDL and metric building): this method returns the column name needed to execute raw SQL queries
+        against physical database tables (e.g. `SELECT MAX(...) FROM <physical_table>`).
+        """
+        if not dataset:
+            return self._sanitize_col_name(raw_col_name)
+
+        raw_upper = str(raw_col_name).upper()
+        table_name_upper = (getattr(dataset, "source_table", None) or dataset.unique_name).upper()
+
+        # 1. Check live schema metadata for physical table exact/case-insensitive match
+        live_cols = self._live_schema_metadata.get(table_name_upper, set())
+        if live_cols:
+            if raw_upper in live_cols:
+                return raw_upper
+            live_cols_upper = {c.upper(): c for c in live_cols}
+            if raw_upper in live_cols_upper:
+                return live_cols_upper[raw_upper]
+
+        # 2. Check if dataset columns carry an explicit source_column
+        cols = getattr(dataset, "columns", []) or []
+        for c in cols:
+            scol = getattr(c, "source_column", None)
+            uname = getattr(c, "unique_name", None) or ""
+            if uname.casefold() == str(raw_col_name).casefold() and scol:
+                return scol
+
+        # 3. Default to clean sanitized raw_col_name (without date_patterns / mapping alias overrides)
+        if raw_col_name:
+            return self._sanitize_col_name(raw_col_name)
+
+        return self._resolve_physical_column_name(dataset, raw_col_name, model=model)
+
     def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str, model: Any = None) -> str:
         """Resolve semantic/raw column name to canonical physical column name dynamically."""
         raw_upper = str(raw_col_name).upper()

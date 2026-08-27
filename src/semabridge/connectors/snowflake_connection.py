@@ -304,6 +304,10 @@ def get_snowflake_connect_kwargs(config: SnowflakeConfig) -> Dict[str, Any]:
         kwargs["token"] = token
         logger.info("Using OAuth S2S authentication for Snowflake")
 
+    elif auth == "externalbrowser":
+        kwargs["authenticator"] = "externalbrowser"
+        logger.info("Using externalbrowser authentication for Snowflake")
+
     else:
         # Default: password auth
         if not config.password:

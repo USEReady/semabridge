@@ -542,6 +542,19 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
             target_group.setdefault(stage, []).append(record)
 
+    # Deduplicate: metrics that were ultimately dropped/rejected (in dropped_by_stage)
+    # should not also appear in converted sections (needs_review, standard, ai_assisted).
+    all_dropped_names = {
+        str(rec.get("entity_name") or rec.get("entity") or "").strip()
+        for records in dropped_by_stage.values()
+        for rec in records
+        if rec.get("entity_name") or rec.get("entity")
+    }
+    if all_dropped_names:
+        needs_review = [e for e in needs_review if e["name"] not in all_dropped_names]
+        standard = [e for e in standard if e["name"] not in all_dropped_names]
+        ai_assisted = [e for e in ai_assisted if e["name"] not in all_dropped_names]
+
     return {
         "crashed": False,
         "target_type": target_type,

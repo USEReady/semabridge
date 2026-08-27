@@ -1909,10 +1909,22 @@ class SnowflakeEmitter(BaseEmitter):
         """
         if not getattr(self.sf_behavior, "auto_create_enriched_view", False):
             return []
+        from semabridge.converter.time_intelligence_shapes import metrics_with_time_intelligence_shapes
+        ti_metrics = metrics_with_time_intelligence_shapes(getattr(model, "metrics", []) or [])
+        ti_datasets = {
+            getattr(m, "dataset", "").casefold()
+            for m in getattr(model, "metrics", []) or []
+            if getattr(m, "unique_name", None) in ti_metrics and getattr(m, "dataset", None)
+        }
+        primary_fact = self._identify_fact_table(model)
+        if primary_fact:
+            ti_datasets.add(primary_fact.casefold())
+
         return [
             fact_table
             for fact_table in self._get_fact_tables_needing_enrichment(model)
-            if self._resolve_fact_enrichment_date_column(model, fact_table)
+            if fact_table.casefold() in ti_datasets
+            and self._resolve_fact_enrichment_date_column(model, fact_table)
         ]
 
     def predict_anchor_flag_map(self, model: Any) -> Dict[str, Dict[Any, str]]:

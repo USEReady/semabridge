@@ -151,29 +151,41 @@ def _resolve_node_shape(
     memo: Dict[str, Optional[Shape]],
     visiting: Set[str],
 ) -> Optional[Shape]:
+    if node is None:
+        return None
+
+    if isinstance(node, MeasureRefNode):
+        return _resolve_own_shape(node.name, dax_by_name, memo, visiting)
+
+    from semabridge.converter.dax_ast_parser import BinaryOpNode
+    if isinstance(node, BinaryOpNode):
+        left_s = _resolve_node_shape(node.left, dax_by_name, memo, visiting)
+        right_s = _resolve_node_shape(node.right, dax_by_name, memo, visiting)
+        return left_s or right_s
+
     if not isinstance(node, FunctionCallNode):
-        # Arithmetic, IF/SWITCH, string literals, bare columns, etc. — none
-        # of these represent a time-intelligence date window on their own.
         return None
 
     func = node.func.upper()
 
     if func in PERIOD_TO_DATE_FUNCS:
-        # TOTALYTD-of-a-measure-that-itself-has-a-date-window is a known,
-        # pre-existing renderer limitation (dax_ast_parser.py's own comment:
-        # produces an always-empty CASE WHEN) — out of scope here. This
-        # shape is reported as a single, non-nested component regardless of
-        # what its own argument is.
         return (PERIOD_TO_DATE_FUNCS[func],)
 
     if func in LAG_FUNCS:
-        # Bare 2-arg form: SAMEPERIODLASTYEAR(<agg-or-measure>, <date column>).
         arg0 = node.args[0] if node.args else None
         inner = _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
         outer = LAG_FUNCS[func]
         return (inner + (outer,)) if inner else (outer,)
 
     if func == "CALCULATE":
+        # Structurally precise rolling months detection on AST repr string
+        full_node_str = str(node)
+        if "MONTHINDEX" in full_node_str.upper():
+            m_r = re.search(r"MONTHINDEX.*?op='-'.*?value=(\d+)", full_node_str, re.IGNORECASE | re.DOTALL)
+            if m_r:
+                n_months = int(m_r.group(1))
+                return (f"R{n_months}M",)
+
         arg0 = node.args[0] if node.args else None
         lag_modifier: Optional[FunctionCallNode] = None
         for modifier in node.args[1:]:
@@ -186,11 +198,13 @@ def _resolve_node_shape(
             outer = LAG_FUNCS[lag_modifier.func.upper()]
             return (inner + (outer,)) if inner else (outer,)
 
-        # No lag modifier — e.g. FILTER(ALL(...))/ALLEXCEPT(...) only, or no
-        # modifiers at all. Those change which rows are included, not what
-        # date window the value represents, so transparently pass through
-        # whatever shape (if any) the wrapped measure/expression has.
         return _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
+
+    # General composite function calls (DIVIDE, CONCATENATE, INT, LEFT, IF, SWITCH, COALESCE, etc.)
+    for arg in node.args:
+        arg_s = _resolve_node_shape(arg, dax_by_name, memo, visiting)
+        if arg_s:
+            return arg_s
 
     return None
 
@@ -347,6 +361,10 @@ def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) ->
     """
     if not shape:
         raise ValueError("build_shape_boolean_sql requires a non-empty shape")
+
+    if len(shape) == 1 and shape[0].startswith("R") and shape[0].endswith("M") and shape[0][1:-1].isdigit():
+        n_months = int(shape[0][1:-1])
+        return f"{date_col_sql} > DATEADD(MONTH, -{n_months}, {anchor_sql}) AND {date_col_sql} <= {anchor_sql}"
 
     effective_anchor = anchor_sql
     lag_components = [c for c in shape if c in LAG_UNITS]

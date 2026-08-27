@@ -79,6 +79,7 @@ _SYNONYMS_SUFFIX_RE = re.compile(r'\s*WITH\s+SYNONYMS\s*=\s*\(.*\)\s*$', re.IGNO
 # ddl_builder.py ``_generate_deterministic_hash``). Not specific to any
 # metric name — just the two suffix shapes the emitter itself can produce.
 _DEDUP_SUFFIX_RE = re.compile(r'_(?:\d+|[0-9A-F]{4})$')
+_BRANCH_SUFFIX_RE = re.compile(r'_BRANCH_\d+(?:_\d+)*$', re.IGNORECASE)
 
 
 def _normalize(name: str, sanitizer: IdentifierSanitizer) -> str:
@@ -87,6 +88,10 @@ def _normalize(name: str, sanitizer: IdentifierSanitizer) -> str:
 
 def _strip_dedup_suffix(name: str) -> str:
     return _DEDUP_SUFFIX_RE.sub("", name)
+
+
+def _strip_branch_suffix(name: str) -> str:
+    return _BRANCH_SUFFIX_RE.sub("", name)
 
 
 @dataclass
@@ -167,7 +172,12 @@ class ReconciliationReport:
         for base, snap_count in snapshot_counts.items():
             accounted = deployed_base_counts.get(base, 0) + dropped_base_counts.get(base, 0)
             if accounted < snap_count:
-                shortfall[base] = snap_count - accounted
+                # Check if base is a child branch metric whose parent base was dropped
+                parent_base = _strip_branch_suffix(base)
+                if parent_base != base and (dropped_base_counts.get(parent_base, 0) > 0 or parent_base in self.dropped_metrics):
+                    accounted += (snap_count - accounted)
+                else:
+                    shortfall[base] = snap_count - accounted
         return shortfall
 
     def is_clean(self) -> bool:

@@ -499,6 +499,14 @@ def parse_structured_response(text: str) -> Tuple[Optional[str], Optional[float]
     try:
         parsed = json.loads(normalized)
     except Exception:
+        # If text looks like a JSON object (starts with '{' or contains '{'), it is a malformed/truncated
+        # JSON payload, not bare SQL text. Try to extract "sql": "..." via regex before giving up.
+        if "{" in cleaned:
+            sql_match = re.search(r'"sql"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', cleaned)
+            if sql_match:
+                extracted_sql = sql_match.group(1).replace(r'\"', '"').replace(r'\\', '\\')
+                return extracted_sql, None
+            return None, None
         return cleaned, None
     return _extract_sql_and_confidence(parsed)
 

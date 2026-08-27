@@ -122,8 +122,11 @@ class SemanticDDLSanitizer:
         in_dimensions = False
         in_metrics = False
         changed = False
+        metric_nulled_in_this_step = False
 
-        metric_line_pattern = re.compile(r'^(\s*\w+\."([^"]+)"\s+AS\s+).+?(?P<comma>,?)\s*$')
+        metric_line_pattern = re.compile(
+            r'^\s*(\w+)\."([^"]+)"\s+AS\s+', flags=re.IGNORECASE
+        )
         table_pk_pattern = re.compile(
             r'^(\s*)(\w+)(\s+AS\s+.+?)\s+PRIMARY\s+KEY\s+\("([^"]+)"\)\s*(?P<comma>,?)\s*$',
             flags=re.IGNORECASE,
@@ -132,8 +135,24 @@ class SemanticDDLSanitizer:
             r'^\s*(\w+)\."[^"]+"\s+AS\s+\w+\."([^"]+)"\s*,?\s*$',
             flags=re.IGNORECASE,
         )
+
+        # Build exact token patterns:
+        # If invalid_identifier has alias.col (e.g. COL_DATE.RUNNING_YEAR or KPI.KPI01),
+        # require the full qualified alias.col or alias."col" reference inside metric expressions.
+        if invalid_alias and invalid_col:
+            metric_token_pattern = re.compile(
+                rf'\b{re.escape(invalid_alias)}\s*\.\s*"?{re.escape(invalid_col)}"?\b',
+                flags=re.IGNORECASE,
+            )
+        else:
+            metric_token_pattern = re.compile(
+                rf'(?<![A-Z0-9_]){re.escape(invalid_col or invalid_norm)}(?![A-Z0-9_])',
+                flags=re.IGNORECASE,
+            )
+
         invalid_token_pattern = re.compile(
-            rf'(?<![A-Z0-9_]){re.escape(invalid_col or invalid_norm)}(?![A-Z0-9_])'
+            rf'(?<![A-Z0-9_]){re.escape(invalid_col or invalid_norm)}(?![A-Z0-9_])',
+            flags=re.IGNORECASE,
         )
 
         # Determine deterministic fallback PK columns from DIMENSIONS by alias.
@@ -190,20 +209,6 @@ class SemanticDDLSanitizer:
                 continue
 
             line_norm = line.upper().replace('"', "")
-            # Match on the word-bounded token pattern only -- a plain
-            # substring check (``invalid_norm in line_norm``) used to be
-            # OR'd in here as well, but for a short invalid identifier
-            # (e.g. a bare "_") that matches almost every line in the
-            # clause, since most identifiers contain an underscore
-            # somewhere (TOTAL_UNITS, SALESFACT_DATE_DATE_DATE, ...).
-            # invalid_token_pattern already requires non-identifier
-            # characters on both sides, so it correctly isolates a
-            # standalone bad token without also matching underscores (or
-            # any other invalid_norm substring) embedded inside a longer,
-            # perfectly valid identifier. Single-quoted string literals are
-            # scrubbed first so a SQL literal that happens to contain the
-            # token (e.g. a LIKE '_%' wildcard) is never mistaken for an
-            # identifier reference either.
             line_norm_for_match = re.sub(r"'(?:''|[^'])*'", "''", line_norm)
             contains_invalid = bool(invalid_token_pattern.search(line_norm_for_match))
 
@@ -236,31 +241,30 @@ class SemanticDDLSanitizer:
                 changed = True
                 continue
 
-            if in_metrics and contains_invalid:
-                # Replace the metric expression with a NULL placeholder so the
-                # metric declaration survives but produces no data.  The
-                # metric_line_pattern extracts the alias/name prefix; if it
-                # doesn't match (e.g. synonym suffix or unusual formatting)
-                # we still drop the whole line so the clause stays valid.
+            if in_metrics:
                 metric_match = metric_line_pattern.match(line)
-                if metric_match:
-                    prefix = metric_match.group(1)
+                should_null_metric = False
+                if metric_match and not metric_nulled_in_this_step:
+                    line_entity_alias = metric_match.group(1).upper()
+                    line_metric_name = metric_match.group(2).upper()
+
+                    # 1. Exact metric entity & name match (e.g. error specifies KPI."KPI01")
+                    if invalid_alias and invalid_col and line_entity_alias == invalid_alias and line_metric_name == invalid_col:
+                        should_null_metric = True
+                    # 2. Qualified column reference in expression (e.g. expression contains COL_DATE.RUNNING_YEAR)
+                    elif metric_token_pattern.search(line_norm_for_match):
+                        should_null_metric = True
+
+                if should_null_metric and metric_match:
+                    prefix_match = re.match(r'^(\s*\w+\."[^"]+"\s+AS\s+)', line, flags=re.IGNORECASE)
+                    prefix = prefix_match.group(1) if prefix_match else f'  {metric_match.group(1)}."{metric_match.group(2)}" AS '
                     nulled_metric_names.append(metric_match.group(2))
-                    # Strip any trailing synonym clause from the original line
-                    # so we can reconstruct a clean replacement.
-                    raw_after_as = line[metric_match.end(1):]
-                    # Detect trailing comma (before optional WITH SYNONYMS or $)
+                    raw_after_as = line[len(prefix):]
                     trailing_comma = "," if raw_after_as.rstrip().endswith(",") or "," in raw_after_as else ""
                     remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){trailing_comma}")
-                else:
-                    # Continuation line or unrecognised format — drop it entirely;
-                    # _normalize_all_clause_commas will fix up trailing commas.
-                    # No name is resolvable here, so this metric (if any) can't
-                    # be added to nulled_metric_names — same pre-existing
-                    # limitation the caller's own fallback attribution has.
-                    pass
-                changed = True
-                continue
+                    changed = True
+                    metric_nulled_in_this_step = True
+                    continue
 
             remediated_lines.append(line)
 

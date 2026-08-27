@@ -581,7 +581,8 @@ class SyncOrchestrator:
         try:
             # Step 1: Extract from source
             # The _extract_to_osi method is a bit of a misnomer now, it returns raw and then we convert
-            raw_extracted_data, osi_model = self._extract_and_convert_to_osi(item, config, job)
+            osi_model = self._extract_to_osi(item, config, job)
+            raw_extracted_data = {}
             if self._artifact_exporter:
                 self._artifact_exporter.export_extraction_artifacts(item, raw_extracted_data)
                 self._artifact_exporter.export_osi_artifacts(item, osi_model)

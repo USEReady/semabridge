@@ -412,23 +412,34 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
                     #     "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
                     #     project_id, recon.unaccounted,
                     # )
-                    unaccounted_entries = [
-                        {
-                            "entity_kind": "metric",
-                            "entity_name": base,
-                            "dataset": None,
-                            "stage": "reconciliation",
-                            "reason": (
+                    dropped_reason_map = {
+                        str(r.get("entity_name") or "").upper(): str(r.get("reason") or "")
+                        for r in (recon.drop_records or [])
+                        if r.get("entity_name")
+                    }
+                    unaccounted_entries = []
+                    for base, count in recon.unaccounted.items():
+                        from semabridge.core.reconciliation import _strip_branch_suffix
+                        parent_base = _strip_branch_suffix(base)
+                        parent_reason = dropped_reason_map.get(parent_base)
+                        if parent_reason:
+                            reason = f"Auto-generated branch of '{parent_base}', which was dropped during deployment: {parent_reason}"
+                        else:
+                            reason = (
                                 "This metric normalizes to a name present in the Stage 6 "
                                 "snapshot but absent from both the deployed semantic "
                                 "view's DDL and the drop ledger — possible silent loss "
                                 "during deployment."
-                            ),
+                            )
+                        unaccounted_entries.append({
+                            "entity_kind": "metric",
+                            "entity_name": base,
+                            "dataset": None,
+                            "stage": "reconciliation",
+                            "reason": reason,
                             "detail": f"{count} snapshot occurrence(s) unaccounted for.",
                             "by_design": False,
-                        }
-                        for base, count in recon.unaccounted.items()
-                    ]
+                        })
                     run["summary"].setdefault("dropped_entities", [])
                     run["summary"]["dropped_entities"].extend(unaccounted_entries)
                     for result_entry in run.get("results") or []:

@@ -24,9 +24,16 @@ def resolve_source_table_mapping(
     an enrichment success must always be visible here regardless of how
     behavior_mapping happens to be configured, for any table/anchor/model.
     """
-    merged = dict(enriched_view_mapping or {})
-    merged.update(behavior_mapping or {})
+    merged: Dict[str, str] = {}
+    for src in (enriched_view_mapping, behavior_mapping):
+        if not src:
+            continue
+        for k, v in src.items():
+            merged[k] = v
+            merged[k.casefold()] = v
+            merged[k.upper()] = v
     return merged
+
 
 
 class TablesClauseBuilder:
@@ -128,6 +135,9 @@ class TablesClauseBuilder:
                     resolved_fiscal_col, safe_table,
                 )
                 return source_fq
+
+        if source_fq.upper().endswith('_ENRICHED"') or source_fq.upper().endswith('_ENRICHED'):
+            return source_fq
 
         anchor_literal = self._fetch_fiscal_anchor_literal(date_table_ref, resolved_date_col, resolved_fiscal_col)
         if anchor_literal is None:

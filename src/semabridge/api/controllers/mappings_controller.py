@@ -356,7 +356,33 @@ async def dry_run_mapping(
                     warehouse=str(target_cfg.get("warehouse") or "placeholder"),
                     database=str(target_cfg.get("database") or "placeholder"),
                 )
-                trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=ConnectorBehavior())
+                trial_behavior = ConnectorBehavior()
+                trial_behavior.snowflake.auto_create_enriched_view = True
+                trial_behavior.snowflake.use_enriched_view_for_metrics = True
+                trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=trial_behavior)
+
+                # Predict anchor_flag_map & re-render metrics so trial DDL emission tests the EXACT deployment SQL
+                try:
+                    predicted_map = trial_emitter.predict_anchor_flag_map(trial_sml)
+                    if predicted_map:
+                        for ft in predicted_map:
+                            trial_emitter._enriched_view_mapping[ft] = f"{ft.upper()}_ENRICHED"
+                        from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
+                        from semabridge.converter.dax_translator import DAXTranslator
+
+                        dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(
+                            getattr(trial_sml, "datasets", []) or []
+                        )
+                        rerender_anchor_dependent_metrics(
+                            trial_sml,
+                            predicted_map,
+                            dataset_col_lookup,
+                            dataset_aliases,
+                            label="predicted",
+                        )
+                except Exception as pred_err:
+                    logger.warning("[DryRun] Trial anchor flag map prediction failed (non-fatal): %s", pred_err)
+
                 try:
                     trial_emitter.generate_ddls(trial_sml)
                 except Exception as ddl_err:

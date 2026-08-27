@@ -9,7 +9,9 @@ def _quote_synonym(value: str) -> str:
 
 
 def synonyms_clause(synonyms: list[str] | None) -> str:
-    cleaned = [str(s or "").strip() for s in (synonyms or []) if str(s or "").strip()]
-    if not cleaned:
-        return ""
-    return f" WITH SYNONYMS = ({', '.join(_quote_synonym(s) for s in cleaned)})"
+    """Snowflake CREATE SEMANTIC VIEW DDL does not support a SYNONYMS clause in SQL DDL.
+
+    Synonyms are maintained in SML metadata and exported to Cortex Analyst YAML specs.
+    Returns empty string for SQL DDL emission.
+    """
+    return ""

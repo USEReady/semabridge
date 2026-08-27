@@ -159,6 +159,10 @@ class MetricsClauseBuilder:
         # type_safety_validator.py's module docstring for the incident this
         # closes.
         dataset_col_types = build_dataset_col_types(getattr(model, "datasets", None))
+        if hasattr(self.translator, "column_data_types"):
+            self.translator.column_data_types = dataset_col_types
+        else:
+            setattr(self.translator, "column_data_types", dataset_col_types)
 
         # Resolved ONCE for the whole model (not per metric -- see
         # time_intelligence_shapes.py's own note on why) so the DDL-
@@ -167,6 +171,14 @@ class MetricsClauseBuilder:
         # metric's own resolved shape predicts" instead of hard-failing
         # every enrichment-created column dry-run can't see.
         metric_shapes = metrics_with_time_intelligence_shapes(valid_metrics)
+        # Build relationship reachability graph to predict cross-table reference failures
+        relationship_graph: Dict[str, Set[str]] = {}
+        for rel in getattr(model, "relationships", []) or []:
+            from_a = dataset_aliases.get(getattr(rel, "from_dataset", None))
+            to_a = dataset_aliases.get(getattr(rel, "to_dataset", None))
+            if from_a and to_a:
+                relationship_graph.setdefault(from_a, set()).add(to_a)
+                relationship_graph.setdefault(to_a, set()).add(from_a)
 
         metric_base_totals: Dict[str, int] = {}
         for m in valid_metrics:
@@ -278,6 +290,28 @@ class MetricsClauseBuilder:
 
             if expr:
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
+                valid_aliases_set = set(dataset_aliases.values())
+                ref_aliases = self._extract_referenced_table_aliases(expr, valid_aliases_set)
+                unreachable_aliases = [
+                    ra for ra in ref_aliases
+                    if not self._is_reachable_alias(relationship_graph, metric_entity_alias, ra)
+                ]
+                if unreachable_aliases:
+                    logger.warning(
+                        "Skipping metric '%s': references table alias(es) %s unreachable from anchor table '%s'.",
+                        metric.unique_name, unreachable_aliases, metric_entity_alias,
+                    )
+                    skipped_metric_names.add(metric.unique_name)
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        f"Metric references table alias(es) {', '.join(sorted(unreachable_aliases))} that are not "
+                        f"reachable from its anchor table entity '{metric_entity_alias}' via declared relationships.",
+                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
+                    )
+                    safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
+                    metrics_lines.append(f'  {metric_entity_alias}."{safe_metric_name}" AS CAST(NULL AS DOUBLE)')
+                    continue
+
                 safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
                 if metric_name != safe_metric_name:
                     logger.info(
@@ -285,9 +319,13 @@ class MetricsClauseBuilder:
                         metric_name,
                         safe_metric_name,
                     )
+                syns_to_emit = list(getattr(metric, "synonyms", []) or [])
+                if "CAST(NULL AS DOUBLE)" in expr or not getattr(metric, "sync_enabled", True):
+                    syns_to_emit = []
+
                 metrics_lines.append(
                     f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
-                    f'{synonyms_clause(list(getattr(metric, "synonyms", []) or []))}'
+                    f'{synonyms_clause(syns_to_emit)}'
                 )
                 metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
                 emittable_metric_name_set.add(self.identifier_sanitizer.sanitize_alias(metric.unique_name))
@@ -316,6 +354,14 @@ class MetricsClauseBuilder:
             "never itself emitted (dropped earlier, or removed in this same "
             "cascading pruning pass) — Snowflake's METRICS clause cannot "
             "reference an undefined metric.",
+        )
+
+        # Apply recursive metric reference inlining and fail-closed validation pass
+        pre_prune_lines = list(metrics_lines)
+        metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, emittable_metric_name_set)
+        self._record_removed_metric_lines(
+            pre_prune_lines, metrics_lines, ddl_name_to_unique, ddl_name_to_dataset,
+            "Metric references an unmapped, dropped, or invalid metric and failed closed.",
         )
 
         # OSI Fallback Loop
@@ -379,7 +425,7 @@ class MetricsClauseBuilder:
 
     @staticmethod
     def _is_scalar_metric_sql(expr: str) -> bool:
-        if not expr:
+        if not expr or "{" in expr or "}" in expr:
             return False
         upper = f" {expr.upper()} "
         forbidden = (
@@ -404,7 +450,13 @@ class MetricsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
     ) -> bool:
         wanted = self.identifier_sanitizer.sanitize_column(column_name).upper()
-        return wanted in {str(c).upper() for c in dataset_col_lookup.get(dataset_name, set())}
+        cols = set(dataset_col_lookup.get(dataset_name, set()))
+        if self.translator and getattr(self.translator, "anchor_flag_map", None):
+            ds_flags = self.translator.anchor_flag_map.get(str(dataset_name or "").casefold()) or {}
+            for flag_val in ds_flags.values():
+                if isinstance(flag_val, str) and flag_val:
+                    cols.add(flag_val)
+        return wanted in {str(c).upper() for c in cols}
 
     def _rewrite_cross_dataset_sql_refs_to_precomputed(
         self,
@@ -523,7 +575,12 @@ class MetricsClauseBuilder:
 
             owners: list[str] = []
             for ds in physical_datasets:
-                cols = dataset_col_lookup.get(ds, set())
+                cols = set(dataset_col_lookup.get(ds, set()))
+                if self.translator and getattr(self.translator, "anchor_flag_map", None):
+                    ds_flags = self.translator.anchor_flag_map.get(str(ds or "").casefold()) or {}
+                    for flag_val in ds_flags.values():
+                        if isinstance(flag_val, str) and flag_val:
+                            cols.add(flag_val)
                 resolved_col = self.translator._resolve_column_name_for_dataset(cols, col_name)
                 if resolved_col:
                     owners.append(ds)
@@ -538,9 +595,16 @@ class MetricsClauseBuilder:
                 unresolved = True
                 return match.group(0)
 
+            chosen_dataset_cols = set(dataset_col_lookup.get(chosen_dataset, set()))
+            if self.translator and getattr(self.translator, "anchor_flag_map", None):
+                ds_flags = self.translator.anchor_flag_map.get(str(chosen_dataset or "").casefold()) or {}
+                for flag_val in ds_flags.values():
+                    if isinstance(flag_val, str) and flag_val:
+                        chosen_dataset_cols.add(flag_val)
+
             chosen_col = (
                 self.translator._resolve_column_name_for_dataset(
-                    dataset_col_lookup.get(chosen_dataset, set()),
+                    chosen_dataset_cols,
                     col_name,
                 )
                 or col_name
@@ -586,7 +650,13 @@ class MetricsClauseBuilder:
         for ds, cols in dataset_col_lookup.items():
             if self._is_virtual_measures_table(ds, dataset_col_lookup):
                 continue
-            resolved = self.translator._resolve_column_name_for_dataset(cols, col_name)
+            effective_cols = set(cols)
+            if self.translator and getattr(self.translator, "anchor_flag_map", None):
+                ds_flags = self.translator.anchor_flag_map.get(str(ds or "").casefold()) or {}
+                for flag_val in ds_flags.values():
+                    if isinstance(flag_val, str) and flag_val:
+                        effective_cols.add(flag_val)
+            resolved = self.translator._resolve_column_name_for_dataset(effective_cols, col_name)
             if resolved:
                 return ds
         return None
@@ -781,6 +851,25 @@ class MetricsClauseBuilder:
                     dataset=getattr(metric, "dataset", None), detail=sql_expr[:200],
                 )
                 return None
+
+            UNTRANSLATED_DAX_PATTERN = re.compile(
+                r"\b(CALCULATE|FILTER|ALL|EARLIER|VALUES|USERELATIONSHIP|ALLEXCEPT|CROSSFILTER|SUMX|AVERAGEX|COUNTX|MINX|MAXX)\b",
+                re.IGNORECASE,
+            )
+            if UNTRANSLATED_DAX_PATTERN.search(sql_expr):
+                logger.warning(
+                    "Metric '%s': sql_expression contains untranslated DAX constructs (%s). "
+                    "Skipping to prevent DDL compilation failure.",
+                    metric.unique_name,
+                    sql_expr[:120],
+                )
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    "SQL expression contains untranslated DAX functions, which Snowflake's "
+                    "semantic-view METRICS clause does not support.",
+                    dataset=getattr(metric, "dataset", None), detail=sql_expr[:200],
+                )
+                return None
             # If the metric's dataset is a virtual measures table, try to remap
             # column references to the actual fact table that owns those columns.
             if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
@@ -800,6 +889,8 @@ class MetricsClauseBuilder:
                     )
                     return None
             expr = sql_expr
+            if expr:
+                expr = re.sub(r'(>|<|=|\+|-|\*|/)\s*["\']?_["\']?', r'\1 0', expr)
             
             # ✅ NEW: Qualify cross-table references FIRST (before normalization)
             expr = self.translator._auto_qualify_cross_table_refs(expr, dataset_aliases)
@@ -1058,6 +1149,24 @@ class MetricsClauseBuilder:
                 return candidate
             idx += 1
 
+    @staticmethod
+    def _is_reachable_alias(graph: Dict[str, Set[str]], start_alias: str, target_alias: str) -> bool:
+        if start_alias == target_alias:
+            return True
+        if not graph:
+            return True
+        visited = {start_alias}
+        queue = [start_alias]
+        while queue:
+            curr = queue.pop(0)
+            for neighbor in graph.get(curr, set()):
+                if neighbor == target_alias:
+                    return True
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        return False
+
     def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None) -> str:
         valid_aliases = set(dataset_aliases.values())
         referenced_aliases = self._extract_referenced_table_aliases(metric_sql, valid_aliases)
@@ -1108,7 +1217,11 @@ class MetricsClauseBuilder:
         if not metrics_lines or not metric_name_set:
             return metrics_lines
         current = list(metrics_lines)
-        while True:
+        inlined_by_metric: Dict[str, Set[str]] = {}
+        max_passes = len(metrics_lines) + 5
+        pass_count = 0
+        while pass_count < max_passes:
+            pass_count += 1
             defined: Set[str] = set()
             window_metrics: Set[str] = set()
             parsed = []
@@ -1132,37 +1245,65 @@ class MetricsClauseBuilder:
                 if not name:
                     next_lines.append(line)
                     continue
-                refs = set(re.findall(r'"([A-Z_][A-Z0-9_]*)"', expr))
-                unresolved = [r for r in refs if r in metric_name_set and r not in defined and r != name]
-                if unresolved:
+
+                refs = set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
+                metric_refs = [r for r in refs if r in metric_name_set and r != name]
+
+                # 1. Fail-closed: check if any referenced metric is missing or invalid/null
+                unresolved_or_invalid = False
+                for r in metric_refs:
+                    if r not in defined:
+                        unresolved_or_invalid = True
+                        break
+                    r_expr = expr_by_name.get(r)
+                    if not r_expr or "CAST(NULL AS" in r_expr.upper() or r_expr.strip().upper() == "NULL":
+                        unresolved_or_invalid = True
+                        break
+
+                if unresolved_or_invalid:
                     removed = True
                     continue
-                window_refs = [r for r in refs if r in window_metrics and r != name]
-                if window_refs:
+
+                # 2. Inline valid referenced metrics that haven't been inlined into this line yet
+                already_inlined = inlined_by_metric.setdefault(name, set())
+                uninlined_metric_refs = [r for r in metric_refs if r not in already_inlined]
+
+                if uninlined_metric_refs:
+                    logger.info("PRUNER MATCH: metric '%s' inlining metrics: %s", name, uninlined_metric_refs)
                     expanded_expr = expr
                     substituted = False
-                    for ref_name in sorted(set(window_refs)):
+                    for ref_name in sorted(set(uninlined_metric_refs)):
                         ref_expr = expr_by_name.get(ref_name)
                         if ref_expr:
-                            # Strip nested/inner WITH SYNONYMS clauses to avoid Snowflake DDL syntax errors
                             clean_ref_expr = re.sub(
                                 r"\s+WITH\s+SYNONYMS\s*=\s*\((?:[^()']|'(?:''|[^'])*')*\)",
                                 "",
                                 ref_expr,
                                 flags=re.IGNORECASE
                             )
-                            expanded_expr = re.sub(rf'"{re.escape(ref_name)}"', f'({clean_ref_expr})', expanded_expr)
+                            pattern = rf'(?:[A-Z0-9_]+\.)?"{re.escape(ref_name)}"'
+                            expanded_expr = re.sub(pattern, f'({clean_ref_expr.strip()})', expanded_expr)
+                            already_inlined.add(ref_name)
                             substituted = True
+
                     if substituted:
                         next_lines.append(f'  {alias}."{name}" AS {expanded_expr}{synonym_suffix}')
                         rewritten = True
                         continue
-                    removed = True
-                    continue
+
                 next_lines.append(line)
-            current = next_lines
+
             if not removed and not rewritten:
+                if hasattr(self.translator, "_normalize_string_boolean_comparisons"):
+                    current = [self.translator._normalize_string_boolean_comparisons(l) for l in current]
                 return current
+            current = next_lines
+
+        if hasattr(self.translator, "_normalize_string_boolean_comparisons"):
+            current = [self.translator._normalize_string_boolean_comparisons(l) for l in current]
+
+        logger.warning("_prune_unresolved_metric_lines reached max passes (%d); returning current state.", max_passes)
+        return current
 
     def _split_outer_synonyms_clause(self, expr: str) -> Tuple[str, str]:
         marker = " WITH SYNONYMS = ("

@@ -233,6 +233,7 @@ export default function ProjectJobsPage() {
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
 
   // Cached UI state — survives SPA navigation within the same tab.
@@ -324,6 +325,19 @@ export default function ProjectJobsPage() {
       console.error('Delete schedule failed:', err);
     } finally {
       setScheduleDeletingId('');
+    }
+  };
+
+  const handleClearLogs = async () => {
+    if (clearingLogs) return;
+    setClearingLogs(true);
+    try {
+      await api.clearJobRuns();
+      setRuns([]);
+    } catch (err) {
+      console.error('Clear logs failed:', err);
+    } finally {
+      setClearingLogs(false);
     }
   };
 
@@ -438,10 +452,11 @@ export default function ProjectJobsPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setRuns([])}
-              className="text-[11px] text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
+              onClick={handleClearLogs}
+              disabled={clearingLogs || runs.length === 0}
+              className="text-[11px] text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Clear Logs
+              {clearingLogs ? 'Clearing…' : 'Clear Logs'}
             </button>
           </div>
         </div>

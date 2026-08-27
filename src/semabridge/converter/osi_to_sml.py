@@ -757,6 +757,9 @@ class OSIToSMLConverter(BaseConverter):
                 continue
 
             companion_names: List[str] = []
+            parent_synonyms = list(getattr(metric, "synonyms", []) or [])
+            parent_synonym_sources = dict(getattr(metric, "synonym_sources", {}) or {})
+
             for index, branch in enumerate(decomposition.branches, start=1):
                 base_name = f"{metric.unique_name}_BRANCH_{index}"
                 new_name = base_name
@@ -765,6 +768,21 @@ class OSIToSMLConverter(BaseConverter):
                     new_name = f"{base_name}_{suffix}"
                     suffix += 1
                 existing_names_cf.add(new_name.casefold())
+
+                # Do NOT copy generic parent synonyms to child branches (which causes duplicate synonym
+                # warnings in Cortex when multiple branches share identical synonyms). Assign only explicit,
+                # disambiguated branch technical labels to each child branch.
+                branch_synonyms = []
+                b_label = f"{metric.label or metric.unique_name} Branch {index}"
+                if b_label not in branch_synonyms:
+                    branch_synonyms.append(b_label)
+                b_name_syn = f"{metric.unique_name} Branch {index}"
+                if b_name_syn not in branch_synonyms:
+                    branch_synonyms.append(b_name_syn)
+
+                branch_syn_sources = {}
+                for s in branch_synonyms:
+                    branch_syn_sources[s] = "auto_generated"
 
                 new_metric = SMLMetric(
                     unique_name=new_name,
@@ -777,6 +795,9 @@ class OSIToSMLConverter(BaseConverter):
                     expression=branch.branch_dax,
                     aggregation=SMLAggregationType.NONE,
                     complexity_tier=1,
+                    parent_metric_name=metric.unique_name,
+                    synonyms=branch_synonyms,
+                    synonym_sources=branch_syn_sources,
                     sync_enabled=True,
                 )
 
@@ -818,6 +839,10 @@ class OSIToSMLConverter(BaseConverter):
                 companion_names.append(new_name)
 
             if companion_names:
+                # Clear parent metric synonyms so dead parent placeholder metric (CAST NULL)
+                # never hijacks Cortex NLP matching away from working branch metrics
+                metric.synonyms = []
+                metric.synonym_sources = {}
                 # Supersede 4a's generic advisory, if it already fired for
                 # this metric -- remove the (note, category) pair together
                 # (they're parallel, same-index lists) so this metric ends

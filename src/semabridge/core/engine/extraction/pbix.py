@@ -59,6 +59,7 @@ def _extract_pbix(
         source_cfg = getattr(context.config, "source", None)
         pbix_path = (
             str(getattr(source_cfg, "pbix_path", "") or "").strip()
+            or str(getattr(source_cfg, "pbix_file_path", "") or "").strip()
             or str(getattr(source_cfg, "source_path", "") or "").strip()
             or str(getattr(source_cfg, "file_path", "") or "").strip()
         )

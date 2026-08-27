@@ -185,3 +185,18 @@ def test_dax_translation_validation(translator: MetricExpressionTranslator, test
         # For tests that are not expected to pass, we can check for specific issues or just assert is_valid is False
         assert validation_result["is_valid"] is False
 
+
+def test_malformed_json_response_rejection():
+    from semabridge.dax_translation.tier5.prompt import parse_structured_response
+    from semabridge.dax_translation.tier5.validation import _is_scalar_metric_sql
+
+    # 1. Malformed JSON with error text
+    raw_json_error = '{\n  "explanation": "DAX expression implies the relationship cannot be resolved",\n  "error": "syntax error"\n}'
+    sql, conf = parse_structured_response(raw_json_error)
+    assert sql is None, f"Expected None SQL for malformed JSON error payload, got: {sql!r}"
+
+    # 2. Direct _is_scalar_metric_sql test with curly braces
+    assert _is_scalar_metric_sql(raw_json_error) is False
+    assert _is_scalar_metric_sql('FACT."METRIC" AS {"error": "cannot translate"}') is False
+
+

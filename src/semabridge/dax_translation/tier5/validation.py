@@ -90,6 +90,8 @@ def _is_scalar_metric_sql(expr: str, dialect: str = "snowflake") -> bool:
     """
     if not expr:
         return False
+    if "{" in expr or "}" in expr:
+        return False
     if not _has_balanced_parentheses(expr):
         # Added after a real incident: a batch response salvaged from a
         # provider that emitted an unescaped quote mid-value (prompt.py's
@@ -398,7 +400,13 @@ class MetricSqlValidator:
 
         return agg_pattern.sub(_replace, metric_sql)
 
-    def _build_safe_sum_sql(self, expr_sql: str, identifier_hint: Optional[str] = None, dialect: str = "snowflake") -> str:
+    def _build_safe_sum_sql(
+        self,
+        expr_sql: str,
+        identifier_hint: Optional[str] = None,
+        dialect: str = "snowflake",
+        column_data_types: Optional[Dict[Any, str]] = None,
+    ) -> str:
         """dialect param added during Step 4 (Pipeline C) verification: the
         IFF(...) flag-wrapping and ::FLOAT cast below are Snowflake-only
         syntax — invalid Databricks/Spark SQL. For any non-Snowflake
@@ -414,6 +422,18 @@ class MetricSqlValidator:
             col_name = hint.split('.')[-1] if '.' in hint else hint
             flag_patterns = [r'^IS_', r'^HAS_', r'^WAS_', r'^DID_', r'^DOES_', r'_FLAG$', r'_FLG$', r'^DELETED$', r'_DELETED$']
             is_flag = any(re.search(p, col_name) for p in flag_patterns)
+
+            # Prevent false-positive boolean flag matching for string-typed columns
+            type_lookup = column_data_types or getattr(self, "column_data_types", None) or {}
+            if is_flag and type_lookup:
+                col_type = ""
+                for k, v in type_lookup.items():
+                    k_str = str(k[1] if isinstance(k, tuple) else k).upper()
+                    if k_str == col_name or k_str == hint:
+                        col_type = str(v).lower()
+                        break
+                if any(st in col_type for st in ("string", "varchar", "char", "text")):
+                    is_flag = False
 
         if is_flag:
             return f"SUM(IFF({expr_sql} = 1 OR {expr_sql} = TRUE, 1, 0))"
