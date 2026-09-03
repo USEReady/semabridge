@@ -58,6 +58,8 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     if not context.sml_model:
         raise ConversionError("No SML model available for target conversion. Ensure Stage 6 completed successfully.")
 
+    self._reuse_existing_view_for_structural_duplicate(context)
+
     output_dir = self._model_output_dir("reverse", model_name=context.project_id)
 
     ddls = emitter.generate_ddls(context.sml_model)
@@ -85,6 +87,51 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
         SMLSerializer.save(context.sml_model, sml_path)
 
     context.target_artifact_path = str(ddl_path)
+
+
+def _reuse_existing_view_for_structural_duplicate(self, context: RunContext) -> None:
+    """Detect a re-upload of the same underlying model under a different
+    file name (see utils/model_dedup.py's structural fingerprint) and, if
+    an already-deployed view matches, redirect this run's DDL at that
+    existing view instead of creating a duplicate one.
+
+    context.sml_model.unique_name is what ddl_builder.py turns into the
+    CREATE (OR REPLACE) SEMANTIC VIEW name; PBIX uploads set it from the
+    per-upload stored file name (see engine.py Step 2 / commit
+    "Fix multi-PBIX view naming"), so two uploads of the same model under
+    different names (e.g. Probability.pbix vs. probablility.pbix) get
+    different, colliding-free names — but also two separate views for what
+    is really one model. Rewriting unique_name here to the first upload's
+    own raw name reproduces get_target_deployment_name()'s exact same
+    sanitized output, so the DDL below targets that same view.
+
+    Never raises: dedup is a best-effort improvement, not a correctness
+    requirement — a failure here must not fail an otherwise-successful sync.
+    """
+    try:
+        from semabridge.repository.model_fingerprint_repository import ModelFingerprintRepository
+        from semabridge.utils.model_dedup import fingerprint_model
+
+        sf_cfg = context.config.snowflake
+        scope_key = f"snowflake|{sf_cfg.database}|{sf_cfg.schema_name}"
+        structural_fp = fingerprint_model(context.sml_model)
+
+        repo = ModelFingerprintRepository()
+        existing_raw_name = repo.find_existing_view_name(scope_key, structural_fp)
+
+        context.model_structural_fingerprint = structural_fp
+        context.model_fingerprint_scope_key = scope_key
+
+        if existing_raw_name and existing_raw_name != context.sml_model.unique_name:
+            logger.info(
+                "Structural duplicate detected: model '%s' matches an already-deployed "
+                "view (originally '%s') in %s — redeploying to that view instead of "
+                "creating a new one.",
+                context.sml_model.unique_name, existing_raw_name, scope_key,
+            )
+            context.sml_model.unique_name = existing_raw_name
+    except Exception as exc:
+        logger.warning("Structural-duplicate detection skipped (non-fatal): %s", exc)
 
 
 def _step6b_predict_anchor_flag_columns(self, context: RunContext) -> None:

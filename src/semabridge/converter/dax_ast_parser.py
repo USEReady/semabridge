@@ -685,6 +685,24 @@ class DaxSqlRenderer:
     # already-aggregated expression in a second outer aggregate.
     _RENDERED_AGG_PATTERN = re.compile(r"^(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*(.+?)\s*\)$", re.IGNORECASE)
 
+    # DAX function calls this renderer turns into a numeric (FLOAT/aggregate)
+    # SQL expression rather than an inherently boolean one. DAX allows using
+    # such an expression directly as an IF condition — 0/BLANK() is falsy,
+    # anything else is truthy (a common YoY/SPLY guard, e.g.
+    # IF(CALCULATE([Sales], SAMEPERIODLASTYEAR('Date'[Date])), <growth calc>,
+    # BLANK()) to skip the growth calc when there's no prior-year data).
+    # Snowflake requires an explicit BOOLEAN for a CASE WHEN condition —
+    # passing the raw FLOAT-valued aggregate directly fails with "Can not
+    # convert parameter '...' of type [FLOAT] into expected type [BOOLEAN]"
+    # and takes down the whole semantic-view DDL, not just this one metric.
+    # See _render_if / _is_numeric_truthiness_condition.
+    _NUMERIC_TRUTHINESS_FUNCS = frozenset({
+        "SUM", "AVERAGE", "AVG", "COUNT", "COUNTA", "COUNTROWS", "COUNTBLANK",
+        "DISTINCTCOUNT", "MIN", "MAX", "CALCULATE", "DIVIDE",
+        "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
+        "TOTALYTD", "TOTALMTD", "TOTALQTD",
+    })
+
     # DAX names conventionally used for the date/calendar dimension across
     # this codebase (see dax_translator.py's "'Calendar'[Date]" dimension
     # reference and dax_engine.py's date_alias="calendar" default) — a
@@ -995,10 +1013,41 @@ class DaxSqlRenderer:
     def _render_if(self, args: List[DaxNode]) -> str:
         if len(args) < 2:
             raise self.DaxRenderError("IF requires at least 2 arguments")
-        cond = self._render_node(args[0])
+        cond_node = args[0]
+        cond = self._render_node(cond_node)
+        if self._is_numeric_truthiness_condition(cond_node):
+            cond = f"(({cond}) IS NOT NULL AND ({cond}) <> 0)"
         true_val = self._render_node(args[1])
         false_val = self._render_node(args[2]) if len(args) > 2 else "NULL"
         return f"CASE WHEN {cond} THEN {true_val} ELSE {false_val} END"
+
+    def _is_numeric_truthiness_condition(self, node: DaxNode) -> bool:
+        """True when `node` is something this renderer turns into a numeric
+        SQL expression rather than an inherently boolean one (see
+        _NUMERIC_TRUTHINESS_FUNCS). Deliberately conservative: only
+        recognizes function calls, arithmetic, and measure references this
+        renderer itself is responsible for turning numeric, so a bare
+        column reference — which may already be a genuine BOOLEAN column in
+        the model — is left untouched rather than risk wrapping something
+        Snowflake would then reject the other way (BOOLEAN compared to 0).
+
+        A MeasureRefNode counts only when it resolves through
+        measure_sql_map to another measure's own (numeric, aggregate) SQL —
+        e.g. IF([Gross Margin SPLY], [YoY GM Var]/[Gross Margin SPLY],
+        BLANK()), the common YoY/SPLY "skip if no prior-period data" guard,
+        where [Gross Margin SPLY] is itself CALCULATE(SUM(...),
+        SAMEPERIODLASTYEAR(...)). An unresolved reference falls through to
+        _render_measure_ref's own bare-column fallback, which may be a
+        genuine boolean column — left alone here for the same reason as any
+        other ColumnRefNode.
+        """
+        if isinstance(node, FunctionCallNode):
+            return node.func.upper() in self._NUMERIC_TRUTHINESS_FUNCS
+        if isinstance(node, BinaryOpNode):
+            return node.op in ("+", "-", "*", "/")
+        if isinstance(node, MeasureRefNode):
+            return node.name.casefold() in self._measure_sql_map_by_casefold
+        return False
 
     def _render_iferror(self, args: List[DaxNode]) -> str:
         if len(args) < 2:

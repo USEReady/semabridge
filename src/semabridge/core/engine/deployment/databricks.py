@@ -73,7 +73,7 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
         from sqlalchemy import select
         from semabridge.repository.orm.models import Account
         from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.auth.account_credential_resolver import scoped_account_env
+        from semabridge.auth.credential_builder import build_databricks_config
 
         with db_manager.get_session() as session:
             account = session.execute(
@@ -89,21 +89,20 @@ def _deploy_to_databricks(self, context: RunContext) -> None:
                     "Please link this account in the Connections panel."
                 )
 
-            with scoped_account_env(account, session):
-                logger.info(
-                    "Databricks deployment scoped to account %s (%s)",
-                    account.tag, identity_id,
-                )
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-                publisher = DatabricksPublisher(
-                    scoped_settings.databricks, behavior=context.behavior
-                )
-                context.target_artifact_path = publisher.publish(context.sml_model)
-                publish_summary = publisher.get_last_publish_summary()
-                context.routing_summary = publish_summary.get("routing_summary") if isinstance(publish_summary, dict) else None
-                self._raise_if_databricks_fallback_failed(context, publish_summary)
-                return
+            # Thread-safe: builds an isolated DatabricksConfig object rather than
+            # mutating os.environ (scoped_account_env), which is unsafe when
+            # multiple syncs from the same batch run concurrently.
+            databricks_cfg = build_databricks_config(account, session, context.config.databricks)
+            logger.info(
+                "Databricks deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+                account.tag, identity_id,
+            )
+            publisher = DatabricksPublisher(databricks_cfg, behavior=context.behavior)
+            context.target_artifact_path = publisher.publish(context.sml_model)
+            publish_summary = publisher.get_last_publish_summary()
+            context.routing_summary = publish_summary.get("routing_summary") if isinstance(publish_summary, dict) else None
+            self._raise_if_databricks_fallback_failed(context, publish_summary)
+            return
 
     # Default: use global env vars
     publisher = DatabricksPublisher(context.config.databricks, behavior=context.behavior)

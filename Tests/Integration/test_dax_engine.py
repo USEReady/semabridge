@@ -311,6 +311,56 @@ class TestSqlRenderer:
         assert "TRY_CAST" not in sql.upper()
         assert "TRY_TO_NUMBER(TO_VARCHAR(" in sql.upper()
 
+    def test_render_if_wraps_numeric_truthiness_condition_as_boolean(self):
+        """YoY/SPLY guard: IF(CALCULATE(...SAMEPERIODLASTYEAR...), ...) uses DAX's
+        implicit numeric truthiness (0/blank = false) as the IF condition. Snowflake
+        requires an explicit BOOLEAN for a CASE WHEN condition -- passing the raw
+        FLOAT-valued aggregate directly used to fail deployment with "Can not
+        convert parameter '...' of type [FLOAT] into expected type [BOOLEAN]" and
+        take down the whole semantic-view DDL, not just this one metric.
+        """
+        parser = DaxAstParser()
+        dax = (
+            "IF(CALCULATE(SUM('Sales'[Amount]), SAMEPERIODLASTYEAR('Date'[Date])), "
+            "DIVIDE(SUM('Sales'[Amount]), CALCULATE(SUM('Sales'[Amount]), SAMEPERIODLASTYEAR('Date'[Date]))), "
+            "BLANK())"
+        )
+        ast = parser.parse(dax)
+
+        renderer = DaxSqlRenderer(table_alias="sales", date_alias="calendar")
+        sql = renderer.render(ast)
+
+        assert sql is not None
+        # The condition must be an explicit boolean comparison, not a bare
+        # FLOAT-valued SUM(...) expression used directly as a WHEN predicate.
+        assert "CASE WHEN ((SUM(" in sql.upper()
+        assert ") <> 0)" in sql.upper()
+        assert ") IS NOT NULL AND (" in sql.upper()
+
+    def test_render_if_comparison_condition_is_not_wrapped(self):
+        """A genuine boolean comparison IF condition must render unchanged --
+        only DAX's implicit numeric-truthiness shape needs the boolean wrap."""
+        parser = DaxAstParser()
+        ast = parser.parse('IF([Region] = "West", SUM(\'Sales\'[Amount]), 0)')
+
+        renderer = DaxSqlRenderer(table_alias="sales")
+        sql = renderer.render(ast)
+
+        assert sql == 'CASE WHEN sales."REGION" = \'West\' THEN SUM(sales."AMOUNT"::FLOAT) ELSE 0 END'
+
+    def test_render_if_bare_column_condition_is_not_wrapped(self):
+        """A bare column reference used as an IF condition may already be a
+        genuine BOOLEAN column in the model -- must not be wrapped with a
+        numeric '<> 0' comparison, which Snowflake would reject for a BOOLEAN
+        column the other way around."""
+        parser = DaxAstParser()
+        ast = parser.parse("IF([IsActive], SUM('Sales'[Amount]), 0)")
+
+        renderer = DaxSqlRenderer(table_alias="sales")
+        sql = renderer.render(ast)
+
+        assert sql == 'CASE WHEN sales."ISACTIVE" THEN SUM(sales."AMOUNT"::FLOAT) ELSE 0 END'
+
 
 def run_tests():
     """Run all tests with pytest."""

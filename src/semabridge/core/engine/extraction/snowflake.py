@@ -43,6 +43,8 @@ from semabridge.core.engine.exceptions import (
     PersistenceError,
     DeploymentError,
 )
+from semabridge.repository.orm.session_factory import db_manager
+from semabridge.auth.credential_builder import build_snowflake_config
 
 logger = get_logger(__name__)
 def _extract_snowflake_scoped(
@@ -54,8 +56,9 @@ def _extract_snowflake_scoped(
     """Run Snowflake extraction under scoped account credentials.
 
     Looks up the Account row by ``identity_id``, decrypts its credential
-    bundle, injects credentials via ``scoped_account_env``, and delegates
-    to the standard extraction pipeline.
+    bundle, builds an isolated ``SnowflakeConfig`` via
+    ``credential_builder.build_snowflake_config`` (no ``os.environ``
+    mutation), and delegates to the standard extraction pipeline.
 
     Args:
         context: Current run context.
@@ -70,8 +73,6 @@ def _extract_snowflake_scoped(
     """
     from sqlalchemy import select
     from semabridge.repository.orm.models import Account
-    from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.auth.account_credential_resolver import scoped_account_env
     try:
         with db_manager.get_session() as session:
             account = session.execute(
@@ -87,24 +88,16 @@ def _extract_snowflake_scoped(
                     "Please link this account in the Connections panel."
                 )
 
-            with scoped_account_env(account, session):
-                logger.info(
-                    "Snowflake extraction scoped to account %s (%s)",
-                    account.tag, identity_id,
-                )
-                # Reload settings to pick up injected env vars
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-                context = RunContext(
-                    project_id=context.project_id,
-                    run_id=context.run_id,
-                    config=scoped_settings,
-                    source_type=context.source_type,
-                    target_type=context.target_type,
-                    behavior=context.behavior,
-                )
-                # Clear identity_id to prevent infinite recursion
-                return self._extract_snowflake_unscoped(context, dataset_id)
+            # Thread-safe: builds an isolated SnowflakeConfig object rather than
+            # mutating os.environ (scoped_account_env), which is unsafe when
+            # multiple syncs from the same batch run concurrently.
+            sf_cfg = build_snowflake_config(account, session, context.config.snowflake)
+            logger.info(
+                "Snowflake extraction scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+                account.tag, identity_id,
+            )
+            # Clear identity_id to prevent infinite recursion
+            return self._extract_snowflake_unscoped(context, dataset_id, sf_cfg=sf_cfg)
     except ExtractionError:
         raise
     except Exception as exc:
@@ -119,8 +112,8 @@ def _extract_snowflake(
     """Extract from Snowflake.
 
     When ``identity_id`` is present in the source config, credentials are
-    resolved from the linked Account row and injected via
-    ``scoped_account_env`` for the duration of this extraction.
+    resolved from the linked Account row into an isolated, thread-local
+    ``SnowflakeConfig`` (see ``_extract_snowflake_scoped``).
     Otherwise, falls back to global env vars (backward compatibility).
     """
     from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
@@ -243,17 +236,26 @@ def _extract_snowflake_unscoped(
     self,
     context: RunContext,
     dataset_id: Optional[str] = None,
+    sf_cfg: Optional[Any] = None,
 ) -> SourceFormat:
     """Run Snowflake extraction without identity_id resolution.
 
-    Called by ``_extract_snowflake_scoped`` after credentials have been
-    injected into ``os.environ``. Delegates to the main extraction body
-    but skips the identity_id check to prevent infinite recursion.
+    Called by ``_extract_snowflake_scoped`` with an already-resolved,
+    thread-local ``sf_cfg`` (built via ``credential_builder.build_snowflake_config``).
+    Delegates to the main extraction body but skips the identity_id check
+    to prevent infinite recursion.
+
+    Args:
+        sf_cfg: Resolved SnowflakeConfig to use instead of ``context.config.snowflake``.
+            Passed explicitly by the scoped caller so this function never has to
+            mutate or replace ``context.config`` (which may be shared across
+            concurrently-running syncs).
     """
     from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
     from semabridge.utils.cache import MetadataCache
 
     config = context.config
+    sf_cfg = sf_cfg if sf_cfg is not None else config.snowflake
     cache = MetadataCache(config.model.cache_dir) if config.model.cache_enabled else None
 
     include_tables, include_source = self._resolve_snowflake_include_tables(context)
@@ -262,7 +264,7 @@ def _extract_snowflake_unscoped(
 
     if dataset_id:
         scope_probe = SnowflakeExtractor(
-            config=config.snowflake,
+            config=sf_cfg,
             cache=cache,
             exclude_tables=config.model.excluded_table_list,
             include_tables=None,
@@ -278,7 +280,7 @@ def _extract_snowflake_unscoped(
     parallel_enabled, max_workers = self._resolve_snowflake_parallelism(context)
 
     extractor = SnowflakeExtractor(
-        config=config.snowflake,
+        config=sf_cfg,
         cache=cache,
         exclude_tables=config.model.excluded_table_list,
         include_tables=include_tables,
@@ -302,7 +304,7 @@ def _extract_snowflake_unscoped(
             )
         if include_source != "model.include_tables":
             extractor = SnowflakeExtractor(
-                config=config.snowflake,
+                config=sf_cfg,
                 cache=cache,
                 exclude_tables=config.model.excluded_table_list,
                 include_tables=None,

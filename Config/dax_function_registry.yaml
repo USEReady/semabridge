@@ -29,9 +29,14 @@ TOTALQTD:
 DIVIDE:
   type: scalar
   template: "DIV0({arg0}, {arg1})"
-IF:
-  type: expr
-  template: "CASE WHEN {arg0} THEN {arg1} ELSE {arg2} END"
+# IF intentionally has no registry entry: it must go through
+# dax_ast_parser.py's _render_if, which wraps a numeric-truthiness
+# condition (e.g. IF(CALCULATE(...SAMEPERIODLASTYEAR...), ...), a common
+# YoY/SPLY guard) in an explicit boolean comparison. A flat template here
+# would emit the raw FLOAT-valued condition directly into "CASE WHEN
+# {arg0} THEN ...", which Snowflake rejects with "Can not convert
+# parameter '...' of type [FLOAT] into expected type [BOOLEAN]" -- taking
+# down the whole semantic-view DDL, not just the one metric.
 ISBLANK:
   type: expr
   template: "({arg0} IS NULL)"

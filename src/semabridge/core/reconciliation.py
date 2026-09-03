@@ -297,8 +297,9 @@ def _fetch_live_deployed_ddl(project_id: str, view_name: str) -> str:
     from sqlalchemy import select
 
     from semabridge.api.services.project_shared import _compat_load_modular_project
-    from semabridge.auth.account_credential_resolver import scoped_account_env
+    from semabridge.auth.credential_builder import build_snowflake_config
     from semabridge.connectors.snowflake_extractor import SnowflakeExtractor
+    from semabridge.core.settings import get_settings
     from semabridge.repository.orm.models import Account
     from semabridge.repository.orm.session_factory import db_manager
 
@@ -321,11 +322,11 @@ def _fetch_live_deployed_ddl(project_id: str, view_name: str) -> str:
         if not account:
             raise ValueError(f"No linked Snowflake account found for identity_id={identity_id!r}")
 
-        with scoped_account_env(account, session):
-            from semabridge.core.settings import reload_settings
-
-            sf_cfg = reload_settings().snowflake
-            return SnowflakeExtractor(sf_cfg).extract_semantic_view_ddl(view_name)
+        # Thread-safe: builds an isolated SnowflakeConfig object rather than
+        # mutating os.environ (scoped_account_env), which is unsafe when a
+        # reconciliation check runs concurrently with other syncs/reconciliations.
+        sf_cfg = build_snowflake_config(account, session, get_settings().snowflake)
+        return SnowflakeExtractor(sf_cfg).extract_semantic_view_ddl(view_name)
 
 
 def reconcile_run(run_id: str) -> ReconciliationReport:

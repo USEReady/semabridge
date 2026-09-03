@@ -127,12 +127,21 @@ def _extract_fabric(
                 ) from identity_exc
 
         if not interactive_token and not identity_id:
-            # Only fall back to global credential store when NO identity_id is specified.
-            # This prevents cross-account contamination in multi-account scenarios.
-            token_data = cm.get_msal_token()
-            if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
-                interactive_token = token_data.get("access_token")
-                logger.debug("_extract_fabric: injecting interactive token from credential store (no identity_id)")
+            account_scoped_token = getattr(context, "fabric_access_token", None)
+            if account_scoped_token:
+                # Resolved at Step 3 from context.account_id (see engine.py) into
+                # an isolated, thread-local value — not os.environ — so concurrent
+                # batch-sync jobs for different accounts can't bleed into each other.
+                interactive_token = account_scoped_token
+                logger.debug("_extract_fabric: using account-scoped Fabric token from context (thread-safe)")
+            else:
+                # Only fall back to global credential store when NO identity_id/account
+                # token is specified. This prevents cross-account contamination in
+                # multi-account scenarios.
+                token_data = cm.get_msal_token()
+                if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
+                    interactive_token = token_data.get("access_token")
+                    logger.debug("_extract_fabric: injecting interactive token from credential store (no identity_id)")
     except ExtractionError:
         raise
     except Exception as exc:

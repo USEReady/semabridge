@@ -71,7 +71,7 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
         from sqlalchemy import select
         from semabridge.repository.orm.models import Account
         from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.auth.account_credential_resolver import scoped_account_env
+        from semabridge.auth.credential_builder import build_snowflake_config
 
         with db_manager.get_session() as session:
             account = session.execute(
@@ -90,18 +90,16 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
                 self._do_snowflake_deploy(context, sf_cfg)
                 return
 
-            with scoped_account_env(account, session):
-                logger.info(
-                    "Snowflake deployment scoped to account %s (%s)",
-                    account.tag, identity_id,
-                )
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-
-                # Override default roles and warehouses if specified in target config
-                sf_cfg = scoped_settings.snowflake
-                self._do_snowflake_deploy(context, sf_cfg)
-                return
+            # Thread-safe: builds an isolated SnowflakeConfig object rather than
+            # mutating os.environ (scoped_account_env), which is unsafe when
+            # multiple syncs from the same batch run concurrently.
+            sf_cfg = build_snowflake_config(account, session, context.config.snowflake)
+            logger.info(
+                "Snowflake deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+                account.tag, identity_id,
+            )
+            self._do_snowflake_deploy(context, sf_cfg)
+            return
 
     # Fallback to legacy global execution
     sf_cfg = context.config.snowflake
@@ -160,6 +158,7 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             raise DeploymentError(
                 f"Snowflake DDL deployment returned unsuccessful status: {error_msg}"
             )
+        self._record_model_fingerprint_on_success(context)
         self._export_inferred_osi_artifacts(context)
 
     # Stored-procedure / Cortex YAML path
@@ -188,6 +187,32 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     # Optional: Sync materialized DAX measures to MEASURES_* tables
     if context.source_type == "fabric" and self._should_sync_measures(context):
         self._sync_fabric_measures(context, emitter)
+
+def _record_model_fingerprint_on_success(self, context: RunContext) -> None:
+    """Persist this model's structural fingerprint -> view-name mapping so a
+    future re-upload of the same underlying model (see
+    _reuse_existing_view_for_structural_duplicate in targets/snowflake.py,
+    which computed the fingerprint carried on context) redeploys to this
+    same view instead of creating a duplicate one.
+
+    Only called after a successful deploy, so a fingerprint is never
+    remembered for a model that didn't actually land in Snowflake. Never
+    raises: this is a best-effort improvement, not a correctness requirement.
+    """
+    if not context.model_structural_fingerprint or not context.model_fingerprint_scope_key or not context.sml_model:
+        return
+    try:
+        from semabridge.repository.model_fingerprint_repository import ModelFingerprintRepository
+
+        ModelFingerprintRepository().record_view_name(
+            scope_key=context.model_fingerprint_scope_key,
+            structural_fingerprint=context.model_structural_fingerprint,
+            view_name=context.sml_model.unique_name,
+            source_name=context.sml_model.unique_name,
+            project_id=context.project_id,
+        )
+    except Exception as exc:
+        logger.warning("Model fingerprint recording skipped (non-fatal): %s", exc)
 
 def _export_inferred_osi_artifacts(self, context: RunContext) -> None:
     """Write OSI JSON/YAML with the latest inferred column datatypes."""

@@ -69,7 +69,7 @@ def _deploy_to_fabric(self, context: RunContext) -> None:
         from sqlalchemy import select
         from semabridge.repository.orm.models import Account
         from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.auth.account_credential_resolver import scoped_account_env
+        from semabridge.auth.credential_builder import build_fabric_config
 
         with db_manager.get_session() as session:
             account = session.execute(
@@ -85,38 +85,47 @@ def _deploy_to_fabric(self, context: RunContext) -> None:
                     "Please link this account in the Connections panel."
                 )
 
-            with scoped_account_env(account, session):
-                logger.info(
-                    "Fabric deployment scoped to account %s (%s)",
-                    account.tag, identity_id,
-                )
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
+            # Thread-safe: builds an isolated FabricConfig object rather than
+            # mutating os.environ (scoped_account_env), which is unsafe when
+            # multiple syncs from the same batch run concurrently.
+            fabric_cfg, fabric_token = build_fabric_config(account, session, context.config.fabric)
+            logger.info(
+                "Fabric deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+                account.tag, identity_id,
+            )
 
-                # Ensure the workspace_id explicitly requested by the project is used
-                # instead of any default ambient workspace on the Account
-                target_workspace = ""
-                for tc in target_configs:
-                    if isinstance(tc, dict) and tc.get("type") == "fabric":
-                        target_workspace = str(tc.get("workspace_id", "") or "").strip()
-                        break
-                if not target_workspace:
-                    if getattr(context.config, "target", None) and getattr(context.config.target, "type", "") == "fabric":
-                        target_workspace = getattr(context.config.target, "workspace_id", "")
-                if target_workspace:
-                    scoped_settings.fabric.workspace_id = target_workspace
+            # Ensure the workspace_id explicitly requested by the project is used
+            # instead of any default ambient workspace on the Account
+            target_workspace = ""
+            for tc in target_configs:
+                if isinstance(tc, dict) and tc.get("type") == "fabric":
+                    target_workspace = str(tc.get("workspace_id", "") or "").strip()
+                    break
+            if not target_workspace:
+                if getattr(context.config, "target", None) and getattr(context.config.target, "type", "") == "fabric":
+                    target_workspace = getattr(context.config.target, "workspace_id", "")
+            if target_workspace:
+                fabric_cfg.workspace_id = target_workspace
 
-                publisher = FabricPublisher(scoped_settings.fabric)
-                publisher.publish(
-                    sml_model=context.sml_model,
-                    model_name=context.project_id,
-                    snowflake_server=scoped_settings.snowflake.account,
-                    snowflake_warehouse=scoped_settings.snowflake.warehouse,
-                    snowflake_database=scoped_settings.snowflake.database,
-                    snowflake_schema=scoped_settings.snowflake.schema_name,
-                    overwrite=True,
-                )
-                return
+            sf_cfg = context.config.snowflake
+            publisher = FabricPublisher(fabric_cfg)
+            if fabric_token:
+                # FabricPublisher has no constructor param for a pre-resolved
+                # token; it otherwise falls back to FABRIC_ACCESS_TOKEN from
+                # os.environ (see get_fabric_access_token_from_env()), which
+                # is exactly the shared-process-global state this fix avoids.
+                publisher._access_token = fabric_token
+                publisher._token_expiry = time.time() + 1800
+            publisher.publish(
+                sml_model=context.sml_model,
+                model_name=context.project_id,
+                snowflake_server=sf_cfg.account,
+                snowflake_warehouse=sf_cfg.warehouse,
+                snowflake_database=sf_cfg.database,
+                snowflake_schema=sf_cfg.schema_name,
+                overwrite=True,
+            )
+            return
 
     # --- Fallback to legacy global logic ---
     try:
