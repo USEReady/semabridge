@@ -12,12 +12,23 @@
  * Used on both the pre-deploy dry-run mapping page and the post-deployment
  * run summary — same shape, same component, two call sites.
  *
+ * A multi-PBIX batch run's entries all land in one flat array with no
+ * indication of which file each came from (e.g. "61 excluded" for a 2-file
+ * batch, no way to tell it's 60 from one file and 1 from the other) --
+ * pass a `model` field on each entry (the caller's own result.model) to get
+ * an extra per-file grouping level above the existing per-stage one. Falls
+ * back to the original flat-by-stage-only rendering when entries carry no
+ * model field, or all share the same one (single-file dry-run/run), so the
+ * dry-run mapping page call site (DryRunMappingTable.jsx, always
+ * single-model) renders identically to before.
+ *
  * Props:
- *   entries : Array<{ entity_kind, entity_name, dataset, stage, reason, detail, by_design }>
+ *   entries : Array<{ entity_kind, entity_name, dataset, stage, reason, detail, by_design, model? }>
  *   title   : optional heading override (default "Dropped Fields")
  */
 import { useState, useMemo } from 'react';
 import { AlertTriangle, ChevronRight, Info } from 'lucide-react';
+import { cleanPbixLabel } from '../../utils/pbixLabel';
 
 const STAGE_LABELS = {
   extraction: 'Extraction',
@@ -57,6 +68,37 @@ function groupByStage(entries) {
     label: stageLabel(key),
     entries: buckets.get(key),
   }));
+}
+
+function groupByModel(entries) {
+  const order = [];
+  const buckets = new Map();
+  entries.forEach((entry) => {
+    const key = entry?.model ? String(entry.model) : '';
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      order.push(key);
+    }
+    buckets.get(key).push(entry);
+  });
+  return order.map((key) => ({ key, label: cleanPbixLabel(key) || '(unknown file)', entries: buckets.get(key) }));
+}
+
+function DropStageGroups({ groups }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {groups.map((group) => (
+        <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            {group.label} · {group.entries.length}
+          </div>
+          {group.entries.map((entry, idx) => (
+            <DropEntryRow key={`${entry?.entity_kind}-${entry?.entity_name}-${idx}`} entry={entry} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function DropEntryRow({ entry }) {
@@ -113,7 +155,13 @@ function DropEntryRow({ entry }) {
 
 export default function DroppedFieldsPanel({ entries = [], title = 'Dropped Fields', defaultExpanded = false }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const groups = useMemo(() => groupByStage(entries.filter(Boolean)), [entries]);
+  const cleanEntries = useMemo(() => entries.filter(Boolean), [entries]);
+  const groups = useMemo(() => groupByStage(cleanEntries), [cleanEntries]);
+  const modelGroups = useMemo(() => groupByModel(cleanEntries), [cleanEntries]);
+  // Only worth a per-file breakdown when entries genuinely span more than
+  // one model -- a single-file run (or the dry-run mapping page, which
+  // never sets `model` at all) renders exactly as before.
+  const isMultiModel = modelGroups.length > 1;
   const total = entries.length;
   const actionableCount = entries.filter((e) => !e?.by_design).length;
 
@@ -154,16 +202,34 @@ export default function DroppedFieldsPanel({ entries = [], title = 'Dropped Fiel
 
       {expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 4px 4px 8px' }}>
-          {groups.map((group) => (
-            <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                {group.label} · {group.entries.length}
-              </div>
-              {group.entries.map((entry, idx) => (
-                <DropEntryRow key={`${entry?.entity_kind}-${entry?.entity_name}-${idx}`} entry={entry} />
-              ))}
-            </div>
-          ))}
+          {isMultiModel ? (
+            modelGroups.map((modelGroup) => {
+              const modelActionable = modelGroup.entries.filter((e) => !e?.by_design).length;
+              return (
+                <div
+                  key={modelGroup.key}
+                  style={{
+                    display: 'flex', flexDirection: 'column', gap: 10,
+                    padding: 10, borderRadius: 8, border: '1px solid var(--border-main)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                      {modelGroup.label}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                      {modelActionable > 0
+                        ? `${modelActionable} excluded${modelGroup.entries.length > modelActionable ? `, ${modelGroup.entries.length - modelActionable} by design` : ''}`
+                        : `${modelGroup.entries.length} by design`}
+                    </span>
+                  </div>
+                  <DropStageGroups groups={groupByStage(modelGroup.entries)} />
+                </div>
+              );
+            })
+          ) : (
+            <DropStageGroups groups={groups} />
+          )}
         </div>
       )}
     </div>

@@ -32,7 +32,6 @@ from typing import Any, Dict, List, Optional
 from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 from semabridge.repository.orm.dry_run_job_models import DryRunJob, DryRunJobFile
-from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +92,6 @@ def create_dry_run_job(
             f"Up to {MAX_PARALLEL_DRY_RUN_FILES} PBIX files are supported per dry-run job; "
             f"{len(files)} were provided."
         )
-    if source_type == "pbix" and len(files) > 1:
-        # Same collision check as _build_sync_jobs()/create_project() — run
-        # here too so a naming collision is caught before any background work
-        # is dispatched, not discovered later as a confusing per-file failure.
-        validate_no_pbix_view_name_collisions(files)
-
     _ensure_schema()
 
     from semabridge.repository.orm.session_factory import db_manager

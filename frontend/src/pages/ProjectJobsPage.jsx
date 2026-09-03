@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react';
 import usePageCache from '../hooks/usePageCache';
-import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2 } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import PageHeader from '../components/common/PageHeader';
 import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
 import DroppedFieldsPanel from '../components/common/DroppedFieldsPanel';
+import Modal from '../components/common/Modal';
+import RunReportSummary from '../components/RunReportSummary';
 import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
+import { cleanPbixLabel } from '../utils/pbixLabel';
 
 const REFRESH_INTERVAL_MS = 4000;
 
@@ -259,6 +264,73 @@ export default function ProjectJobsPage() {
     } finally {
       setRunning(false);
     }
+  };
+
+  // "View Report Preview" modal -- one modal, reused for both the whole-run
+  // report (single-file runs) and each file's own scoped report (multi-PBIX
+  // batches, one button per run.model_reports entry). reportModalModel is
+  // null for the whole-run case, which selects the non-model-scoped
+  // endpoints below. Summary (JSON) and Raw Report (Markdown) are both
+  // fetched up front, not lazily on tab switch, so toggling between them is
+  // instant once the modal has finished loading -- matches demo_version_ref's
+  // exact approach, since this modal is ported from there.
+  const [reportModalRun, setReportModalRun] = useState(null);
+  const [reportModalModel, setReportModalModel] = useState(null);
+  const [reportModalMaximized, setReportModalMaximized] = useState(false);
+  const [reportContent, setReportContent] = useState('');
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState(null);
+  const [reportViewMode, setReportViewMode] = useState('summary');
+  const [reportSummary, setReportSummary] = useState(null);
+  const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
+  const [reportSummaryError, setReportSummaryError] = useState(null);
+
+  const openReportModal = async (run, modelLabel = null) => {
+    const pid = run.project_id;
+    const rid = run.id || run.run_id;
+    setReportModalRun(run);
+    setReportModalModel(modelLabel);
+    setReportModalMaximized(false);
+    setReportViewMode('summary');
+    setReportLoading(true);
+    setReportError(null);
+    setReportContent('');
+    setReportSummaryLoading(true);
+    setReportSummaryError(null);
+    setReportSummary(null);
+    await Promise.all([
+      (async () => {
+        try {
+          const text = modelLabel
+            ? await api.getRunModelReport(pid, rid, modelLabel)
+            : await api.getRunReport(pid, rid);
+          setReportContent(text);
+        } catch (err) {
+          console.error('Failed to load report preview:', err);
+          setReportError(err.message || 'Failed to load report content.');
+        } finally {
+          setReportLoading(false);
+        }
+      })(),
+      (async () => {
+        try {
+          const summary = modelLabel
+            ? await api.getRunModelReportSummary(pid, rid, modelLabel)
+            : await api.getRunReportSummary(pid, rid);
+          setReportSummary(summary);
+        } catch (err) {
+          console.error('Failed to load report summary:', err);
+          setReportSummaryError(err.message || 'Failed to load report summary.');
+        } finally {
+          setReportSummaryLoading(false);
+        }
+      })(),
+    ]);
+  };
+
+  const closeReportModal = () => {
+    setReportModalRun(null);
+    setReportModalModel(null);
   };
 
   const handleDeleteSchedule = async (projectId) => {
@@ -549,6 +621,67 @@ export default function ProjectJobsPage() {
                           <InfoCard label="Message" value={run.message || run.error || '—'} />
                         </div>
 
+                        {/* "View Report Preview" -- one button for a single-file run (or
+                            any run without a per-model breakdown), one PER FILE for a
+                            multi-PBIX batch (run.model_reports), each opening the same
+                            modal scoped to that file's own report. Position/style matches
+                            demo_version_ref's single-run button exactly; multi-file just
+                            repeats it once per entry. */}
+                        {Array.isArray(run.model_reports) && run.model_reports.length > 0 ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 8 }}>
+                            {run.model_reports.map((entry) => (
+                              <button
+                                key={entry.model}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openReportModal(run, entry.model);
+                                }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  padding: '6px 12px',
+                                  borderRadius: 6,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  background: 'var(--bg-surface-raised)',
+                                  color: 'var(--text-primary)',
+                                  border: '1px solid var(--border-main)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <FileText size={14} /> View Report Preview — {cleanPbixLabel(entry.model)}
+                              </button>
+                            ))}
+                          </div>
+                        ) : Boolean(run.report_path) && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, marginBottom: 8 }}>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openReportModal(run);
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: '6px 12px',
+                                borderRadius: 6,
+                                fontSize: 12,
+                                fontWeight: 600,
+                                background: 'var(--bg-surface-raised)',
+                                color: 'var(--text-primary)',
+                                border: '1px solid var(--border-main)',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <FileText size={14} /> View Report Preview
+                            </button>
+                          </div>
+                        )}
+
                         {run.status === 'success' && (
                           <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
@@ -556,7 +689,9 @@ export default function ProjectJobsPage() {
                         <div style={{ marginBottom: 14 }}>
                           <DroppedFieldsPanel
                             entries={(Array.isArray(run.results) ? run.results : []).flatMap(
-                              (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : [])
+                              (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : []).map(
+                                (entry) => ({ ...entry, model: r?.model })
+                              )
                             )}
                           />
                         </div>
@@ -588,6 +723,165 @@ export default function ProjectJobsPage() {
           </div>
         </div>
       </div>
+
+      {/* Run Report Preview Modal -- shared by the whole-run button and every
+          per-model button; reportModalModel selects which endpoints/label to use. */}
+      <Modal
+        open={Boolean(reportModalRun)}
+        onClose={closeReportModal}
+        title={
+          `Run Report Preview — ${reportModalRun?.id || reportModalRun?.run_id || ''}` +
+          (reportModalModel ? ` — ${cleanPbixLabel(reportModalModel)}` : '')
+        }
+        size="lg"
+        allowMaximize
+        isMaximized={reportModalMaximized}
+        onToggleMaximize={() => setReportModalMaximized((v) => !v)}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!reportModalRun) return;
+                const rid = reportModalRun.id || reportModalRun.run_id;
+                try {
+                  if (reportModalModel) {
+                    await api.downloadRunModelReport(reportModalRun.project_id, rid, reportModalModel);
+                  } else {
+                    await api.downloadRunReport(reportModalRun.project_id, rid);
+                  }
+                } catch (err) {
+                  console.error('Failed to download report:', err);
+                }
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                background: 'var(--accent-primary, #3b82f6)',
+                color: '#ffffff',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <Download size={14} /> Download Raw .md
+            </button>
+            <button
+              type="button"
+              onClick={closeReportModal}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 500,
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-main)',
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', gap: 4, padding: '0 4px 12px 4px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 8 }}>
+          {[
+            { key: 'summary', label: 'Summary' },
+            { key: 'markdown', label: 'Raw Report' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setReportViewMode(tab.key)}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                background: reportViewMode === tab.key ? 'var(--accent-primary, #3b82f6)' : 'transparent',
+                color: reportViewMode === tab.key ? '#ffffff' : 'var(--text-secondary)',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {reportViewMode === 'summary' ? (
+          reportSummaryLoading ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
+              Loading summary...
+            </div>
+          ) : reportSummaryError ? (
+            <div style={{ padding: 24, color: 'var(--color-error)' }}>
+              {reportSummaryError}
+            </div>
+          ) : (
+            <RunReportSummary data={reportSummary} />
+          )
+        ) : reportLoading ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
+            Loading report...
+          </div>
+        ) : reportError ? (
+          <div style={{ padding: 24, color: 'var(--color-error)' }}>
+            {reportError}
+          </div>
+        ) : (
+          <div style={{ padding: '8px 4px', fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                table: ({ ...props }) => (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', margin: '16px 0', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }} {...props} />
+                ),
+                th: ({ style, align, ...props }) => (
+                  <th style={{ background: 'var(--bg-surface-raised)', padding: '10px 20px', border: '1px solid var(--border-main)', textAlign: style?.textAlign || align || 'left', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', ...style }} {...props} />
+                ),
+                td: ({ style, align, ...props }) => (
+                  <td style={{ padding: '10px 20px', border: '1px solid var(--border-main)', textAlign: style?.textAlign || align || 'left', color: 'var(--text-primary)', ...style }} {...props} />
+                ),
+                h1: ({ ...props }) => (
+                  <h1 style={{ fontSize: '1.4em', fontWeight: 700, margin: '16px 0 8px 0', color: 'var(--text-primary)' }} {...props} />
+                ),
+                h2: ({ ...props }) => (
+                  <h2 style={{ fontSize: '1.2em', fontWeight: 600, margin: '14px 0 6px 0', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 4 }} {...props} />
+                ),
+                h3: ({ ...props }) => (
+                  <h3 style={{ fontSize: '1.05em', fontWeight: 600, margin: '12px 0 4px 0', color: 'var(--text-primary)' }} {...props} />
+                ),
+                ul: ({ ...props }) => (
+                  <ul style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />
+                ),
+                ol: ({ ...props }) => (
+                  <ol style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />
+                ),
+                li: ({ ...props }) => (
+                  <li style={{ marginBottom: 4 }} {...props} />
+                ),
+                code: ({ inline, ...props }) => (
+                  inline ? (
+                    <code style={{ background: 'var(--bg-surface-raised)', padding: '2px 5px', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.9em' }} {...props} />
+                  ) : (
+                    <code style={{ display: 'block', background: 'var(--bg-surface-raised)', padding: 10, borderRadius: 6, fontFamily: 'monospace', fontSize: '0.9em', overflowX: 'auto' }} {...props} />
+                  )
+                ),
+                blockquote: ({ ...props }) => (
+                  <blockquote style={{ borderLeft: '3px solid var(--accent-primary, #3b82f6)', paddingLeft: 12, margin: '8px 0', color: 'var(--text-secondary)', fontStyle: 'italic' }} {...props} />
+                ),
+              }}
+            >
+              {reportContent}
+            </ReactMarkdown>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

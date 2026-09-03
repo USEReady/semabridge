@@ -29,16 +29,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from semabridge.core.drop_ledger import DropLedger
 from semabridge.core.engine.conversion.pbix import _convert_pbix_to_sml
 from semabridge.core.execution_engine import ExecutionEngine
-from semabridge.domain.exceptions import ValidationError
 from semabridge.utils.name_translator import (
     get_pbix_deployment_view_name,
     get_target_deployment_name,
-    validate_no_pbix_view_name_collisions,
+    resolve_pbix_deployment_base_names,
 )
 
 
@@ -155,34 +152,36 @@ def test_multi_pbix_batch_sharing_one_project_id_still_produces_distinct_view_na
 
 
 # ---------------------------------------------------------------------------
-# (c) Two files that would collide on the same sanitized name are caught and
-#     blocked with a clear error before any deployment attempt — for either
-#     of the colliding files, regardless of which one is listed first.
+# (c) Two files that would collide on the same sanitized name are
+#     disambiguated with a short "_2" suffix — for whichever colliding file
+#     is listed second, regardless of which one that is — instead of being
+#     blocked with a validation error.
 # ---------------------------------------------------------------------------
 
 
-def test_colliding_filenames_are_blocked_before_deployment_regardless_of_order():
+def test_colliding_filenames_are_disambiguated_regardless_of_order():
     colliding_a = "C:/Reports/Sales Report.pbix"
     colliding_b = "C:/Reports/Sales_Report.pbix"
 
-    # Confirms *why* this must be blocked: both really do resolve to the
-    # same deployed view name via the exact conversion path used at sync time.
+    # Confirms *why* disambiguation is needed: both really do resolve to the
+    # same deployed view name via the exact conversion path used at sync time
+    # when resolved independently (no batch context).
     name_a = _deployed_view_name(_convert_pbix_to_sml(_EngineStub(), _build_context(colliding_a, "proj-x")))
     name_b = _deployed_view_name(_convert_pbix_to_sml(_EngineStub(), _build_context(colliding_b, "proj-x")))
     assert name_a == name_b == "SALES_REPORT_SEMANTIC"
 
-    # Blocked regardless of which colliding file is listed first.
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        validate_no_pbix_view_name_collisions([colliding_a, colliding_b])
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        validate_no_pbix_view_name_collisions([colliding_b, colliding_a])
+    # Whichever file is listed first keeps the clean name; the other gets "_2".
+    resolved_a_first = resolve_pbix_deployment_base_names([colliding_a, colliding_b])
+    assert resolved_a_first == {colliding_a: "SALES_REPORT", colliding_b: "SALES_REPORT_2"}
+
+    resolved_b_first = resolve_pbix_deployment_base_names([colliding_b, colliding_a])
+    assert resolved_b_first == {colliding_b: "SALES_REPORT", colliding_a: "SALES_REPORT_2"}
 
 
-def test_build_sync_jobs_blocks_the_whole_batch_when_two_of_three_files_collide(tmp_path):
+def test_build_sync_jobs_disambiguates_when_two_of_three_files_collide(tmp_path):
     """End-to-end at the real job-construction entry point: a 3rd, distinct
-    file in the same batch does not mask or get skipped past the collision
-    between the other two — the whole batch is blocked before any
-    ExecutionEngine.execute() call is made."""
+    file in the same batch is untouched, and the two colliding files get
+    distinct, deploy-safe names instead of the whole batch being blocked."""
     from semabridge.api.services import sync_execution_service as ses
 
     file_a = tmp_path / "Sales Report.pbix"
@@ -192,5 +191,11 @@ def test_build_sync_jobs_blocks_the_whole_batch_when_two_of_three_files_collide(
         f.write_bytes(b"data")
 
     source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b), str(file_c)]}
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
+    sync_jobs, *_ = ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
+
+    assert len(sync_jobs) == 3
+    resolved_by_path = {job["pbix_path"]: job["resolved_display_name"] for job in sync_jobs}
+    assert resolved_by_path[str(file_a)] == "SALES_REPORT"
+    assert resolved_by_path[str(file_b)] == "SALES_REPORT_2"
+    assert resolved_by_path[str(file_c)] == "MARKETING_ANALYSIS"
+    assert len(set(resolved_by_path.values())) == 3

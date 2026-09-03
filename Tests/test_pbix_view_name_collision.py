@@ -1,14 +1,20 @@
-"""Multi-PBIX naming and collision-detection tests (Part D).
+"""Multi-PBIX naming and collision-*disambiguation* tests (Part D).
 
 Covers:
   - get_pbix_deployment_view_name() / find_pbix_view_name_collisions() (pure logic)
-  - Both live enforcement points independently:
-      1. Project-configuration time (projects_controller.create_project)
-      2. Job-construction time (_build_sync_jobs, shared by dry-run AND deploy)
-  - The specific "fixed in one place, not the other" failure mode: each site
-    is proven to catch a collision even when the OTHER site's check is
-    disabled/never wired, so a future regression that removes one wiring
-    point (but not the other) would be caught by this suite.
+  - resolve_pbix_deployment_base_names(): the actual collision-handling
+    mechanism today. Two files that would otherwise produce the identical
+    clean base name are auto-disambiguated with a short "_2"/"_3" suffix
+    instead of being blocked with a validation error -- consistent with
+    this codebase's usual collision-handling shape (see
+    dimensions_clause_builder.py's alias _2/_3 fallback): try the clean
+    name first, only disambiguate when a genuine collision is detected.
+  - Both former "early feedback" enforcement points (project-configuration
+    time in projects_controller.create_project, and dry-run time in
+    mappings_controller.dry_run_mapping) no longer raise on a naming
+    collision -- disambiguation now happens once, at job-construction time
+    (_build_sync_jobs, shared by dry-run AND deploy), so a colliding upload
+    is never rejected outright.
 """
 from __future__ import annotations
 
@@ -16,8 +22,6 @@ import asyncio
 import os
 import sys
 import types
-
-import pytest
 
 os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///./test_pbix_view_name_collision.sqlite")
 os.environ.setdefault("AUTH_ENABLED", "false")
@@ -34,11 +38,10 @@ if "psycopg2" not in sys.modules:
     sys.modules["psycopg2.extensions"] = types.ModuleType("psycopg2.extensions")
     sys.modules["psycopg2.extras"] = types.ModuleType("psycopg2.extras")
 
-from semabridge.domain.exceptions import ValidationError
 from semabridge.utils.name_translator import (
     find_pbix_view_name_collisions,
     get_pbix_deployment_view_name,
-    validate_no_pbix_view_name_collisions,
+    resolve_pbix_deployment_base_names,
 )
 
 COLLIDING_A = "C:/Reports/Sales Report.pbix"
@@ -53,6 +56,16 @@ DISTINCT_C = "C:/Reports/Marketing Analysis.pbix"
 
 def test_get_pbix_deployment_view_name_derives_from_filename_not_project():
     assert get_pbix_deployment_view_name("C:/Reports/Sales Report.pbix", "snowflake") == "SALES_REPORT_SEMANTIC"
+
+
+def test_get_pbix_deployment_view_name_strips_upload_uuid_hash_prefix():
+    # pbix_service.py's _save_uploaded_pbix_file stores every upload as
+    # "{uuid4().hex}_{original filename}" -- that prefix must never leak
+    # into the deployed view name.
+    name = get_pbix_deployment_view_name(
+        "C:/tmp/f2556718378448fc91e0db143cdf6fb7_Customer Profitability.pbix", "snowflake"
+    )
+    assert name == "CUSTOMER_PROFITABILITY_SEMANTIC"
 
 
 def test_get_pbix_deployment_view_name_handles_leading_digit_and_reserved_chars():
@@ -77,26 +90,46 @@ def test_find_collisions_empty_when_all_distinct():
     assert collisions == {}
 
 
-def test_validate_raises_with_actionable_message_naming_both_files():
-    with pytest.raises(ValidationError) as excinfo:
-        validate_no_pbix_view_name_collisions([COLLIDING_A, COLLIDING_B])
-    message = str(excinfo.value)
-    assert "Sales Report.pbix" in message
-    assert "Sales_Report.pbix" in message
-    assert "SALES_REPORT_SEMANTIC" in message
-    assert "Rename" in message
-
-
-def test_validate_does_not_raise_for_distinct_names():
-    validate_no_pbix_view_name_collisions([COLLIDING_A, DISTINCT_C])
-
-
 # ---------------------------------------------------------------------------
-# 2. Call site 1: _build_sync_jobs() — shared by dry-run AND deploy
+# 2. resolve_pbix_deployment_base_names(): disambiguate, don't block
 # ---------------------------------------------------------------------------
 
 
-def test_build_sync_jobs_rejects_colliding_filenames(tmp_path):
+def test_resolve_disambiguates_colliding_names_with_short_numeric_suffix():
+    resolved = resolve_pbix_deployment_base_names([COLLIDING_A, COLLIDING_B])
+    assert resolved[COLLIDING_A] == "SALES_REPORT"
+    assert resolved[COLLIDING_B] == "SALES_REPORT_2"
+    # Never a long UUID/hash fallback.
+    assert len(resolved[COLLIDING_B]) < len("SALES_REPORT") + 40
+
+
+def test_resolve_disambiguation_order_follows_input_order_not_alphabetical():
+    # Whichever file is listed FIRST keeps the clean, unsuffixed name.
+    resolved_b_first = resolve_pbix_deployment_base_names([COLLIDING_B, COLLIDING_A])
+    assert resolved_b_first[COLLIDING_B] == "SALES_REPORT"
+    assert resolved_b_first[COLLIDING_A] == "SALES_REPORT_2"
+
+
+def test_resolve_leaves_distinct_names_untouched():
+    resolved = resolve_pbix_deployment_base_names([COLLIDING_A, DISTINCT_C])
+    assert resolved[COLLIDING_A] == "SALES_REPORT"
+    assert resolved[DISTINCT_C] == "MARKETING_ANALYSIS"
+
+
+def test_resolve_handles_three_way_collision():
+    third = "C:/Reports/Sales-Report.pbix"
+    resolved = resolve_pbix_deployment_base_names([COLLIDING_A, COLLIDING_B, third])
+    assert resolved[COLLIDING_A] == "SALES_REPORT"
+    assert resolved[COLLIDING_B] == "SALES_REPORT_2"
+    assert resolved[third] == "SALES_REPORT_3"
+
+
+# ---------------------------------------------------------------------------
+# 3. Call site 1: _build_sync_jobs() — shared by dry-run AND deploy
+# ---------------------------------------------------------------------------
+
+
+def test_build_sync_jobs_disambiguates_colliding_filenames_instead_of_rejecting(tmp_path):
     from semabridge.api.services import sync_execution_service as ses
 
     file_a = tmp_path / "Sales Report.pbix"
@@ -105,16 +138,20 @@ def test_build_sync_jobs_rejects_colliding_filenames(tmp_path):
     file_b.write_bytes(b"b")
 
     source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b)]}
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
+    sync_jobs, *_ = ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
+
+    assert len(sync_jobs) == 2
+    resolved_by_path = {job["pbix_path"]: job["resolved_display_name"] for job in sync_jobs}
+    assert resolved_by_path[str(file_a)] == "SALES_REPORT"
+    assert resolved_by_path[str(file_b)] == "SALES_REPORT_2"
 
 
-def test_build_sync_jobs_collision_check_covers_dry_run_and_deploy_identically(tmp_path, monkeypatch):
-    """execute_sync_request() calls _build_sync_jobs() exactly once regardless
-    of payload["dry_run"] — proving the same collision check applies to both
-    a dry-run request and a deploy request, because they share this one
-    job-construction step. There is no separate code path for this to drift
-    out of sync between the two.
+def test_build_sync_jobs_collision_handling_is_independent_of_dry_run_flag(tmp_path):
+    """_build_sync_jobs() takes no dry_run parameter at all -- it's the exact
+    same job list (and therefore the exact same disambiguation) regardless
+    of whether the caller (execute_sync_request) is about to deploy or only
+    dry-run. There is no separate code path for this to drift out of sync
+    between the two.
     """
     from semabridge.api.services import sync_execution_service as ses
 
@@ -126,46 +163,25 @@ def test_build_sync_jobs_collision_check_covers_dry_run_and_deploy_identically(t
     source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b)]}
     config = {"source": source_cfg, "targets": [{"type": "snowflake"}]}
 
-    monkeypatch.setattr(ses, "reload_settings", lambda: None)
-    monkeypatch.setattr(ses, "_load_config", lambda payload, normalizer: ("semabridge.yaml", config))
-
-    for dry_run_flag in (True, False):
-        with pytest.raises(ValidationError, match="Naming collision detected"):
-            ses.execute_sync_request({"dry_run": dry_run_flag}, lambda content, *args: content)
-
-
-def test_build_sync_jobs_catches_collision_even_if_config_time_check_was_never_wired(tmp_path):
-    """Simulates 'the CreateProjectRequest-time check was fixed/removed' by
-    calling _build_sync_jobs() in complete isolation from
-    projects_controller.create_project — proving the execution-time site is a
-    genuinely independent line of defense, not a fig leaf that only ever runs
-    alongside the config-time check.
-    """
-    from semabridge.api.services import sync_execution_service as ses
-
-    file_a = tmp_path / "Sales Report.pbix"
-    file_b = tmp_path / "Sales_Report.pbix"
-    file_a.write_bytes(b"a")
-    file_b.write_bytes(b"b")
-
-    source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b)]}
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
+    sync_jobs, *_ = ses._build_sync_jobs(config)
+    resolved_by_path = {job["pbix_path"]: job["resolved_display_name"] for job in sync_jobs}
+    assert resolved_by_path[str(file_a)] == "SALES_REPORT"
+    assert resolved_by_path[str(file_b)] == "SALES_REPORT_2"
 
 
 # ---------------------------------------------------------------------------
-# 3. Call site 2: project-configuration time (create_project)
+# 4. Project-configuration time (create_project) no longer blocks on naming
 # ---------------------------------------------------------------------------
 
 
-def test_create_project_rejects_colliding_filenames_before_touching_compat_store(monkeypatch):
+def test_create_project_no_longer_rejects_colliding_filenames(monkeypatch):
     import semabridge.api.controllers.projects_controller as pc
 
     called = {"create_project_compat": False}
 
     async def _fake_create_project_compat(request_dict):
         called["create_project_compat"] = True
-        return {"id": "should-not-get-here"}
+        return {"id": "proj-ok"}
 
     monkeypatch.setattr(pc, "create_project_compat", _fake_create_project_compat)
     monkeypatch.setattr(pc, "require_request_user_id", lambda request: None)
@@ -175,42 +191,9 @@ def test_create_project_rejects_colliding_filenames_before_touching_compat_store
         source={"type": "pbix", "models": [COLLIDING_A, COLLIDING_B]},
     )
 
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        asyncio.run(pc.create_project(object(), payload))
-
-    assert called["create_project_compat"] is False
-
-
-def test_create_project_catches_collision_even_if_build_sync_jobs_check_was_never_wired(monkeypatch):
-    """Simulates 'the _build_sync_jobs()-time check was fixed/removed' by
-    monkeypatching sync_execution_service's collision validator to a no-op —
-    proving create_project()'s own, separately-imported call to
-    validate_no_pbix_view_name_collisions() still independently catches the
-    collision. This is the concrete regression test for the 'fixed in one
-    place, not the other' failure mode: if this test passed only because the
-    OTHER site happened to also be wired, patching that other site to a no-op
-    would make this test fail too — it doesn't, because create_project calls
-    its own, separate import of the shared validator.
-    """
-    import semabridge.api.controllers.projects_controller as pc
-    from semabridge.api.services import sync_execution_service as ses
-
-    # Simulate the execution-time site being un-wired/broken.
-    monkeypatch.setattr(ses, "validate_no_pbix_view_name_collisions", lambda *a, **k: None)
-
-    async def _fake_create_project_compat(request_dict):
-        return {"id": "should-not-get-here"}
-
-    monkeypatch.setattr(pc, "create_project_compat", _fake_create_project_compat)
-    monkeypatch.setattr(pc, "require_request_user_id", lambda request: None)
-
-    payload = pc.CreateProjectRequest(
-        name="multi-pbix-collision-test",
-        source={"type": "pbix", "models": [COLLIDING_A, COLLIDING_B]},
-    )
-
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        asyncio.run(pc.create_project(object(), payload))
+    result = asyncio.run(pc.create_project(object(), payload))
+    assert result == {"id": "proj-ok"}
+    assert called["create_project_compat"] is True
 
 
 def test_create_project_allows_distinctly_named_files_through(monkeypatch):
@@ -236,11 +219,11 @@ def test_create_project_allows_distinctly_named_files_through(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 4. dry-run controller boundary (fail-fast symmetry with create_project)
+# 5. dry-run controller boundary no longer blocks on naming either
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_mapping_rejects_colliding_selected_sources_before_running_pipeline(monkeypatch):
+def test_dry_run_mapping_no_longer_rejects_colliding_selected_sources(monkeypatch):
     import semabridge.api.controllers.mappings_controller as mc
     import semabridge.api.services.core_domain_service as core_domain_service
 
@@ -263,12 +246,6 @@ def test_dry_run_mapping_rejects_colliding_selected_sources_before_running_pipel
     class _FakeService:
         pass
 
-    import json
+    asyncio.run(mc.dry_run_mapping("preview", object(), request, service=_FakeService()))
 
-    response = asyncio.run(mc.dry_run_mapping("preview", object(), request, service=_FakeService()))
-
-    assert called["sync_models"] is False
-    assert response.status_code == 400
-    body = json.loads(response.body)
-    assert body["success"] is False
-    assert "Naming collision detected" in body["error"]
+    assert called["sync_models"] is True

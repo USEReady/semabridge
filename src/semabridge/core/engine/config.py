@@ -315,6 +315,7 @@ def _step2_init_identifiers(
     dataset_id: Optional[str],
     config_path: Optional[Path] = None,
     sync_mode: str = "copy",
+    resolved_display_name: Optional[str] = None,
 ) -> RunContext:
     """
     Step 2: Initialize identifiers.
@@ -385,6 +386,7 @@ def _step2_init_identifiers(
         behavior=behavior,
         sync_mode=sync_mode,
         semantic_view_name_override=getattr(config, "_semantic_view_name_override", None),
+        resolved_pbix_display_name=resolved_display_name,
     )
 
     # Register the project + run row in the DB immediately.

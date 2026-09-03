@@ -17,6 +17,34 @@ export function buildRunReportUrl(apiBaseUrl, projectId, runId) {
 }
 
 /**
+ * Same as buildRunReportUrl(), but for one model's own report from a
+ * multi-PBIX batch run (see run_report_service.py's
+ * write_per_model_run_reports() / the backend's
+ * .../runs/{run_id}/report/{model_label} endpoint).
+ */
+export function buildRunModelReportUrl(apiBaseUrl, projectId, runId, modelLabel) {
+    return `${apiBaseUrl}/projects/${projectId}/runs/${runId}/report/${encodeURIComponent(modelLabel)}`;
+}
+
+/**
+ * JSON counterpart to buildRunReportUrl() -- the accordion-style summary
+ * view's data source (RunReportSummary.jsx), built fresh server-side from
+ * the run's own snapshot/drop-ledger data rather than downloading the
+ * rendered Markdown file.
+ */
+export function buildRunReportSummaryUrl(apiBaseUrl, projectId, runId) {
+    return `${apiBaseUrl}/projects/${projectId}/runs/${runId}/report-summary`;
+}
+
+/**
+ * Per-model counterpart to buildRunReportSummaryUrl(), for one file's own
+ * scoped summary in a multi-PBIX batch run.
+ */
+export function buildRunModelReportSummaryUrl(apiBaseUrl, projectId, runId, modelLabel) {
+    return `${apiBaseUrl}/projects/${projectId}/runs/${runId}/report-summary/${encodeURIComponent(modelLabel)}`;
+}
+
+/**
  * Resolves the filename a downloaded report should be saved as: prefers
  * the server's Content-Disposition header (which encodes the project's
  * display name, see run_service.py's get_run_report_compat), falling back

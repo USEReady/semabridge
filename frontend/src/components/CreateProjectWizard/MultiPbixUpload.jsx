@@ -17,8 +17,10 @@
  * an inline message rather than silently truncating.
  */
 import { useCallback, useRef, useState } from 'react';
-import { Upload, FileText, X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText } from 'lucide-react';
 import { api } from '../../utils/api';
+import { uploadStatusColors } from './uploadStatusColors';
+import { UploadStatusIcon, RemoveFileButton } from './uploadStatusUI';
 
 export default function MultiPbixUpload({ onFilesChange, maxFiles = 10 }) {
   const [entries, setEntries] = useState([]); // [{ name, size, path, status, error }]
@@ -127,19 +129,19 @@ export default function MultiPbixUpload({ onFilesChange, maxFiles = 10 }) {
 
       {entries.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {entries.map((e) => (
+          {entries.map((e) => {
+            const statusStyle = uploadStatusColors(e.status);
+            return (
             <div
               key={e.name}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '6px 10px', borderRadius: 6,
-                background: 'var(--bg-surface-raised)',
-                border: `1px solid ${e.status === 'error' ? 'var(--color-error)30' : 'var(--border-subtle)'}`,
+                background: statusStyle?.background || 'var(--bg-surface-raised)',
+                border: `1px solid ${statusStyle?.border || 'var(--border-subtle)'}`,
               }}
             >
-              {e.status === 'uploading' && <Loader2 size={13} style={{ color: 'var(--text-tertiary)', animation: 'spin 1s linear infinite', flexShrink: 0 }} />}
-              {e.status === 'done' && <CheckCircle2 size={13} style={{ color: 'var(--color-success)', flexShrink: 0 }} />}
-              {e.status === 'error' && <AlertCircle size={13} style={{ color: 'var(--color-error)', flexShrink: 0 }} />}
+              <UploadStatusIcon status={e.status} size={13} />
               {e.status === 'uploading' ? null : <FileText size={13} style={{ color: 'var(--text-tertiary)', flexShrink: 0, display: e.status === 'error' || e.status === 'done' ? 'none' : 'block' }} />}
               <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {e.name}
@@ -147,14 +149,10 @@ export default function MultiPbixUpload({ onFilesChange, maxFiles = 10 }) {
               {e.status === 'error' && (
                 <span style={{ fontSize: 11, color: 'var(--color-error)' }}>{e.error}</span>
               )}
-              <button
-                onClick={(evt) => { evt.stopPropagation(); removeFile(e.name); }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2, flexShrink: 0 }}
-              >
-                <X size={12} />
-              </button>
+              <RemoveFileButton onClick={() => removeFile(e.name)} />
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -12,7 +12,6 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
-from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
 
 
 class CreateProjectRequest(BaseModel):
@@ -77,6 +76,9 @@ from semabridge.api.services.project_domain_service import (
     get_project_runs_compat,
     get_project_storage_stats,
     get_run_report_compat,
+    get_run_model_report_compat,
+    get_run_report_data_compat,
+    get_run_model_report_data_compat,
     list_project_snapshots_compat,
     list_snapshot_groups_compat,
     restore_project_version_compat,
@@ -141,13 +143,6 @@ async def create_project(request: Request, payload: CreateProjectRequest):
     src_for_validation = payload_dict.get("source") if isinstance(payload_dict.get("source"), dict) else {}
     validation_source_type = str(src_for_validation.get("type") or "")
     validate_pbix_model_list(src_for_validation.get("models"), source_type=validation_source_type)
-    validation_models = src_for_validation.get("models")
-    if validation_source_type.strip().lower() == "pbix" and validation_models:
-        # Earliest possible feedback: catch a naming collision before the user
-        # even gets to a dry-run. _build_sync_jobs() re-checks this at
-        # execution time as defense-in-depth (covers dry-run and deploy alike,
-        # and configs edited after creation).
-        validate_no_pbix_view_name_collisions(validation_models)
     if user_id:
         payload_dict["user_id"] = str(user_id)
         validate_project_connector_accounts_belong_to_user(user_id, payload_dict)
@@ -326,6 +321,52 @@ async def download_run_report(project_id: str, run_id: str, request: Request):
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{report["filename"]}"'},
     )
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/report/{model_label:path}")
+async def download_run_model_report(project_id: str, run_id: str, model_label: str, request: Request):
+    """Per-model report download for a multi-PBIX batch run -- see
+    download_run_report() above for the single-report/whole-run equivalent.
+    """
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    report = await get_run_model_report_compat(project_id, run_id, model_label)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"No report found for run {run_id}, model {model_label}")
+
+    return Response(
+        content=report["content"].encode("utf-8"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{report["filename"]}"'},
+    )
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/report-summary")
+async def get_run_report_summary(project_id: str, run_id: str, request: Request):
+    """JSON counterpart to download_run_report, for the frontend's
+    accordion-style summary view (RunReportSummary.jsx) -- built fresh from
+    the run's own snapshot/drop-ledger data rather than parsing the
+    rendered Markdown file.
+    """
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    data = await get_run_report_data_compat(project_id, run_id)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"No report found for run {run_id}")
+    return data
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/report-summary/{model_label:path}")
+async def get_run_model_report_summary(project_id: str, run_id: str, model_label: str, request: Request):
+    """Per-model counterpart to get_run_report_summary() -- see
+    download_run_model_report() above for the Markdown equivalent.
+    """
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    data = await get_run_model_report_data_compat(project_id, run_id, model_label)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"No report found for run {run_id}, model {model_label}")
+    return data
 
 
 @router.get("/api/projects/{project_id}/vc/stats")

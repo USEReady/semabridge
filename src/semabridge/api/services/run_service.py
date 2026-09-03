@@ -505,8 +505,9 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         # allowed to affect the run's own recorded outcome (write_run_report
         # swallows its own errors and returns None on failure).
         try:
-            from semabridge.api.services.run_report_service import write_run_report
+            from semabridge.api.services.run_report_service import write_run_report, write_per_model_run_reports
             run["report_path"] = write_run_report(run, project_cfg)
+            run["model_reports"] = write_per_model_run_reports(run, project_cfg)
         except Exception as report_exc:
             logger.debug("Run report generation skipped for %s: %s", project_id, report_exc)
         _compat_save_store()
@@ -581,6 +582,17 @@ async def get_project_runs_compat(project_id: str):
                 before_ids = _parse_list("before_target_snapshot_ids")
                 after_ids = _parse_list("after_target_snapshot_ids")
 
+                # The `runs` table has no report columns at all -- report
+                # state has only ever lived in the in-memory compat-store run
+                # dict (see the `finally` block in _perform_project_run),
+                # which this ORM fallback runs only after that store has
+                # already been evicted (server restart). Without this,
+                # per-model download buttons would silently disappear from
+                # the UI for any run reconstructed here, even though the
+                # .md files are still on disk -- see
+                # run_report_service.load_persisted_model_reports().
+                from semabridge.api.services.run_report_service import load_persisted_model_reports
+
                 run_data = {
                     "run_id": row.run_id,
                     "id": row.run_id,
@@ -593,6 +605,7 @@ async def get_project_runs_compat(project_id: str):
                     "before_target_snapshot_ids": before_ids,
                     "after_target_snapshot_ids": after_ids,
                     "after_tgt_snapshots": after_ids,
+                    "model_reports": load_persisted_model_reports(row.project_id, row.run_id),
                 }
                 results.append(run_data)
 
@@ -702,6 +715,130 @@ async def get_run_report_compat(project_id: str, run_id: str) -> Optional[Dict[s
         "content": path.read_text(encoding="utf-8"),
         "filename": f"{safe_project_name}_{run_id}_report.md",
     }
+
+
+async def get_run_model_report_compat(project_id: str, run_id: str, model_label: str) -> Optional[Dict[str, str]]:
+    """Same shape as get_run_report_compat(), scoped to one model's own
+    report from a multi-PBIX batch run (see write_per_model_run_reports).
+    """
+    from semabridge.api.services.run_report_service import REPORTS_ROOT, _sanitize_report_filename_part
+
+    _compat_ensure_loaded()
+    report_path = None
+    project_name = project_id
+    for run in _compat_project_runs.get(project_id, []):
+        if str(run.get("run_id") or run.get("id") or "") == run_id:
+            project_name = run.get("project_name") or project_id
+            for entry in (run.get("model_reports") or []):
+                if str(entry.get("model")) == model_label:
+                    report_path = entry.get("path")
+                    break
+            break
+
+    safe_label = _sanitize_report_filename_part(model_label, "model")
+    if not report_path:
+        # In-memory compat record may have been evicted by a restart since
+        # the run completed -- the file itself still lives at the fixed,
+        # run_id+model-scoped path write_per_model_run_reports always uses.
+        candidate = REPORTS_ROOT / project_id / f"{run_id}__{safe_label}.md"
+        if candidate.exists():
+            report_path = str(candidate)
+
+    if not report_path:
+        return None
+    path = Path(report_path)
+    if not path.exists():
+        return None
+
+    safe_project_name = str(project_name).strip().replace(" ", "_") or project_id
+    return {
+        "content": path.read_text(encoding="utf-8"),
+        "filename": f"{safe_project_name}_{safe_label}_{run_id}_report.md",
+    }
+
+
+def _project_cfg_for_report(project_id: str) -> str:
+    modular_bundle = project_shared._compat_load_modular_project(project_id)
+    return (
+        (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+        or _compat_project_configs.get(project_id)
+        or _compat_load_repo_yaml_text()
+        or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+    )
+
+
+async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+    """JSON counterpart to get_run_report_compat(), for the frontend's
+    accordion-style summary view (RunReportSummary.jsx): finds the same
+    in-memory run record and calls build_run_report_data(run, project_cfg)
+    instead of reading the rendered Markdown file.
+
+    Returns None if no in-memory run record exists (e.g. after a restart
+    evicted it) -- there is no file-based fallback for this JSON view the
+    way get_run_report_compat has for the Markdown file, since JSON is
+    always freshly recomputed, never persisted to disk (matches
+    demo_version_ref's own documented design choice for this endpoint).
+    """
+    from semabridge.api.services.run_report_service import build_run_report_data
+
+    _compat_ensure_loaded()
+    run = None
+    for candidate in _compat_project_runs.get(project_id, []):
+        if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
+            run = candidate
+            break
+    if run is None:
+        return None
+
+    return build_run_report_data(run, _project_cfg_for_report(project_id))
+
+
+async def get_run_model_report_data_compat(project_id: str, run_id: str, model_label: str) -> Optional[Dict[str, Any]]:
+    """Per-model counterpart to get_run_report_data_compat(), for a
+    multi-PBIX batch run -- scopes the run to just the one result matching
+    `model_label` before building the JSON summary, the same scoping trick
+    generate_per_model_reports() uses for the Markdown path.
+
+    Returns None only if no in-memory run record exists at all for run_id
+    (a genuine 404 -- wrong run_id/project_id). If the run record exists
+    but its results/summary blob isn't available in this process right now
+    (stripped before the compat store was persisted, or reconstructed via
+    the ORM fallback -- see build_run_report_data()'s "unavailable" case),
+    this still returns build_run_report_data()'s honest
+    {"crashed": True, "unavailable": True, ...} shape for THIS run rather
+    than a bare None/404 -- the caller can't tell "run never existed" apart
+    from "run's data just isn't here anymore" otherwise, and the frontend
+    would render a generic, unhelpful error for what is actually a run that
+    completed successfully.
+    """
+    from semabridge.api.services.run_report_service import build_run_report_data, _describe_source_for_result
+
+    _compat_ensure_loaded()
+    run = None
+    for candidate in _compat_project_runs.get(project_id, []):
+        if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
+            run = candidate
+            break
+    if run is None:
+        return None
+
+    results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    result = next((r for r in results if str(r.get("model")) == model_label), None)
+    if result is None:
+        if not results:
+            # Not "this model_label doesn't exist" -- results are entirely
+            # missing for this run, so build_run_report_data() will report
+            # the honest "completed but data unavailable" shape instead of
+            # a misleading pre-extraction crash.
+            project_cfg = _project_cfg_for_report(project_id)
+            return build_run_report_data(run, project_cfg)
+        return None
+
+    project_cfg = _project_cfg_for_report(project_id)
+    scoped_run = dict(run)
+    scoped_run["results"] = [result]
+    source_override = _describe_source_for_result(result, project_cfg, run)
+    return build_run_report_data(scoped_run, project_cfg, source_override=source_override)
 
 
 async def get_run_conflicts_compat(run_id: str):

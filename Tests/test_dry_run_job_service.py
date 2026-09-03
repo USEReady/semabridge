@@ -121,14 +121,23 @@ def test_create_dry_run_job_creates_pending_job_and_files():
     assert len(status["files"]) == 2
 
 
-def test_create_dry_run_job_rejects_naming_collision_before_creating_rows():
-    with pytest.raises(ValidationError, match="Naming collision detected"):
-        job_service.create_dry_run_job(
-            project_id="preview-test",
-            source_config={"type": "pbix"},
-            target_config={"type": "snowflake"},
-            selected_sources=["C:/Reports/Sales Report.pbix", "C:/Reports/Sales_Report.pbix"],
-        )
+def test_create_dry_run_job_no_longer_rejects_naming_collision(tmp_path):
+    # Naming disambiguation now happens once, at real job-construction time
+    # (_build_sync_jobs, see test_pbix_view_name_collision.py) -- a
+    # same-named-file collision no longer blocks dry-run job creation.
+    file_a = tmp_path / "Sales Report.pbix"
+    file_b = tmp_path / "Sales_Report.pbix"
+    file_a.write_bytes(b"a")
+    file_b.write_bytes(b"b")
+
+    result = job_service.create_dry_run_job(
+        project_id="preview-test",
+        source_config={"type": "pbix"},
+        target_config={"type": "snowflake"},
+        selected_sources=[str(file_a), str(file_b)],
+    )
+    assert result["job_id"]
+    assert len(result["files"]) == 2
 
 
 def test_create_dry_run_job_rejects_bad_file_list():

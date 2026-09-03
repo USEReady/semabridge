@@ -568,3 +568,22 @@ class IdentifierRegistry:
         """
         seed = f"{original_name}{sanitized_base}".encode("utf-8")
         return hashlib.sha256(seed).hexdigest()[:4].upper()
+
+
+def clean_pbix_model_name(raw) -> str:
+    """Extract a clean model name from a PBIX path or model stem.
+
+    Upload handlers (pbix_service.py's _save_uploaded_pbix_file) prepend a
+    32-character hexadecimal UUID + '_' to every uploaded PBIX file on disk
+    to prevent filename collisions between concurrent uploads. That prefix
+    has no business meaning and must never leak into a deployed view name
+    (e.g. "F2556718378448FC91E0DB143CDF6FB7_SALES" instead of "SALES") --
+    this helper strips it if present, returning the clean original filename
+    stem.
+    """
+    if not raw:
+        return ""
+    from pathlib import Path
+
+    stem = raw.stem if isinstance(raw, Path) else Path(str(raw)).stem
+    return re.sub(r"^[0-9a-fA-F]{32}_", "", stem)

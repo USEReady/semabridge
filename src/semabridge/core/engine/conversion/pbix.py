@@ -76,12 +76,21 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     # pre-deploy collision check, so the collision check and the name actually
     # baked into the DDL agree on the same computation — not two disconnected
     # ones that can disagree about whether a collision exists.
+    #
+    # Prefers context.resolved_pbix_display_name when set (sync_execution_
+    # service._build_sync_jobs already computed it for every job in this
+    # batch via resolve_pbix_deployment_base_names() -- clean by default,
+    # "_2"/"_3"-suffixed only for a genuine same-batch collision). Falls back
+    # to deriving it here directly (e.g. a direct engine.execute() call that
+    # bypasses sync_execution_service) -- still hex-prefix-clean via
+    # clean_pbix_model_name(), just without cross-file disambiguation.
     pbix_source_path = getattr(sf, "pbix_path", None)
-    file_display_name = None
-    if pbix_source_path:
-        from semabridge.utils.identifiers import IdentifierSanitizer
+    file_display_name = getattr(context, "resolved_pbix_display_name", None)
+    if not file_display_name and pbix_source_path:
+        from semabridge.utils.identifiers import IdentifierSanitizer, clean_pbix_model_name
 
-        file_display_name = IdentifierSanitizer().sanitize_table_name(Path(pbix_source_path).stem)
+        clean_stem = clean_pbix_model_name(pbix_source_path) or Path(pbix_source_path).stem
+        file_display_name = IdentifierSanitizer().sanitize_table_name(clean_stem)
 
     # Phase 1: TMSL → OSI
     source_data = {

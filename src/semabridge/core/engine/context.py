@@ -26,11 +26,39 @@ class RunContext:
     behavior: ConnectorBehavior = _dataclass_field(default_factory=ConnectorBehavior)
     account_id: Optional[str] = None  # Linked Account for multi-user credential scoping
 
+    # Pre-resolved access token for an account_id-scoped Fabric connection
+    # (see engine.py Step 3). FabricConfig has no token field of its own, so
+    # this carries it alongside the config rather than injecting
+    # FABRIC_ACCESS_TOKEN into os.environ, which would be unsafe for
+    # concurrently-running syncs. Consumed by extraction/fabric.py.
+    fabric_access_token: Optional[str] = None
+
     # Optional override for the Snowflake semantic view name.
     # Set from model_name / project_name in the project config YAML.
     # Kept separate from config.model.name to avoid mutating the shared
     # lru_cache Settings singleton.
     semantic_view_name_override: Optional[str] = None
+
+    # Clean, batch-disambiguated display name for this job's PBIX file (see
+    # sync_execution_service._build_sync_jobs's resolve_pbix_deployment_base_names()
+    # call). Consumed by conversion/pbix.py's _convert_pbix_to_sml() in place
+    # of deriving the name from the file's own (UUID-prefixed) on-disk stem,
+    # so uploaded PBIX files deploy under a clean name (e.g. "SALES_SEMANTIC")
+    # instead of "F2556718...91E0DB143CDF6FB7_SALES_SEMANTIC" -- with a
+    # short "_2"/"_3" suffix only when two files in the same batch would
+    # otherwise collide on the identical clean name.
+    resolved_pbix_display_name: Optional[str] = None
+
+    # Structural fingerprint of context.sml_model (see utils/model_dedup.py),
+    # computed once at Step 8 (targets/snowflake.py) so a re-upload of the
+    # same underlying model under a different file name redeploys to the
+    # already-deployed view instead of creating a duplicate one. Paired with
+    # model_fingerprint_scope_key (the target database/schema this
+    # fingerprint was computed against) and threaded through to Step 9
+    # (deployment/snowflake.py), which records the mapping only after a
+    # successful deploy — never for a model that didn't actually land.
+    model_structural_fingerprint: Optional[str] = None
+    model_fingerprint_scope_key: Optional[str] = None
 
     # Artifacts accumulated during execution
     source_format: Optional[SourceFormat] = None

@@ -29,6 +29,7 @@ the codebase as of writing (grep-verified against every call site).
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -392,6 +393,249 @@ def _describe_source(project_cfg: str, run: Dict[str, Any]) -> Tuple[str, List[s
     return source_type.title() or "Unknown source", []
 
 
+def _describe_source_for_result(
+    result: Dict[str, Any], project_cfg: str, run: Dict[str, Any]
+) -> Tuple[str, List[str]]:
+    """Same (source kind, [files]) shape as _describe_source(), but scoped to
+    ONE model's own result -- used when rendering a per-model report for a
+    multi-PBIX batch, so its "Source:" line names only that file instead of
+    every file in the batch (see generate_per_model_reports()).
+
+    Falls back to the whole-run description when the result carries no
+    pbix_path of its own (single-model runs, and non-PBIX sources, which
+    don't fan out into multiple files today).
+    """
+    pbix_path = result.get("pbix_path")
+    if pbix_path:
+        return "Local file", [Path(str(pbix_path)).name]
+    return _describe_source(project_cfg, run)
+
+
+# ---------------------------------------------------------------------------
+# JSON summary data (accordion view) -- ported from demo_version_ref's
+# _gather_run_report_data()/build_run_report_data(), adapted to this
+# codebase's current _classify_metrics() (Standard/AI-assisted only --
+# no third "Needs Review" tier yet, see the followup_needs_review_
+# classification memory/follow-up item; needs_review is always []
+# below rather than omitted, so the frontend's three-tier tab structure
+# doesn't need a special case for its absence).
+#
+# Deliberately NOT unified with generate_run_report_markdown()'s own
+# gathering loop below, even though the two compute near-identical data:
+# that function is already relied on by write_run_report()/
+# write_per_model_run_reports() (tested, in production use), and
+# refactoring it to share this loop would risk regressing the Markdown
+# path for a JSON-view feature. Small duplication accepted deliberately.
+# ---------------------------------------------------------------------------
+
+
+def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
+    """Single source of truth for one run's (or one model's, when `run` has
+    already been scoped to a single result -- see generate_per_model_reports()'s
+    scoping trick) report data, structured for build_run_report_data()'s
+    JSON view.
+
+    Returns {"crashed": True, "error": str} if the run never reached
+    ExecutionEngine.execute() (no RunSummary at all to report on) -- OR, with
+    "unavailable": True added, if the run actually completed but its
+    results/summary blob simply isn't available in THIS process's memory
+    right now. The two look identical from run.get("results") alone (both
+    are just "no results"), but they are not the same situation: `results`,
+    `summary`, `logs`, and `stage_states` are deliberately stripped before
+    the compat store is persisted to disk (see project_shared.py's
+    _RUN_BLOB_KEYS/_strip_run_blobs -- kept small/fast on purpose) and are
+    never rebuilt by get_project_runs_compat()'s ORM-fallback branch either,
+    so ANY run reconstructed after a server restart looks exactly like a
+    pre-extraction crash to this function even when it succeeded. A run
+    with a terminal, non-failure status could not have "crashed before
+    reading the source file" -- that combination means the data is simply
+    gone from this process, not that the run failed.
+    """
+    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    if not model_results:
+        top_summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+        if top_summary:
+            model_results = [
+                {
+                    "model": project_name,
+                    "summary": top_summary,
+                    "dropped_entities": top_summary.get("dropped_entities") or [],
+                }
+            ]
+
+    if not model_results:
+        status = str(run.get("status") or "").lower()
+        if status in ("success", "warning", "partial"):
+            return {
+                "crashed": True,
+                "unavailable": True,
+                "error": (
+                    f"This run completed with status '{status}', but its detailed "
+                    "report data is no longer available in this session (for "
+                    "example, after a server restart). Try the Raw Report tab, or "
+                    "Download Raw .md, if a saved report file still exists."
+                ),
+            }
+        return {
+            "crashed": True,
+            "error": str(run.get("error") or run.get("message") or "Unknown error."),
+        }
+
+    multi_model = len(model_results) > 1
+    dataset_count = column_count = metric_count = relationship_count = 0
+    standard: List[Dict[str, Any]] = []
+    ai_assisted: List[Dict[str, Any]] = []
+    dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    target_type = ""
+
+    for result in model_results:
+        model_label = str(result.get("model") or "")
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        target_type = target_type or str(summary.get("target_type") or "")
+        model_dropped = [
+            d for d in (result.get("dropped_entities") or summary.get("dropped_entities") or [])
+            if isinstance(d, dict)
+        ]
+
+        snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
+        if snap_data:
+            extraction_table_drops = sum(
+                1 for d in model_dropped
+                if d.get("stage") == "extraction" and d.get("entity_kind") == "table"
+            )
+            schema_column_drops = sum(
+                1 for d in model_dropped
+                if d.get("stage") == "schema_validation" and d.get("entity_kind") == "column"
+            )
+            emission_relationship_drops = sum(
+                1 for d in model_dropped
+                if d.get("stage") == "ddl_emission" and d.get("entity_kind") == "relationship"
+            )
+            dataset_count += snap_data["dataset_count"] + extraction_table_drops
+            column_count += snap_data["column_count"] + schema_column_drops
+            relationship_count += snap_data["relationship_count"] + emission_relationship_drops
+            metric_count += len(snap_data["metrics"])
+
+            classified = _classify_metrics(snap_data["metrics"])
+            prefix = f"{model_label}: " if multi_model and model_label else ""
+            for entry in classified["standard"]:
+                standard.append({**entry, "name": f"{prefix}{entry['name']}"})
+            for entry in classified["ai_assisted"]:
+                ai_assisted.append({**entry, "name": f"{prefix}{entry['name']}"})
+
+        for record in model_dropped:
+            stage = str(record.get("stage") or "unknown")
+            target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
+            target_group.setdefault(stage, []).append(record)
+
+    return {
+        "crashed": False,
+        "target_type": target_type,
+        "counts": {
+            "datasets": dataset_count,
+            "columns": column_count,
+            "metrics": metric_count,
+            "relationships": relationship_count,
+        },
+        "standard": standard,
+        "ai_assisted": ai_assisted,
+        "needs_review": [],
+        "dropped_by_stage": dropped_by_stage,
+        "excluded_by_design_by_stage": excluded_by_design_by_stage,
+    }
+
+
+def build_run_report_data(
+    run: Dict[str, Any],
+    project_cfg: str,
+    source_override: Optional[Tuple[str, List[str]]] = None,
+) -> Dict[str, Any]:
+    """JSON-friendly counterpart to generate_run_report_markdown, for the
+    frontend's accordion-style summary view (RunReportSummary.jsx):
+    collapsed shows clean counts per category, expanded shows full
+    per-item detail. `source_override` lets a caller scope this to one
+    model's own result (see generate_per_model_reports()'s identical
+    scoping trick for the Markdown path).
+    """
+    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    run_id = str(run.get("run_id") or run.get("id") or "unknown")
+    status = str(run.get("status") or "failed").lower()
+    status_label, _status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
+    source_kind, source_files = source_override or _describe_source(project_cfg, run)
+
+    header = {
+        "run_id": run_id,
+        "project_name": project_name,
+        "status": status,
+        "status_label": status_label,
+        "source_kind": source_kind,
+        "source_files": source_files,
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "duration_label": _format_duration(run.get("duration_ms")),
+    }
+
+    data = _gather_run_report_data(run)
+    if data["crashed"]:
+        return {**header, "crashed": True, "unavailable": data.get("unavailable", False), "error": data["error"]}
+
+    counts = data["counts"]
+    standard, ai_assisted, needs_review = data["standard"], data["ai_assisted"], data["needs_review"]
+    dropped_by_stage, target_type = data["dropped_by_stage"], data["target_type"]
+    excluded_by_design_by_stage = data["excluded_by_design_by_stage"]
+    target_label = target_type.title() if target_type else "the destination"
+
+    def _stage_sections(by_stage: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        ordered_stages = _STAGE_ORDER + [s for s in by_stage if s not in _STAGE_ORDER]
+        sections = []
+        for stage in ordered_stages:
+            records = by_stage.get(stage)
+            if not records:
+                continue
+            sections.append({
+                "stage": stage,
+                "label": stage_group_label(stage, target_label),
+                "items": [
+                    {
+                        "name": record.get("entity_name") or "(unnamed)",
+                        "entity_kind": record.get("entity_kind"),
+                        "reason": humanize_drop_reason(record),
+                    }
+                    for record in records
+                ],
+            })
+        return sections
+
+    dropped_count = sum(len(records) for records in dropped_by_stage.values())
+    excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
+
+    return {
+        **header,
+        "crashed": False,
+        "counts": {
+            "tables": counts["datasets"],
+            "columns": counts["columns"],
+            "calculations": counts["metrics"],
+            "relationships": counts["relationships"],
+            "converted_total": len(standard) + len(ai_assisted) + len(needs_review),
+            "standard": len(standard),
+            "ai_assisted": len(ai_assisted),
+            "needs_review": len(needs_review),
+            "dropped": dropped_count,
+            "excluded_by_design": excluded_by_design_count,
+        },
+        "sections": {
+            "standard": standard,
+            "ai_assisted": ai_assisted,
+            "needs_review": needs_review,
+            "dropped": _stage_sections(dropped_by_stage),
+            "excluded_by_design": _stage_sections(excluded_by_design_by_stage),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -414,12 +658,16 @@ def _format_duration(duration_ms: Any) -> Optional[str]:
     return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
 
 
-def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
+def generate_run_report_markdown(
+    run: Dict[str, Any],
+    project_cfg: str,
+    source_override: Optional[Tuple[str, List[str]]] = None,
+) -> str:
     project_name = str(run.get("project_name") or run.get("project_id") or "Project")
     run_id = str(run.get("run_id") or run.get("id") or "unknown")
     status = str(run.get("status") or "failed").lower()
     status_label, status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
-    source_kind, source_files = _describe_source(project_cfg, run)
+    source_kind, source_files = source_override or _describe_source(project_cfg, run)
 
     lines: List[str] = [
         f"# Run Report — {project_name}",
@@ -622,3 +870,128 @@ def write_run_report(run: Dict[str, Any], project_cfg: str) -> Optional[str]:
             exc_info=True,
         )
         return None
+
+
+def _sanitize_report_filename_part(label: str, fallback: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", str(label or "")).strip("_")
+    return safe or fallback
+
+
+def generate_per_model_reports(run: Dict[str, Any], project_cfg: str) -> List[Dict[str, str]]:
+    """One full Markdown report PER model in a multi-PBIX batch, instead of
+    the single combined report generate_run_report_markdown() produces when
+    given the whole run.
+
+    Reuses generate_run_report_markdown() completely unchanged -- each call
+    just gets a `run` dict narrowed to that one model's own result (so none
+    of the multi-model name-prefixing logic even triggers) and a
+    source description narrowed to that model's own file (see
+    _describe_source_for_result).
+
+    Returns [] for a single-model (or resultless) run -- callers should fall
+    back to the existing combined report in that case, since a "per-model"
+    report is meaningless/redundant when there's only one model.
+    """
+    model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    if len(model_results) <= 1:
+        return []
+
+    reports: List[Dict[str, str]] = []
+    for result in model_results:
+        model_label = str(result.get("model") or "model")
+        scoped_run = dict(run)
+        scoped_run["results"] = [result]
+        source_override = _describe_source_for_result(result, project_cfg, run)
+        markdown = generate_run_report_markdown(scoped_run, project_cfg, source_override=source_override)
+        reports.append({"model": model_label, "markdown": markdown})
+    return reports
+
+
+def _manifest_path(project_id: str, run_id: str) -> Path:
+    return REPORTS_ROOT / project_id / f"{run_id}__manifest.json"
+
+
+def write_per_model_run_reports(run: Dict[str, Any], project_cfg: str) -> List[Dict[str, str]]:
+    """Render and persist one report file PER model for a multi-PBIX batch
+    run, alongside (not instead of) the existing combined report written by
+    write_run_report().
+
+    Also writes a small JSON manifest (run_id__manifest.json) recording
+    {model, path} for each file -- this is NOT persisted anywhere in the ORM
+    (the `runs` table has no report columns at all; report state has only
+    ever lived in the in-memory compat-store run dict, evicted on restart).
+    Without the manifest, a restart would silently make every per-model
+    download button disappear from the UI even though the .md files are
+    still sitting on disk -- see load_persisted_model_reports(), which
+    reads this manifest back to repopulate run["model_reports"] for a run
+    reconstructed from the ORM after the in-memory store is gone.
+
+    Returns [] for a single-model run -- the existing combined report IS the
+    per-model report in that case, so there is nothing extra to write.
+    Never raises, matching write_run_report()'s own error-handling contract.
+    """
+    project_id = str(run.get("project_id") or "")
+    run_id = str(run.get("run_id") or run.get("id") or "")
+    if not project_id or not run_id:
+        return []
+    try:
+        per_model = generate_per_model_reports(run, project_cfg)
+        if not per_model:
+            return []
+        report_dir = REPORTS_ROOT / project_id
+        report_dir.mkdir(parents=True, exist_ok=True)
+        written: List[Dict[str, str]] = []
+        for idx, entry in enumerate(per_model, start=1):
+            safe_label = _sanitize_report_filename_part(entry["model"], f"model{idx}")
+            report_path = report_dir / f"{run_id}__{safe_label}.md"
+            report_path.write_text(entry["markdown"], encoding="utf-8")
+            written.append({"model": entry["model"], "path": str(report_path)})
+
+        import json
+
+        _manifest_path(project_id, run_id).write_text(json.dumps(written), encoding="utf-8")
+        return written
+    except Exception:
+        logger.warning(
+            "Per-model run report generation failed for project=%s run=%s", project_id, run_id,
+            exc_info=True,
+        )
+        return []
+
+
+def load_persisted_model_reports(project_id: str, run_id: str) -> List[Dict[str, str]]:
+    """Disk-based reconstruction of write_per_model_run_reports()'s return
+    value, for a run whose in-memory compat-store record is gone (server
+    restart) -- read by get_project_runs_compat()'s ORM-fallback branch so
+    per-model download buttons keep working after a restart instead of
+    silently vanishing because run["model_reports"] was never repopulated.
+
+    Reads the manifest instead of re-deriving {model, path} pairs from the
+    on-disk filenames, because the filename only carries a lossily-sanitized
+    version of the model label (_sanitize_report_filename_part) -- the
+    manifest is the only place the exact original label survives, and the
+    frontend needs that exact label to request the right file back via
+    get_run_model_report_compat(). Never raises: a missing/corrupt manifest
+    just means no per-model reports are offered, not a request failure --
+    matching every other function in this module's error-handling contract.
+    """
+    import json
+
+    manifest_path = _manifest_path(project_id, run_id)
+    if not manifest_path.exists():
+        return []
+    try:
+        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(entries, list):
+            return []
+        return [
+            {"model": str(e.get("model")), "path": str(e.get("path"))}
+            for e in entries
+            if isinstance(e, dict) and e.get("model") and e.get("path") and Path(str(e["path"])).exists()
+        ]
+    except Exception:
+        logger.debug(
+            "Could not load per-model report manifest for project=%s run=%s",
+            project_id, run_id, exc_info=True,
+        )
+        return []

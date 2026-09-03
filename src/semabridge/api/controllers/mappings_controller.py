@@ -31,7 +31,6 @@ from semabridge.api.services.project_ownership_service import (
 )
 from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
 from semabridge.domain.exceptions import ValidationError
-from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
 
 # --- Request Models ---
 
@@ -540,12 +539,6 @@ async def dry_run_mapping(
             request.selected_sources,
             source_type=str(request.source_config.get("type") or ""),
         )
-        if str(request.source_config.get("type") or "").strip().lower() == "pbix" and request.selected_sources:
-            # Same check _build_sync_jobs() re-runs at execution time (defense
-            # in depth) — checked here too so a collision surfaces at dry-run
-            # time, before the (potentially long-running, see Part B) pipeline
-            # is even started, not just before a real deploy.
-            validate_no_pbix_view_name_collisions(request.selected_sources)
         return await _run_dry_run_pipeline(
             project_id=project_id,
             request_user_id=request_user_id,

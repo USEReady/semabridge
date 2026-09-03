@@ -481,6 +481,14 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [pbixUploadPath, setPbixUploadPath] = useState('');
   const [pbixUploading, setPbixUploading] = useState(false);
 
+  // Clears single-file mode's uploaded PBIX so the dropzone returns to its
+  // empty "Drag and drop" state -- the single-file counterpart of
+  // MultiPbixUpload's per-row remove button.
+  const clearPbixFile = useCallback(() => {
+    setPbixFile(null);
+    setPbixUploadPath('');
+  }, []);
+
   // Multi-PBIX-per-project (Part C): when the user picks "Multiple files" in
   // StepConnectorConfig, pbixFilePaths holds the resolved absolute paths of
   // every uploaded file (via MultiPbixUpload) instead of the single
@@ -1857,6 +1865,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 if (file) setPbixFile(file);
                 setPbixUploadPath(String(path || '').trim());
               }}
+              onClearPbix={clearPbixFile}
               pbixMultiFileMode={pbixMultiFileMode}
               setPbixMultiFileMode={setPbixMultiFileMode}
               setPbixFilePaths={setPbixFilePaths}

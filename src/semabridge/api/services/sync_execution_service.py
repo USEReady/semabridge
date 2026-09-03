@@ -10,7 +10,7 @@ from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.domain.exceptions import NotFoundError, ValidationError
-from semabridge.utils.name_translator import validate_no_pbix_view_name_collisions
+from semabridge.utils.name_translator import resolve_pbix_deployment_base_names
 
 logger = logging.getLogger("semabridge.api")
 
@@ -266,20 +266,23 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     }
                 )
 
-            # Defense-in-depth naming-collision check: this runs for BOTH dry-run
-            # and real-deploy requests, because both funnel through this one
-            # function via execute_sync_request() — there is no separate
-            # "deploy-only" job-construction path for this to drift out of sync
-            # with. A second, earlier check also runs at project-configuration
-            # time (see pbix_source_validation-adjacent call in
-            # projects_controller.create_project and mappings_controller.
-            # dry_run_mapping) so a collision is caught before the user even
-            # gets to a dry-run, not just before a deploy.
-            if len(sync_jobs) > 1:
-                validate_no_pbix_view_name_collisions(
-                    [job["pbix_path"] for job in sync_jobs if job.get("pbix_path")],
-                    platform=target_type,
-                )
+        # Resolve each job's clean, batch-disambiguated base view name up
+        # front, from ALL pbix jobs in this request (single-file or
+        # multi-file alike) -- see resolve_pbix_deployment_base_names().
+        # Every file gets its own clean name (no UUID/hash upload prefix) by
+        # default; only files that would otherwise collide on the identical
+        # name get a short "_2"/"_3" suffix instead of a hard validation
+        # error. Runs for BOTH dry-run and real-deploy requests, since both
+        # funnel through this one function via execute_sync_request().
+        # Consumed by conversion/pbix.py's _convert_pbix_to_sml() via
+        # RunContext.resolved_pbix_display_name.
+        pbix_job_paths = [job["pbix_path"] for job in sync_jobs if job.get("pbix_path")]
+        if pbix_job_paths:
+            resolved_names = resolve_pbix_deployment_base_names(pbix_job_paths)
+            for job in sync_jobs:
+                job_path = job.get("pbix_path")
+                if job_path:
+                    job["resolved_display_name"] = resolved_names.get(job_path)
 
     elif source_type in ("snowflake", "snowflake_semantic_view"):
         model_list = source_cfg.get("models") or []
@@ -377,6 +380,7 @@ def _run_single_job(
             account_id=account_id,
             sync_mode=sync_mode,
             force=force,
+            resolved_display_name=job.get("resolved_display_name"),
         )
         summary_data = summary.model_dump(mode="json")
         job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
@@ -396,6 +400,7 @@ def _run_single_job(
             "run_id": summary_data.get("run_id"),
             "missing_dims": summary_data.get("missing_dims") or {},
             "dropped_entities": summary_data.get("dropped_entities") or [],
+            "pbix_path": job.get("pbix_path"),
         }
     except Exception as exc:
         # exc_info=True so an uncaught failure at this outermost layer of
@@ -421,6 +426,7 @@ def _run_single_job(
             "routing_summary": None,
             "console": _build_console_details(summary_data),
             "run_id": summary_data.get("run_id"),
+            "pbix_path": job.get("pbix_path"),
         }
 
 def _resolve_requested_parallelism(payload: Dict[str, Any]) -> int:

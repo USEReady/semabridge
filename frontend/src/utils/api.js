@@ -1,6 +1,12 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
-import { buildRunReportUrl, resolveReportFilename } from './runReportDownload.js';
+import {
+    buildRunReportUrl,
+    buildRunModelReportUrl,
+    buildRunReportSummaryUrl,
+    buildRunModelReportSummaryUrl,
+    resolveReportFilename,
+} from './runReportDownload.js';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 // Fabric MSAL token is kept in memory only — not persisted to localStorage.
@@ -1818,6 +1824,63 @@ export const api = {
         const blob = await res.blob();
         const filename = resolveReportFilename(res.headers.get('Content-Disposition'), projectId, runId);
         _triggerDownload(blob, filename);
+    },
+
+    // Per-model equivalent of downloadRunReport() -- one file's own report
+    // from a multi-PBIX batch run (see run_report_service.py's
+    // write_per_model_run_reports()).
+    async downloadRunModelReport(projectId, runId, modelLabel) {
+        const res = await authFetch(buildRunModelReportUrl(API_BASE_URL, projectId, runId, modelLabel));
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Report download failed: ${txt}`);
+        }
+        const blob = await res.blob();
+        const filename = resolveReportFilename(res.headers.get('Content-Disposition'), projectId, runId);
+        _triggerDownload(blob, filename);
+    },
+
+    // Fetches the rendered Markdown report as text (not a download) -- the
+    // "View Report Preview" modal's Raw Report tab source. Same endpoint
+    // downloadRunReport() uses, just read as text instead of triggering a
+    // file save.
+    async getRunReport(projectId, runId) {
+        const res = await authFetch(buildRunReportUrl(API_BASE_URL, projectId, runId));
+        if (!res.ok) {
+            throw new Error(`Report request failed with status ${res.status}`);
+        }
+        return res.text();
+    },
+
+    // Per-model equivalent of getRunReport() -- one file's own Markdown
+    // report text from a multi-PBIX batch run.
+    async getRunModelReport(projectId, runId, modelLabel) {
+        const res = await authFetch(buildRunModelReportUrl(API_BASE_URL, projectId, runId, modelLabel));
+        if (!res.ok) {
+            throw new Error(`Report request failed with status ${res.status}`);
+        }
+        return res.text();
+    },
+
+    // JSON counterpart to getRunReport() -- the "View Report Preview"
+    // modal's Summary tab source (see run_report_service.py's
+    // build_run_report_data() / RunReportSummary.jsx).
+    async getRunReportSummary(projectId, runId) {
+        const res = await authFetch(buildRunReportSummaryUrl(API_BASE_URL, projectId, runId));
+        if (!res.ok) {
+            throw new Error(`Report summary request failed with status ${res.status}`);
+        }
+        return handleResponse(res);
+    },
+
+    // Per-model equivalent of getRunReportSummary() -- one file's own
+    // scoped summary from a multi-PBIX batch run.
+    async getRunModelReportSummary(projectId, runId, modelLabel) {
+        const res = await authFetch(buildRunModelReportSummaryUrl(API_BASE_URL, projectId, runId, modelLabel));
+        if (!res.ok) {
+            throw new Error(`Report summary request failed with status ${res.status}`);
+        }
+        return handleResponse(res);
     },
 
     async runProjectNow(projectId, payload = null) {

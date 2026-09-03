@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Check, ChevronDown, RefreshCw, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, RefreshCw, Loader2, CheckCircle2 } from 'lucide-react';
 import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
 import MultiPbixUpload from './MultiPbixUpload';
+import { uploadStatusColors } from './uploadStatusColors';
+import { RemoveFileButton } from './uploadStatusUI';
 import { CONNECTOR_TYPES, TARGET_CONNECTOR_TYPES, PBIX_SOURCE_MODES } from '../../utils/constants';
 
 const SECTION_CARD = {
@@ -66,6 +68,7 @@ export function StepConnectorConfig({
   selectedLocalFolderId,
   setSelectedLocalFolderId,
   onUploadSuccess,
+  onClearPbix = () => {},
   pbixMultiFileMode = false,
   setPbixMultiFileMode = () => {},
   setPbixFilePaths = () => {},
@@ -553,7 +556,10 @@ export function StepConnectorConfig({
 
                 {pbixMultiFileMode ? (
                   <MultiPbixUpload onFilesChange={setPbixFilePaths} maxFiles={10} />
-                ) : (
+                ) : (() => {
+                  const hasUploadedPbix = Boolean(pbixUploadPath) && !pbixUploading && !pbixUploadError;
+                  const doneStyle = uploadStatusColors(hasUploadedPbix ? 'done' : null);
+                  return (
                 <label
                   onDragOver={(event) => {
                     event.preventDefault();
@@ -567,10 +573,11 @@ export function StepConnectorConfig({
                   }}
                   onDrop={handlePbixDrop}
                   style={{
-                    border: '1px dashed var(--accent-blue)',
+                    position: 'relative',
+                    border: `1px dashed ${doneStyle?.border || 'var(--accent-blue)'}`,
                     borderRadius: 12,
                     padding: 18,
-                    background: pbixDragOver ? 'var(--accent-blue)14' : 'var(--accent-blue)08',
+                    background: doneStyle?.background || (pbixDragOver ? 'var(--accent-blue)14' : 'var(--accent-blue)08'),
                     color: 'var(--text-secondary)',
                     cursor: pbixUploading ? 'progress' : 'pointer',
                   }}
@@ -585,11 +592,35 @@ export function StepConnectorConfig({
                       if (nextFile) await uploadPbixFile(nextFile);
                     }}
                   />
+                  {hasUploadedPbix && (
+                    <div style={{ position: 'absolute', top: 10, right: 10 }}>
+                      <RemoveFileButton
+                        title="Remove file"
+                        onClick={() => {
+                          setPbixUploadError('');
+                          setPbixDragOver(false);
+                          onClearPbix();
+                        }}
+                      />
+                    </div>
+                  )}
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                     Drag and drop a `.pbix` file here or click to browse
                     {pbixUploading && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
+                    {hasUploadedPbix && (
+                      <span
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          fontSize: 11, fontWeight: 700, color: 'var(--color-success)',
+                          background: 'var(--color-success-bg)', border: '1px solid var(--color-success)',
+                          borderRadius: 999, padding: '2px 8px',
+                        }}
+                      >
+                        <CheckCircle2 size={12} /> Uploaded Successfully
+                      </span>
+                    )}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  <div style={{ fontSize: 12, color: hasUploadedPbix ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
                     {pbixUploading
                       ? 'Saving file to server...'
                       : pbixUploadPath
@@ -609,7 +640,8 @@ export function StepConnectorConfig({
                     </div>
                   )}
                 </label>
-                )}
+                  );
+                })()}
               </div>
             )}
           </div>

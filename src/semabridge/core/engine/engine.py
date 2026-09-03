@@ -159,6 +159,7 @@ class ExecutionEngine:
         config_dict: Optional[Dict[str, Any]] = None, # In-memory configuration override
         sync_mode: str = "copy",
         force: bool = False,
+        resolved_display_name: Optional[str] = None,
     ) -> RunSummary:
         """
         Execute the full 10-step pipeline.
@@ -214,6 +215,7 @@ class ExecutionEngine:
                 dataset_id,
                 config_path,
                 sync_mode=sync_mode,
+                resolved_display_name=resolved_display_name,
             )
             context.config_path = config_path
             context.config_payload = config_dict
@@ -238,40 +240,67 @@ class ExecutionEngine:
             )
             
             # Step 3: Resolve Authentication
-            # If an account_id is provided, inject its credentials into os.environ
-            # before validation. This enables per-user credential isolation.
-            self._account_env_ctx = None
+            # If an account_id is provided, resolve its credentials before
+            # validation. This enables per-user credential isolation.
+            #
+            # Thread-safe for all three connector types: builds an isolated
+            # config object (via credential_builder.build_*_config) on a
+            # model_copy() of context.config instead of mutating os.environ
+            # or the shared, process-global get_settings() singleton.
+            # Concurrent batch-sync jobs (ThreadPoolExecutor in
+            # sync_execution_service.py) all call this in parallel — the old
+            # scoped_account_env() + cache_clear() + get_settings() pattern
+            # raced on that shared state, letting one job's source/target
+            # config bleed into another job's context mid-run.
             if account_id:
                 try:
-                    from semabridge.auth.account_credential_resolver import scoped_account_env
                     from semabridge.repository.account_repository import AccountRepository
                     from semabridge.repository.orm.session_factory import db_manager
 
-                    session = db_manager.get_session_factory()()
-                    repo = AccountRepository(session)
-                    account = repo.get_account_by_id(account_id)
-                    if account:
-                        self._account_env_ctx = scoped_account_env(account, session)
-                        self._account_env_ctx.__enter__()
-                        context.account_id = account_id
-                        logger.info(
-                            "Account-scoped credentials injected for %s/%s",
-                            account.connector_type,
-                            account.identity_email or account.tag,
-                        )
-                        # Preserve project-scoped source/target namespaces (set from YAML
-                        # in Step 1) before clearing the settings cache — the fresh
-                        # get_settings() call would otherwise lose them.
-                        _old_source = getattr(context.config, "source", None)
-                        _old_target = getattr(context.config, "target", None)
-                        # Force settings cache clear so pydantic re-reads env vars
-                        get_settings.cache_clear()
-                        context.config = get_settings()
-                        # Re-attach project-scoped namespaces to the refreshed config.
-                        if _old_source is not None:
-                            object.__setattr__(context.config, "source", _old_source)
-                        if _old_target is not None:
-                            object.__setattr__(context.config, "target", _old_target)
+                    with db_manager.get_session() as session:
+                        repo = AccountRepository(session)
+                        account = repo.get_account_by_id(account_id)
+                        if not account:
+                            logger.warning("Account credential injection: no account found for %s", account_id)
+                        else:
+                            connector = account.connector_type.upper()
+                            if connector == "SNOWFLAKE":
+                                from semabridge.auth.credential_builder import build_snowflake_config
+
+                                context.config = context.config.model_copy()
+                                context.config._snowflake = build_snowflake_config(
+                                    account, session, context.config.snowflake
+                                )
+                            elif connector == "FABRIC":
+                                from semabridge.auth.credential_builder import build_fabric_config
+
+                                context.config = context.config.model_copy()
+                                fabric_cfg, fabric_token = build_fabric_config(
+                                    account, session, context.config.fabric
+                                )
+                                context.config._fabric = fabric_cfg
+                                context.fabric_access_token = fabric_token
+                            elif connector == "DATABRICKS":
+                                from semabridge.auth.credential_builder import build_databricks_config
+
+                                context.config = context.config.model_copy()
+                                context.config._databricks = build_databricks_config(
+                                    account, session, context.config.databricks
+                                )
+                            else:
+                                logger.warning(
+                                    "Account credential injection: unrecognized connector_type '%s' for %s",
+                                    account.connector_type, account_id,
+                                )
+                                connector = None
+
+                            if connector:
+                                context.account_id = account_id
+                                logger.info(
+                                    "Account-scoped %s config built for %s (thread-safe, no os.environ mutation)",
+                                    connector,
+                                    account.identity_email or account.tag,
+                                )
                 except Exception as acct_exc:
                     logger.warning(
                         "Account credential injection failed for %s: %s",
@@ -355,14 +384,6 @@ class ExecutionEngine:
                 self._context or self._create_fallback_context(),
                 status
             )
-        finally:
-            # Always clean up the account-scoped env context
-            if hasattr(self, '_account_env_ctx') and self._account_env_ctx is not None:
-                try:
-                    self._account_env_ctx.__exit__(None, None, None)
-                except Exception as exc:
-                    logger.debug("Error cleaning up account env context: %s", exc)
-                self._account_env_ctx = None
 
     def _record_step(
         self,
@@ -454,6 +475,7 @@ ExecutionEngine._convert_to_fabric_target     = _tgt_fab._convert_to_fabric_targ
 ExecutionEngine._convert_to_snowflake_target  = _tgt_sf._convert_to_snowflake_target
 ExecutionEngine._convert_to_databricks_target = _tgt_db._convert_to_databricks_target
 ExecutionEngine._step6b_predict_anchor_flag_columns = _tgt_sf._step6b_predict_anchor_flag_columns
+ExecutionEngine._reuse_existing_view_for_structural_duplicate = _tgt_sf._reuse_existing_view_for_structural_duplicate
 
 from semabridge.core.engine.deployment import base as _dep_base
 from semabridge.core.engine.deployment import fabric as _dep_fab
@@ -464,6 +486,7 @@ ExecutionEngine._deploy_to_fabric                    = _dep_fab._deploy_to_fabri
 ExecutionEngine._deploy_to_snowflake                 = _dep_sf._deploy_to_snowflake
 ExecutionEngine._do_snowflake_deploy                 = _dep_sf._do_snowflake_deploy
 ExecutionEngine._export_inferred_osi_artifacts       = _dep_sf._export_inferred_osi_artifacts
+ExecutionEngine._record_model_fingerprint_on_success = _dep_sf._record_model_fingerprint_on_success
 ExecutionEngine._should_sync_measures                = _dep_sf._should_sync_measures
 ExecutionEngine._sync_fabric_measures                = _dep_sf._sync_fabric_measures
 ExecutionEngine._deploy_to_databricks                = _dep_db._deploy_to_databricks
