@@ -461,6 +461,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
                     "model": project_name,
                     "summary": top_summary,
                     "dropped_entities": top_summary.get("dropped_entities") or [],
+                    "data_backfill_results": top_summary.get("data_backfill_results") or [],
                 }
             ]
 
@@ -488,6 +489,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     ai_assisted: List[Dict[str, Any]] = []
     dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    data_backfill_results: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -498,6 +500,9 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             d for d in (result.get("dropped_entities") or summary.get("dropped_entities") or [])
             if isinstance(d, dict)
         ]
+        for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
+            if isinstance(backfill_entry, dict):
+                data_backfill_results.append({**backfill_entry, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         if snap_data:
@@ -544,6 +549,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "needs_review": [],
         "dropped_by_stage": dropped_by_stage,
         "excluded_by_design_by_stage": excluded_by_design_by_stage,
+        "data_backfill_results": data_backfill_results,
     }
 
 
@@ -610,6 +616,11 @@ def build_run_report_data(
 
     dropped_count = sum(len(records) for records in dropped_by_stage.values())
     excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
+    data_backfill_results = data.get("data_backfill_results") or []
+    backfill_loaded = sum(1 for e in data_backfill_results if e.get("status") == "loaded")
+    backfill_skipped = sum(1 for e in data_backfill_results if e.get("status") == "skipped")
+    backfill_failed = sum(1 for e in data_backfill_results if e.get("status") == "failed")
+    backfill_ambiguous = sum(1 for e in data_backfill_results if e.get("status") == "ambiguous_needs_review")
 
     return {
         **header,
@@ -625,6 +636,10 @@ def build_run_report_data(
             "needs_review": len(needs_review),
             "dropped": dropped_count,
             "excluded_by_design": excluded_by_design_count,
+            "data_backfill_loaded": backfill_loaded,
+            "data_backfill_skipped": backfill_skipped,
+            "data_backfill_failed": backfill_failed,
+            "data_backfill_ambiguous": backfill_ambiguous,
         },
         "sections": {
             "standard": standard,
@@ -633,6 +648,10 @@ def build_run_report_data(
             "dropped": _stage_sections(dropped_by_stage),
             "excluded_by_design": _stage_sections(excluded_by_design_by_stage),
         },
+        # Only populated for a run where options.load_source_data was
+        # enabled -- empty list (and all three counts 0 above) for every
+        # other run, matching that feature's off-by-default contract.
+        "data_backfill": data_backfill_results,
     }
 
 
@@ -698,6 +717,7 @@ def generate_run_report_markdown(
                     "model": project_name,
                     "summary": top_summary,
                     "dropped_entities": top_summary.get("dropped_entities") or [],
+                    "data_backfill_results": top_summary.get("data_backfill_results") or [],
                 }
             ]
 
@@ -718,6 +738,7 @@ def generate_run_report_markdown(
     standard: List[Dict[str, Any]] = []
     ai_assisted: List[Dict[str, Any]] = []
     dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    data_backfill_results: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -728,6 +749,9 @@ def generate_run_report_markdown(
             d for d in (result.get("dropped_entities") or summary.get("dropped_entities") or [])
             if isinstance(d, dict)
         ]
+        for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
+            if isinstance(backfill_entry, dict):
+                data_backfill_results.append({**backfill_entry, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         if snap_data:
@@ -841,6 +865,26 @@ def generate_run_report_markdown(
                 suffix = "  _(expected — not an error)_" if record.get("by_design") else ""
                 lines.append(f"- **{name}** — {plain}{suffix}")
             lines.append("")
+
+    # --- Data backfill (only present when options.load_source_data was
+    # enabled for this run — omitted entirely otherwise) -------------------
+    if data_backfill_results:
+        lines.append("## Data Backfill")
+        lines.append("")
+        lines.append(
+            "This run had real-data backfill enabled (`options.load_source_data`). "
+            "Per table:"
+        )
+        lines.append("")
+        lines.append("| Table | Status | Rows | Reason |")
+        lines.append("|---|---|---:|---|")
+        for entry in data_backfill_results:
+            table = entry.get("table") or "(unknown table)"
+            status = str(entry.get("status") or "unknown").replace("_", " ").title()
+            row_count = entry.get("row_count", 0)
+            reason = str(entry.get("reason") or "").replace("|", "\\|")
+            lines.append(f"| {table} | {status} | {row_count} | {reason} |")
+        lines.append("")
 
     return "\n".join(lines)
 

@@ -101,3 +101,18 @@ class RunContext:
     # schema-less preview emitter) but succeeded in this real deploy isn't
     # reported as dropped just because nothing else ever retracted it.
     deployed_ddl_text: Optional[str] = None
+
+    # Per-table outcome of the opt-in data-backfill step (see
+    # connectors/schema_manager.py's _maybe_backfill_source_data, run from
+    # snowflake_emitter.py's deploy pipeline only when the project config
+    # sets options.load_source_data: true). Mirrors drop_ledger's own
+    # emitter-instance -> context merge pattern (see
+    # engine/deployment/snowflake.py's _do_snowflake_deploy): the emitter
+    # accumulates entries on its own instance during deploy(), and the
+    # caller copies them here once deploy() returns. Deliberately NOT part
+    # of drop_ledger -- drop_ledger means "excluded," and a successful load
+    # isn't an exclusion; keeping this separate avoids overloading
+    # DropStage/DropRecord's existing semantics and consumers (the Dropped
+    # Fields UI). Each entry: {table, dataset, status: "loaded"|"skipped"|
+    # "failed", row_count, reason}.
+    data_backfill_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)

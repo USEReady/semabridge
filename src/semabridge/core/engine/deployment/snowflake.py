@@ -114,10 +114,36 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
 
     # DDL path
     if deployment_method in ("ddl", "both"):
+        # Opt-in data-backfill (options.load_source_data, see
+        # core/engine/config.py's _step1_load_config) -- resolved here, not
+        # inside the emitter, since only this call site has both
+        # context.config.options and context.config.source. Same
+        # pbix_path/source_path/file_path alias fallback already used by
+        # core/config_loader.py and core/execution_config.py's own PBIX
+        # path resolution, so a project using any of those three key names
+        # still gets backfill if it opts in.
+        source_cfg = getattr(context.config, "source", None)
+        source_pbix_path = (
+            getattr(source_cfg, "pbix_path", None)
+            or getattr(source_cfg, "source_path", None)
+            or getattr(source_cfg, "file_path", None)
+        )
+        load_source_data = bool(
+            getattr(getattr(context.config, "options", None), "load_source_data", False)
+        )
         deployed = emitter.deploy(
             context.sml_model,
             sync_mode=getattr(context, "sync_mode", "copy"),
+            source_pbix_path=source_pbix_path,
+            load_source_data=load_source_data,
         )
+        # Mirror the drop_ledger merge below: the emitter accumulates
+        # backfill outcomes on its own instance during deploy(), copied
+        # onto context here so Step 10 (finalize.py) can put them on
+        # RunSummary. Runs even when load_source_data was false -- the
+        # list is just empty in that case, same no-op cost as every other
+        # project that never opts in.
+        context.data_backfill_results = list(getattr(emitter, "data_backfill_results", None) or [])
         # Propagate the live deployed DDL (captured by deploy() itself via
         # GET_DDL, on the connection it already had open — see
         # snowflake_emitter.py's Step 6b) so Step 10 can reconcile

@@ -136,9 +136,22 @@ class SnowflakeEmitter(BaseEmitter):
         parallel: bool = False,
         max_workers: int = 4,
         sync_mode: str = "copy",
+        source_pbix_path: Optional[str] = None,
+        load_source_data: bool = False,
     ) -> bool:
-        """Deploy the SML model to Snowflake."""
-        return self._execute_deployment_pipeline(sml, is_osi=False, sync_mode=sync_mode)
+        """Deploy the SML model to Snowflake.
+
+        source_pbix_path/load_source_data: the opt-in data-backfill step
+        (see _maybe_backfill_source_data below) — off by default, and a
+        no-op unless load_source_data is explicitly set true AND a real
+        pbix path is provided. SML deploy path only; deploy_from_osi()
+        deliberately does not accept these (see class docstring on
+        _maybe_backfill_source_data for why OSI is out of scope for v1).
+        """
+        return self._execute_deployment_pipeline(
+            sml, is_osi=False, sync_mode=sync_mode,
+            source_pbix_path=source_pbix_path, load_source_data=load_source_data,
+        )
 
     def deploy_from_osi(
         self,
@@ -155,6 +168,8 @@ class SnowflakeEmitter(BaseEmitter):
         model: Any,
         is_osi: bool = False,
         sync_mode: str = "copy",
+        source_pbix_path: Optional[str] = None,
+        load_source_data: bool = False,
     ) -> bool:
         """Common orchestration for deploying SML or OSI models to Snowflake."""
         try:
@@ -163,6 +178,12 @@ class SnowflakeEmitter(BaseEmitter):
             # stale dropped-metric/smoke-test warnings over from a prior deploy.
             self._dropped_metrics = []
             self._smoke_test_warnings = []
+            # Same reset reasoning as the two lists above -- a reused emitter
+            # instance must not carry a PREVIOUS deploy's backfill outcomes
+            # into this one's result (see engine/deployment/snowflake.py's
+            # _do_snowflake_deploy, which copies this list onto
+            # context.data_backfill_results after deploy() returns).
+            self.data_backfill_results = []
             # Reset so a reused emitter instance never carries a PREVIOUS
             # deploy's captured DDL into this one's result — see the
             # GET_DDL capture at the end of this method (Step 7) and its
@@ -249,6 +270,24 @@ class SnowflakeEmitter(BaseEmitter):
                     datasets = list(getattr(model, "datasets", []) or [])
                     sf_meta = self.schema_manager._fetch_model_table_metadata(cur, datasets)
                 self._live_schema_metadata.update(sf_meta or {})
+
+                # Step 1.6: Opt-in data-backfill (options.load_source_data,
+                # see core/engine/config.py's _step1_load_config). Off by
+                # default and a no-op for every project that hasn't opted
+                # in. Must run here, not earlier or later: it needs the
+                # just-refreshed live schema above (to know each table's
+                # real physical columns and to run the "does it already
+                # have data" safety check), and it must run BEFORE
+                # enrichment just below -- _create_enriched_view reads live
+                # data to compute anchors like MAX_DATE, and backfilling
+                # first means those anchors reflect the newly-loaded rows
+                # instead of going stale. SML-only (is_osi guarded inside).
+                if load_source_data and source_pbix_path and not is_osi:
+                    self.data_backfill_results.extend(
+                        self.schema_manager._maybe_backfill_source_data(
+                            cur, model, source_pbix_path, self._live_schema_metadata,
+                        )
+                    )
 
                 # Auto-enrichment — moved to run here (after Step 1/1.5, once
                 # the underlying fact table is confirmed to actually exist),

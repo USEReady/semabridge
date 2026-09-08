@@ -400,6 +400,7 @@ def _run_single_job(
             "run_id": summary_data.get("run_id"),
             "missing_dims": summary_data.get("missing_dims") or {},
             "dropped_entities": summary_data.get("dropped_entities") or [],
+            "data_backfill_results": summary_data.get("data_backfill_results") or [],
             "pbix_path": job.get("pbix_path"),
         }
     except Exception as exc:

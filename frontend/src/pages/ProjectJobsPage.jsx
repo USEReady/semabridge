@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import usePageCache from '../hooks/usePageCache';
-import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import PageHeader from '../components/common/PageHeader';
@@ -266,14 +266,19 @@ export default function ProjectJobsPage() {
     }
   };
 
-  // "View Report Preview" modal -- one modal, reused for both the whole-run
-  // report (single-file runs) and each file's own scoped report (multi-PBIX
-  // batches, one button per run.model_reports entry). reportModalModel is
-  // null for the whole-run case, which selects the non-model-scoped
-  // endpoints below. Summary (JSON) and Raw Report (Markdown) are both
-  // fetched up front, not lazily on tab switch, so toggling between them is
-  // instant once the modal has finished loading -- matches demo_version_ref's
-  // exact approach, since this modal is ported from there.
+  // "View Report Preview" modal -- always exactly ONE button per run, even
+  // for a multi-PBIX batch (run.model_reports has 2+ entries in that case,
+  // never exactly 1 -- see generate_per_model_reports()). reportModalModel
+  // is null for a single-file run (which selects the non-model-scoped
+  // endpoints below) and defaults to the first file's model for a
+  // multi-file run -- a file-selector dropdown inside the modal (rendered
+  // only when model_reports.length > 1) then lets the user switch which
+  // file's Summary/Raw Report are shown, without closing and reopening the
+  // modal. Summary (JSON) and Raw Report (Markdown) are both fetched up
+  // front, not lazily on tab switch, so toggling between them is instant
+  // once the modal (or a newly-selected file) has finished loading --
+  // matches demo_version_ref's exact approach, since this modal is ported
+  // from there.
   const [reportModalRun, setReportModalRun] = useState(null);
   const [reportModalModel, setReportModalModel] = useState(null);
   const [reportModalMaximized, setReportModalMaximized] = useState(false);
@@ -285,13 +290,9 @@ export default function ProjectJobsPage() {
   const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
   const [reportSummaryError, setReportSummaryError] = useState(null);
 
-  const openReportModal = async (run, modelLabel = null) => {
+  const loadReportForModel = async (run, modelLabel) => {
     const pid = run.project_id;
     const rid = run.id || run.run_id;
-    setReportModalRun(run);
-    setReportModalModel(modelLabel);
-    setReportModalMaximized(false);
-    setReportViewMode('summary');
     setReportLoading(true);
     setReportError(null);
     setReportContent('');
@@ -328,10 +329,68 @@ export default function ProjectJobsPage() {
     ]);
   };
 
+  const openReportModal = async (run) => {
+    const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
+    const initialModel = modelEntries.length > 1 ? modelEntries[0].model : null;
+    setReportModalRun(run);
+    setReportModalModel(initialModel);
+    setReportModalMaximized(false);
+    setReportViewMode('summary');
+    await loadReportForModel(run, initialModel);
+  };
+
+  const selectReportModel = async (modelLabel) => {
+    if (!reportModalRun) return;
+    setReportModalModel(modelLabel);
+    await loadReportForModel(reportModalRun, modelLabel);
+  };
+
   const closeReportModal = () => {
     setReportModalRun(null);
     setReportModalModel(null);
   };
+
+  // "Dropped Fields" modal -- a separate, standalone button/modal from
+  // "View Report Preview" (previously a third tab inside that modal; moved
+  // back out to its own display). Mirrors the report modal's file-selector
+  // pattern exactly (same run.model_reports dropdown, hidden for a
+  // single-file run) but needs no fetch at all: the data is derived
+  // straight from run.results, already loaded client-side -- the same
+  // source the original page-level DroppedFieldsPanel used before it was
+  // ever moved into the report modal.
+  const [droppedFieldsModalRun, setDroppedFieldsModalRun] = useState(null);
+  const [droppedFieldsModalModel, setDroppedFieldsModalModel] = useState(null);
+
+  const openDroppedFieldsModal = (run) => {
+    const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
+    setDroppedFieldsModalRun(run);
+    setDroppedFieldsModalModel(modelEntries.length > 1 ? modelEntries[0].model : null);
+  };
+
+  const selectDroppedFieldsModel = (modelLabel) => {
+    setDroppedFieldsModalModel(modelLabel);
+  };
+
+  const closeDroppedFieldsModal = () => {
+    setDroppedFieldsModalRun(null);
+    setDroppedFieldsModalModel(null);
+  };
+
+  // Scoped to whichever file is currently selected (or the whole run, for
+  // a single-file run). No `model` field is added when scoped to one file,
+  // so DroppedFieldsPanel's own per-model grouping never kicks in here --
+  // it only ever sees one file's entries at a time.
+  const droppedFieldsModalEntries = useMemo(() => {
+    const results = Array.isArray(droppedFieldsModalRun?.results) ? droppedFieldsModalRun.results : [];
+    const scoped = droppedFieldsModalModel
+      ? results.filter((r) => r?.model === droppedFieldsModalModel)
+      : results;
+    return scoped.flatMap(
+      (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : []).map(
+        (entry) => ({ ...entry, model: r?.model })
+      )
+    );
+  }, [droppedFieldsModalRun, droppedFieldsModalModel]);
 
   const handleDeleteSchedule = async (projectId) => {
     if (!projectId) return;
@@ -621,21 +680,20 @@ export default function ProjectJobsPage() {
                           <InfoCard label="Message" value={run.message || run.error || '—'} />
                         </div>
 
-                        {/* "View Report Preview" -- one button for a single-file run (or
-                            any run without a per-model breakdown), one PER FILE for a
-                            multi-PBIX batch (run.model_reports), each opening the same
-                            modal scoped to that file's own report. Position/style matches
-                            demo_version_ref's single-run button exactly; multi-file just
-                            repeats it once per entry. */}
-                        {Array.isArray(run.model_reports) && run.model_reports.length > 0 ? (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 8 }}>
-                            {run.model_reports.map((entry) => (
+                        {/* "View Report Preview" -- always exactly ONE button per run,
+                            whether it's a single-file run or a multi-PBIX batch. The
+                            modal itself (below) handles picking which file's report to
+                            show via its own file-selector dropdown. "Dropped Fields" is
+                            a separate button/modal next to it -- not a tab inside the
+                            report modal -- with its own independent file selector. */}
+                        {(Boolean(run.report_path) || (Array.isArray(run.model_reports) && run.model_reports.length > 0) || (Array.isArray(run.results) && run.results.length > 0)) && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8, marginBottom: 8 }}>
+                            {(Boolean(run.report_path) || (Array.isArray(run.model_reports) && run.model_reports.length > 0)) && (
                               <button
-                                key={entry.model}
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openReportModal(run, entry.model);
+                                  openReportModal(run);
                                 }}
                                 style={{
                                   display: 'inline-flex',
@@ -651,50 +709,39 @@ export default function ProjectJobsPage() {
                                   cursor: 'pointer',
                                 }}
                               >
-                                <FileText size={14} /> View Report Preview — {cleanPbixLabel(entry.model)}
+                                <FileText size={14} /> View Report Preview
                               </button>
-                            ))}
-                          </div>
-                        ) : Boolean(run.report_path) && (
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, marginBottom: 8 }}>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openReportModal(run);
-                              }}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                padding: '6px 12px',
-                                borderRadius: 6,
-                                fontSize: 12,
-                                fontWeight: 600,
-                                background: 'var(--bg-surface-raised)',
-                                color: 'var(--text-primary)',
-                                border: '1px solid var(--border-main)',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <FileText size={14} /> View Report Preview
-                            </button>
+                            )}
+                            {Array.isArray(run.results) && run.results.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openDroppedFieldsModal(run);
+                                }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  padding: '6px 12px',
+                                  borderRadius: 6,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  background: 'var(--bg-surface-raised)',
+                                  color: 'var(--text-primary)',
+                                  border: '1px solid var(--border-main)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <AlertTriangle size={14} /> Dropped Fields
+                              </button>
+                            )}
                           </div>
                         )}
 
                         {run.status === 'success' && (
                           <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
-
-                        <div style={{ marginBottom: 14 }}>
-                          <DroppedFieldsPanel
-                            entries={(Array.isArray(run.results) ? run.results : []).flatMap(
-                              (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : []).map(
-                                (entry) => ({ ...entry, model: r?.model })
-                              )
-                            )}
-                          />
-                        </div>
 
                         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
                           Execution Stages For Selected Run
@@ -789,6 +836,24 @@ export default function ProjectJobsPage() {
           </div>
         }
       >
+        {Array.isArray(reportModalRun?.model_reports) && reportModalRun.model_reports.length > 1 && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+              File
+            </label>
+            <select
+              value={reportModalModel || ''}
+              onChange={(e) => selectReportModel(e.target.value)}
+              style={{ ...inputStyle, width: '100%', maxWidth: 360, cursor: 'pointer' }}
+            >
+              {reportModalRun.model_reports.map((entry) => (
+                <option key={entry.model} value={entry.model}>
+                  {cleanPbixLabel(entry.model)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 4, padding: '0 4px 12px 4px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 8 }}>
           {[
             { key: 'summary', label: 'Summary' },
@@ -879,6 +944,68 @@ export default function ProjectJobsPage() {
             >
               {reportContent}
             </ReactMarkdown>
+          </div>
+        )}
+      </Modal>
+
+      {/* Dropped Fields Modal -- separate from the report modal, with its
+          own independent file-selector state (droppedFieldsModalModel),
+          so switching files here never affects whichever file is selected
+          in the report modal, and vice versa. */}
+      <Modal
+        open={Boolean(droppedFieldsModalRun)}
+        onClose={closeDroppedFieldsModal}
+        title={
+          `Dropped Fields — ${droppedFieldsModalRun?.id || droppedFieldsModalRun?.run_id || ''}` +
+          (droppedFieldsModalModel ? ` — ${cleanPbixLabel(droppedFieldsModalModel)}` : '')
+        }
+        size="lg"
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
+            <button
+              type="button"
+              onClick={closeDroppedFieldsModal}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 500,
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-main)',
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
+        }
+      >
+        {Array.isArray(droppedFieldsModalRun?.model_reports) && droppedFieldsModalRun.model_reports.length > 1 && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+              File
+            </label>
+            <select
+              value={droppedFieldsModalModel || ''}
+              onChange={(e) => selectDroppedFieldsModel(e.target.value)}
+              style={{ ...inputStyle, width: '100%', maxWidth: 360, cursor: 'pointer' }}
+            >
+              {droppedFieldsModalRun.model_reports.map((entry) => (
+                <option key={entry.model} value={entry.model}>
+                  {cleanPbixLabel(entry.model)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {droppedFieldsModalEntries.length === 0 ? (
+          <div style={{ padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Nothing was dropped for this file.
+          </div>
+        ) : (
+          <div style={{ padding: '8px 4px' }}>
+            <DroppedFieldsPanel entries={droppedFieldsModalEntries} defaultExpanded />
           </div>
         )}
       </Modal>

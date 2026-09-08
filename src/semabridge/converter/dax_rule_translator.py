@@ -858,7 +858,21 @@ def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
 
 
 def translate_calculate_with_filters(dax: str, table_alias: str) -> Optional[str]:
-    """Translate CALCULATE with direct or FILTER equality/comparison predicates."""
+    """Translate CALCULATE with direct or FILTER equality/comparison predicates.
+
+    Fails closed (returns None) rather than a partial result the moment any
+    one AND-ed condition can't be fully parsed, or a filter argument
+    contains a nested iterator/CALCULATE/FILTER call this can't reduce to a
+    per-row comparison -- the same contract _parse_simple_predicate_
+    conditions() (this module's sibling for the SUMX(FILTER(...), ...)
+    shape) already enforces. This used to silently `continue` past an
+    unparseable condition instead, which could accept a CALCULATE(agg,
+    FILTER(...)) with a mix of simple and complex conditions and emit a
+    CASE WHEN missing part of the original filter -- correct-looking but
+    silently wrong SQL, and (for a filter argument that isn't a FILTER(...)
+    call at all) potentially just re-testing raw DAX syntax against the
+    comparison regex with a `continue` masking every failed match.
+    """
     if not re.match(r"\s*CALCULATE\s*\(", dax or "", re.IGNORECASE):
         return None
 
@@ -886,15 +900,29 @@ def translate_calculate_with_filters(dax: str, table_alias: str) -> Optional[str
             filter_expr = filter_match.group(1).strip()
         filter_expr = filter_expr.replace("&&", " AND ")
 
+        if re.search(r"\bOR\b", filter_expr, re.IGNORECASE):
+            return None
+        if re.search(
+            r"\b(CALCULATE|FILTER|TOPN|RANKX|ALLEXCEPT|ALL|SELECTEDVALUE|SUMX|AVERAGEX|MINX|MAXX|COUNTX|EARLIER)\s*\(",
+            filter_expr,
+            re.IGNORECASE,
+        ):
+            return None
+
         for predicate in re.split(r"\s+\bAND\b\s+", filter_expr, flags=re.IGNORECASE):
             predicate = predicate.strip()
             pred_match = re.match(
-                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*(<=|>=|<>|=|<|>)\s*(\"[^\"]*\"|'[^']*'|[-+]?\d+(?:\.\d+)?)",
+                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*(<=|>=|<>|=|<|>)\s*(\"[^\"]*\"|'[^']*'|[-+]?\d+(?:\.\d+)?)\s*$",
                 predicate,
                 re.IGNORECASE,
             )
             if not pred_match:
-                continue
+                # Fail closed, not `continue`: silently dropping one
+                # unparseable condition out of an AND-list would emit a
+                # CASE WHEN that computes something other than what the
+                # original DAX filter actually specified, with no
+                # indication that happened.
+                return None
             table = (pred_match.group(1) or pred_match.group(2) or table_alias).strip()
             column = pred_match.group(3).strip()
             op = pred_match.group(4)

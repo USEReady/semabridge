@@ -229,6 +229,21 @@ class MetricsClauseBuilder:
                 continue
 
             if expr:
+                stray_dax_reason = self._detect_untranslated_dax_syntax(expr)
+                if stray_dax_reason:
+                    logger.warning(
+                        "Skipping metric '%s': %s",
+                        metric.unique_name, stray_dax_reason,
+                    )
+                    skipped_metric_names.add(metric.unique_name)
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        stray_dax_reason,
+                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
+                    )
+                    continue
+
+            if expr:
                 type_mismatch_reason = detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
                 if type_mismatch_reason:
                     logger.warning(
@@ -375,6 +390,37 @@ class MetricsClauseBuilder:
             ";",
         )
         return not any(token in upper for token in forbidden)
+
+    # Matches a bare DAX-only function call (FILTER(, CALCULATE(, etc.) that
+    # must never survive into "translated" SQL -- every translation tier
+    # (the AST renderer, the regex-based rule translator, the LLM fallback)
+    # is expected to either fully resolve one of these into real SQL or
+    # decline the whole metric (return None, recorded to drop_ledger), never
+    # leave the call itself embedded in what it reports as success. This is
+    # the last line of defense before such a fragment reaches Snowflake's
+    # own DDL compiler as invalid SQL (e.g. "unexpected 'FILTER'") instead
+    # of being cleanly dropped like every other unsupported DAX pattern --
+    # _is_scalar_metric_sql above only catches SELECT/JOIN/CTE shapes, and
+    # neither of the checks below it is looking for raw DAX syntax either.
+    _UNTRANSLATED_DAX_TOKEN_RE = re.compile(
+        r"\b(CALCULATE|FILTER|TOPN|RANKX|ALLEXCEPT|ALL|SELECTEDVALUE|SUMX|"
+        r"AVERAGEX|MINX|MAXX|COUNTX|EARLIER|USERELATIONSHIP|CROSSFILTER)\s*\(",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _detect_untranslated_dax_syntax(cls, expr: str) -> Optional[str]:
+        if not expr:
+            return None
+        match = cls._UNTRANSLATED_DAX_TOKEN_RE.search(expr)
+        if not match:
+            return None
+        return (
+            f"Translated SQL still contains an untranslated DAX construct "
+            f"('{match.group(1).upper()}(...)') that no translation tier "
+            f"should ever leave embedded. Skipping rather than emitting "
+            f"invalid SQL that would fail at Snowflake DDL compile time."
+        )
 
     def _precomputed_column_name(self, source_dataset: str, source_column: str) -> str:
         return self.identifier_sanitizer.sanitize_column(f"{source_dataset}_{source_column}")

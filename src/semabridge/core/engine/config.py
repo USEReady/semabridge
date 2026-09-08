@@ -285,6 +285,18 @@ def _step1_load_config(
             # rather than collapsing into the same project name.
             pass
 
+            # Project-level `options:` block -- previously write-only (every
+            # project-save path serializes it, e.g. core_config_impl.py,
+            # project_shared.py, mappings_controller.py, but nothing here
+            # ever read it back). Parsed the same way as source_cfg/target_cfg
+            # above so options.load_source_data (opt-in data-backfill, see
+            # connectors/schema_manager.py) is reachable as
+            # context.config.options.load_source_data. Absent/non-dict
+            # options -> an empty SimpleNamespace, so every getattr(...,
+            # False) call site downstream defaults safely off.
+            options_cfg = raw_config.get("options") if isinstance(raw_config.get("options"), dict) else {}
+            object.__setattr__(config, "options", SimpleNamespace(**options_cfg))
+
         # Validate connector types
         if source not in self.SUPPORTED_SOURCES:
             raise ConfigValidationError(

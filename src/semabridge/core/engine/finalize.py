@@ -232,6 +232,8 @@ def _step10_finalize(
     self._summary.routing_summary = context.routing_summary
     if context.drop_ledger.records:
         self._summary.dropped_entities = _reconcile_dropped_entities(context)
+    if context.data_backfill_results:
+        self._summary.data_backfill_results = context.data_backfill_results
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

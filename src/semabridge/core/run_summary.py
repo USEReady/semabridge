@@ -96,6 +96,17 @@ class RunSummary(BaseModel):
         description="Entities excluded from the deployed DDL, with stage and reason (see DropLedger)",
     )
 
+    # Per-table outcome of the opt-in data-backfill step (options.
+    # load_source_data: true) -- deliberately separate from dropped_entities:
+    # a successful load isn't an exclusion, and mixing "skipped" in here
+    # would require overloading DropStage/DropRecord's existing meaning. Each
+    # entry: {table, dataset, status: "loaded"|"skipped"|"failed", row_count,
+    # reason}. Empty for every run that didn't opt in (the default).
+    data_backfill_results: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Per-table data-backfill outcomes (loaded/skipped/failed), only populated when options.load_source_data is enabled",
+    )
+
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
     
