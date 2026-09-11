@@ -87,7 +87,7 @@ def test_execute_still_applies_overrides_when_config_path_is_provided(monkeypatc
     monkeypatch.setattr(
         ExecutionEngine,
         "_apply_mapping_overrides_from_config",
-        staticmethod(lambda sml_model, path, config_payload=None: applied.append(path)),
+        staticmethod(lambda sml_model, path, config_payload=None, allow_column_rename=True: applied.append(path)),
     )
 
     result = engine.execute(

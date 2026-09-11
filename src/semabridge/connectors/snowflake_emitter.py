@@ -234,6 +234,14 @@ class SnowflakeEmitter(BaseEmitter):
                 # TablesClauseBuilder._fetch_fiscal_anchor_literal.
                 self.semantic_view_builder.cursor = cur
 
+                # Step -2: Ensure this project's own target schema exists.
+                # Must run before anything else touches self.config.schema_name
+                # (SHOW TABLES, CTAS, USE SCHEMA all fail on a schema that
+                # doesn't exist yet) — now that every new project defaults to
+                # its own per-project schema rather than one pre-provisioned
+                # shared one, this can no longer be assumed to already exist.
+                self.schema_manager._ensure_schema_exists(cur)
+
                 # Step -1: Pre-compute duplicate name mappings
                 if is_osi:
                     self.semantic_view_builder._precompute_duplicate_mappings(model, is_osi=True)

@@ -101,7 +101,11 @@ def test_still_applies_when_step6_did_not_apply_overrides(monkeypatch):
     monkeypatch.setattr(
         ExecutionEngine,
         "_apply_mapping_overrides_from_config",
-        staticmethod(lambda sml_model, path, config_payload=None: applied.append(path)),
+        staticmethod(
+            lambda sml_model, path, config_payload=None, allow_column_rename=True: applied.append(
+                (path, allow_column_rename)
+            )
+        ),
     )
 
     result = engine.execute(
@@ -114,3 +118,10 @@ def test_still_applies_when_step6_did_not_apply_overrides(monkeypatch):
 
     assert result.status == RunStatus.SUCCESS
     assert len(applied) == 1
+    # This is the late fallback (step 6 never set mapping_overrides_applied),
+    # which fires after relationships/metrics may already be built against
+    # a column's original name -- it must never be allowed to rename a
+    # column's unique_name, only its display label. See
+    # _apply_mapping_overrides_from_config's own docstring.
+    _, allow_column_rename = applied[0]
+    assert allow_column_rename is False

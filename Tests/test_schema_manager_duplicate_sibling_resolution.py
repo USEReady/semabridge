@@ -139,10 +139,24 @@ def test_ambiguous_case_insensitive_duplicate_also_fails_closed():
         sm._resolve_physical_column_name(dataset, "SprocketId")
 
 
-def test_live_schema_confirmed_bypasses_the_new_resolution_entirely():
-    """When the dataset's own live Snowflake schema IS confirmed, resolution
-    must go through the existing live-schema checks unchanged -- the new
-    duplicate-sibling resolution only applies to the modeled-fallback path."""
+def test_live_schema_confirmed_resolves_bare_reference_to_correct_suffixed_sibling():
+    """The real-world incident shape (SALES.UNIT / "invalid identifier"):
+    a genuine collision was already deployed, so the CONFIRMED live
+    Snowflake schema shows both suffixed siblings (WIDGETCODE_1,
+    WIDGETCODE_2) and never the bare base name. A raw/un-suffixed reference
+    matching one of the two original columns must resolve to ITS OWN
+    suffixed sibling even when live schema is confirmed.
+
+    This used to be impossible: duplicate-sibling resolution was gated off
+    entirely whenever live schema was confirmed, on the mistaken assumption
+    that "a real Snowflake schema has no such internal suffix bookkeeping
+    to resolve against" -- true, but irrelevant, since the resolution is
+    model-derived, not live-schema-derived. Steps 1/2 (exact/case-
+    insensitive match) always miss a bare reference here (the live set only
+    has the suffixed names), so with the gate in place this fell through
+    to a naive re-sanitized "WIDGETCODE" -- a name that was never actually
+    a real physical column -- silently producing "invalid identifier"
+    downstream in generated SQL."""
     sm = _build_schema_manager()
     dataset = SMLDataset(
         unique_name="WidgetSource",
@@ -152,11 +166,39 @@ def test_live_schema_confirmed_bypasses_the_new_resolution_entirely():
             SMLColumn(unique_name="WIDGETCODE", data_type="decimal"),
         ],
     )
-    # A live schema is confirmed and (deliberately) does NOT reflect the
-    # modeled duplicate-suffix bookkeeping at all -- if the fix were wrongly
-    # applied here too, it would try to consult _collect_physical_source_columns
-    # instead of just trusting the live, confirmed column list.
-    sm._live_schema_metadata["WIDGETSOURCE"] = {"WIDGETCODE"}
+    sm._live_schema_metadata["WIDGETSOURCE"] = {"WIDGETCODE_1", "WIDGETCODE_2"}
+
+    resolved_first = sm._resolve_physical_column_name(dataset, "WidgetCode")
+    resolved_second = sm._resolve_physical_column_name(dataset, "WIDGETCODE")
+
+    assert resolved_first == "WIDGETCODE_1"
+    assert resolved_second == "WIDGETCODE_2"
+    assert resolved_first != resolved_second, "each raw reference must resolve to ITS OWN sibling"
+
+
+def test_live_schema_confirmed_rejects_a_model_guess_live_reality_does_not_back():
+    """Cross-check safety net, preserved from before this fix: even though
+    duplicate-sibling resolution now also runs when live schema is
+    confirmed, its answer must not be trusted blindly -- only when the
+    resolved sibling actually exists in the CONFIRMED live column set.
+    Here the live schema reflects neither the bare name nor either
+    model-derived suffixed sibling (a stale in-memory model that has
+    drifted from live reality, e.g. after an out-of-band schema change) --
+    the guess ("WIDGETCODE_1") must be rejected and resolution must fall
+    through to the same default behavior this method already had for an
+    unresolvable reference, not the unconfirmed guess."""
+    sm = _build_schema_manager()
+    dataset = SMLDataset(
+        unique_name="WidgetSource",
+        source_table="WidgetSource",
+        columns=[
+            SMLColumn(unique_name="WidgetCode", data_type="string"),
+            SMLColumn(unique_name="WIDGETCODE", data_type="decimal"),
+        ],
+    )
+    sm._live_schema_metadata["WIDGETSOURCE"] = {"SOME_OTHER_COLUMN"}
 
     resolved = sm._resolve_physical_column_name(dataset, "WidgetCode")
-    assert resolved == "WIDGETCODE", "live-confirmed schema must resolve directly, bypassing duplicate-sibling logic"
+
+    assert resolved != "WIDGETCODE_1", "an unconfirmed model guess must never be trusted over live reality"
+    assert resolved == "WIDGETCODE"

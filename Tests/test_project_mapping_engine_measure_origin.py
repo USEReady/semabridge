@@ -71,8 +71,11 @@ def test_metric_target_name_uses_snowflake_leading_digit_rule() -> None:
 
 
 def test_option_b_collision_resolution() -> None:
-    # Scenario: Two datasets Product and Customer both have Manufacturer column.
-    # The engine should detect collisions, but keep the target names as raw sanitized MANUFACTURER.
+    # Scenario: Two datasets Product and Customer both have a Manufacturer
+    # column. Naming-convention rule: neither table name is fact-like, so
+    # the first-encountered table (Product, per declared dataset order)
+    # is treated as primary and keeps the bare name; the other side is
+    # auto-renamed <SourceTableName>_<FieldName> with no per-side prompt.
     model = {
         "unique_name": "Core_Finance_v1",
         "datasets": [
@@ -86,18 +89,22 @@ def test_option_b_collision_resolution() -> None:
     mappings = payload["mappings"]
 
     # Filter to only the columns
-    columns = [row for row in mappings if row.get("entity_kind") == "column"]
+    columns = {row["source_path"]: row for row in mappings if row.get("entity_kind") == "column"}
     assert len(columns) == 2
 
-    # Check target names are NOT mutated
-    for col in columns:
-        assert col["target_name"] == "MANUFACTURER"
-        assert col["collision_detected"] is True
-        assert col["collision_group"] == "column::Core_Finance_v1:MANUFACTURER"
-        assert col["validation_status"] == "collision"
-        assert col["validation_code"] == "NAME_COLLISION"
-        # Verify suggestions ordering
-        assert col["resolution_suggestions"][0] in ("PRODUCT_MANUFACTURER", "CUSTOMER_MANUFACTURER")
+    col_prod = columns["datasets.Product.columns.Manufacturer"]
+    col_cust = columns["datasets.Customer.columns.Manufacturer"]
+
+    # Primary (first-encountered) table keeps its bare name, auto-resolved.
+    assert col_prod["target_name"] == "MANUFACTURER"
+    assert col_prod["collision_detected"] is False
+    assert col_prod["validation_status"] == "valid"
+
+    # The other side is auto-renamed <Table>_<Field>, not left for the user.
+    assert col_cust["target_name"] == "CUSTOMER_MANUFACTURER"
+    assert col_cust["collision_detected"] is False
+    assert col_cust["collision_auto_resolved"] is True
+    assert col_cust["validation_status"] == "valid"
 
     # Scenario B: Overriding one of them manually makes the other unique under Option B
     existing_mappings = {
@@ -128,8 +135,12 @@ def test_option_b_collision_resolution() -> None:
 
 def test_transitive_collision() -> None:
     # Scenario: Product.Manufacturer and Customer.Manufacturer collide.
-    # Product has another column Product_Manufacturer.
-    # Target names should stay as raw sanitized, and conflicts are only flagged on duplicates.
+    # Product has another column Product_Manufacturer. Naming-convention
+    # rule: Product is first-encountered/primary and keeps the bare name;
+    # Customer's colliding field is auto-renamed CUSTOMER_MANUFACTURER --
+    # which does NOT collide with Product's own pre-existing
+    # Product_Manufacturer column, since the rename is qualified by the
+    # *source* table (Customer), not the primary table (Product).
     model = {
         "unique_name": "Core_Finance_v1",
         "datasets": [
@@ -159,26 +170,34 @@ def test_transitive_collision() -> None:
     col_prod_prod_man = columns["datasets.Product.columns.Product_Manufacturer"]
     col_cust_man = columns["datasets.Customer.columns.Manufacturer"]
 
-    # Target names check: raw sanitized, not mutated
+    # Primary (first-encountered) side keeps its bare name; the other
+    # colliding side is auto-renamed <SourceTable>_<Field>.
     assert col_prod_man["target_name"] == "MANUFACTURER"
-    assert col_cust_man["target_name"] == "MANUFACTURER"
+    assert col_cust_man["target_name"] == "CUSTOMER_MANUFACTURER"
     assert col_prod_prod_man["target_name"] == "PRODUCT_MANUFACTURER"
 
-    # Conflicting columns should have collision_detected = True
-    assert col_prod_man["collision_detected"] is True
-    assert col_prod_man["validation_status"] == "collision"
-    
-    assert col_cust_man["collision_detected"] is True
-    assert col_cust_man["validation_status"] == "collision"
+    # Collision is auto-resolved, not left flagged for the user.
+    assert col_prod_man["collision_detected"] is False
+    assert col_prod_man["validation_status"] == "valid"
 
-    # Unique column should be valid
+    assert col_cust_man["collision_detected"] is False
+    assert col_cust_man["collision_auto_resolved"] is True
+    assert col_cust_man["validation_status"] == "valid"
+
+    # No accidental second-order collision with Product's own pre-existing
+    # Product_Manufacturer column -- the rename used Customer's table name,
+    # not Product's.
     assert col_prod_prod_man["collision_detected"] is False
     assert col_prod_prod_man["validation_status"] == "valid"
+    assert col_cust_man["target_name"] != col_prod_prod_man["target_name"]
 
 
-def test_collisions_remain_unresolved_until_user_action() -> None:
-    # Regression test: verify that when build_entity_mappings is called with multiple colliding columns,
-    # target_names remain unresolved initially and resolution_suggestions are populated deterministically.
+def test_collisions_auto_resolve_without_user_action() -> None:
+    # Naming-convention rule supersedes the old "leave unresolved until
+    # user action" design: on a collision, the primary (first-encountered,
+    # since neither Executive nor Industry is fact-like) table's field
+    # keeps its bare name, and every other colliding field is auto-renamed
+    # <SourceTable>_<Field> immediately -- no per-side prompt needed.
     model = {
         "unique_name": "Core_Finance_v1",
         "datasets": [
@@ -199,18 +218,18 @@ def test_collisions_remain_unresolved_until_user_action() -> None:
     assert col_bu_exec["collision_detected"] is False
     assert col_bu_exec["validation_status"] == "valid"
 
+    # Primary (first-encountered) side keeps the bare name, auto-resolved.
     assert col_exec_id["target_name"] == "ID"
-    assert col_exec_id["collision_detected"] is True
-    assert col_exec_id["validation_status"] == "collision"
-    
-    # Verify suggestions order:
-    assert col_exec_id["resolution_suggestions"][0] == "EXECUTIVE_ID"
-    assert "EXECUTIVE_ID" in col_exec_id["resolution_suggestions"][1]
+    assert col_exec_id["collision_detected"] is False
+    assert col_exec_id["validation_status"] == "valid"
 
-    assert col_ind_id["target_name"] == "ID"
-    assert col_ind_id["collision_detected"] is True
-    assert col_ind_id["validation_status"] == "collision"
-    assert col_ind_id["resolution_suggestions"][0] == "INDUSTRY_ID"
+    # The other side is auto-renamed -- and does NOT collide with BU's
+    # pre-existing EXECUTIVE_ID column, since it's qualified by Industry's
+    # own table name, not Executive's.
+    assert col_ind_id["target_name"] == "INDUSTRY_ID"
+    assert col_ind_id["collision_detected"] is False
+    assert col_ind_id["collision_auto_resolved"] is True
+    assert col_ind_id["validation_status"] == "valid"
 
 
 def test_metric_and_column_rows_include_synonyms() -> None:

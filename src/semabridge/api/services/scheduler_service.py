@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from datetime import datetime, timezone as dt_timezone
 from threading import RLock
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -33,6 +35,26 @@ class SchedulerService:
         self._schedule_cleared_callback: Optional[ScheduleClearedCallback] = None
         self._schedules: Dict[str, Dict[str, Any]] = {}
         self._lock = RLock()
+        # Cap how many scheduled project syncs run at once. APScheduler fires
+        # every project's own independent cron/time trigger with no
+        # concurrency limit of its own -- when several projects share the
+        # same (or a coincidentally overlapping) schedule, as many of the
+        # existing projects sharing one Snowflake target schema do today,
+        # they'd otherwise all fire as fully concurrent threads. That
+        # concurrency is exactly the precondition for the destructive
+        # CTAS+SWAP cross-project table race confirmed in
+        # incident_shared_schema_cross_project_contamination (project
+        # memory) -- capping concurrency meaningfully reduces collision risk
+        # for the existing projects still sharing a schema, without touching
+        # any per-project schedule or requiring the bigger migration.
+        # A run that arrives while the cap is already reached queues behind
+        # the ones in flight and fires as soon as a slot frees up -- see
+        # _run_scheduled_project below -- it is delayed, never dropped:
+        # APScheduler's own trigger has already fired by the time this
+        # semaphore is touched, so queuing here cannot cause a missed run,
+        # only a later start time for that run.
+        self._max_concurrent_runs = max(1, int(os.getenv("SEMABRIDGE_SCHEDULER_MAX_CONCURRENT_RUNS", "2")))
+        self._run_semaphore = asyncio.Semaphore(self._max_concurrent_runs)
 
     def start(self) -> None:
         if not self._available or self._scheduler is None:
@@ -172,8 +194,6 @@ class SchedulerService:
         try:
             # Project sync performs blocking connector/LLM/warehouse work. Keep it
             # off the Uvicorn event loop so lightweight API requests stay responsive.
-            import asyncio
-
             def _run_callback_in_thread() -> None:
                 loop = asyncio.new_event_loop()
                 try:
@@ -182,7 +202,14 @@ class SchedulerService:
                 finally:
                     loop.close()
 
-            await asyncio.to_thread(_run_callback_in_thread)
+            if self._run_semaphore.locked():
+                logger.info(
+                    "Scheduled run for project %s is queued (%d scheduled run(s) already "
+                    "in progress, cap=%d) -- will start as soon as a slot frees up",
+                    project_id, self._max_concurrent_runs, self._max_concurrent_runs,
+                )
+            async with self._run_semaphore:
+                await asyncio.to_thread(_run_callback_in_thread)
         finally:
             if schedule_type == "time":
                 self.delete_project_schedule(project_id)

@@ -100,11 +100,19 @@ class RunSummary(BaseModel):
     # load_source_data: true) -- deliberately separate from dropped_entities:
     # a successful load isn't an exclusion, and mixing "skipped" in here
     # would require overloading DropStage/DropRecord's existing meaning. Each
-    # entry: {table, dataset, status: "loaded"|"skipped"|"failed", row_count,
-    # reason}. Empty for every run that didn't opt in (the default).
+    # entry: {table, dataset, status: "loaded"|"skipped"|"failed"|
+    # "ambiguous_needs_review"|"columns_backfilled", row_count, reason}.
+    # "columns_backfilled" (with an additional "columns": [...] key) is the
+    # narrower column-level path: the table already had real data, but one
+    # or more columns were ALTER-TABLE-ADDed by this same deploy (a wider
+    # PBIX schema than whatever last created this table) and were patched
+    # on the existing rows via a keyed MERGE -- see
+    # schema_manager.py's _backfill_columns_for_existing_rows. Every other
+    # status describes a whole-table decision and never carries "columns".
+    # Empty for every run that didn't opt in (the default).
     data_backfill_results: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="Per-table data-backfill outcomes (loaded/skipped/failed), only populated when options.load_source_data is enabled",
+        description="Per-table data-backfill outcomes (loaded/skipped/failed/ambiguous_needs_review/columns_backfilled), only populated when options.load_source_data is enabled",
     )
 
     # Error details for FAILED/PARTIAL

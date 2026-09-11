@@ -9,6 +9,39 @@ from semabridge.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _safe_lookup_attribute_synonyms(attr, dataset_obj, source_column):
+    """Look up synonyms for a dimension attribute in the Cortex YAML
+    side-car, degrading gracefully on an ambiguous match
+    (AmbiguousColumnReferenceError -- e.g. two distinct columns collide by
+    name and there's no way to tell which one this attribute's synonyms
+    should come from).
+
+    Not a reason to drop the dimension entry: it's already been emitted
+    with its own resolved expr/description above this call, so it's fully
+    valid on its own -- only the synonym enrichment is in question. A
+    plain warning log (not drop_ledger) is the right mechanism here, same
+    reasoning as dimensions_clause_builder.py's identical guard: nothing is
+    actually being dropped, so drop_ledger's "what got excluded and why"
+    semantics would misrepresent what happened.
+    """
+    from semabridge.core.exceptions import AmbiguousColumnReferenceError
+    from semabridge.utils.synonyms import lookup_attribute_synonyms
+
+    try:
+        return lookup_attribute_synonyms(attr, dataset_obj, source_column)
+    except AmbiguousColumnReferenceError as exc:
+        candidates = ", ".join(exc.candidates) if exc.candidates else "unknown"
+        logger.warning(
+            "Skipping Cortex YAML synonyms for attribute '%s' in dataset '%s': "
+            "ambiguous column reference matches %d distinct columns (%s) and "
+            "cannot be resolved to one without guessing. The dimension entry "
+            "itself is still emitted normally -- only its synonym set is affected.",
+            getattr(attr, "unique_name", "<unknown>"), getattr(attr, "dataset", "<unknown>"),
+            len(exc.candidates), candidates,
+        )
+        return []
+
+
 def generate_ddls(emitter, sml):
     if not sml.datasets:
         return []
@@ -57,8 +90,7 @@ def generate_cortex_yaml(emitter, sml, sample_fetcher=None):
                         dim_samples = sample_fetcher(ds.unique_name, attr_col)
                         if dim_samples:
                             dim_def["sample_values"] = dim_samples
-                    from semabridge.utils.synonyms import lookup_attribute_synonyms
-                    dim_synonyms = lookup_attribute_synonyms(attr, ds, attr_col)
+                    dim_synonyms = _safe_lookup_attribute_synonyms(attr, ds, attr_col)
                     if dim_synonyms:
                         dim_def["synonyms"] = dim_synonyms
                     table_def["dimensions"].append(dim_def)
@@ -144,8 +176,7 @@ def generate_cortex_yaml_from_osi(emitter, osi, sample_fetcher=None):
                         dim_samples = sample_fetcher(ds.unique_name, attr.source_column)
                         if dim_samples:
                             dim_def["sample_values"] = dim_samples
-                    from semabridge.utils.synonyms import lookup_attribute_synonyms
-                    dim_synonyms = lookup_attribute_synonyms(attr, ds, attr.source_column)
+                    dim_synonyms = _safe_lookup_attribute_synonyms(attr, ds, attr.source_column)
                     if dim_synonyms:
                         dim_def["synonyms"] = dim_synonyms
                     table_def["dimensions"].append(dim_def)

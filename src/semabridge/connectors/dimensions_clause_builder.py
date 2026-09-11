@@ -357,9 +357,35 @@ class DimensionsClauseBuilder:
         dataset_by_name: Dict[str, Any],
         phys_col: str,
     ) -> List[str]:
+        """Look up synonyms for a dimension attribute, degrading gracefully
+        on an ambiguous match (AmbiguousColumnReferenceError -- e.g. two
+        distinct columns collide by name and there's no way to tell which
+        one this attribute's synonyms should come from).
+
+        Unlike the physical-column-resolution ambiguity this same file
+        handles in _safe_resolve_physical_column_name, this is NOT a reason
+        to drop the attribute: phys_col was already resolved unambiguously
+        before this is ever called, so the attribute is fully valid and
+        queryable -- only its synonym enrichment is in question. Keep the
+        attribute, skip attaching synonyms, log a note instead of silently
+        merging in whichever column's synonyms happened to be found first
+        (the actual bug this closes -- see utils/synonyms.py).
+        """
+        from semabridge.core.exceptions import AmbiguousColumnReferenceError
         from semabridge.utils.synonyms import lookup_attribute_synonyms
         dataset_obj = dataset_by_name.get(attr.dataset)
-        return lookup_attribute_synonyms(attr, dataset_obj, phys_col)
+        try:
+            return lookup_attribute_synonyms(attr, dataset_obj, phys_col)
+        except AmbiguousColumnReferenceError as exc:
+            candidates = ", ".join(exc.candidates) if exc.candidates else "unknown"
+            logger.warning(
+                "Skipping synonyms for attribute '%s' in dataset '%s': ambiguous "
+                "column reference matches %d distinct columns (%s) and cannot be "
+                "resolved to one without guessing. The attribute itself is still "
+                "emitted normally -- only its synonym set is affected.",
+                attr.unique_name, attr.dataset, len(exc.candidates), candidates,
+            )
+            return []
 
 
     def _measure_key(self, dataset_name: Optional[str], column_name: Optional[str]) -> Tuple[str, str]:
@@ -417,8 +443,9 @@ class DimensionsClauseBuilder:
                 continue
 
             if not col.unique_name.startswith("_") and phys in known_phys:
-                semantic = self.sanitizer.sanitize_semantic_name(col.unique_name)
-                emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, col.unique_name)
+                semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
+                semantic = self.sanitizer.sanitize_semantic_name(semantic_source_name)
+                emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, semantic_source_name)
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
@@ -429,10 +456,11 @@ class DimensionsClauseBuilder:
         # Last resort
         if first_ds.columns:
             col = first_ds.columns[0]
-            semantic = self.sanitizer.sanitize_semantic_name(col.unique_name)
-            phys = (self.identifier_sanitizer.sanitize_column(col.unique_name) if is_osi 
+            semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
+            semantic = self.sanitizer.sanitize_semantic_name(semantic_source_name)
+            phys = (self.identifier_sanitizer.sanitize_column(col.unique_name) if is_osi
                     else self.schema_manager._resolve_physical_column_name(first_ds, col.unique_name))
-            emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, col.unique_name)
+            emitted_name = self._resolve_unique_dimension_alias(semantic, used_dimension_aliases, semantic_source_name)
             dims_lines.append(
                 f'  {alias}."{emitted_name}" AS '
                 f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'

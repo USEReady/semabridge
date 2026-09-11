@@ -250,6 +250,31 @@ def stage_group_label(stage: str, target_label: str = "the destination") -> str:
     return template.format(target=target_label) if "{target}" in template else template
 
 
+def _group_by_first_seen(items: List[Any], key_fn) -> List[Tuple[Any, List[Any]]]:
+    """Group `items` by key_fn(item), preserving first-seen key order.
+    Used to collapse many entries that share the identical reason/note
+    text into one group instead of repeating that text once per entry --
+    the report previously repeated the same sentence verbatim for every
+    dropped/flagged item in a stage (e.g. 33 times in one real report),
+    which is exactly the "long technical list" this groups away without
+    dropping any name or reason."""
+    order: List[Any] = []
+    groups: Dict[Any, List[Any]] = {}
+    for item in items:
+        key = key_fn(item)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+    return [(key, groups[key]) for key in order]
+
+
+def _names_cell(names: List[str]) -> str:
+    """Comma-joined names for one table cell -- escapes '|' (illegal
+    inside a Markdown table cell) without altering the name itself."""
+    return ", ".join(str(n).replace("|", "\\|") for n in names)
+
+
 # ---------------------------------------------------------------------------
 # SML snapshot loading / metric classification
 # ---------------------------------------------------------------------------
@@ -287,7 +312,10 @@ def _load_snapshot_data(sml_snapshot_id: Optional[str]) -> Optional[Dict[str, An
     }
 
 
-def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+def _classify_metrics(
+    sml_metrics: List[Dict[str, Any]],
+    dropped_metric_names: Optional[set[str]] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
     """Split a snapshot's metrics into Standard / Standard-with-a-flag /
     AI-assisted, reusing the same risky-DAX-pattern check the dry-run page's
     three-tier risk label already uses (project_mapping_engine.py) rather
@@ -300,9 +328,31 @@ def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[
     dimension check), however, run over every metric regardless of tier --
     so a Standard-conversion metric can carry a real flag too, and does get
     one here.
+
+    dropped_metric_names: metric names already recorded in this run's
+    dropped_entities (entity_kind == "metric"; both call sites pass the
+    exact set already computed for their own dropped-sections loop, keyed
+    the same way _classify_metrics itself names a metric below). This
+    exclusion is required, not optional: `sync_enabled` on a metric is
+    set exactly once, at Stage 6 (DAX translation, see
+    converter/tmsl_to_sml.py / converter/osi_to_sml.py) time, and is never
+    revised when a LATER stage -- DDL emission/deployment,
+    connectors/metrics_clause_builder.py -- drops that same metric for an
+    unrelated, later-discovered reason (an unresolvable column reference,
+    for example). Without this check, a metric can appear in BOTH
+    "Standard conversion" and "why we couldn't include it" with mutually
+    exclusive outcomes, since those two report sections previously came
+    from two independent data sources with nothing reconciling them
+    against each other. The drop ledger is the authoritative, later
+    signal here: by the time this function runs, finalize.py's own
+    _reconcile_dropped_entities has already stripped any drop record for
+    a metric later confirmed genuinely live in the deployed DDL -- so
+    anything still present in dropped_entities really was dropped, and
+    a stale sync_enabled=True must not override that.
     """
     from semabridge.api.services.project_mapping_engine import _has_known_risky_dax_pattern
 
+    dropped_metric_names = dropped_metric_names or set()
     advisory_messages = _advisory_category_messages()
     standard: List[Dict[str, Any]] = []
     ai_assisted: List[Dict[str, Any]] = []
@@ -311,6 +361,11 @@ def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         if not metric.get("sync_enabled", True):
             continue  # not successfully converted -- appears in the drop ledger instead
         name = metric.get("unique_name") or metric.get("label") or "Unnamed calculation"
+        if name in dropped_metric_names:
+            # A later stage (DDL emission/deployment) recorded this exact
+            # metric as dropped -- that outcome wins over a stale
+            # sync_enabled=True from the earlier translation stage.
+            continue
         tier = metric.get("complexity_tier") or 1
         categories = metric.get("advisory_categories") or []
         notes_present = bool(metric.get("advisory_notes"))
@@ -523,7 +578,11 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             relationship_count += snap_data["relationship_count"] + emission_relationship_drops
             metric_count += len(snap_data["metrics"])
 
-            classified = _classify_metrics(snap_data["metrics"])
+            dropped_metric_names = {
+                d.get("entity_name") for d in model_dropped
+                if d.get("entity_kind") == "metric" and d.get("entity_name")
+            }
+            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
             prefix = f"{model_label}: " if multi_model and model_label else ""
             for entry in classified["standard"]:
                 standard.append({**entry, "name": f"{prefix}{entry['name']}"})
@@ -693,19 +752,18 @@ def generate_run_report_markdown(
         "",
         f"**{status_icon} {status_label}**",
         "",
-        f"- **Project:** {project_name}",
-        f"- **Source:** {source_kind} — " + ", ".join(source_files or ["(unavailable)"]),
+        f"**Source:** {source_kind} — " + ", ".join(source_files or ["(unavailable)"]),
     ]
     started, completed = run.get("started_at"), run.get("completed_at")
-    when = f"- **Started:** {started}" if started else ""
+    when = f"**Started:** {started}" if started else ""
     if completed:
         when += f"  ·  **Completed:** {completed}"
-    if when:
-        lines.append(when)
     duration_label = _format_duration(run.get("duration_ms"))
     if duration_label:
-        lines.append(f"- **Duration:** {duration_label}")
-    lines.append(f"- **Run ID:** `{run_id}`")
+        when += f"  ·  **Duration:** {duration_label}" if when else f"**Duration:** {duration_label}"
+    if when:
+        lines.append(when)
+    lines.append(f"**Run ID:** `{run_id}`")
     lines.append("")
 
     model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
@@ -775,7 +833,11 @@ def generate_run_report_markdown(
             relationship_count += snap_data["relationship_count"] + emission_relationship_drops
             metric_count += len(snap_data["metrics"])
 
-            classified = _classify_metrics(snap_data["metrics"])
+            dropped_metric_names = {
+                d.get("entity_name") for d in model_dropped
+                if d.get("entity_kind") == "metric" and d.get("entity_name")
+            }
+            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
             prefix = f"{model_label}: " if multi_model and model_label else ""
             for entry in classified["standard"]:
                 standard.append({**entry, "name": f"{prefix}{entry['name']}"})
@@ -786,66 +848,78 @@ def generate_run_report_markdown(
             stage = str(record.get("stage") or "unknown")
             dropped_by_stage.setdefault(stage, []).append(record)
 
-    # --- What we found in your source ------------------------------------
-    lines.append("## What we found in your source")
+    # --- At a Glance --------------------------------------------------------
+    # One compact block up front covering everything a quick status check
+    # needs -- overall result, source-file counts, and the conversion
+    # breakdown -- so the full detail further down is reachable but not
+    # required reading. Same counts as before, just gathered into one place
+    # instead of two separate headline sections.
+    total_converted = len(standard) + len(ai_assisted)
+    not_included_calcs = max(0, metric_count - total_converted)
+    pct = round((total_converted / metric_count) * 100) if metric_count else 0
+
+    lines.append("## At a Glance")
     lines.append("")
-    lines.append("| | Count |")
+    lines.append("| | |")
     lines.append("|---|---:|")
     lines.append(f"| Tables | {dataset_count} |")
     lines.append(f"| Columns | {column_count} |")
-    lines.append(f"| Calculations | {metric_count} |")
     if relationship_count:
-        lines.append(f"| Relationships between tables | {relationship_count} |")
+        lines.append(f"| Relationships | {relationship_count} |")
+    lines.append(f"| Calculations | {metric_count} |")
     lines.append("")
+    lines.append(f"**{total_converted} of {metric_count} calculations converted ({pct}%)**")
+    lines.append("")
+    if metric_count:
+        lines.append("| Outcome | Count |")
+        lines.append("|---|---:|")
+        if standard:
+            lines.append(f"| ✅ Standard conversion | {len(standard)} |")
+        if ai_assisted:
+            lines.append(f"| 🤖 AI-assisted | {len(ai_assisted)} |")
+        if not_included_calcs:
+            lines.append(f"| ❌ Not included | {not_included_calcs} |")
+        lines.append("")
 
-    # --- What converted successfully --------------------------------------
-    total_converted = len(standard) + len(ai_assisted)
-    lines.append("## What converted successfully")
-    lines.append("")
-    lines.append(f"**{total_converted} of {metric_count} calculations converted.**")
+    # --- Converted calculations ----------------------------------------
+    lines.append("## Converted Calculations")
     lines.append("")
     if standard:
         lines.append(f"### Standard conversion ({len(standard)})")
         lines.append("")
-        lines.append("Converted automatically using SemaBridge's built-in conversion rules. No AI involved.")
+        lines.append("_Converted automatically — no AI involved._")
         lines.append("")
-        for entry in standard:
-            if entry["advisory_msgs"]:
-                lines.append(f"- **{entry['name']}** — _{entry['advisory_msgs'][0]}_")
-            else:
-                lines.append(f"- {entry['name']}")
+        clean = [e for e in standard if not e["advisory_msgs"]]
+        flagged = [e for e in standard if e["advisory_msgs"]]
+        lines.append("| Note | Calculations |")
+        lines.append("|---|---|")
+        if clean:
+            lines.append(f"| No issues | {_names_cell([e['name'] for e in clean])} |")
+        for note, entries in _group_by_first_seen(flagged, lambda e: e["advisory_msgs"][0]):
+            lines.append(f"| ⚠️ {note} | {_names_cell([e['name'] for e in entries])} |")
         lines.append("")
     if ai_assisted:
         lines.append(f"### AI-assisted conversion ({len(ai_assisted)})")
         lines.append("")
-        lines.append(
-            "These calculations were too complex for our standard rules, so they "
-            "were interpreted by AI instead. **We recommend verifying these numbers.**"
-        )
+        lines.append("_Too complex for standard rules — interpreted by AI. **Recommend verifying these numbers.**_")
         lines.append("")
+        lines.append("| Calculation | Confidence | Notes |")
+        lines.append("|---|---:|---|")
         for entry in ai_assisted:
-            sentence = (
-                "This calculation was interpreted by AI rather than converted "
-                "using a fixed rule — we recommend verifying this number."
-            )
             confidence = entry.get("confidence")
-            if isinstance(confidence, (int, float)):
-                sentence += (
-                    f" AI's own confidence in this calculation: "
-                    f"{round(confidence * 100)}% (self-reported, not independently verified)."
-                )
+            conf_cell = f"{round(confidence * 100)}%" if isinstance(confidence, (int, float)) else "—"
+            note_bits = []
             if entry.get("risky"):
-                sentence += " This calculation also matches a pattern that has caused problems before — please review it closely."
-            for msg in entry.get("advisory_msgs") or []:
-                sentence += f" {msg}"
-            lines.append(f"- **{entry['name']}** — {sentence}")
+                note_bits.append("Matches a pattern that's caused issues before — review closely")
+            note_bits.extend(entry.get("advisory_msgs") or [])
+            lines.append(f"| {entry['name']} | {conf_cell} | {'; '.join(note_bits) or '—'} |")
         lines.append("")
     if not standard and not ai_assisted:
         lines.append("_Nothing converted successfully in this run._")
         lines.append("")
 
-    # --- What we couldn't include, and why --------------------------------
-    lines.append("## What we couldn't include, and why")
+    # --- Not included, and why ------------------------------------------
+    lines.append("## Not Included, and Why")
     lines.append("")
     if not dropped_by_stage:
         lines.append("Everything found in your source file was successfully converted and deployed.")
@@ -859,11 +933,17 @@ def generate_run_report_markdown(
                 continue
             lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
             lines.append("")
-            for record in records:
-                name = record.get("entity_name") or "(unnamed)"
-                plain = humanize_drop_reason(record)
-                suffix = "  _(expected — not an error)_" if record.get("by_design") else ""
-                lines.append(f"- **{name}** — {plain}{suffix}")
+            lines.append("| Why | Items |")
+            lines.append("|---|---|")
+            # Grouped by (reason, by_design) so the same explanation is
+            # never repeated once per item -- a real report showed the
+            # identical sentence 33 times in a row before this change.
+            for (reason, by_design), recs in _group_by_first_seen(
+                records, lambda r: (humanize_drop_reason(r), bool(r.get("by_design")))
+            ):
+                label = f"{reason} _(expected)_" if by_design else reason
+                names = [r.get("entity_name") or "(unnamed)" for r in recs]
+                lines.append(f"| {label} | {_names_cell(names)} |")
             lines.append("")
 
     # --- Data backfill (only present when options.load_source_data was
@@ -871,19 +951,44 @@ def generate_run_report_markdown(
     if data_backfill_results:
         lines.append("## Data Backfill")
         lines.append("")
-        lines.append(
-            "This run had real-data backfill enabled (`options.load_source_data`). "
-            "Per table:"
-        )
+        triggers_present = {e.get("trigger") for e in data_backfill_results}
+        if triggers_present == {"first_sync_default"}:
+            lines.append(
+                "Real-data backfill ran automatically for this project's first "
+                "sync (no `options.load_source_data` was configured — every "
+                "later sync goes back to opt-in-only). Per table:"
+            )
+        elif triggers_present == {"explicit"}:
+            lines.append(
+                "This run had real-data backfill explicitly enabled "
+                "(`options.load_source_data: true`). Per table:"
+            )
+        else:
+            lines.append(
+                "This run had real-data backfill enabled. Per table "
+                "(see Trigger for why each one ran):"
+            )
         lines.append("")
-        lines.append("| Table | Status | Rows | Reason |")
-        lines.append("|---|---|---:|---|")
+        lines.append("| Table | Status | Rows | Columns | Trigger | Reason |")
+        lines.append("|---|---|---:|---|---|---|")
+        _TRIGGER_LABELS = {
+            "first_sync_default": "Automatic (first sync)",
+            "explicit": "Explicit config",
+        }
         for entry in data_backfill_results:
             table = entry.get("table") or "(unknown table)"
             status = str(entry.get("status") or "unknown").replace("_", " ").title()
             row_count = entry.get("row_count", 0)
+            # Present only for the column-level backfill path (a table
+            # that already had real data, but had one or more columns
+            # ALTER-TABLE-ADDed by this same deploy and patched on the
+            # existing rows) -- distinguishes that from a whole-table
+            # fresh load, which always has an empty Columns cell here.
+            columns = entry.get("columns") or []
+            columns_cell = ", ".join(columns) if columns else "—"
+            trigger = _TRIGGER_LABELS.get(entry.get("trigger"), "—")
             reason = str(entry.get("reason") or "").replace("|", "\\|")
-            lines.append(f"| {table} | {status} | {row_count} | {reason} |")
+            lines.append(f"| {table} | {status} | {row_count} | {columns_cell} | {trigger} | {reason} |")
         lines.append("")
 
     return "\n".join(lines)

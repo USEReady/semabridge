@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from semabridge.core.exceptions import AmbiguousColumnReferenceError
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -143,8 +144,66 @@ def lookup_synonym_override(
     return []
 
 
+def _find_column_unambiguously(columns: list[Any], candidate: str, *, dataset_name: str | None) -> Any | None:
+    """Find the single column object `candidate` refers to, by name, without
+    ever silently picking a winner when more than one column could match.
+
+    Tries an exact (case-sensitive) match against unique_name first, then
+    falls back to case-insensitive. At each stage, if MORE THAN ONE column
+    matches, raises AmbiguousColumnReferenceError instead of returning the
+    first (schema_manager._resolve_duplicate_sibling_physical_name already
+    takes this same fail-closed approach for physical-column resolution --
+    see that function's docstring for why "first match wins" is unsafe here:
+    two distinct columns that collide by name are not interchangeable, and
+    picking one arbitrarily risks attaching the wrong column's synonyms to
+    an attribute that means something else entirely).
+
+    Returns None when nothing matches at all (not an error -- the caller
+    should try its next candidate or give up quietly, same as before).
+    """
+    exact_matches = [col for col in columns if getattr(col, "unique_name", None) == candidate]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        raise AmbiguousColumnReferenceError(
+            f"Column reference '{candidate}' matches {len(exact_matches)} distinct "
+            "columns and cannot be resolved to one without guessing.",
+            dataset_name=dataset_name,
+            raw_col_name=candidate,
+            candidates=[str(getattr(col, "unique_name", "")) for col in exact_matches],
+        )
+
+    candidate_cf = str(candidate).casefold()
+    case_insensitive_matches = [
+        col for col in columns
+        if str(getattr(col, "unique_name", "")).casefold() == candidate_cf
+    ]
+    if len(case_insensitive_matches) == 1:
+        return case_insensitive_matches[0]
+    if len(case_insensitive_matches) > 1:
+        raise AmbiguousColumnReferenceError(
+            f"Column reference '{candidate}' matches {len(case_insensitive_matches)} "
+            "distinct columns differing only in casing and cannot be resolved to one "
+            "without guessing.",
+            dataset_name=dataset_name,
+            raw_col_name=candidate,
+            candidates=[str(getattr(col, "unique_name", "")) for col in case_insensitive_matches],
+        )
+
+    return None
+
+
 def lookup_attribute_synonyms(attr: Any, dataset_obj: Any, phys_col: str | None = None) -> list[str]:
-    """Retrieve synonyms for a dimension attribute by looking up the backing column."""
+    """Retrieve synonyms for a dimension attribute by looking up the backing column.
+
+    Raises AmbiguousColumnReferenceError when a candidate name matches more
+    than one column in the dataset (e.g. two distinct columns collide by
+    name) -- callers must catch this and decide how to degrade (see
+    dimensions_clause_builder.py's _lookup_attribute_synonyms: keep the
+    attribute, skip its synonyms, log a note -- the attribute's own
+    physical column was already resolved unambiguously elsewhere, so only
+    the synonym enrichment is affected, not the attribute's validity).
+    """
     if not dataset_obj:
         return []
 
@@ -155,18 +214,11 @@ def lookup_attribute_synonyms(attr: Any, dataset_obj: Any, phys_col: str | None 
         phys_col,
     ]
     columns = list(getattr(dataset_obj, "columns", []) or [])
+    dataset_name = getattr(dataset_obj, "unique_name", None)
     for candidate in candidates:
         if not candidate:
             continue
-        col = dataset_obj.get_column(candidate) if hasattr(dataset_obj, "get_column") else None
-        if not col:
-            col = next(
-                (
-                    item for item in columns
-                    if str(getattr(item, "unique_name", "")).casefold() == str(candidate).casefold()
-                ),
-                None,
-            )
+        col = _find_column_unambiguously(columns, candidate, dataset_name=dataset_name)
         if col:
             return list(getattr(col, "synonyms", []) or [])
     return []

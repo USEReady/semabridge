@@ -9,6 +9,7 @@ from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED
 from semabridge.utils.logger import get_logger
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_UNREACHABLE_DIMENSION
+from semabridge.connectors.fact_table_naming import is_fact_like_name
 
 logger = get_logger(__name__)
 
@@ -178,6 +179,29 @@ def apply_collision_suffix(
     stem_max = max(1, max_length - size - 1)
     stem = sanitized_name[:stem_max].rstrip("_") or sanitized_name[:1] or "X"
     return f"{stem}_{suffix}", suffix
+
+
+def _table_name_from_parent_path(parent_source_path: Any) -> str:
+    """"datasets.TERRITORY" / "datasets.TERRITORY.columns" -> "TERRITORY",
+    sanitized. Factored out of the (previously three separate, identical)
+    inline copies of this logic in the collision-suggestion code below."""
+    parent_path = str(parent_source_path or "").strip()
+    if not parent_path:
+        return ""
+    stripped = re.sub(r"^datasets\.", "", parent_path, flags=re.IGNORECASE).split(".")[0]
+    return sanitize_identifier(stripped)
+
+
+def _is_primary_source_table(table_name: str) -> bool:
+    """Whole-word fact-table-name heuristic (see fact_table_naming.py,
+    shared with the Snowflake emitter) used to pick which side of a
+    colliding field pair is the "primary/base source table" one -- its
+    field keeps its bare name; every other colliding field is renamed
+    <SourceTableName>_<FieldName>. Reused here rather than SMLDataset's
+    own `is_fact` flag because that flag isn't set until Stage 6 (SML
+    conversion, converter/tmsl_to_sml.py) -- long after dry-run mapping
+    (this module) already needs an answer."""
+    return is_fact_like_name(table_name)
 
 
 def _iter_datasets(model: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
@@ -1067,27 +1091,107 @@ def build_entity_mappings(
                     row["validation_message"] = "Name collision with another manual override."
                 else:
                     row["validation_message"] = "Name collision detected."
-                
+
                 # Symmetrically calculate suggestions if not already present
                 if not row.get("resolution_suggestions"):
-                    _parent_path = str(row.get("parent_source_path") or row.get("source_path") or "").strip()
-                    _table_name = ""
-                    if _parent_path:
-                        _stripped = re.sub(r"^datasets\.", "", _parent_path, flags=re.IGNORECASE).split(".")[0]
-                        _table_name = sanitize_identifier(_stripped)
+                    _table_name = _table_name_from_parent_path(row.get("parent_source_path") or row.get("source_path"))
                     sanitized_name = row.get("sanitized_name") or sanitize_identifier(row.get("source_name"))
-                    
+
                     _seed = str(row.get("parent_source_path") or row.get("model_name") or "").strip()
                     _field = row.get("source_name")
                     _hash = deterministic_hash_suffix(f"{_seed}::{_field}")
-                    
+
                     _suggestions = []
                     if _table_name and _table_name.upper() != sanitized_name.upper():
                         _suggestions.append(f"{_table_name}_{sanitized_name}")
                         _suggestions.append(f"{_table_name}_{sanitized_name}_{_hash}")
                     _suggestions.append(f"{sanitized_name}_{_hash}")
                     row["resolution_suggestions"] = _suggestions
-            
+
+            # --- Standing naming-convention rule: auto-apply, don't just
+            # suggest --------------------------------------------------
+            # On a collision, the primary/base source table's field keeps
+            # its bare name; every OTHER colliding field is renamed
+            # <SourceTableName>_<FieldName> automatically -- no per-side
+            # prompt. "Primary" = whichever colliding table looks like a
+            # fact table (is_fact isn't set yet at this stage -- see
+            # _is_primary_source_table); with none or more than one
+            # fact-like table in the group, the first-encountered entry
+            # (stable iteration order) wins, so behavior stays
+            # deterministic even for a pure dimension-dimension collision.
+            # Manually-edited entries (is_user_edited) are NEVER renamed --
+            # an explicit user choice is never silently overridden -- but if
+            # one exists in the group it IS the forced primary (the user's
+            # choice is authoritative over the fact-table heuristic), and
+            # every other (auto) side is renamed away from it, even if only
+            # one auto side remains.
+            auto_indices = [idx for idx in indices if not generated[idx].get("is_user_edited")]
+            user_edited_idx = next((idx for idx in indices if generated[idx].get("is_user_edited")), None)
+
+            if user_edited_idx is not None:
+                primary_idx = user_edited_idx
+                rename_indices = auto_indices
+            elif len(auto_indices) > 1:
+                fact_indices = [
+                    idx for idx in auto_indices
+                    if _is_primary_source_table(_table_name_from_parent_path(generated[idx].get("parent_source_path")))
+                ]
+                primary_idx = fact_indices[0] if len(fact_indices) == 1 else auto_indices[0]
+                rename_indices = [idx for idx in auto_indices if idx != primary_idx]
+            else:
+                primary_idx = None
+                rename_indices = []
+
+            if primary_idx is not None and rename_indices:
+                for idx in rename_indices:
+                    row = generated[idx]
+                    table_name = _table_name_from_parent_path(row.get("parent_source_path") or row.get("source_path"))
+                    sanitized_name = row.get("sanitized_name") or sanitize_identifier(row.get("source_name"))
+                    new_name = f"{table_name}_{sanitized_name}" if table_name and table_name.upper() != sanitized_name.upper() else row["target_name"]
+                    if new_name.upper() == tname:
+                        # Table-qualifying it didn't actually change anything
+                        # (e.g. the field is already named after its own
+                        # table) -- nothing to auto-resolve, leave the
+                        # existing collision flag/suggestions as-is.
+                        continue
+                    row["target_name"] = new_name
+                    val = _validate_target_name(
+                        target_name=new_name,
+                        source_name=row["source_name"],
+                        collision_detected=False,
+                        target_connector=normalized_target_connector,
+                    )
+                    row["collision_detected"] = False
+                    row["collision_group"] = ""
+                    row["collision_auto_resolved"] = True
+                    row["validation_status"] = val["validation_status"]
+                    row["validation_code"] = val["validation_code"]
+                    row["validation_message"] = (
+                        f"Automatically renamed to '{new_name}' to avoid a name collision "
+                        f"with '{generated[primary_idx]['source_name']}' from "
+                        f"'{generated[primary_idx].get('parent_source_path') or 'the primary table'}'."
+                    )
+                    row["suggested_target_name"] = val["suggested_target_name"]
+
+                primary_row = generated[primary_idx]
+                if not primary_row.get("collision_auto_resolved"):
+                    primary_row["collision_detected"] = False
+                    primary_row["collision_group"] = ""
+                    primary_val = _validate_target_name(
+                        target_name=primary_row["target_name"],
+                        source_name=primary_row["source_name"],
+                        collision_detected=False,
+                        target_connector=normalized_target_connector,
+                    )
+                    primary_row["validation_status"] = primary_val["validation_status"]
+                    primary_row["validation_code"] = primary_val["validation_code"]
+                    primary_row["validation_message"] = (
+                        "Kept as your manual override; the other colliding field(s) were auto-renamed."
+                        if primary_row.get("is_user_edited")
+                        else "Kept unrenamed as the primary/base source table for this field."
+                    )
+                    primary_row["suggested_target_name"] = primary_val["suggested_target_name"]
+
             first_idx = indices[0]
             first_row = generated[first_idx]
             for idx in indices[1:]:

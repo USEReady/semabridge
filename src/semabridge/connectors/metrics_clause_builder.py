@@ -16,6 +16,7 @@ from semabridge.connectors.ddl_helpers import (
 from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metric_sql
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.core.exceptions import AmbiguousColumnReferenceError
 from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.connectors.type_safety_validator import (
     build_dataset_col_types,
@@ -619,6 +620,43 @@ class MetricsClauseBuilder:
                 return ds
         return None
 
+    def _safe_resolve_physical_column_name(
+        self,
+        dataset: Any,
+        raw_col_name: str,
+        *,
+        metric_unique_name: str,
+        dataset_name: Optional[str],
+    ) -> Optional[str]:
+        """Resolve a raw column reference to its physical name for a
+        direct-aggregation metric (SUM/COUNT/etc. over a bare column, no DAX
+        expression), routing a genuinely ambiguous duplicate-sibling
+        reference (schema_manager's AmbiguousColumnReferenceError -- two
+        physical columns sharing the exact same name, both disambiguated
+        with a suffix, with no way to tell from this reference alone which
+        one was meant) through the same drop_ledger "record a clear reason
+        and skip this one entity" pattern dimensions_clause_builder.py
+        already uses for the identical situation -- never let it propagate
+        as an uncaught exception and fail the whole METRICS clause (or the
+        whole dry-run/deploy) over one unresolvable metric.
+
+        Returns the resolved physical column name, or None when the
+        reference was genuinely ambiguous (already recorded to drop_ledger;
+        the caller must skip this metric).
+        """
+        try:
+            return self.schema_manager._resolve_physical_column_name(dataset, raw_col_name)
+        except AmbiguousColumnReferenceError as exc:
+            candidates = ", ".join(exc.candidates) if exc.candidates else "unknown"
+            self.drop_ledger.record(
+                "metric", metric_unique_name, DropStage.DDL_EMISSION,
+                f"Column reference '{raw_col_name}' is ambiguous in dataset '{dataset_name}' -- "
+                f"it matches {len(exc.candidates)} distinct duplicate-named physical columns "
+                f"({candidates}) and cannot be resolved to one without guessing.",
+                dataset=dataset_name,
+            )
+            return None
+
     def _generate_metric_expression(
         self,
         metric: Any,
@@ -666,8 +704,17 @@ class MetricsClauseBuilder:
         if (metric.source_column and metric.aggregation and
             (not getattr(metric, "sql_expression", None) or self._should_use_direct_metric_aggregation(metric))):
             
-            col_name = (self.identifier_sanitizer.sanitize_column(metric.source_column) if is_osi 
-                        else self.schema_manager._resolve_physical_column_name(dataset_by_name.get(metric.dataset), metric.source_column))
+            if is_osi:
+                col_name = self.identifier_sanitizer.sanitize_column(metric.source_column)
+            else:
+                col_name = self._safe_resolve_physical_column_name(
+                    dataset_by_name.get(metric.dataset), metric.source_column,
+                    metric_unique_name=metric.unique_name, dataset_name=metric.dataset,
+                )
+                if col_name is None:
+                    # Ambiguous -- already recorded to drop_ledger. Skip this
+                    # metric rather than proceed with no resolved column.
+                    return None
             agg = metric.aggregation.value.upper()
             
             # Check for physical owner

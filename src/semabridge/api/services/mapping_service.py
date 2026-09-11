@@ -121,7 +121,14 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
             continue
         if str(mapping.get("project_id") or "") != str(project_id):
             continue
-        if not bool(mapping.get("is_user_edited")):
+        # A collision-auto-resolved row (naming-convention rule, applied
+        # automatically with no per-side prompt -- see
+        # project_mapping_engine.py's build_entity_mappings Pass 2) is just
+        # as authoritative as an explicit user edit: either way, this is
+        # the target_name the review UI showed and that must actually reach
+        # deploy. Excluding auto-resolved rows here was the bug -- the
+        # computed rename was correct but silently never left this store.
+        if not bool(mapping.get("is_user_edited")) and not bool(mapping.get("collision_auto_resolved")):
             continue
         source_path = str(mapping.get("source_path") or "").strip()
         target_name = _compat_sanitize_target_name_for_project(

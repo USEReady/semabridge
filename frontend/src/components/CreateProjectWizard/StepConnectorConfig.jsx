@@ -757,6 +757,11 @@ export function StepConnectorConfig({
                             <option key={item.id} value={item.id}>{item.name}</option>
                           ))}
                         </select>
+                        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                          New projects get their own dedicated schema automatically, so
+                          unrelated projects never share physical tables. Pick a schema
+                          here only if you specifically want to target an existing one.
+                        </p>
                       </div>
                       {snowflakeDiscoveryError && (
                         <div style={{ gridColumn: 'span 2', color: 'var(--color-error)', fontSize: 11 }}>

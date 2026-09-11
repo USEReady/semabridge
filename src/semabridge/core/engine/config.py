@@ -52,12 +52,97 @@ def _normalize_identifier_for_match(value: str) -> str:
     """Normalize identifiers so mapping overrides survive space/underscore/case differences."""
     return re.sub(r"_+", "_", re.sub(r"[^A-Z0-9]+", "_", str(value or "").upper())).strip("_")
 
+
+def _rename_column_references(old_name: str, new_name: str, table: str, model: Any) -> Dict[str, int]:
+    """Rewrite every reference to a renamed column across an OSI/SML model.
+
+    Mutating a column's own `unique_name` never touches the places that
+    refer to it by that name as a separate string/text token -- DAX
+    expression text, relationship join columns, and simple-aggregation
+    metrics/dimension attributes that point at a column by name rather than
+    by object reference. This mirrors the sibling-metric bracket rewrite
+    below (a metric renamed here needs its OWN siblings' raw DAX fixed up
+    the same way), broadened to every shape a COLUMN reference can take.
+
+    Only rewrites references scoped to `table` -- the same column name can
+    legitimately exist on more than one table, so matching must always be
+    (table, column), never column name alone.
+
+    Returns a count per reference kind, for logging/testing.
+    """
+    counts = {"expressions": 0, "relationships": 0, "metric_source_column": 0, "attribute_source_column": 0}
+
+    # DAX/expression text: table-qualified bracket references only --
+    # Table[Column] or 'Table Name'[Column]. A bare [Column] with no table
+    # qualifier is genuinely ambiguous here (unlike the metric-name rewrite
+    # below, where an unqualified [MetricName] is safe because metric names
+    # are unique model-wide): a column name is not unique model-wide, so an
+    # unqualified match could silently rewrite a different table's column.
+    # Left alone by design -- not a gap this function is meant to close.
+    bracket_pattern = re.compile(
+        rf"'?{re.escape(table)}'?\s*\[\s*{re.escape(old_name)}\s*\]",
+        re.IGNORECASE,
+    )
+
+    def _replace_bracket(match: "re.Match[str]") -> str:
+        return match.group(0)[: match.group(0).index("[")] + f"[{new_name}]"
+
+    for metric in getattr(model, "metrics", None) or []:
+        expr = getattr(metric, "expression", None)
+        if expr and bracket_pattern.search(expr):
+            metric.expression = bracket_pattern.sub(_replace_bracket, expr)
+            counts["expressions"] += 1
+
+        if (
+            str(getattr(metric, "dataset", "") or "") == table
+            and str(getattr(metric, "source_column", "") or "") == old_name
+        ):
+            metric.source_column = new_name
+            counts["metric_source_column"] += 1
+
+    for rel in getattr(model, "relationships", None) or []:
+        changed = False
+        if str(getattr(rel, "from_dataset", "") or "") == table and old_name in (rel.from_columns or []):
+            rel.from_columns = [new_name if c == old_name else c for c in rel.from_columns]
+            changed = True
+        if str(getattr(rel, "to_dataset", "") or "") == table and old_name in (rel.to_columns or []):
+            rel.to_columns = [new_name if c == old_name else c for c in rel.to_columns]
+            changed = True
+        if changed:
+            counts["relationships"] += 1
+
+    for dimension in getattr(model, "dimensions", None) or []:
+        for attr in getattr(dimension, "attributes", None) or []:
+            if (
+                str(getattr(attr, "dataset", "") or "") == table
+                and str(getattr(attr, "source_column", "") or "") == old_name
+            ):
+                attr.source_column = new_name
+                counts["attribute_source_column"] += 1
+
+    return counts
+
+
 def _apply_mapping_overrides_from_config(
     sml_model: SMLModel,
     config_path: Path,
     config_payload: Optional[Dict[str, Any]] = None,
+    allow_column_rename: bool = True,
 ) -> None:
-    """Apply user-edited mapping overrides from config to SML names before deploy."""
+    """Apply user-edited mapping overrides from config to SML names before deploy.
+
+    allow_column_rename gates whether a column override actually renames
+    `column.unique_name` (with reference rewriting via
+    _rename_column_references) or only updates the display `.label`. It
+    must be False at any call site that runs after relationships/metrics
+    for this model have already been built against the column's original
+    name (e.g. the Snowflake-source metadata-inference conversion path,
+    which constructs relationships and simple-aggregation metrics directly
+    from live schema before this function ever runs) -- renaming there
+    would leave those already-built references silently pointing at a name
+    that no longer exists, which is strictly worse than the label-only
+    behavior this whole mechanism used to be limited to.
+    """
     parsed: Dict[str, Any] = {}
     if isinstance(config_payload, dict) and isinstance(config_payload.get("mappings_overrides"), list):
         parsed = config_payload
@@ -100,6 +185,7 @@ def _apply_mapping_overrides_from_config(
 
     renamed_columns = 0
     renamed_metrics = 0
+    skipped_column_renames = 0
 
     dataset_by_name: Dict[str, Any] = {}
     for dataset in sml_model.datasets:
@@ -197,18 +283,42 @@ def _apply_mapping_overrides_from_config(
                 continue
             for column in dataset.columns:
                 if str(column.unique_name) == column_name:
-                    # Keep physical identity stable for extraction/CTAS/sample-query
-                    # paths; only override semantic display/alias label.
                     if str(column.label) != target_name:
                         column.label = target_name
+
+                    if not allow_column_rename:
+                        skipped_column_renames += 1
+                        logger.warning(
+                            "Not renaming column '%s.%s' -> '%s': this call site runs "
+                            "after relationships/metrics for this model were already "
+                            "built against the original name, so a physical rename here "
+                            "would leave those references silently stale. Only the "
+                            "display label was updated -- the naming collision this "
+                            "override was meant to resolve is NOT fixed for this source.",
+                            dataset_name, column_name, target_name,
+                        )
+                    elif str(column.unique_name) != target_name:
+                        old_name = str(column.unique_name)
+                        column.unique_name = target_name
                         renamed_columns += 1
+
+                        # See _rename_column_references' own docstring: a
+                        # column rename is invisible to anything that refers
+                        # to it by name as a separate string/text token
+                        # rather than by holding this same object.
+                        ref_counts = _rename_column_references(old_name, target_name, dataset_name, sml_model)
+                        logger.debug(
+                            "Rewrote references to renamed column '%s.%s' -> '%s': %s",
+                            dataset_name, old_name, target_name, ref_counts,
+                        )
                     break
 
-    if renamed_columns or renamed_metrics:
+    if renamed_columns or renamed_metrics or skipped_column_renames:
         logger.info(
-            "Applied mapping overrides from config: columns=%s metrics=%s",
+            "Applied mapping overrides from config: columns=%s metrics=%s skipped_columns=%s",
             renamed_columns,
             renamed_metrics,
+            skipped_column_renames,
         )
 
 def _step1_load_config(

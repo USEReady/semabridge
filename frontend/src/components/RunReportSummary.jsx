@@ -144,6 +144,50 @@ function AiAssistedDetail(entry) {
   );
 }
 
+function CrashedNotice({ unavailable, error }) {
+  // Short, plain-language line by default; the longer technical
+  // explanation (data.error, from run_report_service.py) stays available
+  // one click away via "Why?" rather than always-visible body text.
+  const [showDetails, setShowDetails] = useState(false);
+  const shortMessage = unavailable
+    ? "✅ This run completed successfully. (Detailed breakdown isn't available right now — try Raw Report below, or Download Raw .md.)"
+    : '❌ This run failed. See Raw Report for details.';
+
+  return (
+    <div style={{ padding: 16 }}>
+      <p style={{ color: unavailable ? 'var(--text-primary)' : 'var(--color-error)', margin: 0, fontWeight: 600 }}>
+        {shortMessage}
+      </p>
+      {error && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowDetails((prev) => !prev)}
+            style={{
+              marginTop: 6,
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              color: 'var(--accent-blue)',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            {showDetails ? 'Hide details' : 'Why?'}
+          </button>
+          {showDetails && (
+            <p style={{ marginTop: 8, color: unavailable ? 'var(--text-secondary)' : 'var(--color-error)', fontSize: 12, lineHeight: 1.5 }}>
+              {error}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DroppedSection({ groups }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -174,16 +218,7 @@ export default function RunReportSummary({ data }) {
     // pre-extraction crash. See run_report_service.py's
     // _gather_run_report_data() for why these can't be told apart from
     // run.results alone and need this explicit signal.
-    return (
-      <div style={{ padding: 16 }}>
-        <p style={{ color: 'var(--text-primary)', marginBottom: 8 }}>
-          {data.unavailable
-            ? 'This run completed, but its detailed report data is no longer available.'
-            : 'This run did not reach the point of reading your source file.'}
-        </p>
-        <p style={{ color: data.unavailable ? 'var(--text-secondary)' : 'var(--color-error)' }}>{data.error}</p>
-      </div>
-    );
+    return <CrashedNotice unavailable={data.unavailable} error={data.error} />;
   }
 
   const { counts, sections } = data;

@@ -848,7 +848,39 @@ class ModelRepository:
                 )
             )
             session.commit()
- 
+
+    def has_any_successful_run(self, project_id: str, exclude_run_id: Optional[str] = None) -> bool:
+        """True if any run for `project_id` has ever completed with
+        status "success", other than `exclude_run_id` (the run currently
+        in progress, if any). Used to distinguish a brand-new project's
+        first sync from every subsequent one -- see
+        engine/deployment/snowflake.py's options.load_source_data
+        first-sync default. ORM-backed (the `runs` table), not the
+        in-memory/JSON compat store, so this survives a server restart
+        and can't be fooled by that store's own eviction rules.
+
+        Fails closed (returns True, i.e. "assume NOT first sync") on any
+        query error -- silently treating an unrelated DB hiccup as "this
+        must be a first sync" would auto-enable a real data write with no
+        way to confirm it's actually safe to do so.
+        """
+        try:
+            with self._session() as session:
+                query = select(Run.run_id).where(
+                    Run.project_id == project_id,
+                    Run.status == "success",
+                )
+                if exclude_run_id:
+                    query = query.where(Run.run_id != exclude_run_id)
+                return session.execute(query.limit(1)).first() is not None
+        except Exception:
+            logger.warning(
+                "has_any_successful_run query failed for project %s; "
+                "assuming a prior successful run exists (fail closed).",
+                project_id, exc_info=True,
+            )
+            return True
+
     # ------------------------------------------------------------------
     # Conflicts
     # ------------------------------------------------------------------

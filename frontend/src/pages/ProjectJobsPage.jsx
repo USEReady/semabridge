@@ -900,6 +900,51 @@ export default function ProjectJobsPage() {
           </div>
         ) : (
           <div style={{ padding: '8px 4px', fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
+            {/* "At a glance" — a short, plain-language summary ahead of the
+                full itemized breakdown below, for anyone who just wants a
+                quick status check. Built from reportSummary (the same JSON
+                already fetched for the Summary tab, in parallel with this
+                raw markdown), not the backend markdown itself — the Raw
+                Report content stays byte-for-byte unchanged. Skipped
+                entirely when that summary is unavailable/crashed (nothing
+                reliable to show at a glance; the markdown below already
+                carries its own status line either way). */}
+            {reportSummary && !reportSummary.crashed && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 16,
+                  alignItems: 'center',
+                  padding: '12px 16px',
+                  marginBottom: 16,
+                  borderRadius: 8,
+                  background: 'var(--bg-surface-raised)',
+                  border: '1px solid var(--border-main)',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <span style={{
+                  fontWeight: 700,
+                  color: reportSummary.status === 'success' ? 'var(--color-success)'
+                    : reportSummary.status === 'failed' ? 'var(--color-error)'
+                    : 'var(--accent-orange)',
+                }}>
+                  {reportSummary.status === 'success' && '✅ Completed successfully'}
+                  {reportSummary.status === 'failed' && '❌ Did not complete successfully'}
+                  {reportSummary.status !== 'success' && reportSummary.status !== 'failed' && '⚠️ Completed — a few items need your attention'}
+                </span>
+                <span><strong style={{ color: 'var(--text-primary)' }}>{reportSummary.counts?.tables ?? 0}</strong> tables found</span>
+                <span><strong style={{ color: 'var(--text-primary)' }}>{reportSummary.counts?.calculations ?? 0}</strong> calculations found</span>
+                <span><strong style={{ color: 'var(--color-success)' }}>{reportSummary.counts?.converted_total ?? 0}</strong> converted</span>
+                <span>
+                  <strong style={{ color: 'var(--color-error)' }}>
+                    {Math.max(0, (reportSummary.counts?.calculations ?? 0) - (reportSummary.counts?.converted_total ?? 0))}
+                  </strong> not converted
+                </span>
+              </div>
+            )}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{

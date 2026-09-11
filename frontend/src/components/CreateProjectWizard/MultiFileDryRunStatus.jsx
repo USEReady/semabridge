@@ -22,7 +22,7 @@ import { normalizeRows } from '../../utils/normalizeRows';
 const POLL_INTERVAL_MS = 3000;
 const GRID_COLUMNS = '28px 1fr 140px 120px';
 
-export default function MultiFileDryRunStatus({ projectId, jobId, onEdit }) {
+export default function MultiFileDryRunStatus({ projectId, jobId, onEdit, onStatusChange }) {
   const [status, setStatus] = useState(null); // { status, files: [...] }
   const [expandedFileId, setExpandedFileId] = useState(null);
   const [fileDetails, setFileDetails] = useState({}); // file_id -> { loading, result, error }
@@ -36,6 +36,13 @@ export default function MultiFileDryRunStatus({ projectId, jobId, onEdit }) {
       const data = await api.getDryRunJobStatus(projectId, jobId);
       if (cancelledRef.current) return;
       setStatus(data);
+      // Surface the REAL aggregate job status (running/success/failed/
+      // partial, from _aggregate_job_status on the backend) to the parent
+      // step, which otherwise has no way to know per-file completion --
+      // this is what StepMappingOptions.jsx's readiness banner and
+      // Proceed/Continue buttons must gate on instead of the "job was
+      // created" signal they used to rely on.
+      onStatusChange?.(data);
       if (data.status === 'running' || data.status === 'pending') {
         timeoutRef.current = setTimeout(poll, POLL_INTERVAL_MS);
       }
@@ -44,7 +51,7 @@ export default function MultiFileDryRunStatus({ projectId, jobId, onEdit }) {
         timeoutRef.current = setTimeout(poll, POLL_INTERVAL_MS);
       }
     }
-  }, [projectId, jobId]);
+  }, [projectId, jobId, onStatusChange]);
 
   useEffect(() => {
     cancelledRef.current = false;

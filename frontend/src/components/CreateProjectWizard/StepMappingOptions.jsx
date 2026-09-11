@@ -11,6 +11,7 @@ import { ToggleOption } from '../WizardUIComponents';
 import DryRunMappingTable from '../DryRunMappingTable';
 import FieldMappingEditor from '../FieldMappingEditor';
 import MultiFileDryRunStatus from './MultiFileDryRunStatus';
+import { resolveMultiFileDryRunReadiness } from '../../utils/multiFileDryRunReadiness';
 
 export function StepMappingOptions({
   autoRelationships,
@@ -54,10 +55,38 @@ export function StepMappingOptions({
   const [rows, setRows] = useState([]);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const mappingTableRef = useRef(null);
-  const dryRunCompleted = dryRunStatus === 'success';
-  const dryRunFailed = dryRunStatus === 'failed';
-  const hasDryRunResult = dryRunCompleted;
   const aiToggleInitRef = useRef(false);
+
+  // Multi-PBIX per-file status (see multiDryRunJob below): the job being
+  // CREATED and the job being DONE are different moments, but the parent
+  // (CreateProjectPage.jsx) only ever tracks the former via dryRunStatus,
+  // set to 'success' the instant the background job starts. The real,
+  // live per-file completion state only exists inside
+  // MultiFileDryRunStatus's own poll loop -- multiJobStatus mirrors it up
+  // here via onStatusChange so readiness/Proceed/Continue can gate on
+  // actual completion instead of "a job object exists".
+  const [multiJobStatus, setMultiJobStatus] = useState(null); // { status, files: [...] } | null
+  const isMultiFileRun = Boolean(multiDryRunJob?.job_id);
+
+  // A new job (re-run, or a different multi-file batch) must not let the
+  // PREVIOUS job's terminal status leak into this one's readiness check
+  // for however long it takes the first poll to land.
+  useEffect(() => {
+    setMultiJobStatus(null);
+  }, [multiDryRunJob?.job_id]);
+
+  const {
+    running: multiJobRunningRaw,
+    succeeded: multiJobSucceededRaw,
+    hasFailures: multiJobHasFailuresRaw,
+  } = resolveMultiFileDryRunReadiness(multiJobStatus);
+  const multiJobRunning = isMultiFileRun && multiJobRunningRaw;
+  const multiJobSucceeded = isMultiFileRun && multiJobSucceededRaw;
+  const multiJobHasFailures = isMultiFileRun && multiJobHasFailuresRaw;
+
+  const dryRunCompleted = isMultiFileRun ? multiJobSucceeded : dryRunStatus === 'success';
+  const dryRunFailed = isMultiFileRun ? multiJobHasFailures : dryRunStatus === 'failed';
+  const hasDryRunResult = dryRunCompleted;
 
   useEffect(() => {
     onRowsChange?.(rows);
@@ -139,8 +168,9 @@ export function StepMappingOptions({
 
   const isLoading =
     mappingLoading ||
-    dryRunStatus === "loading" ||
-    dryRunStatus === "running";
+    (isMultiFileRun
+      ? multiJobRunning
+      : dryRunStatus === "loading" || dryRunStatus === "running");
 
   // Real signals from the dry-run result — must be declared before readyToProceed / readiness / checkState
   const compatScore  = typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null;
@@ -231,18 +261,25 @@ export function StepMappingOptions({
   }, []);
 
   const readiness = (() => {
-    if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') {
+    if (isLoading) {
       return {
-        message: 'Dry run in progress — validating schema…',
+        message: isMultiFileRun
+          ? 'Dry run in progress — validating schema for all files…'
+          : 'Dry run in progress — validating schema…',
         background: 'rgba(245, 158, 11, 0.12)',
         border: '1px solid rgba(245, 158, 11, 0.35)',
         color: 'var(--accent-orange)',
       };
     }
-    if (dryRunCompleted && hasIssues) {
+    // Checked before requiring dryRunCompleted (which only ever means
+    // "finished AND succeeded") -- a run that finished with failures must
+    // show as an issue, not silently fall through to the generic
+    // "run the check" prompt as if nothing had been attempted yet.
+    if (dryRunFailed || (dryRunCompleted && hasIssues)) {
       const parts = [];
       if (blockingCount > 0) parts.push(`${blockingCount} collision${blockingCount !== 1 ? 's' : ''}`);
       if (schemaIssues > 0) parts.push(`${schemaIssues} schema gap${schemaIssues !== 1 ? 's' : ''}`);
+      if (isMultiFileRun && multiJobHasFailures) parts.push('one or more files failed');
       const detail = parts.length ? ` — ${parts.join(', ')}` : '';
       return {
         message: `Issues detected${detail}. Review before proceeding.`,
@@ -270,11 +307,12 @@ export function StepMappingOptions({
   })();
 
   const checkState = useMemo(() => {
-    if (mappingLoading || dryRunStatus === 'running' || dryRunStatus === 'loading') return 'running';
+    if (isLoading) return 'running';
+    if (dryRunFailed) return 'issues';
     if (!dryRunCompleted) return 'pending';
     if (hasIssues) return 'issues';
     return 'success';
-  }, [mappingLoading, dryRunStatus, dryRunCompleted, hasIssues]);
+  }, [isLoading, dryRunFailed, dryRunCompleted, hasIssues]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -542,6 +580,7 @@ export function StepMappingOptions({
             const row = (detectedMappings || []).find(r => r.id === rowId);
             if (row) setEditingRow(row);
           }}
+          onStatusChange={setMultiJobStatus}
         />
       )}
 

@@ -327,7 +327,19 @@ class ExecutionEngine:
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id, force=force)
             
             if config_path is not None and not context.mapping_overrides_applied:
-                self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
+                # allow_column_rename=False: this fallback only fires when the
+                # source-specific conversion step didn't already apply overrides
+                # on the OSI model before Phase 2 (e.g. the Snowflake-source
+                # metadata-inference path in conversion/snowflake.py, which
+                # builds relationships/metrics directly from live schema and
+                # never sets context.mapping_overrides_applied). By this point
+                # sml_model's relationships and metrics already reference
+                # columns by their original name, so renaming a column here
+                # would leave those references silently stale -- see
+                # _apply_mapping_overrides_from_config's own docstring.
+                self._apply_mapping_overrides_from_config(
+                    sml_model, Path(config_path), config_payload=config_dict, allow_column_rename=False
+                )
             context.sml_model = sml_model
 
             # Step 6b: Predict time-intelligence flag columns (Snowflake
