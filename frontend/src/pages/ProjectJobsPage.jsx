@@ -431,11 +431,29 @@ export default function ProjectJobsPage() {
       <PageHeader
         title="Runs"
         description="Configure execution schedules and monitor run history."
-        action={{
-          label: running ? 'Running…' : 'Run Now',
-          icon: running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
-          onClick: handleRunNow,
-        }}
+        action={
+          <div className="flex items-center gap-2">
+            {schedules.length === 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No scheduled jobs</span>
+            )}
+            <button
+              onClick={handleRunNow}
+              disabled={running || schedules.length === 0}
+              className="flex items-center gap-2 rounded-lg font-semibold text-sm px-4 py-2 theme-transition"
+              style={{
+                background: running || schedules.length === 0 ? 'var(--bg-surface-raised)' : 'var(--accent-blue)',
+                color: running || schedules.length === 0 ? 'var(--text-tertiary)' : '#fff',
+                border: 'none',
+                cursor: running || schedules.length === 0 ? 'not-allowed' : 'pointer',
+                boxShadow: running || schedules.length === 0 ? 'none' : '0 2px 8px rgba(99,102,241,0.25)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+              {running ? 'Running…' : 'Run Scheduled Jobs'}
+            </button>
+          </div>
+        }
       />
 
       <div
@@ -575,7 +593,8 @@ export default function ProjectJobsPage() {
               </div>
             ) : filteredRuns.length === 0 ? (
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-                No job runs yet. Click 'Run Now' to trigger your first execution.
+                No job runs yet. Sync a project from its own page, or set up a schedule
+                and use 'Run Scheduled Jobs' here.
               </div>
             ) : (
               filteredRuns.map((run, index) => {

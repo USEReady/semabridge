@@ -4,6 +4,8 @@ Provides run creation, background execution, run-now, get-runs, run-conflicts,
 manual deploy, project lineage, and clear-job-runs.
 """
 import json
+import os
+import threading
 import time as _time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,6 +32,30 @@ from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 # Backward-compatible alias
 _compat_normalize_sync_mode = normalize_sync_mode
+
+# Single shared cap on concurrent project syncs, regardless of what
+# triggered them -- APScheduler's cron/time schedules (scheduler_service.py),
+# the Jobs page's "Run Scheduled Jobs" trigger-all (schedule_service.py's
+# trigger_job_compat), and a single project's own "Run Now"/deploy
+# (run_project_now_compat below) all converge on _perform_project_run, which
+# is the one place this is enforced. Previously scheduler_service.py held
+# its own separate asyncio.Semaphore that only covered its own dispatch
+# path -- trigger_job_compat's "run every scheduled project" fan-out went
+# through a completely different code path with no cap at all, which is how
+# a single "Run Now" click produced 310+ concurrent project runs (see
+# incident_run_now_fires_every_project in project memory). One shared gate
+# here means every dispatch path is protected the same way, with no risk of
+# the two drifting apart again.
+#
+# threading.Semaphore, not asyncio.Semaphore: _perform_project_run always
+# executes inside its own dedicated thread with its own fresh event loop
+# (see _run_project_background's _run_loop, and scheduler_service.py's
+# _run_callback_in_thread) -- never on the main asyncio loop. An
+# asyncio.Semaphore is only safe to acquire/release from the single event
+# loop it was touched on; a plain threading.Semaphore works correctly
+# regardless of which thread calls it, which is what's actually needed here.
+_MAX_CONCURRENT_RUNS = max(1, int(os.getenv("SEMABRIDGE_MAX_CONCURRENT_RUNS", "2")))
+_RUN_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_RUNS)
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +361,22 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             sync_mode = "copy"
         sync_payload["sync_mode"] = sync_mode
         sync_payload["force"] = bool(run.get("force", False))
-        sync_result = await sync_models(sync_payload)
+
+        # See _RUN_SEMAPHORE's module-level comment: the single shared cap
+        # on concurrent project syncs across every dispatch path. A queued
+        # run still fires once a slot frees up -- this only delays when the
+        # sync starts, never drops it.
+        if not _RUN_SEMAPHORE.acquire(blocking=False):
+            logger.info(
+                "Run for project %s is queued (%d concurrent sync(s) already in progress, "
+                "cap=%d) -- will start as soon as a slot frees up",
+                project_id, _MAX_CONCURRENT_RUNS, _MAX_CONCURRENT_RUNS,
+            )
+            _RUN_SEMAPHORE.acquire()
+        try:
+            sync_result = await sync_models(sync_payload)
+        finally:
+            _RUN_SEMAPHORE.release()
         run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
         run["status"] = resolve_run_status(sync_result or {})
@@ -354,8 +395,15 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             )
             # Persist the updated status so the store file has the correct value
             # on the next server start (avoids reverting to "draft" on restart).
+            # Uses the module-level _compat_save_store already imported at the
+            # top of this file -- a local re-import here previously shadowed
+            # it for this function's entire scope (Python treats a name as
+            # local to the whole function if it's ever assigned/imported
+            # anywhere in the body), causing UnboundLocalError at this
+            # function's own later unconditional _compat_save_store() call
+            # whenever project_id wasn't in _compat_projects and this branch
+            # never ran.
             try:
-                from semabridge.api.services.project_shared import _compat_save_store
                 _compat_save_store()
             except Exception:
                 pass

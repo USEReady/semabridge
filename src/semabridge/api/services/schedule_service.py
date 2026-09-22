@@ -123,8 +123,10 @@ async def update_jobs_config_compat(payload: dict):
 async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
     _compat_ensure_loaded()
     from semabridge.api.services.run_service import _create_project_run, _run_project_background
+    from semabridge.api.services.project_ownership_service import is_project_owned_by_user
 
     project_id = str((payload or {}).get("project_id") or "").strip()
+    user_id = (payload or {}).get("user_id")
 
     if project_id:
         # Trigger a specific project
@@ -133,20 +135,35 @@ async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
         background_tasks.add_task(_run_project_background, run, project_cfg, started)
         return run
 
-    # No project_id — trigger all scheduled projects
+    # No project_id — trigger every currently scheduled project. Deliberately
+    # does NOT fall back to "all projects" when nothing is scheduled: that
+    # fallback used to fire every project in the system (55+, plus preview
+    # entries) from a single "Run Now" click with no project context, which
+    # is exactly how a single click produced 310+ concurrent project runs in
+    # the incident this was fixed for (see incident_run_now_fires_every_
+    # project in project memory). An empty schedule list means there is
+    # genuinely nothing due to run right now — the caller gets a clear
+    # no-op instead.
     scheduled_ids = [
         pid for pid, proj in _compat_projects.items()
         if proj.get("schedule") or proj.get("schedule_type")
     ]
-    if not scheduled_ids:
-        # Fall back to all projects if none are explicitly scheduled
-        scheduled_ids = list(_compat_projects.keys())
 
     if not scheduled_ids:
-        return {"status": "no_projects", "message": "No projects available to trigger.", "triggered": 0}
+        return {"status": "no_projects", "message": "No scheduled jobs to run.", "triggered": 0}
 
     triggered = []
     for pid in scheduled_ids:
+        # The single-project branch above gets its ownership check from the
+        # caller (jobs_controller.trigger_job's _assert_project_access,
+        # before this function is ever reached) — this branch has no single
+        # project_id for the controller to check ahead of time, so ownership
+        # must be enforced per project here instead. Skip (never raise) a
+        # project the requesting user doesn't own, so one forbidden project
+        # can't block triggering the rest the user does own.
+        if not is_project_owned_by_user(pid, user_id, log_prefix="JobProjectAuth"):
+            logger.warning("Skipping scheduled trigger for %s: not owned by requesting user", pid)
+            continue
         try:
             run, project_cfg, started = _create_project_run(pid, "Manual")
             background_tasks.add_task(_run_project_background, run, project_cfg, started)

@@ -1050,10 +1050,6 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         tags: [...tags],
         mappings: detectedMappings.length > 0 ? detectedMappings : undefined,
         relationships: relationships.length > 0 ? relationships : undefined,
-        mapping_options: {
-          auto_detect_relationships: autoRelationships,
-          generate_descriptions: generateDescriptions,
-        },
         preferred_interface: 'ui',
         config_yaml: buildConfigYaml(source, targets),
       };
