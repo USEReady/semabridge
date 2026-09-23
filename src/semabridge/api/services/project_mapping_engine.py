@@ -780,6 +780,7 @@ def build_entity_mappings(
     session_key: Optional[str] = None,
     target_connector: Optional[str] = None,
     drop_ledger: Optional[DropLedger] = None,
+    auto_resolve_collisions: bool = False,
 ) -> Dict[str, Any]:
     existing = existing_mappings or {}
     normalized_target_connector = _normalize_connector_name(target_connector)
@@ -1109,7 +1110,9 @@ def build_entity_mappings(
                     row["resolution_suggestions"] = _suggestions
 
             # --- Standing naming-convention rule: auto-apply, don't just
-            # suggest --------------------------------------------------
+            # suggest -- opt-in via auto_resolve_collisions (default False:
+            # collisions stay flagged for manual Fix/confirm, matching the
+            # old DAX-feature UI) ---------------------------------------
             # On a collision, the primary/base source table's field keeps
             # its bare name; every OTHER colliding field is renamed
             # <SourceTableName>_<FieldName> automatically -- no per-side
@@ -1125,72 +1128,96 @@ def build_entity_mappings(
             # choice is authoritative over the fact-table heuristic), and
             # every other (auto) side is renamed away from it, even if only
             # one auto side remains.
-            auto_indices = [idx for idx in indices if not generated[idx].get("is_user_edited")]
-            user_edited_idx = next((idx for idx in indices if generated[idx].get("is_user_edited")), None)
+            if auto_resolve_collisions:
+                auto_indices = [idx for idx in indices if not generated[idx].get("is_user_edited")]
+                user_edited_idx = next((idx for idx in indices if generated[idx].get("is_user_edited")), None)
 
-            if user_edited_idx is not None:
-                primary_idx = user_edited_idx
-                rename_indices = auto_indices
-            elif len(auto_indices) > 1:
-                fact_indices = [
-                    idx for idx in auto_indices
-                    if _is_primary_source_table(_table_name_from_parent_path(generated[idx].get("parent_source_path")))
-                ]
-                primary_idx = fact_indices[0] if len(fact_indices) == 1 else auto_indices[0]
-                rename_indices = [idx for idx in auto_indices if idx != primary_idx]
-            else:
-                primary_idx = None
-                rename_indices = []
+                if user_edited_idx is not None:
+                    primary_idx = user_edited_idx
+                    rename_indices = auto_indices
+                    primary_reason = "user_edited"
+                elif len(auto_indices) > 1:
+                    fact_indices = [
+                        idx for idx in auto_indices
+                        if _is_primary_source_table(_table_name_from_parent_path(generated[idx].get("parent_source_path")))
+                    ]
+                    primary_idx = fact_indices[0] if len(fact_indices) == 1 else auto_indices[0]
+                    rename_indices = [idx for idx in auto_indices if idx != primary_idx]
+                    primary_reason = "fact_table" if len(fact_indices) == 1 else "first_encountered"
+                else:
+                    primary_idx = None
+                    rename_indices = []
+                    primary_reason = None
 
-            if primary_idx is not None and rename_indices:
-                for idx in rename_indices:
-                    row = generated[idx]
-                    table_name = _table_name_from_parent_path(row.get("parent_source_path") or row.get("source_path"))
-                    sanitized_name = row.get("sanitized_name") or sanitize_identifier(row.get("source_name"))
-                    new_name = f"{table_name}_{sanitized_name}" if table_name and table_name.upper() != sanitized_name.upper() else row["target_name"]
-                    if new_name.upper() == tname:
-                        # Table-qualifying it didn't actually change anything
-                        # (e.g. the field is already named after its own
-                        # table) -- nothing to auto-resolve, leave the
-                        # existing collision flag/suggestions as-is.
-                        continue
-                    row["target_name"] = new_name
-                    val = _validate_target_name(
-                        target_name=new_name,
-                        source_name=row["source_name"],
-                        collision_detected=False,
-                        target_connector=normalized_target_connector,
-                    )
-                    row["collision_detected"] = False
-                    row["collision_group"] = ""
-                    row["collision_auto_resolved"] = True
-                    row["validation_status"] = val["validation_status"]
-                    row["validation_code"] = val["validation_code"]
-                    row["validation_message"] = (
-                        f"Automatically renamed to '{new_name}' to avoid a name collision "
-                        f"with '{generated[primary_idx]['source_name']}' from "
-                        f"'{generated[primary_idx].get('parent_source_path') or 'the primary table'}'."
-                    )
-                    row["suggested_target_name"] = val["suggested_target_name"]
+                if primary_idx is not None and rename_indices:
+                    # Collected here (rather than reconstructed later from the
+                    # separate top-level `collisions` list) because that list
+                    # pairs every group member against indices[0] -- whichever
+                    # row happened to be positionally first -- which is NOT
+                    # guaranteed to be primary_idx once a group has 3+ members
+                    # or the fact-like table isn't first. Building the peer
+                    # references directly off primary_idx/rename_indices here,
+                    # while both are unambiguous, avoids that mismatch entirely.
+                    resolved_siblings = []
+                    for idx in rename_indices:
+                        row = generated[idx]
+                        table_name = _table_name_from_parent_path(row.get("parent_source_path") or row.get("source_path"))
+                        sanitized_name = row.get("sanitized_name") or sanitize_identifier(row.get("source_name"))
+                        new_name = f"{table_name}_{sanitized_name}" if table_name and table_name.upper() != sanitized_name.upper() else row["target_name"]
+                        if new_name.upper() == tname:
+                            # Table-qualifying it didn't actually change anything
+                            # (e.g. the field is already named after its own
+                            # table) -- nothing to auto-resolve, leave the
+                            # existing collision flag/suggestions as-is.
+                            continue
+                        row["target_name"] = new_name
+                        val = _validate_target_name(
+                            target_name=new_name,
+                            source_name=row["source_name"],
+                            collision_detected=False,
+                            target_connector=normalized_target_connector,
+                        )
+                        row["collision_detected"] = False
+                        row["collision_group"] = ""
+                        row["collision_auto_resolved"] = True
+                        row["validation_status"] = val["validation_status"]
+                        row["validation_code"] = val["validation_code"]
+                        row["validation_message"] = (
+                            f"Automatically renamed to '{new_name}' to avoid a name collision "
+                            f"with '{generated[primary_idx]['source_name']}' from "
+                            f"'{generated[primary_idx].get('parent_source_path') or 'the primary table'}'."
+                        )
+                        row["suggested_target_name"] = val["suggested_target_name"]
+                        row["collision_peer_source_name"] = generated[primary_idx]["source_name"]
+                        row["collision_peer_table_name"] = _table_name_from_parent_path(
+                            generated[primary_idx].get("parent_source_path")
+                        )
+                        resolved_siblings.append({
+                            "source_name": row["source_name"],
+                            "table_name": table_name,
+                            "resolved_target_name": new_name,
+                        })
 
-                primary_row = generated[primary_idx]
-                if not primary_row.get("collision_auto_resolved"):
-                    primary_row["collision_detected"] = False
-                    primary_row["collision_group"] = ""
-                    primary_val = _validate_target_name(
-                        target_name=primary_row["target_name"],
-                        source_name=primary_row["source_name"],
-                        collision_detected=False,
-                        target_connector=normalized_target_connector,
-                    )
-                    primary_row["validation_status"] = primary_val["validation_status"]
-                    primary_row["validation_code"] = primary_val["validation_code"]
-                    primary_row["validation_message"] = (
-                        "Kept as your manual override; the other colliding field(s) were auto-renamed."
-                        if primary_row.get("is_user_edited")
-                        else "Kept unrenamed as the primary/base source table for this field."
-                    )
-                    primary_row["suggested_target_name"] = primary_val["suggested_target_name"]
+                    primary_row = generated[primary_idx]
+                    if not primary_row.get("collision_auto_resolved"):
+                        primary_row["collision_detected"] = False
+                        primary_row["collision_group"] = ""
+                        primary_val = _validate_target_name(
+                            target_name=primary_row["target_name"],
+                            source_name=primary_row["source_name"],
+                            collision_detected=False,
+                            target_connector=normalized_target_connector,
+                        )
+                        primary_row["validation_status"] = primary_val["validation_status"]
+                        primary_row["validation_code"] = primary_val["validation_code"]
+                        primary_row["validation_message"] = (
+                            "Kept as your manual override; the other colliding field(s) were auto-renamed."
+                            if primary_row.get("is_user_edited")
+                            else "Kept unrenamed as the primary/base source table for this field."
+                        )
+                        primary_row["suggested_target_name"] = primary_val["suggested_target_name"]
+                        primary_row["collision_resolved_siblings"] = resolved_siblings
+                        primary_row["collision_primary_reason"] = primary_reason
 
             first_idx = indices[0]
             first_row = generated[first_idx]

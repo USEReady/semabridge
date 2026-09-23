@@ -38,6 +38,9 @@ const DEFAULT_WIZARD_STATE = {
   // Step 4 (Mapping)
   autoRelationships: true,
   generateDescriptions: true,
+  // When false (default), name collisions stay flagged for manual
+  // review/Fix instead of being auto-renamed via the primary/base-table rule.
+  autoResolveCollisions: false,
   // Sync strategy: 'copy' (default) or 'upsert'
   write_strategy: 'copy',
 

@@ -474,6 +474,7 @@ def _compat_assembled_project_config(project_id: str, project_cfg: Dict[str, Any
         "options": {
             "auto_relationships": True,
             "generate_descriptions": True,
+            "auto_resolve_collisions": False,
         },
     }
     if model_names:

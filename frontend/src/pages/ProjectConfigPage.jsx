@@ -298,11 +298,18 @@ function ProjectDashboard({ project, configForm, setConfigForm }) {
             onChange={val => updateField('auto_relationships', val)}
             showBorder={true}
           />
-          <ToggleSwitch 
-            label="Generate Descriptions" 
+          <ToggleSwitch
+            label="Generate Descriptions"
             description="Use semantic intelligence to automatically generate business descriptions for all fields."
             checked={!!configForm.generate_descriptions}
             onChange={val => updateField('generate_descriptions', val)}
+            showBorder={true}
+          />
+          <ToggleSwitch
+            label="Auto-Resolve Collisions"
+            description="Automatically rename colliding fields using the primary/base-table rule instead of flagging them for manual review."
+            checked={!!configForm.auto_resolve_collisions}
+            onChange={val => updateField('auto_resolve_collisions', val)}
             showBorder={true}
           />
         </div>
@@ -450,6 +457,7 @@ export default function ProjectConfigPage() {
     block_models: '',
     auto_relationships: true,
     generate_descriptions: true,
+    auto_resolve_collisions: false,
     write_strategy: 'copy',
     selection_model_ids: [],
   });
@@ -929,6 +937,7 @@ export default function ProjectConfigPage() {
         block_models: blockedModels.join(', '),
         auto_relationships: options.auto_relationships !== false,
         generate_descriptions: options.generate_descriptions !== false,
+        auto_resolve_collisions: options.auto_resolve_collisions === true,
         write_strategy: String(options.write_strategy || 'copy').toLowerCase(),
       },
     };
@@ -965,6 +974,7 @@ export default function ProjectConfigPage() {
         ...((configTree?.options && typeof configTree.options === 'object') ? configTree.options : {}),
         auto_relationships: formToUse.auto_relationships,
         generate_descriptions: formToUse.generate_descriptions,
+        auto_resolve_collisions: formToUse.auto_resolve_collisions,
         write_strategy: formToUse.write_strategy || 'copy',
       },
     };
@@ -2649,6 +2659,9 @@ function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
                 {mapping.collision_detected && (
                   <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent-orange)' }}>COLLISION</span>
                 )}
+                {!mapping.collision_detected && mapping.collision_auto_resolved && (
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-success)' }}>AUTO-RESOLVED</span>
+                )}
                 <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>{mapping.status || 'saved'}</span>
               </div>
             </div>
@@ -2660,8 +2673,21 @@ function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
                     <span style={{ color: 'var(--text-secondary)' }}>{column.source}</span>
                     <span style={{ color: 'var(--text-tertiary)' }}>{'->'}</span>
                     <span style={{ color: 'var(--text-primary)' }}>{column.target}</span>
-                    <span style={{ color: column.collision_detected ? 'var(--accent-orange)' : 'var(--text-tertiary)', fontSize: 10 }}>
-                      {column.collision_detected ? 'COLLISION' : (column.type || '')}
+                    <span
+                      style={{
+                        color: column.collision_detected
+                          ? 'var(--accent-orange)'
+                          : column.collision_auto_resolved
+                            ? 'var(--color-success)'
+                            : 'var(--text-tertiary)',
+                        fontSize: 10,
+                      }}
+                    >
+                      {column.collision_detected
+                        ? 'COLLISION'
+                        : column.collision_auto_resolved
+                          ? 'AUTO-RESOLVED'
+                          : (column.type || '')}
                     </span>
                   </div>
                 ))}
@@ -3017,6 +3043,14 @@ function FormEditor({
             onChange={e => patch('generate_descriptions', e.target.checked)}
           />
           Generate AI descriptions (tables and fields)
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={Boolean(value.auto_resolve_collisions)}
+            onChange={e => patch('auto_resolve_collisions', e.target.checked)}
+          />
+          Auto-resolve name collisions
         </label>
       </div>
 

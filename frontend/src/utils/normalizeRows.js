@@ -35,6 +35,17 @@ export function normalizeStatus(item) {
     (validationCode && validationCode !== 'OK')
   ) return 'collision';
 
+  // A naming collision that the primary/base-table-keeps-plain-name rule
+  // (project_mapping_engine.py's build_entity_mappings) already renamed
+  // away automatically -- collision_detected is deliberately cleared on
+  // both sides once that happens, so this must be checked as its own
+  // branch, not folded into the collision check above. 'auto_resolved' is
+  // already wired end-to-end: DryRunMappingTable.jsx's STATUS_BADGE_MAP
+  // renders it as a green "Auto-Resolved" badge, and mappingFilterUtils.js's
+  // CLEAN_STATUSES already treats it as non-blocking -- both were scaffolded
+  // ahead of this fix and only needed a status value to actually receive.
+  if (item?.collision_auto_resolved === true) return 'auto_resolved';
+
   if (!targetField) return 'unmapped';
   if (explicit === 'manual') return 'manual';
   return 'auto';
@@ -122,6 +133,11 @@ export function normalizeRows(data) {
         validation_message: String(row?.validation_message || ''),
         suggested_target_name: String(row?.suggested_target_name || ''),
         collision_detected: Boolean(row?.collision_detected),
+        collision_auto_resolved: Boolean(row?.collision_auto_resolved),
+        collision_peer_source_name: row?.collision_peer_source_name ?? null,
+        collision_peer_table_name: row?.collision_peer_table_name ?? null,
+        collision_resolved_siblings: Array.isArray(row?.collision_resolved_siblings) ? row.collision_resolved_siblings : [],
+        collision_primary_reason: row?.collision_primary_reason ?? null,
         target_expression: row?.target_expression || '',
         sync_enabled: row?.sync_enabled !== false,
         sync_failure_reason: row?.sync_failure_reason || '',
@@ -211,6 +227,11 @@ export function normalizeRows(data) {
         validation_message: String(column?.validation_message || ''),
         suggested_target_name: String(column?.suggested_target_name || ''),
         collision_detected: Boolean(column?.collision_detected),
+        collision_auto_resolved: Boolean(column?.collision_auto_resolved),
+        collision_peer_source_name: column?.collision_peer_source_name ?? null,
+        collision_peer_table_name: column?.collision_peer_table_name ?? null,
+        collision_resolved_siblings: Array.isArray(column?.collision_resolved_siblings) ? column.collision_resolved_siblings : [],
+        collision_primary_reason: column?.collision_primary_reason ?? null,
         target_expression: column?.target_expression || '',
         sync_enabled: column?.sync_enabled !== false,
         sync_failure_reason: column?.sync_failure_reason || '',

@@ -159,7 +159,7 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
   const selfReportedEstimateText = getSelfReportedEstimateText(row);
   const enrichmentUnverifiableCaveat = getEnrichmentUnverifiableCaveat(row);
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
-  const hasDetails = isMeasure || (Array.isArray(row.synonyms) && row.synonyms.length > 0);
+  const hasDetails = isMeasure || (Array.isArray(row.synonyms) && row.synonyms.length > 0) || Boolean(row.collision_auto_resolved);
   const isPanelOpen = (isCollision && expandedCollision === row.id) || (hasDetails && expandedMeasure);
   // Full text is always available via the native tooltip (title attribute);
   // only the short form is derived here for the always-visible row label, so
@@ -183,18 +183,21 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
     >
       {/* Source Field */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: 'var(--text-primary)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          flexShrink: 0,
-        }}>
+        <div
+          title={row.source_field}
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}
+        >
           {row.source_field}
         </div>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0, flexShrink: 0 }}>
           {isMeasure ? <MeasureBadge /> : <TypeBadge type={row.source_type} />}
           {!isMeasure && row.source_table_name && (
             <span style={{
@@ -241,20 +244,23 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
 
       {/* Target Field */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: row.target_field ? 'var(--text-primary)' : 'var(--text-tertiary)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontStyle: row.target_field ? 'normal' : 'italic',
-          flexShrink: 0,
-        }}>
+        <div
+          title={row.target_field || undefined}
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: row.target_field ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontStyle: row.target_field ? 'normal' : 'italic',
+            minWidth: 0,
+          }}
+        >
           {row.target_field || '— unmapped —'}
         </div>
         {row.target_type && !isMeasure && (
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
             <TypeBadge type={row.target_type} />
           </div>
         )}
@@ -519,6 +525,15 @@ const SYNONYM_SOURCE_LABELS = {
   report_alias: 'Report Alias',
 };
 
+// Mirrors the three branches project_mapping_engine.py's collision
+// resolution picks a primary from (user_edited_idx / fact_indices /
+// auto_indices fallback) -- see collision_primary_reason.
+const COLLISION_PRIMARY_REASON_TEXT = {
+  user_edited: 'it was your manual edit',
+  fact_table: 'it was recognized as the base/fact table in this collision',
+  first_encountered: 'no table in the collision was recognized as the base/fact table, so the first one encountered was kept',
+};
+
 function synonymSourceLabel(source) {
   if (SYNONYM_SOURCE_LABELS[source]) return SYNONYM_SOURCE_LABELS[source];
   const word = String(source || '').replace(/[_-]+/g, ' ').trim();
@@ -554,6 +569,63 @@ function MeasureTranslationPanel({ row }) {
       flexDirection: 'column',
       gap: 12,
     }}>
+      {/* ── Naming collision, auto-resolved (informational only — the
+          rename already happened, nothing for the user to do here; see
+          CollisionPanel above for the still-actionable, unresolved case,
+          which this row's status can no longer be since target names have
+          already diverged by this point) ── */}
+      {row.collision_auto_resolved && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+          padding: '8px 12px',
+          borderRadius: 6,
+          background: 'var(--color-success-bg)',
+          border: '1px solid var(--color-success)',
+          color: 'var(--text-secondary)',
+          fontSize: 12,
+        }}>
+          <CheckCircle size={13} style={{ flexShrink: 0, marginTop: 1, color: 'var(--color-success)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>Naming collision — auto-resolved</span>
+            {row.collision_peer_source_name ? (
+              <span>
+                <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.15)', padding: '1px 5px', borderRadius: 3 }}>{row.source_field}</code>
+                {' '}also exists in{' '}
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {row.collision_peer_table_name ? `${row.collision_peer_table_name}.` : ''}{row.collision_peer_source_name}
+                </span>.
+                {' '}Renamed to{' '}
+                <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.15)', padding: '1px 5px', borderRadius: 3 }}>{row.target_field}</code>
+                {' '}to keep the two distinct.
+              </span>
+            ) : Array.isArray(row.collision_resolved_siblings) && row.collision_resolved_siblings.length > 0 ? (
+              <span>
+                Kept as{' '}
+                <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.15)', padding: '1px 5px', borderRadius: 3 }}>{row.target_field}</code>
+                {' — '}
+                {row.collision_resolved_siblings.map((sibling, index) => (
+                  <span key={`${row.id}-sibling-${index}`}>
+                    {index > 0 && ', '}
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {sibling.table_name ? `${sibling.table_name}.` : ''}{sibling.source_name}
+                    </span>
+                    {' was renamed to '}
+                    <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.15)', padding: '1px 5px', borderRadius: 3 }}>{sibling.resolved_target_name}</code>
+                  </span>
+                ))}
+                {' to avoid colliding with it'}
+                {COLLISION_PRIMARY_REASON_TEXT[row.collision_primary_reason]
+                  ? ` (kept unrenamed because ${COLLISION_PRIMARY_REASON_TEXT[row.collision_primary_reason]})`
+                  : ''}
+                .
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       {/* ── Status Banner (Measures only) ── */}
       {isMeasure && (
         isFailed ? (

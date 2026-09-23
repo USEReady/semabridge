@@ -85,7 +85,7 @@ def test_option_b_collision_resolution() -> None:
         "metrics": [],
     }
 
-    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
+    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake", auto_resolve_collisions=True)
     mappings = payload["mappings"]
 
     # Filter to only the columns
@@ -115,7 +115,8 @@ def test_option_b_collision_resolution() -> None:
         project_id="p1",
         model=model,
         existing_mappings=existing_mappings,
-        target_connector="snowflake"
+        target_connector="snowflake",
+        auto_resolve_collisions=True,
     )
     cols = {row["source_path"]: row for row in payload_override["mappings"] if row.get("entity_kind") == "column"}
 
@@ -160,7 +161,7 @@ def test_transitive_collision() -> None:
         ],
     }
 
-    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
+    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake", auto_resolve_collisions=True)
     mappings = payload["mappings"]
 
     columns = {row["source_path"]: row for row in mappings if row.get("entity_kind") == "column"}
@@ -207,7 +208,7 @@ def test_collisions_auto_resolve_without_user_action() -> None:
         ],
     }
 
-    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
+    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake", auto_resolve_collisions=True)
     cols = {row["source_path"]: row for row in payload["mappings"] if row.get("entity_kind") == "column"}
 
     col_bu_exec = cols["datasets.BU.columns.Executive_id"]

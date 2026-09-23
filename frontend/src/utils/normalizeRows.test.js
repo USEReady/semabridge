@@ -42,6 +42,11 @@ function backendRow(overrides = {}) {
     status: 'auto',
     suggested_target_name: 'TOTAL_REVENUE',
     collision_detected: false,
+    collision_auto_resolved: false,
+    collision_peer_source_name: null,
+    collision_peer_table_name: null,
+    collision_resolved_siblings: [],
+    collision_primary_reason: null,
     validation_status: 'valid',
     validation_code: 'OK',
     validation_message: '',
@@ -141,6 +146,11 @@ const EXPECTED_PASSTHROUGH_FIELDS = [
   'suggested_target_name',
   'sync_failure_reason',
   'synonyms',
+  'collision_auto_resolved',
+  'collision_peer_source_name',
+  'collision_peer_table_name',
+  'collision_resolved_siblings',
+  'collision_primary_reason',
   'complexity_tier',
   'static_risk_tier',
   'static_risk_label',
@@ -168,6 +178,91 @@ test('boundary sweep: every field expected to pass through unchanged actually do
     'This is the exact silent-drop bug class already hit three times (advisory_categories, source_file, complexity_tier) -- ' +
     'add the missing field to the allowlist in normalizeRows.js.',
   );
+});
+
+// ---------------------------------------------------------------------------
+// Fourth occurrence of the same bug class: collision_auto_resolved. A
+// naming collision auto-renamed by build_entity_mappings()'s primary/
+// base-table-keeps-plain-name rule clears collision_detected on both sides
+// and sets collision_auto_resolved=True instead -- so unlike the other
+// EXPECTED_PASSTHROUGH_FIELDS above, this field is ALSO read to derive
+// `status`, the same way collision_detected already was. Without this,
+// a correctly-resolved collision renders identically to a plain, never-
+// collided field -- DryRunMappingTable.jsx's STATUS_BADGE_MAP.auto_resolved
+// entry and mappingFilterUtils.js's CLEAN_STATUSES already treat
+// 'auto_resolved' correctly; they just never received it before this fix.
+// ---------------------------------------------------------------------------
+
+test('a collision auto-resolved by the backend gets status "auto_resolved", not "auto"', () => {
+  const response = apiResponse([backendRow({
+    collision_detected: false,
+    collision_auto_resolved: true,
+    target_name: 'PRODUCT_CATEGORY',
+  })]);
+  const [row] = normalizeRows(response);
+  assert.equal(row.status, 'auto_resolved');
+  assert.equal(row.collision_auto_resolved, true);
+});
+
+test('a genuinely unresolved collision still wins over collision_auto_resolved if both are somehow set', () => {
+  const response = apiResponse([backendRow({
+    collision_detected: true,
+    collision_auto_resolved: true,
+  })]);
+  const [row] = normalizeRows(response);
+  assert.equal(row.status, 'collision');
+});
+
+test('a plain, never-collided field is unaffected -- still "auto"', () => {
+  const response = apiResponse([backendRow({
+    collision_detected: false,
+    collision_auto_resolved: false,
+  })]);
+  const [row] = normalizeRows(response);
+  assert.equal(row.status, 'auto');
+});
+
+// ---------------------------------------------------------------------------
+// DryRunMappingTable.jsx's auto-resolved detail panel needs a structured
+// peer reference, not just the boolean flag -- these mirror the two row
+// shapes project_mapping_engine.py actually produces: the renamed row
+// (collision_peer_source_name/table_name) and the primary row
+// (collision_resolved_siblings/collision_primary_reason).
+// ---------------------------------------------------------------------------
+
+test('a renamed row carries its structured peer reference through intact', () => {
+  const response = apiResponse([backendRow({
+    collision_auto_resolved: true,
+    collision_peer_source_name: 'Category',
+    collision_peer_table_name: 'SALES_FACT',
+    target_name: 'KPI_CATEGORY',
+  })]);
+  const [row] = normalizeRows(response);
+  assert.equal(row.collision_peer_source_name, 'Category');
+  assert.equal(row.collision_peer_table_name, 'SALES_FACT');
+});
+
+test('a primary row carries its resolved-siblings list and primary reason through intact', () => {
+  const siblings = [
+    { source_name: 'Category', table_name: 'KPI', resolved_target_name: 'KPI_CATEGORY' },
+    { source_name: 'Category', table_name: 'PRODUCT', resolved_target_name: 'PRODUCT_CATEGORY' },
+  ];
+  const response = apiResponse([backendRow({
+    collision_auto_resolved: false,
+    collision_resolved_siblings: siblings,
+    collision_primary_reason: 'fact_table',
+    target_name: 'CATEGORY',
+  })]);
+  const [row] = normalizeRows(response);
+  assert.deepEqual(row.collision_resolved_siblings, siblings);
+  assert.equal(row.collision_primary_reason, 'fact_table');
+});
+
+test('collision_resolved_siblings defaults to an empty array, not undefined, when absent', () => {
+  const row = backendRow();
+  delete row.collision_resolved_siblings;
+  const [normalized] = normalizeRows(apiResponse([row]));
+  assert.deepEqual(normalized.collision_resolved_siblings, []);
 });
 
 // ---------------------------------------------------------------------------

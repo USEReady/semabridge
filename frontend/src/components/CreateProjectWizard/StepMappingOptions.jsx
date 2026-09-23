@@ -18,6 +18,8 @@ export function StepMappingOptions({
   setAutoRelationships,
   generateDescriptions,
   setGenerateDescriptions,
+  autoResolveCollisions,
+  setAutoResolveCollisions,
   detectedMappings,
   mappingLoading,
   mappingError,
@@ -394,6 +396,12 @@ export function StepMappingOptions({
                 description="Infers FK constraints automatically."
                 checked={autoRelationships}
                 onChange={setAutoRelationships}
+              />
+              <ToggleOption
+                label="Auto-Resolve Collisions"
+                description="Renames colliding fields automatically instead of flagging them for manual review."
+                checked={autoResolveCollisions}
+                onChange={setAutoResolveCollisions}
               />
               <div style={{ borderRadius: 8, border: '1px solid var(--border-main)', padding: 10, background: 'var(--bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                 <div>

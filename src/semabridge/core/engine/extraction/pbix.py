@@ -81,6 +81,24 @@ def _extract_pbix(
     if not p.exists():
         raise ExtractionError(f"PBIX file not found: {pbix_path}")
 
+    # Multi-file dispatch (sync_execution_service._run_single_job) calls
+    # engine.execute() once per PBIX file, each with its own resolved
+    # per-job pbix_path, but context.config.source was built once from the
+    # shared, project-level config_dict at Step 1 -- it still names
+    # whichever file (or none) that dict's source.pbix_path pointed at.
+    # Later in this same run, deployment/snowflake.py's opt-in data-backfill
+    # reads context.config.source.pbix_path/source_path/file_path to decide
+    # what to load from -- without this, every model in a multi-file first
+    # sync would backfill from that one shared path instead of its own file.
+    # Writing the actually-resolved path back here keeps both readers in
+    # sync regardless of whether pbix_path came from the explicit per-job
+    # argument or the source_cfg fallback above.
+    source_cfg = getattr(context.config, "source", None)
+    if source_cfg is None:
+        source_cfg = SimpleNamespace()
+        object.__setattr__(context.config, "source", source_cfg)
+    source_cfg.pbix_path = pbix_path
+
     connector = LocalPBIXConnector({"pbix_path": pbix_path})
     discovered = connector.discover()
     tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")

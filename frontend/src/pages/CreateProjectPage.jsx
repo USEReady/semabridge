@@ -385,7 +385,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     selectedLocalFolderId, selectedPbixFilePath,
     expandedWs, selectedModels: selectedModelsRaw, selectedModelNameByKey,
     selectedDatabricksTables: selectedDatabricksTablesRaw, databricksQuery,
-    autoRelationships, generateDescriptions,
+    autoRelationships, generateDescriptions, autoResolveCollisions,
     currentStepIndex: step,
   } = useProjectWizardStore(state => state.wizard);
   const [showStep1Validation, setShowStep1Validation] = useState(false);
@@ -543,6 +543,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   // Step 4
   const setAutoRelationships = (val) => setWizardState({ autoRelationships: !!val });
   const setGenerateDescriptions = (val) => setWizardState({ generateDescriptions: !!val });
+  const setAutoResolveCollisions = (val) => setWizardState({ autoResolveCollisions: !!val });
   const [detectedMappings, setDetectedMappings] = useState([]);
   const [detectedEntityMappings, setDetectedEntityMappings] = useState([]);
   const [mappingLoading, setMappingLoading] = useState(false);
@@ -1347,6 +1348,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     lines.push('options:');
     lines.push(`  auto_relationships: ${autoRelationships}`);
     lines.push(`  generate_descriptions: ${generateDescriptions}`);
+    lines.push(`  auto_resolve_collisions: ${autoResolveCollisions}`);
     // include write strategy if present in wizard state
     try {
       const ws = useProjectWizardStore.getState().wizard;
@@ -1926,6 +1928,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               <StepMappingOptions
                 autoRelationships={autoRelationships} setAutoRelationships={setAutoRelationships}
                 generateDescriptions={generateDescriptions} setGenerateDescriptions={setGenerateDescriptions}
+                autoResolveCollisions={autoResolveCollisions} setAutoResolveCollisions={setAutoResolveCollisions}
                 detectedMappings={detectedMappings}
                 mappingLoading={mappingLoading}
                 mappingError={mappingError}

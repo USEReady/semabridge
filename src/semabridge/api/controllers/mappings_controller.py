@@ -134,6 +134,7 @@ def _build_config_yaml_from_request(
         "options": {
             "auto_relationships": False,
             "generate_descriptions": False,
+            "auto_resolve_collisions": False,
         },
     }
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
@@ -321,6 +322,10 @@ async def _run_dry_run_pipeline(
         existing_mappings={},
         session_key=f"{preview_project_id}-mapping-session",
         target_connector=target_connector,
+        # Matches the synthetic options in _build_config_yaml_from_request:
+        # this dry-run preview always leaves collisions flagged for the
+        # Fix/confirm UI, regardless of the real project's saved setting.
+        auto_resolve_collisions=False,
     )
     dropped_entities = list(built.get("dropped_entities", []))
 
@@ -440,6 +445,11 @@ async def _run_dry_run_pipeline(
             "status": m.get("status", "auto"),
             "suggested_target_name": m.get("suggested_target_name", ""),
             "collision_detected": bool(m.get("collision_detected")),
+            "collision_auto_resolved": bool(m.get("collision_auto_resolved")),
+            "collision_peer_source_name": m.get("collision_peer_source_name"),
+            "collision_peer_table_name": m.get("collision_peer_table_name"),
+            "collision_resolved_siblings": list(m.get("collision_resolved_siblings") or []),
+            "collision_primary_reason": m.get("collision_primary_reason"),
             "validation_status": m.get("validation_status", "valid"),
             "validation_code": m.get("validation_code", "OK"),
             "validation_message": m.get("validation_message", ""),

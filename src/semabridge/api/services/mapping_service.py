@@ -105,6 +105,19 @@ def _compat_project_target_type(project_id: str) -> str:
     return str((target or {}).get("type") or "").strip().lower()
 
 
+def _compat_auto_resolve_collisions_from_cfg(project_cfg: str) -> bool:
+    parsed = _compat_parse_project_cfg_dict(str(project_cfg or ""))
+    options = parsed.get("options") if isinstance(parsed.get("options"), dict) else {}
+    return bool(options.get("auto_resolve_collisions", False))
+
+
+def _compat_project_auto_resolve_collisions(project_id: str) -> bool:
+    cfg = str(_compat_project_configs.get(project_id) or "").strip()
+    if not cfg:
+        return False
+    return _compat_auto_resolve_collisions_from_cfg(cfg)
+
+
 def _compat_sanitize_target_name_for_project(project_id: str, target_name: str) -> str:
     raw = str(target_name or "").strip()
     if not raw:
@@ -346,6 +359,7 @@ def _compat_build_project_entity_mappings(
         existing_mappings=existing_mappings,
         session_key=f"{project_id}-mapping-session",
         target_connector=target_connector,
+        auto_resolve_collisions=_compat_project_auto_resolve_collisions(project_id),
     )
 
     persisted: List[Dict[str, Any]] = []
@@ -432,6 +446,7 @@ def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[
                 "type": "table",
                 "status": "manual" if row.get("is_user_edited") else "auto-detected",
                 "collision_detected": bool(row.get("collision_detected")),
+                "collision_auto_resolved": bool(row.get("collision_auto_resolved")),
                 "validation_status": row.get("validation_status"),
                 "validation_code": row.get("validation_code"),
                 "validation_message": row.get("validation_message"),
@@ -455,6 +470,7 @@ def _compat_format_mapping_groups(mapping_payload: Dict[str, Any]) -> List[Dict[
             "type": row.get("target_data_type") or row.get("source_data_type") or "unknown",
             "key": str(row.get("source_name") or "").lower() == "id",
             "collision_detected": bool(row.get("collision_detected")),
+            "collision_auto_resolved": bool(row.get("collision_auto_resolved")),
             "validation_status": row.get("validation_status"),
             "validation_code": row.get("validation_code"),
             "validation_message": row.get("validation_message"),
@@ -716,6 +732,11 @@ def _compat_serialize_auto_map_entity_mappings(
             "validation_code": validation_code,
             "validation_message": validation_message,
             "collision_detected": collision_detected,
+            "collision_auto_resolved": bool(row.get("collision_auto_resolved")),
+            "collision_peer_source_name": row.get("collision_peer_source_name"),
+            "collision_peer_table_name": row.get("collision_peer_table_name"),
+            "collision_resolved_siblings": list(row.get("collision_resolved_siblings") or []),
+            "collision_primary_reason": row.get("collision_primary_reason"),
             "suggested_target_name": suggested_target_name,
             "resolution_suggestions": list(row.get("resolution_suggestions") or []),
             "measure_source_tables": list(row.get("measure_source_tables") or []),
@@ -914,6 +935,7 @@ async def auto_map_compat(payload: dict):
             existing_mappings={},
             session_key=f"{preview_project_id}-mapping-session",
             target_connector=target_connector,
+            auto_resolve_collisions=_compat_auto_resolve_collisions_from_cfg(config_yaml),
         )
         data = {
             "project_id": preview_project_id,
