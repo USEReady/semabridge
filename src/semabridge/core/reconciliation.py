@@ -362,9 +362,11 @@ def _fetch_live_deployed_ddl(project_id: str, view_name: str) -> str:
         raise ValueError(f"No project config found for project_id={project_id!r}")
 
     identity_id = ""
+    snowflake_target: dict = {}
     for target in (bundle.get("assembled") or {}).get("targets") or []:
         if isinstance(target, dict) and target.get("type") == "snowflake":
             identity_id = str(target.get("identity_id") or "").strip()
+            snowflake_target = target
             break
     if not identity_id:
         raise ValueError(f"Project {project_id!r} has no Snowflake identity_id configured")
@@ -379,7 +381,16 @@ def _fetch_live_deployed_ddl(project_id: str, view_name: str) -> str:
         # Thread-safe: builds an isolated SnowflakeConfig object rather than
         # mutating os.environ (scoped_account_env), which is unsafe when a
         # reconciliation check runs concurrently with other syncs/reconciliations.
-        sf_cfg = build_snowflake_config(account, session, get_settings().snowflake)
+        # Read the view from the schema the project actually deploys to
+        # (not the global default), or reconciliation reports false losses.
+        from types import SimpleNamespace
+
+        from semabridge.auth.credential_builder import project_snowflake_target
+
+        sf_cfg = build_snowflake_config(
+            account, session, get_settings().snowflake,
+            project_target=project_snowflake_target(SimpleNamespace(target=snowflake_target)),
+        )
         return SnowflakeExtractor(sf_cfg).extract_semantic_view_ddl(view_name)
 
 

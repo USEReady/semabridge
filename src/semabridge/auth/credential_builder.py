@@ -59,16 +59,61 @@ def _load_credential_env_map(account: Account, db: Session) -> dict[str, str]:
     return _load_account_credentials(account, db)
 
 
+_PROJECT_TARGET_FIELDS = (
+    ("database", "database"),
+    ("schema", "schema_name"),
+    ("schema_name", "schema_name"),
+    ("warehouse", "warehouse"),
+    ("role", "role"),
+)
+
+
+def project_snowflake_target(config: object) -> dict[str, str]:
+    """The structural Snowflake fields the PROJECT configured for its target
+    (``targets[0]`` / ``target`` in the project YAML, as loaded by engine
+    Step 1 onto ``config.target``), keyed by SnowflakeConfig field name.
+
+    Only non-empty values are returned, and only for a Snowflake (or untyped)
+    target. Empty dict when the project configured none of them.
+    """
+    target = getattr(config, "target", None)
+    if target is None:
+        return {}
+    get = target.get if isinstance(target, dict) else (lambda key, default=None: getattr(target, key, default))
+    target_type = str(get("type", "") or "").strip().lower()
+    if target_type and target_type not in ("snowflake", "snowflake_semantic_view"):
+        return {}
+    out: dict[str, str] = {}
+    for yaml_key, field_name in _PROJECT_TARGET_FIELDS:
+        value = str(get(yaml_key, "") or "").strip()
+        if value and field_name not in out:
+            out[field_name] = value
+    return out
+
+
+def apply_project_snowflake_target(sf_config: SnowflakeConfig, project_target: Optional[dict]) -> SnowflakeConfig:
+    """Return a copy of ``sf_config`` with the project's configured structural
+    fields (database / schema / warehouse / role) applied. Never mutates the
+    input. Identity copy when the project configured none of them."""
+    updates = {key: value for key, value in (project_target or {}).items() if value}
+    return sf_config.model_copy(update=updates) if updates else sf_config.model_copy()
+
+
 def build_snowflake_config(
     account: Account,
     db: Session,
     base_config: SnowflakeConfig,
+    project_target: Optional[dict] = None,
 ) -> SnowflakeConfig:
     """Build a thread-safe SnowflakeConfig from the Account credential bundle.
 
     Layered merge strategy (industry standard — same as dbt Profile merge):
       - Auth fields (user, password, private_key, oauth_*)  → from Account bundle
-      - Structural fields (warehouse, database, schema)     → from base_config (YAML)
+      - Structural fields (warehouse, database, schema, role) → the PROJECT's
+        configured target (``project_target``, see project_snowflake_target)
+        when set; otherwise as before (Account bundle, then base_config).
+        The schema previously never came from the project at all, so every
+        deploy landed in the .env/default schema.
 
     This guarantees:
     1. Each user's credentials are isolated to their Account row.
@@ -85,6 +130,7 @@ def build_snowflake_config(
         when the sync finishes.
     """
     env_map = _load_credential_env_map(account, db)
+    project_fields = {key: value for key, value in (project_target or {}).items() if value}
 
     # Resolve base_config password (SecretStr → str) for fallback
     base_password: Optional[str] = None
@@ -137,11 +183,12 @@ def build_snowflake_config(
         oauth_client_secret=env_map.get("SNOWFLAKE_OAUTH_CLIENT_SECRET") or base_oauth_secret,
         oauth_token_endpoint=env_map.get("SNOWFLAKE_OAUTH_TOKEN_ENDPOINT") or base_config.oauth_token_endpoint,
         oauth_scope=env_map.get("SNOWFLAKE_OAUTH_SCOPE") or base_config.oauth_scope,
-        # Structural — from semabridge.yaml (project config, not user-specific)
-        warehouse=env_map.get("SNOWFLAKE_WAREHOUSE") or base_config.warehouse,
-        database=env_map.get("SNOWFLAKE_DATABASE") or base_config.database,
+        # Structural — the project's configured target wins; otherwise as before.
+        warehouse=project_fields.get("warehouse") or env_map.get("SNOWFLAKE_WAREHOUSE") or base_config.warehouse,
+        database=project_fields.get("database") or env_map.get("SNOWFLAKE_DATABASE") or base_config.database,
+        schema_name=project_fields.get("schema_name") or base_config.schema_name,
         strict_osi_validation=env_map.get("SNOWFLAKE_STRICT_OSI_VALIDATION") == "true" or base_config.strict_osi_validation,
-        role=env_map.get("SNOWFLAKE_ROLE") or base_config.role,
+        role=project_fields.get("role") or env_map.get("SNOWFLAKE_ROLE") or base_config.role,
         # Passthrough — always from base config
         deployment_method=base_config.deployment_method,
         cortex_search_service=base_config.cortex_search_service,

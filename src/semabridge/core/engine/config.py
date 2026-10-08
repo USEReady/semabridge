@@ -286,6 +286,20 @@ def _step1_load_config(
                             pass
             if target_cfg:
                 object.__setattr__(config, "target", SimpleNamespace(**target_cfg))
+                if target == "snowflake":
+                    # The project's configured database/schema/warehouse/role
+                    # must reach every Snowflake call of this run (they were
+                    # never copied here, so deploys used the .env/default
+                    # schema). A per-run copy: never mutates the shared
+                    # settings singleton's SnowflakeConfig.
+                    from semabridge.auth.credential_builder import (
+                        apply_project_snowflake_target,
+                        project_snowflake_target,
+                    )
+
+                    project_target = project_snowflake_target(config)
+                    if project_target:
+                        config._snowflake = apply_project_snowflake_target(config.snowflake, project_target)
                 if target == "fabric":
                     target_workspace_id = str(target_cfg.get("workspace_id") or "").strip()
                     if target_workspace_id:

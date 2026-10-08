@@ -31,8 +31,13 @@ class SnowflakeConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # schema_name is read from env via its validation_alias
+        # (SNOWFLAKE_SCHEMA). Without populate_by_name an explicit
+        # SnowflakeConfig(schema_name=...) was silently ignored and the
+        # .env/default schema used instead.
+        populate_by_name=True,
     )
-    
+
     # All connection fields are Optional so that identity-based (Account table)
     # auth works without SNOWFLAKE_* env vars. Credentials are resolved at
     # runtime from the Account record when identity_id is present.

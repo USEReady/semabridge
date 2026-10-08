@@ -93,7 +93,12 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
             # Thread-safe: builds an isolated SnowflakeConfig object rather than
             # mutating os.environ (scoped_account_env), which is unsafe when
             # multiple syncs from the same batch run concurrently.
-            sf_cfg = build_snowflake_config(account, session, context.config.snowflake)
+            from semabridge.auth.credential_builder import project_snowflake_target
+
+            sf_cfg = build_snowflake_config(
+                account, session, context.config.snowflake,
+                project_target=project_snowflake_target(context.config),
+            )
             logger.info(
                 "Snowflake deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
                 account.tag, identity_id,

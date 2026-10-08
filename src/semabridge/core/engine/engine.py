@@ -289,11 +289,15 @@ class ExecutionEngine:
                         else:
                             connector = account.connector_type.upper()
                             if connector == "SNOWFLAKE":
-                                from semabridge.auth.credential_builder import build_snowflake_config
+                                from semabridge.auth.credential_builder import (
+                                    build_snowflake_config,
+                                    project_snowflake_target,
+                                )
 
                                 context.config = context.config.model_copy()
                                 context.config._snowflake = build_snowflake_config(
-                                    account, session, context.config.snowflake
+                                    account, session, context.config.snowflake,
+                                    project_target=project_snowflake_target(context.config),
                                 )
                             elif connector == "FABRIC":
                                 from semabridge.auth.credential_builder import build_fabric_config
