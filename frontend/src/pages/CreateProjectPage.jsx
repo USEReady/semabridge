@@ -32,7 +32,21 @@ import DraftToast from '../components/common/DraftToast';
 import DraftBanner from '../components/common/DraftBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import DryRunMappingTable, { isBlockingRow as isDryRunBlockingRow } from '../components/DryRunMappingTable';
-import { buildDryRunPayload } from '../utils/dryRunPayload';
+import {
+  buildDryRunPayload, resolveEffectiveSources, buildMappingSignature, MAX_MULTI_SOURCES,
+} from '../utils/dryRunPayload';
+import {
+  collectMappingOverrides, flattenSectionRows,
+  buildDryRunMigrationFields,
+} from '../utils/multiFileDryRunReadiness';
+import {
+  toggleModelSelection, resolveSelectedModelNames, dedupeModelSelection, seedSelectionFromSavedConfig,
+  MAX_SELECTED_MODELS,
+} from '../utils/modelSelection';
+import { donePbixPaths, planPbixFileAdditions, entriesFromSavedPaths } from '../utils/pbixFileEntries';
+import { cleanPbixLabel } from '../utils/pbixLabel';
+import { useMultiDryRunJob } from '../components/CreateProjectWizard/useMultiDryRunJob';
+import { normalizeRows } from '../utils/normalizeRows';
 import { escapeYamlString } from '../utils/yaml';
 import { StepBasicInfo } from '../components/CreateProjectWizard/StepBasicInfo';
 import { StepConnectorConfig } from '../components/CreateProjectWizard/StepConnectorConfig';
@@ -272,30 +286,6 @@ function SourceTableBadge({ tables, hasIssue = false }) {
   );
 }
 
-function normalizeStatus(item) {
-  const validationStatus = String(item?.validation_status || '').toLowerCase();
-  const validationCode = String(item?.validation_code || '').toUpperCase();
-  const explicit = String(item?.status || '').toLowerCase();
-  const targetField = String(item?.target_field || item?.target_name || item?.target || '').trim();
-
-  if (
-    item?.collision_detected === true ||
-    validationStatus === 'invalid' ||
-    validationStatus === 'collision' ||
-    (validationCode && validationCode !== 'OK')
-  ) return 'collision';
-
-  if (!targetField) return 'unmapped';
-  if (explicit === 'manual') return 'manual';
-  // needs_review: a metric that translated to real, deployable SQL via a
-  // fallback (e.g. an unshifted time-intelligence approximation) that a
-  // human should double-check -- passed through as-is (not collapsed to
-  // 'auto') so rowNeedsAttention() in mappingFilterUtils.js can catch it,
-  // since 'needs_review' isn't in that file's CLEAN_STATUSES set.
-  if (explicit === 'needs_review') return 'needs_review';
-  return 'auto';
-}
-
 function isBlockingRow(row) {
   const status = String(row?.status || '').toLowerCase();
   if (status === 'collision' || status === 'unmapped') return true;
@@ -305,173 +295,6 @@ function isBlockingRow(row) {
 
   const validationCode = String(row?.validation_code || '').toUpperCase();
   return Boolean(validationCode && validationCode !== 'OK');
-}
-
-function parseDatasetFromPath(pathValue) {
-  const path = String(pathValue || '').trim();
-  if (!path) return '';
-  const direct = /^datasets\.([^.]+)$/i.exec(path);
-  if (direct?.[1]) return String(direct[1]).trim();
-  const nested = /^datasets\.([^.]+)\./i.exec(path);
-  if (nested?.[1]) return String(nested[1]).trim();
-  return '';
-}
-
-function resolveMeasureSourceTables(row) {
-  const fromRow = Array.isArray(row?.measure_source_tables)
-    ? row.measure_source_tables.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
-  if (fromRow.length > 0) return [...new Set(fromRow)];
-
-  const fallback = parseDatasetFromPath(row?.parent_source_path);
-  return fallback ? [fallback] : [];
-}
-
-function resolveColumnSourceTable(row, parentTable = '') {
-  const fromPath = parseDatasetFromPath(row?.source_path);
-  if (fromPath) return fromPath;
-
-  const fromParentPath = parseDatasetFromPath(row?.parent_source_path);
-  if (fromParentPath) return fromParentPath;
-
-  return String(parentTable || row?.parent_table || row?.source_table_name || '').trim();
-}
-
-function resolveMeasureExpression(row) {
-  return String(row?.source_expression || row?.measure_expression || row?.expression || '').trim();
-}
-
-function normalizeRows(data) {
-  console.log('[normalizeRows] Input data:', data);
-  const entityRows = Array.isArray(data?.entity_mappings) ? data.entity_mappings : [];
-  console.log('[normalizeRows] Total entity rows:', entityRows.length);
-  console.log('[normalizeRows] Entity kinds:', entityRows.map(r => r?.entity_kind));
-
-  if (entityRows.length > 0) {
-    const fieldRows = entityRows.filter((row) => {
-      const kind = String(row?.entity_kind || '').toLowerCase();
-      const isTable = kind === 'table';
-      if (isTable) {
-        console.log('[normalizeRows] Filtering out table row:', row?.source_entity || row?.source_name);
-      }
-      return !isTable;
-    });
-
-    console.log('[normalizeRows] Field rows after filtering:', fieldRows.length);
-    if (fieldRows.length === 0 && entityRows.length > 0) {
-      console.error('[normalizeRows] No field rows! Entity kinds present:',
-        [...new Set(entityRows.map(r => r?.entity_kind))]);
-    }
-
-    return fieldRows.map((row, index) => {
-      const kind = String(row?.entity_kind || 'column').toLowerCase();
-      const isMeasure = kind === 'metric' || kind === 'measure';
-      const sourceName = String(row?.source_name || row?.name || '').trim();
-      const targetName = String(row?.target_name || row?.name || '').trim();
-      return {
-        id: String(row?.id || `entity-${index}`),
-        project_id: String(row?.project_id || data?.project_id || ''),
-        model_name: String(row?.model_name || data?.model_name || data?.semantic_model_name || ''),
-        source_field: sourceName || `field_${index + 1}`,
-        source_path: String(row?.source_path || '').trim(),
-        entity_kind: kind,
-        parent_source_path: String(row?.parent_source_path || '').trim(),
-        source_type: String(row?.source_data_type || row?.data_type || kind || 'unknown'),
-        field_type: isMeasure ? 'measure' : 'column',
-        measure_source_tables: isMeasure ? resolveMeasureSourceTables(row) : [],
-        source_table_name: !isMeasure ? resolveColumnSourceTable(row) : '',
-        measure_expression: isMeasure ? resolveMeasureExpression(row) : '',
-        target_field: targetName,
-        target_type: String(row?.target_data_type || row?.source_data_type || row?.data_type || 'unknown'),
-        status: row?.collision_detected ? 'collision' : normalizeStatus({ ...row, target_field: targetName }),
-        validation_status: String(row?.validation_status || ''),
-        validation_code: String(row?.validation_code || ''),
-        validation_message: String(row?.validation_message || ''),
-        suggested_target_name: String(row?.suggested_target_name || ''),
-        collision_detected: Boolean(row?.collision_detected),
-        target_expression: row?.target_expression || '',
-        sync_enabled: row?.sync_enabled !== false,
-        sync_failure_reason: row?.sync_failure_reason || '',
-        depends_on_measures: Array.isArray(row?.depends_on_measures) ? row.depends_on_measures : [],
-        synonym_overrides: Array.isArray(row?.synonym_overrides) ? row.synonym_overrides : [],
-        synonyms: Array.isArray(row?.synonyms) ? row.synonyms : [],
-        // Provenance per synonym ('report_alias' | 'tmsl_authored' |
-        // 'manual_override' | 'auto_generated') -- the backend has sent
-        // this correctly all along; it was silently dropped here by the
-        // same allowlist-gap pattern as static_risk_tier/advisory_categories
-        // below, so DryRunMappingTable's synonymSources lookup always saw
-        // undefined and rendered every synonym as "Unknown Source".
-        synonym_sources: (row?.synonym_sources && typeof row.synonym_sources === 'object') ? row.synonym_sources : {},
-        has_report_alias: Boolean(row?.has_report_alias),
-        // Static risk tier (metric-only; null for columns) and the Tier-5
-        // provider's own self-reported estimate (metric-only, Tier-5-
-        // only; null otherwise) -- see utils/riskLabels.js and
-        // project_mapping_engine.py's _compute_static_risk_tier. Passed
-        // through as-is (no renaming/coercion): both are already null
-        // for every row that shouldn't show them, straight from the
-        // backend.
-        static_risk_tier: row?.static_risk_tier ?? null,
-        static_risk_label: row?.static_risk_label ?? null,
-        llm_self_reported_confidence: row?.llm_self_reported_confidence ?? null,
-        // advisory_categories: general-purpose, informational-only tags
-        // (see sml/models.py's SMLMetric.advisory_categories) -- e.g.
-        // 'enrichment_column_unverifiable' (utils/riskLabels.js's
-        // getEnrichmentUnverifiableCaveat). Was already returned by the
-        // backend but silently dropped here before this fix -- same
-        // allowlist-gap pattern as static_risk_tier/llm_self_reported_
-        // confidence above.
-        advisory_categories: Array.isArray(row?.advisory_categories) ? row.advisory_categories : [],
-        isDirty: false,
-      };
-    });
-  }
-
-  const rows = [];
-  const tableMappings = Array.isArray(data?.mappings) ? data.mappings : [];
-  tableMappings.forEach((table, tableIndex) => {
-    const tableSource = String(table?.source || table?.name || '').trim();
-    const columns = Array.isArray(table?.columns) ? table.columns : [];
-
-    if (columns.length === 0) {
-      return;
-    }
-
-    columns.forEach((column, columnIndex) => {
-      const colSource = String(column?.source || column?.name || '').trim();
-      const colTarget = String(column?.target || '').trim();
-      const fieldType = String(column?.field_type || '').toLowerCase() === 'measure' ? 'measure' : 'column';
-      rows.push({
-        id: `${table?.id || tableSource || `t${tableIndex}`}::${column?.source_path || colSource || columnIndex}`,
-        project_id: String(column?.project_id || data?.project_id || ''),
-        model_name: String(column?.model_name || data?.model_name || data?.semantic_model_name || ''),
-        source_field: colSource || `column_${columnIndex + 1}`,
-        source_path: String(column?.source_path || '').trim(),
-        entity_kind: String(column?.entity_kind || 'column').toLowerCase(),
-        source_type: String(column?.type || column?.data_type || 'unknown'),
-        field_type: fieldType,
-        source_table_name: resolveColumnSourceTable(column, tableSource),
-        measure_source_tables: [],
-        measure_expression: '',
-        target_field: colTarget,
-        target_type: String(column?.type || column?.data_type || 'unknown'),
-        status: normalizeStatus({ ...column, target_field: colTarget }),
-        validation_status: String(column?.validation_status || ''),
-        validation_code: String(column?.validation_code || ''),
-        validation_message: String(column?.validation_message || ''),
-        suggested_target_name: String(column?.suggested_target_name || ''),
-        collision_detected: Boolean(column?.collision_detected),
-        target_expression: column?.target_expression || '',
-        sync_enabled: column?.sync_enabled !== false,
-        sync_failure_reason: column?.sync_failure_reason || '',
-        depends_on_measures: Array.isArray(column?.depends_on_measures) ? column.depends_on_measures : [],
-        parent_table: tableSource,
-        synonym_overrides: Array.isArray(column?.synonym_overrides) ? column.synonym_overrides : [],
-        isDirty: false,
-      });
-    });
-  });
-
-  return rows;
 }
 
 function countResponseFields(data) {
@@ -573,6 +396,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     targetDatabase, targetSchema, targetAccount, targetWarehouse,
     modelQueryRegex, pbixSourceMode,
     selectedLocalFolderId, selectedPbixFilePath,
+    pbixUploadPath, pbixMultiFileMode, pbixFileEntries,
     expandedWs, selectedModels: selectedModelsRaw, selectedModelNameByKey,
     selectedDatabricksTables: selectedDatabricksTablesRaw, databricksQuery,
     autoRelationships, generateDescriptions,
@@ -668,8 +492,65 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const setPbixSourceMode = (val) => setWizardState({ pbixSourceMode: val });
 
   const [pbixFile, setPbixFile] = useState(null);
-  const [pbixUploadPath, setPbixUploadPath] = useState('');
+  const setPbixUploadPath = useCallback(
+    (val) => setWizardState({ pbixUploadPath: String(val ?? '').trim() }),
+    [setWizardState],
+  );
   const [pbixUploading, setPbixUploading] = useState(false);
+
+  // Clears single-file mode's uploaded PBIX so the dropzone returns to its
+  // empty "Drag and drop" state -- the single-file counterpart of
+  // MultiPbixUpload's per-row remove button.
+  const clearPbixFile = useCallback(() => {
+    setPbixFile(null);
+    setPbixUploadPath('');
+  }, [setPbixUploadPath]);
+
+  // Multi-PBIX-per-project: when the user picks "Multiple files" in
+  // StepConnectorConfig, pbixFileEntries (persisted in the wizard store, so it
+  // survives leaving step 2 and page reloads) holds every uploaded file;
+  // pbixFilePaths is the derived list of successfully uploaded paths. Which
+  // list/path actually gets dry-run AND saved is decided in one place --
+  // effectiveSources below.
+  const setPbixMultiFileMode = useCallback(
+    (val) => setWizardState({ pbixMultiFileMode: !!val }),
+    [setWizardState],
+  );
+  const pbixFilePaths = useMemo(() => donePbixPaths(pbixFileEntries), [pbixFileEntries]);
+
+  // Uploads run outside any React state updater and write their outcome
+  // straight into the store, so a file still uploading when step 2 unmounts
+  // still lands in the list (and a file removed mid-upload stays removed).
+  const addMultiPbixFiles = useCallback((incoming) => {
+    const store = useProjectWizardStore.getState();
+    const plan = planPbixFileAdditions(store.wizard.pbixFileEntries || [], incoming, MAX_MULTI_SOURCES);
+    if (plan.newEntries.length > 0) store.addPbixFileEntries(plan.newEntries);
+    plan.accepted.forEach((file, index) => {
+      const entryId = plan.newEntries[index].id;
+      api.uploadPbix(file)
+        .then((response) => {
+          const path = String(response?.path || '').trim();
+          useProjectWizardStore.getState().updatePbixFileEntry(entryId, path
+            ? { status: 'done', path, error: '' }
+            : { status: 'error', path: '', error: 'Upload succeeded but no path was returned.' });
+        })
+        .catch((err) => {
+          useProjectWizardStore.getState().updatePbixFileEntry(entryId, {
+            status: 'error',
+            error: err?.message || 'Upload failed.',
+          });
+        });
+    });
+    return plan.message;
+  }, []);
+  const removeMultiPbixFile = useCallback((entryId) => {
+    useProjectWizardStore.getState().removePbixFileEntry(entryId);
+  }, []);
+
+  // Multi-model dry-run job (multiple PBIX files OR multiple Fabric models):
+  // null until a job has been created. Its polling, per-model results and
+  // per-model edits live in useMultiDryRunJob below.
+  const [multiDryRunJob, setMultiDryRunJob] = useState(null);
 
   const [localFolders, setLocalFolders] = useState([]);
   const [localFoldersLoading, setLocalFoldersLoading] = useState(false);
@@ -775,21 +656,48 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
       const st = String(initialData.source_type || '').toLowerCase();
       if (st === 'fabric') {
-        const models = initialData.models || initialData.model || [];
-        const modelNames = Array.isArray(models) ? models : [models];
-        const nextSelectedModels = new Set(modelNames);
-        const nextModelNameByKey = {};
-        modelNames.forEach(n => { nextModelNameByKey[n] = n; });
-        
-        // Also check if we have GUIDs in selection
-        if (Array.isArray(initialData.selection_model_ids)) {
-          initialData.selection_model_ids.forEach(id => {
-            if (id) nextSelectedModels.add(id);
-          });
-        }
+        // Seed ONE key per saved model (names when saved, else GUIDs) -- never
+        // both, which used to show every saved model twice. Names are swapped
+        // for GUID keys once the workspace's model list loads (see
+        // dedupeModelSelection in the discovery effect below).
+        const seed = seedSelectionFromSavedConfig({
+          models: initialData.models || initialData.model || [],
+          selectionModelIds: initialData.selection_model_ids,
+        });
+        setWizardState({ selectedModels: seed.selectedKeys, selectedModelNameByKey: seed.nameByKey });
+      }
 
-        setSelectedModels(nextSelectedModels);
-        setSelectedModelNameByKey(nextModelNameByKey);
+      if (st === 'pbix') {
+        // Restore the PBIX source exactly as it was saved: a multi-PBIX
+        // project re-opens "Multiple files" with every file attached; a
+        // single-file project re-opens its folder-tag pick or its upload.
+        const savedPaths = Array.isArray(initialData.pbix_file_paths) ? initialData.pbix_file_paths : [];
+        if (savedPaths.length > 1) {
+          setWizardState({
+            pbixSourceMode: 'MANUAL',
+            pbixMultiFileMode: true,
+            pbixFileEntries: entriesFromSavedPaths(savedPaths),
+            pbixUploadPath: '',
+          });
+        } else {
+          const singlePath = String(savedPaths[0] || initialData.pbix_uploaded_path || initialData.pbix_path || '').trim();
+          if (initialData.local_folder_id) {
+            setWizardState({
+              pbixSourceMode: 'TAG',
+              pbixMultiFileMode: false,
+              pbixFileEntries: [],
+              selectedLocalFolderId: String(initialData.local_folder_id),
+              selectedPbixFilePath: singlePath,
+            });
+          } else {
+            setWizardState({
+              pbixSourceMode: 'MANUAL',
+              pbixMultiFileMode: false,
+              pbixFileEntries: [],
+              pbixUploadPath: singlePath,
+            });
+          }
+        }
       }
 
       if (mappingMode === 'saved' && Array.isArray(initialData.mappings) && initialData.mappings.length > 0) {
@@ -852,9 +760,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     return liveFabricWorkspaces.find(ws => ws.id === fabricWorkspaceId) || null;
   }, [liveFabricWorkspaces, fabricWorkspaceId]);
 
-  const selectedModelNames = [...selectedModels]
-    .map(modelKey => selectedModelNameByKey[modelKey])
-    .filter(Boolean);
+  const selectedModelNames = useMemo(
+    () => resolveSelectedModelNames(selectedModelsRaw || [], selectedModelNameByKey || {}),
+    [selectedModelsRaw, selectedModelNameByKey],
+  );
 
   const {
     fabricAccounts,
@@ -888,11 +797,28 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (!selectedPbixFilePath) return null;
     return pbixFiles.find(file => file.path === selectedPbixFilePath) || null;
   }, [pbixFiles, selectedPbixFilePath]);
-  const resolvedPbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
-
-  const currentMappingSignature = useMemo(() => JSON.stringify({
+  // The ONE derived answer to "which file(s)/model(s) does this project
+  // use" -- read by both the dry run (handleDryRun) and the save
+  // (buildSourceConfig), so they can never disagree. "Multiple files" with
+  // exactly one uploaded file is a single-file run of that file; a leftover
+  // multi-file list never overrides a folder-tag choice.
+  const effectiveSources = useMemo(() => resolveEffectiveSources({
     sourceConnector,
-    targetConnectors: [...targetConnectors].sort(),
+    pbixSourceMode,
+    pbixMultiFileMode,
+    pbixFilePaths,
+    pbixUploadPath,
+    selectedPbixFilePath,
+    selectedModelNames,
+  }), [
+    sourceConnector, pbixSourceMode, pbixMultiFileMode, pbixFilePaths,
+    pbixUploadPath, selectedPbixFilePath, selectedModelNames,
+  ]);
+  const resolvedPbixPath = effectiveSources.singlePbixPath;
+
+  const currentMappingSignature = useMemo(() => buildMappingSignature({
+    sourceConnector,
+    targetConnectors,
     intermediateFormat,
     fabricAccountId,
     selectedConnectionId,
@@ -905,16 +831,20 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     targetAccount,
     targetWarehouse,
     databricksAccountId,
-    selectedModels: [...selectedModels].sort(),
-    selectedModelNames: [...selectedModelNames].sort(),
-    selectedDatabricksTables: [...selectedDatabricksTables].sort(),
+    selectedModels,
+    selectedModelNames,
+    selectedDatabricksTables,
     pbixPath: resolvedPbixPath,
+    pbixSourceMode,
+    pbixMultiFileMode,
+    pbixFilePaths,
+    effectiveSources: effectiveSources.sources,
   }), [
     databricksAccountId, fabricAccountId, fabricWorkspaceId, intermediateFormat,
     resolvedPbixPath, selectedConnectionId, selectedDatabricksTables, selectedModelNames,
     selectedModels, snowflakeAccountId, snowflakeDatabase, snowflakeSchema,
     sourceConnector, targetAccount, targetConnectors, targetDatabase, targetSchema,
-    targetWarehouse,
+    targetWarehouse, pbixSourceMode, pbixMultiFileMode, pbixFilePaths, effectiveSources,
   ]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -926,10 +856,20 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setUnmappedAcknowledged(false);
     setDetectedMappings([]);
     setDetectedEntityMappings([]);
+    // A multi-model job (and its per-model results/edits) is just as stale.
+    setMultiDryRunJob(null);
+    setDryRunData(null);
+    setEditingRow(null);
   }, [currentMappingSignature, mappingDryRunSignature]);
 
 
   useEffect(() => {
+    // Folder list not loaded yet: keep a restored (edit-mode) file selection
+    // instead of wiping it before its folder tag can even be resolved.
+    if (pbixSourceMode === 'TAG' && sourceConnector === 'pbix' && !selectedLocalFolderTag
+      && selectedLocalFolderId && (localFoldersLoading || localFolders.length === 0)) {
+      return;
+    }
     if (pbixSourceMode !== 'TAG' || sourceConnector !== 'pbix' || !selectedLocalFolderTag) {
       setPbixFiles([]);
       setPbixFilesError('');
@@ -976,7 +916,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     return () => {
       active = false;
     };
-  }, [pbixSourceMode, selectedLocalFolderTag, sourceConnector, step]);
+  }, [pbixSourceMode, selectedLocalFolderTag, sourceConnector, step, selectedLocalFolderId, localFoldersLoading, localFolders.length]);
 
   // Ghost-purge: if the current selection no longer exists in the live list, force-clear it
   // so the auto-select above can immediately re-run and pick the correct workspace.
@@ -1067,21 +1007,21 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           const models = data ?? [];
           setWsModels({ [fabricWorkspaceId]: models });
 
-          // Auto-resolve names for any selected GUIDs during hydration/edit
-          if (models.length > 0 && selectedModels.size > 0) {
-            setSelectedModelNameByKey(prev => {
-              const next = { ...prev };
-              let changed = false;
-              selectedModels.forEach(key => {
-                const id = key.includes('::') ? key.split('::')[1] : key;
-                const match = models.find(m => m.id === id);
-                if (match?.name && next[key] !== match.name) {
-                  next[key] = match.name;
-                  changed = true;
-                }
-              });
-              return changed ? next : prev;
-            });
+          // Edit-mode hydration seeds saved model NAMES; now that the
+          // workspace's models are known, collapse every selection onto one
+          // GUID key per model (with its real name) so nothing is listed
+          // twice and one click always unchecks.
+          if (models.length > 0) {
+            const { wizard: current } = useProjectWizardStore.getState();
+            const currentKeys = current.selectedModels || [];
+            if (currentKeys.length > 0) {
+              const deduped = dedupeModelSelection(currentKeys, current.selectedModelNameByKey || {}, models);
+              const changed = JSON.stringify(deduped.selectedKeys) !== JSON.stringify(currentKeys)
+                || JSON.stringify(deduped.nameByKey) !== JSON.stringify(current.selectedModelNameByKey || {});
+              if (changed) {
+                setWizardState({ selectedModels: deduped.selectedKeys, selectedModelNameByKey: deduped.nameByKey });
+              }
+            }
           }
           
           setWsLoading(false); // Set loading to false immediately after 200 OK
@@ -1139,24 +1079,28 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const clearSelectedModels = () => {
     setSelectedModels(new Set());
     setSelectedModelNameByKey({});
+    setModelSelectionNotice('');
   };
 
-  const toggleModel = (modelKey, modelName = '') => {
-    setSelectedModels(prev => {
-      const s = new Set(prev);
-      s.has(modelKey) ? s.delete(modelKey) : s.add(modelKey);
-      return s;
+  // One click on a model row (see utils/modelSelection.js): removes EVERY key
+  // that refers to the model (name and/or GUID), or adds it -- Fabric is
+  // capped at MAX_SELECTED_MODELS per project, matching the backend.
+  const [modelSelectionNotice, setModelSelectionNotice] = useState('');
+  const toggleModel = useCallback((model) => {
+    const { wizard: current } = useProjectWizardStore.getState();
+    const result = toggleModelSelection({
+      selectedKeys: current.selectedModels || [],
+      nameByKey: current.selectedModelNameByKey || {},
+      model,
+      max: sourceConnector === 'fabric' ? MAX_SELECTED_MODELS : Infinity,
     });
-    setSelectedModelNameByKey(prev => {
-      const next = { ...prev };
-      if (modelKey in next) {
-        delete next[modelKey];
-      } else if (modelName) {
-        next[modelKey] = modelName;
-      }
-      return next;
-    });
-  };
+    if (result.limitReached) {
+      setModelSelectionNotice(`You can select up to ${MAX_SELECTED_MODELS} models per project. Deselect one to add another.`);
+      return;
+    }
+    setModelSelectionNotice('');
+    setWizardState({ selectedModels: result.selectedKeys, selectedModelNameByKey: result.nameByKey });
+  }, [setWizardState, sourceConnector]);
 
   /* ─── Submit ─── */
   const handleFinish = async () => {
@@ -1168,7 +1112,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       return;
     }
 
-    if (sourceConnector === 'pbix' && !resolvedPbixPath) {
+    if (sourceConnector === 'fabric' && selectedModelNames.length === 0) {
+      setCreateError('Select at least one Fabric semantic model before finishing.');
+      return;
+    }
+
+    if (sourceConnector === 'pbix' && effectiveSources.mode === 'none') {
       setCreateError(pbixSourceMode === 'TAG'
         ? 'Select a PBIX file from the tagged folder before finishing.'
         : 'Upload a .pbix file before finishing.');
@@ -1201,6 +1150,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           description: description.trim(),
           tags: Array.from(tags),
           sync_mode: syncMode,
+          ...dryRunMigrationFields,
         });
         // Navigate directly to config/sync page after saving edits
         if (initialData?.id) {
@@ -1211,21 +1161,22 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
 
 
+      // Multi-model: every model's (edited) rows, each tagged with its model.
+      const finalMappings = isMultiModelRun ? flattenSectionRows(multiJob.sections) : detectedMappings;
       const payload = {
         name: name.trim(),
         description: description.trim() || undefined,
         source,
         targets,
         tags: [...tags],
-        mappings: detectedMappings.length > 0 ? detectedMappings : undefined,
+        mappings: finalMappings.length > 0 ? finalMappings : undefined,
         relationships: relationships.length > 0 ? relationships : undefined,
-        mapping_options: {
-          auto_detect_relationships: autoRelationships,
-          generate_descriptions: generateDescriptions,
-        },
         preferred_interface: 'ui',
         config_yaml: buildConfigYaml(source, targets),
       };
+      // Lets the backend migrate dry-run-time edits (e.g. synonyms saved
+      // against the preview project(s)) onto the real project.
+      Object.assign(payload, dryRunMigrationFields);
 
       // Validation Check: Ensure selectedAccountId and selectedWorkspaceId match
       if (sourceConnector === 'fabric' && selectedWorkspace) {
@@ -1255,7 +1206,33 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setCreatedProject(project);
       const projectId = project?.id || project?.project_id;
 
-      if (projectId && detectedEntityMappings.length > 0) {
+      if (projectId && isMultiModelRun) {
+        // Multi-model: persist each EDITED row through the mapping store as
+        // well, tagged with its model, so it is stored against this project
+        // and exported as a model-scoped override (merged with the YAML's
+        // mappings_overrides exactly once at run time). Ids are suffixed with
+        // the model's dry-run file id so two models' rows never share one.
+        try {
+          for (const section of multiJob.sections || []) {
+            for (const row of (section.rows || []).filter((r) => r.isDirty && r.source_path && r.target_field)) {
+              await api.updateMapping(projectId, `${row.id}@${section.fileId}`, {
+                target_name: row.target_field,
+                target_data_type: row.target_type,
+                status: 'manual',
+                model: section.sourceRef,
+                source_path: row.source_path,
+                source_name: row.source_field,
+                entity_kind: row.entity_kind,
+              });
+            }
+          }
+        } catch (mappingPersistErr) {
+          const persistMsg = mappingPersistErr?.message || 'Model edits could not be fully persisted.';
+          setRunWarning(prev => `${prev ? `${prev} ` : ''}${persistMsg}`.trim());
+        }
+      }
+
+      if (projectId && !isMultiModelRun && detectedEntityMappings.length > 0) {
         try {
           await api.deleteMappings(projectId);
           for (const mapping of detectedEntityMappings) {
@@ -1279,7 +1256,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       // (see buildConfigYaml above), so the sync pipeline will pick them up automatically.
       // We skip the per-row API calls here to avoid 500s from mismatched mapping IDs.
 
-      if (sourceConnector === 'pbix' && projectId && pbixFile) {
+      // Only the single-file upload mode owns pbixFile -- a File left over
+      // from before switching to "Multiple files" or a folder tag must not
+      // overwrite the saved source.
+      if (sourceConnector === 'pbix' && projectId && pbixFile
+        && pbixSourceMode === 'MANUAL' && !effectiveSources.useMultiFileList) {
         try {
           const uploadResp = await api.uploadProjectPbix(projectId, pbixFile);
           const persistedPath = String(uploadResp?.path || '').trim();
@@ -1365,17 +1346,27 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
 
     if (sourceConnector === 'pbix') {
-      if (pbixSourceMode === 'TAG') {
+      // Same effectiveSources the dry run used (see resolveEffectiveSources).
+      if (effectiveSources.isMulti) {
+        // Multi-PBIX project: each path becomes its own independent
+        // dry-run/deploy job (see _build_sync_jobs()'s source.models list)
+        // and its own semantic view, named from its own filename — never
+        // the project name.
+        source.models = effectiveSources.sources;
+      } else if (pbixSourceMode === 'TAG') {
         if (selectedLocalFolderId) source.local_folder_id = selectedLocalFolderId;
         if (selectedLocalFolderTag) source.local_folder_tag = selectedLocalFolderTag;
         if (selectedPbixFile?.name) source.file_name = selectedPbixFile.name;
+      } else if (effectiveSources.useMultiFileList) {
+        const entry = (pbixFileEntries || []).find((e) => e.path === effectiveSources.singlePbixPath);
+        if (entry?.name) source.file_name = entry.name;
       } else if (pbixFile?.name) {
         source.file_name = pbixFile.name;
       }
 
-      if (resolvedPbixPath) {
-        source.pbix_path = resolvedPbixPath;
-        source.pbix_file_path = resolvedPbixPath;
+      if (!source.models && effectiveSources.singlePbixPath) {
+        source.pbix_path = effectiveSources.singlePbixPath;
+        source.pbix_file_path = effectiveSources.singlePbixPath;
       }
     }
 
@@ -1447,19 +1438,19 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (target.workspace) lines.push(`    workspace: "${escapeYamlString(target.workspace)}"`);
     });
 
-    // Persist user-edited field/model names for later deploy runs.
-    const mappingOverrides = (detectedMappings || [])
-      .map((row) => ({
-        source_path: String(row?.source_path || '').trim(),
-        target_name: String(row?.target_field || row?.target_name || row?.target || '').trim(),
-      }))
-      .filter((row) => row.source_path && row.target_name);
+    // Persist user-edited field/model names for later deploy runs. A
+    // multi-model run writes the same entries, each keyed by its model
+    // (`model:` = that model's entry in source.models).
+    const mappingOverrides = collectMappingOverrides(
+      isMultiModelRun ? { sections: multiJob.sections } : { rows: detectedMappings || [] },
+    );
 
     if (mappingOverrides.length > 0) {
       lines.push('mappings_overrides:');
       mappingOverrides.forEach((row) => {
         lines.push(`  - source_path: "${escapeYamlString(row.source_path)}"`);
         lines.push(`    target_name: "${escapeYamlString(row.target_name)}"`);
+        if (row.model) lines.push(`    model: "${escapeYamlString(row.model)}"`);
       });
     }
 
@@ -1542,6 +1533,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   /* ─── Step validity ─── */
   const canAdvance = () => {
     if (step === 1) return name.trim().length > 0;
+    // Fabric: the backend rejects an empty model list -- require >= 1.
+    if (step === 3 && sourceConnector === 'fabric') return selectedModelNames.length > 0;
     if (step === 4) return mappingReadyToProceed;
     if (step === 5) return true;
     return true;
@@ -1623,9 +1616,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const handleDryRun = useCallback(async () => {
     setMappingDryRunStatus('loading');
     setMappingError('');
+    setMultiDryRunJob(null);
+    setEditingRow(null);
 
     const projectId = createdProject?.id || createdProject?.project_id || 'preview';
-    const effectivePbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
+    // Same derived source list the save uses (buildSourceConfig).
+    const isMulti = effectiveSources.isMulti;
     const { sourceConfig, targetConfig } = buildDryRunPayload({
       sourceConnector,
       targetConnectors,
@@ -1634,10 +1630,36 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeDatabase,
       targetDatabase,
       selectedModelNames,
-      pbixPath: effectivePbixPath,
+      pbixPath: isMulti ? '' : effectiveSources.singlePbixPath,
     });
 
     const selectedSources = selectedModelNames;
+
+    if (isMulti) {
+      // >1 model (PBIX files or Fabric models): background job + polling,
+      // every model dry-run in parallel server-side, each shown in its own
+      // section (MultiFileDryRunStatus). A previous single-model result must
+      // not linger behind it.
+      setDetectedMappings([]);
+      setDetectedEntityMappings([]);
+      setDryRunData(null);
+      setUnmappedAcknowledged(false);
+      try {
+        const job = await api.createDryRunJob(projectId, {
+          source_config: sourceConfig,
+          target_config: targetConfig,
+          selected_sources: effectiveSources.sources,
+        });
+        if (!job?.job_id) throw new Error('The dry-run job could not be created (no job id returned).');
+        setMultiDryRunJob({ ...job, api_project_id: projectId });
+        setMappingDryRunStatus('success');
+        setMappingDryRunSignature(currentMappingSignature);
+      } catch (err) {
+        setMappingError(err?.message || 'Failed to start the multi-model dry-run job.');
+        setMappingDryRunStatus('error');
+      }
+      return;
+    }
 
     try {
       const response = await api.runProjectDryRun(projectId, {
@@ -1681,15 +1703,57 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [
     createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
     targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
-    pbixSourceMode, selectedPbixFilePath, pbixUploadPath, fabricAccountId,
+    fabricAccountId, effectiveSources,
   ]);
+
+  // ── Multi-model dry run: polling + per-model rows/edits keyed by file_id ──
+  const multiJob = useMultiDryRunJob({
+    projectId: multiDryRunJob?.api_project_id || 'preview',
+    job: multiDryRunJob,
+  });
+  const multiSections = multiJob.sections;
+  const isMultiModelRun = Boolean(multiDryRunJob?.job_id) && multiSections.length > 0;
+  const updateMultiFileRows = multiJob.updateFileRows;
+
+  // Which dry run / preview project(s) the user's dry-run-time edits (e.g.
+  // synonyms) were saved against -- sent on create / edit-save so the backend
+  // can migrate them to the real project. Single: preview_project_id from
+  // the /dry-run response. Multi: the job id plus every model's preview id.
+  const multiJobId = multiDryRunJob?.job_id || '';
+  const singlePreviewProjectId = dryRunData?.project_id || '';
+  const dryRunMigrationFields = buildDryRunMigrationFields({
+    multiJobId,
+    sections: multiSections,
+    singlePreviewProjectId,
+  });
+
+  // ── Per-model routing for the mapping handlers below ─────────────────────────
+  // Multi-model dry runs call the SAME handlers as the single-model table; the
+  // only difference is which rows they read and write: a model's own section
+  // rows (by its dry-run file id) instead of detectedMappings.
+  const rowsForModel = useCallback((fileId) => (
+    fileId ? (multiSections.find((s) => s.fileId === fileId)?.rows || []) : detectedMappings
+  ), [multiSections, detectedMappings]);
+  const setRowsForModel = useCallback((fileId) => (
+    fileId ? (updater) => updateMultiFileRows(fileId, updater) : setDetectedMappings
+  ), [updateMultiFileRows]);
+
+  // Opens the field editor for one model's row -- same behaviour as the
+  // single-model table's onEdit (the editor validates and saves).
+  const handleMultiEditRow = useCallback((fileId, rowId) => {
+    const row = rowsForModel(fileId).find((r) => r.id === rowId);
+    if (!row) return;
+    setEditingRow({ ...row, __multiFileId: fileId });
+  }, [rowsForModel]);
 
   // ── handleFieldEdit — saves a single field mapping edit via the API ──────────
   const handleFieldEdit = useCallback(async (rowId, updates) => {
+    const fileId = editingRow?.id === rowId ? (editingRow?.__multiFileId || null) : null;
+    const section = fileId ? multiSections.find((s) => s.fileId === fileId) : null;
     setIsSavingEdit(true);
 
     const targetPlatform = Array.from(targetConnectors)[0] || 'snowflake';
-    const editingRowData = detectedMappings.find(r => r.id === rowId);
+    const editingRowData = rowsForModel(fileId).find(r => r.id === rowId);
     const sourceType = editingRowData?.source_type || '';
 
     const validation = validateTargetName(
@@ -1704,16 +1768,23 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       return; // error shown inline in modal
     }
 
-    const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+    const projectId = createdProject?.id || createdProject?.project_id || section?.previewProjectId || 'preview';
 
     try {
       await api.updateMapping(projectId, rowId, {
         target_name: updates.target_name,
         target_data_type: updates.target_data_type,
         status: 'manual',
+        // Multi-model only: scope the stored edit to this model.
+        ...(section ? {
+          model: section.sourceRef,
+          source_path: editingRowData?.source_path || '',
+          source_name: editingRowData?.source_field || '',
+          entity_kind: editingRowData?.entity_kind || '',
+        } : {}),
       });
 
-      setDetectedMappings(prev =>
+      setRowsForModel(fileId)(prev =>
         prev.map(row =>
           row.id === rowId
             ? {
@@ -1733,12 +1804,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setIsSavingEdit(false);
     }
-  }, [targetConnectors, detectedMappings, createdProject]);
+  }, [targetConnectors, createdProject, editingRow, multiSections, rowsForModel, setRowsForModel]);
 
-  const handleBulkResolved = useCallback((resolvedMap) => {
+  const handleBulkResolved = useCallback((resolvedMap, fileId = null) => {
     if (!resolvedMap || typeof resolvedMap !== 'object') return;
 
-    setDetectedMappings((prev) => prev.map((row) => {
+    setRowsForModel(fileId)((prev) => prev.map((row) => {
       const nextTarget = resolvedMap[row.id];
       if (!nextTarget) return row;
       return {
@@ -1753,15 +1824,23 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         isDirty: true,
       };
     }));
-  }, []);
+  }, [setRowsForModel]);
 
-  const handleSynonymUpdate = useCallback((rowId, synonyms) => {
-    setDetectedMappings(prev => prev.map(row =>
+  const handleSynonymUpdate = useCallback((rowId, synonyms, fileId = null) => {
+    setRowsForModel(fileId)(prev => prev.map(row =>
       row.id === rowId
         ? { ...row, synonym_overrides: Array.isArray(synonyms) ? synonyms : [], isDirty: true }
         : row
     ));
-  }, []);
+  }, [setRowsForModel]);
+
+  const handleMultiBulkResolved = useCallback((fileId, resolvedMap) => {
+    handleBulkResolved(resolvedMap, fileId);
+  }, [handleBulkResolved]);
+
+  const handleMultiSynonymUpdate = useCallback((fileId, rowId, synonyms) => {
+    handleSynonymUpdate(rowId, synonyms, fileId);
+  }, [handleSynonymUpdate]);
 
   // ── handleDeploy — deploys finalized mappings and advances to Step 5 ─────────
   const handleDeploy = useCallback(async () => {
@@ -1828,6 +1907,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setMappingDryRunError('');
         setMappingDryRunSignature('');
         setUnmappedAcknowledged(false);
+        setMultiDryRunJob(null);
       }
     }
     if (step === 4 && !mappingReadyToProceed) {
@@ -1904,6 +1984,27 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setShowStep1Validation(false);
     }
   }, [step, showStep1Validation]);
+
+  // PBIX files shown on Step 3 (upload mode) and Step 5: the exact effective
+  // source list that will be saved, as clean file names.
+  const pbixSourceLabels = useMemo(
+    () => (sourceConnector === 'pbix' ? effectiveSources.sources.map((p) => cleanPbixLabel(p)) : []),
+    [sourceConnector, effectiveSources],
+  );
+  const pbixManualFileLabels = useMemo(() => {
+    if (sourceConnector !== 'pbix' || pbixSourceMode !== 'MANUAL') return [];
+    if (pbixMultiFileMode) {
+      return (pbixFileEntries || []).map((e) => ({ name: e.name, status: e.status, error: e.error }));
+    }
+    return pbixUploadPath ? [{ name: pbixFile?.name || cleanPbixLabel(pbixUploadPath), status: 'done', error: '' }] : [];
+  }, [sourceConnector, pbixSourceMode, pbixMultiFileMode, pbixFileEntries, pbixUploadPath, pbixFile]);
+  const savedPbixSourceLabels = useMemo(() => {
+    if (!editMode || !initialData || String(initialData.source_type || '').toLowerCase() !== 'pbix') return [];
+    const saved = Array.isArray(initialData.pbix_file_paths) && initialData.pbix_file_paths.length > 0
+      ? initialData.pbix_file_paths
+      : [initialData.pbix_uploaded_path || initialData.pbix_path].filter(Boolean);
+    return saved.map((p) => cleanPbixLabel(p));
+  }, [editMode, initialData]);
 
   const projectDiff = useMemo(() => {
     if (!editMode || !initialData) return null;
@@ -2000,6 +2101,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 if (file) setPbixFile(file);
                 setPbixUploadPath(String(path || '').trim());
               }}
+              onClearPbix={clearPbixFile}
+              pbixMultiFileMode={pbixMultiFileMode}
+              setPbixMultiFileMode={setPbixMultiFileMode}
+              pbixFileEntries={pbixFileEntries}
+              onAddPbixFiles={addMultiPbixFiles}
+              onRemovePbixFile={removeMultiPbixFile}
+              maxPbixFiles={MAX_MULTI_SOURCES}
               workspaces={liveFabricWorkspaces}
               workspacesLoading={isRefreshingWorkspaces}
               isRefreshingWorkspaces={isRefreshingWorkspaces}
@@ -2016,7 +2124,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               expandedWs={expandedWs} toggleWorkspace={toggleWorkspace}
               wsModels={wsModels}
               selectedModels={selectedModels} toggleModel={toggleModel}
+              selectedModelNameByKey={selectedModelNameByKey}
               clearSelectedModels={clearSelectedModels}
+              selectionNotice={modelSelectionNotice}
+              maxSelectedModels={MAX_SELECTED_MODELS}
+              pbixManualFileLabels={pbixManualFileLabels}
               modelQuery={modelQuery} setModelQuery={setModelQuery}
               modelQueryRegex={modelQueryRegex}
               setModelQueryRegex={setModelQueryRegex}
@@ -2107,6 +2219,17 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onBulkResolved={handleBulkResolved}
                 onSynonymUpdate={handleSynonymUpdate}
                 projectId={createdProject?.id || createdProject?.project_id || dryRunData?.project_id || 'preview'}
+                multiDryRunJob={multiDryRunJob}
+                multiSections={multiJob.sections}
+                multiJobStatus={multiJob.jobStatus}
+                multiPollError={multiJob.pollError}
+                onRetryMultiPolling={multiJob.retryPolling}
+                multiRerunningIds={multiJob.rerunningIds}
+                multiRerunErrors={multiJob.rerunErrors}
+                onMultiEditRow={handleMultiEditRow}
+                onMultiBulkResolved={handleMultiBulkResolved}
+                onMultiSynonymUpdate={handleMultiSynonymUpdate}
+                onRetryMultiFile={multiJob.rerunFile}
               />
             </ErrorBoundary>
           )}
@@ -2128,7 +2251,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               diff={projectDiff}
               selectedModels={selectedModels}
               initialSelectedModels={savedModels}
+              savedModels={savedModels}
               selectedModelNameByKey={selectedModelNameByKey}
+              pbixSourceLabels={pbixSourceLabels}
+              savedPbixSourceLabels={savedPbixSourceLabels}
               onClear={clearWizardState}
             />
           )}

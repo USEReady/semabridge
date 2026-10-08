@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from semabridge.api.controllers.composite_controller import router as composite_router
+from semabridge.api.controllers.dry_run_jobs_controller import router as dry_run_jobs_router
 from semabridge.api.controllers.folders_controller import router as folders_router
 from semabridge.api.controllers.graph_controller import router as graph_router
 from semabridge.api.controllers.jobs_controller import router as jobs_router
@@ -19,6 +20,7 @@ for child_router in [
     folders_router,
     jobs_router,
     mappings_router,
+    dry_run_jobs_router,
     versioning_router,
     pbix_router,
     composite_router,

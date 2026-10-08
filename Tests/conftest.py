@@ -151,6 +151,41 @@ def _isolate_compat_store(tmp_path_factory):
 
 
 # -----------------------------------------------------------------------------
+# Tier-5 translation cache isolation — fresh, in-memory-only cache per test
+# -----------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _isolate_tier5_translation_cache():
+    """Replace Tier5Service's shared, process-wide, persistent translation
+    cache (dax_translation/tier5/cache.py's default_persistent_cache()
+    singleton) with a fresh, in-memory-only instance before every test.
+
+    Real regression this closes: two tests in the same module mocked
+    DIFFERENT LLM responses for the IDENTICAL DAX+dialect+schema shape (one
+    exercising the success path, one exercising a rejection path). Because
+    every real call site (DaxTranslationService, converter/dax_translator.py,
+    connectors/databricks_publisher.py) shares ONE cache instance by design
+    -- correct for a real run, where reusing a validated translation across
+    projects is the whole point -- the success test's cached result silently
+    satisfied the rejection test's cache lookup before its own mock was ever
+    consulted, and (before this fixture existed) the same pollution could
+    leak into ~/.semabridge/tier5_translation_cache.jsonl, the real per-user
+    file, across separate pytest invocations too.
+
+    Function-scoped (not session-scoped, unlike _isolate_compat_store above)
+    because the pollution here happens WITHIN a session, between sibling
+    tests — session-scoped isolation from the real file alone isn't enough.
+    """
+    from semabridge.dax_translation.tier5 import cache as tier5_cache_module
+
+    tier5_cache_module.reset_default_persistent_cache_for_tests(
+        tier5_cache_module.Tier5TranslationCache()  # cache_file=None -> in-memory only, never touches disk
+    )
+    yield
+    tier5_cache_module.reset_default_persistent_cache_for_tests(None)
+
+
+# -----------------------------------------------------------------------------
 # SML Model Fixtures
 # -----------------------------------------------------------------------------
 

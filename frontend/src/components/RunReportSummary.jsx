@@ -4,11 +4,23 @@ import StatusBadge from './common/StatusBadge';
 
 /**
  * Clean, business-facing view of a run's report (JSON from
- * api.getRunReportSummary), replacing the raw Markdown as the primary
- * view in ProjectJobsPage's report modal. Collapsed: one row per
- * category with just a name and a count -- the "clean summary" a
- * business user wants at a glance. Expanded: the full per-item detail
- * (advisory messages, drop reasons) for that category only.
+ * api.getRunReportSummary / api.getRunModelReportSummary), shown as the
+ * default "Summary" tab in ProjectJobsPage's "View Report Preview" modal
+ * (the raw Markdown is a "Raw Report" tab away for anyone who wants the
+ * full downloadable-style text instead). Collapsed: one row per category
+ * with just a name and a count -- the "clean summary" a business user
+ * wants at a glance. Expanded: the full per-item detail (advisory
+ * messages, drop reasons) for that category only.
+ *
+ * Ported from demo_version_ref verbatim -- this component is fully
+ * data-driven off the `data` shape build_run_report_data() returns, with
+ * no assumptions specific to a single-file vs. multi-file run baked in
+ * (the caller decides whether `data` describes the whole run or one
+ * model's own scoped slice of it). `needs_review` currently always
+ * arrives empty (DAX-feature's _classify_metrics() doesn't yet implement
+ * demo_version's third classification tier -- see the
+ * followup_needs_review_classification memory) but the section is kept
+ * here, not removed, so no further UI change is needed once that lands.
  */
 
 const SECTION_META = {
@@ -132,6 +144,50 @@ function AiAssistedDetail(entry) {
   );
 }
 
+function CrashedNotice({ unavailable, error }) {
+  // Short, plain-language line by default; the longer technical
+  // explanation (data.error, from run_report_service.py) stays available
+  // one click away via "Why?" rather than always-visible body text.
+  const [showDetails, setShowDetails] = useState(false);
+  const shortMessage = unavailable
+    ? "✅ This run completed successfully. (Detailed breakdown isn't available right now — try Raw Report below, or Download Raw .md.)"
+    : '❌ This run failed. See Raw Report for details.';
+
+  return (
+    <div style={{ padding: 16 }}>
+      <p style={{ color: unavailable ? 'var(--text-primary)' : 'var(--color-error)', margin: 0, fontWeight: 600 }}>
+        {shortMessage}
+      </p>
+      {error && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowDetails((prev) => !prev)}
+            style={{
+              marginTop: 6,
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              color: 'var(--accent-blue)',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            {showDetails ? 'Hide details' : 'Why?'}
+          </button>
+          {showDetails && (
+            <p style={{ marginTop: 8, color: unavailable ? 'var(--text-secondary)' : 'var(--color-error)', fontSize: 12, lineHeight: 1.5 }}>
+              {error}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DroppedSection({ groups }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -156,14 +212,13 @@ export default function RunReportSummary({ data }) {
   if (!data) return null;
 
   if (data.crashed) {
-    return (
-      <div style={{ padding: 16 }}>
-        <p style={{ color: 'var(--text-primary)', marginBottom: 8 }}>
-          This run did not reach the point of reading your source file.
-        </p>
-        <p style={{ color: 'var(--color-error)' }}>{data.error}</p>
-      </div>
-    );
+    // `unavailable` means the run itself completed fine -- its detailed
+    // report data just isn't available in this session anymore (e.g. after
+    // a server restart), which reads very differently from a genuine
+    // pre-extraction crash. See run_report_service.py's
+    // _gather_run_report_data() for why these can't be told apart from
+    // run.results alone and need this explicit signal.
+    return <CrashedNotice unavailable={data.unavailable} error={data.error} />;
   }
 
   const { counts, sections } = data;

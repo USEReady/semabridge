@@ -61,7 +61,11 @@ def _convert_to_fabric_target(self, context: RunContext) -> None:
         snowflake_schema=config.snowflake.schema_name,
     )
 
-    output_dir = self._model_output_dir("fabric", model_name=context.project_id)
+    output_dir = self._model_output_dir(
+        "fabric",
+        model_name=context.project_id,
+        model_subdir=getattr(context, "physical_namespace", None),
+    )
 
     bim_path = output_dir / "model.bim"
     generator.save(bim_path)

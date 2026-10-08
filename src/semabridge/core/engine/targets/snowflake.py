@@ -47,18 +47,58 @@ from semabridge.core.engine.exceptions import (
 
 logger = get_logger(__name__)
 
+# Source types whose Snowflake physical objects (base tables, enriched views,
+# MEASURES_* tables) are created by SemaBridge itself, and therefore safe to
+# namespace per model. A Snowflake-sourced model points at pre-existing,
+# user-owned data tables, which must never be renamed.
+_NAMESPACEABLE_SOURCE_TYPES = {"pbix", "fabric"}
+
+
+def emitter_physical_namespace(context: RunContext) -> Optional[str]:
+    """Per-model physical-object namespace to hand to SnowflakeEmitter.
+
+    Only non-None for a model that is part of a multi-model batch (see
+    sync_execution_service._assign_batch_physical_namespaces) AND whose
+    source is one SemaBridge materializes tables for -- so a single-model
+    run always deploys under exactly the same object names as before.
+    """
+    namespace = getattr(context, "physical_namespace", None)
+    if not namespace:
+        return None
+    if str(getattr(context, "source_type", "") or "").lower() not in _NAMESPACEABLE_SOURCE_TYPES:
+        return None
+    return namespace
+
+
 def _convert_to_snowflake_target(self, context: RunContext) -> None:
     """Generate Snowflake DDL."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.sml.serializer import SMLSerializer
 
     config = context.config
-    emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
+    emitter = SnowflakeEmitter(
+        config.snowflake,
+        behavior=context.behavior,
+        physical_namespace=emitter_physical_namespace(context),
+    )
 
     if not context.sml_model:
         raise ConversionError("No SML model available for target conversion. Ensure Stage 6 completed successfully.")
 
-    output_dir = self._model_output_dir("reverse", model_name=context.project_id)
+    from semabridge.utils.name_translator import get_target_deployment_name
+
+    context.deployed_view_name = get_target_deployment_name(
+        getattr(context.sml_model, "unique_name", None)
+        or getattr(context.sml_model, "label", None)
+        or "model",
+        "snowflake",
+    )
+
+    output_dir = self._model_output_dir(
+        "reverse",
+        model_name=context.project_id,
+        model_subdir=getattr(context, "physical_namespace", None),
+    )
 
     ddls = emitter.generate_ddls(context.sml_model)
     # Surface DDL-emission-time drops (DAX translation failures, unresolved

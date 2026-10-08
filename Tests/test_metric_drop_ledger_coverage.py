@@ -393,6 +393,67 @@ def test_date_expression_compared_to_integer_column_is_dropped_not_emitted():
     assert not any(r["entity_name"] == "Sibling Metric" for r in records)
 
 
+def test_nested_aggregate_expression_is_dropped_not_emitted():
+    """Regression test for a real incident: a Tier-5 translation for a
+    rolling-window metric produced SUM(CASE WHEN MAX(...) ... END) -- an
+    aggregate nested inside another aggregate's row-level argument. Nothing
+    validated that structural shape before it reached Snowflake, and the
+    resulting DDL crashed the entire deploy with 010218 (not just this one
+    metric).
+
+    Placeholder names only (no real project/metric names) -- this reproduces
+    the *shape* of the failure, general over any aggregate pair, not tied to
+    SUM/MAX specifically. A sibling metric is included to prove the rest of
+    the deploy proceeds normally around the dropped one.
+    """
+    translator = MetricExpressionTranslator(IdentifierSanitizer())
+    builder = _builder(translator=translator)
+
+    bad_metric = SimpleNamespace(
+        unique_name="Rolling Metric Bad", dataset="SalesFact", expression="",
+        sql_expression=(
+            'SUM(CASE WHEN MAX(SALESFACT."MONTHINDEX") - SALESFACT."MONTHINDEX" < 12 '
+            'THEN SALESFACT."UNITS" ELSE 0 END)'
+        ),
+        source_column=None, aggregation=None,
+    )
+    sibling_metric = SimpleNamespace(
+        unique_name="Sibling Metric", dataset="SalesFact", expression="",
+        sql_expression=None, source_column="Units",
+        aggregation=SimpleNamespace(value="sum"),
+    )
+
+    lines = builder.build_for_osi(
+        _model([bad_metric, sibling_metric]),
+        dataset_aliases={"SalesFact": "SALESFACT"},
+        dataset_by_name={"SalesFact": SimpleNamespace(is_fact=True)},
+        dataset_col_lookup={"SalesFact": {"MONTHINDEX", "UNITS"}},
+        alias_by_raw={},
+        all_physical_col_names={"MONTHINDEX", "UNITS"},
+        emittable_metric_name_set=set(),
+    )
+
+    # (a) the nested-aggregate metric never reaches the DDL ...
+    joined = "\n".join(lines)
+    assert "Rolling Metric Bad" not in joined
+    assert 'MAX(SALESFACT."MONTHINDEX")' not in joined
+
+    # (b) ... and is recorded with a clear reason, not silently vanished or
+    # crashing the build.
+    records = builder.drop_ledger.to_json()
+    bad_records = [r for r in records if r["entity_name"] == "Rolling Metric Bad"]
+    assert len(bad_records) == 1
+    assert bad_records[0]["stage"] == DropStage.DDL_EMISSION.value
+    assert "Nested aggregate" in bad_records[0]["reason"]
+    assert "SUM" in bad_records[0]["reason"] and "MAX" in bad_records[0]["reason"]
+
+    # (c) the rest of the deploy proceeds normally -- the sibling metric
+    # still gets emitted with its own, unrelated, valid line.
+    assert len(lines) == 1
+    assert 'SUM(SALESFACT."UNITS")' in lines[0]
+    assert not any(r["entity_name"] == "Sibling Metric" for r in records)
+
+
 def test_record_ddl_deployment_drops_falls_back_to_single_name_when_sweep_nulled_no_metric():
     """When the remediated identifier was fixed inside TABLES/RELATIONSHIPS/
     DIMENSIONS instead of METRICS, remediate_invalid_identifier's

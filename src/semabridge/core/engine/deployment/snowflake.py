@@ -71,7 +71,7 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
         from sqlalchemy import select
         from semabridge.repository.orm.models import Account
         from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.auth.account_credential_resolver import scoped_account_env
+        from semabridge.auth.credential_builder import build_snowflake_config
 
         with db_manager.get_session() as session:
             account = session.execute(
@@ -90,36 +90,119 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
                 self._do_snowflake_deploy(context, sf_cfg)
                 return
 
-            with scoped_account_env(account, session):
-                logger.info(
-                    "Snowflake deployment scoped to account %s (%s)",
-                    account.tag, identity_id,
-                )
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
-
-                # Override default roles and warehouses if specified in target config
-                sf_cfg = scoped_settings.snowflake
-                self._do_snowflake_deploy(context, sf_cfg)
-                return
+            # Thread-safe: builds an isolated SnowflakeConfig object rather than
+            # mutating os.environ (scoped_account_env), which is unsafe when
+            # multiple syncs from the same batch run concurrently.
+            sf_cfg = build_snowflake_config(account, session, context.config.snowflake)
+            logger.info(
+                "Snowflake deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+                account.tag, identity_id,
+            )
+            self._do_snowflake_deploy(context, sf_cfg)
+            return
 
     # Fallback to legacy global execution
     sf_cfg = context.config.snowflake
     self._do_snowflake_deploy(context, sf_cfg)
 
+_UNSET = object()
+
+
+def _resolve_load_source_data(context: RunContext) -> "tuple[bool, Optional[str]]":
+    """Returns (load_source_data, trigger) for this deploy.
+
+    Distinguishes "options.load_source_data explicitly set" from "never
+    set at all" -- config.py's SimpleNamespace only carries the attribute
+    when the project YAML actually had the key, so a sentinel (not a
+    plain getattr(..., False)) is required to tell the two apart.
+
+    Explicit config (true OR false) always wins, unchanged from before
+    this default was introduced -- an existing project's behavior must
+    never change just because this function started existing. Only when
+    it's genuinely unset does this project's own run history decide: True
+    ("first_sync_default") for a brand-new project's first-ever
+    successful sync, so real data shows up with zero config; False for
+    every sync after that, back to the original opt-in-only default --
+    see ModelRepository.has_any_successful_run.
+
+    `trigger` is None whenever load_source_data ends up False (nothing to
+    explain in the run report), "first_sync_default" or "explicit"
+    otherwise -- surfaced in run_report_service.py so an automatic first
+    sync never looks like an unexplained, silent behavior change.
+    """
+    options_ns = getattr(context.config, "options", None)
+    raw_load_source_data = getattr(options_ns, "load_source_data", _UNSET)
+    if raw_load_source_data is _UNSET:
+        from semabridge.repository.model_repository import ModelRepository
+        is_first_sync = not ModelRepository().has_any_successful_run(
+            context.project_id, exclude_run_id=context.run_id,
+        )
+        return is_first_sync, ("first_sync_default" if is_first_sync else None)
+
+    load_source_data = bool(raw_load_source_data)
+    return load_source_data, ("explicit" if load_source_data else None)
+
+
 def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     """Inner helper to perform Snowflake deployment with resolved config."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.engine.targets.snowflake import emitter_physical_namespace
 
-    emitter = SnowflakeEmitter(sf_cfg, behavior=context.behavior)
+    emitter = SnowflakeEmitter(
+        sf_cfg,
+        behavior=context.behavior,
+        physical_namespace=emitter_physical_namespace(context),
+    )
     deployment_method = getattr(sf_cfg, "deployment_method", "ddl") or "ddl"
 
     # DDL path
     if deployment_method in ("ddl", "both"):
+        # Opt-in data-backfill (options.load_source_data, see
+        # core/engine/config.py's _step1_load_config and
+        # _resolve_load_source_data above) -- resolved here, not inside
+        # the emitter, since only this call site has both
+        # context.config.options and context.config.source. Same
+        # pbix_path/source_path/file_path alias fallback already used by
+        # core/config_loader.py and core/execution_config.py's own PBIX
+        # path resolution, so a project using any of those three key names
+        # still gets backfill if it opts in.
+        source_cfg = getattr(context.config, "source", None)
+        # In a multi-model batch each job extracted its OWN file; the
+        # project-wide config.source.pbix_path (if any) belongs to at most
+        # one of them, so the job's own path must win there. Single-model
+        # runs keep the original resolution order.
+        batch_pbix_path = (
+            getattr(context, "pbix_path", None)
+            if int(getattr(context, "batch_model_count", 1) or 1) > 1
+            else None
+        )
+        source_pbix_path = (
+            batch_pbix_path
+            or getattr(source_cfg, "pbix_path", None)
+            or getattr(source_cfg, "source_path", None)
+            or getattr(source_cfg, "file_path", None)
+        )
+        load_source_data, backfill_trigger = _resolve_load_source_data(context)
+
         deployed = emitter.deploy(
             context.sml_model,
             sync_mode=getattr(context, "sync_mode", "copy"),
+            source_pbix_path=source_pbix_path,
+            load_source_data=load_source_data,
         )
+        # Mirror the drop_ledger merge below: the emitter accumulates
+        # backfill outcomes on its own instance during deploy(), copied
+        # onto context here so Step 10 (finalize.py) can put them on
+        # RunSummary. Runs even when load_source_data was false -- the
+        # list is just empty in that case, same no-op cost as every other
+        # project that never opts in. `trigger` records WHY this run's
+        # backfill ran at all ("explicit" config vs. "first_sync_default"),
+        # so the run report can say so plainly rather than looking like an
+        # unexplained, silent behavior change.
+        context.data_backfill_results = [
+            {**entry, "trigger": backfill_trigger}
+            for entry in (getattr(emitter, "data_backfill_results", None) or [])
+        ]
         # Propagate the live deployed DDL (captured by deploy() itself via
         # GET_DDL, on the connection it already had open — see
         # snowflake_emitter.py's Step 6b) so Step 10 can reconcile
@@ -216,7 +299,11 @@ def _export_inferred_osi_artifacts(self, context: RunContext) -> None:
         osi_model = SMLToOSIConverter().to_osi(context.sml_model)
         context.osi_model = osi_model
 
-        out_dir = self._model_output_dir("inferred", model_name=context.project_id)
+        out_dir = self._model_output_dir(
+            "inferred",
+            model_name=context.project_id,
+            model_subdir=getattr(context, "physical_namespace", None),
+        )
         json_path = out_dir / "osi_inferred.json"
         yaml_path = out_dir / "osi_inferred.yaml"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone as dt_timezone
 from threading import RLock
@@ -172,8 +173,10 @@ class SchedulerService:
         try:
             # Project sync performs blocking connector/LLM/warehouse work. Keep it
             # off the Uvicorn event loop so lightweight API requests stay responsive.
-            import asyncio
-
+            # Concurrency across scheduled runs (and every other way a project
+            # sync can be triggered) is capped once, centrally, by
+            # run_service._RUN_SEMAPHORE inside _perform_project_run -- see
+            # that module for why the cap lives there instead of here.
             def _run_callback_in_thread() -> None:
                 loop = asyncio.new_event_loop()
                 try:

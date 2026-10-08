@@ -29,6 +29,7 @@ the codebase as of writing (grep-verified against every call site).
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -271,6 +272,31 @@ def stage_group_label(stage: str, target_label: str = "the destination") -> str:
     return template.format(target=target_label) if "{target}" in template else template
 
 
+def _group_by_first_seen(items: List[Any], key_fn) -> List[Tuple[Any, List[Any]]]:
+    """Group `items` by key_fn(item), preserving first-seen key order.
+    Used to collapse many entries that share the identical reason/note
+    text into one group instead of repeating that text once per entry --
+    the report previously repeated the same sentence verbatim for every
+    dropped/flagged item in a stage (e.g. 33 times in one real report),
+    which is exactly the "long technical list" this groups away without
+    dropping any name or reason."""
+    order: List[Any] = []
+    groups: Dict[Any, List[Any]] = {}
+    for item in items:
+        key = key_fn(item)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+    return [(key, groups[key]) for key in order]
+
+
+def _names_cell(names: List[str]) -> str:
+    """Comma-joined names for one table cell -- escapes '|' (illegal
+    inside a Markdown table cell) without altering the name itself."""
+    return ", ".join(str(n).replace("|", "\\|") for n in names)
+
+
 # ---------------------------------------------------------------------------
 # SML snapshot loading / metric classification
 # ---------------------------------------------------------------------------
@@ -308,29 +334,50 @@ def _load_snapshot_data(sml_snapshot_id: Optional[str]) -> Optional[Dict[str, An
     }
 
 
-def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """Split a snapshot's metrics into Standard / AI-assisted / Needs
-    Review, reusing the same risky-DAX-pattern check the dry-run page's
+def _classify_metrics(
+    sml_metrics: List[Dict[str, Any]],
+    dropped_metric_names: Optional[set[str]] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Split a snapshot's metrics into Standard / Standard-with-a-flag /
+    AI-assisted, reusing the same risky-DAX-pattern check the dry-run page's
     three-tier risk label already uses (project_mapping_engine.py) rather
     than reimplementing it.
 
     "known risky pattern" in _compute_static_risk_tier is structurally
     reachable ONLY inside its `if is_tier5:` branch -- so that signal is
     folded into the AI-assisted entries below, not a separate section.
+    advisory_notes/advisory_categories (osi_to_sml.py's unreachable-
+    dimension check), however, run over every metric regardless of tier --
+    so a Standard-conversion metric can carry a real flag too, and does get
+    one here.
 
-    Needs Review is checked FIRST, independent of tier: a metric carrying
-    an advisory_category in REVIEW_REQUIRED_ADVISORY_CATEGORIES (e.g. an
-    unshifted time-intelligence fallback, or a decomposed disconnected-
-    selector branch) goes there regardless of whether it's tier 1-4 or
-    tier 5 -- the same signal dry-run's "Needs Attention" chip already
-    keys off, now surfaced post-run too, instead of blending into Standard/
-    AI-assisted with just a generic advisory message tacked on.
+    dropped_metric_names: metric names already recorded in this run's
+    dropped_entities (entity_kind == "metric"; both call sites pass the
+    exact set already computed for their own dropped-sections loop, keyed
+    the same way _classify_metrics itself names a metric below). This
+    exclusion is required, not optional: `sync_enabled` on a metric is
+    set exactly once, at Stage 6 (DAX translation, see
+    converter/tmsl_to_sml.py / converter/osi_to_sml.py) time, and is never
+    revised when a LATER stage -- DDL emission/deployment,
+    connectors/metrics_clause_builder.py -- drops that same metric for an
+    unrelated, later-discovered reason (an unresolvable column reference,
+    for example). Without this check, a metric can appear in BOTH
+    "Standard conversion" and "why we couldn't include it" with mutually
+    exclusive outcomes, since those two report sections previously came
+    from two independent data sources with nothing reconciling them
+    against each other. The drop ledger is the authoritative, later
+    signal here: by the time this function runs, finalize.py's own
+    _reconcile_dropped_entities has already stripped any drop record for
+    a metric later confirmed genuinely live in the deployed DDL -- so
+    anything still present in dropped_entities really was dropped, and
+    a stale sync_enabled=True must not override that.
     """
     from semabridge.api.services.project_mapping_engine import (
         _has_known_risky_dax_pattern,
         REVIEW_REQUIRED_ADVISORY_CATEGORIES,
     )
 
+    dropped_metric_names = dropped_metric_names or set()
     advisory_messages = _advisory_category_messages()
     standard: List[Dict[str, Any]] = []
     ai_assisted: List[Dict[str, Any]] = []
@@ -340,6 +387,11 @@ def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         if not metric.get("sync_enabled", True):
             continue  # not successfully converted -- appears in the drop ledger instead
         name = metric.get("unique_name") or metric.get("label") or "Unnamed calculation"
+        if name in dropped_metric_names:
+            # A later stage (DDL emission/deployment) recorded this exact
+            # metric as dropped -- that outcome wins over a stale
+            # sync_enabled=True from the earlier translation stage.
+            continue
         tier = metric.get("complexity_tier") or 1
         categories = metric.get("advisory_categories") or []
         notes_present = bool(metric.get("advisory_notes"))
@@ -347,6 +399,10 @@ def _classify_metrics(sml_metrics: List[Dict[str, Any]]) -> Dict[str, List[Dict[
         if not advisory_msgs and notes_present:
             advisory_msgs = [_ADVISORY_FALLBACK_MESSAGE]
 
+        # Needs Review is checked FIRST, independent of tier: a metric
+        # carrying an advisory_category in REVIEW_REQUIRED_ADVISORY_CATEGORIES
+        # goes there regardless of whether it's tier 1-4 or tier 5 -- the
+        # same signal dry-run's "Needs Attention" chip keys off.
         if set(categories) & REVIEW_REQUIRED_ADVISORY_CATEGORIES:
             needs_review.append({"name": name, "advisory_msgs": advisory_msgs})
         elif tier == 5:
@@ -424,47 +480,59 @@ def _describe_source(project_cfg: str, run: Dict[str, Any]) -> Tuple[str, List[s
     return source_type.title() or "Unknown source", []
 
 
+def _describe_source_for_result(
+    result: Dict[str, Any], project_cfg: str, run: Dict[str, Any]
+) -> Tuple[str, List[str]]:
+    """Same (source kind, [files]) shape as _describe_source(), but scoped to
+    ONE model's own result -- used when rendering a per-model report for a
+    multi-PBIX batch, so its "Source:" line names only that file instead of
+    every file in the batch (see generate_per_model_reports()).
+
+    Falls back to the whole-run description when the result carries no
+    pbix_path of its own (single-model runs, and non-PBIX sources, which
+    don't fan out into multiple files today).
+    """
+    pbix_path = result.get("pbix_path")
+    if pbix_path:
+        return "Local file", [Path(str(pbix_path)).name]
+    return _describe_source(project_cfg, run)
+
+
 # ---------------------------------------------------------------------------
-# Rendering
+# JSON summary data (accordion view) -- ported from demo_version_ref's
+# _gather_run_report_data()/build_run_report_data(), adapted to this
+# codebase's _classify_metrics() (Standard / AI-assisted / Needs Review).
+#
+# Deliberately NOT unified with generate_run_report_markdown()'s own
+# gathering loop below, even though the two compute near-identical data:
+# that function is already relied on by write_run_report()/
+# write_per_model_run_reports() (tested, in production use), and
+# refactoring it to share this loop would risk regressing the Markdown
+# path for a JSON-view feature. Small duplication accepted deliberately.
 # ---------------------------------------------------------------------------
-
-_STATUS_LABELS: Dict[str, Tuple[str, str]] = {
-    "success": ("Completed successfully", "✅"),
-    "warning": ("Completed — a few items need your attention", "⚠️"),
-    "failed": ("Did not complete successfully", "❌"),
-}
-
-
-def _format_duration(duration_ms: Any) -> Optional[str]:
-    try:
-        total_seconds = int(float(duration_ms) / 1000)
-    except (TypeError, ValueError):
-        return None
-    if total_seconds <= 0:
-        return None
-    minutes, seconds = divmod(total_seconds, 60)
-    return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
 
 
 def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
-    """Single source of truth for a run's report data -- computed once here,
-    rendered two ways (generate_run_report_markdown's text, and
-    build_run_report_data's JSON-friendly structure for the frontend's
-    accordion summary view) so the two views can never silently disagree.
+    """Single source of truth for one run's (or one model's, when `run` has
+    already been scoped to a single result -- see generate_per_model_reports()'s
+    scoping trick) report data, structured for build_run_report_data()'s
+    JSON view.
 
     Returns {"crashed": True, "error": str} if the run never reached
-    ExecutionEngine.execute() (no RunSummary at all to report on).
-    Otherwise: {"crashed": False, "target_type": str, "counts": {...},
-    "standard": [...], "ai_assisted": [...], "needs_review": [...],
-    "dropped_by_stage": {stage: [DropRecord dict, ...]},
-    "excluded_by_design_by_stage": {stage: [DropRecord dict, ...]}}.
-
-    Split into two separate groupings, not one list with a per-item
-    "(expected — not an error)" suffix: a by_design=True record (an
-    auto-generated Power BI date table, a calculation group, ...) was
-    never something the user needed included -- mixing it into the same
-    "what went wrong" count/section as a genuine translation/deployment
-    failure reads as more problems than actually exist.
+    ExecutionEngine.execute() (no RunSummary at all to report on) -- OR, with
+    "unavailable": True added, if the run actually completed but its
+    results/summary blob simply isn't available in THIS process's memory
+    right now. The two look identical from run.get("results") alone (both
+    are just "no results"), but they are not the same situation: `results`,
+    `summary`, `logs`, and `stage_states` are deliberately stripped before
+    the compat store is persisted to disk (see project_shared.py's
+    _RUN_BLOB_KEYS/_strip_run_blobs -- kept small/fast on purpose) and are
+    never rebuilt by get_project_runs_compat()'s ORM-fallback branch either,
+    so ANY run reconstructed after a server restart looks exactly like a
+    pre-extraction crash to this function even when it succeeded. A run
+    with a terminal, non-failure status could not have "crashed before
+    reading the source file" -- that combination means the data is simply
+    gone from this process, not that the run failed.
     """
     project_name = str(run.get("project_name") or run.get("project_id") or "Project")
     model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
@@ -476,13 +544,23 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
                     "model": project_name,
                     "summary": top_summary,
                     "dropped_entities": top_summary.get("dropped_entities") or [],
+                    "data_backfill_results": top_summary.get("data_backfill_results") or [],
                 }
             ]
 
     if not model_results:
-        # Crashed before ExecutionEngine.execute() was even reached (bad
-        # config, connection error, ...) -- there is no RunSummary at all,
-        # so there is nothing to report on beyond the header and the error.
+        status = str(run.get("status") or "").lower()
+        if status in ("success", "warning", "partial"):
+            return {
+                "crashed": True,
+                "unavailable": True,
+                "error": (
+                    f"This run completed with status '{status}', but its detailed "
+                    "report data is no longer available in this session (for "
+                    "example, after a server restart). Try the Raw Report tab, or "
+                    "Download Raw .md, if a saved report file still exists."
+                ),
+            }
         return {
             "crashed": True,
             "error": str(run.get("error") or run.get("message") or "Unknown error."),
@@ -495,6 +573,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     needs_review: List[Dict[str, Any]] = []
     dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    data_backfill_results: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -505,12 +584,12 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             d for d in (result.get("dropped_entities") or summary.get("dropped_entities") or [])
             if isinstance(d, dict)
         ]
+        for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
+            if isinstance(backfill_entry, dict):
+                data_backfill_results.append({**backfill_entry, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         if snap_data:
-            # "Found in source" adds back by-design/schema-validation drops
-            # so this reflects what was actually in the source file, not
-            # just what survived into the final converted model.
             extraction_table_drops = sum(
                 1 for d in model_dropped
                 if d.get("stage") == "extraction" and d.get("entity_kind") == "table"
@@ -528,7 +607,11 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             relationship_count += snap_data["relationship_count"] + emission_relationship_drops
             metric_count += len(snap_data["metrics"])
 
-            classified = _classify_metrics(snap_data["metrics"])
+            dropped_metric_names = {
+                d.get("entity_name") for d in model_dropped
+                if d.get("entity_kind") == "metric" and d.get("entity_name")
+            }
+            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
             prefix = f"{model_label}: " if multi_model and model_label else ""
             for entry in classified["standard"]:
                 standard.append({**entry, "name": f"{prefix}{entry['name']}"})
@@ -541,19 +624,6 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             stage = str(record.get("stage") or "unknown")
             target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
             target_group.setdefault(stage, []).append(record)
-
-    # Deduplicate: metrics that were ultimately dropped/rejected (in dropped_by_stage)
-    # should not also appear in converted sections (needs_review, standard, ai_assisted).
-    all_dropped_names = {
-        str(rec.get("entity_name") or rec.get("entity") or "").strip()
-        for records in dropped_by_stage.values()
-        for rec in records
-        if rec.get("entity_name") or rec.get("entity")
-    }
-    if all_dropped_names:
-        needs_review = [e for e in needs_review if e["name"] not in all_dropped_names]
-        standard = [e for e in standard if e["name"] not in all_dropped_names]
-        ai_assisted = [e for e in ai_assisted if e["name"] not in all_dropped_names]
 
     return {
         "crashed": False,
@@ -569,182 +639,27 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "needs_review": needs_review,
         "dropped_by_stage": dropped_by_stage,
         "excluded_by_design_by_stage": excluded_by_design_by_stage,
+        "data_backfill_results": data_backfill_results,
     }
 
 
-def generate_run_report_markdown(run: Dict[str, Any], project_cfg: str) -> str:
-    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
-    run_id = str(run.get("run_id") or run.get("id") or "unknown")
-    status = str(run.get("status") or "failed").lower()
-    status_label, status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
-    source_kind, source_files = _describe_source(project_cfg, run)
-
-    lines: List[str] = [
-        f"# Run Report — {project_name}",
-        "",
-        f"**{status_icon} {status_label}**",
-        "",
-        f"- **Project:** {project_name}",
-        f"- **Source:** {source_kind} — " + ", ".join(source_files or ["(unavailable)"]),
-    ]
-    started, completed = run.get("started_at"), run.get("completed_at")
-    when = f"- **Started:** {started}" if started else ""
-    if completed:
-        when += f"  ·  **Completed:** {completed}"
-    if when:
-        lines.append(when)
-    duration_label = _format_duration(run.get("duration_ms"))
-    if duration_label:
-        lines.append(f"- **Duration:** {duration_label}")
-    lines.append(f"- **Run ID:** `{run_id}`")
-    lines.append("")
-
-    data = _gather_run_report_data(run)
-    if data["crashed"]:
-        lines.append("## What happened")
-        lines.append("")
-        lines.append("This run did not reach the point of reading your source file.")
-        lines.append("")
-        lines.append(f"**Error:** {data['error']}")
-        lines.append("")
-        return "\n".join(lines)
-
-    counts = data["counts"]
-    standard, ai_assisted, needs_review = data["standard"], data["ai_assisted"], data["needs_review"]
-    dropped_by_stage, target_type = data["dropped_by_stage"], data["target_type"]
-    excluded_by_design_by_stage = data["excluded_by_design_by_stage"]
-
-    # --- What we found in your source ------------------------------------
-    lines.append("## What we found in your source")
-    lines.append("")
-    lines.append("| | Count |")
-    lines.append("|---|---:|")
-    lines.append(f"| Tables | {counts['datasets']} |")
-    lines.append(f"| Columns | {counts['columns']} |")
-    lines.append(f"| Calculations | {counts['metrics']} |")
-    if counts["relationships"]:
-        lines.append(f"| Relationships between tables | {counts['relationships']} |")
-    lines.append("")
-
-    # --- What converted successfully --------------------------------------
-    total_converted = len(standard) + len(ai_assisted) + len(needs_review)
-    lines.append("## What converted successfully")
-    lines.append("")
-    lines.append(f"**{total_converted} of {counts['metrics']} calculations converted.**")
-    lines.append("")
-    if standard:
-        lines.append(f"### Standard conversion ({len(standard)})")
-        lines.append("")
-        lines.append("Converted automatically using SemaBridge's built-in conversion rules. No AI involved.")
-        lines.append("")
-        for entry in standard:
-            if entry["advisory_msgs"]:
-                lines.append(f"- **{entry['name']}** — _{entry['advisory_msgs'][0]}_")
-            else:
-                lines.append(f"- {entry['name']}")
-        lines.append("")
-    if ai_assisted:
-        lines.append(f"### AI-assisted conversion ({len(ai_assisted)})")
-        lines.append("")
-        lines.append(
-            "These calculations were too complex for our standard rules, so they "
-            "were interpreted by AI instead. **We recommend verifying these numbers.**"
-        )
-        lines.append("")
-        for entry in ai_assisted:
-            sentence = (
-                "This calculation was interpreted by AI rather than converted "
-                "using a fixed rule — we recommend verifying this number."
-            )
-            confidence = entry.get("confidence")
-            if isinstance(confidence, (int, float)):
-                sentence += (
-                    f" AI's own confidence in this calculation: "
-                    f"{round(confidence * 100)}% (self-reported, not independently verified)."
-                )
-            if entry.get("risky"):
-                sentence += " This calculation also matches a pattern that has caused problems before — please review it closely."
-            for msg in entry.get("advisory_msgs") or []:
-                sentence += f" {msg}"
-            lines.append(f"- **{entry['name']}** — {sentence}")
-        lines.append("")
-    if needs_review:
-        lines.append(f"### Needs review ({len(needs_review)})")
-        lines.append("")
-        lines.append(
-            "These calculations converted, but need a quick human check before "
-            "you rely on the numbers."
-        )
-        lines.append("")
-        for entry in needs_review:
-            sentence = " ".join(entry.get("advisory_msgs") or []) or _ADVISORY_FALLBACK_MESSAGE
-            lines.append(f"- **{entry['name']}** — {sentence}")
-        lines.append("")
-    if not standard and not ai_assisted and not needs_review:
-        lines.append("_Nothing converted successfully in this run._")
-        lines.append("")
-
-    # --- What we couldn't include, and why --------------------------------
-    target_label = target_type.title() if target_type else "the destination"
-    lines.append("## What we couldn't include, and why")
-    lines.append("")
-    if not dropped_by_stage:
-        lines.append("Everything found in your source file was successfully converted and deployed.")
-        lines.append("")
-    else:
-        ordered_stages = _STAGE_ORDER + [s for s in dropped_by_stage if s not in _STAGE_ORDER]
-        for stage in ordered_stages:
-            records = dropped_by_stage.get(stage)
-            if not records:
-                continue
-            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
-            lines.append("")
-            for record in records:
-                name = record.get("entity_name") or "(unnamed)"
-                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
-            lines.append("")
-
-    # --- Excluded by design (not errors) -----------------------------------
-    # Deliberately a separate section, not folded into the one above with a
-    # per-item suffix: these were never things the user needed included
-    # (an auto-generated Power BI date table, a calculation group, ...), so
-    # mixing them into "what went wrong" reads as more problems than
-    # actually exist.
-    if excluded_by_design_by_stage:
-        lines.append("## No action needed")
-        lines.append("")
-        lines.append(
-            "These weren't included on purpose — they're not part of your "
-            "real business data, so there's nothing to review here."
-        )
-        lines.append("")
-        ordered_stages = _STAGE_ORDER + [s for s in excluded_by_design_by_stage if s not in _STAGE_ORDER]
-        for stage in ordered_stages:
-            records = excluded_by_design_by_stage.get(stage)
-            if not records:
-                continue
-            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
-            lines.append("")
-            for record in records:
-                name = record.get("entity_name") or "(unnamed)"
-                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-def build_run_report_data(run: Dict[str, Any], project_cfg: str) -> Dict[str, Any]:
+def build_run_report_data(
+    run: Dict[str, Any],
+    project_cfg: str,
+    source_override: Optional[Tuple[str, List[str]]] = None,
+) -> Dict[str, Any]:
     """JSON-friendly counterpart to generate_run_report_markdown, for the
-    frontend's accordion-style summary view (collapsed: clean counts per
-    category; expanded: full per-item detail) -- built from the exact same
-    _gather_run_report_data() computation the markdown report uses, so the
-    two views can never disagree.
+    frontend's accordion-style summary view (RunReportSummary.jsx):
+    collapsed shows clean counts per category, expanded shows full
+    per-item detail. `source_override` lets a caller scope this to one
+    model's own result (see generate_per_model_reports()'s identical
+    scoping trick for the Markdown path).
     """
     project_name = str(run.get("project_name") or run.get("project_id") or "Project")
     run_id = str(run.get("run_id") or run.get("id") or "unknown")
     status = str(run.get("status") or "failed").lower()
     status_label, _status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
-    source_kind, source_files = _describe_source(project_cfg, run)
+    source_kind, source_files = source_override or _describe_source(project_cfg, run)
 
     header = {
         "run_id": run_id,
@@ -760,7 +675,7 @@ def build_run_report_data(run: Dict[str, Any], project_cfg: str) -> Dict[str, An
 
     data = _gather_run_report_data(run)
     if data["crashed"]:
-        return {**header, "crashed": True, "error": data["error"]}
+        return {**header, "crashed": True, "unavailable": data.get("unavailable", False), "error": data["error"]}
 
     counts = data["counts"]
     standard, ai_assisted, needs_review = data["standard"], data["ai_assisted"], data["needs_review"]
@@ -791,6 +706,11 @@ def build_run_report_data(run: Dict[str, Any], project_cfg: str) -> Dict[str, An
 
     dropped_count = sum(len(records) for records in dropped_by_stage.values())
     excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
+    data_backfill_results = data.get("data_backfill_results") or []
+    backfill_loaded = sum(1 for e in data_backfill_results if e.get("status") == "loaded")
+    backfill_skipped = sum(1 for e in data_backfill_results if e.get("status") == "skipped")
+    backfill_failed = sum(1 for e in data_backfill_results if e.get("status") == "failed")
+    backfill_ambiguous = sum(1 for e in data_backfill_results if e.get("status") == "ambiguous_needs_review")
 
     return {
         **header,
@@ -806,6 +726,10 @@ def build_run_report_data(run: Dict[str, Any], project_cfg: str) -> Dict[str, An
             "needs_review": len(needs_review),
             "dropped": dropped_count,
             "excluded_by_design": excluded_by_design_count,
+            "data_backfill_loaded": backfill_loaded,
+            "data_backfill_skipped": backfill_skipped,
+            "data_backfill_failed": backfill_failed,
+            "data_backfill_ambiguous": backfill_ambiguous,
         },
         "sections": {
             "standard": standard,
@@ -814,7 +738,336 @@ def build_run_report_data(run: Dict[str, Any], project_cfg: str) -> Dict[str, An
             "dropped": _stage_sections(dropped_by_stage),
             "excluded_by_design": _stage_sections(excluded_by_design_by_stage),
         },
+        # Only populated for a run where options.load_source_data was
+        # enabled -- empty list (and all three counts 0 above) for every
+        # other run, matching that feature's off-by-default contract.
+        "data_backfill": data_backfill_results,
     }
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+_STATUS_LABELS: Dict[str, Tuple[str, str]] = {
+    "success": ("Completed successfully", "✅"),
+    "warning": ("Completed — a few items need your attention", "⚠️"),
+    "failed": ("Did not complete successfully", "❌"),
+}
+
+
+def _format_duration(duration_ms: Any) -> Optional[str]:
+    try:
+        total_seconds = int(float(duration_ms) / 1000)
+    except (TypeError, ValueError):
+        return None
+    if total_seconds <= 0:
+        return None
+    minutes, seconds = divmod(total_seconds, 60)
+    return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+
+
+def generate_run_report_markdown(
+    run: Dict[str, Any],
+    project_cfg: str,
+    source_override: Optional[Tuple[str, List[str]]] = None,
+) -> str:
+    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    run_id = str(run.get("run_id") or run.get("id") or "unknown")
+    status = str(run.get("status") or "failed").lower()
+    status_label, status_icon = _STATUS_LABELS.get(status, ("Unknown", "❓"))
+    source_kind, source_files = source_override or _describe_source(project_cfg, run)
+
+    lines: List[str] = [
+        f"# Run Report — {project_name}",
+        "",
+        f"**{status_icon} {status_label}**",
+        "",
+        f"**Source:** {source_kind} — " + ", ".join(source_files or ["(unavailable)"]),
+    ]
+    started, completed = run.get("started_at"), run.get("completed_at")
+    when = f"**Started:** {started}" if started else ""
+    if completed:
+        when += f"  ·  **Completed:** {completed}"
+    duration_label = _format_duration(run.get("duration_ms"))
+    if duration_label:
+        when += f"  ·  **Duration:** {duration_label}" if when else f"**Duration:** {duration_label}"
+    if when:
+        lines.append(when)
+    lines.append(f"**Run ID:** `{run_id}`")
+    lines.append("")
+
+    model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    if not model_results:
+        top_summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+        if top_summary:
+            model_results = [
+                {
+                    "model": project_name,
+                    "summary": top_summary,
+                    "dropped_entities": top_summary.get("dropped_entities") or [],
+                    "data_backfill_results": top_summary.get("data_backfill_results") or [],
+                }
+            ]
+
+    if not model_results:
+        # Crashed before ExecutionEngine.execute() was even reached (bad
+        # config, connection error, ...) -- there is no RunSummary at all,
+        # so there is nothing to report on beyond the header and the error.
+        lines.append("## What happened")
+        lines.append("")
+        lines.append("This run did not reach the point of reading your source file.")
+        lines.append("")
+        lines.append(f"**Error:** {run.get('error') or run.get('message') or 'Unknown error.'}")
+        lines.append("")
+        return "\n".join(lines)
+
+    multi_model = len(model_results) > 1
+    dataset_count = column_count = metric_count = relationship_count = 0
+    standard: List[Dict[str, Any]] = []
+    ai_assisted: List[Dict[str, Any]] = []
+    needs_review: List[Dict[str, Any]] = []
+    dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
+    data_backfill_results: List[Dict[str, Any]] = []
+    target_type = ""
+
+    for result in model_results:
+        model_label = str(result.get("model") or "")
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        target_type = target_type or str(summary.get("target_type") or "")
+        model_dropped = [
+            d for d in (result.get("dropped_entities") or summary.get("dropped_entities") or [])
+            if isinstance(d, dict)
+        ]
+        for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
+            if isinstance(backfill_entry, dict):
+                data_backfill_results.append({**backfill_entry, "model": model_label})
+
+        snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
+        if snap_data:
+            # "Found in source" adds back by-design/schema-validation drops
+            # so this reflects what was actually in the source file, not
+            # just what survived into the final converted model.
+            extraction_table_drops = sum(
+                1 for d in model_dropped
+                if d.get("stage") == "extraction" and d.get("entity_kind") == "table"
+            )
+            schema_column_drops = sum(
+                1 for d in model_dropped
+                if d.get("stage") == "schema_validation" and d.get("entity_kind") == "column"
+            )
+            emission_relationship_drops = sum(
+                1 for d in model_dropped
+                if d.get("stage") == "ddl_emission" and d.get("entity_kind") == "relationship"
+            )
+            dataset_count += snap_data["dataset_count"] + extraction_table_drops
+            column_count += snap_data["column_count"] + schema_column_drops
+            relationship_count += snap_data["relationship_count"] + emission_relationship_drops
+            metric_count += len(snap_data["metrics"])
+
+            dropped_metric_names = {
+                d.get("entity_name") for d in model_dropped
+                if d.get("entity_kind") == "metric" and d.get("entity_name")
+            }
+            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
+            prefix = f"{model_label}: " if multi_model and model_label else ""
+            for entry in classified["standard"]:
+                standard.append({**entry, "name": f"{prefix}{entry['name']}"})
+            for entry in classified["ai_assisted"]:
+                ai_assisted.append({**entry, "name": f"{prefix}{entry['name']}"})
+            for entry in classified["needs_review"]:
+                needs_review.append({**entry, "name": f"{prefix}{entry['name']}"})
+
+        for record in model_dropped:
+            stage = str(record.get("stage") or "unknown")
+            # Excluded on purpose (by_design) is not a problem -- kept in its
+            # own "No action needed" section, same split as the JSON summary.
+            target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
+            target_group.setdefault(stage, []).append(record)
+
+    # --- At a Glance --------------------------------------------------------
+    # One compact block up front covering everything a quick status check
+    # needs -- overall result, source-file counts, and the conversion
+    # breakdown -- so the full detail further down is reachable but not
+    # required reading. Same counts as before, just gathered into one place
+    # instead of two separate headline sections.
+    total_converted = len(standard) + len(ai_assisted) + len(needs_review)
+    not_included_calcs = max(0, metric_count - total_converted)
+    pct = round((total_converted / metric_count) * 100) if metric_count else 0
+
+    lines.append("## At a Glance")
+    lines.append("")
+    lines.append("| | |")
+    lines.append("|---|---:|")
+    lines.append(f"| Tables | {dataset_count} |")
+    lines.append(f"| Columns | {column_count} |")
+    if relationship_count:
+        lines.append(f"| Relationships | {relationship_count} |")
+    lines.append(f"| Calculations | {metric_count} |")
+    lines.append("")
+    lines.append(f"**{total_converted} of {metric_count} calculations converted ({pct}%)**")
+    lines.append("")
+    if metric_count:
+        lines.append("| Outcome | Count |")
+        lines.append("|---|---:|")
+        if standard:
+            lines.append(f"| ✅ Standard conversion | {len(standard)} |")
+        if ai_assisted:
+            lines.append(f"| 🤖 AI-assisted | {len(ai_assisted)} |")
+        if needs_review:
+            lines.append(f"| ⚠️ Needs review | {len(needs_review)} |")
+        if not_included_calcs:
+            lines.append(f"| ❌ Not included | {not_included_calcs} |")
+        lines.append("")
+
+    # --- Converted calculations ----------------------------------------
+    lines.append("## Converted Calculations")
+    lines.append("")
+    if standard:
+        lines.append(f"### Standard conversion ({len(standard)})")
+        lines.append("")
+        lines.append("_Converted automatically — no AI involved._")
+        lines.append("")
+        clean = [e for e in standard if not e["advisory_msgs"]]
+        flagged = [e for e in standard if e["advisory_msgs"]]
+        lines.append("| Note | Calculations |")
+        lines.append("|---|---|")
+        if clean:
+            lines.append(f"| No issues | {_names_cell([e['name'] for e in clean])} |")
+        for note, entries in _group_by_first_seen(flagged, lambda e: e["advisory_msgs"][0]):
+            lines.append(f"| ⚠️ {note} | {_names_cell([e['name'] for e in entries])} |")
+        lines.append("")
+    if ai_assisted:
+        lines.append(f"### AI-assisted conversion ({len(ai_assisted)})")
+        lines.append("")
+        lines.append("_Too complex for standard rules — interpreted by AI. **Recommend verifying these numbers.**_")
+        lines.append("")
+        lines.append("| Calculation | Confidence | Notes |")
+        lines.append("|---|---:|---|")
+        for entry in ai_assisted:
+            confidence = entry.get("confidence")
+            conf_cell = f"{round(confidence * 100)}%" if isinstance(confidence, (int, float)) else "—"
+            note_bits = []
+            if entry.get("risky"):
+                note_bits.append("Matches a pattern that's caused issues before — review closely")
+            note_bits.extend(entry.get("advisory_msgs") or [])
+            lines.append(f"| {entry['name']} | {conf_cell} | {'; '.join(note_bits) or '—'} |")
+        lines.append("")
+    if needs_review:
+        lines.append(f"### Needs review ({len(needs_review)})")
+        lines.append("")
+        lines.append(
+            "These calculations converted, but need a quick human check before "
+            "you rely on the numbers."
+        )
+        lines.append("")
+        for entry in needs_review:
+            sentence = " ".join(entry.get("advisory_msgs") or []) or _ADVISORY_FALLBACK_MESSAGE
+            lines.append(f"- **{entry['name']}** — {sentence}")
+        lines.append("")
+    if not standard and not ai_assisted and not needs_review:
+        lines.append("_Nothing converted successfully in this run._")
+        lines.append("")
+
+    # --- Not included, and why ------------------------------------------
+    lines.append("## Not Included, and Why")
+    lines.append("")
+    if not dropped_by_stage:
+        lines.append("Everything found in your source file was successfully converted and deployed.")
+        lines.append("")
+    else:
+        target_label = target_type.title() if target_type else "the destination"
+        ordered_stages = _STAGE_ORDER + [s for s in dropped_by_stage if s not in _STAGE_ORDER]
+        for stage in ordered_stages:
+            records = dropped_by_stage.get(stage)
+            if not records:
+                continue
+            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
+            lines.append("")
+            lines.append("| Why | Items |")
+            lines.append("|---|---|")
+            # Grouped by (reason, by_design) so the same explanation is
+            # never repeated once per item -- a real report showed the
+            # identical sentence 33 times in a row before this change.
+            for (reason, by_design), recs in _group_by_first_seen(
+                records, lambda r: (humanize_drop_reason(r), bool(r.get("by_design")))
+            ):
+                label = f"{reason} _(expected)_" if by_design else reason
+                names = [r.get("entity_name") or "(unnamed)" for r in recs]
+                lines.append(f"| {label} | {_names_cell(names)} |")
+            lines.append("")
+
+    # --- Excluded on purpose ----------------------------------------------
+    # Things deliberately left out (e.g. auto-generated date tables) --
+    # mixing them into "not included" reads as more problems than exist.
+    if excluded_by_design_by_stage:
+        target_label = target_type.title() if target_type else "the destination"
+        lines.append("## No action needed")
+        lines.append("")
+        lines.append(
+            "These weren't included on purpose — they're not part of your "
+            "real business data, so there's nothing to review here."
+        )
+        lines.append("")
+        ordered_stages = _STAGE_ORDER + [s for s in excluded_by_design_by_stage if s not in _STAGE_ORDER]
+        for stage in ordered_stages:
+            records = excluded_by_design_by_stage.get(stage)
+            if not records:
+                continue
+            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
+            lines.append("")
+            for record in records:
+                name = record.get("entity_name") or "(unnamed)"
+                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
+            lines.append("")
+
+    # --- Data backfill (only present when options.load_source_data was
+    # enabled for this run — omitted entirely otherwise) -------------------
+    if data_backfill_results:
+        lines.append("## Data Backfill")
+        lines.append("")
+        triggers_present = {e.get("trigger") for e in data_backfill_results}
+        if triggers_present == {"first_sync_default"}:
+            lines.append(
+                "Real-data backfill ran automatically for this project's first "
+                "sync (no `options.load_source_data` was configured — every "
+                "later sync goes back to opt-in-only). Per table:"
+            )
+        elif triggers_present == {"explicit"}:
+            lines.append(
+                "This run had real-data backfill explicitly enabled "
+                "(`options.load_source_data: true`). Per table:"
+            )
+        else:
+            lines.append(
+                "This run had real-data backfill enabled. Per table "
+                "(see Trigger for why each one ran):"
+            )
+        lines.append("")
+        lines.append("| Table | Status | Rows | Columns | Trigger | Reason |")
+        lines.append("|---|---|---:|---|---|---|")
+        _TRIGGER_LABELS = {
+            "first_sync_default": "Automatic (first sync)",
+            "explicit": "Explicit config",
+        }
+        for entry in data_backfill_results:
+            table = entry.get("table") or "(unknown table)"
+            status = str(entry.get("status") or "unknown").replace("_", " ").title()
+            row_count = entry.get("row_count", 0)
+            # Present only for the column-level backfill path (a table
+            # that already had real data, but had one or more columns
+            # ALTER-TABLE-ADDed by this same deploy and patched on the
+            # existing rows) -- distinguishes that from a whole-table
+            # fresh load, which always has an empty Columns cell here.
+            columns = entry.get("columns") or []
+            columns_cell = ", ".join(columns) if columns else "—"
+            trigger = _TRIGGER_LABELS.get(entry.get("trigger"), "—")
+            reason = str(entry.get("reason") or "").replace("|", "\\|")
+            lines.append(f"| {table} | {status} | {row_count} | {columns_cell} | {trigger} | {reason} |")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def write_run_report(run: Dict[str, Any], project_cfg: str) -> Optional[str]:
@@ -842,3 +1095,128 @@ def write_run_report(run: Dict[str, Any], project_cfg: str) -> Optional[str]:
             exc_info=True,
         )
         return None
+
+
+def _sanitize_report_filename_part(label: str, fallback: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", str(label or "")).strip("_")
+    return safe or fallback
+
+
+def generate_per_model_reports(run: Dict[str, Any], project_cfg: str) -> List[Dict[str, str]]:
+    """One full Markdown report PER model in a multi-PBIX batch, instead of
+    the single combined report generate_run_report_markdown() produces when
+    given the whole run.
+
+    Reuses generate_run_report_markdown() completely unchanged -- each call
+    just gets a `run` dict narrowed to that one model's own result (so none
+    of the multi-model name-prefixing logic even triggers) and a
+    source description narrowed to that model's own file (see
+    _describe_source_for_result).
+
+    Returns [] for a single-model (or resultless) run -- callers should fall
+    back to the existing combined report in that case, since a "per-model"
+    report is meaningless/redundant when there's only one model.
+    """
+    model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    if len(model_results) <= 1:
+        return []
+
+    reports: List[Dict[str, str]] = []
+    for result in model_results:
+        model_label = str(result.get("model") or "model")
+        scoped_run = dict(run)
+        scoped_run["results"] = [result]
+        source_override = _describe_source_for_result(result, project_cfg, run)
+        markdown = generate_run_report_markdown(scoped_run, project_cfg, source_override=source_override)
+        reports.append({"model": model_label, "markdown": markdown})
+    return reports
+
+
+def _manifest_path(project_id: str, run_id: str) -> Path:
+    return REPORTS_ROOT / project_id / f"{run_id}__manifest.json"
+
+
+def write_per_model_run_reports(run: Dict[str, Any], project_cfg: str) -> List[Dict[str, str]]:
+    """Render and persist one report file PER model for a multi-PBIX batch
+    run, alongside (not instead of) the existing combined report written by
+    write_run_report().
+
+    Also writes a small JSON manifest (run_id__manifest.json) recording
+    {model, path} for each file -- this is NOT persisted anywhere in the ORM
+    (the `runs` table has no report columns at all; report state has only
+    ever lived in the in-memory compat-store run dict, evicted on restart).
+    Without the manifest, a restart would silently make every per-model
+    download button disappear from the UI even though the .md files are
+    still sitting on disk -- see load_persisted_model_reports(), which
+    reads this manifest back to repopulate run["model_reports"] for a run
+    reconstructed from the ORM after the in-memory store is gone.
+
+    Returns [] for a single-model run -- the existing combined report IS the
+    per-model report in that case, so there is nothing extra to write.
+    Never raises, matching write_run_report()'s own error-handling contract.
+    """
+    project_id = str(run.get("project_id") or "")
+    run_id = str(run.get("run_id") or run.get("id") or "")
+    if not project_id or not run_id:
+        return []
+    try:
+        per_model = generate_per_model_reports(run, project_cfg)
+        if not per_model:
+            return []
+        report_dir = REPORTS_ROOT / project_id
+        report_dir.mkdir(parents=True, exist_ok=True)
+        written: List[Dict[str, str]] = []
+        for idx, entry in enumerate(per_model, start=1):
+            safe_label = _sanitize_report_filename_part(entry["model"], f"model{idx}")
+            report_path = report_dir / f"{run_id}__{safe_label}.md"
+            report_path.write_text(entry["markdown"], encoding="utf-8")
+            written.append({"model": entry["model"], "path": str(report_path)})
+
+        import json
+
+        _manifest_path(project_id, run_id).write_text(json.dumps(written), encoding="utf-8")
+        return written
+    except Exception:
+        logger.warning(
+            "Per-model run report generation failed for project=%s run=%s", project_id, run_id,
+            exc_info=True,
+        )
+        return []
+
+
+def load_persisted_model_reports(project_id: str, run_id: str) -> List[Dict[str, str]]:
+    """Disk-based reconstruction of write_per_model_run_reports()'s return
+    value, for a run whose in-memory compat-store record is gone (server
+    restart) -- read by get_project_runs_compat()'s ORM-fallback branch so
+    per-model download buttons keep working after a restart instead of
+    silently vanishing because run["model_reports"] was never repopulated.
+
+    Reads the manifest instead of re-deriving {model, path} pairs from the
+    on-disk filenames, because the filename only carries a lossily-sanitized
+    version of the model label (_sanitize_report_filename_part) -- the
+    manifest is the only place the exact original label survives, and the
+    frontend needs that exact label to request the right file back via
+    get_run_model_report_compat(). Never raises: a missing/corrupt manifest
+    just means no per-model reports are offered, not a request failure --
+    matching every other function in this module's error-handling contract.
+    """
+    import json
+
+    manifest_path = _manifest_path(project_id, run_id)
+    if not manifest_path.exists():
+        return []
+    try:
+        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(entries, list):
+            return []
+        return [
+            {"model": str(e.get("model")), "path": str(e.get("path"))}
+            for e in entries
+            if isinstance(e, dict) and e.get("model") and e.get("path") and Path(str(e["path"])).exists()
+        ]
+    except Exception:
+        logger.debug(
+            "Could not load per-model report manifest for project=%s run=%s",
+            project_id, run_id, exc_info=True,
+        )
+        return []

@@ -5,6 +5,8 @@
  * nothing here assumes a fixed label set beyond a couple of known synonyms.
  */
 
+import { cleanPbixLabel } from './pbixLabel.js';
+
 // Known synonyms for the same conceptual field type across connectors/normalizers.
 const FIELD_TYPE_ALIASES = { metric: 'measure' };
 
@@ -77,6 +79,32 @@ export const CONVERSION_FACET_LABELS = {
 
 export function rowIsCollision(row) {
   return String(row?.status || '').toLowerCase().trim() === 'collision';
+}
+
+/**
+ * Full path to the .pbix file this row was extracted from. null for
+ * single-file dry-runs (today's flow never populates it) and for any row
+ * predating this field. See semabridge/intermediate/models.py's
+ * OSIColumn.source_file / OSIMetric.source_file for where this originates.
+ */
+export function rowSourceFile(row) {
+  const path = row?.source_file;
+  return typeof path === 'string' && path.trim() ? path.trim() : null;
+}
+
+/**
+ * Display-friendly filename for rowSourceFile — what the UI should render;
+ * the full path is often long and machine-specific. Same cleaning as
+ * pbixLabel.cleanPbixLabel (basename, upload hash prefix and .pbix removed).
+ */
+export function rowSourceFileName(row) {
+  const path = rowSourceFile(row);
+  if (!path) return null;
+  return cleanPbixLabel(path).replace(/\.pbix$/i, '') || path;
+}
+
+export function hasSourceFileData(rows) {
+  return rows.some((row) => rowSourceFile(row) !== null);
 }
 
 /**

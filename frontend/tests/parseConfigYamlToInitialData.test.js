@@ -46,3 +46,49 @@ options:
   assert.equal(result.sync_mode, 'upsert');
   assert.equal(result.write_strategy, 'upsert');
 });
+
+test('restores a multi-PBIX project file list (source.models paths) for edit mode', () => {
+  const yamlText = `
+source:
+  type: pbix
+  models:
+    - "C:/up/aa_Sales.pbix"
+    - "C:/up/bb_Cost.pbix"
+targets:
+  - type: snowflake
+`;
+  const result = parseConfigYamlToInitialData(yamlText, { id: 7, source: { type: 'pbix' }, target_type: 'snowflake' });
+  assert.deepEqual(result.pbix_file_paths, ['C:/up/aa_Sales.pbix', 'C:/up/bb_Cost.pbix']);
+  assert.equal(result.pbix_path, '');
+});
+
+test('single-PBIX project restores pbix_path and folder-tag ids, with an empty file list', () => {
+  const yamlText = `
+source:
+  type: pbix
+  pbix_path: "D:/tag/x.pbix"
+  local_folder_id: "3"
+  local_folder_tag: "finance"
+targets:
+  - type: snowflake
+`;
+  const result = parseConfigYamlToInitialData(yamlText, { id: 8, source: { type: 'pbix' }, target_type: 'snowflake' });
+  assert.deepEqual(result.pbix_file_paths, []);
+  assert.equal(result.pbix_path, 'D:/tag/x.pbix');
+  assert.equal(result.local_folder_id, '3');
+  assert.equal(result.local_folder_tag, 'finance');
+});
+
+test('Fabric model names are never treated as PBIX paths', () => {
+  const yamlText = `
+source:
+  type: fabric
+  models:
+    - "Sales"
+targets:
+  - type: snowflake
+`;
+  const result = parseConfigYamlToInitialData(yamlText, { id: 9, source: { type: 'fabric' } });
+  assert.deepEqual(result.pbix_file_paths, []);
+  assert.deepEqual(result.models, ['Sales']);
+});

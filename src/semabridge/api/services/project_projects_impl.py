@@ -355,6 +355,61 @@ def _project_with_semantic_models(project: Dict[str, Any], project_id: str = "")
     enriched["model_count"] = len(semantic_models)
     return enriched
 
+# The single physical schema every project used to land in when nobody made
+# a deliberate choice -- either because the field was left blank, or because
+# the create-project wizard's Snowflake-schema dropdown auto-selects the
+# first schema Snowflake discovery returns (StepConnectorConfig.jsx), which
+# in practice is always this one shared schema. Confirmed root cause of the
+# 2026-09 cross-project physical-table contamination incident: unrelated
+# projects' CTAS/SWAP steps silently destroying each other's columns. See
+# incident_shared_schema_cross_project_contamination in project memory.
+_LEGACY_SHARED_SNOWFLAKE_SCHEMA = "SEMABRIDGE_WORKSPACE"
+
+
+def _default_snowflake_schema_for_project(project_id: str) -> str:
+    """Per-project Snowflake schema name, so unrelated projects never again
+    share physical tables. Deliberately still prefixed with the legacy
+    shared-schema name (not a fresh convention) so existing grants scoped to
+    that prefix keep working without a Snowflake-admin change."""
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", str(project_id or "").upper()).strip("_")
+    if not safe:
+        return _LEGACY_SHARED_SNOWFLAKE_SCHEMA
+    return f"{_LEGACY_SHARED_SNOWFLAKE_SCHEMA}_{safe}"
+
+
+def _apply_default_snowflake_schema(parsed: Dict[str, Any], project_id: str) -> None:
+    """Fill in a per-project Snowflake schema for any target that either
+    left it blank or still carries the legacy shared value -- never a
+    schema the user deliberately typed/selected to something else.
+
+    Called ONLY from create_project_compat's own normalization pass
+    (_normalize_new_project_config_yaml below) -- deliberately NOT from
+    _normalize_project_config_yaml itself, which is also called every time
+    an EXISTING project's config is viewed or saved
+    (get_project_config_compat / save_project_config_compat). Applying this
+    there would silently migrate an already-deployed project's target
+    schema on a no-op view/save, which is exactly the "not now" existing-
+    project migration this fix explicitly defers.
+    """
+    default_schema = _default_snowflake_schema_for_project(project_id)
+
+    def _needs_default(target: Dict[str, Any]) -> bool:
+        current = str(target.get("schema") or "").strip()
+        return not current or current.upper() == _LEGACY_SHARED_SNOWFLAKE_SCHEMA
+
+    target = parsed.get("target")
+    if isinstance(target, dict) and str(target.get("type") or "").strip().lower() == "snowflake":
+        if _needs_default(target):
+            target["schema"] = default_schema
+
+    targets = parsed.get("targets")
+    if isinstance(targets, list):
+        for entry in targets:
+            if isinstance(entry, dict) and str(entry.get("type") or "").strip().lower() == "snowflake":
+                if _needs_default(entry):
+                    entry["schema"] = default_schema
+
+
 def _normalize_project_config_yaml(
     project_id: str,
     yaml_text: str,
@@ -383,6 +438,30 @@ def _normalize_project_config_yaml(
         metadata = parsed.get("project_metadata") if isinstance(parsed.get("project_metadata"), dict) else {}
         metadata["owner_user_id"] = normalized_owner
         parsed["project_metadata"] = metadata
+    return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
+
+
+def _normalize_new_project_config_yaml(
+    project_id: str,
+    yaml_text: str,
+    default_name: str,
+    owner_user_id: str | None = None,
+) -> str:
+    """create_project_compat's own normalization: everything
+    _normalize_project_config_yaml does, plus defaulting a brand-new
+    project's Snowflake schema to a per-project name. Kept separate from
+    _normalize_project_config_yaml -- see _apply_default_snowflake_schema's
+    docstring for why the schema default must never fire on an existing
+    project's config view/save.
+    """
+    normalized = _normalize_project_config_yaml(project_id, yaml_text, default_name, owner_user_id)
+    try:
+        parsed = yaml.safe_load(normalized) or {}
+    except Exception as exc:
+        raise ValidationError(f"Invalid YAML content: {exc}")
+    if not isinstance(parsed, dict):
+        raise ValidationError("Project YAML must be an object mapping")
+    _apply_default_snowflake_schema(parsed, project_id)
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
 
 def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -539,6 +618,13 @@ async def create_project_compat(request: dict):
             existing_project = candidate
             break
 
+    # Only a genuinely brand-new project (no existing_project_id match) gets
+    # the new per-project Snowflake schema default -- reusing an existing
+    # project's identity here must behave like every other edit to that
+    # project, never silently move its already-deployed target schema.
+    is_brand_new_project = existing_project_id is None
+    normalize_config_yaml = _normalize_new_project_config_yaml if is_brand_new_project else _normalize_project_config_yaml
+
     if existing_project_id:
         project_id = existing_project_id
         project = dict(existing_project or {})
@@ -558,7 +644,7 @@ async def create_project_compat(request: dict):
 
     config_yaml = payload.get("config_yaml")
     if isinstance(config_yaml, str) and config_yaml.strip():
-        normalized_yaml = _normalize_project_config_yaml(
+        normalized_yaml = normalize_config_yaml(
             project_id,
             config_yaml,
             project.get("name") or project_id,
@@ -574,7 +660,7 @@ async def create_project_compat(request: dict):
         project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
         repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
-        normalized_yaml = _normalize_project_config_yaml(
+        normalized_yaml = normalize_config_yaml(
             project_id,
             selected_yaml,
             project.get("name") or project_id,

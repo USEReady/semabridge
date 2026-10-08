@@ -52,6 +52,7 @@ def _normalize_identifier_for_match(value: str) -> str:
     """Normalize identifiers so mapping overrides survive space/underscore/case differences."""
     return re.sub(r"_+", "_", re.sub(r"[^A-Z0-9]+", "_", str(value or "").upper())).strip("_")
 
+
 def _apply_mapping_overrides_from_config(
     sml_model: SMLModel,
     config_path: Path,
@@ -231,7 +232,22 @@ def _step1_load_config(
 
     try:
         # Load settings (from .env by default)
-        config = get_settings()
+        #
+        # get_settings() is @lru_cache()'d -- a genuine process-wide
+        # singleton, not a per-run object. Every mutation below
+        # (object.__setattr__ on source/target/options) used to land
+        # directly on that shared instance, so concurrent jobs (multi-file
+        # PBIX dispatch runs up to DEFAULT_MAX_PARALLEL_MODELS=10 of these
+        # in a ThreadPoolExecutor -- see sync_execution_service.py) could
+        # race: one job's Step 1 rebinding config.source to its own file
+        # while a sibling job's later step (e.g. deployment/snowflake.py's
+        # data-backfill source_pbix_path resolution, or extraction/pbix.py
+        # writing its own resolved pbix_path back onto config.source) still
+        # expected to read back what IT wrote. model_copy() gives this run
+        # its own private Settings instance before any of that mutation
+        # happens, mirroring the same isolation engine.py's account_id
+        # credential injection already does for exactly this reason.
+        config = get_settings().model_copy()
 
         # Merge in-memory config or file config
         raw_config = config_dict or {}
@@ -285,6 +301,18 @@ def _step1_load_config(
             # rather than collapsing into the same project name.
             pass
 
+            # Project-level `options:` block -- previously write-only (every
+            # project-save path serializes it, e.g. core_config_impl.py,
+            # project_shared.py, mappings_controller.py, but nothing here
+            # ever read it back). Parsed the same way as source_cfg/target_cfg
+            # above so options.load_source_data (opt-in data-backfill, see
+            # connectors/schema_manager.py) is reachable as
+            # context.config.options.load_source_data. Absent/non-dict
+            # options -> an empty SimpleNamespace, so every getattr(...,
+            # False) call site downstream defaults safely off.
+            options_cfg = raw_config.get("options") if isinstance(raw_config.get("options"), dict) else {}
+            object.__setattr__(config, "options", SimpleNamespace(**options_cfg))
+
         # Validate connector types
         if source not in self.SUPPORTED_SOURCES:
             raise ConfigValidationError(
@@ -316,6 +344,7 @@ def _step2_init_identifiers(
     config_path: Optional[Path] = None,
     sync_mode: str = "copy",
     config_dict: Optional[Dict[str, Any]] = None,
+    resolved_display_name: Optional[str] = None,
 ) -> RunContext:
     """
     Step 2: Initialize identifiers.
@@ -399,7 +428,14 @@ def _step2_init_identifiers(
         target_type=target,
         behavior=behavior,
         sync_mode=sync_mode,
-        semantic_view_name_override=getattr(config, "_semantic_view_name_override", None),
+        # A batch-resolved display name (sync_execution_service) doubles as
+        # the view-name override for Fabric jobs; PBIX jobs consume it via
+        # resolved_pbix_display_name instead (conversion/pbix.py).
+        semantic_view_name_override=(
+            getattr(config, "_semantic_view_name_override", None)
+            or (resolved_display_name if source == "fabric" else None)
+        ),
+        resolved_pbix_display_name=resolved_display_name,
     )
 
     # Register the project + run row in the DB immediately.

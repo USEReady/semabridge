@@ -10,11 +10,13 @@ candidate from every adapter — no call site can opt out.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.null_sentinel import is_null_cast_sql
+from semabridge.connectors.type_safety_validator import detect_nested_aggregate
 from semabridge.dax_translation.types import TranslationRequest, TranslationResult
+from semabridge.dax_translation.tier5.cache import Tier5TranslationCache
 from semabridge.dax_translation.tier5.config import Tier5Config, ProviderSettings
 from semabridge.dax_translation.tier5.prompt import (
     build_prompt,
@@ -82,6 +84,44 @@ def _truncate_for_log(text: Optional[str], limit: int = 4000) -> str:
     return text[:limit] + f"... [truncated, {len(text)} chars total]"
 
 
+def _repair_and_validate(sql: Optional[str], request: TranslationRequest) -> Tuple[Optional[str], Optional[str]]:
+    """The full repair + validation pipeline every Tier-5 candidate must
+    pass before being trusted -- whether it just arrived from a live
+    provider response (translate() / _validate_one_batch_candidate) or is
+    being re-checked out of Tier5TranslationCache (_try_cache).
+
+    Centralizing this in one place means a validation rule added or
+    tightened later -- like detect_nested_aggregate, added after a real
+    010218 "nested aggregate" incident on a rolling-window metric -- is
+    automatically applied to a cached entry on its next read, not just to
+    fresh candidates. A cache entry written before this check existed, or
+    under a since-loosened rule, is never blindly trusted: it simply fails
+    here like any other invalid candidate and the caller treats it as a
+    miss.
+
+    Returns (normalized_sql, None) on success, or (None, reason) on the
+    first failing check -- reason is a short string for logging/
+    validation_notes only, never used for any decision itself.
+    """
+    if not sql:
+        return None, "no SQL in candidate"
+    repaired = fix_common_llm_issues(sql, request.dax)
+    if is_null_cast_sql(repaired):
+        return None, "returned a NULL-cast placeholder (declined to translate)"
+    if _dax_divide_lost_its_division(request.dax, repaired):
+        return None, "DIVIDE() in DAX but no '/' in SQL"
+    if not _is_scalar_metric_sql(repaired, dialect=request.dialect):
+        return None, "response is not a safe scalar metric SQL shape"
+    nested_aggregate_reason = detect_nested_aggregate(repaired)
+    if nested_aggregate_reason:
+        return None, nested_aggregate_reason
+    normalized = normalize_metric_column_references(repaired, request)
+    ok, err = validate_metric_column_references(normalized, request)
+    if not ok:
+        return None, err
+    return normalized, None
+
+
 def _build_adapters(config: Tier5Config) -> Dict[str, ProviderAdapter]:
     adapters: Dict[str, ProviderAdapter] = {}
     for name, settings in config.providers.items():
@@ -94,7 +134,7 @@ def _build_adapters(config: Tier5Config) -> Dict[str, ProviderAdapter]:
 
 
 class Tier5Service:
-    def __init__(self, config: Optional[Tier5Config] = None) -> None:
+    def __init__(self, config: Optional[Tier5Config] = None, cache: Optional[Tier5TranslationCache] = None) -> None:
         # Tier5Config.resolve() (not .default()) so Settings-page-
         # configured provider keys/models take effect. This read happens
         # exactly once here, at construction — see resolve()'s docstring
@@ -110,8 +150,42 @@ class Tier5Service:
         # run, this cache is exactly "for the rest of the current run" and
         # naturally clears once credentials are fixed and a new run starts.
         self._unavailable_providers: Set[str] = set()
+        # Defaults to a fresh, in-memory-only, per-instance cache (no disk
+        # I/O) -- exactly the same "no cache" behavior every existing
+        # Tier5Service() construction/test already assumes, and fully
+        # isolated between instances. Real call sites that want the
+        # cache's actual point -- reuse across separate sync runs --
+        # explicitly pass Tier5TranslationCache.default_persistent_cache().
+        self._cache = cache if cache is not None else Tier5TranslationCache()
+
+    def _try_cache(self, request: TranslationRequest) -> Optional[TranslationResult]:
+        entry = self._cache.get(request)
+        if entry is None:
+            return None
+        normalized, _failure_reason = _repair_and_validate(entry.get("sql"), request)
+        if normalized is None:
+            # Cached entry no longer passes validation -- e.g. a rule
+            # (like detect_nested_aggregate) was added or tightened after
+            # this entry was written. Never trust it blindly: treat this
+            # exactly like a cache miss and let the caller fall through to
+            # a live LLM call, which will overwrite the stale entry if it
+            # succeeds.
+            return None
+        return TranslationResult(
+            sql=normalized,
+            tier=5,
+            original_dax=request.dax,
+            provider=entry.get("provider"),
+            translation_provider_confidence=entry.get("translation_provider_confidence", 1.0) or 1.0,
+            validation_notes=["served from Tier5TranslationCache (previously validated)"],
+            llm_self_reported_confidence=entry.get("llm_self_reported_confidence"),
+        )
 
     def translate(self, request: TranslationRequest) -> Optional[TranslationResult]:
+        cached_result = self._try_cache(request)
+        if cached_result is not None:
+            return cached_result
+
         prompt = build_prompt(request)
         system_message = build_system_message(request.dialect)
         validation_notes: List[str] = []
@@ -159,30 +233,12 @@ class Tier5Service:
                 validation_notes.append(f"{provider_name}: no SQL found in structured response — rejected")
                 continue
 
-            repaired = fix_common_llm_issues(parsed_sql, request.dax)
-
-            if is_null_cast_sql(repaired):
-                validation_notes.append(
-                    f"{provider_name}: returned a NULL-cast placeholder (declined to translate) — rejected"
-                )
+            normalized, failure_reason = _repair_and_validate(parsed_sql, request)
+            if normalized is None:
+                validation_notes.append(f"{provider_name}: {failure_reason} — rejected")
                 continue
 
-            if _dax_divide_lost_its_division(request.dax, repaired):
-                validation_notes.append(f"{provider_name}: DIVIDE() in DAX but no '/' in SQL — rejected")
-                continue
-
-            if not _is_scalar_metric_sql(repaired, dialect=request.dialect):
-                validation_notes.append(f"{provider_name}: response is not a safe scalar metric SQL shape — rejected")
-                continue
-
-            normalized = normalize_metric_column_references(repaired, request)
-
-            ok, err = validate_metric_column_references(normalized, request)
-            if not ok:
-                validation_notes.append(f"{provider_name}: {err}")
-                continue
-
-            return TranslationResult(
+            result = TranslationResult(
                 sql=normalized,
                 tier=5,
                 original_dax=request.dax,
@@ -191,6 +247,8 @@ class Tier5Service:
                 validation_notes=validation_notes,
                 llm_self_reported_confidence=llm_self_reported_confidence,
             )
+            self._cache.put(request, result)
+            return result
 
         return None
 
@@ -214,15 +272,36 @@ class Tier5Service:
         Never raises and never silently drops an entry: len(result) ==
         len(requests) always, so the caller can tell exactly which metrics
         still need a per-metric translate() retry or should be given up on.
+
+        Every request is checked against the cache FIRST, individually —
+        a metric whose exact (DAX, dialect, schema) shape was already
+        validated in a past run never needs a live LLM call at all, batched
+        or not. Only the requests that miss the cache go through the
+        provider-call chunking below.
         """
         if not requests:
             return []
 
-        max_batch_size = max(1, int(getattr(self.config, "max_batch_size", 20) or 20))
-        results: List[Optional[TranslationResult]] = []
-        for start in range(0, len(requests), max_batch_size):
-            chunk = requests[start:start + max_batch_size]
-            results.extend(self._translate_one_batch_chunk(chunk))
+        results: List[Optional[TranslationResult]] = [None] * len(requests)
+        uncached_indices: List[int] = []
+        uncached_requests: List[TranslationRequest] = []
+        for i, request in enumerate(requests):
+            cached_result = self._try_cache(request)
+            if cached_result is not None:
+                results[i] = cached_result
+            else:
+                uncached_indices.append(i)
+                uncached_requests.append(request)
+
+        if uncached_requests:
+            max_batch_size = max(1, int(getattr(self.config, "max_batch_size", 20) or 20))
+            for start in range(0, len(uncached_requests), max_batch_size):
+                chunk = uncached_requests[start:start + max_batch_size]
+                chunk_indices = uncached_indices[start:start + max_batch_size]
+                chunk_results = self._translate_one_batch_chunk(chunk)
+                for idx, chunk_result in zip(chunk_indices, chunk_results):
+                    results[idx] = chunk_result
+
         return results
 
     def _translate_one_batch_chunk(
@@ -302,12 +381,16 @@ class Tier5Service:
                     _truncate_for_log(raw.text),
                 )
 
-            return [
+            candidates = [
                 self._validate_one_batch_candidate(
                     req, parsed.get(batch_key(i)), provider_name, raw.confidence
                 )
                 for i, req in enumerate(requests)
             ]
+            for req, candidate in zip(requests, candidates):
+                if candidate is not None:
+                    self._cache.put(req, candidate)
+            return candidates
 
         return [None] * len(requests)
 
@@ -339,17 +422,8 @@ class Tier5Service:
         if not sql:
             return None
 
-        repaired = fix_common_llm_issues(sql, request.dax)
-        if is_null_cast_sql(repaired):
-            return None
-        if _dax_divide_lost_its_division(request.dax, repaired):
-            return None
-        if not _is_scalar_metric_sql(repaired, dialect=request.dialect):
-            return None
-
-        normalized = normalize_metric_column_references(repaired, request)
-        ok, _err = validate_metric_column_references(normalized, request)
-        if not ok:
+        normalized, _failure_reason = _repair_and_validate(sql, request)
+        if normalized is None:
             return None
 
         return TranslationResult(

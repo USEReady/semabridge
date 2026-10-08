@@ -127,7 +127,8 @@ def test_b_prepass_a_refresh_fails_drops_view_and_uses_base_table():
     mock_cursor.fetchone.return_value = ("2026-01-01",)
 
     res = emitter._create_enriched_view(model, mock_cursor, fact_table="FactBeta")
-    assert res.startswith("FACTBETA_") and res.endswith("_ENRICHED")
+    # Single-mode (no per-model prefix) enriched view name: <FACT>_ENRICHED, no hash (D1).
+    assert res.upper() == "FACTBETA_ENRICHED"
     emitter._enriched_view_mapping["FactBeta"] = res
 
     # Now Pre-pass A fails during refresh
@@ -168,7 +169,8 @@ def test_c_enrichment_succeeds_uses_enriched_view():
     mock_cursor.fetchone.return_value = ("2026-01-01",)
 
     res = emitter._create_enriched_view(model, mock_cursor, fact_table="FactGamma")
-    assert res.startswith("FACTGAMMA_") and res.endswith("_ENRICHED")
+    # Single-mode (no per-model prefix) enriched view name: <FACT>_ENRICHED, no hash (D1).
+    assert res.upper() == "FACTGAMMA_ENRICHED"
     emitter._enriched_view_mapping["FactGamma"] = res
 
     tbuilder = TablesClauseBuilder(
@@ -217,7 +219,7 @@ def test_d_two_fact_tables_independent_enrichment_outcomes():
     res_succ = emitter._create_enriched_view(combined_model, mock_cursor, fact_table="FactSucc")
     res_fail = emitter._create_enriched_view(combined_model, mock_cursor, fact_table="FactFail")
 
-    assert res_succ.startswith("FACTSUCC_") and res_succ.endswith("_ENRICHED")
+    assert res_succ.upper() == "FACTSUCC_ENRICHED"
     assert res_fail is None
     emitter._enriched_view_mapping["FactSucc"] = res_succ
 

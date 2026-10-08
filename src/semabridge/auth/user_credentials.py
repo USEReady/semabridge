@@ -18,8 +18,9 @@ Usage::
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -151,6 +152,56 @@ def inject_user_credentials(
     return injected
 
 
+class _EnvScopeGate:
+    """Process-wide gate for os.environ-mutating credential scopes.
+
+    os.environ is process-global, so two concurrent scoped_user_env()
+    sections that inject DIFFERENT values (two users' API keys) would see
+    each other's credentials. The gate admits any number of concurrent
+    holders whose injected env is identical (e.g. parallel runs of the same
+    user -- no contention), and makes a holder with a different env wait
+    until every other holder has left and the env has been restored. While
+    a holder is inside, the env it injected is therefore stable for the
+    whole section, so every read the engine makes during the run sees this
+    run's own snapshot.
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._signature: Optional[Tuple[Tuple[str, str], ...]] = None
+        self._holders = 0
+        self._saved: Dict[str, Optional[str]] = {}
+
+    def acquire(self, env_values: Dict[str, str]) -> None:
+        signature = tuple(sorted(env_values.items()))
+        with self._cond:
+            while self._holders and self._signature != signature:
+                self._cond.wait()
+            if self._holders == 0:
+                self._signature = signature
+                self._saved = {var: os.environ.get(var) for var in env_values}
+                for var, value in env_values.items():
+                    os.environ[var] = value
+            self._holders += 1
+
+    def release(self) -> None:
+        with self._cond:
+            self._holders -= 1
+            if self._holders == 0:
+                for var, original in self._saved.items():
+                    if original is None:
+                        os.environ.pop(var, None)
+                    else:
+                        os.environ[var] = original
+                self._saved = {}
+                self._signature = None
+                self._cond.notify_all()
+
+
+_ENV_SCOPE_GATE = _EnvScopeGate()
+_scope_depth = threading.local()
+
+
 @contextmanager
 def scoped_user_env(
     user_id: int,
@@ -159,9 +210,12 @@ def scoped_user_env(
 ) -> Generator[Dict[str, str], None, None]:
     """Context manager that injects user credentials and restores env on exit.
 
-    This avoids env-var bleed between concurrent requests in a
-    multi-user server. The original values are restored when the
-    context exits.
+    Concurrency-safe: sections for different users (different injected
+    values) are serialized through a process-wide gate (see _EnvScopeGate),
+    so a run never sees another user's credentials, and the env stays fixed
+    for the whole section. Sections injecting identical values run
+    concurrently. Re-entrant within one thread (a nested scope reuses the
+    outer one's gate slot and only overlays/restores its own keys).
 
     Usage::
 
@@ -179,21 +233,37 @@ def scoped_user_env(
     """
     credentials = get_user_credentials(user_id, service, db)
     env_map = _ENV_MAP.get(service.lower(), {})
-
-    # Save originals
-    saved: Dict[str, Optional[str]] = {}
+    env_values: Dict[str, str] = {}
     for key, value in credentials.items():
         env_var = env_map.get(key)
         if env_var and value:
-            saved[env_var] = os.environ.get(env_var)
-            os.environ[env_var] = value
+            env_values[env_var] = value
+    depth = getattr(_scope_depth, "value", 0)
+    if depth:
+        # Nested scope on a thread that already holds the gate: overlay and
+        # restore only this scope's own keys.
+        saved = {var: os.environ.get(var) for var in env_values}
+        for var, value in env_values.items():
+            os.environ[var] = value
+        _scope_depth.value = depth + 1
+        try:
+            yield credentials
+        finally:
+            _scope_depth.value = depth
+            for var, original in saved.items():
+                if original is None:
+                    os.environ.pop(var, None)
+                else:
+                    os.environ[var] = original
+        return
 
+    # The signature is exactly the injected values: a user with no stored
+    # credentials (empty signature) still never overlaps a user whose keys
+    # are injected, and keeps the process defaults as before.
+    _ENV_SCOPE_GATE.acquire(env_values)
+    _scope_depth.value = 1
     try:
         yield credentials
     finally:
-        # Restore originals
-        for env_var, original in saved.items():
-            if original is None:
-                os.environ.pop(env_var, None)
-            else:
-                os.environ[env_var] = original
+        _scope_depth.value = 0
+        _ENV_SCOPE_GATE.release()

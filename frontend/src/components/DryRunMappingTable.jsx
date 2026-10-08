@@ -25,6 +25,8 @@ import {
   rowIsCollision,
   rowNeedsAttention,
   buildFilterOptions,
+  rowSourceFile,
+  rowSourceFileName,
 } from '../utils/mappingFilterUtils';
 import { getStaticRiskBadge, getSelfReportedEstimateText, getEnrichmentUnverifiableCaveat } from '../utils/riskLabels';
 
@@ -195,6 +197,29 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
               textOverflow: 'ellipsis',
             }}>
               {row.source_table_name}
+            </span>
+          )}
+          {rowSourceFileName(row) && (
+            // Only renders for rows that carry a source_file (multi-model
+            // dry runs); single-model rows never set it, so this is
+            // invisible there by construction.
+            <span
+              title={rowSourceFile(row)}
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '2px 6px',
+                borderRadius: 4,
+                background: 'rgba(168, 85, 247, 0.12)',
+                color: '#c4b5fd',
+                border: '1px solid rgba(168, 85, 247, 0.35)',
+                whiteSpace: 'nowrap',
+                maxWidth: 120,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {rowSourceFileName(row)}
             </span>
           )}
         </div>
@@ -1056,6 +1081,22 @@ export default function DryRunMappingTable({
   droppedEntities = [],       // DropRecord[] — entities excluded from deployed DDL (see DropLedger)
   unresolvedReportFieldReferences = [], // [{field, field_type, table, occurrences}] — report queries a name absent from the current schema (see LocalPBIXConnector._detect_unresolved_field_references); table-scoped only, never auto-attached to a specific column
 }) {
+  // ── Dev-only guardrail: catch un-normalized rows reaching this component ────
+  // A raw /dry-run API row has `source_name`/`target_name` keys; a normalized
+  // row (utils/normalizeRows.js) renames them to source_field/target_field.
+  // Seeing the raw shape means a caller skipped normalizeRows() and every row
+  // would silently render placeholders. Dev builds only.
+  if (import.meta.env?.DEV && mappings.length > 0) {
+    const rawShaped = mappings.find((row) => row && ('source_name' in row || 'target_name' in row) && !('source_field' in row));
+    if (rawShaped) {
+      console.error(
+        '[DryRunMappingTable] Received un-normalized row(s) -- pass `mappings` through ' +
+        'utils/normalizeRows.js before rendering this component. Offending row:',
+        rawShaped,
+      );
+    }
+  }
+
   // ── Tier 1 (field type, single-select) / Tier 2 (status, multi-select) ──────
   const [activeFieldType, setActiveFieldType] = useState('all');
   const [activeStatuses, setActiveStatuses] = useState(() => new Set());

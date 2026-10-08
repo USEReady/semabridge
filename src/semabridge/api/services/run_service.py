@@ -4,8 +4,10 @@ Provides run creation, background execution, run-now, get-runs, run-conflicts,
 manual deploy, project lineage, and clear-job-runs.
 """
 import json
-from pathlib import Path
+import os
+import threading
 import time as _time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -30,6 +32,30 @@ from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 # Backward-compatible alias
 _compat_normalize_sync_mode = normalize_sync_mode
+
+# Single shared cap on concurrent project syncs, regardless of what
+# triggered them -- APScheduler's cron/time schedules (scheduler_service.py),
+# the Jobs page's "Run Scheduled Jobs" trigger-all (schedule_service.py's
+# trigger_job_compat), and a single project's own "Run Now"/deploy
+# (run_project_now_compat below) all converge on _perform_project_run, which
+# is the one place this is enforced. Previously scheduler_service.py held
+# its own separate asyncio.Semaphore that only covered its own dispatch
+# path -- trigger_job_compat's "run every scheduled project" fan-out went
+# through a completely different code path with no cap at all, which is how
+# a single "Run Now" click produced 310+ concurrent project runs (see
+# incident_run_now_fires_every_project in project memory). One shared gate
+# here means every dispatch path is protected the same way, with no risk of
+# the two drifting apart again.
+#
+# threading.Semaphore, not asyncio.Semaphore: _perform_project_run always
+# executes inside its own dedicated thread with its own fresh event loop
+# (see _run_project_background's _run_loop, and scheduler_service.py's
+# _run_callback_in_thread) -- never on the main asyncio loop. An
+# asyncio.Semaphore is only safe to acquire/release from the single event
+# loop it was touched on; a plain threading.Semaphore works correctly
+# regardless of which thread calls it, which is what's actually needed here.
+_MAX_CONCURRENT_RUNS = max(1, int(os.getenv("SEMABRIDGE_MAX_CONCURRENT_RUNS", "2")))
+_RUN_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_RUNS)
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +332,128 @@ def _create_project_run(
     return run, project_cfg, started
 
 
+def _reconciliation_payload(recon: Any) -> Dict[str, Any]:
+    """The reconciliation shape stored on run["summary"] and each result."""
+    return {
+        "is_clean": recon.is_clean(),
+        "unaccounted": recon.unaccounted,
+        "deployed_live_count": len(recon.deployed_live_metrics),
+        "deployed_dead_count": len(recon.deployed_dead_metrics),
+        "ddl_error": recon.ddl_error,
+    }
+
+
+def _unaccounted_drop_entries(recon: Any) -> List[Dict[str, Any]]:
+    """Dropped-field entries for metrics reconciliation found unaccounted for.
+
+    A metric that is an auto-generated branch of a parent metric the drop
+    ledger already recorded inherits that parent's drop reason; anything else
+    is reported as a possible silent loss during deployment."""
+    from semabridge.core.reconciliation import _strip_branch_suffix
+
+    dropped_reason_map = {
+        str(r.get("entity_name") or "").upper(): str(r.get("reason") or "")
+        for r in (recon.drop_records or [])
+        if r.get("entity_name")
+    }
+    entries: List[Dict[str, Any]] = []
+    for base, count in recon.unaccounted.items():
+        parent_base = _strip_branch_suffix(base)
+        parent_reason = dropped_reason_map.get(parent_base)
+        if parent_reason:
+            reason = f"Auto-generated branch of '{parent_base}', which was dropped during deployment: {parent_reason}"
+        else:
+            reason = (
+                "This metric normalizes to a name present in the Stage 6 "
+                "snapshot but absent from both the deployed semantic "
+                "view's DDL and the drop ledger — possible silent loss "
+                "during deployment."
+            )
+        entries.append({
+            "entity_kind": "metric",
+            "entity_name": base,
+            "dataset": None,
+            "stage": "reconciliation",
+            "reason": reason,
+            "detail": f"{count} snapshot occurrence(s) unaccounted for.",
+            "by_design": False,
+        })
+    return entries
+
+
+def _reconcile_model_result(project_id: str, result_entry: Dict[str, Any], logger: Any) -> None:
+    """Post-deploy reconciliation for ONE model of a multi-model run.
+
+    Mirrors core.reconciliation.reconcile_run(), but scoped to this result's
+    own snapshot, drop records and deployed view (reconcile_run reads the
+    run-level summary, which in a batch is only the last model's). Best
+    effort and non-fatal: any failure is logged and recorded as
+    result["reconciliation"]["ddl_error"] instead of raised.
+    """
+    summary = result_entry.get("summary") if isinstance(result_entry.get("summary"), dict) else {}
+    if str(result_entry.get("status") or "").lower() != "success":
+        return
+    if str(summary.get("target_type") or "").lower() != "snowflake" or not summary.get("sml_snapshot_id"):
+        return
+    try:
+        from semabridge.core.reconciliation import _fetch_live_deployed_ddl, compute_reconciliation
+        from semabridge.repository.model_repository import ModelRepository
+        from semabridge.sml.serializer import SMLSerializer
+        from semabridge.utils.name_translator import get_target_deployment_name
+
+        snapshot_id = summary.get("sml_snapshot_id")
+        snapshot = ModelRepository().get_snapshot(snapshot_id)
+        if not snapshot or not snapshot.sml_blob:
+            raise ValueError(f"Snapshot {snapshot_id!r} has no sml_blob - nothing to reconcile.")
+        sml_blob = snapshot.sml_blob
+        raw_metric_names = [m.get("unique_name") for m in (sml_blob.get("metrics") or []) if m.get("unique_name")]
+
+        view_name = result_entry.get("view_name")
+        if not view_name:
+            sml_model = SMLSerializer._dict_to_model(sml_blob)
+            view_name = get_target_deployment_name(sml_model.unique_name or sml_model.label or "model", "snowflake")
+
+        drop_records = [
+            r for r in (summary.get("dropped_entities") or [])
+            if isinstance(r, dict) and r.get("entity_kind") == "metric"
+        ]
+        ddl_error: Optional[str] = None
+        ddl_text = ""
+        try:
+            ddl_text = _fetch_live_deployed_ddl(project_id, view_name)
+        except Exception as exc:  # noqa: BLE001 - mirrors reconcile_run
+            ddl_error = str(exc)
+
+        recon = compute_reconciliation(
+            run_id=str(result_entry.get("run_id") or summary.get("run_id") or ""),
+            project_id=project_id,
+            snapshot_id=snapshot_id,
+            snapshot_metric_names=raw_metric_names,
+            deployed_ddl_text=ddl_text,
+            drop_records=drop_records,
+            ddl_error=ddl_error,
+        )
+    except Exception as recon_exc:  # noqa: BLE001
+        logger.warning(
+            "[%s] Post-deploy reconciliation skipped for model '%s' (non-fatal): %s",
+            project_id, result_entry.get("model"), recon_exc,
+        )
+        return
+
+    payload = _reconciliation_payload(recon)
+    result_entry["reconciliation"] = payload
+    summary["reconciliation"] = payload
+    if recon.is_clean():
+        return
+    unaccounted_entries = _unaccounted_drop_entries(recon)
+    result_dropped = result_entry.setdefault("dropped_entities", [])
+    result_dropped.extend(unaccounted_entries)
+    summary_dropped = summary.setdefault("dropped_entities", [])
+    # _run_single_job may hand both keys the very same list object.
+    if summary_dropped is not result_dropped:
+        summary_dropped.extend(unaccounted_entries)
+
+
 async def _perform_project_run(run: dict, project_cfg: str, started: float) -> dict:
     import logging
     logger = logging.getLogger(__name__)
@@ -335,7 +483,22 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             sync_mode = "copy"
         sync_payload["sync_mode"] = sync_mode
         sync_payload["force"] = bool(run.get("force", False))
-        sync_result = await sync_models(sync_payload)
+
+        # See _RUN_SEMAPHORE's module-level comment: the single shared cap
+        # on concurrent project syncs across every dispatch path. A queued
+        # run still fires once a slot frees up -- this only delays when the
+        # sync starts, never drops it.
+        if not _RUN_SEMAPHORE.acquire(blocking=False):
+            logger.info(
+                "Run for project %s is queued (%d concurrent sync(s) already in progress, "
+                "cap=%d) -- will start as soon as a slot frees up",
+                project_id, _MAX_CONCURRENT_RUNS, _MAX_CONCURRENT_RUNS,
+            )
+            _RUN_SEMAPHORE.acquire()
+        try:
+            sync_result = await sync_models(sync_payload)
+        finally:
+            _RUN_SEMAPHORE.release()
         run["duration_ms"] = elapsed_ms(started)
         run["completed_at"] = _compat_now_iso()
         run["status"] = resolve_run_status(sync_result or {})
@@ -344,8 +507,14 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         # already ANDs the project's opt-in with the server-wide
         # SEMABRIDGE_DEMO_MODE env var) — never re-derived independently
         # here, so there is exactly one source of truth for whether display
-        # masking applies to this run.
-        run["demo_mode"] = bool(((sync_result or {}).get("summary") or {}).get("demo_mode"))
+        # masking applies to this run. A multi-model run's top-level summary
+        # is only the LAST model's, so every model's own summary is checked.
+        _sync_payload = sync_result or {}
+        run["demo_mode"] = bool((_sync_payload.get("summary") or {}).get("demo_mode")) or any(
+            bool(((entry or {}).get("summary") or {}).get("demo_mode"))
+            for entry in (_sync_payload.get("results") or [])
+            if isinstance(entry, dict)
+        )
         # Propagate run result back to in-memory project so the Projects page
         # shows the real status instead of the initial "draft" placeholder.
         _run_final_status = run["status"]
@@ -369,8 +538,15 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             )
             # Persist the updated status so the store file has the correct value
             # on the next server start (avoids reverting to "draft" on restart).
+            # Uses the module-level _compat_save_store already imported at the
+            # top of this file -- a local re-import here previously shadowed
+            # it for this function's entire scope (Python treats a name as
+            # local to the whole function if it's ever assigned/imported
+            # anywhere in the body), causing UnboundLocalError at this
+            # function's own later unconditional _compat_save_store() call
+            # whenever project_id wasn't in _compat_projects and this branch
+            # never ran.
             try:
-                from semabridge.api.services.project_shared import _compat_save_store
                 _compat_save_store()
             except Exception:
                 pass
@@ -390,70 +566,57 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         # same dropped_entities list DroppedFieldsPanel already renders,
         # tagged with stage="reconciliation" so they group under their own
         # heading rather than needing a new UI mechanism.
-        try:
-            if (
-                run["status"] != "failed"
-                and str(run["summary"].get("target_type") or "").lower() == "snowflake"
-                and run["summary"].get("sml_snapshot_id")
-            ):
-                from semabridge.core.reconciliation import reconcile_run as _reconcile_run
+        _model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+        if len(_model_results) > 1:
+            # Multi-model batch: run["summary"] is only the LAST model's
+            # summary, so reconcile EVERY successful model against its own
+            # snapshot and its own deployed view, and attach the outcome to
+            # that model's own result entry (result["reconciliation"]).
+            for _result_entry in _model_results:
+                _reconcile_model_result(project_id, _result_entry, logger)
+        else:
+            try:
+                if (
+                    run["status"] != "failed"
+                    and str(run["summary"].get("target_type") or "").lower() == "snowflake"
+                    and run["summary"].get("sml_snapshot_id")
+                ):
+                    from semabridge.core.reconciliation import reconcile_run as _reconcile_run
 
-                recon = _reconcile_run(run["id"])
-                run["summary"]["reconciliation"] = {
-                    "is_clean": recon.is_clean(),
-                    "unaccounted": recon.unaccounted,
-                    "deployed_live_count": len(recon.deployed_live_metrics),
-                    "deployed_dead_count": len(recon.deployed_dead_metrics),
-                    "ddl_error": recon.ddl_error,
-                }
-                if not recon.is_clean():
-                    # Commented out warning log for unaccounted metrics (can re-enable later if needed)
-                    # logger.warning(
-                    #     "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
-                    #     project_id, recon.unaccounted,
-                    # )
-                    dropped_reason_map = {
-                        str(r.get("entity_name") or "").upper(): str(r.get("reason") or "")
-                        for r in (recon.drop_records or [])
-                        if r.get("entity_name")
+                    recon = _reconcile_run(run["id"])
+                    run["summary"]["reconciliation"] = {
+                        "is_clean": recon.is_clean(),
+                        "unaccounted": recon.unaccounted,
+                        "deployed_live_count": len(recon.deployed_live_metrics),
+                        "deployed_dead_count": len(recon.deployed_dead_metrics),
+                        "ddl_error": recon.ddl_error,
                     }
-                    unaccounted_entries = []
-                    for base, count in recon.unaccounted.items():
-                        from semabridge.core.reconciliation import _strip_branch_suffix
-                        parent_base = _strip_branch_suffix(base)
-                        parent_reason = dropped_reason_map.get(parent_base)
-                        if parent_reason:
-                            reason = f"Auto-generated branch of '{parent_base}', which was dropped during deployment: {parent_reason}"
-                        else:
-                            reason = (
-                                "This metric normalizes to a name present in the Stage 6 "
-                                "snapshot but absent from both the deployed semantic "
-                                "view's DDL and the drop ledger — possible silent loss "
-                                "during deployment."
-                            )
-                        unaccounted_entries.append({
-                            "entity_kind": "metric",
-                            "entity_name": base,
-                            "dataset": None,
-                            "stage": "reconciliation",
-                            "reason": reason,
-                            "detail": f"{count} snapshot occurrence(s) unaccounted for.",
-                            "by_design": False,
-                        })
-                    run["summary"].setdefault("dropped_entities", [])
-                    run["summary"]["dropped_entities"].extend(unaccounted_entries)
-                    for result_entry in run.get("results") or []:
-                        if not isinstance(result_entry, dict):
-                            continue
-                        result_summary = result_entry.get("summary") or {}
-                        if result_summary.get("sml_snapshot_id") == recon.snapshot_id:
-                            result_entry.setdefault("dropped_entities", [])
-                            result_entry["dropped_entities"].extend(unaccounted_entries)
-        except Exception as recon_exc:
-            logger.warning(
-                "[%s] Post-deploy reconciliation skipped (non-fatal): %s",
-                project_id, recon_exc,
-            )
+                    if not recon.is_clean():
+                        # Commented out warning log for unaccounted metrics (can re-enable later if needed)
+                        # logger.warning(
+                        #     "[%s] Post-deploy reconciliation found unaccounted metrics: %s",
+                        #     project_id, recon.unaccounted,
+                        # )
+                        unaccounted_entries = _unaccounted_drop_entries(recon)
+                        run["summary"].setdefault("dropped_entities", [])
+                        run["summary"]["dropped_entities"].extend(unaccounted_entries)
+                        for result_entry in run.get("results") or []:
+                            if not isinstance(result_entry, dict):
+                                continue
+                            result_summary = result_entry.get("summary") or {}
+                            if result_summary.get("sml_snapshot_id") == recon.snapshot_id:
+                                result_entry.setdefault("dropped_entities", [])
+                                result_entry["dropped_entities"].extend(unaccounted_entries)
+            except Exception as recon_exc:
+                logger.warning(
+                    "[%s] Post-deploy reconciliation skipped (non-fatal): %s",
+                    project_id, recon_exc,
+                )
+            # Single model: expose the same reconciliation outcome on its
+            # (only) result entry too, so the per-model runs page reads one
+            # shape regardless of how many models the run had.
+            if _model_results and isinstance(run["summary"].get("reconciliation"), dict):
+                _model_results[0]["reconciliation"] = run["summary"]["reconciliation"]
 
         run["message"] = (
             "Execution completed successfully."
@@ -555,7 +718,7 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         # allowed to affect the run's own recorded outcome (write_run_report
         # swallows its own errors and returns None on failure).
         try:
-            from semabridge.api.services.run_report_service import write_run_report
+            from semabridge.api.services.run_report_service import write_run_report, write_per_model_run_reports
             r_path = write_run_report(run, project_cfg)
             run["report_path"] = r_path
             run["has_report"] = bool(r_path and Path(r_path).exists())
@@ -563,6 +726,13 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             logger.debug("Run report generation skipped for %s: %s", project_id, report_exc)
             run["report_path"] = None
             run["has_report"] = False
+        try:
+            # Per-model reports are written independently so a per-model
+            # failure never clears the whole-run report flag above.
+            run["model_reports"] = write_per_model_run_reports(run, project_cfg)
+        except Exception as model_report_exc:
+            logger.debug("Per-model run reports skipped for %s: %s", project_id, model_report_exc)
+            run["model_reports"] = []
         _compat_save_store()
     return run
 
@@ -600,6 +770,16 @@ def _enrich_run_report_meta(run: Dict[str, Any]) -> Dict[str, Any]:
         run["has_report"] = True
     else:
         run["has_report"] = False
+    # Per-model reports: flag each entry individually so the runs page only
+    # enables a model's report buttons when THAT model's report file exists.
+    model_reports = []
+    for entry in run.get("model_reports") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry_path = entry.get("path")
+        model_reports.append({**entry, "has_report": bool(entry_path and Path(entry_path).exists())})
+    if model_reports or "model_reports" in run:
+        run["model_reports"] = model_reports
     return run
 
 
@@ -650,6 +830,17 @@ async def get_project_runs_compat(project_id: str):
                 before_ids = _parse_list("before_target_snapshot_ids")
                 after_ids = _parse_list("after_target_snapshot_ids")
 
+                # The `runs` table has no report columns at all -- report
+                # state has only ever lived in the in-memory compat-store run
+                # dict (see the `finally` block in _perform_project_run),
+                # which this ORM fallback runs only after that store has
+                # already been evicted (server restart). Without this,
+                # per-model download buttons would silently disappear from
+                # the UI for any run reconstructed here, even though the
+                # .md files are still on disk -- see
+                # run_report_service.load_persisted_model_reports().
+                from semabridge.api.services.run_report_service import load_persisted_model_reports
+
                 run_data = {
                     "run_id": row.run_id,
                     "id": row.run_id,
@@ -663,6 +854,7 @@ async def get_project_runs_compat(project_id: str):
                     "after_target_snapshot_ids": after_ids,
                     "after_tgt_snapshots": after_ids,
                     "demo_mode": bool(getattr(row, "demo_mode", False)),
+                    "model_reports": load_persisted_model_reports(row.project_id, row.run_id),
                 }
                 results.append(run_data)
 
@@ -813,25 +1005,70 @@ async def get_run_report_compat(project_id: str, run_id: str) -> Optional[Dict[s
     }
 
 
-async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-    """JSON counterpart to get_run_report_compat, for the frontend's
-    accordion-style summary view: finds the same in-memory run record and
-    calls build_run_report_data(run, project_cfg) instead of reading the
-    rendered Markdown file.
+async def get_run_model_report_compat(project_id: str, run_id: str, model_label: str) -> Optional[Dict[str, str]]:
+    """Same shape as get_run_report_compat(), scoped to one model's own
+    report from a multi-PBIX batch run (see write_per_model_run_reports).
+    """
+    from semabridge.api.services.run_report_service import REPORTS_ROOT, _sanitize_report_filename_part
 
-    project_cfg here is the project's CURRENT config, not necessarily the
-    exact one active when the run happened -- the run record itself never
-    persisted project_cfg (only the Markdown file baked it in at write
-    time), and the project's source config practically never changes
-    between runs anyway. Only affects header display fields (source_kind/
-    source_files); counts/sections come entirely from the run's own
-    persisted snapshot+drop-ledger data, unaffected either way.
+    _compat_ensure_loaded()
+    report_path = None
+    project_name = project_id
+    for run in _compat_project_runs.get(project_id, []):
+        if str(run.get("run_id") or run.get("id") or "") == run_id:
+            project_name = run.get("project_name") or project_id
+            for entry in (run.get("model_reports") or []):
+                if str(entry.get("model")) == model_label:
+                    report_path = entry.get("path")
+                    break
+            break
+
+    safe_label = _sanitize_report_filename_part(model_label, "model")
+    if not report_path:
+        # In-memory compat record may have been evicted by a restart since
+        # the run completed -- the file itself still lives at the fixed,
+        # run_id+model-scoped path write_per_model_run_reports always uses.
+        candidate = REPORTS_ROOT / project_id / f"{run_id}__{safe_label}.md"
+        if candidate.exists():
+            report_path = str(candidate)
+
+    if not report_path:
+        return None
+    path = Path(report_path)
+    if not path.exists():
+        return None
+
+    safe_project_name = str(project_name).strip().replace(" ", "_") or project_id
+    return {
+        "content": path.read_text(encoding="utf-8"),
+        "filename": f"{safe_project_name}_{safe_label}_{run_id}_report.md",
+    }
+
+
+def _project_cfg_for_report(project_id: str) -> str:
+    modular_bundle = project_shared._compat_load_modular_project(project_id)
+    return (
+        (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+        or _compat_project_configs.get(project_id)
+        or _compat_load_repo_yaml_text()
+        or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+    )
+
+
+async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+    """JSON counterpart to get_run_report_compat(), for the frontend's
+    accordion-style summary view (RunReportSummary.jsx): finds the same
+    in-memory run record and calls build_run_report_data(run, project_cfg)
+    instead of reading the rendered Markdown file.
 
     Returns None if no in-memory run record exists (e.g. after a restart
     evicted it) -- there is no file-based fallback for this JSON view the
     way get_run_report_compat has for the Markdown file, since JSON is
-    always freshly recomputed, never persisted to disk.
+    always freshly recomputed, never persisted to disk (matches
+    demo_version_ref's own documented design choice for this endpoint).
     """
+    from semabridge.api.services.run_report_service import build_run_report_data
+
     _compat_ensure_loaded()
     run = None
     for candidate in _compat_project_runs.get(project_id, []):
@@ -841,16 +1078,55 @@ async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[D
     if run is None:
         return None
 
-    from semabridge.api.services.run_report_service import build_run_report_data
+    return build_run_report_data(run, _project_cfg_for_report(project_id))
 
-    modular_bundle = project_shared._compat_load_modular_project(project_id)
-    project_cfg = (
-        (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
-        or _compat_project_configs.get(project_id)
-        or _compat_load_repo_yaml_text()
-        or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
-    )
-    return build_run_report_data(run, project_cfg)
+
+async def get_run_model_report_data_compat(project_id: str, run_id: str, model_label: str) -> Optional[Dict[str, Any]]:
+    """Per-model counterpart to get_run_report_data_compat(), for a
+    multi-PBIX batch run -- scopes the run to just the one result matching
+    `model_label` before building the JSON summary, the same scoping trick
+    generate_per_model_reports() uses for the Markdown path.
+
+    Returns None only if no in-memory run record exists at all for run_id
+    (a genuine 404 -- wrong run_id/project_id). If the run record exists
+    but its results/summary blob isn't available in this process right now
+    (stripped before the compat store was persisted, or reconstructed via
+    the ORM fallback -- see build_run_report_data()'s "unavailable" case),
+    this still returns build_run_report_data()'s honest
+    {"crashed": True, "unavailable": True, ...} shape for THIS run rather
+    than a bare None/404 -- the caller can't tell "run never existed" apart
+    from "run's data just isn't here anymore" otherwise, and the frontend
+    would render a generic, unhelpful error for what is actually a run that
+    completed successfully.
+    """
+    from semabridge.api.services.run_report_service import build_run_report_data, _describe_source_for_result
+
+    _compat_ensure_loaded()
+    run = None
+    for candidate in _compat_project_runs.get(project_id, []):
+        if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
+            run = candidate
+            break
+    if run is None:
+        return None
+
+    results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
+    result = next((r for r in results if str(r.get("model")) == model_label), None)
+    if result is None:
+        if not results:
+            # Not "this model_label doesn't exist" -- results are entirely
+            # missing for this run, so build_run_report_data() will report
+            # the honest "completed but data unavailable" shape instead of
+            # a misleading pre-extraction crash.
+            project_cfg = _project_cfg_for_report(project_id)
+            return build_run_report_data(run, project_cfg)
+        return None
+
+    project_cfg = _project_cfg_for_report(project_id)
+    scoped_run = dict(run)
+    scoped_run["results"] = [result]
+    source_override = _describe_source_for_result(result, project_cfg, run)
+    return build_run_report_data(scoped_run, project_cfg, source_override=source_override)
 
 
 async def get_run_conflicts_compat(run_id: str):

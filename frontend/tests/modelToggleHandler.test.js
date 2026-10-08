@@ -1,100 +1,88 @@
 /**
- * Regression test for model toggle event handler
- * 
- * Bug: onModelToggle was called with 2 parameters instead of 3
- * Impact: Model removal by name logic was broken (isRemoveByName always undefined)
- * Fix: Added third parameter `false` to the event handler call
- * 
- * Commit: 1d690a0 — UI/UX changes in the project creation page
+ * Model toggle handler (Step 3 model picker) — tests the REAL logic in
+ * src/utils/modelSelection.js that StepSourceBrowser/CreateProjectPage use,
+ * instead of re-implementing it inline (the previous version of this file was
+ * a Jest-style copy of the handler and never ran under node --test).
+ *
+ * Regression covered: edit mode seeded a saved model under BOTH its name and
+ * its GUID, so it was listed twice and one click only removed one key (the
+ * row stayed checked). Also: Fabric selection is capped at 10.
+ *
+ * Run: node --test tests/modelToggleHandler.test.js   (from frontend/)
  */
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-describe('CreateProjectPage — Model Toggle Handler', () => {
-  /**
-   * Test: onModelToggle should receive all 3 parameters
-   * 
-   * Context: When a model is toggled in the tree view, the handler receives:
-   * - Parameter 1: Model ID or key
-   * - Parameter 2: Model name
-   * - Parameter 3: isRemoveByName flag (boolean)
-   * 
-   * The third parameter controls whether to remove by name key vs. qualified key.
-   * If this parameter is missing/undefined, the conditional logic fails.
-   */
-  it('should pass 3 parameters to onModelToggle when adding model by ID', () => {
-    // Simulating the event handler from CreateProjectPage.jsx:3753-3759
-    const onModelToggle = jest.fn();
-    const selectedModels = new Set();
-    
-    // Model being toggled
-    const model = { id: 'model_abc', name: 'MyModel' };
-    
-    // Simulate the handler logic when model is NOT already selected by name
-    if (model.name && (selectedModels.has(model.name) || selectedModels.has(model.name.trim()))) {
-      const nameKey = selectedModels.has(model.name) ? model.name : model.name.trim();
-      onModelToggle(nameKey, nameKey, true);
-    } else {
-      // THIS IS THE FIX: Add the third parameter `false`
-      onModelToggle(model.id, model.name || model.id, false);
-    }
-    
-    // Verify all 3 parameters are passed
-    expect(onModelToggle).toHaveBeenCalledWith('model_abc', 'MyModel', false);
-    expect(onModelToggle).toHaveBeenCalledTimes(1);
-    
-    // Verify the third parameter is a boolean (not undefined)
-    const call = onModelToggle.mock.calls[0];
-    expect(typeof call[2]).toBe('boolean');
-    expect(call[2]).toBe(false);
-  });
+import {
+  toggleModelSelection,
+  isModelSelected,
+  resolveSelectedModelNames,
+  dedupeModelSelection,
+  seedSelectionFromSavedConfig,
+  selectionIdentities,
+  MAX_SELECTED_MODELS,
+} from '../src/utils/modelSelection.js';
 
-  /**
-   * Test: onModelToggle should receive true when removing by name
-   */
-  it('should pass true as third parameter when removing model by name', () => {
-    const onModelToggle = jest.fn();
-    const selectedModels = new Set(['MyModel']);
-    
-    const model = { id: 'model_abc', name: 'MyModel' };
-    
-    // Simulate the handler logic when model IS already selected by name
-    if (model.name && (selectedModels.has(model.name) || selectedModels.has(model.name.trim()))) {
-      const nameKey = selectedModels.has(model.name) ? model.name : model.name.trim();
-      onModelToggle(nameKey, nameKey, true);
-    } else {
-      onModelToggle(model.id, model.name || model.id, false);
-    }
-    
-    // Verify the third parameter is true
-    expect(onModelToggle).toHaveBeenCalledWith('MyModel', 'MyModel', true);
-    
-    const call = onModelToggle.mock.calls[0];
-    expect(call[2]).toBe(true);
-  });
+const SALES = { id: '11111111-2222-3333-4444-555555555555', name: 'Sales' };
+const COST = { id: '66666666-7777-8888-9999-000000000000', name: 'Cost' };
 
-  /**
-   * Test: onModelToggle handler logic that depends on the third parameter
-   */
-  it('should differentiate between remove-by-name and remove-by-ID based on third parameter', () => {
-    const toggleModel = jest.fn();
-    const wsid = 'workspace_123';
-    
-    // The actual onModelToggle handler from CreateProjectPage.jsx:3707-3715
-    const createHandler = (workspaceId) => (mid, modelName, isRemoveByName) => {
-      if (isRemoveByName) {
-        toggleModel(mid, modelName);  // Called with name key
-      } else {
-        toggleModel(`${workspaceId}::${mid}`, modelName);  // Called with qualified key
-      }
-    };
-    
-    const handler = createHandler(wsid);
-    
-    // Test remove by ID (third parameter = false)
-    handler('model_abc', 'MyModel', false);
-    expect(toggleModel).toHaveBeenCalledWith('workspace_123::model_abc', 'MyModel');
-    
-    // Test remove by name (third parameter = true)
-    handler('MyModel', 'MyModel', true);
-    expect(toggleModel).toHaveBeenCalledWith('MyModel', 'MyModel');
-  });
+test('adding a model keys it by id and records its name', () => {
+  const r = toggleModelSelection({ selectedKeys: [], nameByKey: {}, model: SALES });
+  assert.deepEqual(r.selectedKeys, [SALES.id]);
+  assert.deepEqual(r.nameByKey, { [SALES.id]: 'Sales' });
+  assert.equal(r.selected, true);
+});
+
+test('a single click unchecks a model selected under BOTH its name and its GUID (edit-mode duplicate)', () => {
+  const selectedKeys = ['Sales', SALES.id];
+  const nameByKey = { Sales: 'Sales', [SALES.id]: 'Sales' };
+  assert.equal(isModelSelected(SALES, selectedKeys, nameByKey), true);
+  const r = toggleModelSelection({ selectedKeys, nameByKey, model: SALES });
+  assert.deepEqual(r.selectedKeys, []);
+  assert.deepEqual(r.nameByKey, {});
+  assert.equal(isModelSelected(SALES, r.selectedKeys, r.nameByKey), false);
+});
+
+test('legacy workspace-qualified keys are matched too', () => {
+  const r = toggleModelSelection({ selectedKeys: [`ws1::${SALES.id}`], nameByKey: { [`ws1::${SALES.id}`]: 'Sales' }, model: SALES });
+  assert.deepEqual(r.selectedKeys, []);
+});
+
+test('toggling one model never touches another', () => {
+  const r = toggleModelSelection({ selectedKeys: [SALES.id, COST.id], nameByKey: { [SALES.id]: 'Sales', [COST.id]: 'Cost' }, model: SALES });
+  assert.deepEqual(r.selectedKeys, [COST.id]);
+  assert.deepEqual(r.nameByKey, { [COST.id]: 'Cost' });
+});
+
+test('selection is capped at MAX_SELECTED_MODELS (10); removing still works at the cap', () => {
+  assert.equal(MAX_SELECTED_MODELS, 10);
+  const keys = Array.from({ length: 10 }, (_, i) => `id-${i}`);
+  const names = Object.fromEntries(keys.map((k, i) => [k, `Model ${i}`]));
+  const blocked = toggleModelSelection({ selectedKeys: keys, nameByKey: names, model: { id: 'id-new', name: 'New' } });
+  assert.equal(blocked.limitReached, true);
+  assert.equal(blocked.selectedKeys.length, 10);
+  const removed = toggleModelSelection({ selectedKeys: keys, nameByKey: names, model: { id: 'id-3', name: 'Model 3' } });
+  assert.equal(removed.limitReached, false);
+  assert.equal(removed.selectedKeys.length, 9);
+});
+
+test('duplicate name+GUID keys count once toward the cap', () => {
+  assert.equal(selectionIdentities(['Sales', SALES.id], { Sales: 'Sales', [SALES.id]: 'Sales' }).length, 1);
+});
+
+test('resolveSelectedModelNames dedupes names sent to the backend', () => {
+  assert.deepEqual(resolveSelectedModelNames(['Sales', SALES.id, COST.id], { Sales: 'Sales', [SALES.id]: 'Sales', [COST.id]: 'Cost' }), ['Sales', 'Cost']);
+});
+
+test('edit-mode seed uses saved names only (never names AND GUIDs)', () => {
+  const seed = seedSelectionFromSavedConfig({ models: ['Sales', 'Cost'], selectionModelIds: [SALES.id, COST.id] });
+  assert.deepEqual(seed.selectedKeys, ['Sales', 'Cost']);
+  const idsOnly = seedSelectionFromSavedConfig({ models: [], selectionModelIds: [SALES.id] });
+  assert.deepEqual(idsOnly.selectedKeys, [SALES.id]);
+});
+
+test('dedupeModelSelection collapses name and GUID keys onto one GUID key once models load', () => {
+  const r = dedupeModelSelection(['Sales', SALES.id, 'Gone'], { Sales: 'Sales', [SALES.id]: SALES.id, Gone: 'Gone' }, [SALES, COST]);
+  assert.deepEqual(r.selectedKeys, [SALES.id, 'Gone']);
+  assert.deepEqual(r.nameByKey, { [SALES.id]: 'Sales', Gone: 'Gone' });
 });

@@ -223,7 +223,12 @@ class DatabricksPublisher:
     def _get_tier5_service(self):
         if self._tier5_service is None:
             from semabridge.dax_translation.tier5.service import Tier5Service
-            self._tier5_service = Tier5Service()
+            from semabridge.dax_translation.tier5.cache import default_persistent_cache
+            # Shared, cross-run, cross-pipeline cache (see tier5/cache.py) --
+            # the same one DaxTranslationService wires in, so a translation
+            # validated via this pipeline is reused by any other, and vice
+            # versa, for a matching DAX+dialect+schema shape.
+            self._tier5_service = Tier5Service(cache=default_persistent_cache())
         return self._tier5_service
 
     @staticmethod

@@ -35,6 +35,7 @@ import os
 import re
 import yaml
 import logging
+import threading
 import time
 
 # Windows-specific asyncio stability:
@@ -644,33 +645,110 @@ def _compat_bootstrap_projects_from_modular_configs() -> None:
             seen.add(project_id)
 
 
-def _compat_save_store() -> None:
-    payload = {
-        "projects": _compat_projects,
-        "project_configs": _compat_project_configs,
+# Guards every mutation of the compat dicts that can happen off the event-loop
+# thread (dry-run job workers run up to MAX_PARALLEL_DRY_RUN_FILES pipelines on
+# real OS threads, each writing its preview project + config here) and the
+# serialization in _compat_save_store(). Re-entrant so a caller holding it
+# (e.g. mutate-then-save) can call _compat_save_store() without deadlocking.
+_compat_store_lock = threading.RLock()
+
+
+def compat_store_lock() -> "threading.RLock":
+    """Public accessor for the compat-store lock (use as ``with compat_store_lock():``)."""
+    return _compat_store_lock
+
+
+def _compat_snapshot_container(value: Any) -> Any:
+    """Shallow-copy a top-level container (and its first-level dict/list
+    values) so json serialization can run outside of any concurrent mutation
+    of the live dicts."""
+    if isinstance(value, dict):
+        return {
+            k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v)
+            for k, v in list(value.items())
+        }
+    if isinstance(value, (list, set, tuple)):
+        return list(value)
+    return value
+
+
+def _compat_build_store_payload() -> Dict[str, Any]:
+    return {
+        "projects": _compat_snapshot_container(_compat_projects),
+        "project_configs": dict(_compat_project_configs),
         # Strip large run detail blobs (summary/results/logs) — only needed
         # for run detail views, not the list.
-        "project_runs": _strip_run_blobs(_compat_project_runs),
+        "project_runs": _strip_run_blobs(_compat_snapshot_container(_compat_project_runs)),
         # Strip large state/config/artifact blobs before persisting — they are
         # re-hydrated from the source on demand (snapshot detail view).
         # This keeps the store file small and cold-start parsing fast.
-        "project_snapshots": _strip_snapshot_blobs(_compat_project_snapshots),
-        "run_snapshots": _compat_run_snapshots,
-        "folders": _compat_folders,
-        "mappings": _compat_mappings,
-        "project_schedules": _compat_project_schedules,
-        "deleted_project_ids": sorted(_compat_deleted_project_ids),
-        "job_config": _compat_job_config,
+        "project_snapshots": _strip_snapshot_blobs(_compat_snapshot_container(_compat_project_snapshots)),
+        "run_snapshots": _compat_snapshot_container(_compat_run_snapshots),
+        "folders": _compat_snapshot_container(_compat_folders),
+        "mappings": _compat_snapshot_container(_compat_mappings),
+        "project_schedules": _compat_snapshot_container(_compat_project_schedules),
+        "deleted_project_ids": sorted(list(_compat_deleted_project_ids)),
+        "job_config": dict(_compat_job_config),
     }
+
+
+def _compat_atomic_write_text(path: Path, text: str) -> None:
+    """Write via a sibling temp file + os.replace so a reader (or a crash)
+    never observes a half-written store. Retries os.replace briefly because on
+    Windows the destination can be transiently locked (AV / sync clients)."""
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
-        _compat_store_write_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        last_exc: Optional[BaseException] = None
+        for attempt in range(5):
+            try:
+                os.replace(tmp_name, str(path))
+                return
+            except PermissionError as exc:
+                last_exc = exc
+                time.sleep(0.05 * (attempt + 1))
+        if last_exc is not None:
+            raise last_exc
+    finally:
+        try:
+            if os.path.exists(tmp_name):
+                os.remove(tmp_name)
+        except OSError:
+            pass
+
+
+def _compat_save_store() -> None:
+    try:
+        with _compat_store_lock:
+            # Snapshot + serialize under the lock so concurrent savers can't
+            # interleave writes, and a mutation racing the snapshot (from a
+            # caller not holding the lock) is retried instead of crashing.
+            text = None
+            for _attempt in range(3):
+                try:
+                    payload = _compat_build_store_payload()
+                    text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+                    break
+                except RuntimeError:
+                    # "dictionary changed size during iteration" from an
+                    # unlocked mutator on another thread — retry.
+                    continue
+            if text is None:
+                logger.warning("Failed to persist compat store: store mutated concurrently during serialization")
+                return
+            _compat_atomic_write_text(_compat_store_write_path(), text)
     except Exception as exc:
         logger.warning("Failed to persist compat store: %s", exc)
 
 
 def _compat_clear_project_schedule(project_id: str) -> None:
-    _compat_project_schedules.pop(str(project_id), None)
-    _compat_save_store()
+    with _compat_store_lock:
+        _compat_project_schedules.pop(str(project_id), None)
+        _compat_save_store()
 
 
 _SNAPSHOT_BLOB_KEYS = frozenset({"state", "project_config_yaml", "artifact"})
@@ -926,6 +1004,14 @@ def _compat_ensure_loaded() -> None:
     global _compat_bootstrapped
     if _compat_bootstrapped:
         return
+    with _compat_store_lock:
+        if _compat_bootstrapped:
+            return
+        _compat_ensure_loaded_locked()
+
+
+def _compat_ensure_loaded_locked() -> None:
+    global _compat_bootstrapped
     _compat_load_store()
     _compat_bootstrap_projects_from_modular_configs()
     _compat_bootstrap_projects_from_orm()

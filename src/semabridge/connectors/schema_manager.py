@@ -5,7 +5,7 @@ import time
 import os
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, TypeAlias
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, TypeAlias
 
 if TYPE_CHECKING:
     import snowflake.connector.cursor
@@ -82,6 +82,18 @@ class SnowflakeSchemaManager:
         self.connection_manager = connection_manager
         self._dup_name_repo = dup_name_repo
         self._verified_tables: set[str] = set()  # Temporary compatibility during phase 2 refactor
+        # Columns added via ALTER TABLE ADD COLUMN by THIS deploy's own
+        # _ensure_source_tables_exist call, keyed by safe_table_name -> set
+        # of safe column names. Fresh every deploy (SchemaManager itself is
+        # constructed fresh per deploy -- see SnowflakeEmitter.__init__ --
+        # so no explicit reset is needed here). Consumed by
+        # _maybe_backfill_source_data/_backfill_one_table to distinguish
+        # "this column is null because it was just added this run, and its
+        # sibling columns' real data proves the table itself is populated"
+        # from "the whole table is empty/garbage" -- see that code for why
+        # the table-level real_data/empty/ambiguous check alone can't tell
+        # the two apart.
+        self._newly_added_columns: Dict[str, set[str]] = {}
         self._live_schema_metadata: Dict[str, set[str]] = {}
         self._schema_cache_ttl_seconds = int(os.getenv("SEMABRIDGE_SCHEMA_CACHE_TTL_SECONDS", "300"))
 
@@ -115,6 +127,14 @@ class SnowflakeSchemaManager:
         suffix = f"{int(time.time() * 1000)}_{os.getpid()}"
         candidate = f"{safe_table_name}__FIXED_{suffix}"
         # Snowflake identifier max length is 255 characters.
+        return candidate[:255]
+
+    def _build_staging_table_name(self, safe_table_name: str) -> str:
+        """Create a collision-resistant TEMPORARY table name for a
+        column-level backfill's staging data (see
+        _backfill_columns_for_existing_rows)."""
+        suffix = f"{int(time.time() * 1000)}_{os.getpid()}"
+        candidate = f"{safe_table_name}__BACKFILL_STAGE_{suffix}"
         return candidate[:255]
 
     def _safe_table_name(self, name: str) -> str:
@@ -201,6 +221,32 @@ class SnowflakeSchemaManager:
             logger.warning("Duplicate mapping failed for %s: %s", source_name, exc)
             return preferred_name
 
+    def _ensure_schema_exists(self, cursor) -> None:
+        """Create this project's target schema if it doesn't exist yet.
+
+        Every project now defaults to its own per-project schema (see
+        _apply_default_snowflake_schema in project_projects_impl.py) instead
+        of a single shared one, so unlike before, a brand-new project's
+        schema will not already exist in Snowflake. IF NOT EXISTS makes this
+        an idempotent no-op for any project still pointed at a pre-existing
+        (e.g. legacy shared, or manually provisioned) schema. Non-fatal on
+        failure -- e.g. a role without CREATE SCHEMA privilege but granted
+        USAGE on an already-provisioned schema -- so this never blocks a
+        deploy that would otherwise have worked exactly as before.
+        """
+        try:
+            self._execute_sql(
+                cursor,
+                f"CREATE SCHEMA IF NOT EXISTS {self._schema_fqn()}",
+                context="CREATE SCHEMA IF NOT EXISTS",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not ensure schema %s exists (continuing -- it may already "
+                "exist under a role without CREATE SCHEMA privilege): %s",
+                self._schema_fqn(), exc,
+            )
+
     def _ensure_source_tables_exist(self, cursor, sml: SMLModel) -> None:
         """
         Check if source tables exist in Snowflake, create them if missing.
@@ -276,6 +322,7 @@ class SnowflakeSchemaManager:
                                     f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}',
                                     context=f"ALTER TABLE ADD COLUMN {safe_table_name}.{col_name}",
                                 )
+                                self._newly_added_columns.setdefault(safe_table_name, set()).add(col_name)
                             except Exception as e:
                                 logger.warning(f"Could not add column {col_name} to {safe_table_name}: {e}")
                                 # Fallback: if ALTER fails (e.g. constraints), we might need recreation
@@ -323,8 +370,9 @@ class SnowflakeSchemaManager:
                                         f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}',
                                         context=f"ALTER TABLE ADD COLUMN {safe_table_name}.{col_name}",
                                     )
+                                    self._newly_added_columns.setdefault(safe_table_name, set()).add(col_name)
 
-                    
+
                     if source_table.upper() == "DIM_DATE":
                          logger.info("Populated DIM_DATE with generated data")
                     else:
@@ -1433,6 +1481,642 @@ class SnowflakeSchemaManager:
             self._execute_sql(cursor, f"ALTER TABLE {full_table} SWAP WITH {fixed_table}", context=f"SWAP TABLE {safe_table_name}")
             logger.info("Table swapped successfully: %s", safe_table_name)
             self._execute_sql(cursor, f"DROP TABLE IF EXISTS {fixed_table}", context=f"DROP TABLE {fixed_table_name}")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Opt-in data backfill (options.load_source_data) — SML only, v1 scope.
+    #
+    # Loads real row data extracted from the source PBIX into a table this
+    # run's own schema-creation step (_ensure_source_tables_exist) may have
+    # just built structure-only, or that already exists but never received
+    # real data from whatever process was supposed to populate it (see the
+    # real incident this exists to prevent: SEMABRIDGE_WORKSPACE.PRODUCT had
+    # data in exactly one column, NULL everywhere else in its non-key
+    # columns). Off by default; only reached at all when the caller
+    # (snowflake_emitter.py's deploy pipeline) has both
+    # options.load_source_data=true AND a resolved PBIX path. Never touches
+    # a table that already has any real data in any non-key column — see
+    # _table_already_has_real_data.
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _maybe_backfill_source_data(
+        self,
+        cursor,
+        model: SMLModel,
+        source_pbix_path: str,
+        live_schema_metadata: Dict[str, set],
+    ) -> list[dict]:
+        """Attempt a data backfill for every dataset in `model`.
+
+        Returns one {table, dataset, status, row_count, reason} dict per
+        dataset considered (status is "loaded", "skipped", or "failed").
+        Never raises — a backfill failure (missing pbixray, a corrupt PBIX,
+        one bad table) must not abort an otherwise-successful deploy; each
+        table's own attempt is independently wrapped in
+        _backfill_one_table's try/except, and this method's own PBIXRay-open
+        step is wrapped here for the same reason.
+        """
+        try:
+            from pbixray import PBIXRay
+        except Exception as exc:
+            logger.warning("Data backfill requested but pbixray is unavailable: %s", exc)
+            return [{
+                "table": None, "dataset": None, "status": "failed", "row_count": 0,
+                "reason": f"pbixray is not installed/importable: {exc}",
+            }]
+
+        try:
+            pbix_model = PBIXRay(source_pbix_path)
+        except Exception as exc:
+            logger.warning("Data backfill: could not open PBIX file '%s': %s", source_pbix_path, exc)
+            return [{
+                "table": None, "dataset": None, "status": "failed", "row_count": 0,
+                "reason": f"Could not open source PBIX file '{source_pbix_path}': {exc}",
+            }]
+
+        results = []
+        for dataset in getattr(model, "datasets", []) or []:
+            results.append(self._backfill_one_table(cursor, pbix_model, dataset, live_schema_metadata))
+        return results
+
+    def _backfill_one_table(
+        self,
+        cursor,
+        pbix_model: Any,
+        dataset: SMLDataset,
+        live_schema_metadata: Dict[str, set],
+    ) -> dict:
+        """Backfill one dataset's table. Always returns a result dict, never
+        raises — any exception here is caught and reported as status="failed"
+        so one broken table can't abort the rest of the deploy or the rest
+        of this backfill pass."""
+        source_table = dataset.source_table or dataset.unique_name
+        safe_table_name = self._safe_table_name(source_table)
+        dataset_name = dataset.unique_name
+
+        try:
+            physical_cols = self._collect_physical_source_columns(dataset)
+            if not physical_cols:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "skipped", 0,
+                    "No physical columns inferred for this dataset — nothing to load.",
+                )
+
+            key_names = {col.unique_name for col in dataset.get_key_columns()}
+            non_key_safe_names = [
+                safe_name for safe_name, col in physical_cols.items()
+                if col.unique_name not in key_names
+            ]
+            if not non_key_safe_names:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "skipped", 0,
+                    "This table has no non-key columns to check or load.",
+                )
+
+            classification = self._classify_table_data_state(
+                cursor, safe_table_name, physical_cols, non_key_safe_names,
+            )
+            state = classification["state"]
+            row_count = classification["row_count"]
+
+            if state == "real_data":
+                # The table as a whole is genuinely populated -- but a
+                # column that _ensure_source_tables_exist ALTER-TABLE-ADDed
+                # during THIS SAME deploy (a newer/wider PBIX schema
+                # introducing fields an older sync's table didn't have) is
+                # unavoidably NULL for every pre-existing row (ALTER TABLE
+                # ADD COLUMN cannot populate historical rows, and nothing
+                # else in this pipeline does either) -- see the real
+                # incident this exists to prevent: PRODUCT.ISVANARSDEL,
+                # added this way, permanently null despite SEGMENT/PRODUCT/
+                # PRODUCTID on the same rows being fully real.
+                #
+                # Deliberately narrow: only columns THIS deploy just added
+                # are eligible, and only if they are still 100% null right
+                # now (a partially-populated newly-added column is a
+                # different, more ambiguous case -- see the guard inside
+                # _backfill_columns_for_existing_rows). A column that
+                # already existed before this run and is all-null is NOT
+                # covered here even if it looks identical -- that's a
+                # separate, riskier "was this column always meant to be
+                # empty" question this fix does not attempt to answer.
+                newly_added = self._newly_added_columns.get(safe_table_name, set())
+                still_empty_new_cols = [
+                    c for c in non_key_safe_names
+                    if c in newly_added and c not in classification["populated_columns"]
+                ]
+                if not still_empty_new_cols:
+                    return self._backfill_result(
+                        safe_table_name, dataset_name, "skipped", row_count,
+                        "Table already has real data in at least one non-key column — left untouched.",
+                    )
+                return self._backfill_columns_for_existing_rows(
+                    cursor, pbix_model, dataset, safe_table_name, dataset_name,
+                    physical_cols, key_names, still_empty_new_cols, row_count,
+                    live_schema_metadata,
+                )
+            if state == "ambiguous":
+                reason = self._format_ambiguous_reason(
+                    row_count, classification["populated_columns"], classification["samples"],
+                )
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "ambiguous_needs_review", row_count, reason,
+                )
+            # state == "empty" -- confidently not real data, proceed to load.
+
+            df = pbix_model.get_table(source_table)
+            if df is None or df.empty:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "skipped", 0,
+                    f"Source PBIX table '{source_table}' has no rows to load.",
+                )
+
+            # Real sanitizer, same one used everywhere else in this
+            # pipeline — never the naive remap a hand-rolled reference
+            # script used, which is wrong on reserved words, special
+            # characters, and leading-digit columns.
+            df = df.rename(columns={col: self._sanitize_col_name(str(col)) for col in df.columns})
+
+            live_cols = {str(c).upper() for c in live_schema_metadata.get(safe_table_name.upper(), set())}
+            if live_cols:
+                unmatched = [c for c in df.columns if c.upper() not in live_cols]
+                if unmatched:
+                    logger.warning(
+                        "Data backfill for %s: dropping %d extracted column(s) with no "
+                        "matching live physical column: %s",
+                        safe_table_name, len(unmatched), unmatched,
+                    )
+                    df = df.drop(columns=unmatched)
+                if df.shape[1] == 0:
+                    return self._backfill_result(
+                        safe_table_name, dataset_name, "failed", 0,
+                        "None of the extracted PBIX columns matched this table's live physical columns.",
+                    )
+
+            # A pandas datetime64 column staged with use_logical_type=True
+            # (below) still carries a full TIMESTAMP value (midnight time
+            # component included) -- confirmed against a real load:
+            # Snowflake's COPY INTO rejects casting that timestamp-shaped
+            # variant into a strict DATE-typed target column even at
+            # 00:00:00.000 ("Failed to cast variant value '<ts>' to
+            # DATE"). Narrowing to plain Python date objects for any
+            # column this dataset actually declares as DataType.DATE (not
+            # DATETIME/TIMESTAMP) avoids the mismatch at the source.
+            import pandas as pd
+
+            for safe_name, col in physical_cols.items():
+                if (
+                    safe_name in df.columns
+                    and getattr(col, "data_type", None) == DataType.DATE
+                    and pd.api.types.is_datetime64_any_dtype(df[safe_name])
+                ):
+                    df[safe_name] = df[safe_name].dt.date
+
+            from snowflake.connector.pandas_tools import write_pandas
+
+            success, _num_chunks, num_rows, _details = write_pandas(
+                cursor.connection,
+                df,
+                safe_table_name,
+                schema=self.config.schema_name,
+                # Explicit and load-bearing: if the sanitized table/column
+                # names don't match what's really live, this must fail
+                # loudly rather than silently create a shadow table.
+                auto_create_table=False,
+                quote_identifiers=True,
+                # Without this, write_pandas stages a pandas datetime64
+                # column as a raw INT64 nanosecond-epoch value with no
+                # Parquet logical-type annotation, and Snowflake's COPY
+                # INTO then can't implicitly cast that plain integer into
+                # a DATE/TIMESTAMP-typed target column ("Failed to cast
+                # variant value <ns-epoch> to DATE") -- confirmed against
+                # a real load of Sales & Returns Sample's Date column.
+                # use_logical_type=True makes write_pandas emit proper
+                # DATE/TIMESTAMP Parquet logical types instead.
+                use_logical_type=True,
+            )
+            if not success:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "failed", 0,
+                    "write_pandas reported failure loading this table.",
+                )
+
+            logger.info(
+                "Data backfill: loaded %d row(s) into %s.%s from source PBIX table '%s'",
+                num_rows, self.config.schema_name, safe_table_name, source_table,
+            )
+            return self._backfill_result(
+                safe_table_name, dataset_name, "loaded", int(num_rows),
+                f"Loaded {int(num_rows)} row(s) from the source PBIX.",
+            )
+
+        except Exception as exc:
+            logger.warning("Data backfill failed for table %s: %s", safe_table_name, exc, exc_info=True)
+            return self._backfill_result(
+                safe_table_name, dataset_name, "failed", 0,
+                f"Unexpected error during backfill: {exc}",
+            )
+
+    def _backfill_columns_for_existing_rows(
+        self,
+        cursor,
+        pbix_model: Any,
+        dataset: SMLDataset,
+        safe_table_name: str,
+        dataset_name: str,
+        physical_cols: Dict[str, Any],
+        key_names: set,
+        target_cols: list[str],
+        row_count: int,
+        live_schema_metadata: Dict[str, set],
+    ) -> dict:
+        """Patch specific, currently-100%-null columns on a table's EXISTING
+        rows -- for columns _ensure_source_tables_exist ALTER-TABLE-ADDed
+        this same deploy onto a table that already has real data elsewhere.
+
+        write_pandas/COPY INTO (the whole-table path just above) is
+        deliberately append-only -- it can only add rows, never update an
+        existing row's column value in place (see that path's own comment
+        on why: even a wrong eligibility verdict must never destroy data).
+        That mechanism is wrong here: the table already has `row_count`
+        real rows, and the goal is to fill in one or more columns ON those
+        same rows, not add more rows. This uses a narrow, explicitly-scoped
+        MERGE instead: stage just {key column(s) + target_cols} from the
+        source PBIX into a session-scoped TEMPORARY table, then
+        MERGE ... WHEN MATCHED THEN UPDATE SET <target_cols only> -- never
+        touching the key column(s) or any other column on the matched
+        rows.
+
+        Requires a reliable key column common to both sides, unique on
+        both sides, with matching row counts; refuses (returns
+        "ambiguous_needs_review") rather than guess when any of that
+        doesn't hold -- a mismatch means key-based matching can't be
+        trusted not to silently patch the wrong row, patch a duplicate, or
+        miss rows entirely.
+        """
+        source_table = dataset.source_table or dataset.unique_name
+        key_safe_names = [
+            safe_name for safe_name, col in physical_cols.items()
+            if col.unique_name in key_names
+        ]
+        if not key_safe_names:
+            return self._backfill_result(
+                safe_table_name, dataset_name, "ambiguous_needs_review", row_count,
+                f"Column(s) {target_cols} were added by this deploy and are still empty, "
+                "but this dataset has no key column to safely match existing rows against "
+                "the source PBIX -- left untouched rather than guess.",
+                columns=list(target_cols),
+            )
+
+        try:
+            df = pbix_model.get_table(source_table)
+            if df is None or df.empty:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "skipped", 0,
+                    f"Column(s) {target_cols} were added by this deploy, but source PBIX "
+                    f"table '{source_table}' has no rows to backfill them from.",
+                    columns=list(target_cols),
+                )
+
+            df = df.rename(columns={col: self._sanitize_col_name(str(col)) for col in df.columns})
+
+            wanted = list(dict.fromkeys(key_safe_names + target_cols))
+            missing = [c for c in wanted if c not in df.columns]
+            if missing:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "ambiguous_needs_review", row_count,
+                    f"Column(s) {target_cols} were added by this deploy, but the extracted "
+                    f"PBIX data is missing expected column(s) {missing} needed to match "
+                    "existing rows -- left untouched rather than guess.",
+                    columns=list(target_cols),
+                )
+            df = df[wanted]
+
+            # A non-unique key makes "WHEN MATCHED" ambiguous about which
+            # source row's value wins -- exactly the kind of silent guess
+            # this feature exists to avoid.
+            if len(key_safe_names) == 1 and df[key_safe_names[0]].duplicated().any():
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "ambiguous_needs_review", row_count,
+                    f"Column(s) {target_cols} were added by this deploy, but the source "
+                    f"PBIX table has duplicate values in key column '{key_safe_names[0]}' -- "
+                    "left untouched rather than risk an ambiguous match.",
+                    columns=list(target_cols),
+                )
+
+            import pandas as pd
+
+            for safe_name, col in physical_cols.items():
+                if (
+                    safe_name in df.columns
+                    and getattr(col, "data_type", None) == DataType.DATE
+                    and pd.api.types.is_datetime64_any_dtype(df[safe_name])
+                ):
+                    df[safe_name] = df[safe_name].dt.date
+
+            source_row_count = len(df)
+            # Mirrors the CTAS+SWAP row-count safety guard elsewhere in
+            # this file: if the source PBIX's row count doesn't match the
+            # live table's, key-based matching can't be trusted -- bail
+            # out to a human rather than patch a possibly-wrong subset.
+            if source_row_count != row_count:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "ambiguous_needs_review", row_count,
+                    f"Column(s) {target_cols} were added by this deploy, but the source "
+                    f"PBIX has {source_row_count} row(s) for '{source_table}' while the "
+                    f"live table has {row_count} -- left untouched rather than risk a "
+                    "partial or mismatched patch.",
+                    columns=list(target_cols),
+                )
+
+            staging_name = self._build_staging_table_name(safe_table_name)
+            from snowflake.connector.pandas_tools import write_pandas
+
+            success, _num_chunks, _num_rows, _details = write_pandas(
+                cursor.connection,
+                df,
+                staging_name,
+                schema=self.config.schema_name,
+                auto_create_table=True,
+                table_type="temporary",
+                quote_identifiers=True,
+                use_logical_type=True,
+            )
+            if not success:
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "failed", 0,
+                    f"write_pandas reported failure staging data to backfill column(s) {target_cols}.",
+                    columns=list(target_cols),
+                )
+
+            try:
+                key_expr = " AND ".join(f'tgt."{k}" = src."{k}"' for k in key_safe_names)
+                set_clause = ", ".join(f'tgt."{c}" = src."{c}"' for c in target_cols)
+                merge_sql = (
+                    f'MERGE INTO {self.config.schema_name}."{safe_table_name}" AS tgt '
+                    f'USING {self.config.schema_name}."{staging_name}" AS src '
+                    f'ON {key_expr} '
+                    f'WHEN MATCHED THEN UPDATE SET {set_clause}'
+                )
+                self._execute_sql(
+                    cursor, merge_sql, context=f"BACKFILL COLUMNS MERGE {safe_table_name}",
+                )
+                # Snowflake's connector doesn't reliably populate
+                # cursor.rowcount for a MERGE across all driver versions --
+                # source_row_count is a safe stand-in since the row-count
+                # parity check above already guarantees every source row
+                # has exactly one live counterpart to match.
+                updated = cursor.rowcount if cursor.rowcount is not None else source_row_count
+            finally:
+                self._execute_sql(
+                    cursor, f'DROP TABLE IF EXISTS {self.config.schema_name}."{staging_name}"',
+                    context=f"DROP STAGING TABLE {staging_name}",
+                )
+
+            logger.info(
+                "Data backfill: patched column(s) %s on %d existing row(s) in %s.%s "
+                "(added by this deploy, source PBIX table '%s')",
+                target_cols, updated, self.config.schema_name, safe_table_name, source_table,
+            )
+            return self._backfill_result(
+                safe_table_name, dataset_name, "columns_backfilled", updated,
+                f"Patched newly-added column(s) {target_cols} on {updated} existing "
+                "row(s) from the source PBIX -- other columns on those rows were left "
+                "untouched.",
+                columns=list(target_cols),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Column-level data backfill failed for table %s columns %s: %s",
+                safe_table_name, target_cols, exc, exc_info=True,
+            )
+            return self._backfill_result(
+                safe_table_name, dataset_name, "failed", 0,
+                f"Unexpected error while backfilling column(s) {target_cols}: {exc}",
+                columns=list(target_cols),
+            )
+
+    @staticmethod
+    def _backfill_result(
+        table: str,
+        dataset: str,
+        status: str,
+        row_count: int,
+        reason: str,
+        columns: Optional[list[str]] = None,
+    ) -> dict:
+        result = {"table": table, "dataset": dataset, "status": status, "row_count": row_count, "reason": reason}
+        # Only present for the column-level backfill path (status
+        # "columns_backfilled", or an "ambiguous_needs_review"/"failed"
+        # outcome reached from that same path) -- absent (not just empty)
+        # for every whole-table loaded/skipped/failed outcome, so the run
+        # report can render the two shapes distinctly instead of
+        # conflating "loaded a fresh table" with "patched existing rows'
+        # column(s)".
+        if columns:
+            result["columns"] = columns
+        return result
+
+    # A table needs at least this many existing rows before it's even
+    # eligible to be judged "already populated" at all. Below this floor,
+    # ANY non-null pattern is treated as noise, not real data -- this
+    # directly covers a single leftover garbage row (all-NULL, or the
+    # generate_sample_insert() 'Sample_<column>' placeholder pattern
+    # table_management.py writes for a brand-new table), which would
+    # otherwise permanently block a legitimate backfill the moment any ONE
+    # of its columns happened to carry a stray non-null value. Chosen at
+    # the low end of the requested 10-100 range deliberately: this tool's
+    # own PBIX source is the ground truth for what a table's real row
+    # count should be, so a genuinely tiny-but-real table (say 5 rows)
+    # backfilling again just re-loads the SAME rows from the SAME source
+    # -- unlike an arbitrary external system that might diverge from the
+    # PBIX, there's no independent "real" state here to lose. Note
+    # write_pandas is never called with overwrite=True (see
+    # _backfill_one_table), so even a wrong "eligible" verdict only ever
+    # appends/duplicates rows -- it can never truncate or delete a table
+    # that turns out to have been genuinely, if sparsely, populated.
+    _MIN_ROW_COUNT_FOR_POPULATED = 10
+
+    # Among the rows that DO exist, a non-key column only counts as
+    # "meaningfully populated" once at least half of them are non-null --
+    # a single stray non-null value out of hundreds of rows (noise, a
+    # manual test insert, a partial/aborted prior load) must not
+    # permanently block backfill just because SOME value exists somewhere.
+    # 50% still easily preserves the original incident's protection: a
+    # genuinely populated column (like PRODUCT in the real incident this
+    # feature exists to prevent recurring) is typically at or near 100%
+    # non-null, nowhere close to this threshold.
+    _MIN_POPULATED_FRACTION = 0.5
+
+    def _classify_table_data_state(
+        self,
+        cursor,
+        safe_table_name: str,
+        physical_cols: Dict[str, Any],
+        non_key_safe_names: list[str],
+    ) -> Dict[str, Any]:
+        """Classify a table's current data state into exactly one of three
+        outcomes, returned as {"state", "row_count", "populated_columns",
+        "samples"}:
+
+        - "real_data": row_count >= _MIN_ROW_COUNT_FOR_POPULATED AND at
+          least one non-key column is non-null across at least
+          _MIN_POPULATED_FRACTION of those rows -- confidently real,
+          skip and leave untouched.
+        - "empty": row_count == 0, every non-key column is entirely null
+          regardless of row count, OR (below the floor) the populated
+          value(s) exactly match the known generate_sample_insert()
+          placeholder pattern (see _is_known_placeholder_pattern) --
+          confidently NOT real data, safe to proceed with backfill.
+        - "ambiguous": below _MIN_ROW_COUNT_FOR_POPULATED but at least one
+          non-key column has a non-null value that ISN'T the known
+          placeholder pattern -- could be a genuinely small real table
+          (e.g. a 1-row or 7-row reference table) or leftover garbage from
+          something else, and this check cannot tell the two apart from
+          row/null counts alone. Deliberately NOT auto-decided either way:
+          skipped without loading, surfaced as its own status
+          ("ambiguous_needs_review") with enough evidence (which columns,
+          sample values) for a human reading the run report to decide
+          without re-running diagnostics themselves.
+
+        A blanket floor-only rule (skip below N rows always eligible)
+        would auto-backfill-over a genuinely real small table just as
+        easily as a genuinely garbage one -- this three-way split exists
+        specifically so that ambiguity is never silently resolved in
+        either direction.
+        """
+        count_exprs = ", ".join(f'COUNT("{c}") AS "{c}"' for c in non_key_safe_names)
+        query = (
+            f'SELECT COUNT(*) AS "ROW_COUNT", {count_exprs} '
+            f'FROM {self.config.schema_name}."{safe_table_name}"'
+        )
+        self._execute_sql(cursor, query, context=f"BACKFILL SAFETY CHECK {safe_table_name}")
+        row = cursor.fetchone()
+        if not row:
+            return {"state": "empty", "row_count": 0, "populated_columns": [], "samples": {}}
+
+        row_count = int(row[0] or 0)
+        counts = {name: int(c or 0) for name, c in zip(non_key_safe_names, row[1:])}
+        populated_columns = [name for name, c in counts.items() if c > 0]
+
+        if row_count == 0:
+            return {"state": "empty", "row_count": 0, "populated_columns": [], "samples": {}}
+
+        if row_count >= self._MIN_ROW_COUNT_FOR_POPULATED:
+            has_real_data = any(
+                (c / row_count) >= self._MIN_POPULATED_FRACTION for c in counts.values()
+            )
+            return {
+                "state": "real_data" if has_real_data else "empty",
+                "row_count": row_count,
+                "populated_columns": populated_columns,
+                "samples": {},
+            }
+
+        # Below the row-count floor.
+        if not populated_columns:
+            return {"state": "empty", "row_count": row_count, "populated_columns": [], "samples": {}}
+
+        if self._is_known_placeholder_pattern(
+            cursor, safe_table_name, physical_cols, populated_columns, row_count,
+        ):
+            return {
+                "state": "empty", "row_count": row_count,
+                "populated_columns": populated_columns, "samples": {},
+            }
+
+        samples = self._fetch_sample_values(cursor, safe_table_name, populated_columns, row_count)
+        return {
+            "state": "ambiguous", "row_count": row_count,
+            "populated_columns": populated_columns, "samples": samples,
+        }
+
+    def _is_known_placeholder_pattern(
+        self,
+        cursor,
+        safe_table_name: str,
+        physical_cols: Dict[str, Any],
+        populated_columns: list[str],
+        row_count: int,
+    ) -> bool:
+        """True only for the exact generate_sample_insert() placeholder
+        shape (table_management.py) -- a single row where every populated
+        non-key STRING column's value is literally
+        'Sample_<original PBIX column name, truncated to 20 chars>', the
+        one-time seed row that pipeline writes for a brand-new table
+        (guarded there by its own WHERE NOT EXISTS clause, so it can never
+        insert more than one). Confidently garbage, not ambiguous, because
+        this exact literal string can't plausibly arise from real business
+        data by coincidence. Only STRING columns carry this identifiable
+        signature (generate_sample_insert() fills numeric/boolean/date
+        columns with "1"/TRUE/CURRENT_DATE(), none of which are
+        distinguishable from real values on their own) -- but requiring
+        EVERY populated string column to match simultaneously is already
+        strong, specific evidence.
+        """
+        if row_count != 1:
+            return False
+        string_populated = [
+            name for name in populated_columns
+            if getattr(physical_cols.get(name), "data_type", None) == DataType.STRING
+        ]
+        if not string_populated:
+            return False
+        samples = self._fetch_sample_values(cursor, safe_table_name, string_populated, row_count)
+        for name in string_populated:
+            col = physical_cols.get(name)
+            if col is None:
+                return False
+            expected = f"Sample_{col.unique_name[:20]}"
+            values = samples.get(name) or []
+            if not values or values[0] != expected:
+                return False
+        return True
+
+    def _fetch_sample_values(
+        self,
+        cursor,
+        safe_table_name: str,
+        columns: list[str],
+        limit: int,
+    ) -> Dict[str, list]:
+        """Up to 3 non-null sample values per column, for evidence
+        (ambiguous-review reason text) or placeholder-pattern matching.
+        `limit` is the table's own row_count -- always small here (only
+        ever called below _MIN_ROW_COUNT_FOR_POPULATED), so fetching every
+        row is cheap and safe."""
+        if not columns:
+            return {}
+        col_list = ", ".join(f'"{c}"' for c in columns)
+        query = f'SELECT {col_list} FROM {self.config.schema_name}."{safe_table_name}" LIMIT {max(int(limit), 1)}'
+        self._execute_sql(cursor, query, context=f"BACKFILL SAMPLE VALUES {safe_table_name}")
+        rows = cursor.fetchall() or []
+        samples: Dict[str, list] = {c: [] for c in columns}
+        for r in rows:
+            for name, val in zip(columns, r):
+                if val is not None and len(samples[name]) < 3:
+                    samples[name].append(val)
+        return samples
+
+    @staticmethod
+    def _format_ambiguous_reason(
+        row_count: int,
+        populated_columns: list[str],
+        samples: Dict[str, list],
+    ) -> str:
+        """Enough detail for a human reading the run report to decide
+        without re-running diagnostics themselves -- row count, which
+        columns had data, and what that data actually looks like."""
+        parts = []
+        for name in populated_columns:
+            values = samples.get(name) or []
+            sample_str = ", ".join(repr(v) for v in values) if values else "(no sample captured)"
+            parts.append(f"{name}=[{sample_str}]")
+        cols_desc = "; ".join(parts) if parts else "(none)"
+        return (
+            f"Ambiguous: {row_count} row(s) — below the minimum ({SnowflakeSchemaManager._MIN_ROW_COUNT_FOR_POPULATED}) "
+            f"to confidently call this real data, but not confirmed empty either. Populated non-key column(s) "
+            f"and sample value(s): {cols_desc}. Needs manual review — left untouched without loading."
+        )
 
     def evolve_schema(
         self,

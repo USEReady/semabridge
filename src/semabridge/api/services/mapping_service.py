@@ -3,6 +3,7 @@
 Provides list, auto-map, update, and delete mappings plus all supporting
 private helpers for building, serializing, and validating entity mappings.
 """
+import logging
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,7 @@ AUTO_MAP_SNOWFLAKE_RESERVED = {
     "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
 }
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -130,13 +132,54 @@ def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, 
         )
         if not source_path or not target_name:
             continue
-        overrides.append({
+        override = {
             "source_path": source_path,
             "target_name": target_name,
             "entity_kind": str(mapping.get("entity_kind") or "").strip().lower(),
             "source_name": str(mapping.get("source_name") or "").strip(),
-        })
+        }
+        model = str(mapping.get("model") or "").strip()
+        if model:
+            # Multi-model edit: keep it scoped to its own model.
+            override["model"] = model
+        overrides.append(override)
     return overrides
+
+
+def _compat_override_identity(row: Dict[str, Any]) -> tuple:
+    """(model, source_path) identity of one override row; the model part is
+    normalised the same way sync_execution_service scopes overrides."""
+    from semabridge.api.services.sync_execution_service import _model_identity_key
+
+    return (_model_identity_key(row.get("model")), str(row.get("source_path") or "").strip())
+
+
+def _compat_merge_model_scoped_overrides(
+    config_overrides: List[Dict[str, Any]],
+    store_overrides: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge the project YAML's overrides with the mapping-store edits so each
+    (model, source_path) appears exactly once; a store edit wins over the YAML
+    row for the same identity. Order: YAML rows first (in their order), then
+    store-only rows."""
+    store_by_id: Dict[tuple, Dict[str, Any]] = {}
+    for row in store_overrides:
+        store_by_id[_compat_override_identity(row)] = row
+    merged: List[Dict[str, Any]] = []
+    seen: set = set()
+    for row in config_overrides:
+        if not isinstance(row, dict):
+            continue
+        identity = _compat_override_identity(row)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(store_by_id.get(identity, row))
+    for identity, row in store_by_id.items():
+        if identity not in seen:
+            seen.add(identity)
+            merged.append(row)
+    return merged
 
 
 def _compat_apply_manual_mapping_overrides_to_cfg(config_yaml: str, project_id: str) -> str:
@@ -144,7 +187,18 @@ def _compat_apply_manual_mapping_overrides_to_cfg(config_yaml: str, project_id: 
     overrides = _compat_collect_manual_mapping_overrides(project_id)
     if not overrides:
         return config_yaml
-    parsed["mappings_overrides"] = overrides
+    config_overrides = parsed.get("mappings_overrides") if isinstance(parsed.get("mappings_overrides"), list) else []
+    model_scoped = any(
+        isinstance(row, dict) and str(row.get("model") or "").strip()
+        for row in list(config_overrides) + overrides
+    )
+    if model_scoped:
+        # Multi-model project: an edit may arrive through both the YAML
+        # (written at create time) and the mapping store (edited later) --
+        # merge so it is applied exactly once, scoped to its own model.
+        parsed["mappings_overrides"] = _compat_merge_model_scoped_overrides(config_overrides, overrides)
+    else:
+        parsed["mappings_overrides"] = overrides
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
 
 
@@ -249,31 +303,91 @@ def _compat_scope_model_for_dry_run(
     return model
 
 
-def _compat_preferred_snapshot_id_from_sync_result(
+def _compat_source_match_keys(value: Any) -> set:
+    """Lower-cased keys a selected source / result model name can match on:
+    the raw value plus, for file paths, the file stem — so a PBIX
+    selected_sources entry (full path) matches a sync result row whose
+    ``model`` is the file's stem, and vice versa."""
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    keys = {text.lower()}
+    normalized = text.replace("\\", "/")
+    if "/" in normalized or normalized.lower().endswith(".pbix"):
+        stem = normalized.rsplit("/", 1)[-1]
+        if stem.lower().endswith(".pbix"):
+            stem = stem[: -len(".pbix")]
+        if stem.strip():
+            keys.add(stem.strip().lower())
+    return keys
+
+
+def _compat_snapshot_ids_by_model_from_sync_result(
     sync_result: Dict[str, Any],
     selected_model_names: Optional[List[str]] = None,
-) -> str:
+) -> Dict[str, str]:
+    """Every selected model's own SML snapshot id, keyed by the selected
+    source string as passed in. Models with no snapshot are omitted. This is
+    the multi-model-safe counterpart of
+    _compat_preferred_snapshot_id_from_sync_result (which can only return one
+    id and therefore must only be used for single-model scopes)."""
+    out: Dict[str, str] = {}
     if not isinstance(sync_result, dict):
-        return ""
-
-    selected_lookup = {
-        str(item or "").strip().lower()
-        for item in (selected_model_names or [])
-        if str(item or "").strip()
-    }
-
+        return out
     results = sync_result.get("results") if isinstance(sync_result.get("results"), list) else []
-    if selected_lookup and results:
+    for selected in selected_model_names or []:
+        keys = _compat_source_match_keys(selected)
+        if not keys:
+            continue
         for row in results:
             if not isinstance(row, dict):
                 continue
-            model_name = str(row.get("model") or "").strip().lower()
-            if model_name not in selected_lookup:
+            if not (_compat_source_match_keys(row.get("model")) & keys):
                 continue
             summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
             sid = str(summary.get("sml_snapshot_id") or "").strip()
             if sid:
-                return sid
+                out[str(selected)] = sid
+                break
+    return out
+
+
+def _compat_preferred_snapshot_id_from_sync_result(
+    sync_result: Dict[str, Any],
+    selected_model_names: Optional[List[str]] = None,
+) -> str:
+    """The ONE snapshot id to build a dry-run/auto-map preview from.
+
+    Only meaningful for a single-model scope. For more than one selected
+    model there is no single correct answer — callers must either fan out
+    one call per model (the dry-run jobs endpoint does exactly that) or use
+    _compat_snapshot_ids_by_model_from_sync_result. When several selected
+    models each produced a distinct snapshot this logs a warning instead of
+    silently pretending the first one is the whole result.
+    """
+    if not isinstance(sync_result, dict):
+        return ""
+
+    selected = [
+        str(item or "").strip()
+        for item in (selected_model_names or [])
+        if str(item or "").strip()
+    ]
+
+    results = sync_result.get("results") if isinstance(sync_result.get("results"), list) else []
+    if selected and results:
+        by_model = _compat_snapshot_ids_by_model_from_sync_result(sync_result, selected)
+        if len(set(by_model.values())) > 1:
+            logger.warning(
+                "[DryRun] %d selected models produced distinct snapshots (%s); a single "
+                "preferred snapshot only covers the first. Multi-model previews must be "
+                "dry-run per model (POST /api/projects/{id}/dry-run-jobs).",
+                len(by_model),
+                ", ".join(sorted(by_model)),
+            )
+        for name in selected:
+            if by_model.get(name):
+                return by_model[name]
 
     summary = sync_result.get("summary") if isinstance(sync_result.get("summary"), dict) else {}
     sid = str(summary.get("sml_snapshot_id") or "").strip()
@@ -731,6 +845,7 @@ def _compat_serialize_auto_map_entity_mappings(
             "static_risk_tier": row.get("static_risk_tier"),
             "static_risk_label": row.get("static_risk_label"),
             "llm_self_reported_confidence": row.get("llm_self_reported_confidence"),
+            "source_file": row.get("source_file"),
         })
 
     seen: Dict[str, Dict[str, Any]] = {}

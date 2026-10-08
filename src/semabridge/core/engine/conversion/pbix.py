@@ -67,6 +67,15 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     )
     ds_id = display_name or context.project_id
 
+    # Multi-mode projects: each model deploys to the view name assigned to it
+    # once, at project creation, and saved in the project config (carried
+    # here as context.resolved_pbix_display_name). Single-mode projects never
+    # set it, so their view name is derived exactly as before.
+    resolved_display_name = getattr(context, "resolved_pbix_display_name", None)
+    if resolved_display_name:
+        display_name = resolved_display_name
+        ds_id = resolved_display_name
+
     # Phase 1: TMSL → OSI
     source_data = {
         "tmsl": sf.tmsl_definition if sf else None,
@@ -75,6 +84,14 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         "display_name": display_name or ds_id,
         "project_id": context.project_id,
         "field_aliases": getattr(sf, "field_aliases", []),
+        # Stamped onto every OSIColumn/OSIMetric this conversion produces (see
+        # TMSLToOSIConverter.to_osi) so a multi-PBIX project's per-file dry-run
+        # results are never ambiguous about which .pbix file they came from.
+        # getattr, not direct access: context.source_format is a real
+        # SourceFormat in production (always has pbix_path, defaulting to
+        # None), but some tests substitute a lighter-weight stand-in that
+        # doesn't set every SourceFormat attribute.
+        "source_file": getattr(sf, "pbix_path", None),
     }
     osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model

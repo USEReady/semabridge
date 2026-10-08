@@ -59,12 +59,27 @@ class ExecutionEngine:
         safe = re.sub(r"_+", "_", safe).strip("._")
         return safe or "model"
 
-    def _model_output_dir(self, *parts: str, model_name: Optional[str] = None) -> Path:
+    def _model_output_dir(
+        self,
+        *parts: str,
+        model_name: Optional[str] = None,
+        model_subdir: Optional[str] = None,
+    ) -> Path:
+        """output/<parts...>/<project>[/<model_subdir>].
+
+        model_subdir is only set for a model that is part of a multi-model
+        batch (RunContext.physical_namespace), so every model of the batch
+        writes its own artifacts instead of overwriting a sibling's file in
+        the shared per-project directory. Single-model runs pass None and
+        keep exactly the previous path.
+        """
         safe_name = self._safe_output_name(model_name or (self._context.project_id if self._context else None))
         path = Path("output")
         for part in parts:
             path /= part
         path /= safe_name
+        if model_subdir:
+            path /= self._safe_output_name(model_subdir)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -159,6 +174,11 @@ class ExecutionEngine:
         config_dict: Optional[Dict[str, Any]] = None, # In-memory configuration override
         sync_mode: str = "copy",
         force: bool = False,
+        resolved_display_name: Optional[str] = None,
+        # Multi-model batch isolation (see RunContext.physical_namespace).
+        physical_namespace: Optional[str] = None,
+        batch_model_count: int = 1,
+        batch_name_registry: Optional[Any] = None,
     ) -> RunSummary:
         """
         Execute the full 10-step pipeline.
@@ -215,9 +235,14 @@ class ExecutionEngine:
                 config_path,
                 sync_mode=sync_mode,
                 config_dict=config_dict,
+                resolved_display_name=resolved_display_name,
             )
             context.config_path = config_path
             context.config_payload = config_dict
+            context.physical_namespace = (str(physical_namespace).strip() or None) if physical_namespace else None
+            context.batch_model_count = max(1, int(batch_model_count or 1))
+            context.batch_name_registry = batch_name_registry
+            context.pbix_path = pbix_path
             self._context = context
             self._summary = create_run_summary(
                 project_id=context.project_id,
@@ -239,40 +264,67 @@ class ExecutionEngine:
             )
             
             # Step 3: Resolve Authentication
-            # If an account_id is provided, inject its credentials into os.environ
-            # before validation. This enables per-user credential isolation.
-            self._account_env_ctx = None
+            # If an account_id is provided, resolve its credentials before
+            # validation. This enables per-user credential isolation.
+            #
+            # Thread-safe for all three connector types: builds an isolated
+            # config object (via credential_builder.build_*_config) on a
+            # model_copy() of context.config instead of mutating os.environ
+            # or the shared, process-global get_settings() singleton.
+            # Concurrent batch-sync jobs (ThreadPoolExecutor in
+            # sync_execution_service.py) all call this in parallel — the old
+            # scoped_account_env() + cache_clear() + get_settings() pattern
+            # raced on that shared state, letting one job's source/target
+            # config bleed into another job's context mid-run.
             if account_id:
                 try:
-                    from semabridge.auth.account_credential_resolver import scoped_account_env
                     from semabridge.repository.account_repository import AccountRepository
                     from semabridge.repository.orm.session_factory import db_manager
 
-                    session = db_manager.get_session_factory()()
-                    repo = AccountRepository(session)
-                    account = repo.get_account_by_id(account_id)
-                    if account:
-                        self._account_env_ctx = scoped_account_env(account, session)
-                        self._account_env_ctx.__enter__()
-                        context.account_id = account_id
-                        logger.info(
-                            "Account-scoped credentials injected for %s/%s",
-                            account.connector_type,
-                            account.identity_email or account.tag,
-                        )
-                        # Preserve project-scoped source/target namespaces (set from YAML
-                        # in Step 1) before clearing the settings cache — the fresh
-                        # get_settings() call would otherwise lose them.
-                        _old_source = getattr(context.config, "source", None)
-                        _old_target = getattr(context.config, "target", None)
-                        # Force settings cache clear so pydantic re-reads env vars
-                        get_settings.cache_clear()
-                        context.config = get_settings()
-                        # Re-attach project-scoped namespaces to the refreshed config.
-                        if _old_source is not None:
-                            object.__setattr__(context.config, "source", _old_source)
-                        if _old_target is not None:
-                            object.__setattr__(context.config, "target", _old_target)
+                    with db_manager.get_session() as session:
+                        repo = AccountRepository(session)
+                        account = repo.get_account_by_id(account_id)
+                        if not account:
+                            logger.warning("Account credential injection: no account found for %s", account_id)
+                        else:
+                            connector = account.connector_type.upper()
+                            if connector == "SNOWFLAKE":
+                                from semabridge.auth.credential_builder import build_snowflake_config
+
+                                context.config = context.config.model_copy()
+                                context.config._snowflake = build_snowflake_config(
+                                    account, session, context.config.snowflake
+                                )
+                            elif connector == "FABRIC":
+                                from semabridge.auth.credential_builder import build_fabric_config
+
+                                context.config = context.config.model_copy()
+                                fabric_cfg, fabric_token = build_fabric_config(
+                                    account, session, context.config.fabric
+                                )
+                                context.config._fabric = fabric_cfg
+                                context.fabric_access_token = fabric_token
+                            elif connector == "DATABRICKS":
+                                from semabridge.auth.credential_builder import build_databricks_config
+
+                                context.config = context.config.model_copy()
+                                context.config._databricks = build_databricks_config(
+                                    account, session, context.config.databricks
+                                )
+                            else:
+                                logger.warning(
+                                    "Account credential injection: unrecognized connector_type '%s' for %s",
+                                    account.connector_type, account_id,
+                                )
+                                connector = None
+
+                            if connector:
+                                context.account_id = account_id
+                                logger.info(
+                                    "Account-scoped %s config built for %s (thread-safe, no os.environ mutation)",
+                                    connector,
+                                    account.identity_email or account.tag,
+                                )
                 except Exception as acct_exc:
                     logger.warning(
                         "Account credential injection failed for %s: %s",
@@ -356,14 +408,6 @@ class ExecutionEngine:
                 self._context or self._create_fallback_context(),
                 status
             )
-        finally:
-            # Always clean up the account-scoped env context
-            if hasattr(self, '_account_env_ctx') and self._account_env_ctx is not None:
-                try:
-                    self._account_env_ctx.__exit__(None, None, None)
-                except Exception as exc:
-                    logger.debug("Error cleaning up account env context: %s", exc)
-                self._account_env_ctx = None
 
     def _record_step(
         self,

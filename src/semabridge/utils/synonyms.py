@@ -171,3 +171,124 @@ def lookup_attribute_synonyms(attr: Any, dataset_obj: Any, phys_col: str | None 
             return list(getattr(col, "synonyms", []) or [])
     return []
 
+
+def _row_timestamp(row: Any):
+    """updated_at (or created_at) of a SynonymOverride row as a naive UTC
+    datetime for comparison, or None when unknown."""
+    from datetime import timezone
+
+    value = getattr(row, "updated_at", None) or getattr(row, "created_at", None)
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def copy_synonym_overrides(
+    source_project_ids: Iterable[str],
+    target_project_id: str,
+    *,
+    model_name_by_source: dict[str, str] | None = None,
+) -> int:
+    """Copy UI synonym overrides saved during a dry run (under transient
+    ``preview-*`` project ids, one per model) into the real project, so the
+    synonyms the user edited in the dry run are the ones that get deployed.
+
+    Rules:
+      - Each preview project holds exactly one model's rows. When
+        ``model_name_by_source`` maps a preview id to the model name the real
+        project deploys that model under, its rows are stored under that
+        model name only -- one model's synonyms never land on another model.
+      - A row already on the target is replaced only when the preview row is
+        strictly NEWER than it. Synonyms the user edits on the real project
+        after the dry run therefore are never overwritten by an older dry-run
+        value, however often the project is saved.
+      - When several sources carry the same key, the first source wins.
+
+    The synonym values themselves are copied verbatim; how synonyms are
+    generated, resolved or looked up is unchanged. Returns the number of
+    target rows created/updated. Errors are logged and return 0 -- synonym
+    migration must never block saving a project.
+    """
+    target = str(target_project_id or "").strip()
+    name_map = {str(k).strip(): str(v).strip() for k, v in (model_name_by_source or {}).items() if str(v or "").strip()}
+    sources = []
+    for pid in source_project_ids or []:
+        text = str(pid or "").strip()
+        if text and text != target and text not in sources:
+            sources.append(text)
+    if not target or not sources:
+        return 0
+
+    try:
+        from sqlalchemy import select
+
+        from semabridge.repository.orm.models import SynonymOverride
+        from semabridge.repository.orm.session_factory import db_manager
+
+        copied = 0
+        with db_manager.get_session() as session:
+            merged: dict[tuple[str, str, str], tuple[tuple[str, str, str], list[str], Any]] = {}
+            for source in sources:
+                rows = session.execute(
+                    select(SynonymOverride).where(SynonymOverride.project_id == source)
+                ).scalars().all()
+                for row in rows:
+                    model_name = name_map.get(source) or row.model_name
+                    key = synonym_override_key(model_name, row.table_name, row.column_name)
+                    if key in merged:
+                        continue
+                    merged[key] = (
+                        (model_name, row.table_name, row.column_name),
+                        _clean_items(row.synonyms),
+                        _row_timestamp(row),
+                    )
+            if not merged:
+                return 0
+            existing_rows = session.execute(
+                select(SynonymOverride).where(SynonymOverride.project_id == target)
+            ).scalars().all()
+            existing = {
+                synonym_override_key(r.model_name, r.table_name, r.column_name): r
+                for r in existing_rows
+            }
+            for key, ((model_name, table_name, column_name), values, source_ts) in merged.items():
+                row = existing.get(key)
+                if row is not None:
+                    target_ts = _row_timestamp(row)
+                    if source_ts is None or target_ts is None or source_ts <= target_ts:
+                        continue
+                    if list(row.synonyms) == values:
+                        continue
+                    row.synonyms = values
+                    # Carry the dry-run edit's own timestamp, so "newer"
+                    # always compares edit times, not copy times.
+                    row.updated_at = source_ts
+                else:
+                    row = SynonymOverride(
+                        project_id=target,
+                        model_name=model_name,
+                        table_name=table_name,
+                        column_name=column_name,
+                    )
+                    row.synonyms = values
+                    if source_ts is not None:
+                        row.created_at = source_ts
+                        row.updated_at = source_ts
+                    session.add(row)
+                copied += 1
+        logger.info(
+            "Migrated %d synonym override(s) from %s to project '%s'",
+            copied,
+            ", ".join(sources),
+            target,
+        )
+        return copied
+    except Exception as exc:
+        logger.warning(
+            "Synonym override migration to project '%s' failed (continuing): %s",
+            target,
+            exc,
+        )
+        return 0

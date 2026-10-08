@@ -1,5 +1,13 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
+import {
+    buildRunReportUrl,
+    buildRunModelReportUrl,
+    buildRunReportSummaryUrl,
+    buildRunModelReportSummaryUrl,
+    resolveReportFilename,
+} from './runReportDownload.js';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 // Fabric MSAL token is kept in memory only — not persisted to localStorage.
 // This prevents XSS exfiltration of the Fabric OAuth token. On page reload the
@@ -1612,6 +1620,41 @@ export const api = {
     },
 
     /**
+     * Multi-PBIX background dry-run jobs — background-job-plus-polling
+     * pattern so an N-file batch never risks the HTTP timeout a single
+     * long, synchronous runProjectDryRun() request would. Each of these
+     * calls is fast (job creation / a status read / a rerun trigger); the
+     * actual per-file pipeline work happens server-side in the background
+     * and is observed via polling createDryRunJob's returned job_id with
+     * getDryRunJobStatus.
+     */
+    async createDryRunJob(projectId, payload) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    async getDryRunJobStatus(projectId, jobId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs/${jobId}`);
+        return handleResponse(res);
+    },
+
+    async getDryRunJobFile(projectId, jobId, fileId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs/${jobId}/files/${fileId}`);
+        return handleResponse(res);
+    },
+
+    async rerunDryRunJobFile(projectId, jobId, fileId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/dry-run-jobs/${jobId}/files/${fileId}/rerun`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
+    /**
      * Auto-add a missing dimension column to the Snowflake physical table.
      * Called from the dry-run conflict UI when the user clicks "Auto-add to Snowflake".
      * After this succeeds the caller should trigger a re-sync.
@@ -1771,6 +1814,83 @@ export const api = {
         }));
     },
 
+    // Downloads the Markdown run-summary report written by the backend's
+    // write_run_report() (see run_report_service.py) for one run. Mirrors
+    // exportProject()'s fetch -> Content-Disposition -> _triggerDownload
+    // pattern below. Works identically for a successful, warning, partial,
+    // or failed run -- write_run_report runs unconditionally from
+    // _perform_project_run's `finally` block, so every run has a report to
+    // download, not just successful ones. URL/filename resolution is
+    // extracted to runReportDownload.js so it's unit-testable without a
+    // fetch/DOM environment.
+    async downloadRunReport(projectId, runId) {
+        const res = await authFetch(buildRunReportUrl(API_BASE_URL, projectId, runId));
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Report download failed: ${txt}`);
+        }
+        const blob = await res.blob();
+        const filename = resolveReportFilename(res.headers.get('Content-Disposition'), projectId, runId);
+        _triggerDownload(blob, filename);
+    },
+
+    // Per-model equivalent of downloadRunReport() -- one file's own report
+    // from a multi-PBIX batch run (see run_report_service.py's
+    // write_per_model_run_reports()).
+    async downloadRunModelReport(projectId, runId, modelLabel) {
+        const res = await authFetch(buildRunModelReportUrl(API_BASE_URL, projectId, runId, modelLabel));
+        if (!res.ok) {
+            const txt = await res.text();
+            throw new Error(`Report download failed: ${txt}`);
+        }
+        const blob = await res.blob();
+        const filename = resolveReportFilename(res.headers.get('Content-Disposition'), projectId, runId);
+        _triggerDownload(blob, filename);
+    },
+
+    // Fetches the rendered Markdown report as text (not a download) -- the
+    // "View Report Preview" modal's Raw Report tab source. Same endpoint
+    // downloadRunReport() uses, just read as text instead of triggering a
+    // file save.
+    async getRunReport(projectId, runId) {
+        const res = await authFetch(buildRunReportUrl(API_BASE_URL, projectId, runId));
+        if (!res.ok) {
+            throw new Error(`Report request failed with status ${res.status}`);
+        }
+        return res.text();
+    },
+
+    // Per-model equivalent of getRunReport() -- one file's own Markdown
+    // report text from a multi-PBIX batch run.
+    async getRunModelReport(projectId, runId, modelLabel) {
+        const res = await authFetch(buildRunModelReportUrl(API_BASE_URL, projectId, runId, modelLabel));
+        if (!res.ok) {
+            throw new Error(`Report request failed with status ${res.status}`);
+        }
+        return res.text();
+    },
+
+    // JSON counterpart to getRunReport() -- the "View Report Preview"
+    // modal's Summary tab source (see run_report_service.py's
+    // build_run_report_data() / RunReportSummary.jsx).
+    async getRunReportSummary(projectId, runId) {
+        const res = await authFetch(buildRunReportSummaryUrl(API_BASE_URL, projectId, runId));
+        if (!res.ok) {
+            throw new Error(`Report summary request failed with status ${res.status}`);
+        }
+        return handleResponse(res);
+    },
+
+    // Per-model equivalent of getRunReportSummary() -- one file's own
+    // scoped summary from a multi-PBIX batch run.
+    async getRunModelReportSummary(projectId, runId, modelLabel) {
+        const res = await authFetch(buildRunModelReportSummaryUrl(API_BASE_URL, projectId, runId, modelLabel));
+        if (!res.ok) {
+            throw new Error(`Report summary request failed with status ${res.status}`);
+        }
+        return handleResponse(res);
+    },
+
     async runProjectNow(projectId, payload = null) {
         invalidateApiCache('jobs:runs:');
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
@@ -1797,37 +1917,6 @@ export const api = {
             timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
         });
         return handleResponse(res);
-    },
-
-    async getRunReport(projectId, runId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
-        if (!res.ok) {
-            throw new Error(`Report request failed with status ${res.status}`);
-        }
-        return res.text();
-    },
-
-    async getRunReportSummary(projectId, runId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report-summary`);
-        if (!res.ok) {
-            throw new Error(`Report summary request failed with status ${res.status}`);
-        }
-        return handleResponse(res);
-    },
-
-    async downloadRunReport(projectId, runId) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/report`);
-        if (!res.ok) {
-            throw new Error(`Report download failed with status ${res.status}`);
-        }
-        const blob = await res.blob();
-        const disposition = res.headers.get('content-disposition');
-        let filename = `${projectId}_${runId}_report.md`;
-        if (disposition && disposition.includes('filename=')) {
-            const match = disposition.match(/filename="?([^";]+)"?/);
-            if (match && match[1]) filename = match[1];
-        }
-        _triggerDownload(blob, filename);
     },
 
     async listProjectSnapshots(projectId, options = {}) {

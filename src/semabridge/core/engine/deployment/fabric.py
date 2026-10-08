@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 import json
@@ -47,9 +48,32 @@ from semabridge.core.engine.exceptions import (
 
 logger = get_logger(__name__)
 
+# Serializes the legacy (no identity_id) Fabric deploy fallback below, which
+# still has to inject stored credentials into process-global os.environ for
+# FabricPublisher's env-based token lookup. Without this, two concurrent
+# legacy deploys could interleave their inject/pop/publish sequences.
+_LEGACY_FABRIC_ENV_LOCK = threading.RLock()
+
+
+def _fabric_model_name(context: RunContext) -> str:
+    """Name of the Fabric semantic model this run publishes.
+
+    Single-model runs keep publishing under the project id, exactly as
+    before. In a multi-model batch every job shares that project id, so the
+    per-model namespace is appended to keep each model's published Fabric
+    model distinct instead of overwriting one another.
+    """
+    namespace = getattr(context, "physical_namespace", None)
+    if namespace:
+        return f"{context.project_id}_{namespace}"
+    return context.project_id
+
+
 def _deploy_to_fabric(self, context: RunContext) -> None:
     """Deploy to Fabric with multi-account isolation."""
     from semabridge.connectors.fabric_publisher import FabricPublisher
+
+    context.deployed_view_name = _fabric_model_name(context)
 
     # Check for per-account identity_id scoping
     target_configs = getattr(context.config, "targets", None) or []
@@ -69,7 +93,7 @@ def _deploy_to_fabric(self, context: RunContext) -> None:
         from sqlalchemy import select
         from semabridge.repository.orm.models import Account
         from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.auth.account_credential_resolver import scoped_account_env
+        from semabridge.auth.credential_builder import build_fabric_config
 
         with db_manager.get_session() as session:
             account = session.execute(
@@ -85,61 +109,77 @@ def _deploy_to_fabric(self, context: RunContext) -> None:
                     "Please link this account in the Connections panel."
                 )
 
-            with scoped_account_env(account, session):
-                logger.info(
-                    "Fabric deployment scoped to account %s (%s)",
-                    account.tag, identity_id,
-                )
-                from semabridge.core.settings import reload_settings
-                scoped_settings = reload_settings()
+            # Thread-safe: builds an isolated FabricConfig object rather than
+            # mutating os.environ (scoped_account_env), which is unsafe when
+            # multiple syncs from the same batch run concurrently.
+            fabric_cfg, fabric_token = build_fabric_config(account, session, context.config.fabric)
+            logger.info(
+                "Fabric deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+                account.tag, identity_id,
+            )
 
-                # Ensure the workspace_id explicitly requested by the project is used
-                # instead of any default ambient workspace on the Account
-                target_workspace = ""
-                for tc in target_configs:
-                    if isinstance(tc, dict) and tc.get("type") == "fabric":
-                        target_workspace = str(tc.get("workspace_id", "") or "").strip()
-                        break
-                if not target_workspace:
-                    if getattr(context.config, "target", None) and getattr(context.config.target, "type", "") == "fabric":
-                        target_workspace = getattr(context.config.target, "workspace_id", "")
-                if target_workspace:
-                    scoped_settings.fabric.workspace_id = target_workspace
+            # Ensure the workspace_id explicitly requested by the project is used
+            # instead of any default ambient workspace on the Account
+            target_workspace = ""
+            for tc in target_configs:
+                if isinstance(tc, dict) and tc.get("type") == "fabric":
+                    target_workspace = str(tc.get("workspace_id", "") or "").strip()
+                    break
+            if not target_workspace:
+                if getattr(context.config, "target", None) and getattr(context.config.target, "type", "") == "fabric":
+                    target_workspace = getattr(context.config.target, "workspace_id", "")
+            if target_workspace:
+                fabric_cfg.workspace_id = target_workspace
 
-                publisher = FabricPublisher(scoped_settings.fabric)
-                publisher.publish(
-                    sml_model=context.sml_model,
-                    model_name=context.project_id,
-                    snowflake_server=scoped_settings.snowflake.account,
-                    snowflake_warehouse=scoped_settings.snowflake.warehouse,
-                    snowflake_database=scoped_settings.snowflake.database,
-                    snowflake_schema=scoped_settings.snowflake.schema_name,
-                    overwrite=True,
-                )
-                return
+            sf_cfg = context.config.snowflake
+            publisher = FabricPublisher(fabric_cfg)
+            if fabric_token:
+                # FabricPublisher has no constructor param for a pre-resolved
+                # token; it otherwise falls back to FABRIC_ACCESS_TOKEN from
+                # os.environ (see get_fabric_access_token_from_env()), which
+                # is exactly the shared-process-global state this fix avoids.
+                publisher._access_token = fabric_token
+                publisher._token_expiry = time.time() + 1800
+            publisher.publish(
+                sml_model=context.sml_model,
+                model_name=_fabric_model_name(context),
+                snowflake_server=sf_cfg.account,
+                snowflake_warehouse=sf_cfg.warehouse,
+                snowflake_database=sf_cfg.database,
+                snowflake_schema=sf_cfg.schema_name,
+                overwrite=True,
+            )
+            return
 
     # --- Fallback to legacy global logic ---
-    try:
-        from semabridge.repository.credential_manager import CredentialManager
-        cm = CredentialManager()
-        cm.inject_credentials_to_env("fabric")
-    except Exception as _inj_exc:
-        logger.debug("Credential re-injection skipping: %s", _inj_exc)
+    # Held for the whole inject -> build-config -> publish sequence so a
+    # concurrent legacy deploy cannot swap the env underneath this one. The
+    # config is built directly (FabricConfig()) rather than clearing the
+    # process-wide get_settings() cache, which every other concurrently
+    # running sync shares.
+    from semabridge.core.settings import FabricConfig
 
-    os.environ.pop("FABRIC_ACCESS_TOKEN", None)
-    os.environ.pop("FABRIC_REFRESH_TOKEN", None)
+    with _LEGACY_FABRIC_ENV_LOCK:
+        try:
+            from semabridge.repository.credential_manager import CredentialManager
+            cm = CredentialManager()
+            cm.inject_credentials_to_env("fabric")
+        except Exception as _inj_exc:
+            logger.debug("Credential re-injection skipping: %s", _inj_exc)
 
-    from semabridge.core.settings import get_settings
-    get_settings.cache_clear()
-    config = get_settings()
+        os.environ.pop("FABRIC_ACCESS_TOKEN", None)
+        os.environ.pop("FABRIC_REFRESH_TOKEN", None)
 
-    publisher = FabricPublisher(config.fabric)
-    publisher.publish(
-        sml_model=context.sml_model,
-        model_name=context.project_id,
-        snowflake_server=config.snowflake.account,
-        snowflake_warehouse=config.snowflake.warehouse,
-        snowflake_database=config.snowflake.database,
-        snowflake_schema=config.snowflake.schema_name,
-        overwrite=True,
-    )
+        fabric_cfg = FabricConfig()
+        sf_cfg = context.config.snowflake
+
+        publisher = FabricPublisher(fabric_cfg)
+        publisher.publish(
+            sml_model=context.sml_model,
+            model_name=_fabric_model_name(context),
+            snowflake_server=sf_cfg.account,
+            snowflake_warehouse=sf_cfg.warehouse,
+            snowflake_database=sf_cfg.database,
+            snowflake_schema=sf_cfg.schema_name,
+            overwrite=True,
+        )

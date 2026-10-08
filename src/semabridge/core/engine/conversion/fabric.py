@@ -115,6 +115,22 @@ def _convert_fabric_to_sml(
             sml_model.unique_name,
         )
 
+    # Multi-model Fabric batch: two datasets with the same display name
+    # would otherwise deploy to the same view. Claim the name in the
+    # batch-scoped registry; only a genuine collision gets a "_2"/"_3"
+    # suffix (same policy as PBIX batches). No registry -> unchanged.
+    registry = getattr(context, "batch_name_registry", None)
+    if registry is not None and sml_model.unique_name:
+        claimed = registry.claim(context.run_id, sml_model.unique_name)
+        if claimed != sml_model.unique_name:
+            logger.info(
+                "Fabric view name '%s' already used by another model in this batch; "
+                "deploying this model as '%s'",
+                sml_model.unique_name, claimed,
+            )
+            sml_model.unique_name = claimed
+            sml_model.label = claimed
+
     self._record_step(
         6, StepStatus.SUCCESS,
         f"{sml_model.dataset_count} datasets, {sml_model.metric_count} metrics (via OSI)"

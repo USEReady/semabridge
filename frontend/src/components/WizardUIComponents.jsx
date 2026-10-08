@@ -31,7 +31,7 @@ export function ToggleOption({ label, description, checked, onChange }) {
         background: checked ? 'var(--accent-blue)08' : 'var(--bg-surface)',
         border: checked ? '1.5px solid var(--accent-blue)40' : '1px solid var(--border-main)',
       }}
-      onClick={() => onChange(v => !v)}
+      onClick={() => onChange(!checked)}
     >
       <div
         style={{

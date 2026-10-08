@@ -214,6 +214,42 @@ class TestCategory5ZeroDataDependencyConstants:
     def test_expression_referencing_a_measure_has_data_dependency(self):
         assert dax_has_zero_data_dependencies("[Measure_A] + 1") is False
 
+    def test_var_return_referencing_a_column_has_data_dependency(self):
+        """A VAR/RETURN block is a named sub-expression, not a boundary
+        that hides what it references — a real column reference inside
+        the RETURN body must still count as a data dependency, whatever
+        the variable is named or computes. Regression for: the parser
+        used to have zero VAR/RETURN grammar support, so a VAR block
+        parsed as nothing but a bare 'VAR' identifier, silently dropping
+        every real reference and misclassifying the whole metric as a
+        by-design-excluded constant."""
+        dax = "VAR _x = [SomeMeasure] RETURN CALCULATE(SUM('SomeTable'[SomeColumn]), 'SomeTable'[Flag] = _x)"
+        assert dax_has_zero_data_dependencies(dax) is False
+
+    def test_var_return_referencing_a_measure_only_in_its_definition_has_data_dependency(self):
+        """The data reference can live entirely inside a VAR's own
+        definition (never touched again in the RETURN body) and must
+        still be detected — a variable's definition is walked on its own
+        terms, not only through how the RETURN body happens to use it."""
+        dax = "VAR _x = [Measure_A] RETURN 42"
+        assert dax_has_zero_data_dependencies(dax) is False
+
+    def test_multi_var_return_with_nested_calculate_has_data_dependency(self):
+        """Multiple VARs, one of which itself contains a nested CALCULATE,
+        all correctly walked — not just the single-variable shape."""
+        dax = (
+            "VAR _anchor = [SomeMeasure] "
+            "VAR _period = CALCULATE(MAX('Dates'[PeriodKey]), 'Dates'[Anchor] = _anchor) "
+            "RETURN CALCULATE(SUM('SomeTable'[SomeColumn]), 'Dates'[PeriodKey] = _period)"
+        )
+        assert dax_has_zero_data_dependencies(dax) is False
+
+    def test_var_return_over_literals_only_still_has_zero_dependencies(self):
+        """VAR/RETURN support must not weaken the constant-detection case
+        the other direction — a VAR block computing purely from literals
+        is still, correctly, a compile-time constant."""
+        assert dax_has_zero_data_dependencies("VAR _x = 1 RETURN _x + 2") is True
+
     def test_constant_metric_excluded_by_design_through_osi_pipeline(self, monkeypatch):
         def _fake_batch_translate_tier5(self, metrics_list):
             return {

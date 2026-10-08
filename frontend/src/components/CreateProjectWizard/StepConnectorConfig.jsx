@@ -3,6 +3,8 @@ import { Check, CheckCircle2, ChevronDown, RefreshCw, Loader2 } from 'lucide-rea
 import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
+import MultiPbixUpload from './MultiPbixUpload';
+import { RemoveFileButton } from './uploadStatusUI';
 import { CONNECTOR_TYPES, TARGET_CONNECTOR_TYPES, PBIX_SOURCE_MODES } from '../../utils/constants';
 
 const SECTION_CARD = {
@@ -65,6 +67,13 @@ export function StepConnectorConfig({
   selectedLocalFolderId,
   setSelectedLocalFolderId,
   onUploadSuccess,
+  onClearPbix = () => {},
+  pbixMultiFileMode = false,
+  setPbixMultiFileMode = () => {},
+  pbixFileEntries = [],
+  onAddPbixFiles = () => '',
+  onRemovePbixFile = () => {},
+  maxPbixFiles = 10,
   workspaces,
   workspacesLoading,
   isRefreshingWorkspaces,
@@ -537,7 +546,47 @@ export function StepConnectorConfig({
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <label style={LABEL}>PBIX Upload</label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={LABEL}>PBIX Upload</label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[
+                      { value: false, label: 'Single file' },
+                      { value: true, label: 'Multiple files' },
+                    ].map((opt) => {
+                      const active = pbixMultiFileMode === opt.value;
+                      return (
+                        <button
+                          key={String(opt.value)}
+                          type="button"
+                          onClick={() => setPbixMultiFileMode(opt.value)}
+                          style={{
+                            border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+                            background: active ? 'var(--accent-blue)14' : 'var(--bg-surface)',
+                            color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {pbixMultiFileMode ? (
+                  <MultiPbixUpload
+                    entries={pbixFileEntries}
+                    onAddFiles={onAddPbixFiles}
+                    onRemove={onRemovePbixFile}
+                    maxFiles={maxPbixFiles}
+                  />
+                ) : (() => {
+                  const hasUploadedPbix = Boolean(pbixUploadPath) && !pbixUploading && !pbixUploadError;
+                  return (
                 <label
                   onDragOver={(event) => {
                     event.preventDefault();
@@ -551,6 +600,7 @@ export function StepConnectorConfig({
                   }}
                   onDrop={handlePbixDrop}
                   style={{
+                    position: 'relative',
                     border: hasUploadedPbix
                       ? '1px dashed #22c55e'
                       : '1px dashed var(--accent-blue)',
@@ -576,6 +626,18 @@ export function StepConnectorConfig({
                       if (nextFile) await uploadPbixFile(nextFile);
                     }}
                   />
+                  {hasUploadedPbix && (
+                    <div style={{ position: 'absolute', top: 10, right: 10 }}>
+                      <RemoveFileButton
+                        title="Remove file"
+                        onClick={() => {
+                          setPbixUploadError('');
+                          setPbixDragOver(false);
+                          onClearPbix();
+                        }}
+                      />
+                    </div>
+                  )}
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span>Drag and drop a `.pbix` file here or click to browse</span>
                     {pbixUploading && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
@@ -617,6 +679,8 @@ export function StepConnectorConfig({
                     </div>
                   )}
                 </label>
+                  );
+                })()}
               </div>
             )}
           </div>

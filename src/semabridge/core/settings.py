@@ -749,13 +749,27 @@ def get_settings() -> Settings:
     # Ensure we're looking for .env in the right place
     env_file = Path.cwd() / ".env"
     if not env_file.exists():
-        # Try parent directories
+        # Try parent directories. Previously this os.chdir()'d into the
+        # parent, a process-wide side effect that could move every relative
+        # path (output/, Config/, uploads) of OTHER concurrently running
+        # syncs mid-run. Instead, load that .env's values into the process
+        # env WITHOUT overriding anything already set -- pydantic-settings
+        # gives real env vars precedence over the .env file anyway, so the
+        # effective settings are the same, and every lazily-built sub-config
+        # (SnowflakeConfig(), FabricConfig(), ...) sees them too.
         for parent in Path.cwd().parents:
             candidate = parent / ".env"
             if candidate.exists():
-                os.chdir(parent)
+                try:
+                    from dotenv import load_dotenv
+
+                    load_dotenv(candidate, override=False)
+                except Exception as exc:  # pragma: no cover - dotenv is a dependency
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).warning("Could not load %s: %s", candidate, exc)
                 break
-    
+
     return Settings()
 
 

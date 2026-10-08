@@ -33,7 +33,8 @@ import {
     GitBranch,
     Table,
     ListTree,
-    Pin
+    Pin,
+    Download
 } from 'lucide-react';
 import { api, formatDate } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
@@ -884,6 +885,32 @@ export default function VersionControlPage() {
         }
     };
 
+    // Downloads the Markdown run-summary report for the currently selected
+    // run. Available for every run regardless of outcome -- write_run_report
+    // is called unconditionally (success, warning, partial, or failed) from
+    // the backend's finally block, so there is always a report to fetch here.
+    const handleDownloadReport = async (run) => {
+        if (!run?.run_id) return;
+        try {
+            await api.downloadRunReport(selectedProjectId, run.run_id);
+        } catch (error) {
+            addLog('error', 'VC', 'Report download failed: ' + error.message);
+        }
+    };
+
+    // Downloads one model's own report from a multi-PBIX batch run (see
+    // run.model_reports, populated only when a run synced more than one
+    // file -- each file gets its own separate report instead of one
+    // combined report for the whole batch).
+    const handleDownloadModelReport = async (run, modelLabel) => {
+        if (!run?.run_id || !modelLabel) return;
+        try {
+            await api.downloadRunModelReport(selectedProjectId, run.run_id, modelLabel);
+        } catch (error) {
+            addLog('error', 'VC', 'Report download failed: ' + error.message);
+        }
+    };
+
     const handleCompare = async () => {
         if (diffSelection.length !== 2) return;
         setIsComparing(true);
@@ -1115,13 +1142,23 @@ export default function VersionControlPage() {
                                                 >
                                                     <RotateCcw size={18} /> Rollback
                                                 </ActionButton>
-                                                <ActionButton 
-                                                    variant="ghost" 
+                                                <ActionButton
+                                                    variant="ghost"
                                                     onClick={() => setViewMode('mappings')}
                                                     className="px-8 py-3.5"
                                                 >
                                                     <ListTree size={18} /> View Mappings
                                                 </ActionButton>
+                                                {(!selectedRun.model_reports || selectedRun.model_reports.length === 0) && (
+                                                    <ActionButton
+                                                        variant="ghost"
+                                                        onClick={() => handleDownloadReport(selectedRun)}
+                                                        className="px-8 py-3.5"
+                                                        title="Download the run-summary report (available for every run, success or failure)"
+                                                    >
+                                                        <Download size={18} /> Download Report
+                                                    </ActionButton>
+                                                )}
                                             </div>
                                         </div>
 
@@ -1149,6 +1186,32 @@ export default function VersionControlPage() {
                                                 </div>
                                             ))}
                                         </div>
+
+                                        {selectedRun.model_reports && selectedRun.model_reports.length > 0 && (
+                                            <div className="mt-8">
+                                                <h4 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-3">
+                                                    Per-file reports ({selectedRun.model_reports.length})
+                                                </h4>
+                                                <div className="flex flex-col gap-2">
+                                                    {selectedRun.model_reports.map((entry) => (
+                                                        <div
+                                                            key={entry.model}
+                                                            className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--bg-surface-raised)]/50 border border-[var(--border-light)]"
+                                                        >
+                                                            <span className="text-[var(--text-primary)] font-bold text-[13px] font-mono truncate">{entry.model}</span>
+                                                            <ActionButton
+                                                                variant="ghost"
+                                                                onClick={() => handleDownloadModelReport(selectedRun, entry.model)}
+                                                                className="px-4 py-2 shrink-0"
+                                                                title={`Download the report for ${entry.model}`}
+                                                            >
+                                                                <Download size={14} /> Download
+                                                            </ActionButton>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <div className="py-20 text-center">

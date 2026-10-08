@@ -168,6 +168,12 @@ class OSIColumn(OSIBaseModel):
         description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
     )
     has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
+    source_file: Optional[str] = Field(
+        default=None,
+        description="Full path to the source .pbix file this field was extracted from — "
+        "disambiguates rows across a multi-PBIX project, where each file runs its own "
+        "independent extraction and never merges with another file's entities.",
+    )
     is_enum: bool = Field(default=False, description="Exhaustive categorical values indicator")
     cortex_search_service: Optional[str] = Field(default=None, description="Linked Cortex Search Service name")
     sample_values: List[str] = Field(default_factory=list, description="Representative sample values")
@@ -318,6 +324,12 @@ class OSIMetric(OSIBaseModel):
         description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
     )
     has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
+    source_file: Optional[str] = Field(
+        default=None,
+        description="Full path to the source .pbix file this metric was extracted from — "
+        "disambiguates rows across a multi-PBIX project, where each file runs its own "
+        "independent extraction and never merges with another file's entities.",
+    )
     sql_expression: Optional[str] = None          # Pre-translated SQL (from Snowflake extract)
     complexity_tier: int = 0                       # 0=unknown, 1-5 from DAX analysis
     depends_on_measures: List[str] = Field(default_factory=list)  # Dependency graph

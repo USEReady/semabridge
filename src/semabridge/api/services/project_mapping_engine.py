@@ -442,6 +442,7 @@ def extract_model_entities(
                 "synonyms": list(column.get("synonyms") or []),
                 "synonym_sources": dict(column.get("synonym_sources") or {}),
                 "has_report_alias": bool(column.get("has_report_alias")),
+                "source_file": column.get("source_file"),
             })
 
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
@@ -470,6 +471,7 @@ def extract_model_entities(
             "complexity_tier": metric.get("complexity_tier"),
             "validation_notes": list(metric.get("validation_notes") or []),
             "llm_self_reported_confidence": metric.get("llm_self_reported_confidence"),
+            "source_file": metric.get("source_file"),
         })
 
     return entities
@@ -995,6 +997,7 @@ def build_entity_mappings(
             "synonym_sources": dict(entity.get("synonym_sources") or {}),
             "has_report_alias": bool(entity.get("has_report_alias")),
             "complexity_tier": entity.get("complexity_tier"),
+            "source_file": entity.get("source_file"),
         })
 
     # Pass 2: Declarative Validation (Option B)

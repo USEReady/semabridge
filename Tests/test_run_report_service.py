@@ -191,7 +191,7 @@ def test_markdown_separates_excluded_by_design_from_real_issues(monkeypatch):
     markdown = generate_run_report_markdown(run, "source:\n  type: pbix\n")
 
     assert "## No action needed" in markdown
-    couldnt_include_section = markdown.split("## What we couldn't include, and why")[1].split("## No action needed")[0]
+    couldnt_include_section = markdown.split("## Not Included, and Why")[1].split("## No action needed")[0]
     assert "DateTableTemplate_123" not in couldnt_include_section
     assert "DroppedMetric" in couldnt_include_section
     excluded_section = markdown.split("## No action needed")[1]
@@ -208,7 +208,7 @@ def test_build_run_report_data_and_markdown_agree_on_counts(monkeypatch):
     data = build_run_report_data(run, project_cfg)
     markdown = generate_run_report_markdown(run, project_cfg)
 
-    assert f"{data['counts']['converted_total']} of {data['counts']['calculations']} calculations converted." in markdown
+    assert f"{data['counts']['converted_total']} of {data['counts']['calculations']} calculations converted (" in markdown
     assert "Needs review (1)" in markdown
     assert "NeedsReviewMetric" in markdown
 
