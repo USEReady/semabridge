@@ -726,13 +726,15 @@ class SnowflakeEmitter(BaseEmitter):
                         if _en in _seen_enriched:
                             continue
                         _seen_enriched.add(_en)
-                        _candidate_name = _en[: -len("_ENRICHED")] if _en.endswith("_ENRICHED") else _en
-                        # Namespaced enriched views are "<NS>_<fact>_ENRICHED".
-                        _candidate_name = self._strip_physical_namespace(_candidate_name)
-                        _candidate_dataset = self._get_dataset_by_name(model, _candidate_name)
-                        _refresh_fact_table = (
-                            getattr(_candidate_dataset, "unique_name", None) or _candidate_name
-                        )
+                        _refresh_fact_table = self._dataset_for_enriched_view(model, _en)
+                        if not _refresh_fact_table:
+                            _candidate_name = _en[: -len("_ENRICHED")] if _en.endswith("_ENRICHED") else _en
+                            # Namespaced enriched views are "<NS>_<fact>_ENRICHED".
+                            _candidate_name = self._strip_physical_namespace(_candidate_name)
+                            _candidate_dataset = self._get_dataset_by_name(model, _candidate_name)
+                            _refresh_fact_table = (
+                                getattr(_candidate_dataset, "unique_name", None) or _candidate_name
+                            )
                         try:
                             _refreshed = self._create_enriched_view(model, cur, fact_table=_refresh_fact_table)
                             if _refreshed:
@@ -775,19 +777,24 @@ class SnowflakeEmitter(BaseEmitter):
                     for _tbl in _table_refs:
                         _tbl_clean = _tbl.strip('"')
                         if _tbl_clean.upper().endswith("_ENRICHED"):
-                            _ds_name = _tbl_clean[: -len("_ENRICHED")] if _tbl_clean.upper().endswith("_ENRICHED") else _tbl_clean
                             _fq_v = f'"{self.config.database}"."{self.config.schema_name}"."{_tbl_clean}"'
                             if not self._view_exists(cur, _fq_v):
+                                # Same naming function as creation identifies
+                                # the dataset (prefixed or not).
+                                _ds_name = self._dataset_for_enriched_view(model, _tbl_clean)
+                                if not _ds_name:
+                                    logger.warning(
+                                        "Pre-flight check: enriched view '%s' does not exist and matches "
+                                        "no dataset of this model; leaving DDL unchanged.",
+                                        _tbl_clean,
+                                    )
+                                    continue
                                 logger.warning(
                                     "Pre-flight check: Enriched view '%s' does not exist in Snowflake. Falling back dataset '%s' to base table.",
                                     _tbl_clean, _ds_name
                                 )
                                 self._failed_enrichment_datasets.add(_ds_name)
                                 self._failed_enrichment_datasets.add(_ds_name.casefold())
-                                if "_" in _ds_name:
-                                    _base_ds = _ds_name.rsplit("_", 1)[0]
-                                    self._failed_enrichment_datasets.add(_base_ds)
-                                    self._failed_enrichment_datasets.add(_base_ds.casefold())
                                 _preflight_rebuild = True
 
                 if _preflight_rebuild:
@@ -2893,6 +2900,26 @@ class SnowflakeEmitter(BaseEmitter):
                 return True
         return False
 
+    def _enriched_view_name(self, fact_table: str) -> str:
+        """The ONE naming rule for a fact table's enriched view -- used both
+        when the view is created and when its existence is checked, so the two
+        can never disagree."""
+        return self._namespaced_physical_name(f"{fact_table}_ENRICHED")
+
+    def _dataset_for_enriched_view(self, model, view_name: str) -> Optional[str]:
+        """Which dataset an enriched view belongs to, found by applying
+        _enriched_view_name to the model's own datasets (and to the views this
+        emitter recorded creating) -- never by guessing from the view name."""
+        target = str(view_name or "").strip().strip('"').upper()
+        for fact, created in (self._enriched_view_mapping or {}).items():
+            if str(created or "").upper() == target:
+                return str(fact)
+        for dataset in getattr(model, "datasets", None) or []:
+            name = getattr(dataset, "unique_name", None)
+            if name and self._enriched_view_name(name).upper() == target:
+                return str(name)
+        return None
+
     def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None):
         """
         Automatically create an enriched view with pre-computed columns and anchors.
@@ -2910,17 +2937,9 @@ class SnowflakeEmitter(BaseEmitter):
             return None
         
         date_info = self._find_date_table(model)
-        enriched_view_name = self._namespaced_physical_name(f"{fact_table}_ENRICHED")
+        enriched_view_name = self._enriched_view_name(fact_table)
         fact_dataset = self._get_dataset_by_name(model, fact_table)
         fact_source_name = getattr(fact_dataset, "source_table", None) or fact_table
-        if "_" in fact_source_name and not fact_source_name.upper().endswith("_ENRICHED"):
-            parts = fact_source_name.rsplit("_", 1)
-            if parts[0].upper() in self._live_schema_metadata:
-                fact_source_name = parts[0]
-            elif fact_table and "_" in fact_table:
-                p0 = fact_table.rsplit("_", 1)[0]
-                if p0.upper() in self._live_schema_metadata:
-                    fact_source_name = p0
         fact_source_safe = self._id.sanitize_table_name(fact_source_name)
         fact_source_ref = f'"{self.config.database}"."{self.config.schema_name}"."{fact_source_safe}"'
         fact_source_key = self._id.sanitize_table_name(fact_source_name).upper()

@@ -430,42 +430,56 @@ def _update_snowflake_view_metadata_on_failure(self, context: RunContext, sf_cfg
     Returns:
         True if timestamp update succeeded, False otherwise
     """
+    # The deployed object is the SEMANTIC VIEW this model deploys to, in the
+    # run's configured database/schema (SnowflakeConfig.schema_name -- not
+    # getattr(sf_cfg, "schema"), which is pydantic's schema() method).
+    db_name = str(getattr(sf_cfg, "database", None) or "").strip()
+    schema_name = str(getattr(sf_cfg, "schema_name", None) or "").strip()
+    view_name = str(getattr(context, "deployed_view_name", None) or "").strip()
+    if not (db_name and schema_name and view_name):
+        logger.debug(
+            "Skipping view timestamp update: database/schema/view unknown (db=%r schema=%r view=%r)",
+            db_name, schema_name, view_name,
+        )
+        return False
+    fully_qualified_name = f'"{db_name}"."{schema_name}"."{view_name}"'
+
     try:
         import snowflake.connector
         from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
-        
-        # Get Snowflake connection parameters
+
         kwargs = get_snowflake_connect_kwargs(sf_cfg)
         kwargs["session_parameters"] = {
             "QUERY_TAG": "SemaBridge_SilentUpdate"
         }
-        
-        # Connect to Snowflake
+
         conn = snowflake.connector.connect(**kwargs)
         try:
             cur = conn.cursor()
-            
-            # Get database, schema, and view name
-            db_name = getattr(sf_cfg, "database", "").strip() or "SEMABRIDGE"
-            schema_name = getattr(sf_cfg, "schema", "").strip() or "SEMABRIDGE_WORKSPACE"
-            view_name = context.project_id  # Using project_id as the view name
-            
-            # Format: "DB"."SCHEMA"."VIEW"
-            fully_qualified_name = f'"{db_name}"."{schema_name}"."{view_name}"'
-            
-            # Silent update: Use ALTER VIEW SET to touch the view without adding comments
-            # This updates LAST_ALTERED silently without leaving any visible trail
-            alter_query = f"ALTER VIEW IF EXISTS {fully_qualified_name} OWNER TO CURRENT_ROLE"
-            
-            logger.debug(f"Silently updating view timestamp for {fully_qualified_name}")
-            cur.execute(alter_query)
-            
-            logger.debug(
-                f"Successfully updated Snowflake view LAST_ALTERED timestamp (silent). "
-                f"View: {fully_qualified_name}"
+            # Only touch a view that exists; read its current comment so it
+            # can be set back to exactly the same value (no visible change,
+            # LAST_ALTERED moves).
+            escaped_name = view_name.replace("'", "''")
+            cur.execute(
+                f"SHOW SEMANTIC VIEWS LIKE '{escaped_name}' IN SCHEMA \"{db_name}\".\"{schema_name}\""
             )
+            row = cur.fetchone()
+            if not row:
+                logger.debug("Skipping view timestamp update: %s does not exist", fully_qualified_name)
+                return False
+            columns = [str(col[0]).lower() for col in (cur.description or [])]
+            comment = None
+            if "comment" in columns:
+                comment = row[columns.index("comment")]
+            if comment:
+                escaped_comment = str(comment).replace("'", "''")
+                cur.execute(f"ALTER SEMANTIC VIEW IF EXISTS {fully_qualified_name} SET COMMENT = '{escaped_comment}'")
+            else:
+                cur.execute(f"ALTER SEMANTIC VIEW IF EXISTS {fully_qualified_name} UNSET COMMENT")
+
+            logger.debug("Updated LAST_ALTERED (silent) for %s", fully_qualified_name)
             return True
-            
+
         finally:
             conn.close()
             
