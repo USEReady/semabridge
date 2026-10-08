@@ -857,6 +857,22 @@ class MetricExpressionTranslator:
         dataset_aliases: Dict[str, str],
         metric_names: Optional[set[str]] = None
     ) -> Tuple[bool, Optional[str]]:
+        if not metric_sql:
+            return False, "Empty metric SQL expression"
+
+        # Pattern 4 validation gate: Reject any metric SQL that still contains DAX syntax
+        dax_keywords = ["CALCULATE", "FILTER", "ALL", "ALLEXCEPT", "EARLIER", "USERELATIONSHIP"]
+        for kw in dax_keywords:
+            if re.search(rf"\b{kw}\s*\(", metric_sql, re.IGNORECASE):
+                error = f"Metric SQL contains raw DAX keyword: {kw}"
+                logger.warning(f"Metric '{metric_name}': {error}")
+                return False, error
+
+        if re.search(r"\[[^\]]+\]", metric_sql) or re.search(r"'[^']+'\[[^\]]+\]", metric_sql):
+            error = f"Metric SQL contains untranslated DAX measure bracket syntax: {metric_sql}"
+            logger.warning(f"Metric '{metric_name}': {error}")
+            return False, error
+
         alias_to_dataset = {v: k for k, v in dataset_aliases.items()}
         alias_to_dataset.update({str(v).lower(): k for k, v in dataset_aliases.items()})
         alias_to_dataset.update({str(v).upper(): k for k, v in dataset_aliases.items()})
@@ -1517,6 +1533,18 @@ class MetricExpressionTranslator:
             base_lower = base.lower()
             for col in known_columns:
                 if col.lower() == base_lower:
+                    return col
+
+        if candidate.upper() in ("COL_DATE", "DATE"):
+            for target in ("DATE_DATE", "CAL_DT", "DATE", "COL_DATE", "DATE_DIM_CK", "DATE_DIM"):
+                for col in known_columns:
+                    if col.upper() == target:
+                        return col
+
+        if candidate.upper().startswith("COL_"):
+            unprefixed = candidate[4:].lower()
+            for col in known_columns:
+                if col.lower() == unprefixed:
                     return col
         return None
 

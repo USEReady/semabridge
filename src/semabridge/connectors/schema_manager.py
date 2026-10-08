@@ -50,7 +50,10 @@ else:
 
 from semabridge.utils.logger import get_logger
 
+import threading
+
 _SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
+_SCHEMA_CACHE_LOCK = threading.Lock()
 
 
 def _schema_cache_key(database: str, schema: str) -> str:
@@ -58,7 +61,8 @@ def _schema_cache_key(database: str, schema: str) -> str:
 
 
 def clear_schema_cache() -> None:
-    _SCHEMA_CACHE.clear()
+    with _SCHEMA_CACHE_LOCK:
+        _SCHEMA_CACHE.clear()
 logger = get_logger(__name__)
 
 class SnowflakeSchemaManager:
@@ -83,23 +87,25 @@ class SnowflakeSchemaManager:
 
     def _get_cached_schema_metadata(self) -> Optional[Dict[str, set[str]]]:
         key = _schema_cache_key(self.config.database, self.config.schema_name)
-        entry = _SCHEMA_CACHE.get(key)
-        if not entry:
-            return None
-        loaded_at = entry.get("loaded_at") or 0
-        if self._schema_cache_ttl_seconds > 0:
-            age = time.time() - float(loaded_at)
-            if age > self._schema_cache_ttl_seconds:
+        with _SCHEMA_CACHE_LOCK:
+            entry = _SCHEMA_CACHE.get(key)
+            if not entry:
                 return None
-        metadata = entry.get("metadata") or {}
+            loaded_at = entry.get("loaded_at") or 0
+            if self._schema_cache_ttl_seconds > 0:
+                age = time.time() - float(loaded_at)
+                if age > self._schema_cache_ttl_seconds:
+                    return None
+            metadata = dict(entry.get("metadata") or {})
         if metadata:
             self._live_schema_metadata.update(metadata)
         return metadata
 
     def refresh_schema_cache(self) -> None:
         key = _schema_cache_key(self.config.database, self.config.schema_name)
-        if key in _SCHEMA_CACHE:
-            del _SCHEMA_CACHE[key]
+        with _SCHEMA_CACHE_LOCK:
+            if key in _SCHEMA_CACHE:
+                del _SCHEMA_CACHE[key]
 
     def _execute_sql(self, cursor, sql: str, params: Any = None, context: str = "") -> Any:
         return self.connection_manager._execute_sql(cursor, sql, params, context=context)
@@ -710,7 +716,7 @@ class SnowflakeSchemaManager:
 
         # 3. Date/time pattern mappings (dynamic resolution from candidates)
         date_patterns = {
-            "DATE": ["CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
+            "DATE": ["DATE_DATE", "CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
             "YEAR": ["CAL_YR", "COL_YEAR", "FISCAL_YR", "CAL_YR", "YEAR"],
             "MONTH": ["CAL_MNTH", "COL_MONTH", "FISCAL_MNTH", "CAL_MNTH", "MONTH"],
             "QUARTER": ["CAL_QTR_NUM", "COL_QUARTER", "FISCAL_QTR", "QUARTER"],
@@ -1529,7 +1535,8 @@ class SnowflakeSchemaManager:
             metadata[table].add(column)
         self._live_schema_metadata.update(metadata)
         key = _schema_cache_key(self.config.database, self.config.schema_name)
-        _SCHEMA_CACHE[key] = {"loaded_at": time.time(), "metadata": metadata}
+        with _SCHEMA_CACHE_LOCK:
+            _SCHEMA_CACHE[key] = {"loaded_at": time.time(), "metadata": metadata}
         return metadata
 
     def _fetch_model_table_metadata(self, cursor, datasets: list[Any]) -> Dict[str, set[str]]:

@@ -120,11 +120,15 @@ def rerender_anchor_dependent_metrics(
             continue
 
         dataset_name = getattr(metric, "dataset", None)
-        # Deliberately not skipped when empty — see the docstring above:
-        # retranslating with an empty map reproduces (predicted pass) or
-        # restores (confirmed pass, correcting a divergent prediction)
-        # Stage 1's safe CURRENT_DATE() fallback.
         flag_map_for_dataset = anchor_flag_map.get(str(dataset_name or "").casefold(), {})
+        if not flag_map_for_dataset and anchor_flag_map:
+            if len(anchor_flag_map) == 1:
+                flag_map_for_dataset = list(anchor_flag_map.values())[0]
+            else:
+                for k, v in anchor_flag_map.items():
+                    if v:
+                        flag_map_for_dataset = v
+                        break
 
         table_alias = dataset_aliases.get(dataset_name, dataset_name)
         translation = translator.translate(

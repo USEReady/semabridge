@@ -11,26 +11,38 @@ from semabridge.connectors.fact_table_naming import is_fact_like_name
 def resolve_source_table_mapping(
     behavior_mapping: Optional[Dict[str, str]],
     enriched_view_mapping: Optional[Dict[str, str]],
+    failed_enrichment_datasets: Optional[Set[str]] = None,
 ) -> Dict[str, str]:
     """Merge an explicit behavior-config source_table_mapping with the
     emitter's own enriched-view redirect mapping (dataset -> "*_ENRICHED"
     view name, recorded when auto-enrichment succeeds).
 
-    This is the single source of truth every consumer that needs to know
-    "which physical table actually backs this dataset" must use — TABLES
-    clause building, dataset_col_lookup construction, and enriched-view
-    SELECT resolution. behavior_mapping wins on conflict (an explicit user
-    override). Neither input being None/missing is treated as an error;
-    an enrichment success must always be visible here regardless of how
-    behavior_mapping happens to be configured, for any table/anchor/model.
+    Runtime enrichment status always wins: an entry pointing to an enriched view
+    (e.g., ending with "_ENRICHED" or containing "_ENRICHED") is used ONLY when enrichment for
+    that dataset succeeded in this run. If a dataset failed enrichment in this run
+    (or is recorded in failed_enrichment_datasets), any mapping to an enriched view
+    is ignored so the dataset cleanly falls back to its base table.
     """
     merged: Dict[str, str] = {}
-    for src in (enriched_view_mapping, behavior_mapping):
-        if not src:
-            continue
-        for k, v in src.items():
+    failed_set = {s.casefold() for s in (failed_enrichment_datasets or set())}
+
+    if enriched_view_mapping:
+        for k, v in enriched_view_mapping.items():
+            if k.casefold() not in failed_set:
+                merged[k] = v
+                merged[k.casefold()] = v
+                merged[k.upper()] = v
+
+    if behavior_mapping:
+        for k, v in behavior_mapping.items():
+            k_fold = k.casefold()
+            is_enriched_target = bool(v and (v.upper().endswith("_ENRICHED") or "_ENRICHED" in v.upper()))
+            if is_enriched_target and k_fold in failed_set:
+                continue
+            if is_enriched_target and enriched_view_mapping is not None and k_fold not in {x.casefold() for x in enriched_view_mapping}:
+                continue
             merged[k] = v
-            merged[k.casefold()] = v
+            merged[k_fold] = v
             merged[k.upper()] = v
     return merged
 
@@ -46,6 +58,7 @@ class TablesClauseBuilder:
         live_schema_metadata: dict[str, set[str]],
         cursor: Any = None,
         enriched_view_mapping: Optional[Dict[str, str]] = None,
+        failed_enrichment_datasets: Optional[Set[str]] = None,
     ) -> None:
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -53,11 +66,11 @@ class TablesClauseBuilder:
         self.behavior = behavior
         self.live_schema_metadata = live_schema_metadata
         self.cursor = cursor
-        # Shared by reference with the owning SnowflakeEmitter (see
-        # SnowflakeEmitter._enriched_view_mapping) so an enrichment success
-        # recorded there is visible here without a stale/duplicated copy.
         self.enriched_view_mapping: Dict[str, str] = (
             enriched_view_mapping if enriched_view_mapping is not None else {}
+        )
+        self.failed_enrichment_datasets: Set[str] = (
+            failed_enrichment_datasets if failed_enrichment_datasets is not None else set()
         )
         self._anchor_literal_cache: dict[tuple, Optional[str]] = {}
 
@@ -86,7 +99,9 @@ class TablesClauseBuilder:
 
         date_table, date_col, fiscal_col = date_info
         source_table_mapping = resolve_source_table_mapping(
-            getattr(self.behavior.snowflake, "source_table_mapping", None), self.enriched_view_mapping
+            getattr(self.behavior.snowflake, "source_table_mapping", None),
+            self.enriched_view_mapping,
+            self.failed_enrichment_datasets,
         )
 
         date_dataset = next(
@@ -237,7 +252,9 @@ class TablesClauseBuilder:
         live_col_lookup: dict[str, set[str]] = {}
         dataset_by_name: dict[str, Any] = {d.unique_name: d for d in datasets}
         source_table_mapping = resolve_source_table_mapping(
-            getattr(self.behavior.snowflake, "source_table_mapping", None), self.enriched_view_mapping
+            getattr(self.behavior.snowflake, "source_table_mapping", None),
+            self.enriched_view_mapping,
+            self.failed_enrichment_datasets,
         )
         for dataset in datasets:
             if is_osi:

@@ -89,25 +89,13 @@ class DAXTranslator:
     _MEASURE_REF_PATTERN = re.compile(r"\[([^\]]+)\]")
 
     CALENDAR_MAP = {
-        # "COL_DATE" is the established Snowflake naming convention for the
-        # Date/Calendar dimension's table alias (see snowflake_emitter.py's
-        # "Map common DAX name -> physical name (e.g. Date -> COL_DATE)" and
-        # dax_rule_translator.py's own _date_alias(), which already defaults
-        # to this) — kept consistent with those rather than a stale default
-        # that doesn't match any table the deployed semantic view declares.
-        "table": "COL_DATE",
-        "date_col": "DATE",
+        "table": "Date",
+        "date_col": "DATE_DATE",
         "year_col": "YEAR",
         "period_col": "PERIOD",
     }
 
     def __init__(self) -> None:
-        # Lazily created and reused across every _try_llm_fallback /
-        # batch_translate_tier5 call made through this instance, so a
-        # provider's per-run "unavailable after auth failure" cache (see
-        # Tier5Service._unavailable_providers) actually spans the whole
-        # run instead of resetting on every metric (each fresh
-        # Tier5Service() used to start that cache empty again).
         self._tier5_service = None
 
     def _get_tier5_service(self):
@@ -117,7 +105,7 @@ class DAXTranslator:
         return self._tier5_service
 
     def _get_date_alias(self) -> str:
-        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "COL_DATE"))
+        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "Date"))
     
     # Time Intelligence patterns that CAN be translated to Snowflake window functions
     TIME_INTEL_PATTERNS = {

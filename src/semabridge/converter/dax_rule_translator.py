@@ -22,7 +22,7 @@ _local_state = threading.local()
 
 
 def _date_alias() -> str:
-    return os.getenv("SEMABRIDGE_DATE_ALIAS", "COL_DATE")
+    return getattr(_local_state, "date_alias", None) or os.getenv("SEMABRIDGE_DATE_ALIAS", "Date")
 
 
 # Common DAX aggregation functions
@@ -429,7 +429,7 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
     logger.debug("DIVIDE pattern matched.")
     numerator_measure = match.group(1)
     denominator_measure = match.group(2)
-    alternate_result = match.group(3) or "0"
+    alternate_result = match.group(3)
 
     numerator_sql = _resolve_divide_operand_sql(numerator_measure, table_alias)
     denominator_sql = _resolve_divide_operand_sql(denominator_measure, table_alias)
@@ -437,7 +437,10 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
         logger.debug("DIVIDE operand is not a direct aggregate call — declining to a measure reference.")
         return None
 
-    result = f"COALESCE(({numerator_sql}) / NULLIF({denominator_sql}, 0), {alternate_result})"
+    if alternate_result is not None:
+        result = f"COALESCE(({numerator_sql}) / NULLIF({denominator_sql}, 0), {alternate_result})"
+    else:
+        result = f"({numerator_sql}) / NULLIF({denominator_sql}, 0)"
     logger.debug(f"Translated DIVIDE expression to: {result}")
     return result
 

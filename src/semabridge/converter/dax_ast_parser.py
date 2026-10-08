@@ -162,7 +162,7 @@ class DaxLexer:
                 tok = self._read_measure_ref()
             elif ch == '"':
                 tok = self._read_string('"')
-            elif ch.isdigit() or (ch == "-" and self._peek_next_is_digit()):
+            elif ch.isdigit() or (ch == "." and self._peek_next_is_digit()) or (ch == "-" and self._peek_next_is_digit()):
                 tok = self._read_number()
             elif ch.isalpha() or ch == "_":
                 tok = self._read_identifier()
@@ -651,7 +651,7 @@ class DaxSqlRenderer:
     def __init__(
         self,
         table_alias: str = "T",
-        date_alias: str = "COL_DATE",
+        date_alias: str = "Date",
         measure_sql_map: Optional[Dict[str, str]] = None,
         known_measure_names: Optional[Any] = None,
         anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
@@ -871,6 +871,9 @@ class DaxSqlRenderer:
 
         # Registry-driven templates (if configured)
         rendered_args = [self._render_node(a) for a in node.args]
+        if func == "DIVIDE":
+            return self._render_divide(node.args)
+
         registry_sql = self._func_registry.render(
             func,
             rendered_args,
@@ -879,14 +882,6 @@ class DaxSqlRenderer:
         )
         if registry_sql:
             return registry_sql
-
-        # Direct aggregations
-        if func in self._AGG_MAP and node.args:
-            return self._render_aggregation(func, node.args[0])
-
-        # DIVIDE → DIV0 (Snowflake null-safe division)
-        if func == "DIVIDE":
-            return self._render_divide(node.args)
 
         # IF
         if func == "IF":
@@ -960,8 +955,11 @@ class DaxSqlRenderer:
             raise self.DaxRenderError("DIVIDE requires at least 2 arguments")
         num = self._render_node(args[0])
         den = self._render_node(args[1])
-        # DIV0 returns 0 (not NULL) on zero division; matches DAX DIVIDE default
-        return f"DIV0({num}, {den})"
+        if len(args) > 2:
+            alt = self._render_node(args[2])
+            return f"IFF(COALESCE({den}, 0) = 0, {alt}, ({num}) / ({den}))"
+        return f"({num}) / NULLIF({den}, 0)"
+
 
     def _render_if(self, args: List[DaxNode]) -> str:
         if len(args) < 2:
@@ -1243,7 +1241,13 @@ class DaxSqlRenderer:
             raise self.DaxRenderError(f"{func} requires at least 1 argument")
 
         d = self.date_alias
-        date_col = f'{d}."COL_DATE"'
+        extracted_col = None
+        for arg in args:
+            if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
+                extracted_col = arg.column
+                break
+        d_col = extracted_col or "DATE_DATE"
+        date_col = f'{d}."{d_col}"'
 
         # Shape-flag mode (see converter/time_intelligence_shapes.py): if the
         # caller precomputed a boolean flag column for this exact shape on
@@ -1347,7 +1351,13 @@ class DaxSqlRenderer:
             raise self.DaxRenderError("Period function expects (aggregate, date_column) arguments")
 
         d = self.date_alias
-        date_col = f'{d}."COL_DATE"'
+        extracted_col = None
+        for arg in args:
+            if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
+                extracted_col = arg.column
+                break
+        d_col = extracted_col or "DATE_DATE"
+        date_col = f'{d}."{d_col}"'
         # No flag column provisioned for this shape — anchor to CURRENT_DATE()
         # rather than the enriched-view-only MAX_DATE column, matching
         # _render_period_to_date's fallback above and the already-established
@@ -1540,7 +1550,7 @@ class DaxSqlRenderer:
 def try_ast_translate(
     dax: str,
     table_alias: str,
-    date_alias: str = "COL_DATE",
+    date_alias: str = "Date",
     measure_sql_map: Optional[Dict[str, str]] = None,
     known_measure_names: Optional[Any] = None,
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,

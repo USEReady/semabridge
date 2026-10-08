@@ -42,6 +42,8 @@ class MetricsClauseBuilder:
         config: Any,
         dup_name_repo: Any = None,
         drop_ledger: Optional[DropLedger] = None,
+        enriched_view_mapping: Optional[Dict[str, str]] = None,
+        no_populated_date_link_datasets: Optional[Set[str]] = None,
     ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -50,6 +52,12 @@ class MetricsClauseBuilder:
         self.config = config
         self.dup_name_repo = dup_name_repo
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.enriched_view_mapping: Dict[str, str] = (
+            enriched_view_mapping if enriched_view_mapping is not None else {}
+        )
+        self.no_populated_date_link_datasets: Set[str] = (
+            no_populated_date_link_datasets if no_populated_date_link_datasets is not None else set()
+        )
 
     def build_for_sml(
         self,
@@ -209,6 +217,25 @@ class MetricsClauseBuilder:
         for metric in valid_metrics:
             if metric.unique_name in skipped_metric_names:
                 continue
+
+            ds_fold = str(getattr(metric, "dataset", "") or "").casefold()
+            is_ti = (
+                (metric.unique_name in metric_shapes)
+                or any(token in metric.unique_name.upper() for token in ["_YTD", "_SPLY", "_R12M", "_R12MS", "_YOY", "_MTD", "_QTD"])
+                or any(
+                    k in str(getattr(metric, "expression", "") or "").upper()
+                    for k in ["TOTALYTD", "SAMEPERIODLASTYEAR", "DATESYTD", "DATEADD", "PARALLELPERIOD", "MONTHINDEX", "RUNNING_YEAR", "COL_DATE.DATE_DATE", "_YTD", "_SPLY", "_R12M"]
+                )
+            )
+            if is_ti and ds_fold in self.no_populated_date_link_datasets:
+                skipped_metric_names.add(metric.unique_name)
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    "no populated date link on fact table",
+                    dataset=getattr(metric, "dataset", None),
+                )
+                continue
+
             alias = dataset_aliases.get(metric.dataset)
             if not alias:
                 self.drop_ledger.record(
@@ -443,6 +470,25 @@ class MetricsClauseBuilder:
     def _precomputed_column_name(self, source_dataset: str, source_column: str) -> str:
         return self.identifier_sanitizer.sanitize_column(f"{source_dataset}_{source_column}")
 
+    def _get_effective_dataset_cols(
+        self,
+        dataset_name: str,
+        dataset_col_lookup: Dict[str, Set[str]],
+    ) -> Set[str]:
+        cols = set(dataset_col_lookup.get(dataset_name, set()))
+        if self.translator and getattr(self.translator, "anchor_flag_map", None):
+            mapped_source = (
+                (self.enriched_view_mapping or {}).get(dataset_name)
+                or (self.enriched_view_mapping or {}).get(str(dataset_name or "").casefold())
+                or ""
+            )
+            if mapped_source and ("_ENRICHED" in mapped_source.upper()):
+                ds_flags = self.translator.anchor_flag_map.get(str(dataset_name or "").casefold()) or {}
+                for flag_val in ds_flags.values():
+                    if isinstance(flag_val, str) and flag_val:
+                        cols.add(flag_val)
+        return cols
+
     def _dataset_has_column(
         self,
         dataset_name: str,
@@ -450,12 +496,7 @@ class MetricsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
     ) -> bool:
         wanted = self.identifier_sanitizer.sanitize_column(column_name).upper()
-        cols = set(dataset_col_lookup.get(dataset_name, set()))
-        if self.translator and getattr(self.translator, "anchor_flag_map", None):
-            ds_flags = self.translator.anchor_flag_map.get(str(dataset_name or "").casefold()) or {}
-            for flag_val in ds_flags.values():
-                if isinstance(flag_val, str) and flag_val:
-                    cols.add(flag_val)
+        cols = self._get_effective_dataset_cols(dataset_name, dataset_col_lookup)
         return wanted in {str(c).upper() for c in cols}
 
     def _rewrite_cross_dataset_sql_refs_to_precomputed(
@@ -931,32 +972,38 @@ class MetricsClauseBuilder:
                 shape = (metric_shapes or {}).get(metric.unique_name)
                 predicted_flag_col = enrichment_flag_column_if_referenced(shape, expr)
                 if predicted_flag_col:
-                    honest_note = (
-                        f"Cannot verify in dry-run — resolved by live enrichment at deploy time "
-                        f"(references '{predicted_flag_col}', a flag column "
-                        f"_create_enriched_view creates on '{metric.dataset}' for this metric's "
-                        f"time-intelligence shape; dry-run has no live connection to confirm it "
-                        f"directly)."
+                    has_enriched_target = bool(
+                        self.enriched_view_mapping
+                        and self.enriched_view_mapping.get(metric.dataset)
+                        and str(metric.dataset).casefold() not in {s.casefold() for s in (self.failed_enrichment_datasets or set())}
                     )
-                    # OSI metrics (is_osi=True) have no advisory_notes/
-                    # advisory_categories fields at all -- that's an SML-
-                    # only concept (see osi_to_sml.py's own producer for
-                    # the unreachable-dimension advisory). hasattr guards
-                    # this generically rather than branching on is_osi
-                    # directly; either way, returning expr below (not
-                    # None) is the part that actually matters for both.
-                    if hasattr(metric, "advisory_notes") and honest_note not in metric.advisory_notes:
-                        metric.advisory_notes = list(metric.advisory_notes) + [honest_note]
-                        metric.advisory_categories = list(metric.advisory_categories) + [
-                            ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE
-                        ]
-                    logger.info(
-                        "Metric '%s': column '%s' not in dry-run's declared schema, but matches "
-                        "this metric's predicted enrichment flag column — emitting as unverified "
-                        "rather than dropping.",
-                        metric.unique_name, predicted_flag_col,
-                    )
-                    return expr
+                    if has_enriched_target:
+                        honest_note = (
+                            f"Cannot verify in dry-run — resolved by live enrichment at deploy time "
+                            f"(references '{predicted_flag_col}', a flag column "
+                            f"_create_enriched_view creates on '{metric.dataset}' for this metric's "
+                            f"time-intelligence shape; dry-run has no live connection to confirm it "
+                            f"directly)."
+                        )
+                        if hasattr(metric, "advisory_notes") and honest_note not in metric.advisory_notes:
+                            metric.advisory_notes = list(metric.advisory_notes) + [honest_note]
+                            metric.advisory_categories = list(metric.advisory_categories) + [
+                                ADVISORY_CATEGORY_ENRICHMENT_COLUMN_UNVERIFIABLE
+                            ]
+                        logger.info(
+                            "Metric '%s': column '%s' not in dry-run's declared schema, but matches "
+                            "this metric's predicted enrichment flag column — emitting as unverified "
+                            "rather than dropping.",
+                            metric.unique_name, predicted_flag_col,
+                        )
+                        return expr
+                    else:
+                        self.drop_ledger.record(
+                            "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                            f"Metric references enrichment flag column '{predicted_flag_col}' but dataset '{metric.dataset}' is not pointing to an enriched view in TABLES clause",
+                            dataset=getattr(metric, "dataset", None), detail=expr[:200] if expr else None,
+                        )
+                        return None
                 logger.warning(
                     "Metric '%s': skipping invalid SQL expression after normalization: %s",
                     metric.unique_name,

@@ -6,11 +6,17 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import copy
 from semabridge.core.execution_engine import ExecutionEngine
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 from semabridge.utils.identifiers import clean_pbix_model_name
+from semabridge.utils.name_translator import (
+    get_target_deployment_name,
+    target_lock_manager,
+    validate_no_target_view_collisions,
+)
 
 logger = logging.getLogger("semabridge.api")
 
@@ -23,7 +29,9 @@ _TYPE_ALIASES = {
 }
 
 MAX_BATCH_MODELS = 10
-DEFAULT_MAX_PARALLEL_MODELS = 10
+# Lowered to 4 to align with standard Snowflake warehouse concurrency limits
+# (MAX_CONCURRENCY_LEVEL defaults to 8 on standard warehouses, leaving headroom for probes).
+DEFAULT_MAX_PARALLEL_MODELS = 4
 DEFAULT_MAX_PARALLEL_FABRIC_JOBS = 3
 DEFAULT_PROCESS_MAX_WORKERS = 8
 DEFAULT_EXECUTOR = "thread"
@@ -193,12 +201,13 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
 
     elif source_type == "pbix":
         explicit_pbix = source_cfg.get("pbix_path")
-        if not explicit_pbix and not source_cfg.get("models"):
+        models_list = source_cfg.get("models")
+        if not explicit_pbix and not models_list:
             raise ValidationError(
                 "PBIX source requires source.pbix_path or source.models."
             )
 
-        if explicit_pbix:
+        if explicit_pbix and not models_list:
             sync_jobs.append(
                 {
                     "dataset_id": None,
@@ -207,7 +216,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                 }
             )
         else:
-            model_list = source_cfg.get("models") or [config.get("model_name", "")]
+            model_list = models_list or [config.get("model_name", "")]
             for raw_model in model_list:
                 if isinstance(raw_model, dict):
                     model_name = str(raw_model.get("pbixPath") or raw_model.get("name") or "")
@@ -301,6 +310,9 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
     if len(sync_jobs) > MAX_BATCH_MODELS:
         raise ValidationError(f"Batch sync currently supports up to {MAX_BATCH_MODELS} models per request.")
 
+    if len(sync_jobs) > 1:
+        validate_no_target_view_collisions([j["model_label"] for j in sync_jobs], platform=target_type)
+
     return sync_jobs, source_type, target_type, source_cfg, target_cfg
 
 def _persist_model_version(
@@ -341,96 +353,113 @@ def _run_single_job(
     force: bool = False,
 ) -> Dict[str, Any]:
     model_label = job["model_label"]
-    repository = ModelRepository()
-    engine = ExecutionEngine(db_manager=repository)
+    local_config = copy.deepcopy(config)
+    target_view_name = get_target_deployment_name(model_label, target_type)
 
-    logger.info("Syncing model: %s", model_label)
-    try:
-        summary = engine.execute(
-            source=engine_source_type,
-            target=target_type,
-            project_id=requested_project_id,
-            config_path=Path(config_path) if config_path else None,
-            config_dict=config,
-            dataset_id=job["dataset_id"],
-            workspace_id=resolved_workspace_id,
-            pbix_path=job["pbix_path"],
-            project_name=model_label,
-            tag=str(config.get("version_tag", "v1.0")),
-            deploy=deploy_enabled,
-            dry_run=not deploy_enabled,
-            account_id=account_id,
-            sync_mode=sync_mode,
-            force=force,
-        )
-        summary_data = summary.model_dump(mode="json")
-        job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
+    with target_lock_manager.hold(target_view_name) as acquired:
+        if not acquired:
+            logger.warning("Target view lock for '%s' is held by another active run; rejecting request.", target_view_name)
+            summary_data = {
+                "errors": [
+                    {
+                        "step_number": 0,
+                        "step_name": "TargetLock",
+                        "message": f"Target view name '{target_view_name}' is currently being deployed by another active run.",
+                        "error_type": "TargetViewLockConflict",
+                    }
+                ]
+            }
+            return {
+                "model": model_label,
+                "status": "conflict",
+                "summary": summary_data,
+                "routing_summary": None,
+                "console": _build_console_details(summary_data),
+                "run_id": None,
+            }
 
-        # Persist the TRUE run outcome to the `runs` table. This was
-        # previously only wired up on the deprecated CLIExecutor path — the
-        # modern engine (used here) never updated a run's row past its
-        # initial "running" status. `status`/`error_message` below are
-        # always the real outcome; `demo_mode`/`demo_masked` only record
-        # whether a later display-layer masking pass (see
-        # core/run_helpers.mask_run_for_display) is expected to apply — they
-        # never change what's stored here.
-        _run_id_for_record = summary_data.get("run_id")
-        if _run_id_for_record:
-            try:
-                _true_status = str(summary_data.get("status") or "").lower()
-                _demo_mode_active = bool(summary_data.get("demo_mode"))
-                _errors = summary_data.get("errors") or []
-                repository.record_run_complete(
-                    run_id=str(_run_id_for_record),
-                    status=_true_status,
-                    final_step=int(summary_data.get("last_successful_step") or 0),
-                    duration_ms=int(summary_data.get("duration_ms") or 0),
-                    error_message=(_errors[0].get("message") if _errors else None),
-                    demo_mode=_demo_mode_active,
-                    demo_masked=(_demo_mode_active and _true_status in ("failed", "partial")),
-                )
-            except Exception as record_exc:
-                logger.error(
-                    "Failed to persist true run completion for run_id=%s: %s",
-                    _run_id_for_record, record_exc,
-                )
+        repository = ModelRepository()
+        engine = ExecutionEngine(db_manager=repository)
 
-        if job_ok and deploy_enabled:
-            try:
-                _persist_model_version(repository, config, summary_data, model_label, resolved_workspace_id)
-            except Exception as version_error:
-                logger.warning("Version row write failed for %s: %s", model_label, version_error)
+        logger.info("Syncing model: %s (target_view=%s)", model_label, target_view_name)
+        try:
+            summary = engine.execute(
+                source=engine_source_type,
+                target=target_type,
+                project_id=requested_project_id,
+                config_path=Path(config_path) if config_path else None,
+                config_dict=local_config,
+                dataset_id=job["dataset_id"],
+                workspace_id=resolved_workspace_id,
+                pbix_path=job["pbix_path"],
+                project_name=model_label,
+                tag=str(local_config.get("version_tag", "v1.0")),
+                deploy=deploy_enabled,
+                dry_run=not deploy_enabled,
+                account_id=account_id,
+                sync_mode=sync_mode,
+                force=force,
+            )
+            summary_data = summary.model_dump(mode="json")
+            job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
 
-        return {
-            "model": model_label,
-            "status": "success" if job_ok else "failed",
-            "summary": summary_data,
-            "routing_summary": summary_data.get("routing_summary") if isinstance(summary_data, dict) else None,
-            "console": _build_console_details(summary_data),
-            "run_id": summary_data.get("run_id"),
-            "missing_dims": summary_data.get("missing_dims") or {},
-            "dropped_entities": summary_data.get("dropped_entities") or [],
-        }
-    except Exception as exc:
-        logger.error("Sync failed for model '%s': %s", model_label, exc)
-        summary_data = {
-            "errors": [
-                {
-                    "step_number": 0,
-                    "step_name": "Execution",
-                    "message": str(exc),
-                    "error_type": type(exc).__name__,
-                }
-            ]
-        }
-        return {
-            "model": model_label,
-            "status": "conflict" if "CONFLICT:" in str(exc) else "failed",
-            "summary": summary_data,
-            "routing_summary": None,
-            "console": _build_console_details(summary_data),
-            "run_id": summary_data.get("run_id"),
-        }
+            _run_id_for_record = summary_data.get("run_id")
+            if _run_id_for_record:
+                try:
+                    _true_status = str(summary_data.get("status") or "").lower()
+                    _demo_mode_active = bool(summary_data.get("demo_mode"))
+                    _errors = summary_data.get("errors") or []
+                    repository.record_run_complete(
+                        run_id=str(_run_id_for_record),
+                        status=_true_status,
+                        final_step=int(summary_data.get("last_successful_step") or 0),
+                        duration_ms=int(summary_data.get("duration_ms") or 0),
+                        error_message=(_errors[0].get("message") if _errors else None),
+                        demo_mode=_demo_mode_active,
+                        demo_masked=(_demo_mode_active and _true_status in ("failed", "partial")),
+                    )
+                except Exception as record_exc:
+                    logger.error(
+                        "Failed to persist true run completion for run_id=%s: %s",
+                        _run_id_for_record, record_exc,
+                    )
+
+            if job_ok and deploy_enabled:
+                try:
+                    _persist_model_version(repository, config, summary_data, model_label, resolved_workspace_id)
+                except Exception as version_error:
+                    logger.warning("Version row write failed for %s: %s", model_label, version_error)
+
+            return {
+                "model": model_label,
+                "status": "success" if job_ok else "failed",
+                "summary": summary_data,
+                "routing_summary": summary_data.get("routing_summary") if isinstance(summary_data, dict) else None,
+                "console": _build_console_details(summary_data),
+                "run_id": summary_data.get("run_id"),
+                "missing_dims": summary_data.get("missing_dims") or {},
+                "dropped_entities": summary_data.get("dropped_entities") or [],
+            }
+        except Exception as exc:
+            logger.error("Sync failed for model '%s': %s", model_label, exc)
+            summary_data = {
+                "errors": [
+                    {
+                        "step_number": 0,
+                        "step_name": "Execution",
+                        "message": str(exc),
+                        "error_type": type(exc).__name__,
+                    }
+                ]
+            }
+            return {
+                "model": model_label,
+                "status": "conflict" if "CONFLICT:" in str(exc) else "failed",
+                "summary": summary_data,
+                "routing_summary": None,
+                "console": _build_console_details(summary_data),
+                "run_id": summary_data.get("run_id"),
+            }
 
 def _resolve_requested_parallelism(payload: Dict[str, Any]) -> int:
     if "max_parallel_models" in payload:
@@ -663,51 +692,21 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         deploy_enabled,
     )
 
-    try:
-        per_model_results = _run_parallel_jobs(
-            sync_jobs=sync_jobs,
-            effective_parallelism=effective_parallelism,
-            executor_kind=executor_kind,
-            source_type=source_type,
-            target_type=target_type,
-            config=config,
-            config_path=config_path,
-            deploy_enabled=deploy_enabled,
-            resolved_workspace_id=resolved_workspace_id,
-            requested_project_id=requested_project_id,
-            account_id=account_id,
-            sync_mode=sync_mode,
-            force=force or bool(payload.get("force", False)),
-        )
-    except Exception as exc:  # noqa: BLE001
-        if executor_kind == "process":
-            logger.exception(
-                "Process executor failed for batch sync; retrying with thread executor. Error: %s",
-                exc,
-            )
-            executor_kind = "thread"
-            effective_parallelism = _resolve_effective_parallelism(
-                sync_jobs=sync_jobs,
-                payload=payload,
-                max_parallel_models=max_parallel_models,
-                is_fabric_bound=is_fabric_bound,
-                executor_kind=executor_kind,
-            )
-            per_model_results = _run_parallel_jobs(
-                sync_jobs=sync_jobs,
-                effective_parallelism=effective_parallelism,
-                executor_kind=executor_kind,
-                source_type=source_type,
-                target_type=target_type,
-                config=config,
-                config_path=config_path,
-                deploy_enabled=deploy_enabled,
-                resolved_workspace_id=resolved_workspace_id,
-                requested_project_id=requested_project_id,
-                account_id=account_id,
-            )
-        else:
-            raise
+    per_model_results = _run_parallel_jobs(
+        sync_jobs=sync_jobs,
+        effective_parallelism=effective_parallelism,
+        executor_kind=executor_kind,
+        source_type=source_type,
+        target_type=target_type,
+        config=config,
+        config_path=config_path,
+        deploy_enabled=deploy_enabled,
+        resolved_workspace_id=resolved_workspace_id,
+        requested_project_id=requested_project_id,
+        account_id=account_id,
+        sync_mode=sync_mode,
+        force=force or bool(payload.get("force", False)),
+    )
 
     job_order = {str(job["model_label"]): index for index, job in enumerate(sync_jobs)}
     per_model_results.sort(key=lambda item: job_order.get(str(item.get("model") or ""), 0))

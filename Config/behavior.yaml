@@ -21,9 +21,7 @@ snowflake:
   auto_create_enriched_view: true    # Create _ENRICHED view with anchors
   use_enriched_view_for_metrics: true # Point semantic model to enriched view
   
-  # Point to enriched view instead of base table
-  source_table_mapping:
-    "SalesFact": "SEMABRIDGE.PUBLIC.SALESFACT_ENRICHED"
+  source_table_mapping: {}
   
   # Auto features (no manual mapping needed)
   auto_qualify_cross_table_refs: true

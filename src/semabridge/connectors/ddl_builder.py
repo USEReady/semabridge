@@ -51,15 +51,17 @@ class SemanticViewBuilder:
         translator: Any = None,
         drop_ledger: Optional[DropLedger] = None,
         enriched_view_mapping: Optional[Dict[str, str]] = None,
+        failed_enrichment_datasets: Optional[Set[str]] = None,
     ) -> None:
         self.config = config
         self.behavior = behavior
         self.identifier_sanitizer = identifier_sanitizer
         self.live_schema_metadata = live_schema_metadata
-        # Shared by reference with the owning SnowflakeEmitter — see
-        # SnowflakeEmitter._enriched_view_mapping / _get_source_table_mapping.
         self.enriched_view_mapping: Dict[str, str] = (
             enriched_view_mapping if enriched_view_mapping is not None else {}
+        )
+        self.failed_enrichment_datasets: Set[str] = (
+            failed_enrichment_datasets if failed_enrichment_datasets is not None else set()
         )
         self.schema_manager = schema_manager
         self.dup_name_repo = dup_name_repo
@@ -89,9 +91,12 @@ class SemanticViewBuilder:
             identifier_sanitizer, schema_manager, self.sanitizer, translator, behavior,
             drop_ledger=self.drop_ledger,
         )
+        self.no_populated_date_link_datasets: Set[str] = set()
         self.metrics_builder = MetricsClauseBuilder(
             identifier_sanitizer, schema_manager, self.sanitizer, translator, config, dup_name_repo,
             drop_ledger=self.drop_ledger,
+            enriched_view_mapping=self.enriched_view_mapping,
+            no_populated_date_link_datasets=self.no_populated_date_link_datasets,
         )
 
     def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:
@@ -286,7 +291,12 @@ class SemanticViewBuilder:
         related_ds = {r.from_dataset for r in sml.relationships if r.is_active} | {r.to_dataset for r in sml.relationships if r.is_active}
 
         # TABLES
-        tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata, cursor=self.cursor, enriched_view_mapping=self.enriched_view_mapping)
+        tbuilder = TablesClauseBuilder(
+            self.identifier_sanitizer, self.schema_manager, self.config, self.behavior,
+            self.live_schema_metadata, cursor=self.cursor,
+            enriched_view_mapping=self.enriched_view_mapping,
+            failed_enrichment_datasets=self.failed_enrichment_datasets
+        )
         tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
@@ -344,7 +354,12 @@ class SemanticViewBuilder:
         related_ds = {r.from_dataset for r in osi.relationships if r.is_active} | {r.to_dataset for r in osi.relationships if r.is_active}
 
         # TABLES
-        tbuilder = TablesClauseBuilder(self.identifier_sanitizer, self.schema_manager, self.config, self.behavior, self.live_schema_metadata, cursor=self.cursor, enriched_view_mapping=self.enriched_view_mapping)
+        tbuilder = TablesClauseBuilder(
+            self.identifier_sanitizer, self.schema_manager, self.config, self.behavior,
+            self.live_schema_metadata, cursor=self.cursor,
+            enriched_view_mapping=self.enriched_view_mapping,
+            failed_enrichment_datasets=self.failed_enrichment_datasets
+        )
         tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 

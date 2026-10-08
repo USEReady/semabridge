@@ -28,7 +28,7 @@ TOTALQTD:
     )
 DIVIDE:
   type: scalar
-  template: "DIV0({arg0}, {arg1})"
+  template: "({arg0}) / NULLIF({arg1}, 0)"
 IF:
   type: expr
   template: "CASE WHEN {arg0} THEN {arg1} ELSE {arg2} END"
