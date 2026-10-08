@@ -41,9 +41,9 @@ from semabridge.core.settings import SnowflakeConfig
 from semabridge.formats.sml.models import DataType
 from semabridge.utils.identifiers import IdentifierSanitizer
 
-_UPLOADS_DIR = r"C:\Users\Sabiha Anjum\AppData\Local\Temp\semabridge\uploads"
+_UPLOADS_DIR = r"C:\MockData\semabridge\uploads"
 _VALID_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_CORPORATE_SPEND_PBIX = os.path.join(_UPLOADS_DIR, "9fabc0c1283c43f18c85b86436de3584_Corporate Spend.pbix")
+_SAMPLE_MODEL_PBIX = os.path.join(_UPLOADS_DIR, "sample_model_fixture.pbix")
 
 _SKIP_REASON = f"PBIX upload cache not present in this environment: {_UPLOADS_DIR}"
 
@@ -293,12 +293,12 @@ def test_corporate_spend_small_real_table_lands_in_ambiguous_needs_review(table_
     non-placeholder business data -- must NOT auto-backfill (would
     duplicate real data already there) and must NOT be silently skipped
     either. Confirms landing in ambiguous_needs_review with evidence."""
-    if not os.path.isfile(_CORPORATE_SPEND_PBIX):
+    if not os.path.isfile(_SAMPLE_MODEL_PBIX):
         pytest.skip(_SKIP_REASON)
 
     from pbixray import PBIXRay
 
-    model = PBIXRay(_CORPORATE_SPEND_PBIX)
+    model = PBIXRay(_SAMPLE_MODEL_PBIX)
     df = model.get_table(table_name)
     assert not df.empty, f"expected real rows for {table_name}"
     assert len(df) < SnowflakeSchemaManager._MIN_ROW_COUNT_FOR_POPULATED, (
