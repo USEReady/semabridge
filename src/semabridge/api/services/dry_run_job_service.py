@@ -707,3 +707,100 @@ def reset_dry_run_job_file_for_rerun(job_id: str, file_id: str) -> Dict[str, Any
             job.completed_at = None
 
     return {"job_id": job_id, "file_id": file_id, "filename": filename, "label": label, "status": "pending"}
+
+
+def validate_multi_model_dry_run_readiness(
+    project_id: str,
+    source_cfg: Dict[str, Any],
+) -> None:
+    """Server-side gate: refuses a multi-mode project sync/run unless every
+    model's latest dry run succeeded with no unresolved collisions or blockers.
+    """
+    _ensure_schema()
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.dry_run_job_models import DryRunJob
+    from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers
+    from semabridge.utils.project_models import model_entry_key
+
+    models = source_cfg.get("models") or []
+    expected_models = [model_entry_key(m) for m in models if model_entry_key(m)]
+    if not expected_models:
+        explicit_pbix = str(source_cfg.get("pbix_path") or "").strip()
+        if explicit_pbix:
+            expected_models = [explicit_pbix]
+
+    if not expected_models:
+        return
+
+    with db_manager.get_session() as session:
+        job = session.query(DryRunJob).filter(
+            DryRunJob.project_id == project_id
+        ).order_by(DryRunJob.created_at.desc()).first()
+
+        if not job:
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                "no dry-run job found for this project. Every model must have a completed, "
+                "successful dry run with no unresolved blockers before deployment."
+            )
+
+        if job.status in ("running", "pending"):
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                "a dry-run job is currently in progress. Wait for it to complete."
+            )
+
+        files = list(job.files)
+        if not files:
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                "dry-run job has no model entries."
+            )
+
+        files_by_ref = {}
+        for f in files:
+            for k in (f.source_ref, f.pbix_path, f.label, f.display_name):
+                if k:
+                    k_str = str(k).strip()
+                    files_by_ref[k_str.lower()] = f
+                    files_by_ref[k_str.replace("\\", "/").lower()] = f
+                    files_by_ref[PurePath(k_str.replace("\\", "/")).stem.lower()] = f
+
+        for exp in expected_models:
+            exp_key = str(exp).strip().lower()
+            exp_norm = exp_key.replace("\\", "/")
+            exp_stem = PurePath(exp_norm).stem.lower()
+
+            matched_file = (
+                files_by_ref.get(exp_key)
+                or files_by_ref.get(exp_norm)
+                or files_by_ref.get(exp_stem)
+            )
+
+            if not matched_file:
+                raise ValidationError(
+                    f"Multi-model project '{project_id}' cannot be synced: "
+                    f"model '{exp}' has not been dry-run in the latest dry-run job."
+                )
+
+            if matched_file.status != "success":
+                err = matched_file.error_message or f"status is '{matched_file.status}'"
+                raise ValidationError(
+                    f"Multi-model project '{project_id}' cannot be synced: "
+                    f"dry run for model '{matched_file.label or exp}' failed ({err}). "
+                    "Retry the dry run for this model."
+                )
+
+            if matched_file.result_json:
+                try:
+                    result_data = json.loads(matched_file.result_json)
+                except Exception:
+                    result_data = {}
+                blockers = _compat_collect_dry_run_blockers(result_data)
+                if blockers:
+                    raise ValidationError(
+                        f"Multi-model project '{project_id}' cannot be synced: "
+                        f"model '{matched_file.label or exp}' has {len(blockers)} unresolved dry-run blocker(s). "
+                        "Resolve all collisions and blockers before syncing."
+                    )
+

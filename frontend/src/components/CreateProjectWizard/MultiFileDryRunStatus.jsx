@@ -18,6 +18,7 @@
 import { useCallback, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RotateCcw } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
+import DroppedFieldsPanel from '../common/DroppedFieldsPanel';
 import DryRunMappingTable from '../DryRunMappingTable';
 
 function pluralize(count, word) {
@@ -26,9 +27,22 @@ function pluralize(count, word) {
 
 function SectionCounts({ section }) {
   if (!section.loaded) return null;
+  const unresolvedCollisions = section.unresolvedCollisions ?? (
+    Array.isArray(section.rows)
+      ? section.rows.filter((r) => String(r.status || '').toLowerCase() === 'collision').length
+      : 0
+  );
   return (
     <span style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
       {pluralize(section.columnCount, 'column')} · {pluralize(section.metricCount, 'metric')}
+      {unresolvedCollisions > 0 && (
+        <>
+          {' · '}
+          <span style={{ color: 'var(--color-error)', fontWeight: 700 }}>
+            {pluralize(unresolvedCollisions, 'unresolved collision')}
+          </span>
+        </>
+      )}
       {' · '}
       <span style={{ color: section.blockingCount > 0 ? 'var(--color-error)' : 'var(--color-success)', fontWeight: 700 }}>
         {section.blockingCount > 0 ? `${section.blockingCount} blocking` : 'no blocking issues'}
@@ -202,6 +216,11 @@ export default function MultiFileDryRunStatus({
                       droppedEntities={section.result?.dropped_entities || []}
                       unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
                     />
+                    {Array.isArray(section.result?.dropped_entities) && section.result.dropped_entities.length > 0 && (
+                      <div style={{ marginTop: 14 }}>
+                        <DroppedFieldsPanel entries={section.result.dropped_entities} />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

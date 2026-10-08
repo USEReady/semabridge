@@ -979,6 +979,15 @@ async def run_project_now_compat(
         from semabridge.api.services.mapping_service import _compat_apply_manual_mapping_overrides_to_cfg
         config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
         _compat_project_configs[project_id] = config_override
+
+        # Multi-model server-side gate: every model must have a successful dry run with no unresolved blockers
+        parsed_cfg = _compat_parse_project_cfg_dict(config_override or base_cfg) or {}
+        source_cfg = parsed_cfg.get("source") if isinstance(parsed_cfg.get("source"), dict) else {}
+        from semabridge.utils.project_models import is_multi_mode
+        if is_multi_mode(source_cfg):
+            from semabridge.api.services.dry_run_job_service import validate_multi_model_dry_run_readiness
+            validate_multi_model_dry_run_readiness(project_id, source_cfg)
+
     run, project_cfg, started = _create_project_run(
         project_id,
         "Manual",
