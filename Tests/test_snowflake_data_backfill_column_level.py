@@ -97,10 +97,20 @@ class _RecordingConnectionManager:
 
 
 def _fake_cursor(fetchone_sequence):
-    """fetchone_sequence: list of return values, one per fetchone() call
-    in order (only the COUNT safety-check query calls fetchone here)."""
+    """fetchone_sequence: list of return values, one per COUNT safety-check
+    fetchone() call in order. The post-load NULL check (a per-column COUNT
+    without COUNT(*)) is answered as "populated", as a real table would be
+    after a successful load."""
     cursor = MagicMock()
-    cursor.fetchone.side_effect = list(fetchone_sequence)
+    remaining = list(fetchone_sequence)
+
+    def _fetchone():
+        sql = getattr(cursor, "_last_sql", None)
+        if (isinstance(sql, str) and "COUNT(*)" not in sql.upper()) or not remaining:
+            return (1,) * 64
+        return remaining.pop(0)
+
+    cursor.fetchone.side_effect = _fetchone
     cursor.connection = MagicMock()
     cursor.rowcount = None
     return cursor

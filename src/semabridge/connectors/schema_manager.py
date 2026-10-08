@@ -1630,11 +1630,12 @@ class SnowflakeSchemaManager:
                     f"Source PBIX table '{source_table}' has no rows to load.",
                 )
 
-            # Real sanitizer, same one used everywhere else in this
-            # pipeline — never the naive remap a hand-rolled reference
-            # script used, which is wrong on reserved words, special
-            # characters, and leading-digit columns.
-            df = df.rename(columns={col: self._sanitize_col_name(str(col)) for col in df.columns})
+            # Each source column is loaded into ITS OWN final physical
+            # column (the name the table was created with, which can differ
+            # from the sanitized source name -- e.g. a disambiguated or
+            # renamed column), never matched by re-sanitizing the source
+            # name and hoping it lines up (which left such columns 100% NULL).
+            df, source_by_target = self._map_source_columns_to_physical(df, physical_cols)
 
             live_cols = {str(c).upper() for c in live_schema_metadata.get(safe_table_name.upper(), set())}
             if live_cols:
@@ -1698,6 +1699,20 @@ class SnowflakeSchemaManager:
                 return self._backfill_result(
                     safe_table_name, dataset_name, "failed", 0,
                     "write_pandas reported failure loading this table.",
+                )
+
+            empty_targets = self._columns_left_all_null(cursor, safe_table_name, df, list(df.columns))
+            if empty_targets:
+                details = ", ".join(f"{target} (source '{source_by_target.get(target, target)}')" for target in empty_targets)
+                logger.error(
+                    "Data backfill for %s: column(s) loaded 100%% NULL although the source has values: %s",
+                    safe_table_name, details,
+                )
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "failed", int(num_rows),
+                    f"Loaded {int(num_rows)} row(s), but these column(s) are 100% NULL in the table "
+                    f"while their source column has values: {details}.",
+                    columns=list(empty_targets),
                 )
 
             logger.info(
@@ -1777,7 +1792,7 @@ class SnowflakeSchemaManager:
                     columns=list(target_cols),
                 )
 
-            df = df.rename(columns={col: self._sanitize_col_name(str(col)) for col in df.columns})
+            df, _source_by_target = self._map_source_columns_to_physical(df, physical_cols)
 
             wanted = list(dict.fromkeys(key_safe_names + target_cols))
             missing = [c for c in wanted if c not in df.columns]
@@ -1872,6 +1887,19 @@ class SnowflakeSchemaManager:
                     context=f"DROP STAGING TABLE {staging_name}",
                 )
 
+            empty_targets = self._columns_left_all_null(cursor, safe_table_name, df, list(target_cols))
+            if empty_targets:
+                logger.error(
+                    "Data backfill for %s: patched column(s) still 100%% NULL although the source has values: %s",
+                    safe_table_name, empty_targets,
+                )
+                return self._backfill_result(
+                    safe_table_name, dataset_name, "failed", updated,
+                    f"Patched {updated} row(s), but column(s) {empty_targets} are still 100% NULL "
+                    "while their source column has values.",
+                    columns=list(empty_targets),
+                )
+
             logger.info(
                 "Data backfill: patched column(s) %s on %d existing row(s) in %s.%s "
                 "(added by this deploy, source PBIX table '%s')",
@@ -1894,6 +1922,77 @@ class SnowflakeSchemaManager:
                 f"Unexpected error while backfilling column(s) {target_cols}: {exc}",
                 columns=list(target_cols),
             )
+
+    def _map_source_columns_to_physical(self, df: Any, physical_cols: Dict[str, Any]) -> tuple[Any, Dict[str, str]]:
+        """Rename the extracted source DataFrame's columns to the FINAL
+        physical column each one belongs to, and drop source columns that
+        belong to no physical column.
+
+        physical_cols (from _collect_physical_source_columns -- the same map
+        the table was created from) maps physical name -> model column. Each
+        model column is matched to its source column by identity: exact
+        name, then case-insensitive, then sanitized form; each source column
+        is used at most once. The column's physical name -- not a
+        re-sanitized source name -- is what the data is loaded into, so a
+        column whose physical name differs from its source name (suffixed or
+        renamed) still receives its data.
+
+        Returns (renamed_df, {physical_name: source_column_name}).
+        """
+        source_names = [str(col) for col in df.columns]
+        exact = {name: name for name in source_names}
+        folded: Dict[str, list] = {}
+        sanitized: Dict[str, list] = {}
+        for name in source_names:
+            folded.setdefault(name.casefold(), []).append(name)
+            sanitized.setdefault(self._sanitize_col_name(name).upper(), []).append(name)
+
+        used: set = set()
+        rename: Dict[str, str] = {}
+        source_by_target: Dict[str, str] = {}
+
+        def _take(candidates):
+            for candidate in candidates or []:
+                if candidate not in used:
+                    return candidate
+            return None
+
+        for physical_name, col in physical_cols.items():
+            unique_name = str(getattr(col, "unique_name", "") or "")
+            source = (
+                (exact.get(unique_name) if exact.get(unique_name) not in used else None)
+                or _take(folded.get(unique_name.casefold()))
+                or _take(sanitized.get(self._sanitize_col_name(unique_name).upper()))
+            )
+            if source is None:
+                continue
+            used.add(source)
+            rename[source] = physical_name
+            source_by_target[physical_name] = source
+
+        unmatched = [name for name in source_names if name not in used]
+        if unmatched:
+            logger.debug("Data backfill: source column(s) with no model column, not loaded: %s", unmatched)
+        df = df[[name for name in source_names if name in used]].rename(columns=rename)
+        return df, source_by_target
+
+    def _columns_left_all_null(self, cursor, safe_table_name: str, df: Any, target_cols: list[str]) -> list[str]:
+        """Post-load check: target columns that are 100% NULL in the table
+        although the loaded source data has values for them."""
+        expected = [
+            col for col in target_cols
+            if col in getattr(df, "columns", []) and bool(df[col].notna().any())
+        ]
+        if not expected:
+            return []
+        select_list = ", ".join(f'COUNT("{col}")' for col in expected)
+        self._execute_sql(
+            cursor,
+            f'SELECT {select_list} FROM {self.config.schema_name}."{safe_table_name}"',
+            context=f"POST-LOAD NULL CHECK {safe_table_name}",
+        )
+        row = cursor.fetchone() or ()
+        return [col for col, count in zip(expected, row) if not count]
 
     @staticmethod
     def _backfill_result(

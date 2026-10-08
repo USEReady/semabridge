@@ -47,11 +47,18 @@ def _build_schema_manager(connection_manager=None) -> SnowflakeSchemaManager:
     )
     behavior = ConnectorBehavior()
     identifier_sanitizer = IdentifierSanitizer()
+    if connection_manager is None:
+        # Records each executed SQL text on the cursor, so a fake cursor can
+        # tell the classification query from the post-load NULL check.
+        connection_manager = MagicMock()
+        connection_manager._execute_sql.side_effect = (
+            lambda cursor, sql, params=None, context="": setattr(cursor, "_last_sql", sql)
+        )
     return SnowflakeSchemaManager(
         config=config,
         behavior=behavior,
         identifier_sanitizer=identifier_sanitizer,
-        connection_manager=connection_manager or MagicMock(),
+        connection_manager=connection_manager,
         dup_name_repo=None,
     )
 
@@ -81,9 +88,19 @@ def _fake_cursor(row_result):
     that never need a follow-up sample-values query ("real_data", or
     "empty" via row_count==0 / all-null / above-floor-but-unpopulated) --
     use _fake_cursor_for_classification for anything that reaches the
-    ambiguous/placeholder-check path."""
+    ambiguous/placeholder-check path.
+
+    Any LATER fetchone() answers the post-load NULL check (per-column
+    COUNTs after a load): it reports the loaded columns as populated, as a
+    real table would be after a successful load."""
     cursor = MagicMock()
-    cursor.fetchone.return_value = row_result
+
+    def _fetchone():
+        sql = getattr(cursor, "_last_sql", None)
+        is_post_load_check = isinstance(sql, str) and "COUNT(*)" not in sql.upper()
+        return (1,) * 64 if is_post_load_check else row_result
+
+    cursor.fetchone.side_effect = _fetchone
     cursor.connection = MagicMock()
     return cursor
 
