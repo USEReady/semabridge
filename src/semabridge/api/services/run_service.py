@@ -1122,6 +1122,26 @@ async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[D
     return build_run_report_data(run, _project_cfg_for_report(project_id))
 
 
+def _is_run_demo_masked(project_id: str, run_id: str) -> bool:
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+    _compat_ensure_loaded()
+    for candidate in _compat_project_runs.get(project_id, []):
+        if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
+            if candidate.get("demo_mode") or demo_mode_globally_armed():
+                return str(candidate.get("status") or "").lower() not in ("success", "running", "")
+            return False
+    try:
+        from semabridge.repository.orm.models import Run
+        from semabridge.repository.orm.session_factory import db_manager
+        with db_manager.get_session() as session:
+            row = session.get(Run, run_id)
+            if row and (getattr(row, "demo_mode", False) or demo_mode_globally_armed()):
+                return str(row.status or "").lower() not in ("success", "running", "")
+    except Exception:
+        pass
+    return False
+
+
 async def get_run_model_report_data_compat(project_id: str, run_id: str, model_label: str) -> Optional[Dict[str, Any]]:
     """Per-model counterpart to get_run_report_data_compat(), for a
     multi-PBIX batch run -- scopes the run to just the one result matching
@@ -1152,36 +1172,50 @@ async def get_run_model_report_data_compat(project_id: str, run_id: str, model_l
 
     results = [r for r in ((run or {}).get("results") or []) if isinstance(r, dict)]
     result = next((r for r in results if str(r.get("model")) == model_label), None)
+    data = None
     if result is None:
         # After a restart the live results are gone; the summary written when
         # the run completed is the authoritative copy.
         persisted = load_model_summary(project_id, run_id, model_label)
         if persisted is not None:
-            return persisted
-    if run is None:
-        return None
-    if result is None:
-        if not results:
-            # Not "this model_label doesn't exist" -- results are entirely
-            # missing for this run, so build_run_report_data() will report
-            # the honest "completed but data unavailable" shape instead of
-            # a misleading pre-extraction crash.
+            data = persisted
+    if data is None:
+        if run is None:
+            return None
+        if result is None:
+            if not results:
+                project_cfg = _project_cfg_for_report(project_id)
+                data = build_run_report_data(run, project_cfg)
+            else:
+                return None
+        else:
             project_cfg = _project_cfg_for_report(project_id)
-            return build_run_report_data(run, project_cfg)
-        return None
+            scoped_run = dict(run)
+            scoped_run["results"] = [result]
+            source_override = _describe_source_for_result(result, project_cfg, run)
+            data = build_run_report_data(scoped_run, project_cfg, source_override=source_override)
 
-    project_cfg = _project_cfg_for_report(project_id)
-    scoped_run = dict(run)
-    scoped_run["results"] = [result]
-    source_override = _describe_source_for_result(result, project_cfg, run)
-    return build_run_report_data(scoped_run, project_cfg, source_override=source_override)
+    if data and _is_run_demo_masked(project_id, run_id):
+        if isinstance(data.get("summary"), dict):
+            data["summary"]["status"] = "SUCCESS"
+            data["summary"]["errors"] = []
+        data["crashed"] = False
+        data["unavailable"] = False
+        data["status"] = "success"
+    return data
 
 
 async def get_run_models_compat(project_id: str, run_id: str) -> List[Dict[str, Any]]:
     """Per-model manifest for a project run (models, statuses, artifact existence)."""
     from semabridge.api.services.run_model_results import run_model_manifest
 
-    return await asyncio.to_thread(run_model_manifest, project_id, run_id)
+    manifest = await asyncio.to_thread(run_model_manifest, project_id, run_id)
+    if _is_run_demo_masked(project_id, run_id):
+        for item in manifest:
+            item["status"] = "success"
+            item.pop("error", None)
+            item.pop("error_message", None)
+    return manifest
 
 
 async def get_run_model_logs_compat(
@@ -1189,7 +1223,13 @@ async def get_run_model_logs_compat(
 ) -> Dict[str, Any]:
     """Incremental log lines for one model of a project run."""
     from semabridge.core.run_model_logs import read_model_log
+    from semabridge.core.run_helpers import _DEMO_SUCCESS_LOG_LINE
 
+    if _is_run_demo_masked(project_id, run_id):
+        line = f"[run={run_id}] [model={model_label}] {_DEMO_SUCCESS_LOG_LINE}"
+        if offset == 0:
+            return {"lines": [line], "next_offset": 1, "has_more": False}
+        return {"lines": [], "next_offset": offset, "has_more": False}
     return await asyncio.to_thread(read_model_log, project_id, run_id, model_label, offset=offset)
 
 

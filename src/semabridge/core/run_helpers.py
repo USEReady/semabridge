@@ -135,6 +135,24 @@ def mask_run_for_display(run: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             new_item = dict(item)
             new_item["status"] = "success"
+            new_item["error"] = None
+            new_item["error_message"] = None
+            if "console_lines" in new_item:
+                new_item["console_lines"] = [_DEMO_SUCCESS_LOG_LINE]
+            if "console_text" in new_item:
+                new_item["console_text"] = _DEMO_SUCCESS_LOG_LINE
+            if "reconciliation" in new_item and isinstance(new_item["reconciliation"], dict):
+                r_item = dict(new_item["reconciliation"])
+                r_item["status"] = "success"
+                r_item.pop("error", None)
+                r_item.pop("errors", None)
+                new_item["reconciliation"] = r_item
+            if "reconciliation_summary" in new_item and isinstance(new_item["reconciliation_summary"], dict):
+                rs_item = dict(new_item["reconciliation_summary"])
+                rs_item["status"] = "success"
+                rs_item.pop("error", None)
+                rs_item.pop("errors", None)
+                new_item["reconciliation_summary"] = rs_item
             item_summary = item.get("summary")
             if isinstance(item_summary, dict):
                 new_item_summary = dict(item_summary)
@@ -143,5 +161,49 @@ def mask_run_for_display(run: Dict[str, Any]) -> Dict[str, Any]:
                 new_item["summary"] = new_item_summary
             masked_results.append(new_item)
         masked["results"] = masked_results
+
+    # Per-model results list (for multi-model runs & hydration)
+    model_results = run.get("model_results")
+    if isinstance(model_results, list):
+        masked_mr = []
+        for item in model_results:
+            if not isinstance(item, dict):
+                masked_mr.append(item)
+                continue
+            new_item = dict(item)
+            new_item["status"] = "success"
+            new_item["error_message"] = None
+            new_item["error"] = None
+            if "console_lines" in new_item:
+                new_item["console_lines"] = [_DEMO_SUCCESS_LOG_LINE]
+            if "console_text" in new_item:
+                new_item["console_text"] = _DEMO_SUCCESS_LOG_LINE
+            if "reconciliation" in new_item and isinstance(new_item["reconciliation"], dict):
+                r_item = dict(new_item["reconciliation"])
+                r_item["status"] = "success"
+                r_item.pop("error", None)
+                r_item.pop("errors", None)
+                new_item["reconciliation"] = r_item
+            if "reconciliation_summary" in new_item and isinstance(new_item["reconciliation_summary"], dict):
+                rs_item = dict(new_item["reconciliation_summary"])
+                rs_item["status"] = "success"
+                rs_item.pop("error", None)
+                rs_item.pop("errors", None)
+                new_item["reconciliation_summary"] = rs_item
+            if isinstance(new_item.get("summary"), dict):
+                s_item = dict(new_item["summary"])
+                s_item["status"] = "SUCCESS"
+                s_item["errors"] = []
+                new_item["summary"] = s_item
+            masked_mr.append(new_item)
+        masked["model_results"] = masked_mr
+
+    # Root-level reconciliation
+    if "reconciliation" in run and isinstance(run.get("reconciliation"), dict):
+        masked_rec = dict(run["reconciliation"])
+        masked_rec["status"] = "success"
+        masked_rec.pop("error", None)
+        masked_rec.pop("errors", None)
+        masked["reconciliation"] = masked_rec
 
     return masked
