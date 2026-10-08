@@ -53,6 +53,12 @@ class DryRunJob(Base):
     source_config_json: Mapped[str] = mapped_column(Text, nullable=False)
     target_config_json: Mapped[str] = mapped_column(Text, nullable=False)
     requested_by_user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # "pbix" | "fabric" (any source type the dry-run pipeline supports). Added
+    # for multi-model (non-PBIX) jobs; nullable so pre-existing rows load.
+    source_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Dry-run options as submitted/resolved at job creation (currently
+    # {"auto_resolve_collisions": bool}) so per-file reruns replay them.
+    options_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     files: Mapped[List["DryRunJobFile"]] = relationship(
         back_populates="job",
@@ -81,8 +87,24 @@ class DryRunJobFile(Base):
     file_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("dry_run_jobs.job_id"), nullable=False)
     file_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Kept populated for PBIX files (back-compat); "" for non-PBIX sources.
     pbix_path: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Generic per-file source reference: the full .pbix path for PBIX, the
+    # semantic model name for Fabric. This is what the worker passes as
+    # selected_sources=[source_ref]. Nullable for rows created before the
+    # column existed (readers fall back to pbix_path).
+    source_ref: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # UI section title: PBIX file stem, or the Fabric model name.
+    label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # The transient preview-* project id this file's dry run ran under —
+    # synonym edits made on this file's preview are keyed by it, and are
+    # migrated to the real project id on project create/save.
+    preview_project_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # When the file was (re)queued as pending — used by the stale-job guard to
+    # fail files whose background task never started (e.g. server restart).
+    queued_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # The same JSON shape _run_dry_run_pipeline()/dry_run_mapping() has always

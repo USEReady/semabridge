@@ -71,7 +71,10 @@ export function StepConnectorConfig({
   onClearPbix = () => {},
   pbixMultiFileMode = false,
   setPbixMultiFileMode = () => {},
-  setPbixFilePaths = () => {},
+  pbixFileEntries = [],
+  onAddPbixFiles = () => '',
+  onRemovePbixFile = () => {},
+  maxPbixFiles = 10,
   workspaces,
   workspacesLoading,
   isRefreshingWorkspaces,
@@ -555,7 +558,12 @@ export function StepConnectorConfig({
                 </div>
 
                 {pbixMultiFileMode ? (
-                  <MultiPbixUpload onFilesChange={setPbixFilePaths} maxFiles={10} />
+                  <MultiPbixUpload
+                    entries={pbixFileEntries}
+                    onAddFiles={onAddPbixFiles}
+                    onRemove={onRemovePbixFile}
+                    maxFiles={maxPbixFiles}
+                  />
                 ) : (() => {
                   const hasUploadedPbix = Boolean(pbixUploadPath) && !pbixUploading && !pbixUploadError;
                   const doneStyle = uploadStatusColors(hasUploadedPbix ? 'done' : null);

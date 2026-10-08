@@ -1,15 +1,16 @@
-import React, { useMemo } from 'react';
-import { Loader2, ChevronDown, ChevronRight, CheckSquare, Square, X } from 'lucide-react';
+import { Loader2, CheckSquare, Square } from 'lucide-react';
 import SmartSearchBar from '../common/SmartSearchBar';
 import { matchesSmartQuery } from '../common/smartSearchQuery';
+import { isModelSelected, selectionIdentities } from '../../utils/modelSelection';
+import { UploadStatusIcon } from './uploadStatusUI';
 
 export function StepSourceBrowser({
-  sourceConnector, selectedWorkspace, workspaces, wsLoading,
-  expandedWs, toggleWorkspace, wsModels,
+  sourceConnector, selectedWorkspace, wsLoading,
+  wsModels,
   selectedModels, toggleModel, clearSelectedModels,
   modelQuery, setModelQuery,
   modelQueryRegex, setModelQueryRegex,
-  modelResults, snowflakeResults,
+  snowflakeResults,
   pbixSourceMode = 'TAG',
   selectedLocalFolderTag = '',
   pbixFiles = [],
@@ -28,7 +29,14 @@ export function StepSourceBrowser({
   setDatabricksQueryRegex = () => { },
   savedModels = new Set(),
   selectedModelNameByKey = {},
+  selectionNotice = '',
+  maxSelectedModels = 10,
+  pbixManualFileLabels = [],
 }) {
+  // A model counts once however many keys (name / GUID) refer to it.
+  const selectedCount = selectionIdentities(Array.from(selectedModels || []), selectedModelNameByKey).length;
+  const isSelected = (m) => isModelSelected({ id: m.id, name: m.name }, Array.from(selectedModels || []), selectedModelNameByKey);
+  const isSaved = (m) => Boolean(savedModels?.has(m.id) || (m.name && (savedModels?.has(m.name) || savedModels?.has(m.name.trim()))));
 
   if (sourceConnector === 'pbix') {
     if (pbixSourceMode === 'MANUAL') {
@@ -41,9 +49,26 @@ export function StepSourceBrowser({
             </p>
           </div>
           <div style={{ padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-              Upload the `.pbix` file in Connector Config, then use Start Sync after the project is created.
-            </div>
+            {pbixManualFileLabels.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                Upload the `.pbix` file in Connector Config, then use Start Sync after the project is created.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>
+                  {pbixManualFileLabels.length} PBIX file{pbixManualFileLabels.length !== 1 ? 's' : ''} attached
+                </div>
+                {pbixManualFileLabels.map((file) => (
+                  <div key={file.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-primary)' }}>
+                    <UploadStatusIcon status={file.status} size={13} />
+                    <span>{file.name}</span>
+                    {file.status === 'error' && file.error && (
+                      <span style={{ fontSize: 11, color: 'var(--color-error)' }}>{file.error}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       );
@@ -236,7 +261,7 @@ export function StepSourceBrowser({
           <div>
             <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
             <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-              Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
+              Choose which Fabric semantic models to include from {selectedWorkspace.name}. Select at least one model (up to {maxSelectedModels}); each selected model is dry-run and deployed as its own semantic view.
             </p>
           </div>
           <SmartSearchBar
@@ -246,32 +271,31 @@ export function StepSourceBrowser({
             onToggleRegex={setModelQueryRegex}
             placeholder={`Search models in ${selectedWorkspace.name}`}
           />
-          {selectedModels.size > 0 && (
+          {selectedCount > 0 ? (
             <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
-              {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
+              {selectedCount} of {maxSelectedModels} model{maxSelectedModels !== 1 ? 's' : ''} selected
               <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
                 Clear
               </button>
             </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--color-warning)', padding: '4px 0' }}>
+              Select at least one semantic model to continue.
+            </div>
+          )}
+          {selectionNotice && (
+            <div role="status" style={{ fontSize: 12, color: 'var(--color-warning)' }}>{selectionNotice}</div>
           )}
           <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
             {displayModels.map(m => {
               const modelId = m._id || m.id;
-              const isSelected = selectedModels.has(modelId) || (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim())));
               return (
                 <ModelRow
                   key={modelId}
                   model={{ ...m, _id: modelId }}
-                  selected={isSelected}
-                  isSaved={savedModels.has(modelId) || (m.name && (savedModels.has(m.name) || savedModels.has(m.name.trim())))}
-                  onToggle={() => {
-                    if (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim()))) {
-                      const nameKey = selectedModels.has(m.name) ? m.name : m.name.trim();
-                      toggleModel(nameKey, nameKey);
-                    } else {
-                      toggleModel(modelId, m.name || m.id);
-                    }
-                  }}
+                  selected={isSelected(m)}
+                  isSaved={isSaved(m)}
+                  onToggle={() => toggleModel({ id: m.id, name: m.name || m.id })}
                 />
               );
             })}
@@ -310,9 +334,9 @@ export function StepSourceBrowser({
           placeholder="Search Snowflake semantic objects"
         />
 
-        {selectedModels.size > 0 && (
+        {selectedCount > 0 && (
           <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
-            {selectedModels.size} object{selectedModels.size !== 1 ? 's' : ''} selected
+            {selectedCount} object{selectedCount !== 1 ? 's' : ''} selected
             <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
               Clear
             </button>
@@ -332,21 +356,13 @@ export function StepSourceBrowser({
           ) : (
             displayModels.map(m => {
               const modelId = m._id || m.id;
-              const isSelected = selectedModels.has(modelId) || (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim())));
               return (
                 <ModelRow
                   key={modelId}
                   model={{ ...m, _id: modelId }}
-                  selected={isSelected}
-                  isSaved={savedModels.has(modelId) || (m.name && (savedModels.has(m.name) || savedModels.has(m.name.trim())))}
-                  onToggle={() => {
-                    if (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim()))) {
-                      const nameKey = selectedModels.has(m.name) ? m.name : m.name.trim();
-                      toggleModel(nameKey, nameKey);
-                    } else {
-                      toggleModel(modelId, m.name || m.id);
-                    }
-                  }}
+                  selected={isSelected({ id: modelId, name: m.name })}
+                  isSaved={isSaved({ id: modelId, name: m.name })}
+                  onToggle={() => toggleModel({ id: modelId, name: m.name || modelId })}
                 />
               );
             })
@@ -356,212 +372,7 @@ export function StepSourceBrowser({
     );
   }
 
-  const displayModels = modelQuery ? modelResults : null;
-
-  const missingModels = useMemo(() => {
-    if (!savedModels || savedModels.size === 0) return [];
-    if (wsLoading || workspaces.length === 0 || !fabricWorkspaceId) return [];
-    if (!wsModels[fabricWorkspaceId]) return [];
-    
-    const wsNames = new Set(wsModels[fabricWorkspaceId].map(m => String(m.name || '').toLowerCase().trim()));
-    const wsIds = new Set(wsModels[fabricWorkspaceId].map(m => String(m.id || '').toLowerCase()));
-
-    return [...selectedModels].filter(selected => {
-      const s = String(selected).toLowerCase().trim();
-      return !wsNames.has(s) && !wsIds.has(s);
-    });
-  }, [selectedModels, savedModels, wsModels, fabricWorkspaceId, wsLoading, workspaces]);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div>
-        <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Select Models</h2>
-        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
-          Choose which Fabric semantic models to include from {selectedWorkspace.name}. Leave all unchecked to include everything in this workspace.
-        </p>
-      </div>
-
-      {missingModels.length > 0 && (
-        <div style={{ padding: '12px 16px', background: 'var(--color-warning)15', border: '1px solid var(--color-warning)30', borderRadius: 8, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-          <div style={{ fontSize: 13, color: 'var(--color-warning)', marginTop: 2 }}>⚠️</div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-              Models previously synced but not found in workspace
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              {missingModels.join(', ')}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedModels.size > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <CheckSquare size={12} /> Currently Selected ({selectedModels.size})
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {Array.from(selectedModels).map(key => {
-              const name = selectedModelNameByKey[key] || key.split('::').pop();
-              const isMissing = missingModels.includes(key);
-              return (
-                <div key={key} style={{ 
-                  display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, 
-                  background: isMissing ? 'var(--color-warning)15' : 'var(--accent-blue)10', 
-                  border: `1px solid ${isMissing ? 'var(--color-warning)30' : 'var(--accent-blue)30'}`,
-                  fontSize: 11, color: isMissing ? 'var(--color-warning)' : 'var(--accent-blue)'
-                }}>
-                  {name}
-                  <button 
-                    onClick={() => toggleModel(key, name)}
-                    style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', cursor: 'pointer', display: 'flex' }}
-                  >
-                    <X size={10} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Search */}
-      <SmartSearchBar
-        value={modelQuery}
-        onChange={setModelQuery}
-        useRegex={modelQueryRegex}
-        onToggleRegex={setModelQueryRegex}
-        placeholder={`Search models in ${selectedWorkspace.name}`}
-      />
-
-      {selectedModels.size > 0 && (
-        <div style={{ fontSize: 11, color: 'var(--accent-blue)', padding: '4px 0' }}>
-          {selectedModels.size} model{selectedModels.size !== 1 ? 's' : ''} selected
-          <button onClick={clearSelectedModels} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 11 }}>
-            Clear
-          </button>
-        </div>
-      )}
-
-      {/* Flat search results */}
-      {displayModels && (
-        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8 }}>
-          {displayModels.map(m => {
-            const isSelected = selectedModels.has(m._id) || (m.name && selectedModels.has(m.name));
-            return (
-              <ModelRow
-                key={m._id}
-                model={m}
-                selected={isSelected}
-                isSaved={savedModels.has(m._id) || (m.name && savedModels.has(m.name))}
-                onToggle={() => {
-                  if (m.name && selectedModels.has(m.name)) {
-                    toggleModel(m.name, m.name);
-                  } else {
-                    toggleModel(m._id, m.name || m.id);
-                  }
-                }}
-                showWs
-              />
-            );
-          })}
-        </div>
-      )}
-
-      {/* Tree view when no search */}
-      {!displayModels && (
-        <div className="custom-scrollbar" style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }}>
-          {wsLoading ? (
-            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
-              Discovering workspaces…
-            </div>
-          ) : workspaces.length === 0 ? (
-            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-              No workspaces found. Check your Fabric connector credentials in Settings.
-            </div>
-          ) : workspaces.map((ws) => {
-            const wsid = ws.workspace_id || ws.id;
-            const wsName = ws.display_name || ws.name || wsid;
-            if (!wsid) return null;
-            return (
-              <WorkspaceRow
-                key={wsid}
-                ws={{ ...ws, id: wsid, name: wsName }}
-                expanded={!!expandedWs[wsid]}
-                models={wsModels[wsid]}
-                selectedModels={selectedModels}
-                savedModels={savedModels}
-                onToggle={() => toggleWorkspace(wsid)}
-                onModelToggle={(mid, modelName, isRemoveByName) => {
-                  if (isRemoveByName) {
-                    toggleModel(mid, modelName);
-                  } else {
-                    toggleModel(`${wsid}::${mid}`, modelName);
-                  }
-                }}
-              />
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WorkspaceRow({ ws, expanded, models, selectedModels, savedModels, onToggle, onModelToggle }) {
-  return (
-    <div>
-      <div
-        onClick={onToggle}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '9px 12px', cursor: 'pointer', userSelect: 'none',
-          borderBottom: '1px solid var(--border-subtle)',
-          background: expanded ? 'var(--bg-surface-raised)' : 'transparent',
-        }}
-        onMouseEnter={e => { if (!expanded) e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
-        onMouseLeave={e => { if (!expanded) e.currentTarget.style.background = 'transparent'; }}
-      >
-        {expanded ? <ChevronDown size={13} style={{ color: 'var(--text-tertiary)' }} /> : <ChevronRight size={13} style={{ color: 'var(--text-tertiary)' }} />}
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{ws.name || ws.id}</span>
-        {models && (
-          <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 4 }}>({models.length} models)</span>
-        )}
-      </div>
-      {expanded && models && (
-        <div className="custom-scrollbar" style={{ maxHeight: 250, overflowY: 'auto' }}>
-          {models.map(m => {
-            const modelId = `${ws.id}::${m.id}`;
-            const isSelected = selectedModels.has(modelId) || (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim())));
-            return (
-              <ModelRow
-                key={m.id}
-                model={{ ...m, _id: modelId }}
-                selected={isSelected}
-                isSaved={savedModels?.has(modelId) || (m.name && (savedModels?.has(m.name) || savedModels?.has(m.name.trim())))}
-                onToggle={() => {
-                  if (m.name && (selectedModels.has(m.name) || selectedModels.has(m.name.trim()))) {
-                    const nameKey = selectedModels.has(m.name) ? m.name : m.name.trim();
-                    onModelToggle(nameKey, nameKey, true);
-                  } else {
-                    onModelToggle(m.id, m.name || m.id, false);
-                  }
-                }}
-                indent
-              />
-            );
-          })}
-        </div>
-      )}
-      {expanded && !models && (
-        <div style={{ padding: '8px 32px', fontSize: 12, color: 'var(--text-tertiary)' }}>
-          <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', display: 'inline', marginRight: 6 }} />
-          Loading models…
-        </div>
-      )}
-    </div>
-  );
+  return null;
 }
 
 function ModelRow({ model, selected, onToggle, indent, showWs, isSaved }) {

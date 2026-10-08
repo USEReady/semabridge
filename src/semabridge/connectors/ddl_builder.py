@@ -33,6 +33,14 @@ from semabridge.core.exceptions import ConnectorError
 logger = get_logger(__name__)
 
 
+
+def _debug_ddl_path(model) -> Path:
+    """Per-view debug DDL file, so parallel models in one batch don't
+    overwrite each other's debug output."""
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(getattr(model, "unique_name", "") or "")).strip("_")
+    filename = f"debug_generated_sql_{name}.sql" if name else "debug_generated_sql.sql"
+    return Path("output/debug") / filename
+
 class SemanticViewBuilder:
     """Facade for semantic-view DDL orchestration.
 
@@ -201,7 +209,7 @@ class SemanticViewBuilder:
             semantic_ddl = self._generate_semantic_view(sml)
             
             try:
-                debug_file = Path("output/debug/debug_generated_sql.sql")
+                debug_file = _debug_ddl_path(sml)
                 debug_file.parent.mkdir(parents=True, exist_ok=True)
                 debug_file.write_text(semantic_ddl, encoding="utf-8")
             except Exception as exc:
@@ -241,7 +249,7 @@ class SemanticViewBuilder:
             semantic_ddl = self._generate_semantic_view_from_osi(osi)
             
             try:
-                debug_file = Path("output/debug/debug_generated_sql.sql")
+                debug_file = _debug_ddl_path(osi)
                 debug_file.parent.mkdir(parents=True, exist_ok=True)
                 debug_file.write_text(semantic_ddl, encoding="utf-8")
             except Exception as exc:

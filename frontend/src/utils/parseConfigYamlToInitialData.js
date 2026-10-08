@@ -25,6 +25,9 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     pbix_path: '',
     pbix_folder: '',
     pbix_uploaded_path: '',
+    pbix_file_paths: [],
+    local_folder_id: '',
+    local_folder_tag: '',
     models: [],
   };
 
@@ -55,6 +58,15 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       models = selectionModelIds;
     }
 
+    // Multi-PBIX projects save every file's path under source.models (see
+    // CreateProjectPage buildSourceConfig); a single-PBIX project uses
+    // pbix_path instead. Restore the list so edit mode re-opens the
+    // "Multiple files" upload with every file still attached.
+    const parsedSourceType = String(parsedSource.type || fallback.source_type).toLowerCase();
+    const pbixFilePaths = parsedSourceType === 'pbix'
+      ? [...new Set(models.map((m) => String(m || '').trim()).filter(Boolean))]
+      : [];
+
     return {
       source_type: String(parsedSource.type || fallback.source_type),
       target_type: String(firstTarget.type || fallback.target_type),
@@ -72,6 +84,9 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       pbix_path: String(parsedSource.pbix_path || parsedSource.pbix_file_path || parsedSource.source_path || parsedSource.file_path || ''),
       pbix_folder: String(parsedSource.pbix_folder || ''),
       pbix_uploaded_path: String(projectMeta?.pbix_file_path || parsedSource.pbix_file_path || parsedSource.pbix_path || ''),
+      pbix_file_paths: pbixFilePaths,
+      local_folder_id: String(parsedSource.local_folder_id || ''),
+      local_folder_tag: String(parsedSource.local_folder_tag || ''),
       sync_mode: syncMode,
       write_strategy: syncMode,
       models,

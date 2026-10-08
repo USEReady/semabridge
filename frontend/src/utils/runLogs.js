@@ -1,3 +1,5 @@
+import { cleanPbixLabel } from './pbixLabel.js';
+
 const STORAGE_KEY = 'semabridge_run_logs_v1';
 
 function safeParse(value) {
@@ -175,3 +177,123 @@ export function getRunLogs(run) {
   if (Array.isArray(stored) && stored.length) return stored;
   return buildMockRunLogs(run);
 }
+
+// ---------------------------------------------------------------------------
+// Per-model run breakdown (multi-model runs only)
+// ---------------------------------------------------------------------------
+
+function consoleLinesForResult(result) {
+  const consoleData = result?.console;
+  if (Array.isArray(consoleData?.lines) && consoleData.lines.length) {
+    return consoleData.lines.map((line) => String(line));
+  }
+  if (typeof consoleData?.text === 'string' && consoleData.text.trim()) {
+    return consoleData.text.replace(/\r\n/g, '\n').split('\n').filter((line) => line.length);
+  }
+  if (Array.isArray(result?.logs) && result.logs.length) {
+    return result.logs.map((line) => String(line));
+  }
+  return collectStepLogs(result?.summary);
+}
+
+function durationMsForResult(result) {
+  const direct = Number(result?.duration_ms ?? result?.summary?.duration_ms);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const started = Date.parse(result?.summary?.started_at || result?.started_at || '');
+  const completed = Date.parse(result?.summary?.completed_at || result?.completed_at || '');
+  if (Number.isFinite(started) && Number.isFinite(completed) && completed >= started) {
+    return completed - started;
+  }
+  return null;
+}
+
+/**
+ * Splits a multi-model run into one display entry per model, merging
+ * run.results[] (status/logs/dropped fields) with run.model_reports[]
+ * (per-model report availability) by model label. Raw labels are matched
+ * first, then their cleanPbixLabel() form (so a path vs. basename mismatch
+ * still pairs up).
+ *
+ * Returns [] for single-model runs (results <= 1 AND model_reports <= 1) so
+ * callers keep rendering the combined run view unchanged.
+ *
+ * Entry shape:
+ *   { key, model, label, status, viewName, targetArtifactPath, durationMs,
+ *     logs[], reportEntry, reportModel, droppedEntities[], reconciliation,
+ *     hasResult }
+ */
+export function getPerModelRunEntries(run) {
+  const results = (Array.isArray(run?.results) ? run.results : [])
+    .filter((r) => r && typeof r === 'object');
+  const reports = (Array.isArray(run?.model_reports) ? run.model_reports : [])
+    .filter((e) => e && typeof e === 'object' && e.model);
+  if (results.length <= 1 && reports.length <= 1) return [];
+
+  const usedReports = new Set();
+  const findReport = (rawModel) => {
+    if (!rawModel) return null;
+    const raw = String(rawModel);
+    let idx = reports.findIndex((e, i) => !usedReports.has(i) && String(e.model) === raw);
+    if (idx < 0) {
+      const clean = cleanPbixLabel(raw);
+      idx = reports.findIndex((e, i) => !usedReports.has(i) && cleanPbixLabel(e.model) === clean);
+    }
+    if (idx < 0) return null;
+    usedReports.add(idx);
+    return reports[idx];
+  };
+
+  const usedKeys = new Set();
+  const uniqueKey = (base) => {
+    let key = base;
+    let n = 2;
+    while (usedKeys.has(key)) key = `${base}#${n++}`;
+    usedKeys.add(key);
+    return key;
+  };
+
+  const entries = results.map((result, index) => {
+    const model = result.model ? String(result.model) : '';
+    const reportEntry = findReport(model);
+    const reconciliation = result.reconciliation || result.summary?.reconciliation || null;
+    return {
+      key: uniqueKey(model || `model-${index + 1}`),
+      model: model || null,
+      label: cleanPbixLabel(model) || `Model ${index + 1}`,
+      status: normalizeStatus(result.status || result.summary?.status) || 'unknown',
+      viewName: result.view_name || result.summary?.view_name || null,
+      targetArtifactPath: result.target_artifact_path || null,
+      durationMs: durationMsForResult(result),
+      logs: consoleLinesForResult(result),
+      reportEntry,
+      reportModel: reportEntry ? String(reportEntry.model) : null,
+      droppedEntities: Array.isArray(result.dropped_entities) ? result.dropped_entities : [],
+      reconciliation: reconciliation && typeof reconciliation === 'object' ? reconciliation : null,
+      hasResult: true,
+    };
+  });
+
+  reports.forEach((reportEntry, index) => {
+    if (usedReports.has(index)) return;
+    const model = String(reportEntry.model);
+    entries.push({
+      key: uniqueKey(model),
+      model,
+      label: cleanPbixLabel(model) || model,
+      status: 'unknown',
+      viewName: null,
+      targetArtifactPath: null,
+      durationMs: null,
+      logs: [],
+      reportEntry,
+      reportModel: model,
+      droppedEntities: [],
+      reconciliation: null,
+      hasResult: false,
+    });
+  });
+
+  return entries;
+}
+
+export { collectStepLogs };

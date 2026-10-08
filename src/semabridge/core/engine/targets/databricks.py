@@ -61,7 +61,11 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
         view_type_override="metric_view",
     )
 
-    output_dir = self._model_output_dir("databricks", model_name=context.project_id)
+    output_dir = self._model_output_dir(
+        "databricks",
+        model_name=context.project_id,
+        model_subdir=getattr(context, "physical_namespace", None),
+    )
     yaml_path = output_dir / "databricks_metric_views.yaml"
 
     metric_view_defs: list[dict[str, Any]] = []
@@ -72,6 +76,14 @@ def _convert_to_databricks_target(self, context: RunContext) -> None:
             "view_name": view_match.group(1) if view_match else "unknown",
             "yaml_definition": yaml_match.group(1) if yaml_match else stmt,
         })
+
+    deployed_names = [
+        str(d["view_name"]).replace("`", "")
+        for d in metric_view_defs
+        if d.get("view_name") and d["view_name"] != "unknown"
+    ]
+    if deployed_names:
+        context.deployed_view_name = ", ".join(deployed_names)
 
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(

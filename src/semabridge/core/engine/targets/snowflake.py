@@ -47,20 +47,60 @@ from semabridge.core.engine.exceptions import (
 
 logger = get_logger(__name__)
 
+# Source types whose Snowflake physical objects (base tables, enriched views,
+# MEASURES_* tables) are created by SemaBridge itself, and therefore safe to
+# namespace per model. A Snowflake-sourced model points at pre-existing,
+# user-owned data tables, which must never be renamed.
+_NAMESPACEABLE_SOURCE_TYPES = {"pbix", "fabric"}
+
+
+def emitter_physical_namespace(context: RunContext) -> Optional[str]:
+    """Per-model physical-object namespace to hand to SnowflakeEmitter.
+
+    Only non-None for a model that is part of a multi-model batch (see
+    sync_execution_service._assign_batch_physical_namespaces) AND whose
+    source is one SemaBridge materializes tables for -- so a single-model
+    run always deploys under exactly the same object names as before.
+    """
+    namespace = getattr(context, "physical_namespace", None)
+    if not namespace:
+        return None
+    if str(getattr(context, "source_type", "") or "").lower() not in _NAMESPACEABLE_SOURCE_TYPES:
+        return None
+    return namespace
+
+
 def _convert_to_snowflake_target(self, context: RunContext) -> None:
     """Generate Snowflake DDL."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.sml.serializer import SMLSerializer
 
     config = context.config
-    emitter = SnowflakeEmitter(config.snowflake, behavior=context.behavior)
+    emitter = SnowflakeEmitter(
+        config.snowflake,
+        behavior=context.behavior,
+        physical_namespace=emitter_physical_namespace(context),
+    )
 
     if not context.sml_model:
         raise ConversionError("No SML model available for target conversion. Ensure Stage 6 completed successfully.")
 
     self._reuse_existing_view_for_structural_duplicate(context)
 
-    output_dir = self._model_output_dir("reverse", model_name=context.project_id)
+    from semabridge.utils.name_translator import get_target_deployment_name
+
+    context.deployed_view_name = get_target_deployment_name(
+        getattr(context.sml_model, "unique_name", None)
+        or getattr(context.sml_model, "label", None)
+        or "model",
+        "snowflake",
+    )
+
+    output_dir = self._model_output_dir(
+        "reverse",
+        model_name=context.project_id,
+        model_subdir=getattr(context, "physical_namespace", None),
+    )
 
     ddls = emitter.generate_ddls(context.sml_model)
     # Surface DDL-emission-time drops (DAX translation failures, unresolved
@@ -114,13 +154,35 @@ def _reuse_existing_view_for_structural_duplicate(self, context: RunContext) -> 
 
         sf_cfg = context.config.snowflake
         scope_key = f"snowflake|{sf_cfg.database}|{sf_cfg.schema_name}"
-        structural_fp = fingerprint_model(context.sml_model)
-
-        repo = ModelFingerprintRepository()
-        existing_raw_name = repo.find_existing_view_name(scope_key, structural_fp)
+        # Scope reuse to the owning project: a view deployed by a different
+        # project into the same schema never belongs to this model.
+        project_id = str(getattr(context, "project_id", "") or "").strip()
+        if project_id:
+            scope_key = f"{scope_key}|project={project_id}"
+        # include_expressions: two models built from one template (same
+        # tables/columns/measure names, different measure formulas) must not
+        # be treated as the same model.
+        structural_fp = fingerprint_model(context.sml_model, include_expressions=True)
 
         context.model_structural_fingerprint = structural_fp
         context.model_fingerprint_scope_key = scope_key
+
+        # Never redirect inside a multi-model batch: every model of the batch
+        # already has its own batch-disambiguated view name, and redirecting
+        # onto an existing view could collapse two different models of the
+        # same project into one view. Only a single-model run (a re-upload
+        # of that one model under a different file name) may reuse a view.
+        batch_count = int(getattr(context, "batch_model_count", 1) or 1)
+        if batch_count > 1:
+            logger.info(
+                "Structural-duplicate view reuse skipped for model '%s': part of a "
+                "%d-model batch (each model deploys to its own view).",
+                context.sml_model.unique_name, batch_count,
+            )
+            return
+
+        repo = ModelFingerprintRepository()
+        existing_raw_name = repo.find_existing_view_name(scope_key, structural_fp)
 
         if existing_raw_name and existing_raw_name != context.sml_model.unique_name:
             logger.info(

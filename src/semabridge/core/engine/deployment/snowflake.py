@@ -146,8 +146,13 @@ def _resolve_load_source_data(context: RunContext) -> "tuple[bool, Optional[str]
 def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     """Inner helper to perform Snowflake deployment with resolved config."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.engine.targets.snowflake import emitter_physical_namespace
 
-    emitter = SnowflakeEmitter(sf_cfg, behavior=context.behavior)
+    emitter = SnowflakeEmitter(
+        sf_cfg,
+        behavior=context.behavior,
+        physical_namespace=emitter_physical_namespace(context),
+    )
     deployment_method = getattr(sf_cfg, "deployment_method", "ddl") or "ddl"
 
     # DDL path
@@ -162,8 +167,18 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
         # path resolution, so a project using any of those three key names
         # still gets backfill if it opts in.
         source_cfg = getattr(context.config, "source", None)
+        # In a multi-model batch each job extracted its OWN file; the
+        # project-wide config.source.pbix_path (if any) belongs to at most
+        # one of them, so the job's own path must win there. Single-model
+        # runs keep the original resolution order.
+        batch_pbix_path = (
+            getattr(context, "pbix_path", None)
+            if int(getattr(context, "batch_model_count", 1) or 1) > 1
+            else None
+        )
         source_pbix_path = (
-            getattr(source_cfg, "pbix_path", None)
+            batch_pbix_path
+            or getattr(source_cfg, "pbix_path", None)
             or getattr(source_cfg, "source_path", None)
             or getattr(source_cfg, "file_path", None)
         )
@@ -311,7 +326,11 @@ def _export_inferred_osi_artifacts(self, context: RunContext) -> None:
         osi_model = SMLToOSIConverter().to_osi(context.sml_model)
         context.osi_model = osi_model
 
-        out_dir = self._model_output_dir("inferred", model_name=context.project_id)
+        out_dir = self._model_output_dir(
+            "inferred",
+            model_name=context.project_id,
+            model_subdir=getattr(context, "physical_namespace", None),
+        )
         json_path = out_dir / "osi_inferred.json"
         yaml_path = out_dir / "osi_inferred.yaml"
 

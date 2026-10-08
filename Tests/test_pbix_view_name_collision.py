@@ -246,6 +246,14 @@ def test_dry_run_mapping_no_longer_rejects_colliding_selected_sources(monkeypatc
     class _FakeService:
         pass
 
-    asyncio.run(mc.dry_run_mapping("preview", object(), request, service=_FakeService()))
+    response = asyncio.run(mc.dry_run_mapping("preview", object(), request, service=_FakeService()))
 
-    assert called["sync_models"] is True
+    # Multi-model dry runs now go through the per-model /dry-run-jobs endpoint
+    # (one isolated, parallel result per model). The synchronous endpoint
+    # redirects there instead of rejecting the colliding names.
+    import json as _json
+    body = _json.loads(response.body)
+    assert response.status_code == 400
+    assert body["use_dry_run_jobs"] is True
+    assert "collid" not in body["error"].lower()
+    assert called["sync_models"] is False

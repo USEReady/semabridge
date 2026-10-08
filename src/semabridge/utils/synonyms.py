@@ -223,3 +223,96 @@ def lookup_attribute_synonyms(attr: Any, dataset_obj: Any, phys_col: str | None 
             return list(getattr(col, "synonyms", []) or [])
     return []
 
+
+
+def copy_synonym_overrides(
+    source_project_ids: Iterable[str],
+    target_project_id: str,
+    *,
+    overwrite: bool = True,
+) -> int:
+    """Copy UI synonym overrides from one or more (dry-run ``preview-*``)
+    project ids to a real project id, keyed by model_name/table_name/
+    column_name exactly as stored (deploy looks them up with the same key via
+    :func:`load_synonym_overrides`).
+
+    Synonym edits made during a dry run are saved under the transient preview
+    project id the dry run ran under; deploy loads by the real project id, so
+    without this copy those edits would silently be lost.
+
+    When several sources carry the same key, the first source in
+    ``source_project_ids`` wins. ``overwrite`` controls whether an existing
+    row on the target is replaced (preview edits are the newest user intent,
+    so default True). Returns the number of target rows created/updated.
+    Errors (e.g. the table being unavailable) are logged and return 0 —
+    synonym migration must never block project creation.
+    """
+    target = str(target_project_id or "").strip()
+    sources = []
+    for pid in source_project_ids or []:
+        text = str(pid or "").strip()
+        if text and text != target and text not in sources:
+            sources.append(text)
+    if not target or not sources:
+        return 0
+
+    try:
+        from sqlalchemy import select
+
+        from semabridge.repository.orm.models import SynonymOverride
+        from semabridge.repository.orm.session_factory import db_manager
+
+        copied = 0
+        with db_manager.get_session() as session:
+            merged: dict[tuple[str, str, str], tuple[tuple[str, str, str], list[str]]] = {}
+            for source in sources:
+                rows = session.execute(
+                    select(SynonymOverride).where(SynonymOverride.project_id == source)
+                ).scalars().all()
+                for row in rows:
+                    key = synonym_override_key(row.model_name, row.table_name, row.column_name)
+                    if key in merged:
+                        continue
+                    merged[key] = (
+                        (row.model_name, row.table_name, row.column_name),
+                        _clean_items(row.synonyms),
+                    )
+            if not merged:
+                return 0
+            existing_rows = session.execute(
+                select(SynonymOverride).where(SynonymOverride.project_id == target)
+            ).scalars().all()
+            existing = {
+                synonym_override_key(r.model_name, r.table_name, r.column_name): r
+                for r in existing_rows
+            }
+            for key, ((model_name, table_name, column_name), values) in merged.items():
+                row = existing.get(key)
+                if row is not None:
+                    if not overwrite:
+                        continue
+                    row.synonyms = values
+                else:
+                    row = SynonymOverride(
+                        project_id=target,
+                        model_name=model_name,
+                        table_name=table_name,
+                        column_name=column_name,
+                    )
+                    row.synonyms = values
+                    session.add(row)
+                copied += 1
+        logger.info(
+            "Migrated %d synonym override(s) from %s to project '%s'",
+            copied,
+            ", ".join(sources),
+            target,
+        )
+        return copied
+    except Exception as exc:
+        logger.warning(
+            "Synonym override migration to project '%s' failed (continuing): %s",
+            target,
+            exc,
+        )
+        return 0

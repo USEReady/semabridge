@@ -38,6 +38,13 @@ class DryRunRequest(BaseModel):
     source_config: Dict[str, Any]
     target_config: Dict[str, Any]
     selected_sources: List[str]
+    # Optional collision auto-resolve toggle so the preview matches what the
+    # deploy will do. Either top-level ``auto_resolve_collisions`` or
+    # ``options.auto_resolve_collisions`` (same key the project YAML uses).
+    # When neither is sent: the real project's saved option (if project_id is
+    # a real project), else False.
+    auto_resolve_collisions: Optional[bool] = None
+    options: Optional[Dict[str, Any]] = None
 
 class UpdateMappingRequest(BaseModel):
     target_name: Optional[str] = None
@@ -84,11 +91,90 @@ async def delete_mappings(request: Request, project_id: Optional[str] = None):
     return await delete_mappings_compat(pid or None)
 
 
+# Source types whose selected_sources entries are each an independent model
+# (one .pbix file / one Fabric semantic model). A synchronous /dry-run call
+# can only preview ONE of them -- N of them must go through the dry-run jobs
+# endpoint, which runs one isolated pipeline per model in parallel.
+_PER_MODEL_SOURCE_TYPES = ("pbix", "fabric")
+
+
+def _is_preview_project_id(project_id: Optional[str]) -> bool:
+    pid = str(project_id or "").strip()
+    return pid in ("", "preview") or pid.startswith("preview-")
+
+
+def _dry_run_preview_project_id(
+    request_user_id: Any,
+    source_config: Dict[str, Any],
+    selected_sources: List[str],
+) -> str:
+    """Deterministic preview project id for one dry-run scope (user + source
+    type + workspace + selected sources). A dry-run job file's preview id is
+    this function applied to selected_sources=[that file's source_ref], so
+    every model in a job gets its own isolated preview project."""
+    user_seed = str(request_user_id or "").strip()
+    seed = (
+        f"{user_seed}-"
+        f"{(source_config or {}).get('type','')}-"
+        f"{(source_config or {}).get('workspace_id','')}-"
+        f"{'|'.join(sorted(selected_sources or []))}"
+    )
+    return f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
+
+
+def _resolve_dry_run_auto_resolve_collisions(
+    project_id: Optional[str],
+    *,
+    explicit: Optional[bool] = None,
+    options: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Same toggle the deploy path reads (``options.auto_resolve_collisions``
+    in the project config, see mapping_service._compat_auto_resolve_collisions_from_cfg).
+    Precedence: explicit payload flag > payload ``options`` > the real
+    project's saved config (non-preview ids only) > False."""
+    if explicit is not None:
+        return bool(explicit)
+    if isinstance(options, dict) and options.get("auto_resolve_collisions") is not None:
+        return bool(options.get("auto_resolve_collisions"))
+    if not _is_preview_project_id(project_id):
+        try:
+            from semabridge.api.services.mapping_service import _compat_project_auto_resolve_collisions
+            import semabridge.api.services.project_shared as project_shared
+
+            project_shared._compat_ensure_loaded()
+            return bool(_compat_project_auto_resolve_collisions(str(project_id)))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read auto_resolve_collisions for project %s: %s", project_id, exc)
+    return False
+
+
+def _dry_run_source_label(
+    source_type: str,
+    selected_sources: List[str],
+    source_config: Dict[str, Any],
+    model_name: str = "",
+) -> str:
+    """UI section title for one dry-run scope: the PBIX file stem, or the
+    Fabric model name."""
+    from pathlib import PurePath
+
+    first = str((selected_sources or [""])[0] or "").strip()
+    stype = str(source_type or "").strip().lower()
+    if stype == "pbix":
+        candidate = first if first.lower().endswith(".pbix") else str((source_config or {}).get("pbix_path") or first or "")
+        if candidate.strip():
+            return PurePath(candidate.replace("\\", "/")).stem or candidate
+    if first:
+        return first
+    return str(model_name or "")
+
+
 def _build_config_yaml_from_request(
     source_config: Dict[str, Any],
     target_config: Dict[str, Any],
     selected_sources: List[str],
     project_name: str = "dry-run-preview",
+    auto_resolve_collisions: bool = False,
 ) -> str:
     """
     Build a minimal semabridge config YAML from the wizard's source/target config
@@ -134,7 +220,7 @@ def _build_config_yaml_from_request(
         "options": {
             "auto_relationships": False,
             "generate_descriptions": False,
-            "auto_resolve_collisions": False,
+            "auto_resolve_collisions": bool(auto_resolve_collisions),
         },
     }
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
@@ -147,6 +233,7 @@ async def _run_dry_run_pipeline(
     source_config: Dict[str, Any],
     target_config: Dict[str, Any],
     selected_sources: List[str],
+    auto_resolve_collisions: bool = False,
 ) -> Dict[str, Any]:
     """The actual dry-run pipeline: builds a preview project, runs the real
     extraction -> OSI -> SML pipeline with dry_run=True, builds entity
@@ -188,40 +275,38 @@ async def _run_dry_run_pipeline(
     # ── 1. Resolve or create a stable preview project in the compat store ──
     # Use a deterministic project id based on source+models so repeated dry
     # runs for the same wizard session reuse the same project slot.
-    user_seed = str(request_user_id or "").strip()
-    seed = (
-        f"{user_seed}-"
-        f"{source_config.get('type','')}-"
-        f"{source_config.get('workspace_id','')}-"
-        f"{'|'.join(sorted(selected_sources))}"
-    )
-    preview_project_id = f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
+    preview_project_id = _dry_run_preview_project_id(request_user_id, source_config, selected_sources)
+    source_type = str(source_config.get("type") or "").strip().lower()
 
     project_shared._compat_ensure_loaded()
-    preview_project = project_shared._compat_projects.get(preview_project_id)
-    if not isinstance(preview_project, dict):
-        preview_project = {
-            "id": preview_project_id,
-            "project_id": preview_project_id,
-            "created_at": project_shared._compat_now_iso(),
-        }
-    preview_project.update({
-        "name": "dry-run-preview",
-        "updated_at": project_shared._compat_now_iso(),
-        "status": "preview",
-        "is_transient_preview": True,
-        "preview_kind": "dry-run",
-        "owner_user_id": str(request_user_id).strip() if request_user_id is not None else None,
-        "user_id": str(request_user_id).strip() if request_user_id is not None else None,
-        "account_id": source_account_id or target_account_id,
-        "source_account_id": source_account_id,
-        "target_account_id": target_account_id,
-        "source": dict(source_config),
-        "target": dict(target_config),
-        "targets": [dict(target_config)],
-    })
-    project_shared._compat_projects[preview_project_id] = preview_project
-    project_shared._compat_save_store()
+    # Up to MAX_PARALLEL_DRY_RUN_FILES of these pipelines run concurrently on
+    # worker threads (dry_run_job_service) -- every compat-store mutation +
+    # save goes through the shared store lock.
+    with project_shared.compat_store_lock():
+        preview_project = project_shared._compat_projects.get(preview_project_id)
+        if not isinstance(preview_project, dict):
+            preview_project = {
+                "id": preview_project_id,
+                "project_id": preview_project_id,
+                "created_at": project_shared._compat_now_iso(),
+            }
+        preview_project.update({
+            "name": "dry-run-preview",
+            "updated_at": project_shared._compat_now_iso(),
+            "status": "preview",
+            "is_transient_preview": True,
+            "preview_kind": "dry-run",
+            "owner_user_id": str(request_user_id).strip() if request_user_id is not None else None,
+            "user_id": str(request_user_id).strip() if request_user_id is not None else None,
+            "account_id": source_account_id or target_account_id,
+            "source_account_id": source_account_id,
+            "target_account_id": target_account_id,
+            "source": dict(source_config),
+            "target": dict(target_config),
+            "targets": [dict(target_config)],
+        })
+        project_shared._compat_projects[preview_project_id] = preview_project
+        project_shared._compat_save_store()
     logger.info(
         "[PreviewProject] prepared preview_project_id=%s user_id=%s source_account_id=%s target_account_id=%s selected_sources=%s",
         preview_project_id,
@@ -237,8 +322,10 @@ async def _run_dry_run_pipeline(
         target_config=target_config,
         selected_sources=selected_sources,
         project_name="dry-run-preview",
+        auto_resolve_collisions=auto_resolve_collisions,
     )
-    project_shared._compat_project_configs[preview_project_id] = config_yaml
+    with project_shared.compat_store_lock():
+        project_shared._compat_project_configs[preview_project_id] = config_yaml
 
     # ── 3. Run the real pipeline with dry_run=True (no deployment) ──────────
     #    This runs: connector extraction → OSI conversion → SML generation
@@ -322,10 +409,10 @@ async def _run_dry_run_pipeline(
         existing_mappings={},
         session_key=f"{preview_project_id}-mapping-session",
         target_connector=target_connector,
-        # Matches the synthetic options in _build_config_yaml_from_request:
-        # this dry-run preview always leaves collisions flagged for the
-        # Fix/confirm UI, regardless of the real project's saved setting.
-        auto_resolve_collisions=False,
+        # Matches the options in _build_config_yaml_from_request: the
+        # project's/payload's collision auto-resolve toggle (default False),
+        # so the preview shows exactly what the deploy will do.
+        auto_resolve_collisions=bool(auto_resolve_collisions),
     )
     dropped_entities = list(built.get("dropped_entities", []))
 
@@ -414,6 +501,7 @@ async def _run_dry_run_pipeline(
     else:
         fallback_model_name = "default"
     model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
+    source_label = _dry_run_source_label(source_type, selected_sources, source_config, model_name)
     from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
     synonym_overrides = load_synonym_overrides(preview_project_id)
     for m in entity_mappings:
@@ -487,7 +575,9 @@ async def _run_dry_run_pipeline(
             # mapping_service.py, then never added to this dict) — see
             # Tests/test_source_file_attribution.py for the regression test
             # that specifically guards this response boundary.
-            "source_file": m.get("source_file"),
+            # Falls back to this scope's label (PBIX stem / Fabric model
+            # name) so every row of a per-model result is attributable.
+            "source_file": m.get("source_file") or source_label or None,
         })
 
     auto_count = sum(1 for m in filtered_mappings if m.get("status") == "auto")
@@ -502,6 +592,13 @@ async def _run_dry_run_pipeline(
         "success": True,
         "project_id": preview_project_id,
         "model_name": model_name,
+        # Per-model section identity for the UI (multi-model dry-run jobs
+        # render one section per result).
+        "label": source_label,
+        "source_file": source_label,
+        "source_type": source_type,
+        "source_ref": (selected_sources[0] if len(selected_sources or []) == 1 else None),
+        "auto_resolve_collisions": bool(auto_resolve_collisions),
         "entity_mappings": filtered_mappings,
         "extraction_failed": extraction_failed,
         "dropped_entities": data.get("dropped_entities", []),
@@ -545,16 +642,39 @@ async def dry_run_mapping(
         )
         if project_id not in ("preview", ""):
             _assert_project_access(project_id, request_user_id)
+        source_type = str(request.source_config.get("type") or "").strip().lower()
         validate_pbix_model_list(
             request.selected_sources,
-            source_type=str(request.source_config.get("type") or ""),
+            source_type=source_type,
         )
+        selected_sources = list(request.selected_sources or [])
+        if source_type in _PER_MODEL_SOURCE_TYPES:
+            from semabridge.api.services.pbix_source_validation import dedupe_sources_case_insensitive
+
+            deduped = dedupe_sources_case_insensitive(selected_sources)
+            if len(deduped) > 1:
+                # A single synchronous pipeline can only build ONE model's
+                # preview (it used to silently return just the first model's
+                # fields). Multi-model dry runs run one isolated pipeline per
+                # model via the jobs endpoint.
+                raise ValidationError(
+                    f"{len(deduped)} models were selected; the synchronous dry run previews "
+                    f"exactly one model. Use POST /api/projects/{project_id or 'preview'}/dry-run-jobs "
+                    "to dry run multiple models in parallel (one result per model)."
+                )
+            if len(deduped) != len(selected_sources):
+                selected_sources = deduped
         return await _run_dry_run_pipeline(
             project_id=project_id,
             request_user_id=request_user_id,
             source_config=request.source_config,
             target_config=request.target_config,
-            selected_sources=request.selected_sources,
+            selected_sources=selected_sources,
+            auto_resolve_collisions=_resolve_dry_run_auto_resolve_collisions(
+                project_id,
+                explicit=request.auto_resolve_collisions,
+                options=request.options,
+            ),
         )
 
     except ValidationError as e:
@@ -567,6 +687,7 @@ async def dry_run_mapping(
             content={
                 "success": False,
                 "error": str(e),
+                "use_dry_run_jobs": "/dry-run-jobs" in str(e),
                 "entity_mappings": [],
                 "dropped_entities": [],
                 "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},

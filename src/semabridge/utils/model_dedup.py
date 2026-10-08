@@ -74,7 +74,18 @@ def canonicalize_name(name: str) -> str:
 # Structural Fingerprinting
 # ───────────────────────────────────────────────────────────────────────────
 
-def fingerprint_model(model: Any, include_labels: bool = False) -> str:
+def _normalize_expression(expr: Any) -> str:
+    """Whitespace/case-insensitive normal form of a DAX/SQL expression."""
+    if not expr:
+        return ""
+    return re.sub(r"\s+", " ", str(expr)).strip().lower()
+
+
+def fingerprint_model(
+    model: Any,
+    include_labels: bool = False,
+    include_expressions: bool = False,
+) -> str:
     """
     Generate a structural fingerprint (SHA-256 hash) of a semantic model.
 
@@ -84,6 +95,12 @@ def fingerprint_model(model: Any, include_labels: bool = False) -> str:
     3. Metric names and their aggregation types
     4. Relationship definitions
     5. Optional: Label information (if include_labels=True)
+    6. Optional: metric/calculated-column expressions (if
+       include_expressions=True). Required whenever the fingerprint is used
+       to decide that two models are "the same model" (see
+       targets/snowflake.py's structural-duplicate view reuse): two models
+       built from one template (same tables/columns/measure names) but with
+       different measure formulas are NOT the same model.
 
     Two models with identical structure (but possibly different names/labels)
     will have the same fingerprint if include_labels=False.
@@ -112,6 +129,12 @@ def fingerprint_model(model: Any, include_labels: bool = False) -> str:
                 ])
                 for col_name in col_names:
                     components.append(f"column:{col_name}")
+                if include_expressions:
+                    for col in ds.columns:
+                        col_expr = _normalize_expression(getattr(col, 'source_expression', None))
+                        if col_expr:
+                            col_name = canonicalize_name(getattr(col, 'unique_name', ''))
+                            components.append(f"column_expr:{ds_name}.{col_name}={col_expr}")
 
     # 2. Metric structure
     if hasattr(model, 'metrics'):
@@ -120,6 +143,13 @@ def fingerprint_model(model: Any, include_labels: bool = False) -> str:
             agg_type = getattr(metric, 'aggregation', 'unknown').lower()
             ds_ref = canonicalize_name(getattr(metric, 'dataset', ''))
             components.append(f"metric:{m_name}:agg={agg_type}:ds={ds_ref}")
+            if include_expressions:
+                # Prefer the source (DAX) expression: it is stable across runs,
+                # whereas sql_expression may be re-translated differently.
+                m_expr = _normalize_expression(
+                    getattr(metric, 'expression', None) or getattr(metric, 'sql_expression', None)
+                )
+                components.append(f"metric_expr:{m_name}={m_expr}")
 
     # 3. Relationship structure
     if hasattr(model, 'relationships'):

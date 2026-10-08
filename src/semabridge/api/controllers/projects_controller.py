@@ -22,6 +22,11 @@ class CreateProjectRequest(BaseModel):
     targets: Optional[List[Any]] = None
     config_yaml: Optional[str] = None
     connection_tag: Optional[str] = None
+    # Optional: migrate synonym overrides edited during the dry run from the
+    # preview project id(s) to the new project (see _migrate_preview_synonyms).
+    dry_run_job_id: Optional[str] = None
+    preview_project_id: Optional[str] = None
+    preview_project_ids: Optional[List[str]] = None
 
     class Config:
         extra = "allow"
@@ -104,6 +109,112 @@ def _assert_project_access(project_id: str, user_id: str | None) -> None:
         raise HTTPException(status_code=403, detail="Forbidden: project access denied")
 
 
+# Optional create/update payload fields naming the dry-run preview(s) a
+# project is being created/saved from. Synonym edits made during a dry run are
+# stored under the transient ``preview-*`` project id(s); these fields let the
+# backend copy them to the real project id (deploy loads by real id).
+_PREVIEW_MIGRATION_FIELDS = ("dry_run_job_id", "preview_project_id", "preview_project_ids")
+
+
+def _pop_preview_migration_fields(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: payload_dict.pop(key, None) for key in _PREVIEW_MIGRATION_FIELDS}
+
+
+def _preview_project_owned_by(preview_project_id: str, user_id: str | None) -> bool:
+    if not auth_is_enabled():
+        return True
+    try:
+        import semabridge.api.services.project_shared as project_shared
+
+        project_shared._compat_ensure_loaded()
+        preview = project_shared._compat_projects.get(preview_project_id)
+    except Exception:  # noqa: BLE001
+        preview = None
+    if not isinstance(preview, dict):
+        return False
+    owner = str(preview.get("owner_user_id") or preview.get("user_id") or "").strip()
+    return bool(owner) and owner == str(user_id or "").strip()
+
+
+def _collect_preview_project_ids(fields: Dict[str, Any], user_id: str | None) -> List[str]:
+    """Resolve the preview project ids to migrate from: the explicit
+    ``preview_project_id`` / ``preview_project_ids`` plus every per-file
+    preview id of ``dry_run_job_id``. Only ``preview-*`` ids the caller owns
+    (when auth is on) are returned."""
+    ids: List[str] = []
+
+    def _add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text.startswith("preview-") and text not in ids:
+            ids.append(text)
+
+    explicit = fields.get("preview_project_id")
+    if isinstance(explicit, (list, tuple)):
+        for item in explicit:
+            _add(item)
+    else:
+        _add(explicit)
+    for item in fields.get("preview_project_ids") or []:
+        _add(item)
+    explicit_ids = [pid for pid in ids if _preview_project_owned_by(pid, user_id)]
+
+    job_ids: List[str] = []
+    job_id = str(fields.get("dry_run_job_id") or "").strip()
+    if job_id:
+        try:
+            from semabridge.api.services.dry_run_job_service import (
+                get_dry_run_job_meta,
+                get_dry_run_job_preview_project_ids,
+            )
+
+            meta = get_dry_run_job_meta(job_id)
+            owner = str(meta.get("requested_by_user_id") or "").strip()
+            if auth_is_enabled() and owner != str(user_id or "").strip():
+                logger.warning(
+                    "[SynonymMigration] skip dry_run_job_id=%s: not owned by user_id=%s", job_id, user_id
+                )
+            else:
+                for entry in get_dry_run_job_preview_project_ids(job_id):
+                    pid = str(entry.get("preview_project_id") or "").strip()
+                    if pid.startswith("preview-") and pid not in job_ids:
+                        job_ids.append(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[SynonymMigration] could not resolve dry_run_job_id=%s: %s", job_id, exc)
+
+    out: List[str] = []
+    for pid in explicit_ids + job_ids:
+        if pid not in out:
+            out.append(pid)
+    return out
+
+
+def _migrate_preview_synonyms(target_project_id: str, fields: Dict[str, Any], user_id: str | None) -> Optional[Dict[str, Any]]:
+    """Copy synonym overrides from the named preview project(s) to the real
+    project. Returns a small report (or None when nothing was requested).
+    Never raises — a synonym migration failure must not fail project save."""
+    if not any(fields.get(key) for key in _PREVIEW_MIGRATION_FIELDS):
+        return None
+    target = str(target_project_id or "").strip()
+    if not target or target == "preview" or target.startswith("preview-"):
+        return None
+    try:
+        from semabridge.utils.synonyms import copy_synonym_overrides
+
+        sources = _collect_preview_project_ids(fields, user_id)
+        copied = copy_synonym_overrides(sources, target) if sources else 0
+        return {"copied": copied, "source_project_ids": sources}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SynonymMigration] failed for project %s: %s", target, exc)
+        return {"copied": 0, "source_project_ids": [], "error": str(exc)}
+
+
+def _attach_migration_report(response: Any, report: Optional[Dict[str, Any]]) -> Any:
+    if report is not None and isinstance(response, dict):
+        response = dict(response)
+        response["synonym_migration"] = report
+    return response
+
+
 @router.get("/api/projects")
 async def list_projects(
     request: Request,
@@ -155,7 +266,13 @@ async def create_project(request: Request, payload: CreateProjectRequest):
             identity_id,
             len(payload_dict.get("targets") or []),
         )
-    return await create_project_compat(payload_dict)
+    migration_fields = _pop_preview_migration_fields(payload_dict)
+    created = await create_project_compat(payload_dict)
+    if isinstance(created, dict):
+        new_id = str(created.get("id") or created.get("project_id") or "").strip()
+        report = await asyncio.to_thread(_migrate_preview_synonyms, new_id, migration_fields, user_id)
+        return _attach_migration_report(created, report)
+    return created
 
 
 @router.get("/api/projects/{project_id}")
@@ -169,7 +286,11 @@ async def get_project(project_id: str, request: Request):
 async def patch_project(project_id: str, payload: PatchProjectRequest, request: Request):
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
-    return await patch_project_compat(project_id, payload.model_dump(exclude_none=False))
+    payload_dict = payload.model_dump(exclude_none=False)
+    migration_fields = _pop_preview_migration_fields(payload_dict)
+    response = await patch_project_compat(project_id, payload_dict)
+    report = await asyncio.to_thread(_migrate_preview_synonyms, project_id, migration_fields, user_id)
+    return _attach_migration_report(response, report)
 
 
 @router.delete("/api/projects/{project_id}")
@@ -190,7 +311,11 @@ async def get_project_config(project_id: str, request: Request):
 async def save_project_config(project_id: str, payload: SaveProjectConfigRequest, request: Request):
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
-    return await save_project_config_compat(project_id, payload.model_dump(exclude_none=False))
+    payload_dict = payload.model_dump(exclude_none=False)
+    migration_fields = _pop_preview_migration_fields(payload_dict)
+    response = await save_project_config_compat(project_id, payload_dict)
+    report = await asyncio.to_thread(_migrate_preview_synonyms, project_id, migration_fields, user_id)
+    return _attach_migration_report(response, report)
 
 
 @router.get("/api/projects/{project_id}/snapshots")

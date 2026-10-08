@@ -42,6 +42,10 @@ def sync_measure_data(
     
     # Generate table name from measure
     table_base = target_table or measure_name
+    if not target_table and hasattr(emitter, "_namespaced_physical_name"):
+        # Multi-model batch: per-measure tables are namespaced per model so
+        # same-named measures of two models never TRUNCATE each other.
+        table_base = emitter._namespaced_physical_name(table_base)
     safe_table = f"MEASURES_{emitter._safe_table_name(table_base)}"
     full_table = f'{emitter.config.database}.{emitter.config.schema_name}."{safe_table}"'
     

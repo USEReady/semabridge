@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 import re
 import yaml
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -51,14 +52,56 @@ class MissingSourceTableWarning(UserWarning):
     pass
 
 
+class _NamespacedPbixTableReader:
+    """PBIXRay proxy translating namespaced target table names back to the
+    PBIX's own table names (see SnowflakeEmitter._run_source_data_backfill)."""
+
+    def __init__(self, inner: Any, name_map: Dict[str, str]):
+        self._inner = inner
+        self._name_map = dict(name_map)
+
+    def get_table(self, name: str):
+        return self._inner.get_table(self._name_map.get(name, name))
+
+    def __getattr__(self, attr: str):
+        return getattr(self._inner, attr)
+
+
 class SnowflakeEmitter(BaseEmitter):
     """
     Orchestrates the emission of SML models to Snowflake artifacts.
     Acts as a Facade delegating to specialized domain managers.
     """
+
+    # Physical tables that are generated identically for every model (the
+    # synthesized calendar dimension, built from GENERATOR by
+    # schema_manager when source_table == DIM_DATE) and therefore safely
+    # shared -- never namespaced, or schema_manager's special-casing would
+    # no longer recognize them.
+    _SHARED_PHYSICAL_TABLES = frozenset({"DIM_DATE"})
     
-    def __init__(self, config: SnowflakeConfig, behavior: Optional[ConnectorBehavior] = None):
+    def __init__(
+        self,
+        config: SnowflakeConfig,
+        behavior: Optional[ConnectorBehavior] = None,
+        physical_namespace: Optional[str] = None,
+    ):
         self.config = config
+        # Per-model physical-object namespace (multi-model batches only; see
+        # core/engine/targets/snowflake.py's emitter_physical_namespace).
+        # When set, every physical object this emitter creates/references in
+        # the target schema -- base tables (dataset.source_table), *_ENRICHED
+        # views and per-measure MEASURES_* tables -- is prefixed with
+        # "<namespace>_" so models sharing one schema never overwrite each
+        # other. None (single-model runs, and every other caller) leaves all
+        # names exactly as before.
+        self.physical_namespace: Optional[str] = (
+            str(physical_namespace).strip() or None
+        ) if physical_namespace else None
+        self._namespace_scope_active = False
+        # namespaced raw source_table -> original raw source_table, for the
+        # active scope (used to read the right table back out of the PBIX).
+        self._namespace_original_sources: Dict[str, str] = {}
         self.behavior = behavior or ConnectorBehavior()
         self.sf_behavior = self.behavior.snowflake
         self.last_deployment_error: Optional[str] = None
@@ -148,10 +191,11 @@ class SnowflakeEmitter(BaseEmitter):
         deliberately does not accept these (see class docstring on
         _maybe_backfill_source_data for why OSI is out of scope for v1).
         """
-        return self._execute_deployment_pipeline(
-            sml, is_osi=False, sync_mode=sync_mode,
-            source_pbix_path=source_pbix_path, load_source_data=load_source_data,
-        )
+        with self._physical_namespace_scope(sml):
+            return self._execute_deployment_pipeline(
+                sml, is_osi=False, sync_mode=sync_mode,
+                source_pbix_path=source_pbix_path, load_source_data=load_source_data,
+            )
 
     def deploy_from_osi(
         self,
@@ -161,7 +205,116 @@ class SnowflakeEmitter(BaseEmitter):
         sync_mode: str = "copy",
     ) -> bool:
         """Deploy an OSI model directly to Snowflake."""
-        return self._execute_deployment_pipeline(osi, is_osi=True, sync_mode=sync_mode)
+        with self._physical_namespace_scope(osi):
+            return self._execute_deployment_pipeline(osi, is_osi=True, sync_mode=sync_mode)
+
+    # =========================================================================
+    # PER-MODEL PHYSICAL NAMESPACE (multi-model batches)
+    # =========================================================================
+
+    def _namespaced_physical_name(self, name: str) -> str:
+        """Prefix a physical object name with this model's namespace.
+
+        Identity when no namespace is configured, so single-model runs keep
+        their exact object names. Idempotent: an already-prefixed name is
+        returned unchanged.
+        """
+        if not self.physical_namespace or not name:
+            return name
+        prefix = f"{self.physical_namespace}_"
+        if str(name).upper().startswith(prefix.upper()):
+            return name
+        return f"{prefix}{name}"
+
+    def _strip_physical_namespace(self, name: str) -> str:
+        """Inverse of _namespaced_physical_name (case-insensitive)."""
+        if not self.physical_namespace or not name:
+            return name
+        prefix = f"{self.physical_namespace}_".upper()
+        if str(name).upper().startswith(prefix):
+            return str(name)[len(prefix):]
+        return name
+
+    @contextmanager
+    def _physical_namespace_scope(self, model: Any):
+        """Temporarily point every dataset's source_table at its namespaced
+        physical table for the duration of a deploy / DDL generation.
+
+        Rewriting source_table (instead of patching each builder) keeps
+        table creation (schema_manager), live-schema lookups, the TABLES
+        clause of the semantic view and the Cortex YAML consistent with each
+        other by construction. Schema-qualified source tables (DB.SCH.TBL)
+        point at explicitly configured external locations and are left
+        alone. Restored on exit so the persisted/returned model is unchanged.
+        No-op without a namespace, or when already inside a scope.
+        """
+        if not self.physical_namespace or model is None or self._namespace_scope_active:
+            yield
+            return
+        originals: list = []
+        mapping: Dict[str, str] = {}
+        for dataset in getattr(model, "datasets", None) or []:
+            raw = getattr(dataset, "source_table", None) or getattr(dataset, "unique_name", None)
+            if not raw or "." in str(raw):
+                continue
+            if str(raw).upper() in self._SHARED_PHYSICAL_TABLES:
+                continue
+            namespaced = self._namespaced_physical_name(str(raw))
+            if namespaced == raw:
+                continue
+            originals.append((dataset, getattr(dataset, "source_table", None)))
+            dataset.source_table = namespaced
+            mapping[namespaced] = str(raw)
+        self._namespace_original_sources = mapping
+        self._namespace_scope_active = True
+        try:
+            yield
+        finally:
+            self._namespace_scope_active = False
+            for dataset, original in originals:
+                dataset.source_table = original
+            self._namespace_original_sources = {}
+
+    def _dataset_physical_table_key(self, model: Any, dataset_name: str) -> str:
+        """Upper-cased physical table name for a dataset (honours source_table)."""
+        dataset = self._get_dataset_by_name(model, dataset_name)
+        raw = (getattr(dataset, "source_table", None) if dataset is not None else None) or dataset_name
+        return self._id.sanitize_table_name(str(raw)).upper()
+
+    def _run_source_data_backfill(self, cursor: Any, model: Any, source_pbix_path: str) -> list:
+        """Opt-in data backfill, namespace-aware.
+
+        Without a namespace this is exactly schema_manager's own
+        _maybe_backfill_source_data. With one, dataset.source_table holds the
+        namespaced TARGET table name while the PBIX still names its tables by
+        the original name, so the PBIX reader is wrapped to translate the
+        namespaced name back before every lookup.
+        """
+        if not self.physical_namespace or not self._namespace_original_sources:
+            return self.schema_manager._maybe_backfill_source_data(
+                cursor, model, source_pbix_path, self._live_schema_metadata,
+            )
+        try:
+            from pbixray import PBIXRay
+        except Exception as exc:
+            logger.warning("Data backfill requested but pbixray is unavailable: %s", exc)
+            return [{
+                "table": None, "dataset": None, "status": "failed", "row_count": 0,
+                "reason": f"pbixray is not installed/importable: {exc}",
+            }]
+        try:
+            pbix_model = PBIXRay(source_pbix_path)
+        except Exception as exc:
+            logger.warning("Data backfill: could not open PBIX file '%s': %s", source_pbix_path, exc)
+            return [{
+                "table": None, "dataset": None, "status": "failed", "row_count": 0,
+                "reason": f"Could not open source PBIX file '{source_pbix_path}': {exc}",
+            }]
+        reader = _NamespacedPbixTableReader(pbix_model, dict(self._namespace_original_sources))
+        return [
+            self.schema_manager._backfill_one_table(cursor, reader, dataset, self._live_schema_metadata)
+            for dataset in getattr(model, "datasets", []) or []
+        ]
 
     def _execute_deployment_pipeline(
         self,
@@ -292,9 +445,7 @@ class SnowflakeEmitter(BaseEmitter):
                 # instead of going stale. SML-only (is_osi guarded inside).
                 if load_source_data and source_pbix_path and not is_osi:
                     self.data_backfill_results.extend(
-                        self.schema_manager._maybe_backfill_source_data(
-                            cur, model, source_pbix_path, self._live_schema_metadata,
-                        )
+                        self._run_source_data_backfill(cur, model, source_pbix_path)
                     )
 
                 # Auto-enrichment — moved to run here (after Step 1/1.5, once
@@ -540,6 +691,8 @@ class SnowflakeEmitter(BaseEmitter):
                         # rebuilds the matching view instead of always guessing the
                         # same single fact table.
                         _candidate_name = _en[: -len("_ENRICHED")] if _en.endswith("_ENRICHED") else _en
+                        # Namespaced enriched views are "<NS>_<fact>_ENRICHED".
+                        _candidate_name = self._strip_physical_namespace(_candidate_name)
                         _candidate_dataset = self._get_dataset_by_name(model, _candidate_name)
                         _refresh_fact_table = (
                             getattr(_candidate_dataset, "unique_name", None) or _candidate_name
@@ -1118,25 +1271,56 @@ class SnowflakeEmitter(BaseEmitter):
     # =========================================================================
 
     def generate_ddls(self, sml: SMLModel) -> list[str]:
-        return self.semantic_view_builder.generate_ddls(sml)
+        with self._physical_namespace_scope(sml):
+            return self.semantic_view_builder.generate_ddls(sml)
 
     def generate_ddls_from_osi(self, osi: OSIModel) -> list[str]:
-        return self.semantic_view_builder.generate_ddls_from_osi(osi)
+        with self._physical_namespace_scope(osi):
+            return self.semantic_view_builder.generate_ddls_from_osi(osi)
 
     def sync_all_measures(self, sml: SMLModel, fabric_extractor, dataset_id: str, grain_dimensions=None) -> dict:
-        return self.measure_synchronizer.sync_all_measures(sml, fabric_extractor, dataset_id, grain_dimensions)
+        if not self.physical_namespace:
+            return self.measure_synchronizer.sync_all_measures(sml, fabric_extractor, dataset_id, grain_dimensions)
+        # Per-measure MEASURES_<measure> tables are named after the measure
+        # alone, so two models of a batch with a same-named measure would
+        # TRUNCATE/overwrite each other's table. Namespace those (only when
+        # the caller didn't pick an explicit target_table -- the per-model
+        # SHADOW_<model> table is already model-scoped and is referenced by
+        # name afterwards, so it is left untouched).
+        synchronizer = self.measure_synchronizer
+        original_sync = synchronizer.sync_measure_data
+
+        def _namespaced_sync(*args, **kwargs):
+            if kwargs.get("target_table") is None and len(args) < 3:
+                measure_name = kwargs.get("measure_name", args[0] if args else None)
+                if measure_name:
+                    kwargs["target_table"] = self._namespaced_physical_name(str(measure_name))
+            return original_sync(*args, **kwargs)
+
+        synchronizer.sync_measure_data = _namespaced_sync
+        try:
+            return synchronizer.sync_all_measures(sml, fabric_extractor, dataset_id, grain_dimensions)
+        finally:
+            try:
+                del synchronizer.sync_measure_data
+            except AttributeError:
+                synchronizer.sync_measure_data = original_sync
 
     def _build_history_snapshot_ddls_for_sml(self, sml: SMLModel) -> list[str]:
-        return self.semantic_view_builder._build_history_snapshot_ddls_for_sml(sml)
+        with self._physical_namespace_scope(sml):
+            return self.semantic_view_builder._build_history_snapshot_ddls_for_sml(sml)
 
     def _build_history_snapshot_ddls_for_osi(self, osi: OSIModel) -> list[str]:
-        return self.semantic_view_builder._build_history_snapshot_ddls_for_osi(osi)
+        with self._physical_namespace_scope(osi):
+            return self.semantic_view_builder._build_history_snapshot_ddls_for_osi(osi)
 
     def generate_cortex_yaml(self, sml: SMLModel, sample_fetcher=None) -> str:
-        return _renderers.generate_cortex_yaml(self, sml, sample_fetcher=sample_fetcher)
+        with self._physical_namespace_scope(sml):
+            return _renderers.generate_cortex_yaml(self, sml, sample_fetcher=sample_fetcher)
 
     def generate_cortex_yaml_from_osi(self, osi: OSIModel, sample_fetcher=None) -> str:
-        return _renderers.generate_cortex_yaml_from_osi(self, osi, sample_fetcher=sample_fetcher)
+        with self._physical_namespace_scope(osi):
+            return _renderers.generate_cortex_yaml_from_osi(self, osi, sample_fetcher=sample_fetcher)
 
     def _get_source_table_mapping(self) -> Dict[str, str]:
         """Return effective source_table_mapping, merging behavior config and local enriched mapping.
@@ -2119,6 +2303,11 @@ class SnowflakeEmitter(BaseEmitter):
 
         for table, cols in suggestions.items():
             table_upper = table.upper()
+            if self.physical_namespace:
+                # Namespaced model: the dataset's physical table is its
+                # (namespaced) source_table, never the bare dataset name,
+                # which could be ANOTHER model's table in the shared schema.
+                table_upper = self._dataset_physical_table_key(model, table)
 
             # Resolve physical table name (model name may differ from Snowflake name)
             existing_cols = live_meta.get(table_upper, set())
@@ -2172,7 +2361,12 @@ class SnowflakeEmitter(BaseEmitter):
                     continue
 
                 # Resolve source column physical name
-                source_existing = live_meta.get(source_table.upper(), set())
+                source_physical = (
+                    self._dataset_physical_table_key(model, source_table)
+                    if self.physical_namespace
+                    else source_table.upper()
+                )
+                source_existing = live_meta.get(source_physical, set())
                 src_col_phys = self._resolve_physical_col_name(col, source_existing) or col_safe
 
                 # Resolve join keys
@@ -2192,7 +2386,7 @@ class SnowflakeEmitter(BaseEmitter):
                 update_sql = (
                     f'UPDATE "{table_upper}" t '
                     f'SET t."{col_safe}" = ('
-                    f'  SELECT s."{src_col_phys}" FROM "{source_table.upper()}" s '
+                    f'  SELECT s."{src_col_phys}" FROM "{source_physical}" s '
                     f'  WHERE s."{to_key}" = t."{from_key}" LIMIT 1'
                     f')'
                 )
@@ -2601,7 +2795,7 @@ class SnowflakeEmitter(BaseEmitter):
             return None
         
         date_info = self._find_date_table(model)
-        enriched_view_name = f"{fact_table}_ENRICHED"
+        enriched_view_name = self._namespaced_physical_name(f"{fact_table}_ENRICHED")
         fact_dataset = self._get_dataset_by_name(model, fact_table)
         fact_source_name = getattr(fact_dataset, "source_table", None) or fact_table
         fact_source_safe = self._id.sanitize_table_name(fact_source_name)

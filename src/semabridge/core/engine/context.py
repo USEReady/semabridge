@@ -49,6 +49,26 @@ class RunContext:
     # otherwise collide on the identical clean name.
     resolved_pbix_display_name: Optional[str] = None
 
+    # Multi-model batch isolation (see sync_execution_service's
+    # _assign_batch_physical_namespaces). physical_namespace is a sanitized,
+    # deterministic per-model prefix set ONLY when this run is one of several
+    # models synced together (batch_model_count > 1); it namespaces every
+    # physical object the deploy creates in the shared target schema and the
+    # per-model output/ subdirectory. None for single-model runs, which keep
+    # their exact previous object names and output paths.
+    physical_namespace: Optional[str] = None
+    batch_model_count: int = 1
+    # Thread-scoped BatchViewNameRegistry (utils/name_translator.py) shared
+    # by the Fabric jobs of one batch, so two Fabric datasets with the same
+    # display name get "_2"-suffixed view names instead of colliding.
+    batch_name_registry: Optional[Any] = None
+    # The PBIX file THIS job was extracted from (multi-file batches carry
+    # one per job; config.source.pbix_path is project-wide).
+    pbix_path: Optional[str] = None
+    # Final deployed view name (target-specific, e.g. "SALES_SEMANTIC"),
+    # recorded at Step 8 for per-model run results.
+    deployed_view_name: Optional[str] = None
+
     # Structural fingerprint of context.sml_model (see utils/model_dedup.py),
     # computed once at Step 8 (targets/snowflake.py) so a re-upload of the
     # same underlying model under a different file name redeploys to the

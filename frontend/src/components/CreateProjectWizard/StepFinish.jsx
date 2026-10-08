@@ -20,6 +20,8 @@ export function StepFinish({
   selectedModels,
   savedModels,
   selectedModelNameByKey,
+  pbixSourceLabels = [],
+  savedPbixSourceLabels = [],
   onClear,
 }) {
   const createdProjectId = createdProject?.id || createdProject?.project_id;
@@ -95,19 +97,22 @@ export function StepFinish({
 
   const showDiffs = editMode && diff && Object.keys(diff).length > 0;
 
-  const currentSelectionNames = selectedModels?.size > 0
-    ? Array.from(selectedModels)
-        .map(id => selectedModelNameByKey?.[id] || id.split('::').pop())
-        .sort()
-        .join(', ')
-    : 'Everything (*)';
+  const isPbix = String(sourceConnector || '').toLowerCase() === 'pbix';
+  // De-duplicated display names (a model selected under both its name and
+  // its GUID is listed once).
+  const namesFor = (keys) => [...new Set(Array.from(keys || [])
+    .map(id => selectedModelNameByKey?.[id] || String(id).split('::').pop()))]
+    .sort()
+    .join(', ');
 
-  const wasSelectionNames = savedModels?.size > 0
-    ? Array.from(savedModels)
-        .map(id => selectedModelNameByKey?.[id] || id.split('::').pop())
-        .sort()
-        .join(', ')
-    : 'Everything (*)';
+  // PBIX: list the actual file(s) that will be saved -- never "Everything (*)".
+  const currentSelectionNames = isPbix
+    ? (pbixSourceLabels.length > 0 ? pbixSourceLabels.join(', ') : 'No PBIX file selected')
+    : (selectedModels?.size > 0 ? namesFor(selectedModels) : 'Everything (*)');
+
+  const wasSelectionNames = isPbix
+    ? (savedPbixSourceLabels.length > 0 ? savedPbixSourceLabels.join(', ') : 'No PBIX file selected')
+    : (savedModels?.size > 0 ? namesFor(savedModels) : 'Everything (*)');
 
   const modelsChanged = editMode && currentSelectionNames !== wasSelectionNames;
 
@@ -156,7 +161,7 @@ export function StepFinish({
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>Selected Models</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 4 }}>{isPbix ? `PBIX File${pbixSourceLabels.length === 1 ? '' : 's'}` : 'Selected Models'}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{currentSelectionNames}</span>

@@ -74,3 +74,67 @@ def validate_pbix_model_list(models: Optional[List[str]], *, source_type: str) -
         if path in seen:
             raise ValidationError(f"Duplicate file selected: '{path}'.")
         seen.add(path)
+
+
+# Source types a multi-model dry-run job can fan out over (one job file per
+# entry in selected_sources). Each entry is a full .pbix path for "pbix" and a
+# semantic model name for "fabric".
+MULTI_MODEL_SOURCE_TYPES = ("pbix", "fabric")
+MAX_DRY_RUN_MODELS = MAX_PBIX_FILES
+
+
+def dedupe_sources_case_insensitive(sources: Optional[List[str]]) -> List[str]:
+    """Strip blanks and drop case-insensitive duplicates, preserving the first
+    occurrence's spelling and the original order."""
+    out: List[str] = []
+    seen = set()
+    for entry in sources or []:
+        text = str(entry or "").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def normalize_dry_run_sources(sources: Optional[List[str]], *, source_type: str) -> List[str]:
+    """Validate + normalize the ``selected_sources`` list of a multi-model
+    dry-run job. Generic over source types: every entry becomes exactly one
+    independently-run job file.
+
+    - entries are stripped and de-duplicated case-insensitively;
+    - at most ``MAX_DRY_RUN_MODELS`` entries;
+    - pbix: delegated to ``validate_pbix_model_list`` (each entry must be a
+      ``.pbix`` path);
+    - fabric: an empty list is an error (there is no implicit "whole
+      workspace" dry run).
+
+    Raises:
+        ValidationError: with a client-facing message.
+    """
+    stype = str(source_type or "").strip().lower()
+    if sources is not None and not isinstance(sources, list):
+        raise ValidationError("selected_sources must be a list.")
+    for entry in sources or []:
+        if not isinstance(entry, str):
+            raise ValidationError("Each entry in selected_sources must be a string.")
+    deduped = dedupe_sources_case_insensitive(sources)
+
+    if len(deduped) > MAX_DRY_RUN_MODELS:
+        noun = "PBIX files" if stype == "pbix" else "models"
+        raise ValidationError(
+            f"Up to {MAX_DRY_RUN_MODELS} {noun} are supported per dry run; "
+            f"{len(deduped)} were provided."
+        )
+    if stype == "pbix":
+        validate_pbix_model_list(deduped, source_type="pbix")
+    elif stype == "fabric":
+        if not deduped:
+            raise ValidationError(
+                "Select at least one Fabric semantic model to dry run "
+                "(selected_sources was empty)."
+            )
+    return deduped

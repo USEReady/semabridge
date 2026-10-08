@@ -59,12 +59,27 @@ class ExecutionEngine:
         safe = re.sub(r"_+", "_", safe).strip("._")
         return safe or "model"
 
-    def _model_output_dir(self, *parts: str, model_name: Optional[str] = None) -> Path:
+    def _model_output_dir(
+        self,
+        *parts: str,
+        model_name: Optional[str] = None,
+        model_subdir: Optional[str] = None,
+    ) -> Path:
+        """output/<parts...>/<project>[/<model_subdir>].
+
+        model_subdir is only set for a model that is part of a multi-model
+        batch (RunContext.physical_namespace), so every model of the batch
+        writes its own artifacts instead of overwriting a sibling's file in
+        the shared per-project directory. Single-model runs pass None and
+        keep exactly the previous path.
+        """
         safe_name = self._safe_output_name(model_name or (self._context.project_id if self._context else None))
         path = Path("output")
         for part in parts:
             path /= part
         path /= safe_name
+        if model_subdir:
+            path /= self._safe_output_name(model_subdir)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -160,6 +175,10 @@ class ExecutionEngine:
         sync_mode: str = "copy",
         force: bool = False,
         resolved_display_name: Optional[str] = None,
+        # Multi-model batch isolation (see RunContext.physical_namespace).
+        physical_namespace: Optional[str] = None,
+        batch_model_count: int = 1,
+        batch_name_registry: Optional[Any] = None,
     ) -> RunSummary:
         """
         Execute the full 10-step pipeline.
@@ -219,6 +238,10 @@ class ExecutionEngine:
             )
             context.config_path = config_path
             context.config_payload = config_dict
+            context.physical_namespace = (str(physical_namespace).strip() or None) if physical_namespace else None
+            context.batch_model_count = max(1, int(batch_model_count or 1))
+            context.batch_name_registry = batch_name_registry
+            context.pbix_path = pbix_path
             self._context = context
             self._summary = create_run_summary(
                 project_id=context.project_id,

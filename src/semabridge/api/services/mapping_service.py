@@ -3,6 +3,7 @@
 Provides list, auto-map, update, and delete mappings plus all supporting
 private helpers for building, serializing, and validating entity mappings.
 """
+import logging
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,7 @@ AUTO_MAP_SNOWFLAKE_RESERVED = {
     "KEY", "REFERENCES", "DATABASE", "SCHEMA", "WAREHOUSE", "ACCOUNT",
 }
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -269,31 +271,91 @@ def _compat_scope_model_for_dry_run(
     return model
 
 
-def _compat_preferred_snapshot_id_from_sync_result(
+def _compat_source_match_keys(value: Any) -> set:
+    """Lower-cased keys a selected source / result model name can match on:
+    the raw value plus, for file paths, the file stem — so a PBIX
+    selected_sources entry (full path) matches a sync result row whose
+    ``model`` is the file's stem, and vice versa."""
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    keys = {text.lower()}
+    normalized = text.replace("\\", "/")
+    if "/" in normalized or normalized.lower().endswith(".pbix"):
+        stem = normalized.rsplit("/", 1)[-1]
+        if stem.lower().endswith(".pbix"):
+            stem = stem[: -len(".pbix")]
+        if stem.strip():
+            keys.add(stem.strip().lower())
+    return keys
+
+
+def _compat_snapshot_ids_by_model_from_sync_result(
     sync_result: Dict[str, Any],
     selected_model_names: Optional[List[str]] = None,
-) -> str:
+) -> Dict[str, str]:
+    """Every selected model's own SML snapshot id, keyed by the selected
+    source string as passed in. Models with no snapshot are omitted. This is
+    the multi-model-safe counterpart of
+    _compat_preferred_snapshot_id_from_sync_result (which can only return one
+    id and therefore must only be used for single-model scopes)."""
+    out: Dict[str, str] = {}
     if not isinstance(sync_result, dict):
-        return ""
-
-    selected_lookup = {
-        str(item or "").strip().lower()
-        for item in (selected_model_names or [])
-        if str(item or "").strip()
-    }
-
+        return out
     results = sync_result.get("results") if isinstance(sync_result.get("results"), list) else []
-    if selected_lookup and results:
+    for selected in selected_model_names or []:
+        keys = _compat_source_match_keys(selected)
+        if not keys:
+            continue
         for row in results:
             if not isinstance(row, dict):
                 continue
-            model_name = str(row.get("model") or "").strip().lower()
-            if model_name not in selected_lookup:
+            if not (_compat_source_match_keys(row.get("model")) & keys):
                 continue
             summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
             sid = str(summary.get("sml_snapshot_id") or "").strip()
             if sid:
-                return sid
+                out[str(selected)] = sid
+                break
+    return out
+
+
+def _compat_preferred_snapshot_id_from_sync_result(
+    sync_result: Dict[str, Any],
+    selected_model_names: Optional[List[str]] = None,
+) -> str:
+    """The ONE snapshot id to build a dry-run/auto-map preview from.
+
+    Only meaningful for a single-model scope. For more than one selected
+    model there is no single correct answer — callers must either fan out
+    one call per model (the dry-run jobs endpoint does exactly that) or use
+    _compat_snapshot_ids_by_model_from_sync_result. When several selected
+    models each produced a distinct snapshot this logs a warning instead of
+    silently pretending the first one is the whole result.
+    """
+    if not isinstance(sync_result, dict):
+        return ""
+
+    selected = [
+        str(item or "").strip()
+        for item in (selected_model_names or [])
+        if str(item or "").strip()
+    ]
+
+    results = sync_result.get("results") if isinstance(sync_result.get("results"), list) else []
+    if selected and results:
+        by_model = _compat_snapshot_ids_by_model_from_sync_result(sync_result, selected)
+        if len(set(by_model.values())) > 1:
+            logger.warning(
+                "[DryRun] %d selected models produced distinct snapshots (%s); a single "
+                "preferred snapshot only covers the first. Multi-model previews must be "
+                "dry-run per model (POST /api/projects/{id}/dry-run-jobs).",
+                len(by_model),
+                ", ".join(sorted(by_model)),
+            )
+        for name in selected:
+            if by_model.get(name):
+                return by_model[name]
 
     summary = sync_result.get("summary") if isinstance(sync_result.get("summary"), dict) else {}
     sid = str(summary.get("sml_snapshot_id") or "").strip()

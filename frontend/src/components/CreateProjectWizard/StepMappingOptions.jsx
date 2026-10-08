@@ -11,7 +11,7 @@ import { ToggleOption } from '../WizardUIComponents';
 import DryRunMappingTable from '../DryRunMappingTable';
 import FieldMappingEditor from '../FieldMappingEditor';
 import MultiFileDryRunStatus from './MultiFileDryRunStatus';
-import { resolveMultiFileDryRunReadiness } from '../../utils/multiFileDryRunReadiness';
+import { resolveMultiModelReadiness, flattenSectionRows } from '../../utils/multiFileDryRunReadiness';
 
 export function StepMappingOptions({
   autoRelationships,
@@ -48,10 +48,22 @@ export function StepMappingOptions({
   onSynonymUpdate,
   projectId,
   onProceed,
-  // Multi-PBIX-per-project (Part C): when set, a background dry-run job is
-  // in flight/complete for N files — render the per-file status list
-  // instead of the single-file DryRunMappingTable below.
+  // Multi-model dry run (multiple PBIX files or multiple Fabric models):
+  // when set, a background dry-run job is in flight/complete -- render one
+  // collapsible section per model instead of the single-model table below.
+  // Per-model state (sections) is owned by CreateProjectPage's
+  // useMultiDryRunJob; every handler below is scoped to one model's file_id.
   multiDryRunJob,
+  multiSections = [],
+  multiJobStatus = null,
+  multiPollError = '',
+  onRetryMultiPolling,
+  multiRerunningIds,
+  multiRerunErrors,
+  onMultiEditRow,
+  onMultiBulkResolved,
+  onMultiSynonymUpdate,
+  onRetryMultiFile,
 }) {
   const [autoMappingMode, setAutoMappingMode] = useState(true);
   const [rows, setRows] = useState([]);
@@ -59,32 +71,19 @@ export function StepMappingOptions({
   const mappingTableRef = useRef(null);
   const aiToggleInitRef = useRef(false);
 
-  // Multi-PBIX per-file status (see multiDryRunJob below): the job being
-  // CREATED and the job being DONE are different moments, but the parent
-  // (CreateProjectPage.jsx) only ever tracks the former via dryRunStatus,
-  // set to 'success' the instant the background job starts. The real,
-  // live per-file completion state only exists inside
-  // MultiFileDryRunStatus's own poll loop -- multiJobStatus mirrors it up
-  // here via onStatusChange so readiness/Proceed/Continue can gate on
-  // actual completion instead of "a job object exists".
-  const [multiJobStatus, setMultiJobStatus] = useState(null); // { status, files: [...] } | null
+  // Multi-model readiness: the job being CREATED (dryRunStatus='success' in
+  // the parent) is not the job being DONE. Gate on every model's own
+  // status + loaded result + blocking rows instead (see
+  // utils/multiFileDryRunReadiness.js resolveMultiModelReadiness).
   const isMultiFileRun = Boolean(multiDryRunJob?.job_id);
-
-  // A new job (re-run, or a different multi-file batch) must not let the
-  // PREVIOUS job's terminal status leak into this one's readiness check
-  // for however long it takes the first poll to land.
-  useEffect(() => {
-    setMultiJobStatus(null);
-  }, [multiDryRunJob?.job_id]);
-
-  const {
-    running: multiJobRunningRaw,
-    succeeded: multiJobSucceededRaw,
-    hasFailures: multiJobHasFailuresRaw,
-  } = resolveMultiFileDryRunReadiness(multiJobStatus);
-  const multiJobRunning = isMultiFileRun && multiJobRunningRaw;
-  const multiJobSucceeded = isMultiFileRun && multiJobSucceededRaw;
-  const multiJobHasFailures = isMultiFileRun && multiJobHasFailuresRaw;
+  const multiReadiness = useMemo(() => resolveMultiModelReadiness(multiSections || []), [multiSections]);
+  const multiRows = useMemo(
+    () => (isMultiFileRun ? flattenSectionRows(multiSections || []) : []),
+    [isMultiFileRun, multiSections],
+  );
+  const multiJobRunning = isMultiFileRun && multiReadiness.running;
+  const multiJobSucceeded = isMultiFileRun && multiReadiness.allSucceeded;
+  const multiJobHasFailures = isMultiFileRun && multiReadiness.hasFailures;
 
   const dryRunCompleted = isMultiFileRun ? multiJobSucceeded : dryRunStatus === 'success';
   const dryRunFailed = isMultiFileRun ? multiJobHasFailures : dryRunStatus === 'failed';
@@ -111,36 +110,46 @@ export function StepMappingOptions({
     }
   }, [detectedMappings]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const blockingCount = useMemo(
+  // Rows every summary below is computed over: the single-model table's rows,
+  // or every model's rows for a multi-model run.
+  const effectiveRows = isMultiFileRun ? multiRows : rows;
+
+  const singleBlockingCount = useMemo(
     () => rows.filter((row) => isBlockingRow(row)).length,
     [rows],
   );
+  const blockingCount = isMultiFileRun ? multiReadiness.totalBlocking : singleBlockingCount;
 
   const sourceModel = useMemo(() => ({
-    name: selectedModelNames?.[0] || 'Selected Sources',
+    name: isMultiFileRun
+      ? `${(multiSections || []).length} models`
+      : (selectedModelNames?.[0] || 'Selected Sources'),
     type: sourceConnector || 'Source Model',
-    field_count: rows.length,
-  }), [rows.length, selectedModelNames, sourceConnector]);
+    field_count: effectiveRows.length,
+  }), [effectiveRows.length, isMultiFileRun, multiSections, selectedModelNames, sourceConnector]);
 
   const targetModel = useMemo(() => ({
     name: primaryTargetConnector || 'Target Model',
     type: primaryTargetConnector || 'Target Connector',
-    field_count: rows.filter(row => String(row.target_field || '').trim()).length,
-  }), [primaryTargetConnector, rows]);
+    field_count: effectiveRows.filter(row => String(row.target_field || '').trim()).length,
+  }), [primaryTargetConnector, effectiveRows]);
   const connectorHealthy = Boolean(sourceConnector) && Boolean(primaryTargetConnector);
   const targetDestination = useMemo(() => {
-    const firstMapped = rows.find((row) => String(row?.target_field || '').trim());
+    const firstMapped = effectiveRows.find((row) => String(row?.target_field || '').trim());
     if (firstMapped?.target_field) return firstMapped.target_field;
     return `${String(primaryTargetConnector || 'target').toUpperCase()}.PUBLIC.<TABLE>`;
-  }, [rows, primaryTargetConnector]);
+  }, [effectiveRows, primaryTargetConnector]);
 
-  const explicitTables = useMemo(() => (
-    Array.from(new Set((selectedModelNames || []).map(name => String(name || '').trim()).filter(Boolean)))
-  ), [selectedModelNames]);
+  const explicitTables = useMemo(() => {
+    const names = isMultiFileRun
+      ? (multiSections || []).map((section) => section.label)
+      : (selectedModelNames || []);
+    return Array.from(new Set(names.map(name => String(name || '').trim()).filter(Boolean)));
+  }, [isMultiFileRun, multiSections, selectedModelNames]);
 
   const inferredTables = useMemo(() => {
     const explicitUpper = new Set(explicitTables.map(name => name.toUpperCase()));
-    const rowTables = rows.flatMap((row) => {
+    const rowTables = effectiveRows.flatMap((row) => {
       if (row.field_type === 'measure') return Array.isArray(row.measure_source_tables) ? row.measure_source_tables : [];
       return row.source_table_name ? [row.source_table_name] : [];
     });
@@ -150,23 +159,25 @@ export function StepMappingOptions({
           .filter(Boolean)
           .filter(name => !explicitUpper.has(name.toUpperCase()))
     ));
-  }, [explicitTables, rows]);
+  }, [explicitTables, effectiveRows]);
   const visibleInferredTables = useMemo(() => {
     if (!autoMappingMode && !autoRelationships) return [];
     return inferredTables;
   }, [autoMappingMode, autoRelationships, inferredTables]);
 
   const counts = useMemo(() => {
-    const summary = { all: rows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
-    rows.forEach(row => {
+    const summary = { all: effectiveRows.length, auto: 0, manual: 0, unmapped: 0, collision: 0 };
+    effectiveRows.forEach(row => {
       if (summary[row.status] !== undefined) summary[row.status] += 1;
     });
     return summary;
-  }, [rows]);
+  }, [effectiveRows]);
   const estimatedVolume = useMemo(() => {
-    const totalFields = Number(dryRunData?.summary?.total_fields || rows.length || 0);
+    const totalFields = isMultiFileRun
+      ? effectiveRows.length
+      : Number(dryRunData?.summary?.total_fields || rows.length || 0);
     return `${totalFields} mapped fields`;
-  }, [dryRunData, rows.length]);
+  }, [dryRunData, effectiveRows.length, isMultiFileRun, rows.length]);
 
   const isLoading =
     mappingLoading ||
@@ -175,17 +186,24 @@ export function StepMappingOptions({
       : dryRunStatus === "loading" || dryRunStatus === "running");
 
   // Real signals from the dry-run result — must be declared before readyToProceed / readiness / checkState
-  const compatScore  = typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null;
-  const schemaIssues = Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0;
+  const compatScore  = isMultiFileRun
+    ? multiReadiness.minCompatibilityScore
+    : (typeof dryRunData?.compatibility_score === 'number' ? dryRunData.compatibility_score : null);
+  const schemaIssues = isMultiFileRun
+    ? multiReadiness.totalSchemaConflicts
+    : (Array.isArray(dryRunData?.schema_conflicts) ? dryRunData.schema_conflicts.length : 0);
   const hasIssues    = blockingCount > 0 || dryRunFailed || schemaIssues > 0 || (compatScore !== null && compatScore < 90);
 
   // The dry-run check must have completed (at least once) before the user can
   // proceed — regardless of mapping mode.  Without this guard the bar shows
   // green immediately because compatScore is null before any run has run.
-  const readyToProceed =
-    dryRunCompleted &&
-    blockingCount === 0 &&
-    (compatScore === null || compatScore >= 70);
+  // Multi-model: every model succeeded, every result is loaded, and no model
+  // has blocking rows or a sub-70 compatibility score.
+  const readyToProceed = isMultiFileRun
+    ? multiReadiness.ready
+    : (dryRunCompleted &&
+      blockingCount === 0 &&
+      (compatScore === null || compatScore >= 70));
 
   useEffect(() => {
     onProceedStateChange?.(readyToProceed);
@@ -266,7 +284,7 @@ export function StepMappingOptions({
     if (isLoading) {
       return {
         message: isMultiFileRun
-          ? 'Dry run in progress — validating schema for all files…'
+          ? `Dry run in progress — validating ${multiReadiness.total} models (${multiReadiness.succeededCount + multiReadiness.failedCount} of ${multiReadiness.total} finished)…`
           : 'Dry run in progress — validating schema…',
         background: 'rgba(245, 158, 11, 0.12)',
         border: '1px solid rgba(245, 158, 11, 0.35)',
@@ -281,7 +299,15 @@ export function StepMappingOptions({
       const parts = [];
       if (blockingCount > 0) parts.push(`${blockingCount} collision${blockingCount !== 1 ? 's' : ''}`);
       if (schemaIssues > 0) parts.push(`${schemaIssues} schema gap${schemaIssues !== 1 ? 's' : ''}`);
-      if (isMultiFileRun && multiJobHasFailures) parts.push('one or more files failed');
+      if (isMultiFileRun && multiJobHasFailures) {
+        parts.push(`${multiReadiness.failedCount} model${multiReadiness.failedCount !== 1 ? 's' : ''} failed`);
+      }
+      if (isMultiFileRun && multiReadiness.blockedModels.length > 0) {
+        parts.push(`blocking items in ${multiReadiness.blockedModels.join(', ')}`);
+      }
+      if (isMultiFileRun && multiReadiness.lowCompatModels.length > 0) {
+        parts.push(`low compatibility in ${multiReadiness.lowCompatModels.join(', ')}`);
+      }
       const detail = parts.length ? ` — ${parts.join(', ')}` : '';
       return {
         message: `Issues detected${detail}. Review before proceeding.`,
@@ -581,15 +607,27 @@ export function StepMappingOptions({
            entirely when a background dry-run job is active for this
            project (see CreateProjectPage.jsx's handleDryRun). ─────────── */}
       {multiDryRunJob?.job_id && (
-        <MultiFileDryRunStatus
-          projectId={projectId}
-          jobId={multiDryRunJob.job_id}
-          onEdit={(rowId) => {
-            const row = (detectedMappings || []).find(r => r.id === rowId);
-            if (row) setEditingRow(row);
-          }}
-          onStatusChange={setMultiJobStatus}
-        />
+        <div ref={mappingTableRef}>
+          <MultiFileDryRunStatus
+            sections={multiSections}
+            jobStatus={multiJobStatus}
+            projectId={projectId}
+            relationships={(() => {
+              try {
+                const stored = sessionStorage.getItem('detectedRelationships');
+                return stored ? JSON.parse(stored) : [];
+              } catch { return []; }
+            })()}
+            rerunningIds={multiRerunningIds}
+            rerunErrors={multiRerunErrors}
+            pollError={multiPollError}
+            onRetryPolling={onRetryMultiPolling}
+            onEditRow={onMultiEditRow}
+            onBulkResolved={onMultiBulkResolved}
+            onSynonymUpdate={onMultiSynonymUpdate}
+            onRetryFile={onRetryMultiFile}
+          />
+        </div>
       )}
 
       {/* ── New DryRunMappingTable — shown after a successful dry run ─────── */}

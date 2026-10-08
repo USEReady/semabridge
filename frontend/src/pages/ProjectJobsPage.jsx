@@ -11,7 +11,8 @@ import Modal from '../components/common/Modal';
 import RunReportSummary from '../components/RunReportSummary';
 import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
-import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
+import { buildMockRunLogs, getPerModelRunEntries, getRunLogs, saveRunLogs } from '../utils/runLogs';
+import ModelRunSection from '../components/runs/ModelRunSection';
 import { cleanPbixLabel } from '../utils/pbixLabel';
 
 const REFRESH_INTERVAL_MS = 4000;
@@ -329,9 +330,14 @@ export default function ProjectJobsPage() {
     ]);
   };
 
-  const openReportModal = async (run) => {
+  // preselectModel: optional model_reports[].model label -- the per-model
+  // sections of a multi-model run open the modal on that model's own
+  // report. Ignored for single-file runs (no model selector there).
+  const openReportModal = async (run, preselectModel = null) => {
     const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
-    const initialModel = modelEntries.length > 1 ? modelEntries[0].model : null;
+    const initialModel = modelEntries.length > 1
+      ? (preselectModel && modelEntries.some((e) => e.model === preselectModel) ? preselectModel : modelEntries[0].model)
+      : null;
     setReportModalRun(run);
     setReportModalModel(initialModel);
     setReportModalMaximized(false);
@@ -361,10 +367,14 @@ export default function ProjectJobsPage() {
   const [droppedFieldsModalRun, setDroppedFieldsModalRun] = useState(null);
   const [droppedFieldsModalModel, setDroppedFieldsModalModel] = useState(null);
 
-  const openDroppedFieldsModal = (run) => {
+  // preselectModel: optional result.model label (per-model sections of a
+  // multi-model run). Without it, defaults to the first file as before.
+  const openDroppedFieldsModal = (run, preselectModel = null) => {
     const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
     setDroppedFieldsModalRun(run);
-    setDroppedFieldsModalModel(modelEntries.length > 1 ? modelEntries[0].model : null);
+    setDroppedFieldsModalModel(
+      preselectModel || (modelEntries.length > 1 ? modelEntries[0].model : null)
+    );
   };
 
   const selectDroppedFieldsModel = (modelLabel) => {
@@ -600,6 +610,11 @@ export default function ProjectJobsPage() {
               filteredRuns.map((run, index) => {
                 const isExpanded = expandedRunId === run.id;
                 const logs = getRunLogs(run);
+                // Non-empty only for multi-model runs; single-model runs keep
+                // the original combined layout untouched.
+                const perModelEntries = getPerModelRunEntries(run);
+                const isMultiModel = perModelEntries.length > 0;
+                const hasAnyModelReport = perModelEntries.some((entry) => entry.reportModel);
                 return (
                   <div
                     key={run.id ?? index}
@@ -705,7 +720,7 @@ export default function ProjectJobsPage() {
                             show via its own file-selector dropdown. "Dropped Fields" is
                             a separate button/modal next to it -- not a tab inside the
                             report modal -- with its own independent file selector. */}
-                        {(Boolean(run.report_path) || (Array.isArray(run.model_reports) && run.model_reports.length > 0) || (Array.isArray(run.results) && run.results.length > 0)) && (
+                        {!isMultiModel && (Boolean(run.report_path) || (Array.isArray(run.model_reports) && run.model_reports.length > 0) || (Array.isArray(run.results) && run.results.length > 0)) && (
                           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8, marginBottom: 8 }}>
                             {(Boolean(run.report_path) || (Array.isArray(run.model_reports) && run.model_reports.length > 0)) && (
                               <button
@@ -762,24 +777,73 @@ export default function ProjectJobsPage() {
                           <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
 
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                          Execution Stages For Selected Run
-                        </div>
-                        <div
-                          style={{
-                            borderRadius: 8,
-                            border: '1px solid var(--border-main)',
-                            background: 'var(--bg-surface)',
-                            padding: 12,
-                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                            fontSize: 12,
-                            lineHeight: 1.65,
-                            color: 'var(--text-primary)',
-                            whiteSpace: 'pre-wrap',
-                          }}
-                        >
-                          {logs.join('\n')}
-                        </div>
+                        {isMultiModel ? (
+                          <>
+                            {/* Fallback: no per-model report manifest but the
+                                combined run report exists -- keep one run-level
+                                button so it stays reachable. */}
+                            {!hasAnyModelReport && Boolean(run.report_path) && (
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openReportModal(run);
+                                  }}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    padding: '6px 12px',
+                                    borderRadius: 6,
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    background: 'var(--bg-surface-raised)',
+                                    color: 'var(--text-primary)',
+                                    border: '1px solid var(--border-main)',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <FileText size={14} /> View Report Preview
+                                </button>
+                              </div>
+                            )}
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                              Models In This Run ({perModelEntries.length})
+                            </div>
+                            {perModelEntries.map((entry) => (
+                              <ModelRunSection
+                                key={entry.key}
+                                entry={entry}
+                                formatDuration={formatDuration}
+                                defaultOpen={entry.status === 'failed' || entry.status === 'conflict'}
+                                onViewReport={entry.reportModel ? () => openReportModal(run, entry.reportModel) : undefined}
+                                onViewDroppedFields={entry.hasResult && entry.model ? () => openDroppedFieldsModal(run, entry.model) : undefined}
+                              />
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                              Execution Stages For Selected Run
+                            </div>
+                            <div
+                              style={{
+                                borderRadius: 8,
+                                border: '1px solid var(--border-main)',
+                                background: 'var(--bg-surface)',
+                                padding: 12,
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                fontSize: 12,
+                                lineHeight: 1.65,
+                                color: 'var(--text-primary)',
+                                whiteSpace: 'pre-wrap',
+                              }}
+                            >
+                              {logs.join('\n')}
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>

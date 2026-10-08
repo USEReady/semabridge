@@ -522,7 +522,13 @@ def _step2_init_identifiers(
         target_type=target,
         behavior=behavior,
         sync_mode=sync_mode,
-        semantic_view_name_override=getattr(config, "_semantic_view_name_override", None),
+        # A batch-resolved display name (sync_execution_service) doubles as
+        # the view-name override for Fabric jobs; PBIX jobs consume it via
+        # resolved_pbix_display_name instead (conversion/pbix.py).
+        semantic_view_name_override=(
+            getattr(config, "_semantic_view_name_override", None)
+            or (resolved_display_name if source == "fabric" else None)
+        ),
         resolved_pbix_display_name=resolved_display_name,
     )
 

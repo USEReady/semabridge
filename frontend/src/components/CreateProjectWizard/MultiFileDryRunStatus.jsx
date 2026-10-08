@@ -1,101 +1,70 @@
 /**
- * MultiFileDryRunStatus — per-file status list + drill-in + independent
- * re-run for a multi-PBIX background dry-run job.
+ * MultiFileDryRunStatus — one collapsible section per model for a
+ * multi-model (multiple PBIX files OR multiple Fabric models) dry run.
  *
- * Modeled on ProjectJobsPage.jsx's per-run list pattern (CSS-grid rows +
- * StatusBadge + a self-contained setTimeout polling loop) rather than
- * inventing a new list/poll pattern — the difference here is polling one
- * job's per-file statuses instead of a project's per-run history.
+ * Purely presentational: polling, per-file result loading and the per-model
+ * rows/edits live in useMultiDryRunJob (owned by CreateProjectPage) and are
+ * passed in as `sections` (see utils/multiFileDryRunReadiness.js
+ * buildMultiModelSections). Each section's body is a regular
+ * DryRunMappingTable instance fed only that model's rows, so every feature of
+ * the single-model page (filter bar, edit/rename, collision Fix + Resolve
+ * All, synonyms, dropped fields, risk labels) works per model with its own
+ * independent filter state. Nothing here is model-specific.
  *
- * On partial failure, every configured file is still shown here with its
- * own real status/error — a failed file never hides a sibling's success,
- * and clicking "Retry" re-runs only that one file (dry_run_jobs_controller's
- * rerun endpoint resets/reschedules just that file's row).
+ * A section expanded while its model is still running shows the table as
+ * soon as that model's result lands. A failed model shows its real error and
+ * a per-model Retry; other models are never hidden by a sibling's failure.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
-import { api } from '../../utils/api';
+import { useCallback, useState } from 'react';
+import { ChevronDown, ChevronRight, Loader2, RotateCcw } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import DryRunMappingTable from '../DryRunMappingTable';
-import { normalizeRows } from '../../utils/normalizeRows';
 
-const POLL_INTERVAL_MS = 3000;
-const GRID_COLUMNS = '28px 1fr 140px 120px';
+function pluralize(count, word) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
 
-export default function MultiFileDryRunStatus({ projectId, jobId, onEdit, onStatusChange }) {
-  const [status, setStatus] = useState(null); // { status, files: [...] }
-  const [expandedFileId, setExpandedFileId] = useState(null);
-  const [fileDetails, setFileDetails] = useState({}); // file_id -> { loading, result, error }
-  const [rerunningFileIds, setRerunningFileIds] = useState(new Set());
-  const timeoutRef = useRef(null);
-  const cancelledRef = useRef(false);
+function SectionCounts({ section }) {
+  if (!section.loaded) return null;
+  return (
+    <span style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
+      {pluralize(section.columnCount, 'column')} · {pluralize(section.metricCount, 'metric')}
+      {' · '}
+      <span style={{ color: section.blockingCount > 0 ? 'var(--color-error)' : 'var(--color-success)', fontWeight: 700 }}>
+        {section.blockingCount > 0 ? `${section.blockingCount} blocking` : 'no blocking issues'}
+      </span>
+    </span>
+  );
+}
 
-  const poll = useCallback(async () => {
-    if (!projectId || !jobId || cancelledRef.current) return;
-    try {
-      const data = await api.getDryRunJobStatus(projectId, jobId);
-      if (cancelledRef.current) return;
-      setStatus(data);
-      // Surface the REAL aggregate job status (running/success/failed/
-      // partial, from _aggregate_job_status on the backend) to the parent
-      // step, which otherwise has no way to know per-file completion --
-      // this is what StepMappingOptions.jsx's readiness banner and
-      // Proceed/Continue buttons must gate on instead of the "job was
-      // created" signal they used to rely on.
-      onStatusChange?.(data);
-      if (data.status === 'running' || data.status === 'pending') {
-        timeoutRef.current = setTimeout(poll, POLL_INTERVAL_MS);
-      }
-    } catch (err) {
-      if (!cancelledRef.current) {
-        timeoutRef.current = setTimeout(poll, POLL_INTERVAL_MS);
-      }
-    }
-  }, [projectId, jobId, onStatusChange]);
+export default function MultiFileDryRunStatus({
+  sections = [],
+  jobStatus = null,
+  projectId,
+  relationships = [],
+  rerunningIds = new Set(),
+  rerunErrors = {},
+  pollError = '',
+  onRetryPolling,
+  onEditRow,          // (fileId, rowId, updates?) => void
+  onBulkResolved,     // (fileId, resolvedMap) => void
+  onSynonymUpdate,    // (fileId, rowId, synonyms) => void
+  onRetryFile,        // (fileId) => void
+}) {
+  const [expanded, setExpanded] = useState(() => new Set());
 
-  useEffect(() => {
-    cancelledRef.current = false;
-    setStatus(null);
-    setExpandedFileId(null);
-    setFileDetails({});
-    poll();
-    return () => {
-      cancelledRef.current = true;
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [poll]);
+  const toggle = useCallback((fileId) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId); else next.add(fileId);
+      return next;
+    });
+  }, []);
 
-  const toggleExpand = useCallback(async (fileId) => {
-    if (expandedFileId === fileId) {
-      setExpandedFileId(null);
-      return;
-    }
-    setExpandedFileId(fileId);
-    if (fileDetails[fileId]?.result || fileDetails[fileId]?.loading) return;
-    setFileDetails((prev) => ({ ...prev, [fileId]: { loading: true } }));
-    try {
-      const detail = await api.getDryRunJobFile(projectId, jobId, fileId);
-      setFileDetails((prev) => ({ ...prev, [fileId]: { loading: false, result: detail.result, error: detail.error } }));
-    } catch (err) {
-      setFileDetails((prev) => ({ ...prev, [fileId]: { loading: false, error: err?.message || 'Failed to load results.' } }));
-    }
-  }, [expandedFileId, fileDetails, projectId, jobId]);
+  const allExpanded = sections.length > 0 && sections.every((s) => expanded.has(s.fileId));
+  const kind = sections.length === 1 ? 'model' : 'models';
 
-  const handleRerun = useCallback(async (fileId, evt) => {
-    evt.stopPropagation();
-    setRerunningFileIds((prev) => new Set(prev).add(fileId));
-    setFileDetails((prev) => { const next = { ...prev }; delete next[fileId]; return next; });
-    try {
-      await api.rerunDryRunJobFile(projectId, jobId, fileId);
-    } finally {
-      setRerunningFileIds((prev) => { const next = new Set(prev); next.delete(fileId); return next; });
-    }
-    // Resume polling immediately to reflect the reset 'pending' state and
-    // then the new outcome, without touching any sibling file's row.
-    poll();
-  }, [projectId, jobId, poll]);
-
-  if (!status) {
+  if (!jobStatus && sections.length === 0) {
     return (
       <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 16, fontSize: 12, color: 'var(--text-tertiary)' }}>
         Starting dry-run job…
@@ -104,89 +73,135 @@ export default function MultiFileDryRunStatus({ projectId, jobId, onEdit, onStat
   }
 
   return (
-    <div style={{ border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
-          Multi-file dry run — {status.files.length} file{status.files.length !== 1 ? 's' : ''}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+          Multi-model dry run — {sections.length} {kind}
         </div>
-        <StatusBadge status={status.status} size="sm" />
+        {jobStatus?.status && <StatusBadge status={jobStatus.status} size="sm" />}
+        <button
+          type="button"
+          onClick={() => setExpanded(allExpanded ? new Set() : new Set(sections.map((s) => s.fileId)))}
+          style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+        >
+          {allExpanded ? 'Collapse all' : 'Expand all'}
+        </button>
       </div>
 
-      {status.files.map((file) => {
-        const expanded = expandedFileId === file.file_id;
-        const detail = fileDetails[file.file_id];
-        const isRerunning = rerunningFileIds.has(file.file_id);
-        const canRerun = file.status === 'failed' && !isRerunning;
+      {pollError && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.10)', color: 'var(--color-error)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+          <span style={{ flex: 1 }}>Lost contact with the dry-run job: {pollError}</span>
+          {onRetryPolling && (
+            <button type="button" onClick={onRetryPolling} style={{ background: 'none', border: '1px solid var(--border-main)', borderRadius: 6, padding: '3px 8px', fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              Reconnect
+            </button>
+          )}
+        </div>
+      )}
+
+      {sections.map((section) => {
+        const isOpen = expanded.has(section.fileId);
+        const isRerunning = rerunningIds.has(section.fileId);
+        const failed = section.status === 'failed' || Boolean(section.loadError);
+        const canRetry = failed && !isRerunning;
+        const badgeStatus = isRerunning ? 'running' : section.status;
+        const errorText = section.status === 'failed'
+          ? (section.error || 'This model failed during the dry run.')
+          : section.loadError;
         return (
-          <div key={file.file_id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div
+            key={section.fileId}
+            style={{
+              border: `1px solid ${failed ? 'rgba(239, 68, 68, 0.35)' : section.blockingCount > 0 ? 'rgba(251, 191, 36, 0.35)' : 'var(--border-main)'}`,
+              borderRadius: 10,
+              background: 'var(--bg-surface)',
+              overflow: 'hidden',
+            }}
+          >
             <div
-              onClick={() => toggleExpand(file.file_id)}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: GRID_COLUMNS,
-                gap: 10,
-                alignItems: 'center',
-                padding: '10px 14px',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
+              onClick={() => toggle(section.fileId)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(section.fileId); } }}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', userSelect: 'none' }}
             >
-              {expanded
-                ? <ChevronDown size={13} style={{ color: 'var(--text-tertiary)' }} />
-                : <ChevronRight size={13} style={{ color: 'var(--text-tertiary)' }} />}
-              <div style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{file.filename}</span>
-                {file.status === 'failed' && file.error_summary && (
-                  <div style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {file.error_summary}
+              {isOpen
+                ? <ChevronDown size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                : <ChevronRight size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div title={section.sourceRef || section.label} style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {section.label}
+                </div>
+                {failed && errorText && !isOpen && (
+                  <div title={errorText} style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {errorText}
                   </div>
                 )}
               </div>
-              <StatusBadge status={isRerunning ? 'running' : file.status} size="sm" />
-              <div>
-                {canRerun && (
-                  <button
-                    onClick={(evt) => handleRerun(file.file_id, evt)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      background: 'none', border: '1px solid var(--border-main)', borderRadius: 6,
-                      padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer',
-                    }}
-                  >
-                    <RotateCcw size={11} /> Retry
-                  </button>
-                )}
-              </div>
+              <SectionCounts section={section} />
+              <StatusBadge status={badgeStatus} size="sm" />
+              {canRetry && onRetryFile && (
+                <button
+                  type="button"
+                  onClick={(evt) => { evt.stopPropagation(); onRetryFile(section.fileId); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    background: 'none', border: '1px solid var(--border-main)', borderRadius: 6,
+                    padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer',
+                  }}
+                >
+                  <RotateCcw size={11} /> Retry
+                </button>
+              )}
             </div>
 
-            {expanded && (
-              <div style={{ padding: '0 14px 14px' }}>
-                {detail?.loading && (
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>Loading results…</div>
+            {rerunErrors[section.fileId] && (
+              <div style={{ padding: '0 14px 8px', fontSize: 11, color: 'var(--color-error)' }}>
+                Retry failed: {rerunErrors[section.fileId]}
+              </div>
+            )}
+
+            {isOpen && (
+              <div style={{ padding: '0 14px 14px', borderTop: '1px solid var(--border-subtle)' }}>
+                {(section.status === 'pending' || section.status === 'running' || isRerunning) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-tertiary)', padding: '12px 0' }}>
+                    <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                    Dry run in progress for this model — results will appear here as soon as it finishes.
+                  </div>
                 )}
-                {detail?.error && !detail?.result && (
-                  <div style={{ fontSize: 12, color: 'var(--color-error)', padding: '8px 0' }}>{detail.error}</div>
+                {section.loading && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-tertiary)', padding: '12px 0' }}>
+                    <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                    Loading results…
+                  </div>
                 )}
-                {detail?.result && (
-                  <DryRunMappingTable
-                    // MUST go through normalizeRows() here, same as the single-file
-                    // flow (CreateProjectPage.jsx's runDryRun) -- detail.result is
-                    // the RAW /dry-run-job file response (source_name/target_name/
-                    // source_expression/...), not the NormalizedRow[] shape
-                    // DryRunMappingTable's `mappings` prop requires. Passing
-                    // detail.result.entity_mappings directly here previously
-                    // produced blank DAX expressions and "fx Measure"/"unknown"/
-                    // "-- unmapped --" placeholders on every row despite the
-                    // underlying dry run having succeeded. See the guardrail test
-                    // in DryRunMappingTable.guardrail.test.js, which fails the
-                    // build if any future caller reintroduces this.
-                    mappings={normalizeRows(detail.result)}
-                    summary={detail.result.summary}
-                    onEdit={onEdit}
-                    projectId={projectId}
-                    droppedEntities={detail.result.dropped_entities || []}
-                  />
+                {failed && errorText && (
+                  <div style={{ fontSize: 12, color: 'var(--color-error)', padding: '12px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {errorText}
+                  </div>
+                )}
+                {section.loaded && (
+                  <div style={{ paddingTop: 12 }}>
+                    <DryRunMappingTable
+                      // key: a re-run (new attempt) starts with fresh filter state.
+                      key={section.attempt}
+                      // Rows are already NormalizedRow[] -- useMultiDryRunJob runs
+                      // every per-file result through normalizeRows() on load.
+                      mappings={section.rows}
+                      summary={section.result?.summary}
+                      relationships={relationships}
+                      onEdit={(rowId, updates) => onEditRow?.(section.fileId, rowId, updates)}
+                      onBulkResolved={(resolvedMap) => onBulkResolved?.(section.fileId, resolvedMap)}
+                      onSynonymUpdate={(rowId, synonyms) => onSynonymUpdate?.(section.fileId, rowId, synonyms)}
+                      projectId={section.previewProjectId || section.result?.project_id || projectId}
+                      modelName={section.result?.model_name || section.label}
+                      schemaConflicts={section.result?.schema_conflicts || []}
+                      compatibilityScore={section.compatibilityScore}
+                      onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
+                      droppedEntities={section.result?.dropped_entities || []}
+                    />
+                  </div>
                 )}
               </div>
             )}

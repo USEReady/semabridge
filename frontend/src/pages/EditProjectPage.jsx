@@ -84,6 +84,14 @@ export default function EditProjectPage() {
       tags: meta?.tags || project?.tags || [],
       // persist sync mode if provided by the wizard (only copy|upsert allowed)
       ...(nextSyncMode ? { sync_mode: nextSyncMode } : {}),
+      // Dry-run provenance so the backend can migrate synonyms edited during
+      // this edit session's dry run (single: preview_project_id; multi-model:
+      // dry_run_job_id + preview_project_ids) onto this project.
+      ...(meta?.dry_run_job_id ? { dry_run_job_id: meta.dry_run_job_id } : {}),
+      ...(meta?.preview_project_id ? { preview_project_id: meta.preview_project_id } : {}),
+      ...(Array.isArray(meta?.preview_project_ids) && meta.preview_project_ids.length > 0
+        ? { preview_project_ids: meta.preview_project_ids }
+        : {}),
     });
     if (nextSyncMode && typeof localStorage !== 'undefined') {
       localStorage.setItem(`project_${id}_syncMode`, nextSyncMode);

@@ -136,3 +136,94 @@ def find_pbix_view_name_collisions(
         view_name = get_pbix_deployment_view_name(path, platform)
         by_view_name.setdefault(view_name, []).append(path)
     return {name: paths for name, paths in by_view_name.items() if len(paths) > 1}
+
+
+# Maximum length of a per-model physical namespace prefix. Snowflake allows
+# 255-char identifiers, but the prefix is prepended to every table/view name
+# of the model, so it is kept short; longer names are truncated and given a
+# short deterministic hash so two long, similar names never collapse.
+_PHYSICAL_NAMESPACE_MAX_LEN = 40
+
+
+def build_physical_namespace(name: str) -> str:
+    """Return a deterministic, identifier-safe per-model namespace prefix.
+
+    Used ONLY for multi-model batches (see sync_execution_service's
+    _assign_batch_physical_namespaces): every physical object a model's
+    deploy creates in the shared target schema (base tables, *_ENRICHED
+    views, MEASURES_* tables) is prefixed with this value so two models of
+    the same project that both contain e.g. a ``Sales`` table never share
+    or overwrite each other's physical objects. Single-model runs never get
+    a namespace, so their object names are unchanged.
+    """
+    import hashlib
+
+    from semabridge.utils.identifiers import IdentifierSanitizer
+
+    raw = str(name or "").strip() or "MODEL"
+    stem = Path(raw).stem if raw.lower().endswith(".pbix") else raw
+    safe = IdentifierSanitizer().sanitize_table_name(stem) or "MODEL"
+    safe = safe.upper()
+    if len(safe) > _PHYSICAL_NAMESPACE_MAX_LEN:
+        digest = hashlib.sha1(safe.encode("utf-8")).hexdigest()[:8].upper()
+        safe = f"{safe[: _PHYSICAL_NAMESPACE_MAX_LEN - 9].rstrip('_')}_{digest}"
+    return safe
+
+
+def make_unique_labels(labels: List[str]) -> List[str]:
+    """Suffix duplicate labels ("_2", "_3", ...) so every entry is unique.
+
+    The first occurrence keeps its label unchanged, mirroring
+    resolve_pbix_deployment_base_names()'s collision policy.
+    """
+    seen: Dict[str, int] = {}
+    taken = set(labels)
+    result: List[str] = []
+    for label in labels:
+        count = seen.get(label, 0) + 1
+        seen[label] = count
+        if count == 1:
+            result.append(label)
+            continue
+        n = count
+        candidate = f"{label}_{n}"
+        while candidate in taken:
+            n += 1
+            candidate = f"{label}_{n}"
+        taken.add(candidate)
+        result.append(candidate)
+    return result
+
+
+class BatchViewNameRegistry:
+    """Thread-safe claim registry for view base names within ONE sync batch.
+
+    PBIX jobs get their batch-disambiguated names up front (file names are
+    known before extraction). Fabric dataset display names are only known
+    after each job's own extraction, so jobs of a multi-model Fabric batch
+    claim their name here at conversion time: the first claimant keeps the
+    clean name, later claimants of the same name get "_2"/"_3" -- the same
+    suffix policy resolve_pbix_deployment_base_names() uses.
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._claims: Dict[str, str] = {}  # upper-cased name -> owner key
+
+    def claim(self, owner_key: str, base_name: str) -> str:
+        base = str(base_name or "").strip() or "model"
+        with self._lock:
+            n = 1
+            candidate = base
+            while True:
+                owner = self._claims.get(candidate.upper())
+                if owner is None or owner == owner_key:
+                    self._claims[candidate.upper()] = owner_key
+                    return candidate
+                n += 1
+                candidate = f"{base}_{n}"
+
+    def __getstate__(self):  # pragma: no cover - only hit by process pools
+        raise TypeError("BatchViewNameRegistry is thread-scoped and cannot be pickled")

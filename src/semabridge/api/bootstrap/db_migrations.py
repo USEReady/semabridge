@@ -42,6 +42,76 @@ def _table_exists(engine, table_name: str) -> bool:
     return row is not None
 
 
+# Columns added to the dry-run job tables for multi-model (PBIX + Fabric)
+# dry-run jobs. (table, column, DDL type) — all nullable so existing rows load.
+_DRY_RUN_JOB_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("dry_run_jobs", "source_type", "VARCHAR(50)"),
+    ("dry_run_jobs", "options_json", "TEXT"),
+    ("dry_run_job_files", "source_ref", "TEXT"),
+    ("dry_run_job_files", "source_type", "VARCHAR(50)"),
+    ("dry_run_job_files", "label", "VARCHAR(255)"),
+    ("dry_run_job_files", "preview_project_id", "VARCHAR(255)"),
+    ("dry_run_job_files", "queued_at", "__TS__"),
+)
+
+
+def ensure_dry_run_job_columns(engine=None) -> list[str]:
+    """Idempotently add the multi-model dry-run job columns to pre-existing
+    ``dry_run_jobs`` / ``dry_run_job_files`` tables (``create_all()`` never adds
+    columns to an existing table). Returns the DDL statements applied.
+
+    Safe to call repeatedly; a no-op when the tables don't exist yet (they are
+    then created by ``create_all()`` with every column already present).
+    """
+    from sqlalchemy import text
+
+    if engine is None:
+        from semabridge.repository.orm.session_factory import get_engine
+
+        engine = get_engine()
+
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        ts_type = "TIMESTAMP WITH TIME ZONE"
+    elif dialect == "duckdb":
+        ts_type = "TIMESTAMPTZ"
+    else:
+        ts_type = "TIMESTAMP"
+
+    def _columns_for(table: str) -> set[str]:
+        # SQLite has no information_schema; its inspector is safe to use
+        # (the DuckDB pg_catalog problem the helpers above avoid is
+        # DuckDB-specific).
+        if dialect == "sqlite":
+            from sqlalchemy import inspect as _sa_inspect
+
+            insp = _sa_inspect(engine)
+            if not insp.has_table(table):
+                return set()
+            return {c["name"] for c in insp.get_columns(table)} or {"__unknown__"}
+        if not _table_exists(engine, table):
+            return set()
+        return _get_column_names(engine, table) or {"__unknown__"}
+
+    applied: list[str] = []
+    columns_cache: dict[str, set[str]] = {}
+    for table, column, ddl_type in _DRY_RUN_JOB_COLUMNS:
+        if table not in columns_cache:
+            columns_cache[table] = _columns_for(table)
+        existing = columns_cache[table]
+        if not existing or "__unknown__" in existing or column in existing:
+            continue
+        col_type = ts_type if ddl_type == "__TS__" else ddl_type
+        applied.append(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+    if applied:
+        with engine.begin() as conn:
+            for ddl in applied:
+                conn.execute(text(ddl))
+        logger.info("Applied dry-run job schema fixes: %s", ", ".join(applied))
+    return applied
+
+
 def _apply_schema_compatibility_fixes() -> None:
     """Apply lightweight column-level compatibility fixes for existing DBs.
 
@@ -121,6 +191,11 @@ def _apply_schema_compatibility_fixes() -> None:
             pending_alters.append("ALTER TABLE runs ADD COLUMN before_target_snapshot_ids TEXT")
         if "after_target_snapshot_ids" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN after_target_snapshot_ids TEXT")
+
+    try:
+        ensure_dry_run_job_columns(engine)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not apply dry-run job schema fixes: %s", exc)
 
     # In PostgreSQL, migrate the unique constraint from `tag` to `(owner_id, tag)`
     if dialect == "postgresql":
