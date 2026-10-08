@@ -34,8 +34,8 @@ from semabridge.repository.orm.session_factory import db_manager
 
 @pytest.fixture(autouse=True)
 def _reset_db():
-    from semabridge.repository.model_repository import ModelRepository
-    ModelRepository()
+    from semabridge.api.services.dry_run_job_service import _ensure_schema
+    _ensure_schema()
     with db_manager.get_session() as session:
         session.query(DryRunJobFile).delete()
         session.query(DryRunJob).delete()
