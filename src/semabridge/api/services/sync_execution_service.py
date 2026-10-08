@@ -494,7 +494,34 @@ def _config_with_model_scoped_overrides(config: Dict[str, Any], job: Dict[str, A
     return {**config, "mappings_overrides": scoped}
 
 
-def _run_single_job(
+def _run_single_job(job: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
+    """Run one model's job inside its own log scope: every log record it
+    emits (in this thread/context) is tagged with the project run id and
+    this model and written to this model's own log file."""
+    from semabridge.core.run_model_logs import append_model_log_line, model_log_scope
+
+    model_label = job["model_label"]
+    run_id = job.get("project_run_id")
+    project_id = job.get("log_project_id")
+    with model_log_scope(project_id, run_id, model_label):
+        logger.info(
+            "Model '%s' started (view=%s, prefix=%s)",
+            model_label, job.get("resolved_display_name") or "-", job.get("physical_namespace") or "-",
+        )
+        result = _run_single_job_impl(job, **kwargs)
+        logger.info(
+            "Model '%s' finished: status=%s view=%s duration_ms=%s",
+            model_label, result.get("status"), result.get("view_name") or "-", result.get("duration_ms"),
+        )
+    if run_id:
+        # The model's step-by-step console summary (incl. errors) at the end
+        # of its own log, tagged like every other line.
+        for line in ((result.get("console") or {}).get("lines") or []):
+            append_model_log_line(project_id or "", run_id, model_label, f"[run={run_id}] [model={model_label}] {line}")
+    return result
+
+
+def _run_single_job_impl(
     job: Dict[str, Any],
     *,
     engine_source_type: str,
@@ -878,6 +905,12 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     config_path = str(Path(_config_path).resolve()) if _config_path else ""
     requested_project_id = str(payload.get("project_id") or config.get("project_id") or "").strip() or None
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
+    # Per-model log files are keyed by the PROJECT run id (set by run_service
+    # for real runs; absent for dry runs and direct calls -> no log files).
+    project_run_id = str(payload.get("project_run_id") or "").strip() or None
+    for job in sync_jobs:
+        job["project_run_id"] = project_run_id
+        job["log_project_id"] = requested_project_id
     settings = get_settings()
 
     _fabric_env_workspace_id = ""

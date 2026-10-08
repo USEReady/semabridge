@@ -256,6 +256,9 @@ export function getPerModelRunEntries(run) {
     const model = result.model ? String(result.model) : '';
     const reportEntry = findReport(model);
     const reconciliation = result.reconciliation || result.summary?.reconciliation || null;
+    const hasReport = result.has_report !== undefined ? Boolean(result.has_report) : Boolean(reportEntry);
+    const hasSummary = result.has_summary !== undefined ? Boolean(result.has_summary) : hasReport;
+    const hasLog = result.has_log !== undefined ? Boolean(result.has_log) : (result.logs?.length > 0 || (result.console?.lines?.length > 0));
     return {
       key: uniqueKey(model || `model-${index + 1}`),
       model: model || null,
@@ -266,7 +269,10 @@ export function getPerModelRunEntries(run) {
       durationMs: durationMsForResult(result),
       logs: consoleLinesForResult(result),
       reportEntry,
-      reportModel: reportEntry ? String(reportEntry.model) : null,
+      reportModel: reportEntry ? String(reportEntry.model) : (hasReport && model ? model : null),
+      has_report: hasReport,
+      has_summary: hasSummary,
+      has_log: hasLog,
       droppedEntities: Array.isArray(result.dropped_entities) ? result.dropped_entities : [],
       reconciliation: reconciliation && typeof reconciliation === 'object' ? reconciliation : null,
       hasResult: true,

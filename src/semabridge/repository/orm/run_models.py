@@ -63,6 +63,44 @@ class Run(Base):
         return f"<Run(run_id={self.run_id!r}, status={self.status!r})>"
 
 
+class RunModelResult(Base):
+    """Per-model outcome of one project run (one row per model of the run).
+
+    Survives server restarts: the in-memory/JSON run store keeps only
+    run-level fields, so the Runs page rebuilds each model's section (status,
+    view, duration, drop summary, reconciliation, artifact paths) from here.
+    No FK to ``runs``: ``run_id`` is the PROJECT run id, not an engine run.
+    """
+
+    __tablename__ = "run_model_results"
+    __table_args__ = (
+        Index("ix_run_model_results_run", "run_id"),
+        Index("ix_run_model_results_project", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
+    view_name: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    physical_namespace: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dropped_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reconciliation_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    report_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    log_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        _UTC_DT, server_default=func.now(), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<RunModelResult(run_id={self.run_id!r}, model={self.model!r}, status={self.status!r})>"
+
+
 class SourceArtifact(Base):
     """Raw source-format blob per run.
 

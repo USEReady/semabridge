@@ -3,6 +3,7 @@
 Provides run creation, background execution, run-now, get-runs, run-conflicts,
 manual deploy, project lineage, and clear-job-runs.
 """
+import asyncio
 import json
 import os
 import threading
@@ -470,6 +471,8 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
             # connector details, but the deploy flag must be set here so
             # execute_sync_request does not skip Stage 8/9.
             "deploy": True,
+            # Keys each model's own log file (see core/run_model_logs.py).
+            "project_run_id": str(run.get("id") or run.get("run_id") or ""),
         }
         account_id = run.get("account_id")
         if account_id:
@@ -733,6 +736,14 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
         except Exception as model_report_exc:
             logger.debug("Per-model run reports skipped for %s: %s", project_id, model_report_exc)
             run["model_reports"] = []
+        try:
+            # Per-model outcome rows + JSON summaries: survive a restart (the
+            # run store keeps only run-level fields).
+            from semabridge.api.services.run_model_results import persist_run_model_results
+
+            persist_run_model_results(run, project_cfg)
+        except Exception as persist_exc:
+            logger.warning("Per-model results not persisted for %s: %s", project_id, persist_exc)
         _compat_save_store()
     return run
 
@@ -800,7 +811,7 @@ async def get_project_runs_compat(project_id: str):
 
     runs = _compat_project_runs.get(pid, [])
     if runs:
-        return [_enrich_run_report_meta(mask_run_for_display(r)) for r in runs]
+        return [_enrich_run_report_meta(mask_run_for_display(_hydrate_model_results(r))) for r in runs]
 
     try:
         from semabridge.repository.orm.models import Run
@@ -861,10 +872,31 @@ async def get_project_runs_compat(project_id: str):
             if results:
                 _compat_project_runs[pid] = results
 
-            return [_enrich_run_report_meta(mask_run_for_display(r)) for r in results]
+            return [_enrich_run_report_meta(mask_run_for_display(_hydrate_model_results(r))) for r in results]
     except Exception as exc:
         logger.error("Failed to retrieve runs from ORM: %s", exc)
         return []
+
+
+def _hydrate_model_results(run: Dict[str, Any]) -> Dict[str, Any]:
+    """A run read back after a restart has no in-memory per-model results;
+    rebuild them from the persisted per-model rows so every model section
+    still shows its status, view, duration, drops and reconciliation.
+    Returns a copy (the stored run is never mutated)."""
+    if not isinstance(run, dict) or run.get("results"):
+        return run
+    pid = str(run.get("project_id") or "")
+    rid = str(run.get("id") or run.get("run_id") or "")
+    if not (pid and rid):
+        return run
+    from semabridge.api.services.run_model_results import load_run_model_results
+
+    persisted = load_run_model_results(pid, rid)
+    if not persisted:
+        return run
+    hydrated = dict(run)
+    hydrated["results"] = persisted
+    return hydrated
 
 
 def list_demo_masked_failures(since: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -1100,6 +1132,7 @@ async def get_run_model_report_data_compat(project_id: str, run_id: str, model_l
     completed successfully.
     """
     from semabridge.api.services.run_report_service import build_run_report_data, _describe_source_for_result
+    from semabridge.api.services.run_model_results import load_model_summary
 
     _compat_ensure_loaded()
     run = None
@@ -1107,11 +1140,17 @@ async def get_run_model_report_data_compat(project_id: str, run_id: str, model_l
         if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
             run = candidate
             break
+
+    results = [r for r in ((run or {}).get("results") or []) if isinstance(r, dict)]
+    result = next((r for r in results if str(r.get("model")) == model_label), None)
+    if result is None:
+        # After a restart the live results are gone; the summary written when
+        # the run completed is the authoritative copy.
+        persisted = load_model_summary(project_id, run_id, model_label)
+        if persisted is not None:
+            return persisted
     if run is None:
         return None
-
-    results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
-    result = next((r for r in results if str(r.get("model")) == model_label), None)
     if result is None:
         if not results:
             # Not "this model_label doesn't exist" -- results are entirely
@@ -1127,6 +1166,28 @@ async def get_run_model_report_data_compat(project_id: str, run_id: str, model_l
     scoped_run["results"] = [result]
     source_override = _describe_source_for_result(result, project_cfg, run)
     return build_run_report_data(scoped_run, project_cfg, source_override=source_override)
+
+
+async def get_run_models_compat(project_id: str, run_id: str) -> List[Dict[str, Any]]:
+    """Per-model manifest for a project run (models, statuses, artifact existence)."""
+    from semabridge.api.services.run_model_results import run_model_manifest
+
+    return await asyncio.to_thread(run_model_manifest, project_id, run_id)
+
+
+async def get_run_model_logs_compat(
+    project_id: str, run_id: str, model_label: str, offset: int = 0
+) -> Dict[str, Any]:
+    """Incremental log lines for one model of a project run."""
+    from semabridge.core.run_model_logs import read_model_log
+
+    return await asyncio.to_thread(read_model_log, project_id, run_id, model_label, offset=offset)
+
+
+def run_belongs_to_project_compat(project_id: str, run_id: str) -> bool:
+    from semabridge.api.services.run_model_results import run_belongs_to_project
+
+    return run_belongs_to_project(project_id, run_id)
 
 
 async def get_run_conflicts_compat(run_id: str):

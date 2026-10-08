@@ -200,6 +200,32 @@ export default function ProjectJobsPage() {
   const setSearchUseRegex = (v) => setJobsCache({ searchUseRegex: typeof v === 'function' ? v(searchUseRegex) : v });
   const setStatusFilter = (v) => setJobsCache({ statusFilter: typeof v === 'function' ? v(statusFilter) : v });
   const setExpandedRunId = (v) => setJobsCache({ expandedRunId: typeof v === 'function' ? v(expandedRunId) : v });
+  const [liveManifests, setLiveManifests] = useState({});
+  const [expandedModelSections, setExpandedModelSections] = useState({});
+
+  useEffect(() => {
+    if (!expandedRunId) return;
+    const activeRun = runs.find(r => r.id === expandedRunId);
+    if (!activeRun || activeRun.status !== 'running') return;
+
+    let cancelled = false;
+    const fetchManifest = async () => {
+      try {
+        const manifest = await api.getRunModels(activeRun.project_id, activeRun.id);
+        if (!cancelled && Array.isArray(manifest) && manifest.length > 0) {
+          setLiveManifests(prev => ({ ...prev, [activeRun.id]: manifest }));
+        }
+      } catch {
+        // best effort polling while running
+      }
+    };
+    fetchManifest();
+    const interval = setInterval(fetchManifest, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [expandedRunId, runs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -606,11 +632,11 @@ export default function ProjectJobsPage() {
               filteredRuns.map((run, index) => {
                 const isExpanded = expandedRunId === run.id;
                 const logs = getRunLogs(run);
-                // Non-empty only for multi-model runs; single-model runs keep
-                // the original combined layout untouched.
-                const perModelEntries = getPerModelRunEntries(run);
+                const effectiveRun = (liveManifests[run.id] && run.status === 'running')
+                  ? { ...run, results: liveManifests[run.id] }
+                  : run;
+                const perModelEntries = getPerModelRunEntries(effectiveRun);
                 const isMultiModel = perModelEntries.length > 0;
-                const hasAnyModelReport = perModelEntries.some((entry) => entry.reportModel);
                 return (
                   <div
                     key={run.id ?? index}
@@ -710,12 +736,7 @@ export default function ProjectJobsPage() {
                           <InfoCard label="Message" value={run.message || run.error || '—'} />
                         </div>
 
-                        {/* "View Report Preview" -- always exactly ONE button per run,
-                            whether it's a single-file run or a multi-PBIX batch. The
-                            modal itself (below) handles picking which file's report to
-                            show via its own file-selector dropdown. "Dropped Fields" is
-                            a separate button/modal next to it -- not a tab inside the
-                            report modal -- with its own independent file selector. */}
+                        {/* "View Report Preview" for single-model runs */}
                         {!isMultiModel && Boolean(run.has_report || run.report_path) && (
                           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, marginBottom: 8 }}>
                             <button
@@ -749,46 +770,64 @@ export default function ProjectJobsPage() {
 
                         {isMultiModel ? (
                           <>
-                            {/* Fallback: no per-model report manifest but the
-                                combined run report exists -- keep one run-level
-                                button so it stays reachable. */}
-                            {!hasAnyModelReport && Boolean(run.has_report || run.report_path) && (
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 6 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                Models In This Run ({perModelEntries.length})
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openReportModal(run);
-                                  }}
+                                  onClick={() => setExpandedModelSections(prev => ({
+                                    ...prev,
+                                    ...Object.fromEntries(perModelEntries.map(e => [e.key, true])),
+                                  }))}
                                   style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    padding: '6px 12px',
-                                    borderRadius: 6,
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    background: 'var(--bg-surface-raised)',
-                                    color: 'var(--text-primary)',
-                                    border: '1px solid var(--border-main)',
+                                    fontSize: 11,
+                                    color: 'var(--text-tertiary)',
+                                    background: 'transparent',
+                                    border: 'none',
                                     cursor: 'pointer',
+                                    padding: 0,
                                   }}
+                                  className="hover:text-primary transition-colors"
                                 >
-                                  <FileText size={14} /> View Report Preview
+                                  Expand all
+                                </button>
+                                <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>•</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedModelSections(prev => ({
+                                    ...prev,
+                                    ...Object.fromEntries(perModelEntries.map(e => [e.key, false])),
+                                  }))}
+                                  style={{
+                                    fontSize: 11,
+                                    color: 'var(--text-tertiary)',
+                                    background: 'transparent',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                  }}
+                                  className="hover:text-primary transition-colors"
+                                >
+                                  Collapse all
                                 </button>
                               </div>
-                            )}
-                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                              Models In This Run ({perModelEntries.length})
                             </div>
                             {perModelEntries.map((entry) => (
                               <ModelRunSection
                                 key={entry.key}
                                 entry={entry}
+                                projectId={run.project_id}
+                                runId={run.id}
+                                isRunActive={run.status === 'running'}
+                                isOpen={expandedModelSections[entry.key]}
+                                onToggle={() => setExpandedModelSections(prev => ({
+                                  ...prev,
+                                  [entry.key]: !(prev[entry.key] !== undefined ? prev[entry.key] : (entry.status === 'failed' || entry.status === 'conflict')),
+                                }))}
                                 formatDuration={formatDuration}
                                 defaultOpen={entry.status === 'failed' || entry.status === 'conflict'}
-                                onViewReport={entry.reportModel ? () => openReportModal(run, entry.reportModel) : undefined}
-                                onViewDroppedFields={entry.hasResult && entry.model ? () => openDroppedFieldsModal(run, entry.model) : undefined}
                               />
                             ))}
                           </>

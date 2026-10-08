@@ -27,6 +27,7 @@ from semabridge.repository.orm.project_models import (
 )
 from semabridge.repository.orm.run_models import (
     Run,
+    RunModelResult,
     SourceArtifact,
     SyncConflictRow,
     SyncCheckpointRow,
@@ -72,6 +73,7 @@ __all__ = [
     "RetentionPolicy",
     # Execution runs
     "Run",
+    "RunModelResult",
     "SourceArtifact",
     "SyncConflictRow",
     "SyncCheckpointRow",

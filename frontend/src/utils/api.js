@@ -1891,6 +1891,25 @@ export const api = {
         return handleResponse(res);
     },
 
+    async getRunModels(projectId, runId) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/models`);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch run models with status ${res.status}`);
+        }
+        return handleResponse(res);
+    },
+
+    async getRunModelLogs(projectId, runId, modelLabel, offset = 0) {
+        const query = offset ? `?offset=${encodeURIComponent(offset)}` : '';
+        const res = await authFetch(
+            `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/models/${encodeURIComponent(modelLabel)}/logs${query}`
+        );
+        if (!res.ok) {
+            throw new Error(`Failed to fetch run model logs with status ${res.status}`);
+        }
+        return handleResponse(res);
+    },
+
     async runProjectNow(projectId, payload = null) {
         invalidateApiCache('jobs:runs:');
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {

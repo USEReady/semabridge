@@ -84,6 +84,9 @@ from semabridge.api.services.project_domain_service import (
     get_run_model_report_compat,
     get_run_report_data_compat,
     get_run_model_report_data_compat,
+    get_run_models_compat,
+    get_run_model_logs_compat,
+    run_belongs_to_project_compat as run_belongs_to_project,
     list_project_snapshots_compat,
     list_snapshot_groups_compat,
     restore_project_version_compat,
@@ -481,6 +484,8 @@ async def download_run_report(project_id: str, run_id: str, request: Request):
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     try:
+        if not run_belongs_to_project(project_id, run_id):
+            raise HTTPException(status_code=404, detail=f"No run found for id {run_id}")
         report = await get_run_report_compat(project_id, run_id)
         if not report:
             logger.warning("Run report requested but not found for project=%s run=%s", project_id, run_id)
@@ -506,6 +511,8 @@ async def download_run_model_report(project_id: str, run_id: str, model_label: s
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     try:
+        if not run_belongs_to_project(project_id, run_id):
+            raise HTTPException(status_code=404, detail=f"No run found for id {run_id}")
         report = await get_run_model_report_compat(project_id, run_id, model_label)
         if not report:
             logger.warning(
@@ -538,6 +545,8 @@ async def get_run_report_summary(project_id: str, run_id: str, request: Request)
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     try:
+        if not run_belongs_to_project(project_id, run_id):
+            raise HTTPException(status_code=404, detail=f"No run found for id {run_id}")
         data = await get_run_report_data_compat(project_id, run_id)
         if not data:
             logger.warning("Run report summary requested but not found for project=%s run=%s", project_id, run_id)
@@ -558,6 +567,8 @@ async def get_run_model_report_summary(project_id: str, run_id: str, model_label
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     try:
+        if not run_belongs_to_project(project_id, run_id):
+            raise HTTPException(status_code=404, detail=f"No run found for id {run_id}")
         data = await get_run_model_report_data_compat(project_id, run_id, model_label)
         if not data:
             logger.warning(
@@ -574,6 +585,43 @@ async def get_run_model_report_summary(project_id: str, run_id: str, model_label
             project_id, run_id, model_label, exc,
         )
         raise HTTPException(status_code=500, detail=f"Failed to build report summary: {exc}") from exc
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/models")
+async def get_run_models(project_id: str, run_id: str, request: Request):
+    """Per-model status and artifact manifest for a multi-model run."""
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    try:
+        if not run_belongs_to_project(project_id, run_id):
+            raise HTTPException(status_code=404, detail=f"No run found for id {run_id}")
+        return await get_run_models_compat(project_id, run_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to get run models for project=%s run=%s: %s", project_id, run_id, exc)
+        raise HTTPException(status_code=500, detail=f"Failed to get run models: {exc}") from exc
+
+
+@router.get("/api/projects/{project_id}/runs/{run_id}/models/{model_label:path}/logs")
+async def get_run_model_logs(
+    project_id: str, run_id: str, model_label: str, request: Request, offset: int = 0
+):
+    """Incremental log chunk for one model of a project run."""
+    user_id = require_request_user_id(request)
+    await asyncio.to_thread(_assert_project_access, project_id, user_id)
+    try:
+        if not run_belongs_to_project(project_id, run_id):
+            raise HTTPException(status_code=404, detail=f"No run found for id {run_id}")
+        return await get_run_model_logs_compat(project_id, run_id, model_label, offset=offset)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "Failed to get run model logs for project=%s run=%s model=%s: %s",
+            project_id, run_id, model_label, exc,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to get run model logs: {exc}") from exc
 
 
 @router.get("/api/projects/{project_id}/vc/stats")
