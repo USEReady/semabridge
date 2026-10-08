@@ -50,12 +50,12 @@ class RunContext:
     resolved_pbix_display_name: Optional[str] = None
 
     # Multi-model batch isolation (see sync_execution_service's
-    # _assign_batch_physical_namespaces). physical_namespace is a sanitized,
-    # deterministic per-model prefix set ONLY when this run is one of several
-    # models synced together (batch_model_count > 1); it namespaces every
-    # physical object the deploy creates in the shared target schema and the
-    # per-model output/ subdirectory. None for single-model runs, which keep
-    # their exact previous object names and output paths.
+    # _assign_project_mode_naming). physical_namespace is a readable,
+    # deterministic per-model prefix set ONLY for models of a multi-mode
+    # project (source.mode: multiple); it namespaces every physical object
+    # the deploy creates in the shared target schema and the per-model
+    # output/ subdirectory. None for single-mode projects, which keep their
+    # exact previous object names and output paths.
     physical_namespace: Optional[str] = None
     batch_model_count: int = 1
     # Thread-scoped BatchViewNameRegistry (utils/name_translator.py) shared

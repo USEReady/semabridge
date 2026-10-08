@@ -115,7 +115,7 @@ def test_multi_model_batch_assigns_distinct_deterministic_namespaces(tmp_path):
     file_b = tmp_path / "Region B.pbix"
     file_a.write_bytes(b"a")
     file_b.write_bytes(b"b")
-    cfg = {"source": {"type": "pbix", "models": [str(file_a), str(file_b)]}, "targets": [{"type": "snowflake"}]}
+    cfg = {"source": {"type": "pbix", "mode": "multiple", "models": [str(file_a), str(file_b)]}, "targets": [{"type": "snowflake"}]}
 
     jobs, *_ = ses._build_sync_jobs(cfg)
     again, *_ = ses._build_sync_jobs(cfg)
@@ -130,7 +130,7 @@ def test_colliding_display_names_still_get_distinct_namespaces(tmp_path):
     file_b = tmp_path / "Sales_Report.pbix"
     file_a.write_bytes(b"a")
     file_b.write_bytes(b"b")
-    jobs, *_ = ses._build_sync_jobs({"source": {"type": "pbix", "models": [str(file_a), str(file_b)]}, "targets": [{"type": "snowflake"}]})
+    jobs, *_ = ses._build_sync_jobs({"source": {"type": "pbix", "mode": "multiple", "models": [str(file_a), str(file_b)]}, "targets": [{"type": "snowflake"}]})
     namespaces = [j["physical_namespace"] for j in jobs]
     assert len(set(namespaces)) == 2
 

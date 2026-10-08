@@ -16,39 +16,6 @@ import yaml
 from semabridge.api.services import project_projects_impl as ppi
 
 
-def test_blank_schema_gets_a_per_project_default():
-    yaml_text = "\n".join([
-        "project_name: Demo",
-        "source:",
-        "  type: fabric",
-        "targets:",
-        "  - type: snowflake",
-        "    database: SEMABRIDGE",
-    ])
-
-    normalized = ppi._normalize_new_project_config_yaml("proj-demo", yaml_text, "Demo")
-    parsed = yaml.safe_load(normalized)
-
-    assert parsed["targets"][0]["schema"] == "SEMABRIDGE_WORKSPACE_PROJ_DEMO"
-
-
-def test_legacy_shared_schema_value_is_overridden():
-    yaml_text = "\n".join([
-        "project_name: Demo",
-        "source:",
-        "  type: fabric",
-        "targets:",
-        "  - type: snowflake",
-        "    database: SEMABRIDGE",
-        "    schema: SEMABRIDGE_WORKSPACE",
-    ])
-
-    normalized = ppi._normalize_new_project_config_yaml("proj-multi-test20", yaml_text, "Demo")
-    parsed = yaml.safe_load(normalized)
-
-    assert parsed["targets"][0]["schema"] == "SEMABRIDGE_WORKSPACE_PROJ_MULTI_TEST20"
-
-
 def test_deliberately_chosen_schema_is_left_alone():
     yaml_text = "\n".join([
         "project_name: Demo",

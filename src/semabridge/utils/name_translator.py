@@ -206,7 +206,7 @@ def build_physical_namespace(name: str) -> str:
     """Return a deterministic, readable, identifier-safe per-model namespace prefix.
 
     Used ONLY for multi-mode projects (see sync_execution_service's
-    _assign_batch_physical_namespaces): every physical object a model's
+    _assign_project_mode_naming): every physical object a model's
     deploy creates in the shared target schema (base tables, *_ENRICHED
     views, MEASURES_* tables) is prefixed with this value so two models of
     the same project that contain a table with the same name never share

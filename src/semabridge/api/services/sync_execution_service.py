@@ -14,12 +14,17 @@ from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 from semabridge.utils.identifiers import clean_pbix_model_name
+from semabridge.utils.project_models import (
+    assign_model_view_names,
+    assign_physical_namespaces,
+    is_multi_mode,
+    saved_view_name_for,
+)
 from semabridge.utils.name_translator import (
     BatchViewNameRegistry,
     build_physical_namespace,
     get_target_deployment_name,
     make_unique_labels,
-    resolve_pbix_deployment_base_names,
     target_lock_manager,
 )
 
@@ -191,7 +196,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
     if source_type == "fabric":
         explicit_id = source_cfg.get("dataset_id")
         if explicit_id:
-            sync_jobs.append({"dataset_id": explicit_id, "pbix_path": None, "model_label": explicit_id})
+            sync_jobs.append({"dataset_id": explicit_id, "pbix_path": None, "model_label": explicit_id, "source_ref": explicit_id})
         else:
             model_list = source_cfg.get("models") or []
             if not model_list:
@@ -211,7 +216,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
             for model_id in model_list:
                 resolved_id = str(model_id).strip()
                 if resolved_id:
-                    sync_jobs.append({"dataset_id": resolved_id, "pbix_path": None, "model_label": resolved_id})
+                    sync_jobs.append({"dataset_id": resolved_id, "pbix_path": None, "model_label": resolved_id, "source_ref": resolved_id})
 
     elif source_type == "pbix":
         explicit_pbix = source_cfg.get("pbix_path")
@@ -227,6 +232,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     "dataset_id": None,
                     "pbix_path": explicit_pbix,
                     "model_label": clean_pbix_model_name(explicit_pbix),
+                    "source_ref": explicit_pbix,
                 }
             )
         else:
@@ -249,6 +255,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     "dataset_id": None,
                     "pbix_path": pbix_path,
                     "model_label": clean_pbix_model_name(model_name or pbix_path) or "model",
+                    "source_ref": model_name or pbix_path,
                 }
                 if resolution_error:
                     job["resolution_error"] = resolution_error
@@ -266,26 +273,6 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
                     + "; ".join(str(job["resolution_error"]) for job in resolution_failures)
                 )
 
-        # Resolve each job's clean, batch-disambiguated base view name up
-        # front, from ALL pbix jobs in this request (single-file or
-        # multi-file alike) -- see resolve_pbix_deployment_base_names().
-        # Every file gets its own clean name (no UUID/hash upload prefix) by
-        # default; only files that would otherwise collide on the identical
-        # name get a short "_2"/"_3" suffix instead of a hard validation
-        # error. Runs for BOTH dry-run and real-deploy requests, since both
-        # funnel through this one function via execute_sync_request().
-        # Consumed by conversion/pbix.py's _convert_pbix_to_sml() via
-        # RunContext.resolved_pbix_display_name.
-        pbix_job_paths = [
-            job["pbix_path"] for job in sync_jobs
-            if job.get("pbix_path") and not job.get("resolution_error")
-        ]
-        if pbix_job_paths:
-            resolved_names = resolve_pbix_deployment_base_names(pbix_job_paths)
-            for job in sync_jobs:
-                job_path = job.get("pbix_path")
-                if job_path and not job.get("resolution_error"):
-                    job["resolved_display_name"] = resolved_names.get(job_path)
 
     elif source_type in ("snowflake", "snowflake_semantic_view"):
         model_list = source_cfg.get("models") or []
@@ -328,7 +315,7 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
     for job, label in zip(sync_jobs, unique_labels):
         job["model_label"] = label
 
-    _assign_batch_physical_namespaces(sync_jobs)
+    _assign_project_mode_naming(sync_jobs, source_cfg)
 
     return sync_jobs, source_type, target_type, source_cfg, target_cfg
 
@@ -408,31 +395,45 @@ def _reject_duplicate_pbix_jobs(sync_jobs: List[Dict[str, Any]]) -> None:
         claimed[key] = str(job.get("model_label") or path)
 
 
-def _assign_batch_physical_namespaces(sync_jobs: List[Dict[str, Any]]) -> None:
-    """Give every job of a MULTI-model batch its own deterministic
-    physical-object namespace (job["physical_namespace"]) and the batch size
-    (job["batch_model_count"]).
+def _assign_project_mode_naming(sync_jobs: List[Dict[str, Any]], source_cfg: Dict[str, Any]) -> None:
+    """Per-model naming, driven by the project's MODE (source.mode), never by
+    how many models this particular run contains.
 
-    Consumed by the engine (RunContext.physical_namespace) to prefix every
-    physical object the model's deploy creates in the shared target schema
-    and to write its artifacts to a per-model output subdirectory. Derived
-    from the job's batch-disambiguated display name (PBIX) or its unique
-    model label, so it is stable across runs of the same project. A
-    single-model run gets no namespace -- its object names never change.
+    Single-mode projects (and every project created before modes existed):
+    no per-model view name, no physical prefix -- object names exactly as
+    before, whatever the number of models.
+
+    Multi-mode projects: each model deploys to the view name saved for it at
+    project creation (source.model_views; computed the same way for a model
+    that has no saved name yet), and every physical object it creates is
+    prefixed with a readable per-model prefix derived from that name
+    (assign_physical_namespaces guarantees the prefixes can never produce
+    clashing object names). Removing or adding models never renames the
+    others: names come from the saved config, not from the batch.
     """
     count = len(sync_jobs)
+    multi = is_multi_mode(source_cfg)
     for job in sync_jobs:
         job["batch_model_count"] = count
-    if count <= 1:
-        for job in sync_jobs:
+        job["multi_mode"] = multi
+        if not multi:
+            job["resolved_display_name"] = None
             job["physical_namespace"] = None
+    if not multi:
         return
-    raw = [
-        build_physical_namespace(str(job.get("resolved_display_name") or job.get("model_label") or "model"))
-        for job in sync_jobs
-    ]
-    for job, namespace in zip(sync_jobs, make_unique_labels(raw)):
+    computed = assign_model_view_names(source_cfg)
+    for job in sync_jobs:
+        refs = (job.get("source_ref"), job.get("pbix_path"), job.get("dataset_id"), job.get("model_label"))
+        job["resolved_display_name"] = (
+            saved_view_name_for(source_cfg, *refs)
+            or saved_view_name_for({"model_views": computed}, *refs)
+        )
+    namespaces = assign_physical_namespaces(
+        [str(job.get("resolved_display_name") or job.get("model_label") or "model") for job in sync_jobs]
+    )
+    for job, namespace in zip(sync_jobs, namespaces):
         job["physical_namespace"] = namespace
+
 
 def _persist_model_version(
     repository: ModelRepository,
@@ -782,7 +783,11 @@ def _run_parallel_jobs(
     # names through one shared, thread-scoped registry. (Fabric-bound runs
     # always use the thread executor -- see _resolve_executor_kind.)
     batch_name_registry: Optional[BatchViewNameRegistry] = None
-    if source_type == "fabric" and len(sync_jobs) > 1 and executor_kind != "process":
+    if (
+        source_type == "fabric"
+        and any(job.get("multi_mode") for job in sync_jobs)
+        and executor_kind != "process"
+    ):
         batch_name_registry = BatchViewNameRegistry()
 
     if effective_parallelism <= 1:

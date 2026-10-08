@@ -136,7 +136,11 @@ def _preview_project_owned_by(preview_project_id: str, user_id: str | None) -> b
     return bool(owner) and owner == str(user_id or "").strip()
 
 
-def _collect_preview_project_ids(fields: Dict[str, Any], user_id: str | None) -> List[str]:
+def _collect_preview_project_ids(
+    fields: Dict[str, Any],
+    user_id: str | None,
+    source_refs: Optional[Dict[str, str]] = None,
+) -> List[str]:
     """Resolve the preview project ids to migrate from: the explicit
     ``preview_project_id`` / ``preview_project_ids`` plus every per-file
     preview id of ``dry_run_job_id``. Only ``preview-*`` ids the caller owns
@@ -178,6 +182,8 @@ def _collect_preview_project_ids(fields: Dict[str, Any], user_id: str | None) ->
                     pid = str(entry.get("preview_project_id") or "").strip()
                     if pid.startswith("preview-") and pid not in job_ids:
                         job_ids.append(pid)
+                        if source_refs is not None and entry.get("source_ref"):
+                            source_refs[pid] = str(entry["source_ref"])
         except Exception as exc:  # noqa: BLE001
             logger.warning("[SynonymMigration] could not resolve dry_run_job_id=%s: %s", job_id, exc)
 
@@ -200,12 +206,49 @@ def _migrate_preview_synonyms(target_project_id: str, fields: Dict[str, Any], us
     try:
         from semabridge.utils.synonyms import copy_synonym_overrides
 
-        sources = _collect_preview_project_ids(fields, user_id)
-        copied = copy_synonym_overrides(sources, target) if sources else 0
+        source_refs: Dict[str, str] = {}
+        sources = _collect_preview_project_ids(fields, user_id, source_refs)
+        copied = (
+            copy_synonym_overrides(
+                sources, target,
+                model_name_by_source=_saved_model_names_for_previews(target, source_refs),
+            )
+            if sources else 0
+        )
         return {"copied": copied, "source_project_ids": sources}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SynonymMigration] failed for project %s: %s", target, exc)
         return {"copied": 0, "source_project_ids": [], "error": str(exc)}
+
+
+def _saved_model_names_for_previews(target_project_id: str, source_refs: Dict[str, str]) -> Dict[str, str]:
+    """Multi-mode projects: map each model's dry-run preview project to the
+    model name it deploys under (its saved view name), so that model's
+    synonyms are stored for that model only. Empty for single-mode projects,
+    whose preview and deploy model names already match."""
+    if not source_refs:
+        return {}
+    try:
+        import yaml
+
+        import semabridge.api.services.project_shared as project_shared
+        from semabridge.utils.project_models import is_multi_mode, saved_view_name_for
+
+        project_shared._compat_ensure_loaded()
+        cfg_text = project_shared._compat_project_configs.get(target_project_id) or ""
+        parsed = yaml.safe_load(cfg_text) or {}
+        source_cfg = parsed.get("source") if isinstance(parsed, dict) and isinstance(parsed.get("source"), dict) else {}
+        if not is_multi_mode(source_cfg):
+            return {}
+        out: Dict[str, str] = {}
+        for preview_id, source_ref in source_refs.items():
+            name = saved_view_name_for(source_cfg, source_ref)
+            if name:
+                out[preview_id] = name
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SynonymMigration] could not read saved model names for %s: %s", target_project_id, exc)
+        return {}
 
 
 def _attach_migration_report(response: Any, report: Optional[Dict[str, Any]]) -> Any:

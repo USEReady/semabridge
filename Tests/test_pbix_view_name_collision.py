@@ -137,7 +137,7 @@ def test_build_sync_jobs_disambiguates_colliding_filenames_instead_of_rejecting(
     file_a.write_bytes(b"a")
     file_b.write_bytes(b"b")
 
-    source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b)]}
+    source_cfg = {"type": "pbix", "mode": "multiple", "models": [str(file_a), str(file_b)]}
     sync_jobs, *_ = ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
 
     assert len(sync_jobs) == 2
@@ -160,7 +160,7 @@ def test_build_sync_jobs_collision_handling_is_independent_of_dry_run_flag(tmp_p
     file_a.write_bytes(b"a")
     file_b.write_bytes(b"b")
 
-    source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b)]}
+    source_cfg = {"type": "pbix", "mode": "multiple", "models": [str(file_a), str(file_b)]}
     config = {"source": source_cfg, "targets": [{"type": "snowflake"}]}
 
     sync_jobs, *_ = ses._build_sync_jobs(config)

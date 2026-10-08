@@ -28,6 +28,8 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
     pbix_file_paths: [],
     local_folder_id: '',
     local_folder_tag: '',
+    source_mode: '',
+    model_views: {},
     models: [],
   };
 
@@ -87,6 +89,12 @@ export function parseConfigYamlToInitialData(yamlText, projectMeta) {
       pbix_file_paths: pbixFilePaths,
       local_folder_id: String(parsedSource.local_folder_id || ''),
       local_folder_tag: String(parsedSource.local_folder_tag || ''),
+      // Project mode (chosen at creation) and the per-model view names saved
+      // for a multi-mode project -- carried through edit mode unchanged.
+      source_mode: String(parsedSource.mode || '').toLowerCase(),
+      model_views: (parsedSource.model_views && typeof parsedSource.model_views === 'object' && !Array.isArray(parsedSource.model_views))
+        ? { ...parsedSource.model_views }
+        : {},
       sync_mode: syncMode,
       write_strategy: syncMode,
       models,

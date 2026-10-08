@@ -23,6 +23,7 @@ from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.utils.logger import get_logger
 from semabridge.core.interfaces import BaseEmitter
 from semabridge.core.exceptions import ConnectorError
+from semabridge.utils.project_models import SNOWFLAKE_MAX_IDENTIFIER_LENGTH
 from semabridge.repository.duplicate_name_mapping_repository import DuplicateNameMappingRepository
 
 # Import domain managers
@@ -228,7 +229,15 @@ class SnowflakeEmitter(BaseEmitter):
         prefix = f"{self.physical_namespace}_"
         if str(name).upper().startswith(prefix.upper()):
             return name
-        return f"{prefix}{name}"
+        namespaced = f"{prefix}{name}"
+        if len(namespaced) > SNOWFLAKE_MAX_IDENTIFIER_LENGTH:
+            raise ConnectorError(
+                f"Prefixed object name for '{name}' would be {len(namespaced)} characters "
+                f"(model prefix '{self.physical_namespace}'), over Snowflake's "
+                f"{SNOWFLAKE_MAX_IDENTIFIER_LENGTH}-character identifier limit. "
+                "Shorten the source table name or the model's view name."
+            )
+        return namespaced
 
     def _strip_physical_namespace(self, name: str) -> str:
         """Inverse of _namespaced_physical_name (case-insensitive)."""
@@ -257,12 +266,22 @@ class SnowflakeEmitter(BaseEmitter):
             return
         originals: list = []
         mapping: Dict[str, str] = {}
+        prefix_upper = f"{self.physical_namespace}_".upper()
         for dataset in getattr(model, "datasets", None) or []:
             raw = getattr(dataset, "source_table", None) or getattr(dataset, "unique_name", None)
             if not raw or "." in str(raw):
                 continue
             if str(raw).upper() in self._SHARED_PHYSICAL_TABLES:
                 continue
+            if str(raw).upper().startswith(prefix_upper):
+                # Would be left unprefixed (indistinguishable from an
+                # already-prefixed name) and could clash with another
+                # project's object of the same name: fail clearly.
+                raise ConnectorError(
+                    f"Source table '{raw}' already starts with this model's object prefix "
+                    f"'{self.physical_namespace}_', so its prefixed name cannot be told apart "
+                    "from an unprefixed one. Rename the model (its view name) or the table."
+                )
             namespaced = self._namespaced_physical_name(str(raw))
             if namespaced == raw:
                 continue

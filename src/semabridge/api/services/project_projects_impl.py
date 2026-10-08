@@ -430,6 +430,15 @@ def _normalize_project_config_yaml(
 
     parsed["project_id"] = project_id
     parsed["display_name"] = display_name
+    # Multi-mode projects: every model gets its semantic view name once and
+    # keeps it (source.model_views). Existing names are never changed; only
+    # models without one (new project, or a model added later) get a name.
+    source_cfg = parsed.get("source")
+    if isinstance(source_cfg, dict):
+        from semabridge.utils.project_models import assign_model_view_names, is_multi_mode
+
+        if is_multi_mode(source_cfg):
+            source_cfg["model_views"] = assign_model_view_names(source_cfg)
     if not str(parsed.get("project_name") or "").strip():
         parsed["project_name"] = display_name or default_name
     normalized_owner = str(owner_user_id or parsed.get("owner_user_id") or "").strip()
@@ -461,7 +470,10 @@ def _normalize_new_project_config_yaml(
         raise ValidationError(f"Invalid YAML content: {exc}")
     if not isinstance(parsed, dict):
         raise ValidationError("Project YAML must be an object mapping")
-    _apply_default_snowflake_schema(parsed, project_id)
+    # The per-project default schema (_apply_default_snowflake_schema) is
+    # intentionally NOT applied: it silently redirected a new project's
+    # explicitly chosen schema. A new project deploys to the schema it was
+    # configured with, exactly as before.
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
 
 def _project_discovery_entry(project_id: str, file_path: Path, project_cfg: Dict[str, Any]) -> Dict[str, Any]:

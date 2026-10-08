@@ -1425,6 +1425,19 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (source.pbix_file_path) lines.push(`  pbix_file_path: "${escapeYamlString(source.pbix_file_path)}"`);
     if (source.local_folder_id) lines.push(`  local_folder_id: "${escapeYamlString(source.local_folder_id)}"`);
     if (source.local_folder_tag) lines.push(`  local_folder_tag: "${escapeYamlString(source.local_folder_tag)}"`);
+    // Project mode is chosen once, at creation: a multi-model project stays
+    // multi-mode (and keeps its saved per-model view names) even if later
+    // edited down to one model, so its object names never change.
+    const savedMultiMode = editMode && String(initialData?.source_mode || '').toLowerCase() === 'multiple';
+    if (savedMultiMode || effectiveSources.isMulti) {
+      lines.push('  mode: multiple');
+      const savedViews = (editMode && initialData?.model_views) || {};
+      const keptViews = Object.entries(savedViews).filter(([key, value]) => key && value);
+      if (keptViews.length > 0) {
+        lines.push('  model_views:');
+        keptViews.forEach(([key, value]) => lines.push(`    "${escapeYamlString(key)}": "${escapeYamlString(value)}"`));
+      }
+    }
 
     lines.push('targets:');
     targets.forEach((target) => {

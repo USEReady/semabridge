@@ -57,10 +57,10 @@ _NAMESPACEABLE_SOURCE_TYPES = {"pbix", "fabric"}
 def emitter_physical_namespace(context: RunContext) -> Optional[str]:
     """Per-model physical-object namespace to hand to SnowflakeEmitter.
 
-    Only non-None for a model that is part of a multi-model batch (see
-    sync_execution_service._assign_batch_physical_namespaces) AND whose
-    source is one SemaBridge materializes tables for -- so a single-model
-    run always deploys under exactly the same object names as before.
+    Only non-None for a model of a multi-mode project (see
+    sync_execution_service._assign_project_mode_naming) AND whose source is
+    one SemaBridge materializes tables for -- so a single-mode project always
+    deploys under exactly the same object names as before.
     """
     namespace = getattr(context, "physical_namespace", None)
     if not namespace:
@@ -119,7 +119,17 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     # a genuine SUCCESS. Writing here unconditionally would otherwise corrupt
     # the last-good artifact with content describing a model that was never
     # actually deployed.
-    staging_dir = self._model_output_dir("reverse", ".staging", model_name=context.project_id)
+    # Per-model staging subdirectory (same model_subdir as the canonical
+    # output_dir above): models of one multi-model project run concurrently
+    # and must never overwrite each other's staged DDL/YAML before promotion.
+    # Single-model projects have no physical_namespace, so their staging path
+    # is unchanged.
+    staging_dir = self._model_output_dir(
+        "reverse",
+        ".staging",
+        model_name=context.project_id,
+        model_subdir=getattr(context, "physical_namespace", None),
+    )
     staged_ddl_path = staging_dir / "semantic_view.sql"
     staged_yaml_path = staging_dir / "cortex_analyst.yaml"
 

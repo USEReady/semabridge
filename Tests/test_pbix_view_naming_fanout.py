@@ -103,7 +103,9 @@ def test_single_pbix_sync_view_name_derives_from_its_own_filename_not_project_id
 
     sml_model = _convert_pbix_to_sml(_EngineStub(), context)
 
-    assert sml_model.unique_name == "SALES_REPORT"
+    # Single-mode naming is the demo's: the clean file name; the deployed
+    # view name (below) is the same either way.
+    assert sml_model.unique_name == "Sales Report"
     assert "some-unrelated-project-guid-123" not in sml_model.unique_name.lower()
 
     deployed_name = _deployed_view_name(sml_model)
@@ -137,7 +139,7 @@ def test_multi_pbix_batch_sharing_one_project_id_still_produces_distinct_view_na
     unique_names = [m.unique_name for m in sml_models]
     deployed_names = [_deployed_view_name(m) for m in sml_models]
 
-    assert unique_names == ["SALES_REPORT", "MARKETING_ANALYSIS", "INVENTORY_SUMMARY"]
+    assert unique_names == ["Sales Report", "Marketing Analysis", "Inventory Summary"]
     assert deployed_names == [
         "SALES_REPORT_SEMANTIC",
         "MARKETING_ANALYSIS_SEMANTIC",
@@ -190,7 +192,7 @@ def test_build_sync_jobs_disambiguates_when_two_of_three_files_collide(tmp_path)
     for f in (file_a, file_b, file_c):
         f.write_bytes(b"data")
 
-    source_cfg = {"type": "pbix", "models": [str(file_a), str(file_b), str(file_c)]}
+    source_cfg = {"type": "pbix", "mode": "multiple", "models": [str(file_a), str(file_b), str(file_c)]}
     sync_jobs, *_ = ses._build_sync_jobs({"source": source_cfg, "targets": [{"type": "snowflake"}]})
 
     assert len(sync_jobs) == 3
