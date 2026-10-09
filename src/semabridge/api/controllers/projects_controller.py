@@ -261,6 +261,25 @@ def _attach_migration_report(response: Any, report: Optional[Dict[str, Any]]) ->
     return response
 
 
+def _link_preview_dry_runs(target_project_id: str, fields: Dict[str, Any], user_id: str | None) -> None:
+    """Re-associates dry run job(s) from a transient preview project id to the
+    real target project id after project save. Never raises."""
+    if not any(fields.get(key) for key in _PREVIEW_MIGRATION_FIELDS):
+        return
+    try:
+        from semabridge.api.services.dry_run_job_service import link_dry_run_job_to_project
+
+        preview_ids = _collect_preview_project_ids(fields, user_id)
+        link_dry_run_job_to_project(
+            target_project_id,
+            dry_run_job_id=fields.get("dry_run_job_id"),
+            preview_project_ids=preview_ids,
+            user_id=user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[DryRunMigration] could not link dry run job for %s: %s", target_project_id, exc)
+
+
 @router.get("/api/projects")
 async def list_projects(
     request: Request,
@@ -316,6 +335,7 @@ async def create_project(request: Request, payload: CreateProjectRequest):
     created = await create_project_compat(payload_dict)
     if isinstance(created, dict):
         new_id = str(created.get("id") or created.get("project_id") or "").strip()
+        await asyncio.to_thread(_link_preview_dry_runs, new_id, migration_fields, user_id)
         report = await asyncio.to_thread(_migrate_preview_synonyms, new_id, migration_fields, user_id)
         return _attach_migration_report(created, report)
     return created
@@ -335,6 +355,7 @@ async def patch_project(project_id: str, payload: PatchProjectRequest, request: 
     payload_dict = payload.model_dump(exclude_none=False)
     migration_fields = _pop_preview_migration_fields(payload_dict)
     response = await patch_project_compat(project_id, payload_dict)
+    await asyncio.to_thread(_link_preview_dry_runs, project_id, migration_fields, user_id)
     report = await asyncio.to_thread(_migrate_preview_synonyms, project_id, migration_fields, user_id)
     return _attach_migration_report(response, report)
 
@@ -360,6 +381,7 @@ async def save_project_config(project_id: str, payload: SaveProjectConfigRequest
     payload_dict = payload.model_dump(exclude_none=False)
     migration_fields = _pop_preview_migration_fields(payload_dict)
     response = await save_project_config_compat(project_id, payload_dict)
+    await asyncio.to_thread(_link_preview_dry_runs, project_id, migration_fields, user_id)
     report = await asyncio.to_thread(_migrate_preview_synonyms, project_id, migration_fields, user_id)
     return _attach_migration_report(response, report)
 

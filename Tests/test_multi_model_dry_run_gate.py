@@ -203,3 +203,79 @@ def test_gate_passes_when_all_models_succeed_without_blockers():
     )
     # Should not raise
     validate_multi_model_dry_run_readiness("proj_gate_6", source_cfg)
+
+
+def test_gate_passes_when_job_is_linked_from_preview():
+    from semabridge.api.services.dry_run_job_service import link_dry_run_job_to_project
+
+    source_cfg = {
+        "mode": "multiple",
+        "models": ["models/ModelA.pbix", "models/ModelB.pbix"],
+    }
+    _populate_job(
+        "preview",
+        [
+            {
+                "source_ref": "models/ModelA.pbix",
+                "status": "success",
+                "result": {
+                    "entity_mappings": [
+                        {"id": "r1", "source_name": "Field1", "target_name": "F1", "status": "valid"}
+                    ]
+                },
+            },
+            {
+                "source_ref": "models/ModelB.pbix",
+                "status": "success",
+                "result": {
+                    "entity_mappings": [
+                        {"id": "r2", "source_name": "Field2", "target_name": "F2", "status": "valid"}
+                    ]
+                },
+            },
+        ],
+        status="success",
+    )
+
+    linked = link_dry_run_job_to_project(
+        "proj_linked_1",
+        dry_run_job_id="dryrun-preview",
+    )
+    assert linked >= 1
+    # Gate should now pass for the real project id
+    validate_multi_model_dry_run_readiness("proj_linked_1", source_cfg)
+
+
+def test_gate_discovers_unlinked_preview_job_by_matching_models():
+    source_cfg = {
+        "mode": "multiple",
+        "models": ["models/ModelA.pbix", "models/ModelB.pbix"],
+    }
+    _populate_job(
+        "preview-random-id",
+        [
+            {
+                "source_ref": "models/ModelA.pbix",
+                "status": "success",
+                "result": {
+                    "entity_mappings": [
+                        {"id": "r1", "source_name": "Field1", "target_name": "F1", "status": "valid"}
+                    ]
+                },
+            },
+            {
+                "source_ref": "models/ModelB.pbix",
+                "status": "success",
+                "result": {
+                    "entity_mappings": [
+                        {"id": "r2", "source_name": "Field2", "target_name": "F2", "status": "valid"}
+                    ]
+                },
+            },
+        ],
+        status="success",
+    )
+
+    # Gate should discover the preview job with matching models and link it
+    validate_multi_model_dry_run_readiness("proj-multi-sync-test", source_cfg)
+

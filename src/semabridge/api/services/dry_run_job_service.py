@@ -568,6 +568,45 @@ def get_dry_run_job_meta(job_id: str) -> Dict[str, Any]:
         }
 
 
+def link_dry_run_job_to_project(
+    target_project_id: str,
+    dry_run_job_id: Optional[str] = None,
+    preview_project_ids: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
+) -> int:
+    """Re-associates dry run job(s) from a transient preview project id to the
+    real target project id after project save.
+    """
+    _ensure_schema()
+    target = str(target_project_id or "").strip()
+    if not target or target == "preview" or target.startswith("preview-"):
+        return 0
+
+    from semabridge.api.services.project_ownership_service import auth_is_enabled
+    from semabridge.repository.orm.dry_run_job_models import DryRunJob
+    from semabridge.repository.orm.session_factory import db_manager
+
+    updated_count = 0
+    with db_manager.get_session() as session:
+        if dry_run_job_id:
+            job = session.get(DryRunJob, str(dry_run_job_id).strip())
+            if job is not None:
+                if not auth_is_enabled() or not user_id or str(job.requested_by_user_id or "") == str(user_id):
+                    job.project_id = target
+                    updated_count += 1
+
+        if preview_project_ids:
+            clean_previews = [str(p).strip() for p in preview_project_ids if str(p or "").strip()]
+            if clean_previews:
+                jobs = session.query(DryRunJob).filter(DryRunJob.project_id.in_(clean_previews)).all()
+                for job in jobs:
+                    if not auth_is_enabled() or not user_id or str(job.requested_by_user_id or "") == str(user_id):
+                        job.project_id = target
+                        updated_count += 1
+
+    return updated_count
+
+
 def get_dry_run_job_preview_project_ids(job_id: str) -> List[Dict[str, Any]]:
     """Every per-file preview project id of a job (for synonym migration)."""
     _ensure_schema()
@@ -736,6 +775,39 @@ def validate_multi_model_dry_run_readiness(
         job = session.query(DryRunJob).filter(
             DryRunJob.project_id == project_id
         ).order_by(DryRunJob.created_at.desc()).first()
+
+        if not job:
+            preview_jobs = (
+                session.query(DryRunJob)
+                .filter(DryRunJob.project_id.like("preview%"))
+                .order_by(DryRunJob.created_at.desc())
+                .limit(10)
+                .all()
+            )
+            for cand in preview_jobs:
+                cand_files = list(cand.files)
+                if not cand_files:
+                    continue
+                cand_refs = set()
+                for f in cand_files:
+                    for k in (f.source_ref, f.pbix_path, f.label, f.display_name):
+                        if k:
+                            k_str = str(k).strip().lower()
+                            cand_refs.add(k_str)
+                            cand_refs.add(k_str.replace("\\", "/"))
+                            cand_refs.add(PurePath(k_str.replace("\\", "/")).stem.lower())
+                all_match = True
+                for exp in expected_models:
+                    exp_key = str(exp).strip().lower()
+                    exp_norm = exp_key.replace("\\", "/")
+                    exp_stem = PurePath(exp_norm).stem.lower()
+                    if exp_key not in cand_refs and exp_norm not in cand_refs and exp_stem not in cand_refs:
+                        all_match = False
+                        break
+                if all_match:
+                    cand.project_id = project_id
+                    job = cand
+                    break
 
         if not job:
             raise ValidationError(
