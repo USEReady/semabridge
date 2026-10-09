@@ -7,12 +7,16 @@ into Snowflake-compatible SQL for Semantic Views.
 
 import os
 import re
-from typing import Optional, Tuple, Dict, List, Any
+from typing import Optional, Tuple, Dict, List, Any, Iterable, Set
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.naming import sanitize_column, to_alias
 from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
 from semabridge.connectors.fact_table_naming import tokenize_dataset_name as _tokenize_dataset_name
+from semabridge.converter.dax_ast_parser import (
+    extract_measure_references_from_ast,
+    validate_emitted_sql,
+)
 
 logger = get_logger(__name__)
 
@@ -110,7 +114,7 @@ class DAXTranslator:
         return self._tier5_service
 
     def _get_date_alias(self) -> str:
-        return os.getenv("SEMABRIDGE_DATE_ALIAS", self.CALENDAR_MAP.get("table", "Date"))
+        return os.getenv("SEMABRIDGE_DATE_ALIAS", "COL_DATE")
     
     # Time Intelligence patterns that CAN be translated to Snowflake window functions
     TIME_INTEL_PATTERNS = {
@@ -232,7 +236,8 @@ class DAXTranslator:
                   dataset_col_lookup: Optional[Dict[str, set]] = None,
                   dataset_aliases: Optional[Dict[str, str]] = None,
                   anchor_flag_map: Optional[Dict[Any, str]] = None,
-                  skip_tier5: bool = False) -> DAXTranslationResult:
+                  skip_tier5: bool = False,
+                  relationships: Optional[Iterable[Any]] = None) -> DAXTranslationResult:
         """
         Translate a DAX expression to SQL.
 
@@ -257,11 +262,25 @@ class DAXTranslator:
                 collects into one batch_translate_tier5()/translate_batch()
                 call instead (see the dry-run timeout fix). Default False:
                 every other existing caller's behavior is unchanged.
+            relationships: Optional iterable of relationship objects for reachability
+                validation in cross-table column references.
         """
         if not dax:
             return DAXTranslationResult(None, 3, "")
         
         clean_dax = dax.strip()
+
+        def _wrap_res(result: Optional[DAXTranslationResult]) -> DAXTranslationResult:
+            if result and result.is_success and result.sql:
+                if not validate_emitted_sql(result.sql):
+                    logger.warning(
+                        "Translated SQL failed DAX validation gate: %s | DAX: %s",
+                        result.sql,
+                        clean_dax,
+                    )
+                    return DAXTranslationResult(None, 4, clean_dax)
+                return result
+            return result or DAXTranslationResult(None, 4, clean_dax)
 
         # Tier 1-4 (regex/AST-based general DAX grammar) run first; anything
         # they decline falls through to the retry/AST/LLM tiers below.
@@ -271,14 +290,16 @@ class DAXTranslator:
             dataset_name,
             metrics_context,
             anchor_flag_map=anchor_flag_map,
+            dataset_aliases=dataset_aliases,
+            relationships=relationships,
         )
-        if tiered_sql:
-            return tiered_sql
+        if tiered_sql and tiered_sql.is_success:
+            return _wrap_res(tiered_sql)
 
         # Tier 1: Direct Aggregations
         tier1_sql = self._try_tier1(clean_dax, table_alias)
         if tier1_sql:
-            return DAXTranslationResult(tier1_sql, 1, clean_dax)
+            return _wrap_res(DAXTranslationResult(tier1_sql, 1, clean_dax))
 
         strict_blocked = any(
             re.search(rf"\b{pattern}\b", clean_dax, re.IGNORECASE)
@@ -293,7 +314,7 @@ class DAXTranslator:
         if not strict_blocked:
             strict_sql = self._try_strict_translation(clean_dax, table_alias, metrics_context)
             if strict_sql:
-                return DAXTranslationResult(strict_sql, 2, clean_dax)
+                return _wrap_res(DAXTranslationResult(strict_sql, 2, clean_dax))
 
         if metrics_context:
             dependency_sql = self._try_dependency_translation(
@@ -303,14 +324,14 @@ class DAXTranslator:
                 metrics_context,
             )
             if dependency_sql:
-                return DAXTranslationResult(dependency_sql, 2, clean_dax)
+                return _wrap_res(DAXTranslationResult(dependency_sql, 2, clean_dax))
         
         # Tier 2: Branching & Arithmetic
         # e.g. [Net Sales] = [Gross Sales] - [Discounts]
         if metrics_context:
             tier2_sql = self._try_branching(clean_dax, metrics_context)
             if tier2_sql:
-                return DAXTranslationResult(tier2_sql, 2, clean_dax)
+                return _wrap_res(DAXTranslationResult(tier2_sql, 2, clean_dax))
         
         # Tier 3: Time Intelligence (TOTALYTD, TOTALMTD, TOTALQTD, SAMEPERIODLASTYEAR, etc.)
         # Uses the deterministic AST parser + Snowflake window function renderer.
@@ -366,11 +387,13 @@ class DAXTranslator:
                 primary_table_name=dataset_name,
                 allow_unshifted_fallback=bool(metrics_context),
                 advisory_categories=time_intel_advisories,
+                table_aliases=dataset_aliases,
+                relationships=relationships,
             )
             if ast_sql:
-                return DAXTranslationResult(
+                return _wrap_res(DAXTranslationResult(
                     ast_sql, 3, clean_dax, advisory_categories=time_intel_advisories
-                )
+                ))
 
         # Tier 4: Complex CALCULATE / FILTER / ALL / ALLEXCEPT — attempt AST translation
         is_complex = any(
@@ -392,9 +415,11 @@ class DAXTranslator:
                 known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
+                table_aliases=dataset_aliases,
+                relationships=relationships,
             )
             if ast_sql:
-                return DAXTranslationResult(ast_sql, 4, clean_dax)
+                return _wrap_res(DAXTranslationResult(ast_sql, 4, clean_dax))
 
         # General deterministic fallback: attempt AST translation for any
         # remaining shape the AST renderer can already express structurally —
@@ -403,16 +428,6 @@ class DAXTranslator:
         # with comparison conditions — before giving up to the LLM tier.
         # try_ast_translate is side-effect-free and returns None on failure,
         # so this can only recover cases that would otherwise reach Tier 5.
-        #
-        # Unlike the two blocks above (pre-existing, and possibly relying on
-        # FILTER/iterator row-context bracket-as-column semantics this simple
-        # grammar doesn't model), this new path requires every bracket
-        # reference in the expression to be an already-resolved measure. A
-        # measure reference the renderer can't distinguish from a column
-        # (silently falling back to treating it as one) must never be
-        # accepted here — better to defer to a later pass that has fuller
-        # context (see _resolve_metric_dependencies-style passes) than to
-        # risk a plausible-looking but wrong translation.
         from semabridge.converter.dax_ast_parser import try_ast_translate
         resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
         if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures):
@@ -424,15 +439,29 @@ class DAXTranslator:
                 known_measure_names=self._all_measure_names(metrics_context),
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
+                table_aliases=dataset_aliases,
+                relationships=relationships,
             )
             if general_ast_sql:
-                return DAXTranslationResult(general_ast_sql, 4, clean_dax)
+                return _wrap_res(DAXTranslationResult(general_ast_sql, 4, clean_dax))
 
         if skip_tier5:
             # Tiers 1-4 above already declined. Return the identical shape
             # as "all tiers exhausted" below rather than spending this
             # metric's one Tier-5 attempt right now -- the caller collects
             # it for a single batched call instead (see docstring above).
+            return DAXTranslationResult(None, 4, clean_dax)
+
+        from semabridge.converter.dax_ast_parser import (
+            dax_context_transition_failure_reason,
+            dax_has_zero_data_dependencies,
+            dax_root_is_string_producing,
+        )
+        if (
+            dax_context_transition_failure_reason(clean_dax)
+            or dax_has_zero_data_dependencies(clean_dax)
+            or dax_root_is_string_producing(clean_dax)
+        ):
             return DAXTranslationResult(None, 4, clean_dax)
 
         # Tier 5: LLM Fallback - Use Claude for complex expressions deterministic parsing couldn't handle
@@ -446,7 +475,7 @@ class DAXTranslator:
             dataset_aliases=dataset_aliases,
         )
         if llm_result:
-            return llm_result
+            return _wrap_res(llm_result)
 
         # No translation possible — return None (all tiers exhausted)
         return DAXTranslationResult(None, 4, clean_dax)
@@ -458,6 +487,8 @@ class DAXTranslator:
         dataset_name: str,
         metrics_context: List[Any] = None,
         anchor_flag_map: Optional[Dict[Any, str]] = None,
+        dataset_aliases: Optional[Dict[str, str]] = None,
+        relationships: Optional[Iterable[Any]] = None,
     ) -> Optional[DAXTranslationResult]:
         tier1_sql = self._try_tier1(clean_dax, table_alias)
         if tier1_sql:
@@ -504,6 +535,8 @@ class DAXTranslator:
                 known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
+                table_aliases=dataset_aliases,
+                relationships=relationships,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 3, clean_dax)
@@ -523,6 +556,8 @@ class DAXTranslator:
                 known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
+                table_aliases=dataset_aliases,
+                relationships=relationships,
             )
             if ast_sql:
                 return DAXTranslationResult(ast_sql, 4, clean_dax)
@@ -538,25 +573,6 @@ class DAXTranslator:
         back to a bare column reference for it, later fixed up into a
         by-name metric citation by
         connectors/translator.py:_qualify_bare_metric_references).
-
-        That mix -- one sibling measure reference fully inlined as raw SQL,
-        another left as a bare-then-qualified metric citation, in the SAME
-        top-level expression -- produces a shape Snowflake's semantic view
-        validator rejects with error 010218 ("a metric must have a single
-        aggregate over another row-level expression ... at its own or a
-        lower level of granularity"): it is neither "one aggregate over
-        row-level columns" (one operand is a raw aggregate, fine) nor "a
-        pure reference to other metrics" (the OTHER operand is inlined raw
-        SQL, not a citation) -- it's an inconsistent hybrid of both.
-        Real-world case: TOTAL_UNITS_YTD_VAR_PCT2/TOTAL_UNITS_YTD_VAR and
-        their dependents.
-
-        Unlike `_has_unresolved_bracket_reference` (deliberately over-broad
-        for its own narrower use), this only counts brackets that are
-        actually tracked as measures -- a plain `[Column]` argument to
-        SUM(...) must never trigger this, or currently-working metrics that
-        merely aggregate a physical column alongside an already-resolved
-        measure reference would regress.
         """
         if not dax or not all_measure_names:
             return False
@@ -564,14 +580,11 @@ class DAXTranslator:
         known_lower = {str(k).casefold() for k in all_measure_names}
         saw_resolved = False
         saw_unresolved = False
-        for match in self._MEASURE_REF_PATTERN.finditer(dax):
-            start = match.start()
-            if start > 0 and dax[start - 1] == "'":
-                continue  # table-qualified 'Table'[Column] ref, not a bracket-only ref
-            name = match.group(1).strip().casefold()
-            if not name or name not in known_lower:
+        for name in extract_measure_references_from_ast(dax):
+            name_cf = name.casefold()
+            if not name_cf or name_cf not in known_lower:
                 continue
-            if name in resolved_lower:
+            if name_cf in resolved_lower:
                 saw_resolved = True
             else:
                 saw_unresolved = True
@@ -584,20 +597,6 @@ class DAXTranslator:
     ) -> Tuple[Dict[str, str], set]:
         """Neutralize inline-vs-citation inconsistency for a single AST
         render call -- see `_has_inconsistent_measure_resolution`.
-
-        When this metric's own DAX mixes resolved and unresolved measure
-        references, clearing BOTH maps forces every reference in this
-        expression through the AST renderer's bare-column fallback
-        uniformly (see dax_ast_parser.py:_render_measure_ref), so all of
-        them get fixed up identically by the later qualification pass
-        instead of some being inlined and others cited. Clearing only
-        `measure_sql_map` and leaving `known_measure_names` populated would
-        make the renderer fail closed (raise) on the very references this
-        is meant to rescue -- both must be cleared together.
-
-        Returns the args unchanged when there's no inconsistency, so every
-        already-working metric (fully resolved, or fully unresolved) is
-        completely unaffected.
         """
         if self._has_inconsistent_measure_resolution(dax, resolved_measures, all_measure_names):
             return {}, set()
@@ -607,33 +606,15 @@ class DAXTranslator:
         self, dax: str, resolved_measures: Dict[str, str]
     ) -> bool:
         """
-        True if `dax` contains any bracket-only reference (e.g. [Name]) that
-        is not a key of `resolved_measures`.
-
-        The AST renderer's grammar cannot distinguish "this bracket reference
-        names a measure with no SQL yet" from "this bracket reference names a
-        column in an iterator/FILTER row-context" (both use identical [Name]
-        syntax) — unresolved, it silently falls back to treating the name as
-        a raw physical column, which is only sometimes correct. Rather than
-        try to reconstruct row-context here, this check is deliberately
-        strict: every bracket reference must already be a known, resolved
-        measure, or the result is not trusted. This only guards the new,
-        general fallback path below (CALCULATE-wrapping-a-measure,
-        measure-to-measure arithmetic, nested IF/SWITCH) — none of those
-        shapes legitimately need iterator/FILTER row-context, so being this
-        strict costs nothing there, while a declined case simply falls
-        through to whatever later pass has fuller measure context (e.g.
-        _resolve_metric_dependencies-style passes), never a hard failure.
+        True if `dax` contains any bare [MeasureName] reference that is not
+        a key of `resolved_measures`.
+        Uses the AST tokenizer/parser as single source of truth.
         """
         if not dax:
             return False
         resolved_lower = {str(k).casefold() for k in (resolved_measures or {}).keys()}
-        for match in self._MEASURE_REF_PATTERN.finditer(dax):
-            start = match.start()
-            if start > 0 and dax[start - 1] == "'":
-                continue  # table-qualified 'Table'[Column] ref, not a bracket-only ref
-            name = match.group(1).strip().casefold()
-            if name and name not in resolved_lower:
+        for ref in extract_measure_references_from_ast(dax):
+            if ref.casefold() not in resolved_lower:
                 return True
         return False
 
@@ -732,8 +713,12 @@ class DAXTranslator:
                 numerator_sql = self._try_dependency_translation(args[0], table_alias, dataset_name, metrics_context, visiting)
                 denominator_sql = self._try_dependency_translation(args[1], table_alias, dataset_name, metrics_context, visiting)
                 if numerator_sql and denominator_sql:
-                    alt = args[2].strip() if len(args) >= 3 and args[2].strip() else "0"
-                    return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+                    if len(args) >= 3 and args[2].strip():
+                        alt = args[2].strip()
+                        if alt.upper() in ("BLANK()", "NULL", "NONE"):
+                            return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
+                        return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+                    return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
 
         # This substitution only replaces [Measure] tokens — it cannot
         # translate surrounding DAX function-call syntax (e.g. INT(...),
@@ -747,8 +732,7 @@ class DAXTranslator:
         if self._has_function_call_outside_brackets(clean_dax):
             return None
 
-        refs = [match.group(1).strip() for match in self._MEASURE_REF_PATTERN.finditer(clean_dax)]
-        refs = [ref for ref in refs if ref]
+        refs = list(extract_measure_references_from_ast(clean_dax))
         if refs:
             replaced = clean_dax
             for ref in refs:
@@ -1352,14 +1336,7 @@ class DAXTranslator:
             return args
 
         def extract_measure_refs(expr: str) -> List[str]:
-            refs: List[str] = []
-            for match in self._MEASURE_REF_PATTERN.finditer(expr or ""):
-                start = match.start()
-                if start > 0 and expr[start - 1] == "'":
-                    # Skip table-qualified column refs like 'Table'[Column]
-                    continue
-                refs.append(match.group(1).strip())
-            return refs
+            return list(extract_measure_references_from_ast(expr))
 
         def replace_measure_refs(expr: str, visiting: set[str]) -> Optional[str]:
             replaced = expr
@@ -1427,10 +1404,12 @@ class DAXTranslator:
                     denominator_sql = replace_measure_refs(args[1], visiting)
                     if not numerator_sql or not denominator_sql:
                         return None
-                    alt = args[2].strip() if len(args) >= 3 and args[2].strip() else "0"
-                    return (
-                        f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
-                    )
+                    if len(args) >= 3 and args[2].strip():
+                        alt = args[2].strip()
+                        if alt.upper() in ("BLANK()", "NULL", "NONE"):
+                            return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
+                        return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+                    return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
 
             # TOTALYTD(Expression, Date) used to be handled here with a bare
             # OVER(PARTITION BY ... ORDER BY ...) window function — invalid
@@ -1502,12 +1481,8 @@ class DAXTranslator:
             "failure_reason": None
         }
         
-        # Extract measure dependencies [MeasureName]
-        measure_refs = re.findall(r"\[([^\]]+)\]", clean_dax)
-        # Filter out column refs (those from 'Table'[Column] patterns)
-        table_col_pattern = re.findall(r"'[\w\s]+'\[([^\]]+)\]", clean_dax)
-        pure_measure_refs = [m for m in measure_refs if m not in table_col_pattern]
-        result["depends_on_measures"] = list(set(pure_measure_refs))
+        # Extract measure dependencies [MeasureName] via AST
+        result["depends_on_measures"] = sorted(list(extract_measure_references_from_ast(clean_dax)))
         
         # Check for unsupported patterns first (Tier 4)
         for pattern in self.UNSUPPORTED_PATTERNS:

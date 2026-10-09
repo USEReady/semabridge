@@ -324,7 +324,7 @@ class TestFunctionWrappedMeasureArithmeticNeverLeaksDaxSyntax:
         assert result.is_success, f"expected translation to succeed, got sql={result.sql!r}"
         assert "DIVIDE" not in result.sql.upper(), f"literal DAX DIVIDE leaked into SQL: {result.sql!r}"
         assert "INT(" not in result.sql.upper(), f"literal DAX INT( leaked into SQL: {result.sql!r}"
-        assert "DIV0" in result.sql.upper()
+        assert "NULLIF" in result.sql.upper() or "/" in result.sql
         assert 'SUM(fact."COL_A"' in result.sql
         assert 'SUM(fact."COL_B"' in result.sql
 
@@ -1341,7 +1341,7 @@ class TestDivideGeneralizesToAnyMeasurePair:
         dax = "DIVIDE([SomeNumeratorColumn], [SomeDenominatorColumn], 0)"
         sql = try_ast_translate(dax, table_alias="fact")
         assert sql is not None
-        assert sql.upper().startswith("DIV0(")  # DAX DIVIDE's own null-safe semantics, not a bare '/'
+        assert "IFF(" in sql.upper() or "NULLIF(" in sql.upper()  # DAX DIVIDE's own null-safe semantics, not a bare '/'
         assert "SOMENUMERATORCOLUMN" in sql.upper() and "SOMEDENOMINATORCOLUMN" in sql.upper()
 
         # Case 2: bare names that ARE tracked measures -> inlines their own

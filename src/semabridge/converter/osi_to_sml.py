@@ -48,6 +48,8 @@ from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.converter.dax_ast_parser import (
     ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK,
     ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS,
+    ADVISORY_NOTE_CALCULATE_FILTER_SEMANTICS,
     ADVISORY_CATEGORY_DISCONNECTED_SELECTOR_DECOMPOSED,
 )
 from semabridge.connectors.inference_engine import SmlInferenceEngine
@@ -62,6 +64,7 @@ logger = get_logger(__name__)
 # parallel lists -- see SMLMetric.advisory_categories docstring).
 _TRANSLATION_ADVISORY_NOTES = {
     ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK: ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK,
+    ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS: ADVISORY_NOTE_CALCULATE_FILTER_SEMANTICS,
 }
 
 
@@ -152,6 +155,7 @@ class OSIToSMLConverter(BaseConverter):
                     osi_metric,
                     dataset_col_lookup=dax_dataset_col_lookup,
                     dataset_aliases=dax_dataset_aliases,
+                    relationships=osi_model.relationships,
                 )
                 sml.metrics.append(sml_metric)
 
@@ -168,6 +172,7 @@ class OSIToSMLConverter(BaseConverter):
                 sml,
                 dataset_col_lookup=dax_dataset_col_lookup,
                 dataset_aliases=dax_dataset_aliases,
+                relationships=osi_model.relationships,
                 skip_tier5=True,
             )
 
@@ -233,6 +238,7 @@ class OSIToSMLConverter(BaseConverter):
                     sml,
                     dataset_col_lookup=dax_dataset_col_lookup,
                     dataset_aliases=dax_dataset_aliases,
+                    relationships=osi_model.relationships,
                     skip_tier5=True,
                 )
 
@@ -369,6 +375,7 @@ class OSIToSMLConverter(BaseConverter):
         osi_metric: OSIMetric,
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         dataset_aliases: Optional[Dict[str, str]] = None,
+        relationships: Optional[Iterable[Any]] = None,
     ) -> SMLMetric:
         # --- Snowflake-sourced metrics already have sql_expression ---
         # When the source is a Snowflake semantic view, the expression is already
@@ -501,6 +508,7 @@ class OSIToSMLConverter(BaseConverter):
                 dataset_col_lookup=dataset_col_lookup,
                 dataset_aliases=dataset_aliases,
                 skip_tier5=True,
+                relationships=relationships,
             )
             
             if translation.is_success:
@@ -541,29 +549,17 @@ class OSIToSMLConverter(BaseConverter):
     def _resolve_metric_dependencies(
         self,
         sml: SMLModel,
-        max_passes: int = 3,
+        max_passes: Optional[int] = None,
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         dataset_aliases: Optional[Dict[str, str]] = None,
+        relationships: Optional[Iterable[Any]] = None,
         skip_tier5: bool = False,
     ) -> None:
         """Resolve unresolved metrics using full metric context in deterministic passes.
 
         This performs lightweight topological convergence: each pass can unlock
         downstream expressions once upstream measures receive SQL.
-
-        dataset_col_lookup/dataset_aliases: forwarded to DAXTranslator's
-        Tier 5 semantic validator (Step 3 of the DAX translation
-        consolidation); rebuilt from sml.datasets if not supplied.
-
-        skip_tier5: forwarded to DAXTranslator.translate() -- see its
-        docstring. from_osi() calls this method twice: once with
-        skip_tier5=True *before* the Step 3c/3d Tier-5 batch call (so this
-        method's own per-metric loop, run up to `max_passes` times, never
-        issues an individual Tier5Service call itself), and once more with
-        skip_tier5=True *after* the batch call, so a metric that is a pure
-        deterministic (Tier 1-4) dependency on a metric the batch just
-        resolved still converges correctly -- without either call spending
-        a second, redundant per-metric Tier-5 attempt.
+        Iteration runs until a pass resolves nothing new, capped at the total number of metrics.
         """
         if not sml.metrics:
             return
@@ -571,9 +567,14 @@ class OSIToSMLConverter(BaseConverter):
         if dataset_col_lookup is None or dataset_aliases is None:
             dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(sml.datasets)
 
-        from semabridge.converter.dax_ast_parser import is_by_design_excluded
+        from semabridge.converter.dax_ast_parser import (
+            extract_measure_references_from_ast,
+            is_by_design_excluded,
+        )
 
-        for pass_idx in range(max_passes):
+        effective_max_passes = max_passes if max_passes is not None else max(1, len(sml.metrics))
+
+        for pass_idx in range(effective_max_passes):
             resolved_this_pass = 0
             for metric in sml.metrics:
                 if metric.sql_expression or not (metric.expression or "").strip():
@@ -594,6 +595,7 @@ class OSIToSMLConverter(BaseConverter):
                     dataset_col_lookup=dataset_col_lookup,
                     dataset_aliases=dataset_aliases,
                     skip_tier5=skip_tier5,
+                    relationships=relationships,
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql
@@ -613,6 +615,50 @@ class OSIToSMLConverter(BaseConverter):
                 pass_idx + 1,
                 resolved_this_pass,
             )
+
+        # Cycle Detection: Check for circular dependencies among unresolved metrics
+        unresolved = [
+            m for m in sml.metrics
+            if not m.sql_expression
+            and (m.expression or "").strip()
+            and not is_by_design_excluded(m.sync_failure_reason)
+        ]
+        if unresolved:
+            metric_map = {str(m.unique_name).casefold(): m for m in sml.metrics if m.unique_name}
+            for m in unresolved:
+                visited_path: List[str] = []
+                visited_set: Set[str] = set()
+
+                def find_cycle(curr_name: str) -> Optional[List[str]]:
+                    curr_cf = curr_name.casefold()
+                    if curr_cf in visited_set:
+                        idx = [p.casefold() for p in visited_path].index(curr_cf)
+                        return visited_path[idx:] + [curr_name]
+                    visited_set.add(curr_cf)
+                    visited_path.append(curr_name)
+
+                    target_m = metric_map.get(curr_cf)
+                    if target_m and not target_m.sql_expression and target_m.expression:
+                        deps = extract_measure_references_from_ast(target_m.expression)
+                        for dep in deps:
+                            if dep.casefold() in metric_map:
+                                cycle = find_cycle(dep)
+                                if cycle:
+                                    return cycle
+                    visited_path.pop()
+                    visited_set.remove(curr_cf)
+                    return None
+
+                cycle = find_cycle(m.unique_name)
+                if cycle:
+                    cycle_names = " -> ".join(cycle)
+                    m.sync_enabled = False
+                    m.sync_failure_reason = f"Circular measure dependency cycle detected: {cycle_names}"
+                    logger.warning(
+                        "Circular measure dependency cycle detected for '%s': %s",
+                        m.unique_name,
+                        cycle_names,
+                    )
 
     # Real incident: a placeholder reason set BEFORE the Tier-5 batch call
     # even runs ("DAX translation deferred to Tier-5 batch (Tier N)", see

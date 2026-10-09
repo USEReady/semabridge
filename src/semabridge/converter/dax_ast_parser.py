@@ -54,11 +54,23 @@ def _ast_cache_key(
     primary_table_name: Optional[str] = None,
     date_table_names: Optional[Any] = None,
     allow_unshifted_fallback: bool = False,
+    table_aliases: Optional[Dict[str, str]] = None,
+    relationships: Optional[Iterable[Any]] = None,
 ) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
     names = tuple(sorted(known_measure_names or ()))
     flags = tuple(sorted((anchor_flag_map or {}).items()))
     date_tables = tuple(sorted(str(n).casefold() for n in (date_table_names or ())))
+    tbl_aliases = tuple(sorted((table_aliases or {}).items()))
+    rel_tuple = tuple(
+        sorted(
+            (
+                str(getattr(r, "from_dataset", "")).casefold(),
+                str(getattr(r, "to_dataset", "")).casefold(),
+            )
+            for r in (relationships or ())
+        )
+    )
     return (
         dax or "",
         table_alias or "",
@@ -69,6 +81,8 @@ def _ast_cache_key(
         primary_table_name or "",
         date_tables,
         allow_unshifted_fallback,
+        tbl_aliases,
+        rel_tuple,
     )
 from semabridge.utils.naming import sanitize_column
 
@@ -667,6 +681,65 @@ ADVISORY_NOTE_LAG_PERIOD_UNSHIFTED_FALLBACK = (
     "current-period value instead. Needs review before trusting the shifted comparison."
 )
 
+ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS = "calculate_filter_semantics_difference"
+ADVISORY_NOTE_CALCULATE_FILTER_SEMANTICS = (
+    "DAX CALCULATE filters override existing filters on that column, "
+    "while the SUM(CASE WHEN ...) translation doesn't, so results differ when grouping by the filtered column."
+)
+
+_DAX_SYNTAX_IN_SQL_PATTERN = re.compile(
+    r"\b(BLANK|CALCULATE|CALCULATETABLE|FILTER|ALL|ALLEXCEPT|ALLSELECTED|SAMEPERIODLASTYEAR|"
+    r"PREVIOUSYEAR|PREVIOUSMONTH|PREVIOUSQUARTER|DATESYTD|DATESMTD|DATESQTD|"
+    r"TOTALYTD|TOTALMTD|TOTALQTD|DIVIDE|USERELATIONSHIP|CROSSFILTER|RELATED|RELATEDTABLE|EARLIER|EARLIEST|LOOKUPVALUE)\s*\(",
+    re.IGNORECASE,
+)
+
+
+def validate_emitted_sql(sql: Optional[str]) -> bool:
+    """Validation gate to reject any emitted SQL containing un-translated DAX functions or bracket references."""
+    if not sql or not str(sql).strip():
+        return False
+    # Check for bracket references [..]
+    if re.search(r"\[[^\]]+\]", sql):
+        return False
+    # Check for un-translated DAX function calls
+    if _DAX_SYNTAX_IN_SQL_PATTERN.search(sql):
+        return False
+    return True
+
+
+def extract_measure_references_from_ast(dax: str) -> Set[str]:
+    """Extract all bare [MeasureName] references from DAX using AST parsing."""
+    if not dax or not dax.strip():
+        return set()
+    parser = DaxAstParser()
+    ast = parser.parse(dax)
+    if ast is None:
+        return set()
+    refs: Set[str] = set()
+
+    def walk(node: Optional[DaxNode]) -> None:
+        if node is None:
+            return
+        if isinstance(node, MeasureRefNode):
+            if node.name and node.name.strip():
+                refs.add(node.name.strip())
+        elif isinstance(node, FunctionCallNode):
+            for arg in node.args:
+                walk(arg)
+        elif isinstance(node, BinaryOpNode):
+            walk(node.left)
+            walk(node.right)
+        elif isinstance(node, UnaryOpNode):
+            walk(node.operand)
+        elif isinstance(node, VarNode):
+            for _, v_expr in node.variables:
+                walk(v_expr)
+            walk(node.body)
+
+    walk(ast)
+    return refs
+
 
 class DaxSqlRenderer:
     """
@@ -749,6 +822,8 @@ class DaxSqlRenderer:
         date_table_names: Optional[Any] = None,
         allow_unshifted_fallback: bool = False,
         advisory_categories: Optional[List[str]] = None,
+        table_aliases: Optional[Dict[str, str]] = None,
+        relationships: Optional[Iterable[Any]] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
@@ -765,6 +840,11 @@ class DaxSqlRenderer:
             str(n).strip().casefold()
             for n in (date_table_names or self._DEFAULT_DATE_TABLE_NAMES)
         }
+        self.table_aliases = table_aliases or {}
+        self._table_aliases_cf = {
+            str(k).strip().strip("'").casefold(): v for k, v in self.table_aliases.items()
+        }
+        self.relationships = relationships
         # Shape tuple (see converter/time_intelligence_shapes.py, e.g.
         # ("YTD",), ("YTD", "SPLY_YEAR")) -> precomputed boolean flag column
         # name on the enriched view (e.g. "IS_YTD"). When a shape has an
@@ -822,7 +902,10 @@ class DaxSqlRenderer:
         if node is None:
             return None
         try:
-            return self._render_node(node)
+            sql = self._render_node(node)
+            if not validate_emitted_sql(sql):
+                raise self.DaxRenderError(f"Emitted SQL contains un-translated DAX syntax: {sql}")
+            return sql
         except self.DaxRenderError as exc:
             logger.debug(f"AST render failed (recoverable): {exc}")
             return None
@@ -871,7 +954,8 @@ class DaxSqlRenderer:
         nonexistent column or (worse) returns wrong numbers if a
         same-named column happens to exist.
         """
-        name_cf = str(table_name or "").strip().strip("'").casefold()
+        name_clean = str(table_name or "").strip().strip("'")
+        name_cf = name_clean.casefold()
         if not self.primary_table_name:
             # Caller hasn't told us which DAX table this metric belongs to
             # (not yet opted into table-aware resolution, or passed an
@@ -882,10 +966,20 @@ class DaxSqlRenderer:
             return self.table_alias
         if name_cf in self._date_table_names_cf:
             return self.date_alias
+        if name_cf in self._table_aliases_cf:
+            if self.relationships is not None:
+                if not has_relationship_path(self.relationships, self.primary_table_name, name_clean):
+                    raise self.DaxRenderError(
+                        f"Column reference to table '{table_name}' has no relationship path from "
+                        f"'{self.primary_table_name}'"
+                    )
+            if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in self._advisory_categories:
+                self._advisory_categories.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
+            return self._table_aliases_cf[name_cf]
         raise self.DaxRenderError(
             f"Column reference to table '{table_name}' does not match this "
             f"metric's own table ('{self.primary_table_name}') or the "
-            "recognized date dimension — refusing to guess its SQL alias "
+            "recognized date dimension / table aliases — refusing to guess its SQL alias "
             "rather than emit a cross-table column reference that may "
             "silently compute the wrong thing"
         )
@@ -958,6 +1052,14 @@ class DaxSqlRenderer:
 
         if func == "DATEADD":
             return self._render_dateadd(node.args)
+
+        # Aggregations (SUM, AVERAGE, MIN, MAX, COUNT, etc.)
+        if func in self._AGG_MAP:
+            if func == "COUNTROWS":
+                return "COUNT(*)"
+            if not node.args:
+                raise self.DaxRenderError(f"Aggregation {func} requires at least 1 argument")
+            return self._render_aggregation(func, node.args[0])
 
         # Registry-driven templates (if configured)
         rendered_args = [self._render_node(a) for a in node.args]
@@ -1046,9 +1148,15 @@ class DaxSqlRenderer:
         num = self._render_node(args[0])
         den = self._render_node(args[1])
         if len(args) > 2:
-            alt = self._render_node(args[2])
+            alt_node = args[2]
+            if isinstance(alt_node, FunctionCallNode) and alt_node.func.upper() == "BLANK":
+                return f"({num}) / NULLIF({den}, 0)"
+            alt = self._render_node(alt_node)
+            if alt.upper() in ("NULL", "NONE", "", "BLANK()"):
+                return f"({num}) / NULLIF({den}, 0)"
             return f"IFF(COALESCE({den}, 0) = 0, {alt}, ({num}) / ({den}))"
         return f"({num}) / NULLIF({den}, 0)"
+
 
 
     def _render_if(self, args: List[DaxNode]) -> str:
@@ -1367,7 +1475,10 @@ class DaxSqlRenderer:
             if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
                 extracted_col = arg.column
                 break
-        d_col = extracted_col or "DATE_DATE"
+        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
+            d_col = "COL_DATE"
+        else:
+            d_col = extracted_col or "DATE_DATE"
         date_col = f'{d}."{d_col}"'
 
         # Shape-flag mode (see converter/time_intelligence_shapes.py): if the
@@ -1477,7 +1588,10 @@ class DaxSqlRenderer:
             if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
                 extracted_col = arg.column
                 break
-        d_col = extracted_col or "DATE_DATE"
+        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
+            d_col = "COL_DATE"
+        else:
+            d_col = extracted_col or "DATE_DATE"
         date_col = f'{d}."{d_col}"'
         # No flag column provisioned for this shape — anchor to CURRENT_DATE()
         # rather than the enriched-view-only MAX_DATE column, matching
@@ -1671,7 +1785,7 @@ class DaxSqlRenderer:
 def try_ast_translate(
     dax: str,
     table_alias: str,
-    date_alias: str = "Date",
+    date_alias: str = "COL_DATE",
     measure_sql_map: Optional[Dict[str, str]] = None,
     known_measure_names: Optional[Any] = None,
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
@@ -1679,6 +1793,8 @@ def try_ast_translate(
     date_table_names: Optional[Any] = None,
     allow_unshifted_fallback: bool = False,
     advisory_categories: Optional[List[str]] = None,
+    table_aliases: Optional[Dict[str, str]] = None,
+    relationships: Optional[Iterable[Any]] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1745,6 +1861,8 @@ def try_ast_translate(
         primary_table_name,
         date_table_names,
         allow_unshifted_fallback,
+        table_aliases,
+        relationships,
     )
     if cache_key in _AST_CACHE:
         cached_sql, cached_categories = _AST_CACHE[cache_key]
@@ -1769,6 +1887,9 @@ def try_ast_translate(
         primary_table_name=primary_table_name,
         date_table_names=date_table_names,
         allow_unshifted_fallback=allow_unshifted_fallback,
+        advisory_categories=advisory_categories,
+        table_aliases=table_aliases,
+        relationships=relationships,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:
@@ -1868,7 +1989,7 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
 
 
 _CONTEXT_TRANSITION_REASON = (
-    "DAX ALLEXCEPT/ALL requires re-partitioning the aggregate "
+    f"{BY_DESIGN_EXCLUDED_PREFIX}: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate "
     "independently of the query's own grouping (a SQL window "
     "function) — Snowflake's semantic-view METRICS clause does not "
     "support window functions, and no derived-metric/precomputed-"
@@ -1894,9 +2015,9 @@ def _calculate_has_direct_all_or_allexcept_modifier(node: DaxNode) -> bool:
     consistent with the renderer's actual behavior.
     """
     if isinstance(node, FunctionCallNode):
-        if node.func == "CALCULATE":
+        if node.func.upper() == "CALCULATE":
             for filter_arg in node.args[1:]:
-                if isinstance(filter_arg, FunctionCallNode) and filter_arg.func in ("ALL", "ALLEXCEPT"):
+                if isinstance(filter_arg, FunctionCallNode) and filter_arg.func.upper() in ("ALL", "ALLEXCEPT"):
                     return True
         return any(_calculate_has_direct_all_or_allexcept_modifier(a) for a in node.args)
     if isinstance(node, BinaryOpNode):
