@@ -144,11 +144,11 @@ def test_prefixed_name_over_the_identifier_limit_fails_clearly():
         _emitter("MODEL_A")._namespaced_physical_name("T" * 250)
 
 
-def test_a_table_already_starting_with_the_model_prefix_fails_clearly():
+def test_physical_namespace_scope_preserves_source_table():
     from types import SimpleNamespace
 
     model = SimpleNamespace(datasets=[SimpleNamespace(source_table="MODEL_A_TABLE", unique_name="MODEL_A_TABLE")])
     emitter = _emitter("MODEL_A")
-    with pytest.raises(ConnectorError, match="already starts with"):
-        with emitter._physical_namespace_scope(model):
-            pass
+    with emitter._physical_namespace_scope(model):
+        pass
+    assert model.datasets[0].source_table == "MODEL_A_TABLE"

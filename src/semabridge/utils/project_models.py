@@ -44,7 +44,16 @@ def model_entry_key(entry: Any) -> str:
     """The string a ``source.models`` entry is identified by (a PBIX path or
     a model name; dict entries use their path/name)."""
     if isinstance(entry, dict):
-        return str(entry.get("pbixPath") or entry.get("name") or entry.get("view") or "").strip()
+        return str(
+            entry.get("pbixPath")
+            or entry.get("model_path")
+            or entry.get("path")
+            or entry.get("source_path")
+            or entry.get("file_path")
+            or entry.get("name")
+            or entry.get("view")
+            or ""
+        ).strip()
     return str(entry or "").strip()
 
 

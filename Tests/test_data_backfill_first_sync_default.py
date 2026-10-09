@@ -121,59 +121,15 @@ def test_explicit_false_wins_regardless_of_run_history(monkeypatch):
     assert trigger is None
 
 
-def test_unset_defaults_true_on_first_sync(monkeypatch):
-    monkeypatch.setattr(
-        "semabridge.repository.model_repository.ModelRepository.has_any_successful_run",
-        lambda self, project_id, exclude_run_id=None: False,  # no prior successful run
-    )
-    # options present but WITHOUT the load_source_data key at all (mirrors
-    # config.py's SimpleNamespace(**options_cfg) when the YAML never set it).
-    context = _fake_context(options=SimpleNamespace())
-    load_source_data, trigger = _resolve_load_source_data(context)
-    assert load_source_data is True
-    assert trigger == "first_sync_default"
-
-
-def test_unset_defaults_false_when_a_prior_successful_run_exists(monkeypatch):
-    monkeypatch.setattr(
-        "semabridge.repository.model_repository.ModelRepository.has_any_successful_run",
-        lambda self, project_id, exclude_run_id=None: True,  # a prior successful run exists
-    )
+def test_unset_defaults_false_always(monkeypatch):
     context = _fake_context(options=SimpleNamespace())
     load_source_data, trigger = _resolve_load_source_data(context)
     assert load_source_data is False
     assert trigger is None
 
 
-def test_unset_with_no_options_namespace_at_all_defaults_by_run_history(monkeypatch):
-    """A project whose config never had an `options:` block at all (options
-    is None, not just missing the one key) must behave identically to one
-    with an empty options block -- still eligible for the first-sync
-    default, not silently disabled."""
-    monkeypatch.setattr(
-        "semabridge.repository.model_repository.ModelRepository.has_any_successful_run",
-        lambda self, project_id, exclude_run_id=None: False,
-    )
+def test_unset_with_no_options_namespace_at_all_defaults_false(monkeypatch):
     context = _fake_context(options=None)
     load_source_data, trigger = _resolve_load_source_data(context)
-    assert load_source_data is True
-    assert trigger == "first_sync_default"
-
-
-def test_has_any_successful_run_called_with_correct_project_and_exclusion(monkeypatch):
-    captured = {}
-
-    def fake_has_any_successful_run(self, project_id, exclude_run_id=None):
-        captured["project_id"] = project_id
-        captured["exclude_run_id"] = exclude_run_id
-        return False
-
-    monkeypatch.setattr(
-        "semabridge.repository.model_repository.ModelRepository.has_any_successful_run",
-        fake_has_any_successful_run,
-    )
-    context = _fake_context(project_id="proj-xyz", run_id="run-999", options=SimpleNamespace())
-    _resolve_load_source_data(context)
-
-    assert captured["project_id"] == "proj-xyz"
-    assert captured["exclude_run_id"] == "run-999"
+    assert load_source_data is False
+    assert trigger is None

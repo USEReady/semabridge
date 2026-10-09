@@ -1596,9 +1596,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
 
       const entityMappings = Array.isArray(response?.entity_mappings) ? response.entity_mappings : [];
-      // If we don't have mappings array, we can use entityMappings directly for our table
-      setDetectedMappings(response?.mappings || []);
+      const rows = normalizeRows(response);
+      setDetectedMappings(rows);
       setDetectedEntityMappings(entityMappings);
+      setDryRunData(response);
 
       if (dryRun) {
         setMappingDryRunStatus('success');

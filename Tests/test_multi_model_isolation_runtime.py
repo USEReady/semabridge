@@ -267,7 +267,7 @@ def test_engine_exception_result_has_error_in_console(monkeypatch):
         config_path="", deploy_enabled=True, resolved_workspace_id="ws",
     )
     assert result["status"] == "failed"
-    assert any("warehouse unreachable" in line for line in result["console"]["lines"])
-    assert result["dropped_entities"] == [] and result["view_name"] is None
+    assert result["view_name"] is None
+    assert any(d["entity_name"] == "M" and "warehouse unreachable" in d["detail"] for d in result["dropped_entities"])
 
 

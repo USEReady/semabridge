@@ -771,6 +771,8 @@ def validate_multi_model_dry_run_readiness(
     if not expected_models:
         return
 
+    from semabridge.utils.identifiers import clean_pbix_model_name
+
     with db_manager.get_session() as session:
         job = session.query(DryRunJob).filter(
             DryRunJob.project_id == project_id
@@ -796,12 +798,21 @@ def validate_multi_model_dry_run_readiness(
                             cand_refs.add(k_str)
                             cand_refs.add(k_str.replace("\\", "/"))
                             cand_refs.add(PurePath(k_str.replace("\\", "/")).stem.lower())
+                            cleaned = (clean_pbix_model_name(k_str) or "").strip().lower()
+                            if cleaned:
+                                cand_refs.add(cleaned)
                 all_match = True
                 for exp in expected_models:
                     exp_key = str(exp).strip().lower()
                     exp_norm = exp_key.replace("\\", "/")
                     exp_stem = PurePath(exp_norm).stem.lower()
-                    if exp_key not in cand_refs and exp_norm not in cand_refs and exp_stem not in cand_refs:
+                    exp_clean = (clean_pbix_model_name(exp_norm) or "").strip().lower()
+                    if (
+                        exp_key not in cand_refs
+                        and exp_norm not in cand_refs
+                        and exp_stem not in cand_refs
+                        and exp_clean not in cand_refs
+                    ):
                         all_match = False
                         break
                 if all_match:
@@ -837,16 +848,21 @@ def validate_multi_model_dry_run_readiness(
                     files_by_ref[k_str.lower()] = f
                     files_by_ref[k_str.replace("\\", "/").lower()] = f
                     files_by_ref[PurePath(k_str.replace("\\", "/")).stem.lower()] = f
+                    cleaned = (clean_pbix_model_name(k_str) or "").strip().lower()
+                    if cleaned:
+                        files_by_ref[cleaned] = f
 
         for exp in expected_models:
             exp_key = str(exp).strip().lower()
             exp_norm = exp_key.replace("\\", "/")
             exp_stem = PurePath(exp_norm).stem.lower()
+            exp_clean = (clean_pbix_model_name(exp_norm) or "").strip().lower()
 
             matched_file = (
                 files_by_ref.get(exp_key)
                 or files_by_ref.get(exp_norm)
                 or files_by_ref.get(exp_stem)
+                or files_by_ref.get(exp_clean)
             )
 
             if not matched_file:

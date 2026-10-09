@@ -168,14 +168,11 @@ export function saveRunLogs(runId, logs) {
 export function getRunLogs(run) {
   if (!run) return [];
   const summaryLogs = buildSummaryRunLogs(run);
-  if (normalizeStatus(run.status) === 'running' && !run.summary && !run.results) {
-    return buildProgressiveRunLogs(run, summaryLogs);
-  }
   if (summaryLogs.length) return summaryLogs;
   const store = readStore();
   const stored = store[String(run.id)];
   if (Array.isArray(stored) && stored.length) return stored;
-  return buildMockRunLogs(run);
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -223,11 +220,45 @@ function durationMsForResult(result) {
  *     hasResult }
  */
 export function getPerModelRunEntries(run) {
+  if (!run || typeof run !== 'object') return [];
+
   const results = (Array.isArray(run?.results) ? run.results : [])
     .filter((r) => r && typeof r === 'object');
   const reports = (Array.isArray(run?.model_reports) ? run.model_reports : [])
     .filter((e) => e && typeof e === 'object' && e.model);
-  if (results.length <= 1 && reports.length <= 1) return [];
+
+  // If no per-model results or reports were provided, synthesize a single-model
+  // entry from the run-level fields so that single-model runs render their
+  // status, report preview, logs, reconciliation, and dropped fields under
+  // the model cleanly.
+  if (results.length === 0 && reports.length === 0) {
+    const rawModel = run.source_model_name || run.model || run.view_name || run.summary?.view_name || run.project_name || 'Target Model';
+    const droppedEntities = (
+      (Array.isArray(run.dropped_entities) && run.dropped_entities.length > 0 && run.dropped_entities) ||
+      (Array.isArray(run.summary?.dropped_entities) && run.summary.dropped_entities.length > 0 && run.summary.dropped_entities) ||
+      (Array.isArray(run.summary?.drop_ledger) && run.summary.drop_ledger.length > 0 && run.summary.drop_ledger) ||
+      []
+    );
+    const reconciliation = run.reconciliation || run.summary?.reconciliation || null;
+    return [{
+      key: 'model-single-1',
+      model: rawModel,
+      label: cleanPbixLabel(rawModel) || rawModel,
+      status: normalizeStatus(run.status) || 'unknown',
+      viewName: run.view_name || run.summary?.view_name || null,
+      targetArtifactPath: run.target_artifact_path || null,
+      durationMs: Number(run.duration_ms) || null,
+      logs: buildSummaryRunLogs(run),
+      reportEntry: null,
+      reportModel: (run.has_report || run.report_path) ? rawModel : null,
+      has_report: Boolean(run.has_report || run.report_path),
+      has_summary: Boolean(run.has_summary),
+      has_log: true,
+      droppedEntities,
+      reconciliation: reconciliation && typeof reconciliation === 'object' ? reconciliation : null,
+      hasResult: true,
+    }];
+  }
 
   const usedReports = new Set();
   const findReport = (rawModel) => {
@@ -259,6 +290,16 @@ export function getPerModelRunEntries(run) {
     const hasReport = result.has_report !== undefined ? Boolean(result.has_report) : Boolean(reportEntry);
     const hasSummary = result.has_summary !== undefined ? Boolean(result.has_summary) : hasReport;
     const hasLog = result.has_log !== undefined ? Boolean(result.has_log) : (result.logs?.length > 0 || (result.console?.lines?.length > 0));
+    const droppedEntities = (
+      (Array.isArray(result.dropped_entities) && result.dropped_entities.length > 0 && result.dropped_entities) ||
+      (Array.isArray(result.summary?.dropped_entities) && result.summary.dropped_entities.length > 0 && result.summary.dropped_entities) ||
+      (Array.isArray(result.summary?.drop_ledger) && result.summary.drop_ledger.length > 0 && result.summary.drop_ledger) ||
+      (results.length === 1 && Array.isArray(run?.dropped_entities) && run.dropped_entities.length > 0 && run.dropped_entities) ||
+      (results.length === 1 && Array.isArray(run?.summary?.dropped_entities) && run.summary.dropped_entities.length > 0 && run.summary.dropped_entities) ||
+      (results.length === 1 && Array.isArray(run?.summary?.drop_ledger) && run.summary.drop_ledger.length > 0 && run.summary.drop_ledger) ||
+      []
+    );
+
     return {
       key: uniqueKey(model || `model-${index + 1}`),
       model: model || null,
@@ -273,7 +314,7 @@ export function getPerModelRunEntries(run) {
       has_report: hasReport,
       has_summary: hasSummary,
       has_log: hasLog,
-      droppedEntities: Array.isArray(result.dropped_entities) ? result.dropped_entities : [],
+      droppedEntities,
       reconciliation: reconciliation && typeof reconciliation === 'object' ? reconciliation : null,
       hasResult: true,
     };

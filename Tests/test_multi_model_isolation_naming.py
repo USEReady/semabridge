@@ -135,7 +135,7 @@ def test_colliding_display_names_still_get_distinct_namespaces(tmp_path):
     assert len(set(namespaces)) == 2
 
 
-def test_two_models_with_same_table_get_distinct_physical_objects_and_views():
+def test_two_models_with_same_table_get_distinct_views_and_shared_physical_tables():
     model_a, model_b = _sml("REGION_A"), _sml("REGION_B")
     emitter_a = SnowflakeEmitter(_config(), ConnectorBehavior(), physical_namespace="REGION_A")
     emitter_b = SnowflakeEmitter(_config(), ConnectorBehavior(), physical_namespace="REGION_B")
@@ -146,23 +146,22 @@ def test_two_models_with_same_table_get_distinct_physical_objects_and_views():
     # Distinct views...
     assert '"REGION_A_SEMANTIC"' in ddl_a
     assert '"REGION_B_SEMANTIC"' in ddl_b
-    # ...each referencing ONLY its own physical table.
-    assert '"REGION_A_FACT"' in ddl_a and '"REGION_B_FACT"' not in ddl_a
-    assert '"REGION_B_FACT"' in ddl_b and '"REGION_A_FACT"' not in ddl_b
+    # ...both referencing the shared physical table in Snowflake without altering it.
+    assert '."FACT"' in ddl_a
+    assert '."FACT"' in ddl_b
+    assert '"REGION_A_FACT"' not in ddl_a
+    assert '"REGION_B_FACT"' not in ddl_b
     # Shared, generated calendar dimension is not namespaced.
     assert '"REGION_A_DIM_DATE"' not in ddl_a
-    # The model itself is restored after DDL generation.
+    # The model itself is untouched after DDL generation.
     assert model_a.datasets[0].source_table == "Fact"
-    # Enriched views / measure tables are namespaced the same way.
-    assert emitter_a._namespaced_physical_name("Fact_ENRICHED") == "REGION_A_Fact_ENRICHED"
-    assert emitter_a._strip_physical_namespace("REGION_A_FACT") == "FACT"
 
 
-def test_namespace_never_applied_to_snowflake_sourced_models():
-    ctx = SimpleNamespace(physical_namespace="REGION_A", source_type="snowflake")
-    assert targets_snowflake.emitter_physical_namespace(ctx) is None
+def test_emitter_physical_namespace_is_none_for_all_sources():
+    ctx_sf = SimpleNamespace(physical_namespace="REGION_A", source_type="snowflake")
+    assert targets_snowflake.emitter_physical_namespace(ctx_sf) is None
     ctx_pbix = SimpleNamespace(physical_namespace="REGION_A", source_type="pbix")
-    assert targets_snowflake.emitter_physical_namespace(ctx_pbix) == "REGION_A"
+    assert targets_snowflake.emitter_physical_namespace(ctx_pbix) is None
 
 
 def test_multi_model_output_dir_is_per_model(tmp_path, monkeypatch):

@@ -9,6 +9,8 @@ import sys
 import types
 from datetime import datetime, timezone
 
+os.environ["SEMABRIDGE_DATABASE_URL"] = "sqlite:///file::memory:?cache=shared&uri=true"
+
 import pytest
 
 if "psycopg2" not in sys.modules:
@@ -21,7 +23,13 @@ if "psycopg2" not in sys.modules:
     _psycopg2.connect = lambda *args, **kwargs: None
     sys.modules["psycopg2"] = _psycopg2
     sys.modules["psycopg2.extensions"] = types.ModuleType("psycopg2.extensions")
-    sys.modules["psycopg2.extras"] = types.ModuleType("psycopg2.extras")
+    _extras = types.ModuleType("psycopg2.extras")
+    _extras.register_uuid = lambda *args, **kwargs: None
+    _extras.register_default_json = lambda *args, **kwargs: None
+    _extras.register_default_jsonb = lambda *args, **kwargs: None
+    _extras.register_hstore = lambda *args, **kwargs: None
+    _extras.HstoreAdapter = types.SimpleNamespace(get_oids=lambda *args, **kwargs: (None, None))
+    sys.modules["psycopg2.extras"] = _extras
 
 from semabridge.api.services.dry_run_job_service import (
     create_dry_run_job,

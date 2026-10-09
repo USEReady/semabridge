@@ -794,6 +794,70 @@ def _enrich_run_report_meta(run: Dict[str, Any]) -> Dict[str, Any]:
     return run
 
 
+def _sweep_stale_runs():
+    """Find any runs in memory or ORM DB with status=='running' that are older
+    than 5 minutes (or from previous interrupted sessions) and mark them failed."""
+    import logging
+    from datetime import datetime, timezone, timedelta
+    logger = logging.getLogger(__name__)
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=5)
+
+    # 1. Sweep DB
+    try:
+        from semabridge.repository.orm.session_factory import db_manager
+        from semabridge.repository.orm.models import Run
+        from sqlalchemy import select
+
+        with db_manager.get_session() as session:
+            running_db_runs = session.execute(
+                select(Run).where(Run.status == "running")
+            ).scalars().all()
+            for r in running_db_runs:
+                run_ts = getattr(r, "started_at", None) or getattr(r, "created_at", None)
+                if run_ts:
+                    if isinstance(run_ts, str):
+                        try:
+                            run_ts = datetime.fromisoformat(run_ts.replace("Z", "+00:00"))
+                        except ValueError:
+                            run_ts = None
+                    if run_ts and run_ts.tzinfo is None:
+                        run_ts = run_ts.replace(tzinfo=timezone.utc)
+                if not run_ts or run_ts < cutoff:
+                    r.status = "failed"
+                    r.error_message = r.error_message or "Run timed out or was interrupted."
+                    if not r.completed_at:
+                        r.completed_at = now
+            session.commit()
+    except Exception as exc:
+        logger.debug("Stale DB run sweep skipped: %s", exc)
+
+    modified = False
+    for pid, r_list in list(_compat_project_runs.items()):
+        for r in r_list:
+            if str(r.get("status") or "").lower() == "running":
+                ts_str = r.get("started_at") or r.get("created_at")
+                run_ts = None
+                if ts_str:
+                    try:
+                        run_ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+                        if run_ts.tzinfo is None:
+                            run_ts = run_ts.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                if not run_ts or run_ts < cutoff:
+                    r["status"] = "failed"
+                    r["message"] = r.get("message") or "Run timed out or was interrupted."
+                    r["completed_at"] = r.get("completed_at") or _compat_now_iso()
+                    modified = True
+    if modified:
+        try:
+            _compat_save_store()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
@@ -807,6 +871,7 @@ async def get_project_runs_compat(project_id: str):
     logger = logging.getLogger(__name__)
 
     _compat_ensure_loaded()
+    _sweep_stale_runs()
     pid = str(project_id).strip()
 
     runs = _compat_project_runs.get(pid, [])
@@ -892,10 +957,33 @@ def _hydrate_model_results(run: Dict[str, Any]) -> Dict[str, Any]:
     from semabridge.api.services.run_model_results import load_run_model_results
 
     persisted = load_run_model_results(pid, rid)
-    if not persisted:
-        return run
+    if persisted:
+        hydrated = dict(run)
+        hydrated["results"] = persisted
+        return hydrated
+
+    # Synthesize a model result entry from run-level summary and dropped_entities
+    summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+    dropped = list(run.get("dropped_entities") or summary.get("dropped_entities") or [])
+    model_name = run.get("project_name") or run.get("model") or pid
     hydrated = dict(run)
-    hydrated["results"] = persisted
+    hydrated["results"] = [
+        {
+            "model": model_name,
+            "status": run.get("status") or "unknown",
+            "view_name": run.get("view_name") or summary.get("view_name"),
+            "physical_namespace": run.get("physical_namespace"),
+            "duration_ms": run.get("duration_ms"),
+            "dropped_entities": dropped,
+            "reconciliation": run.get("reconciliation") or summary.get("reconciliation"),
+            "error": run.get("error") or run.get("message"),
+            "report_path": run.get("report_path"),
+            "summary_path": run.get("summary_path"),
+            "log_path": run.get("log_path"),
+            "logs": run.get("logs") or [],
+            "persisted": False,
+        }
+    ]
     return hydrated
 
 
@@ -1317,35 +1405,32 @@ async def get_project_lineage_compat(project_id: str) -> Dict[str, Any]:
 async def clear_job_runs_compat(before: Optional[str] = None, user_id: Optional[str] = None):
     """Clear job runs, optionally filtered by date and/or user ownership.
 
-    Args:
-        before: ISO-8601 datetime string (e.g. "2026-05-31T06:23:53"). When
-                provided, only runs whose started_at/created_at is on or before
-                this timestamp are deleted.
-        user_id: When provided (auth mode), only delete runs belonging to
-                 projects owned by this user.
+    Completely removes matching runs from ORM DB (Run and RunModelResult tables),
+    the in-memory compatibility store, and on-disk report and log artifacts.
     """
     import logging
+    import shutil
     from datetime import datetime, timezone
 
     logger = logging.getLogger(__name__)
 
     _compat_ensure_loaded()
 
-    # Parse the cutoff timestamp
     cutoff_dt: Optional[datetime] = None
     if before:
         try:
-            # Accept both "2026-05-31T06:23:53" and "2026-05-31 06:23:53" forms
             cutoff_dt = datetime.fromisoformat(before.replace(" ", "T"))
             if cutoff_dt.tzinfo is None:
                 cutoff_dt = cutoff_dt.replace(tzinfo=timezone.utc)
         except ValueError:
             logger.warning("clear_job_runs_compat: invalid 'before' value '%s' — ignoring filter", before)
 
+    deleted_run_ids = set()
     deleted_db = 0
+
     try:
-        from semabridge.repository.orm.models import Run
-        from sqlalchemy import select
+        from semabridge.repository.orm.models import Run, RunModelResult
+        from sqlalchemy import select, delete
         from semabridge.repository.orm.session_factory import db_manager
 
         with db_manager.get_session() as session:
@@ -1371,38 +1456,95 @@ async def clear_job_runs_compat(before: Optional[str] = None, user_id: Optional[
                     if not is_project_owned_by_user(str(r.project_id or ""), user_id,
                                                     log_denied=False, log_prefix="ClearRuns"):
                         continue
+                deleted_run_ids.add(r.run_id)
                 session.delete(r)
                 deleted_db += 1
+
+            if deleted_run_ids:
+                session.execute(delete(RunModelResult).where(RunModelResult.run_id.in_(list(deleted_run_ids))))
+            elif cutoff_dt is None and not user_id:
+                session.execute(delete(RunModelResult))
+
             session.commit()
     except Exception as exc:
         logger.error("Failed to connect to ORM to clear runs: %s", exc)
 
     # Mirror filter on the in-memory compat store
     deleted_compat = 0
-    for project_id in list(_compat_project_runs.keys()):
-        if user_id:
-            from semabridge.api.services.project_ownership_service import is_project_owned_by_user
-            if not is_project_owned_by_user(project_id, user_id, log_denied=False, log_prefix="ClearRuns"):
-                continue
-        if cutoff_dt is not None:
-            kept = []
-            for run in _compat_project_runs.get(project_id, []):
-                run_ts_str = run.get("started_at") or run.get("created_at") or run.get("timestamp") or ""
-                if run_ts_str:
-                    try:
-                        run_ts = datetime.fromisoformat(str(run_ts_str).replace("Z", "+00:00"))
-                        if run_ts.tzinfo is None:
-                            run_ts = run_ts.replace(tzinfo=timezone.utc)
-                        if run_ts > cutoff_dt:
-                            kept.append(run)
-                            continue
-                    except ValueError:
-                        pass
-                deleted_compat += 1
-            _compat_project_runs[project_id] = kept
-        else:
-            deleted_compat += len(_compat_project_runs.get(project_id, []))
-            _compat_project_runs[project_id] = []
+    if cutoff_dt is None and not user_id:
+        for p_runs in _compat_project_runs.values():
+            deleted_compat += len(p_runs)
+        _compat_project_runs.clear()
+    else:
+        for project_id in list(_compat_project_runs.keys()):
+            if user_id:
+                from semabridge.api.services.project_ownership_service import is_project_owned_by_user
+                if not is_project_owned_by_user(project_id, user_id, log_denied=False, log_prefix="ClearRuns"):
+                    continue
+            if cutoff_dt is not None:
+                kept = []
+                for run in _compat_project_runs.get(project_id, []):
+                    rid = str(run.get("run_id") or run.get("id") or "")
+                    run_ts_str = run.get("started_at") or run.get("created_at") or run.get("timestamp") or ""
+                    if run_ts_str:
+                        try:
+                            run_ts = datetime.fromisoformat(str(run_ts_str).replace("Z", "+00:00"))
+                            if run_ts.tzinfo is None:
+                                run_ts = run_ts.replace(tzinfo=timezone.utc)
+                            if run_ts > cutoff_dt:
+                                kept.append(run)
+                                continue
+                        except ValueError:
+                            pass
+                    deleted_run_ids.add(rid)
+                    deleted_compat += 1
+                _compat_project_runs[project_id] = kept
+            else:
+                for run in _compat_project_runs.get(project_id, []):
+                    rid = str(run.get("run_id") or run.get("id") or "")
+                    if rid:
+                        deleted_run_ids.add(rid)
+                deleted_compat += len(_compat_project_runs.get(project_id, []))
+                _compat_project_runs[project_id] = []
+
+    # Clean up on-disk artifacts for deleted runs
+    try:
+        from semabridge.api.services.run_report_service import REPORTS_ROOT
+        from semabridge.core.run_model_logs import RUN_LOGS_ROOT
+
+        if cutoff_dt is None and not user_id:
+            if REPORTS_ROOT.exists():
+                for p_dir in REPORTS_ROOT.iterdir():
+                    if p_dir.is_dir():
+                        shutil.rmtree(p_dir, ignore_errors=True)
+            if RUN_LOGS_ROOT.exists():
+                for p_dir in RUN_LOGS_ROOT.iterdir():
+                    if p_dir.is_dir():
+                        shutil.rmtree(p_dir, ignore_errors=True)
+        elif deleted_run_ids:
+            for rid in deleted_run_ids:
+                if not rid:
+                    continue
+                if REPORTS_ROOT.exists():
+                    for f in list(REPORTS_ROOT.glob(f"**/{rid}*")):
+                        try:
+                            if f.is_file():
+                                f.unlink(missing_ok=True)
+                            elif f.is_dir():
+                                shutil.rmtree(f, ignore_errors=True)
+                        except Exception:
+                            pass
+                if RUN_LOGS_ROOT.exists():
+                    for f in list(RUN_LOGS_ROOT.glob(f"**/{rid}*")):
+                        try:
+                            if f.is_file():
+                                f.unlink(missing_ok=True)
+                            elif f.is_dir():
+                                shutil.rmtree(f, ignore_errors=True)
+                        except Exception:
+                            pass
+    except Exception as clean_exc:
+        logger.debug("Artifact disk cleanup error: %s", clean_exc)
 
     _compat_save_store()
 

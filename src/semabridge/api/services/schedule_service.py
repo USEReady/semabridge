@@ -15,6 +15,7 @@ from semabridge.api.services.project_shared import (
     _compat_ensure_loaded,
     _compat_job_config,
     _compat_now_iso,
+    _compat_project_runs,
     _compat_project_schedules,
     _compat_projects,
     _compat_save_store,
@@ -24,24 +25,30 @@ from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 
 async def list_job_runs_compat():
-    """Aggregate run history across every known project.
-
-    Delegates to get_project_runs_compat() per project rather than reading
-    _compat_project_runs directly. That in-memory dict is only ever
-    populated from the JSON compat-store cache file at process startup, or
-    by a run triggered during this same process's lifetime -- it has no
-    database fallback. get_project_runs_compat() does (it queries the
-    `runs` ORM table and warms the cache when empty), so a run that's
-    safely recorded in the database but not yet warm in memory -- e.g.
-    right after a server restart, before anyone has opened that specific
-    project's own run-history view -- would otherwise be silently missing
-    from this aggregate list even though it exists.
+    """Aggregate run history across every known project (from _compat_projects,
+    _compat_project_runs, and ORM database).
     """
-    from semabridge.api.services.run_service import get_project_runs_compat
+    from semabridge.api.services.run_service import get_project_runs_compat, _sweep_stale_runs
 
     _compat_ensure_loaded()
+    _sweep_stale_runs()
+
+    all_project_ids = set(_compat_projects.keys()) | set(_compat_project_runs.keys())
+    try:
+        from semabridge.repository.orm.models import Run
+        from sqlalchemy import select, distinct
+        from semabridge.repository.orm.session_factory import db_manager
+
+        with db_manager.get_session() as session:
+            db_pids = session.execute(select(distinct(Run.project_id))).scalars().all()
+            for pid in db_pids:
+                if pid:
+                    all_project_ids.add(str(pid))
+    except Exception:
+        pass
+
     all_runs: List[Dict[str, Any]] = []
-    for project_id in list(_compat_projects.keys()):
+    for project_id in all_project_ids:
         all_runs.extend(await get_project_runs_compat(project_id))
     all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
     return all_runs

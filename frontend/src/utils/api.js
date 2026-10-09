@@ -1471,6 +1471,7 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/jobs/runs${query}`, { method: 'DELETE' });
         const result = await handleResponse(res);
         invalidateApiCache('jobs:runs');
+        invalidateApiCache('runs');
         return result;
     },
 

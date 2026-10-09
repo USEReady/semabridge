@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight, FileText, Download, AlertTriangle, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Download, AlertTriangle, RefreshCw, Copy, Check, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import StatusBadge from '../common/StatusBadge';
@@ -91,17 +91,152 @@ function ReconciliationSummary({ reconciliation }) {
   );
 }
 
+const STAGE_CONFIG = {
+  ddl_deployment: {
+    label: 'Snowflake Deployment',
+    color: '#ef4444',
+    bg: 'rgba(239, 68, 68, 0.12)',
+    border: 'rgba(239, 68, 68, 0.35)',
+  },
+  dax_translation: {
+    label: 'DAX Translation',
+    color: '#a855f7',
+    bg: 'rgba(168, 85, 247, 0.12)',
+    border: 'rgba(168, 85, 247, 0.35)',
+  },
+  schema_validation: {
+    label: 'Schema Validation',
+    color: '#f97316',
+    bg: 'rgba(249, 115, 22, 0.12)',
+    border: 'rgba(249, 115, 22, 0.35)',
+  },
+  ddl_emission: {
+    label: 'DDL Generation',
+    color: '#eab308',
+    bg: 'rgba(234, 179, 8, 0.12)',
+    border: 'rgba(234, 179, 8, 0.35)',
+  },
+  extraction: {
+    label: 'Metadata Extraction',
+    color: '#3b82f6',
+    bg: 'rgba(59, 130, 246, 0.12)',
+    border: 'rgba(59, 130, 246, 0.35)',
+  },
+  reconciliation: {
+    label: 'Reconciliation',
+    color: '#06b6d4',
+    bg: 'rgba(6, 182, 212, 0.12)',
+    border: 'rgba(6, 182, 212, 0.35)',
+  },
+};
+
+function normalizeStage(stage, reason = '') {
+  const s = String(stage || '').toLowerCase().trim();
+  if (STAGE_CONFIG[s]) return s;
+  const r = String(reason || '').toLowerCase();
+  if (r.includes('snowflake') || r.includes('deployment') || r.includes('ddl execution')) {
+    return 'ddl_deployment';
+  }
+  if (r.includes('dax') || r.includes('translation') || r.includes('syntax error in formula')) {
+    return 'dax_translation';
+  }
+  if (r.includes('schema') || r.includes('type mismatch') || r.includes('conflict')) {
+    return 'schema_validation';
+  }
+  return s || 'conversion';
+}
+
+function DroppedItemDetail({ detail }) {
+  const [copied, setCopied] = useState(false);
+  if (!detail) return null;
+
+  const detailText = typeof detail === 'object' ? JSON.stringify(detail, null, 2) : String(detail);
+  if (!detailText.trim()) return null;
+
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    try {
+      navigator.clipboard.writeText(detailText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        padding: '8px 10px',
+        borderRadius: 4,
+        background: 'rgba(0, 0, 0, 0.35)',
+        border: '1px solid rgba(255, 255, 255, 0.08)',
+        position: 'relative',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)' }}>
+          Detailed Error / Rejection Log
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '2px 6px',
+            fontSize: 10,
+            borderRadius: 3,
+            background: 'var(--bg-surface-raised)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border-main)',
+            cursor: 'pointer',
+          }}
+          title="Copy error details"
+        >
+          {copied ? <Check size={11} style={{ color: 'var(--color-success, #10b981)' }} /> : <Copy size={11} />}
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <div
+        style={{
+          fontFamily: MONO,
+          fontSize: 11,
+          lineHeight: 1.5,
+          color: '#f87171',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          maxHeight: 160,
+          overflowY: 'auto',
+        }}
+      >
+        {detailText}
+      </div>
+    </div>
+  );
+}
+
 function DroppedFieldsSection({ droppedEntities }) {
-  const [open, setOpen] = useState(false);
   const count = droppedEntities?.length || 0;
+  // Default open when dropped fields exist so reasons are immediately visible
+  const [open, setOpen] = useState(true);
   if (!count) return null;
+
+  const rejectedCount = droppedEntities.filter(
+    (e) => !e?.by_design || String(e?.stage || '').includes('deployment') || String(e?.reason || '').toLowerCase().includes('snowflake')
+  ).length;
+
+  const hasErrors = rejectedCount > 0;
+  const accentColor = hasErrors ? 'var(--color-error, #ef4444)' : 'var(--color-warning, #f59e0b)';
+  const accentBg = hasErrors ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.08)';
+  const accentBorder = hasErrors ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.35)';
 
   return (
     <div
       style={{
         marginTop: 10,
         borderRadius: 6,
-        border: '1px solid var(--border-main)',
+        border: `1px solid ${accentBorder}`,
         background: 'var(--bg-surface)',
         overflow: 'hidden',
       }}
@@ -113,48 +248,152 @@ function DroppedFieldsSection({ droppedEntities }) {
           width: '100%',
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'space-between',
           gap: 8,
-          padding: '8px 12px',
+          padding: '9px 12px',
           border: 'none',
-          background: 'transparent',
+          background: accentBg,
           cursor: 'pointer',
           textAlign: 'left',
           fontSize: 12,
           fontWeight: 600,
-          color: 'var(--color-warning, #f59e0b)',
+          color: accentColor,
         }}
       >
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <AlertTriangle size={14} />
-        <span>Not converted ({count})</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <AlertTriangle size={14} />
+          <span style={{ fontWeight: 700 }}>
+            Dropped Fields & Excluded Entities ({count})
+          </span>
+          {rejectedCount > 0 && (
+            <span
+              style={{
+                fontSize: 10,
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: 'rgba(239, 68, 68, 0.2)',
+                color: '#ef4444',
+                fontWeight: 700,
+                border: '1px solid rgba(239, 68, 68, 0.4)',
+              }}
+            >
+              {rejectedCount} Rejected / Failed
+            </span>
+          )}
+          {count > rejectedCount && (
+            <span
+              style={{
+                fontSize: 10,
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-tertiary)',
+                fontWeight: 600,
+              }}
+            >
+              {count - rejectedCount} by design
+            </span>
+          )}
+        </div>
+        <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+          {open ? 'Collapse' : 'Expand details'}
+        </span>
       </button>
+
       {open && (
-        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border-subtle, var(--border-main))' }}>
-          <div style={{ display: 'grid', gap: 6 }}>
+        <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border-subtle, var(--border-main))' }}>
+          <div style={{ display: 'grid', gap: 8 }}>
             {droppedEntities.map((item, idx) => {
-              const name = item.name || item.field || item.entity || `Field ${idx + 1}`;
-              const kind = item.kind || item.type || item.entity_type || 'field';
-              const reason = item.reason || item.message || item.error || 'Excluded during conversion';
+              const name = item.entity_name || item.name || item.field || item.entity || `Field ${idx + 1}`;
+              const kind = item.entity_kind || item.kind || item.type || item.entity_type || 'field';
+              const rawStage = normalizeStage(item.stage, item.reason);
+              const stageMeta = STAGE_CONFIG[rawStage] || {
+                label: item.stage ? String(item.stage).replace(/_/g, ' ') : 'Conversion',
+                color: 'var(--text-secondary)',
+                bg: 'var(--bg-surface-raised)',
+                border: 'var(--border-main)',
+              };
+              const reason = item.reason || item.message || item.error || 'Excluded during sync';
+              const detail = item.detail || item.details || item.raw_error || item.stack || item.sql || null;
+              const byDesign = Boolean(item.by_design);
+              const isSnowflakeReject = rawStage === 'ddl_deployment' || String(reason).toLowerCase().includes('snowflake');
+
               return (
                 <div
                   key={idx}
                   style={{
-                    padding: '6px 10px',
-                    borderRadius: 4,
-                    background: 'var(--bg-input)',
-                    fontSize: 12,
+                    padding: '10px 12px',
+                    borderRadius: 6,
+                    background: byDesign ? 'var(--bg-surface-raised)' : 'var(--bg-input)',
+                    border: `1px solid ${isSnowflakeReject ? 'rgba(239, 68, 68, 0.4)' : byDesign ? 'var(--border-main)' : 'rgba(245, 158, 11, 0.3)'}`,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 2,
+                    gap: 6,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <strong style={{ fontFamily: MONO, color: 'var(--text-primary)' }}>{name}</strong>
-                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)' }}>
-                      {kind}
+                  {/* Top Bar: Name + Badges */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <strong style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-primary)' }}>
+                        {name}
+                      </strong>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '1px 6px',
+                          borderRadius: 3,
+                          background: 'var(--bg-surface)',
+                          color: 'var(--text-tertiary)',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          border: '1px solid var(--border-main)',
+                        }}
+                      >
+                        {kind}
+                      </span>
+                      {/* Stage Badge */}
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '1px 7px',
+                          borderRadius: 3,
+                          background: stageMeta.bg,
+                          color: stageMeta.color,
+                          border: `1px solid ${stageMeta.border}`,
+                          fontWeight: 700,
+                          textTransform: 'capitalize',
+                        }}
+                      >
+                        {stageMeta.label}
+                      </span>
+                    </div>
+
+                    <div>
+                      {byDesign ? (
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', fontWeight: 600 }}>
+                          Excluded by design
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                          {isSnowflakeReject ? 'Snowflake Rejection' : 'Sync Error'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Reason text */}
+                  <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-secondary)', marginRight: 6 }}>
+                      Exact Reason:
+                    </span>
+                    <span style={{ color: isSnowflakeReject ? '#f87171' : 'var(--text-primary)' }}>
+                      {reason}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{reason}</div>
+
+                  {/* Detailed Error / Rejection Log */}
+                  <DroppedItemDetail detail={detail} />
                 </div>
               );
             })}
@@ -182,9 +421,8 @@ export default function ModelRunSection({
     else setLocalOpen((v) => !v);
   };
 
-  // Logs state & polling
+  // Logs state
   const [logs, setLogs] = useState(entry?.logs || []);
-  const [logOffset, setLogOffset] = useState(0);
   const logsContainerRef = useRef(null);
 
   // In-place Report preview state
@@ -196,57 +434,14 @@ export default function ModelRunSection({
   const [previewError, setPreviewError] = useState(null);
   const [downloadingJson, setDownloadingJson] = useState(false);
 
-  // Sync initial logs
+  // Sync logs when entry updates
   useEffect(() => {
-    if (entry?.logs?.length && logs.length === 0) {
+    if (Array.isArray(entry?.logs)) {
       setLogs(entry.logs);
     }
   }, [entry?.logs]);
 
-  // Model log polling while running
-  const isModelRunning = isRunActive || entry?.status === 'running';
   const modelName = entry?.model || '';
-
-  useEffect(() => {
-    if (!open || !projectId || !runId || !modelName) return;
-
-    let cancelled = false;
-    let timerId;
-
-    const pollLogs = async () => {
-      try {
-        const data = await api.getRunModelLogs(projectId, runId, modelName, logOffset);
-        if (cancelled) return;
-        if (data && Array.isArray(data.lines) && data.lines.length > 0) {
-          setLogs((prev) => [...prev, ...data.lines]);
-          if (data.next_offset) {
-            setLogOffset(data.next_offset);
-          }
-        }
-      } catch {
-        // best effort polling
-      }
-    };
-
-    if (isModelRunning) {
-      pollLogs();
-      timerId = setInterval(pollLogs, 2500);
-    } else if (logs.length === 0) {
-      pollLogs();
-    }
-
-    return () => {
-      cancelled = true;
-      if (timerId) clearInterval(timerId);
-    };
-  }, [open, isModelRunning, projectId, runId, modelName, logOffset]);
-
-  // Auto-scroll logs to bottom on update when model is running
-  useEffect(() => {
-    if (open && isModelRunning && logsContainerRef.current) {
-      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
-    }
-  }, [logs, open, isModelRunning]);
 
   // Load preview data when preview is opened
   const loadPreview = async () => {
@@ -498,16 +693,11 @@ export default function ModelRunSection({
           <ReconciliationSummary reconciliation={entry.reconciliation} />
 
           {/* Dropped Fields */}
-          <DroppedFieldsSection droppedEntities={entry.droppedEntities} />
+          <DroppedFieldsSection droppedEntities={entry.droppedEntities || entry.dropped_entities} />
 
           {/* Execution Stages / Logs */}
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '12px 0 8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>Execution Stages</span>
-            {isModelRunning && (
-              <span style={{ fontSize: 11, color: 'var(--accent-primary, #3b82f6)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <RefreshCw size={11} className="animate-spin" /> Live logs
-              </span>
-            )}
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '12px 0 8px 0' }}>
+            Execution Stages
           </div>
           <div
             ref={logsContainerRef}

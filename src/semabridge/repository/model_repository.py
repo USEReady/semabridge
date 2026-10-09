@@ -590,8 +590,6 @@ class ModelRepository:
         """Update the persisted status for an existing snapshot."""
         with self._session() as session:
             values: Dict[str, Any] = {"status": status, "error_message": error_message}
-            if str(status or "").strip().lower() == "failed":
-                values["sml_blob"] = None
             result = session.execute(
                 update(SnapshotRow)
                 .where(SnapshotRow.snapshot_id == snapshot_id)

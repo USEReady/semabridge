@@ -1134,7 +1134,7 @@ export default function ProjectConfigPage() {
       if (wizardPayload && typeof wizardPayload === 'object' && wizardPayload.name) {
         setSaveInfo('Config saved successfully.');
         navigate('/projects');
-        return;
+        return true;
       }
       
       setYamlText(nextYaml);
@@ -1217,44 +1217,15 @@ export default function ProjectConfigPage() {
       }
 
       const run = await api.runProjectNow(id, { sync_mode: syncMode });
+      const runId = run?.run_id || run?.id;
       const status = String(run?.status || '').toLowerCase();
-      if (run?.id) {
-        saveRunLogs(run.id, buildMockRunLogs(run));
+      if (runId) {
+        saveRunLogs(runId, buildMockRunLogs(run));
       }
 
-      // Sync Now is the primary execution entry point. Route users directly to Runs.
-      if (run?.run_id || run?.id || status === 'running') {
-        navigate('/jobs');
-        return;
-      }
-      if (typeof window !== 'undefined' && window.dispatchEvent) {
-        window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', {
-          detail: {
-            projectId: id,
-            status: status || 'running',
-            progress: 5,
-          },
-        }));
-      }
-
-      if (status === 'running') {
-        addLog('info', 'Sync', 'Sync started. You can continue using other screens while it runs.');
-        setSaveInfo('Sync started. Progress is shown in the bottom status bar.');
-      } else if (status === 'success') {
-        addLog('success', 'Sync', 'Sync completed successfully.');
-        setSaveInfo('Sync completed successfully.');
-        // Fallback: force progress bar to 100% and status to 'success'
-        if (typeof window !== 'undefined' && window.dispatchEvent) {
-          window.dispatchEvent(new CustomEvent('semabridge-sync-fallback', { detail: { projectId: id, status: 'success', progress: 100 } }));
-        }
-      } else if (status === 'warning' || status === 'partial') {
-        addLog('warning', 'Sync', `Sync completed with warnings${run?.error ? `: ${run.error}` : ''}`);
-        setSaveInfo('Sync completed with warnings. Check logs for details.');
-      } else {
-        const msg = run?.error || 'Sync failed.';
-        addLog('error', 'Sync', msg);
-        setSaveInfo(`Sync failed: ${msg}`);
-      }
+      // Sync Now is the primary execution entry point. Route users directly to Runs page.
+      navigate('/jobs');
+      return;
     } catch (err) {
       const msg = err?.message || 'Sync failed due to unexpected error.';
       addLog('error', 'Sync', msg);

@@ -250,53 +250,13 @@ class SnowflakeEmitter(BaseEmitter):
 
     @contextmanager
     def _physical_namespace_scope(self, model: Any):
-        """Temporarily point every dataset's source_table at its namespaced
-        physical table for the duration of a deploy / DDL generation.
+        """Scope for model deployment.
 
-        Rewriting source_table (instead of patching each builder) keeps
-        table creation (schema_manager), live-schema lookups, the TABLES
-        clause of the semantic view and the Cortex YAML consistent with each
-        other by construction. Schema-qualified source tables (DB.SCH.TBL)
-        point at explicitly configured external locations and are left
-        alone. Restored on exit so the persisted/returned model is unchanged.
-        No-op without a namespace, or when already inside a scope.
+        Physical source tables in Snowflake (CATEGORY, DATE, SALESFACT, etc.)
+        are pre-existing user-owned data tables and must never be rewritten with model
+        prefixes, preserving parity with the demo_version sync engine.
         """
-        if not self.physical_namespace or model is None or self._namespace_scope_active:
-            yield
-            return
-        originals: list = []
-        mapping: Dict[str, str] = {}
-        prefix_upper = f"{self.physical_namespace}_".upper()
-        for dataset in getattr(model, "datasets", None) or []:
-            raw = getattr(dataset, "source_table", None) or getattr(dataset, "unique_name", None)
-            if not raw or "." in str(raw):
-                continue
-            if str(raw).upper() in self._SHARED_PHYSICAL_TABLES:
-                continue
-            if str(raw).upper().startswith(prefix_upper):
-                # Would be left unprefixed (indistinguishable from an
-                # already-prefixed name) and could clash with another
-                # project's object of the same name: fail clearly.
-                raise ConnectorError(
-                    f"Source table '{raw}' already starts with this model's object prefix "
-                    f"'{self.physical_namespace}_', so its prefixed name cannot be told apart "
-                    "from an unprefixed one. Rename the model (its view name) or the table."
-                )
-            namespaced = self._namespaced_physical_name(str(raw))
-            if namespaced == raw:
-                continue
-            originals.append((dataset, getattr(dataset, "source_table", None)))
-            dataset.source_table = namespaced
-            mapping[namespaced] = str(raw)
-        self._namespace_original_sources = mapping
-        self._namespace_scope_active = True
-        try:
-            yield
-        finally:
-            self._namespace_scope_active = False
-            for dataset, original in originals:
-                dataset.source_table = original
-            self._namespace_original_sources = {}
+        yield
 
     def _dataset_physical_table_key(self, model: Any, dataset_name: str) -> str:
         """Upper-cased physical table name for a dataset (honours source_table)."""
@@ -2818,6 +2778,28 @@ class SnowflakeEmitter(BaseEmitter):
             )
             return None
 
+        source_col = self._resolve_model_column_name(model, source_dataset, source_column)
+        if self._live_schema_metadata:
+            src_ds_obj = self._get_dataset_by_name(model, source_dataset)
+            src_tbl = (getattr(src_ds_obj, "source_table", None) or source_dataset).rsplit(".", 1)[-1]
+            src_keys = [
+                src_tbl,
+                src_tbl.upper(),
+                self._id.sanitize_table_name(src_tbl).upper(),
+                self._dataset_physical_table_key(model, source_dataset),
+            ]
+            live_src_cols = None
+            for sk in src_keys:
+                if sk in self._live_schema_metadata:
+                    live_src_cols = {c.upper() for c in self._live_schema_metadata[sk]}
+                    break
+            if live_src_cols and source_col.upper() not in live_src_cols:
+                logger.warning(
+                    "Column '%s' does not exist in live schema for table '%s'; skipping pre-compute projection for %s",
+                    source_col, src_tbl, precomputed_column,
+                )
+                return None
+
         # Prefer a real LEFT JOIN over a correlated subquery whenever every
         # hop in the path lands on a confirmed primary key: Snowflake
         # rejects a correlated scalar subquery embedded in a CREATE VIEW
@@ -3063,15 +3045,35 @@ class SnowflakeEmitter(BaseEmitter):
                             resolved_date_col = col_name
                             break
 
-            # Probe 4: If no fact rows join to populated date values, mark dataset as having no populated date link
+            # Ensure resolved_date_col is identified if available
+            if not resolved_date_col:
+                fact_date_cand = self._resolve_fact_enrichment_date_column(model, fact_table)
+                if fact_date_cand and fact_date_cand in fact_cols:
+                    resolved_date_col = fact_date_cand
+                else:
+                    for _fc in sorted(fact_cols):
+                        if any(_t in _fc.upper() for _t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR", "YR"]):
+                            resolved_date_col = _fc
+                            break
+
+            # Probe 4: If no fact rows join to populated date values, fall back to CURRENT_DATE() if date column exists
             if max_date_literal is None or str(max_date_literal).strip().upper() == "NULL":
-                logger.warning(
-                    "No populated date link found for fact dataset '%s'; marking dataset as having no usable dates.",
-                    fact_table,
-                )
-                self.no_populated_date_link_datasets.add(str(fact_table).casefold())
-                if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
-                    self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                if resolved_date_col:
+                    logger.info(
+                        "Date anchor MAX('%s') for fact dataset '%s' evaluated to NULL (empty table or NULL dates); "
+                        "falling back to CURRENT_DATE() anchor for enriched view.",
+                        resolved_date_col,
+                        fact_table,
+                    )
+                    max_date_literal = "CURRENT_DATE()"
+                else:
+                    logger.warning(
+                        "No populated date link or date column found for fact dataset '%s'; marking dataset as having no usable dates.",
+                        fact_table,
+                    )
+                    self.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                    if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
+                        self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
 
 
             if max_date_literal is not None and str(max_date_literal).strip().upper() != "NULL":

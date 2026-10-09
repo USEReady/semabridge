@@ -23,7 +23,32 @@ def resolve_source_table_mapping(
     (or is recorded in failed_enrichment_datasets), any mapping to an enriched view
     is ignored so the dataset cleanly falls back to its base table.
     """
-    merged: Dict[str, str] = {}
+    class _CaseFoldMappingDict(dict):
+        def get(self, key, default=None):
+            if key in self:
+                return super().get(key)
+            if isinstance(key, str):
+                k_fold = key.casefold()
+                for k, v in self.items():
+                    if isinstance(k, str) and k.casefold() == k_fold:
+                        return v
+            return default
+
+        def __getitem__(self, key):
+            val = self.get(key)
+            if val is not None:
+                return val
+            return super().__getitem__(key)
+
+        def __contains__(self, key):
+            if super().__contains__(key):
+                return True
+            if isinstance(key, str):
+                k_fold = key.casefold()
+                return any(isinstance(k, str) and k.casefold() == k_fold for k in self.keys())
+            return False
+
+    merged: Dict[str, str] = _CaseFoldMappingDict()
     failed_set = {s.casefold() for s in (failed_enrichment_datasets or set())}
 
     if enriched_view_mapping:

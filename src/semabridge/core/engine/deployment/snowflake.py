@@ -116,33 +116,14 @@ _UNSET = object()
 def _resolve_load_source_data(context: RunContext) -> "tuple[bool, Optional[str]]":
     """Returns (load_source_data, trigger) for this deploy.
 
-    Distinguishes "options.load_source_data explicitly set" from "never
-    set at all" -- config.py's SimpleNamespace only carries the attribute
-    when the project YAML actually had the key, so a sentinel (not a
-    plain getattr(..., False)) is required to tell the two apart.
-
-    Explicit config (true OR false) always wins, unchanged from before
-    this default was introduced -- an existing project's behavior must
-    never change just because this function started existing. Only when
-    it's genuinely unset does this project's own run history decide: True
-    ("first_sync_default") for a brand-new project's first-ever
-    successful sync, so real data shows up with zero config; False for
-    every sync after that, back to the original opt-in-only default --
-    see ModelRepository.has_any_successful_run.
-
-    `trigger` is None whenever load_source_data ends up False (nothing to
-    explain in the run report), "first_sync_default" or "explicit"
-    otherwise -- surfaced in run_report_service.py so an automatic first
-    sync never looks like an unexplained, silent behavior change.
+    Data backfill into physical tables is strictly opt-in via project options
+    (`options.load_source_data: true`). The core mission of SemaBridge is
+    semantic layer synchronization (semantic view creation and metric translation).
     """
     options_ns = getattr(context.config, "options", None)
     raw_load_source_data = getattr(options_ns, "load_source_data", _UNSET)
-    if raw_load_source_data is _UNSET:
-        from semabridge.repository.model_repository import ModelRepository
-        is_first_sync = not ModelRepository().has_any_successful_run(
-            context.project_id, exclude_run_id=context.run_id,
-        )
-        return is_first_sync, ("first_sync_default" if is_first_sync else None)
+    if raw_load_source_data is _UNSET or raw_load_source_data is None:
+        return False, None
 
     load_source_data = bool(raw_load_source_data)
     return load_source_data, ("explicit" if load_source_data else None)

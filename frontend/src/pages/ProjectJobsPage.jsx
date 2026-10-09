@@ -280,9 +280,14 @@ export default function ProjectJobsPage() {
     setClearingLogs(true);
     try {
       await api.clearJobRuns();
+      try {
+        localStorage.removeItem('semabridge_run_logs_v1');
+      } catch {}
       setRuns([]);
+      setLiveManifests({});
+      setExpandedRunId(null);
     } catch (err) {
-      console.error('Clear logs failed:', err);
+      console.error('Clear runs failed:', err);
     } finally {
       setClearingLogs(false);
     }
@@ -435,11 +440,21 @@ export default function ProjectJobsPage() {
     const scoped = droppedFieldsModalModel
       ? results.filter((r) => r?.model === droppedFieldsModalModel)
       : results;
-    return scoped.flatMap(
+    let list = scoped.flatMap(
       (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : []).map(
         (entry) => ({ ...entry, model: r?.model })
       )
     );
+    if (!list.length && droppedFieldsModalRun) {
+      const fallback = (
+        (Array.isArray(droppedFieldsModalRun.dropped_entities) && droppedFieldsModalRun.dropped_entities) ||
+        (Array.isArray(droppedFieldsModalRun.summary?.dropped_entities) && droppedFieldsModalRun.summary.dropped_entities) ||
+        (Array.isArray(droppedFieldsModalRun.summary?.drop_ledger) && droppedFieldsModalRun.summary.drop_ledger) ||
+        []
+      );
+      list = fallback.map((entry) => ({ ...entry, model: droppedFieldsModalRun.source_model_name || droppedFieldsModalRun.model || 'Model' }));
+    }
+    return list;
   }, [droppedFieldsModalRun, droppedFieldsModalModel]);
 
   const handleDeleteSchedule = async (projectId) => {
@@ -570,7 +585,7 @@ export default function ProjectJobsPage() {
               disabled={clearingLogs || runs.length === 0}
               className="text-[11px] text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {clearingLogs ? 'Clearing…' : 'Clear Logs'}
+              {clearingLogs ? 'Clearing…' : 'Clear Runs'}
             </button>
           </div>
         </div>
@@ -727,17 +742,73 @@ export default function ProjectJobsPage() {
 
                     {isExpanded && (
                       <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
-                          <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
-                          <InfoCard label="Sync Mode" value={(run.sync_mode || 'copy').toUpperCase()} />
-                          <InfoCard label="Started" value={formatDate(run.started_at)} />
-                          <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
-                          <InfoCard label="Status" value={String(run.status || 'draft')} />
-                          <InfoCard label="Message" value={run.message || run.error || '—'} />
-                        </div>
+                        {(() => {
+                          const totalDroppedCount = perModelEntries.reduce(
+                            (sum, e) => sum + (Array.isArray(e.droppedEntities) ? e.droppedEntities.length : 0),
+                            0
+                          ) || (Array.isArray(run.dropped_entities) ? run.dropped_entities.length : 0)
+                            || (Array.isArray(run.summary?.dropped_entities) ? run.summary.dropped_entities.length : 0)
+                            || (Array.isArray(run.summary?.drop_ledger) ? run.summary.drop_ledger.length : 0);
 
-                        {/* "View Report Preview" for single-model runs */}
-                        {!isMultiModel && Boolean(run.has_report || run.report_path) && (
+                          return (
+                            <>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
+                                <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
+                                <InfoCard label="Sync Mode" value={(run.sync_mode || 'copy').toUpperCase()} />
+                                <InfoCard label="Started" value={formatDate(run.started_at)} />
+                                <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
+                                <InfoCard label="Status" value={String(run.status || 'draft')} />
+                                <InfoCard label="Message" value={run.message || run.error || '—'} />
+                              </div>
+
+                              {totalDroppedCount > 0 && (
+                                <div
+                                  style={{
+                                    marginBottom: 12,
+                                    padding: '10px 14px',
+                                    borderRadius: 6,
+                                    background: 'rgba(239, 68, 68, 0.08)',
+                                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    flexWrap: 'wrap',
+                                    gap: 10,
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-error, #ef4444)', fontWeight: 600 }}>
+                                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                                    <span>
+                                      This run recorded {totalDroppedCount} dropped or excluded {totalDroppedCount === 1 ? 'entity' : 'entities'} across models. See individual model sections below for the exact rejection reasons and error logs.
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => openDroppedFieldsModal(run)}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      padding: '4px 10px',
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      borderRadius: 4,
+                                      background: 'var(--bg-surface-raised)',
+                                      color: 'var(--text-primary)',
+                                      border: '1px solid var(--border-main)',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    View All Dropped In Model
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+
+                        {/* "View Report Preview" button -- available whenever a run report or model reports exist */}
+                        {Boolean(run.has_report || run.report_path || (Array.isArray(run.model_reports) && run.model_reports.length > 0)) && (
                           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, marginBottom: 8 }}>
                             <button
                               type="button"
@@ -772,64 +843,80 @@ export default function ProjectJobsPage() {
                           <>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 6 }}>
                               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                                Models In This Run ({perModelEntries.length})
+                                {perModelEntries.length > 1
+                                  ? `Models In This Run (${perModelEntries.length})`
+                                  : 'Target Model & Dropped Fields'}
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedModelSections(prev => ({
-                                    ...prev,
-                                    ...Object.fromEntries(perModelEntries.map(e => [e.key, true])),
-                                  }))}
-                                  style={{
-                                    fontSize: 11,
-                                    color: 'var(--text-tertiary)',
-                                    background: 'transparent',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    padding: 0,
-                                  }}
-                                  className="hover:text-primary transition-colors"
-                                >
-                                  Expand all
-                                </button>
-                                <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>•</span>
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedModelSections(prev => ({
-                                    ...prev,
-                                    ...Object.fromEntries(perModelEntries.map(e => [e.key, false])),
-                                  }))}
-                                  style={{
-                                    fontSize: 11,
-                                    color: 'var(--text-tertiary)',
-                                    background: 'transparent',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    padding: 0,
-                                  }}
-                                  className="hover:text-primary transition-colors"
-                                >
-                                  Collapse all
-                                </button>
-                              </div>
+                              {perModelEntries.length > 1 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedModelSections(prev => ({
+                                      ...prev,
+                                      ...Object.fromEntries(perModelEntries.map(e => [e.key, true])),
+                                    }))}
+                                    style={{
+                                      fontSize: 11,
+                                      color: 'var(--text-tertiary)',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      padding: 0,
+                                    }}
+                                    className="hover:text-primary transition-colors"
+                                  >
+                                    Expand all
+                                  </button>
+                                  <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>•</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedModelSections(prev => ({
+                                      ...prev,
+                                      ...Object.fromEntries(perModelEntries.map(e => [e.key, false])),
+                                    }))}
+                                    style={{
+                                      fontSize: 11,
+                                      color: 'var(--text-tertiary)',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      padding: 0,
+                                    }}
+                                    className="hover:text-primary transition-colors"
+                                  >
+                                    Collapse all
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                            {perModelEntries.map((entry) => (
-                              <ModelRunSection
-                                key={entry.key}
-                                entry={entry}
-                                projectId={run.project_id}
-                                runId={run.id}
-                                isRunActive={run.status === 'running'}
-                                isOpen={expandedModelSections[entry.key]}
-                                onToggle={() => setExpandedModelSections(prev => ({
-                                  ...prev,
-                                  [entry.key]: !(prev[entry.key] !== undefined ? prev[entry.key] : (entry.status === 'failed' || entry.status === 'conflict')),
-                                }))}
-                                formatDuration={formatDuration}
-                                defaultOpen={entry.status === 'failed' || entry.status === 'conflict'}
-                              />
-                            ))}
+                            {perModelEntries.map((entry) => {
+                              const shouldOpenByDefault = (
+                                perModelEntries.length === 1 ||
+                                entry.status === 'failed' ||
+                                entry.status === 'conflict' ||
+                                (Array.isArray(entry.droppedEntities) && entry.droppedEntities.length > 0)
+                              );
+                              const isOpen = expandedModelSections[entry.key] !== undefined
+                                ? expandedModelSections[entry.key]
+                                : shouldOpenByDefault;
+
+                              return (
+                                <ModelRunSection
+                                  key={entry.key}
+                                  entry={entry}
+                                  projectId={run.project_id}
+                                  runId={run.id}
+                                  isRunActive={run.status === 'running'}
+                                  isOpen={isOpen}
+                                  onToggle={() => setExpandedModelSections(prev => ({
+                                    ...prev,
+                                    [entry.key]: !(prev[entry.key] !== undefined ? prev[entry.key] : shouldOpenByDefault),
+                                  }))}
+                                  formatDuration={formatDuration}
+                                  defaultOpen={shouldOpenByDefault}
+                                />
+                              );
+                            })}
                           </>
                         ) : (
                           <>

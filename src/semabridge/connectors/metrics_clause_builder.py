@@ -45,6 +45,8 @@ class MetricsClauseBuilder:
         drop_ledger: Optional[DropLedger] = None,
         enriched_view_mapping: Optional[Dict[str, str]] = None,
         no_populated_date_link_datasets: Optional[Set[str]] = None,
+        failed_enrichment_datasets: Optional[Set[str]] = None,
+        live_schema_metadata: Optional[Dict[str, Any]] = None,
     ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -58,6 +60,12 @@ class MetricsClauseBuilder:
         )
         self.no_populated_date_link_datasets: Set[str] = (
             no_populated_date_link_datasets if no_populated_date_link_datasets is not None else set()
+        )
+        self.failed_enrichment_datasets: Set[str] = (
+            failed_enrichment_datasets if failed_enrichment_datasets is not None else set()
+        )
+        self.live_schema_metadata: Dict[str, Any] = (
+            live_schema_metadata if live_schema_metadata is not None else {}
         )
 
     def build_for_sml(
@@ -1036,9 +1044,23 @@ class MetricsClauseBuilder:
                 if predicted_flag_col:
                     has_enriched_target = bool(
                         self.enriched_view_mapping
-                        and self.enriched_view_mapping.get(metric.dataset)
+                        and (
+                            self.enriched_view_mapping.get(metric.dataset)
+                            or self.enriched_view_mapping.get(str(metric.dataset or "").casefold())
+                            or self.enriched_view_mapping.get(str(metric.dataset or "").upper())
+                        )
                         and str(metric.dataset).casefold() not in {s.casefold() for s in (self.failed_enrichment_datasets or set())}
                     )
+                    if has_enriched_target and self.live_schema_metadata:
+                        enriched_vname = (
+                            self.enriched_view_mapping.get(metric.dataset)
+                            or self.enriched_view_mapping.get(str(metric.dataset or "").casefold())
+                            or self.enriched_view_mapping.get(str(metric.dataset or "").upper())
+                        )
+                        live_v_cols = self.live_schema_metadata.get(str(enriched_vname).upper(), set())
+                        if live_v_cols and predicted_flag_col.upper() not in {c.upper() for c in live_v_cols}:
+                            has_enriched_target = False
+
                     if has_enriched_target:
                         honest_note = (
                             f"Cannot verify in dry-run — resolved by live enrichment at deploy time "

@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///./test_run_model_results_and_logs.sqlite")
+os.environ["SEMABRIDGE_DATABASE_URL"] = "sqlite:///./test_run_model_results_and_logs.sqlite"
+os.environ["DATABASE_URL"] = "sqlite:///./test_run_model_results_and_logs.sqlite"
 os.environ.setdefault("AUTH_ENABLED", "false")
 
 if "psycopg2" not in sys.modules:
@@ -23,9 +24,16 @@ if "psycopg2" not in sys.modules:
     _psycopg2.paramstyle = "pyformat"
     _psycopg2.Error = Exception
     _psycopg2.connect = lambda *args, **kwargs: None
+    _ext = types.ModuleType("psycopg2.extensions")
+    _ext.register_adapter = lambda *args, **kwargs: None
+    _extras = types.ModuleType("psycopg2.extras")
+    _extras.register_uuid = lambda *args, **kwargs: None
+    _extras.RealDictCursor = object
+    _psycopg2.extensions = _ext
+    _psycopg2.extras = _extras
     sys.modules["psycopg2"] = _psycopg2
-    sys.modules["psycopg2.extensions"] = types.ModuleType("psycopg2.extensions")
-    sys.modules["psycopg2.extras"] = types.ModuleType("psycopg2.extras")
+    sys.modules["psycopg2.extensions"] = _ext
+    sys.modules["psycopg2.extras"] = _extras
 
 from semabridge.core.run_model_logs import (
     model_log_scope,

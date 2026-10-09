@@ -239,7 +239,15 @@ def _build_sync_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str,
             model_list = models_list or [config.get("model_name", "")]
             for raw_model in model_list:
                 if isinstance(raw_model, dict):
-                    model_name = str(raw_model.get("pbixPath") or raw_model.get("name") or "")
+                    model_name = str(
+                        raw_model.get("pbix_path")
+                        or raw_model.get("pbixPath")
+                        or raw_model.get("path")
+                        or raw_model.get("file_path")
+                        or raw_model.get("source_path")
+                        or raw_model.get("name")
+                        or ""
+                    )
                 else:
                     model_name = str(raw_model or "")
 
@@ -632,7 +640,14 @@ def _run_single_job_impl(
             # _extract_with_pbixray for the same fix applied one layer down, at
             # the actual extraction call site.
             logger.error("Sync failed for model '%s': %s", model_label, exc, exc_info=True)
-            result = _failed_result(job, str(exc), type(exc).__name__, started)
+            accumulated_drops = []
+            try:
+                if engine is not None and hasattr(engine, "_context") and hasattr(engine._context, "drop_ledger"):
+                    for r in getattr(engine._context.drop_ledger, "records", []) or []:
+                        accumulated_drops.append(r.model_dump(mode="json") if hasattr(r, "model_dump") else dict(r))
+            except Exception:
+                pass
+            result = _failed_result(job, str(exc), type(exc).__name__, started, dropped_entities=accumulated_drops)
             if "CONFLICT:" in str(exc):
                 result["status"] = "conflict"
             return result
@@ -693,10 +708,21 @@ def _failed_result(
     message: str,
     error_type: str,
     started: Optional[float] = None,
+    dropped_entities: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Uniform per-model failure entry -- same keys as a successful one, with
-    the error message always present in console.lines."""
+    the error message always present in console.lines and recorded in dropped_entities."""
     model_label = str(job.get("model_label") or "unknown")
+    drops: List[Dict[str, Any]] = list(dropped_entities or [])
+    # Always include a record explaining the failure rejection so the runs page displays the exact reason
+    drops.append({
+        "entity_kind": "model",
+        "entity_name": model_label,
+        "stage": "ddl_deployment",
+        "reason": f"Deployment rejected: {message}",
+        "detail": f"{error_type}: {message}",
+        "by_design": False,
+    })
     summary_data = {
         "status": "FAILED",
         "errors": [
@@ -707,6 +733,7 @@ def _failed_result(
                 "error_type": error_type,
             }
         ],
+        "dropped_entities": drops,
     }
     return {
         "model": model_label,
@@ -716,7 +743,7 @@ def _failed_result(
         "console": _build_console_details(summary_data, fallback_message=f"[ERROR] {message}"),
         "run_id": None,
         "missing_dims": {},
-        "dropped_entities": [],
+        "dropped_entities": drops,
         "data_backfill_results": [],
         "pbix_path": job.get("pbix_path"),
         "view_name": None,

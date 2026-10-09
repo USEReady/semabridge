@@ -105,6 +105,8 @@ class SemanticViewBuilder:
             drop_ledger=self.drop_ledger,
             enriched_view_mapping=self.enriched_view_mapping,
             no_populated_date_link_datasets=self.no_populated_date_link_datasets,
+            failed_enrichment_datasets=self.failed_enrichment_datasets,
+            live_schema_metadata=self.live_schema_metadata,
         )
 
     def _precompute_suggestions(self, model: Any) -> dict[str, list[str]]:
@@ -331,6 +333,11 @@ class SemanticViewBuilder:
         all_phys = {c for cols in ds_lookup.values() for c in cols}
         emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in sml.metrics if (m.source_column and m.aggregation) or m.sql_expression or getattr(m, "expression", None)}
 
+        self.metrics_builder.enriched_view_mapping = self.enriched_view_mapping
+        self.metrics_builder.failed_enrichment_datasets = self.failed_enrichment_datasets
+        self.metrics_builder.live_schema_metadata = self.live_schema_metadata
+        self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
+
         metrics_lines = self.metrics_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
 
         # CROSS-CLAUSE DEDUPLICATION
@@ -394,6 +401,11 @@ class SemanticViewBuilder:
         all_phys = {c for cols in ds_lookup.values() for c in cols}
         emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in osi.metrics if (m.source_column and m.aggregation) or getattr(m, "expression", None) or getattr(m, "sql_expression", None)}
         
+        self.metrics_builder.enriched_view_mapping = self.enriched_view_mapping
+        self.metrics_builder.failed_enrichment_datasets = self.failed_enrichment_datasets
+        self.metrics_builder.live_schema_metadata = self.live_schema_metadata
+        self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
+
         metrics_lines = self.metrics_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
         
         if dims_lines and metrics_lines and dimensions_block_idx is not None:

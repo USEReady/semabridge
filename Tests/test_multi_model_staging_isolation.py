@@ -18,15 +18,16 @@ class _FakeEmitter:
         self.drop_ledger = None
 
     def generate_ddls(self, sml):
-        return [f"-- ddl for {self.physical_namespace or 'single'}"]
+        return [f"-- ddl for {getattr(sml, 'unique_name', None) or self.physical_namespace or 'single'}"]
 
     def generate_cortex_yaml(self, sml):
-        return f"name: {self.physical_namespace or 'single'}\n"
+        return f"name: {getattr(sml, 'unique_name', None) or self.physical_namespace or 'single'}\n"
 
 
 class _FakeModel:
-    unique_name = "model_x"
-    label = "model_x"
+    def __init__(self, name="model_x"):
+        self.unique_name = name
+        self.label = name
 
 
 def _run(monkeypatch, namespace):
@@ -40,7 +41,7 @@ def _run(monkeypatch, namespace):
         behavior=None,
         physical_namespace=namespace,
         source_type="pbix",
-        sml_model=_FakeModel(),
+        sml_model=_FakeModel(namespace),
         project_id="proj_x",
         drop_ledger=None,
     )

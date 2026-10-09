@@ -47,27 +47,13 @@ from semabridge.core.engine.exceptions import (
 
 logger = get_logger(__name__)
 
-# Source types whose Snowflake physical objects (base tables, enriched views,
-# MEASURES_* tables) are created by SemaBridge itself, and therefore safe to
-# namespace per model. A Snowflake-sourced model points at pre-existing,
-# user-owned data tables, which must never be renamed.
-_NAMESPACEABLE_SOURCE_TYPES = {"pbix", "fabric"}
-
-
 def emitter_physical_namespace(context: RunContext) -> Optional[str]:
-    """Per-model physical-object namespace to hand to SnowflakeEmitter.
-
-    Only non-None for a model of a multi-mode project (see
-    sync_execution_service._assign_project_mode_naming) AND whose source is
-    one SemaBridge materializes tables for -- so a single-mode project always
-    deploys under exactly the same object names as before.
+    """Physical source data tables in Snowflake (CATEGORY, DATE, SALESFACT, etc.)
+    are pre-existing user-owned data tables and must never be namespaced per model,
+    preserving parity with the demo_version sync engine. Model isolation in
+    Snowflake is achieved via unique semantic view names, not physical table prefixing.
     """
-    namespace = getattr(context, "physical_namespace", None)
-    if not namespace:
-        return None
-    if str(getattr(context, "source_type", "") or "").lower() not in _NAMESPACEABLE_SOURCE_TYPES:
-        return None
-    return namespace
+    return None
 
 
 def _convert_to_snowflake_target(self, context: RunContext) -> None:
