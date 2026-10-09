@@ -18,7 +18,6 @@
 import { useCallback, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RotateCcw } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
-import DroppedFieldsPanel from '../common/DroppedFieldsPanel';
 import DryRunMappingTable from '../DryRunMappingTable';
 
 function pluralize(count, word) {
@@ -216,11 +215,6 @@ export default function MultiFileDryRunStatus({
                       droppedEntities={section.result?.dropped_entities || []}
                       unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
                     />
-                    {Array.isArray(section.result?.dropped_entities) && section.result.dropped_entities.length > 0 && (
-                      <div style={{ marginTop: 14 }}>
-                        <DroppedFieldsPanel entries={section.result.dropped_entities} />
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

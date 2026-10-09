@@ -1508,8 +1508,6 @@ export default function DryRunMappingTable({
         )}
       </div>
 
-      {/* <DroppedFieldsPanel entries={droppedEntities} /> */}
-
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* Tier 1 — field type (single-select), built from whatever field types are in the data */}
@@ -1625,6 +1623,11 @@ export default function DryRunMappingTable({
           {bulkToast.type === 'success' && <CheckCircle size={13} />}
           {bulkToast.msg}
         </div>
+      )}
+
+      {/* ── Dropped fields panel (placed under model/filters, above columns & metrics) ── */}
+      {Array.isArray(droppedEntities) && droppedEntities.length > 0 && (
+        <DroppedFieldsPanel entries={droppedEntities} />
       )}
 
       {/* ── Columns table ────────────────────────────────────────────────────── */}
