@@ -273,26 +273,12 @@ class OSIToSMLConverter(BaseConverter):
             # a user sees at mapping/dry-run time, never what deploys.
             self._flag_unreachable_dimension_calculates(sml)
 
-            # 4a2. Decompose "disconnected selector table" metrics (e.g. a
-            # Power BI field-parameter/what-if table with no real business
-            # key) whose DAX switches between OTHER tables' aggregates
-            # based on the selector's own value -- a shape no single
-            # Snowflake metric can express, but whose individual branches
-            # (selector condition stripped) are real, deployable metrics
-            # on their own. Must run AFTER 4a (needs sml.relationships to
-            # confirm genuine disconnection -- see
-            # try_decompose_disconnected_selector_metric's docstring on why
-            # translation "succeeding" doesn't mean this metric is safe)
-            # and takes priority over 4a's generic advisory for any metric
-            # it successfully handles (removes it, see below) -- a
-            # successful decomposition is a strictly more specific,
-            # actionable diagnosis than a bare "unreachable dimension" note
-            # with no real fix.
-            self._decompose_disconnected_selector_metrics(
-                sml,
-                dataset_col_lookup=dax_dataset_col_lookup,
-                dataset_aliases=dax_dataset_aliases,
-            )
+            # 4a2. Disconnected selector decomposition disabled — keep metrics single as built.
+            # self._decompose_disconnected_selector_metrics(
+            #     sml,
+            #     dataset_col_lookup=dax_dataset_col_lookup,
+            #     dataset_aliases=dax_dataset_aliases,
+            # )
 
             # 4b. Advisory-only, opposite outcome of 4a: a metric whose
             # CALCULATE(...) filters a table that DOES have a relationship
