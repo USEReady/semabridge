@@ -13,6 +13,7 @@ from typing import Any, Dict, Literal, Optional
 import yaml
 from pydantic import Field
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
+from semabridge.connectors.sql_guard import validate_safe_sql
 from semabridge.core.settings import Settings, get_settings
 from semabridge.core.config_loader import get_project_file_path
 from semabridge.core.behavior import ConnectorBehavior
@@ -441,9 +442,9 @@ def _update_snowflake_view_metadata_on_failure(self, context: RunContext, sf_cfg
             # can be set back to exactly the same value (no visible change,
             # LAST_ALTERED moves).
             escaped_name = view_name.replace("'", "''")
-            cur.execute(
-                f"SHOW SEMANTIC VIEWS LIKE '{escaped_name}' IN SCHEMA \"{db_name}\".\"{schema_name}\""
-            )
+            show_sql = f"SHOW SEMANTIC VIEWS LIKE '{escaped_name}' IN SCHEMA \"{db_name}\".\"{schema_name}\""
+            validate_safe_sql(show_sql)
+            cur.execute(show_sql)
             row = cur.fetchone()
             if not row:
                 logger.debug("Skipping view timestamp update: %s does not exist", fully_qualified_name)
@@ -454,9 +455,13 @@ def _update_snowflake_view_metadata_on_failure(self, context: RunContext, sf_cfg
                 comment = row[columns.index("comment")]
             if comment:
                 escaped_comment = str(comment).replace("'", "''")
-                cur.execute(f"ALTER SEMANTIC VIEW IF EXISTS {fully_qualified_name} SET COMMENT = '{escaped_comment}'")
+                set_sql = f"ALTER SEMANTIC VIEW IF EXISTS {fully_qualified_name} SET COMMENT = '{escaped_comment}'"
+                validate_safe_sql(set_sql)
+                cur.execute(set_sql)
             else:
-                cur.execute(f"ALTER SEMANTIC VIEW IF EXISTS {fully_qualified_name} UNSET COMMENT")
+                unset_sql = f"ALTER SEMANTIC VIEW IF EXISTS {fully_qualified_name} UNSET COMMENT"
+                validate_safe_sql(unset_sql)
+                cur.execute(unset_sql)
 
             logger.debug("Updated LAST_ALTERED (silent) for %s", fully_qualified_name)
             return True

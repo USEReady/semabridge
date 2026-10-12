@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 import semabridge.api.services.project_shared as project_shared
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 
 from semabridge.api.services.project_shared import (
     _compat_default_project_yaml,
@@ -1075,8 +1075,41 @@ async def run_project_now_compat(
         if is_multi_mode(source_cfg):
             from semabridge.api.services.dry_run_job_service import validate_multi_model_dry_run_readiness
             validate_multi_model_dry_run_readiness(project_id, source_cfg)
+        else:
+            force = bool((payload or {}).get("force", False))
+            if not force:
+                import sys
+                pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
+                auto_map_fn = getattr(pri_mod, "auto_map_compat", None)
+                if auto_map_fn is None:
+                    from semabridge.api.services.mapping_service import auto_map_compat as auto_map_fn
+                collect_blockers_fn = getattr(pri_mod, "_compat_collect_dry_run_blockers", None)
+                if collect_blockers_fn is None:
+                    from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers as collect_blockers_fn
+                dry_run_payload = {
+                    "project_id": project_id,
+                    "dry_run": True,
+                    "config_yaml": config_override or base_cfg,
+                }
+                auto_map_res = await auto_map_fn(dry_run_payload)
+                blockers = collect_blockers_fn(auto_map_res)
+                if blockers:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "status": "blocked",
+                            "mode": "DRY_RUN",
+                            "blocking_issue_count": len(blockers),
+                            "blockers": blockers,
+                            "message": f"Project has {len(blockers)} blocking issue(s) in dry run. Resolve them before running live sync.",
+                        },
+                    )
 
-    run, project_cfg, started = _create_project_run(
+    import sys
+    pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
+    create_run_fn = getattr(pri_mod, "_create_project_run", None) or _create_project_run
+    run, project_cfg, started = create_run_fn(
+
         project_id,
         "Manual",
         run_type=run_type,
@@ -1093,7 +1126,8 @@ async def run_project_now_compat(
     if user_id is not None and str(user_id).strip():
         run["user_id"] = user_id
     run["force"] = force
-    background_tasks.add_task(_run_project_background, run, project_cfg, started)
+    run_bg_fn = getattr(pri_mod, "_run_project_background", None) or _run_project_background
+    background_tasks.add_task(run_bg_fn, run, project_cfg, started)
     return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
 
 

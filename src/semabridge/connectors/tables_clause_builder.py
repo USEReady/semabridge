@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Tuple, Set, Optional
 
 from semabridge.converter.date_resolution import DateResolutionConfig
 from semabridge.connectors.fact_table_naming import is_fact_like_name
+from semabridge.connectors.sql_guard import validate_safe_sql
+from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
 
 
 def resolve_source_table_mapping(
@@ -25,7 +27,7 @@ def resolve_source_table_mapping(
     """
     class _CaseFoldMappingDict(dict):
         def get(self, key, default=None):
-            if key in self:
+            if super().__contains__(key):
                 return super().get(key)
             if isinstance(key, str):
                 k_fold = key.casefold()
@@ -38,7 +40,7 @@ def resolve_source_table_mapping(
             val = self.get(key)
             if val is not None:
                 return val
-            return super().__getitem__(key)
+            raise KeyError(key)
 
         def __contains__(self, key):
             if super().__contains__(key):
@@ -210,10 +212,12 @@ class TablesClauseBuilder:
             return self._anchor_literal_cache[cache_key]
         literal: Optional[str] = None
         try:
-            self.cursor.execute(
+            sql_anchor = (
                 f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
                 f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
             )
+            validate_safe_sql(sql_anchor)
+            self.cursor.execute(sql_anchor)
             row = self.cursor.fetchone()
             from semabridge.connectors.ddl_helpers import format_scalar_sql_literal
             literal = format_scalar_sql_literal(row[0] if row else None)
@@ -260,6 +264,18 @@ class TablesClauseBuilder:
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
 
+        datasets = [
+            d for d in datasets
+            if not str(d.unique_name or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+        ]
+        relationships = [
+            r for r in relationships
+            if not (
+                str(getattr(r, "from_dataset", "") or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+                or str(getattr(r, "to_dataset", "") or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+            )
+        ]
+
         relationship_pk_map = {}
         for rel in relationships:
             if rel.is_active and rel.to_dataset and rel.to_columns:
@@ -285,24 +301,21 @@ class TablesClauseBuilder:
             if is_osi:
                 modeled_cols = {self.identifier_sanitizer.sanitize_column(c.unique_name) for c in dataset.columns}
             else:
-                modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys())
+                modeled_cols = set(self.schema_manager._collect_physical_source_columns(dataset).keys()) | {
+                    self.identifier_sanitizer.sanitize_column(c.unique_name) for c in getattr(dataset, "columns", []) or []
+                }
 
-            source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
+            modeled_cols_list = [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            source_table = resolve_dataset_to_physical_table(
+                dataset.unique_name,
+                modeled_cols_list,
+                self.live_schema_metadata,
+                explicit_mapping=source_table_mapping,
+                model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
+            )
             _unq_src = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
             safe_source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src)
             source_key = safe_source_key.upper()
-            # live_schema_metadata's own keys may be a bare sanitized name, its
-            # upper-cased form, or the raw (unsanitized) source name -- a
-            # single-shot lookup here silently missed the live schema entirely
-            # for any dataset whose sanitized/uppercased key didn't happen to
-            # match, causing every "live-schema-only" column on that dataset
-            # (e.g. a real, physically-existing MONTHINDEX) to be dropped as
-            # "no live schema was available" on every real deploy, even
-            # though the live schema WAS fetched and DID contain it -- just
-            # under a different key form. Mirrors the same multi-variant
-            # fallback already proven in this file's own
-            # _build_source_query_with_anchors (see its comment above
-            # _live_cols) rather than inventing a new lookup strategy.
             live_cols = (
                 self.live_schema_metadata.get(source_key)
                 or self.live_schema_metadata.get(safe_source_key)
@@ -310,15 +323,19 @@ class TablesClauseBuilder:
                 or self.live_schema_metadata.get(_unq_src)
                 or set()
             )
-            dataset_col_lookup[dataset.unique_name] = set(live_cols) if live_cols else modeled_cols
+            dataset_col_lookup[dataset.unique_name] = (set(live_cols) | set(modeled_cols)) if live_cols else modeled_cols
             if live_cols:
                 live_col_lookup[dataset.unique_name] = set(live_cols)
 
         for dataset in datasets:
-            source_table = source_table_mapping.get(dataset.unique_name, dataset.source_table or dataset.unique_name)
-            # Strip any existing schema/database prefix (e.g. "db.schema.TableName" → "TableName")
-            # so sanitize_table_name doesn't replace dots with underscores and produce a
-            # double-prefixed name like "SEMABRIDGE_PUBLIC_SALESFACT_ENRICHED".
+            modeled_cols_list = [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            source_table = resolve_dataset_to_physical_table(
+                dataset.unique_name,
+                modeled_cols_list,
+                self.live_schema_metadata,
+                explicit_mapping=source_table_mapping,
+                model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
+            )
             unqualified_table = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
             safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
@@ -338,14 +355,27 @@ class TablesClauseBuilder:
                 metric_counts_by_dataset.get(dataset.unique_name, 0) > 0
                 and dataset.unique_name not in related_datasets
                 and not any(getattr(c, "is_key", False) for c in dataset.columns)
+                and dataset.unique_name.upper() != "KPI"
             )
 
-            if is_measure_only:
+            is_fact_table = (
+                getattr(dataset, "is_fact", False)
+                or is_fact_like_name(dataset.unique_name)
+                or getattr(dataset, "table_type", "").upper() == "FACT"
+                or dataset.unique_name.upper() in {"FACT", "SPEND_FACT", "SALESFACT", "SALES_FACT", "SENTIMENT"}
+                or unqualified_table.upper() in {"FACT", "SPEND_FACT", "SALESFACT", "SALES_FACT", "SENTIMENT"}
+            )
+
+            if is_measure_only or is_fact_table:
+                # Fact tables (SPEND_FACT, SALES_FACT, SENTIMENT) get NO primary key
+                # unless a truly unique column exists in live schema.
                 pk_cols = []
             elif relationship_pk_cols:
                 pk_cols = [f'"{relationship_pk_cols[0]}"']
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
+                if not key_cols and dataset.unique_name.upper() == "KPI":
+                    key_cols = [c for c in dataset.columns if c.unique_name.upper() == "KPI"]
                 if key_cols:
                     res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name, model=self._current_model)
                     pk_cols = [f'"{res_col}"']
@@ -355,10 +385,9 @@ class TablesClauseBuilder:
                     col_name = dataset.columns[0].unique_name if dataset.columns else "ID"
                     pk_cols = [f'"{self.identifier_sanitizer.sanitize_column(col_name)}"']
 
-            # Verification
+            # Verification: only retain columns that actually exist in the physical table
             verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]
-            if not verified_pk and known_phys:
-                verified_pk = [f'"{sorted(list(known_phys))[0]}"']
+
 
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
@@ -369,7 +398,8 @@ class TablesClauseBuilder:
             if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or is_fact_like_name(dataset.unique_name)):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
-            tables_lines.append(f'  {alias} AS {full_table} {pk_clause}')
+            pk_suffix = f" {pk_clause}" if pk_clause else ""
+            tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}')
 
             for rel_pk in relationship_pk_cols[1:]:
                 rel_alias = self._get_unique_alias(f"{dataset.unique_name}__BY_{rel_pk}", registry)

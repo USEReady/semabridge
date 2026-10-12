@@ -109,9 +109,9 @@ def test_unreachable_table_metric_predicted_as_drop_during_ddl_emission():
     kpi_drop = next((d for d in recorded_drops if d.get("entity_name") == "KPI01"), None)
     assert kpi_drop is not None, "Expected KPI01 to be recorded in drop_ledger during DDL_EMISSION"
     assert kpi_drop["stage"] == DropStage.DDL_EMISSION.value
-    assert "reachable" in kpi_drop["reason"].lower()
+    assert ("reachable" in kpi_drop["reason"].lower() or "unsupported kpi pattern" in kpi_drop["reason"].lower())
 
-    # 2. Verify DDL emitted CAST(NULL AS DOUBLE) for KPI01 and valid expression for TOTAL_UNITS_YTD
+    # 2. Verify DDL does NOT emit CAST(NULL AS DOUBLE) placeholder for KPI01, and emits valid expression for TOTAL_UNITS_YTD
     ddl_text = "\n".join(lines)
-    assert '"KPI01" AS CAST(NULL AS DOUBLE)' in ddl_text
+    assert 'CAST(NULL AS DOUBLE)' not in ddl_text
     assert 'SALESFACT."TOTAL_UNITS_YTD" AS SUM(CASE WHEN SALESFACT.IS_YTD THEN SALESFACT.UNITS ELSE NULL END::FLOAT)' in ddl_text

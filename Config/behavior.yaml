@@ -9,7 +9,7 @@ default:
   translation_priority: "llm_first"
 
 snowflake:
-  apply_inferred_types: true
+  apply_inferred_types: false
   deterministic_translation_enabled: true
   enable_llm_dax_translation: true
   llm_provider: "openai"
@@ -17,7 +17,7 @@ snowflake:
   dialect: "snowflake"
   
   # Auto-enrichment features (NEW)
-  auto_execute_precompute: true      # Automatically run ALTER TABLE ADD COLUMN
+  auto_execute_precompute: false
   auto_create_enriched_view: true    # Create _ENRICHED view with anchors
   use_enriched_view_for_metrics: true # Point semantic model to enriched view
   

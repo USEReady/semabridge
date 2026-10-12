@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from semabridge.utils.logger import get_logger
 from semabridge.core.exceptions import ConnectorError
 from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+from semabridge.connectors.sql_guard import validate_safe_sql, SQLSecurityGuardError
 
 logger = get_logger(__name__)
 
@@ -192,6 +193,9 @@ class SnowflakeConnectionManager:
         except Exception:
             session_info = None
 
+        # SQL Execution Safety Guard: Strictly block any modification to data tables
+        validate_safe_sql(sql)
+
         if session_info:
             logger.info("%s: session=%s\n%s", context, session_info, self._ddl_preview(sql))
         else:
@@ -240,6 +244,9 @@ class SnowflakeConnectionManager:
         retryable_codes: tuple = (),
     ) -> Any:
         """Execute a SQL statement with exponential-backoff retry."""
+        # SQL Execution Safety Guard: Strictly block any modification to data tables
+        validate_safe_sql(sql)
+
         # Snowflake error codes considered transient:
         _TRANSIENT_CODES = {
             "000625", "000707", "390114",

@@ -124,15 +124,7 @@ class RelationshipsClauseBuilder:
             from_phys = dataset_col_lookup.get(rel.from_dataset, set())
             if from_phys:
                 validated_from = [c for c in from_cols if c in from_phys]
-                if not validated_from:
-                    fallback_fk = sorted(from_phys)[0]
-                    logger.warning(
-                        f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                        f"FK columns {from_cols} not physical in '{rel.from_dataset}'. "
-                        f"Using '{fallback_fk}'."
-                    )
-                    from_cols = [fallback_fk]
-                else:
+                if validated_from:
                     from_cols = validated_from
 
             # Validate PK reference
@@ -142,34 +134,12 @@ class RelationshipsClauseBuilder:
                 if mapped_to_alias:
                     to_alias = mapped_to_alias
                 
-                declared_pk_cols = declared_pk_by_alias.get(to_alias, [])
                 to_phys_upper = {c.upper() for c in to_phys}
                 if to_phys:
                     validated_to = [c for c in to_cols if c.upper() in to_phys_upper]
-                    if not validated_to:
-                        fallback_to = declared_pk_cols[0] if declared_pk_cols else sorted(to_phys)[0]
-                        logger.warning(
-                            f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced columns {to_cols} not physical in '{rel.to_dataset}'. "
-                            f"Using '{fallback_to}'."
-                        )
-                        to_cols = [fallback_to]
-                    else:
+                    if validated_to:
                         to_cols = validated_to
 
-                if declared_pk_cols:
-                    declared_upper = {c.upper() for c in declared_pk_cols}
-                    if not all(c.upper() in declared_upper for c in to_cols):
-                        fallback_to = declared_pk_cols[0]
-                        logger.warning(
-                            f"Remapping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
-                            f"referenced columns {to_cols} are not declared PK {declared_pk_cols} "
-                            f"for '{rel.to_dataset}'. Using '{fallback_to}'."
-                        )
-                        to_cols = [fallback_to]
-                        mapped_to_alias = relationship_target_alias.get((rel.to_dataset, to_cols[0].upper()))
-                        if mapped_to_alias:
-                            to_alias = mapped_to_alias
 
             quoted_to_cols = [f'"{c}"' for c in to_cols]
             ref_clause = f'{to_alias} ({", ".join(quoted_to_cols)})' if to_cols else to_alias

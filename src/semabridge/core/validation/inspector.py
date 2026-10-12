@@ -13,6 +13,7 @@ import snowflake.connector
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.utils.logger import get_logger
 from semabridge.core.exceptions import ConnectorError
+from semabridge.connectors.sql_guard import validate_safe_sql
 
 logger = get_logger(__name__)
 
@@ -53,7 +54,9 @@ class SnowflakeInspector:
         self.connect()
         cursor = self._connection.cursor()
         try:
-            cursor.execute(f"USE SCHEMA {self.config.database}.{self.config.schema_name}")
+            sql_use = f"USE SCHEMA {self.config.database}.{self.config.schema_name}"
+            validate_safe_sql(sql_use)
+            cursor.execute(sql_use)
             return True
         except Exception as e:
             logger.warning(f"Namespace check failed: {e}")
@@ -79,7 +82,9 @@ class SnowflakeInspector:
         
         try:
             # Use DESCRIBE for precise type info
-            cursor.execute(f'DESC TABLE {self.config.database}.{self.config.schema_name}."{safe_table}"')
+            desc_sql = f'DESC TABLE {self.config.database}.{self.config.schema_name}."{safe_table}"'
+            validate_safe_sql(desc_sql)
+            cursor.execute(desc_sql)
             rows = cursor.fetchall()
             
             # Format: name (0), type (1), kind (2), null? (3), default (4), primary key (5), unique key (6), check (7), expression (8), comment (9), policy name (10)
@@ -127,6 +132,7 @@ class SnowflakeInspector:
         )
 
         try:
+            validate_safe_sql(query)
             cursor.execute(
                 query,
                 (self.config.database.upper(), self.config.schema_name.upper()),
@@ -191,7 +197,9 @@ class SnowflakeInspector:
         cursor = self._connection.cursor()
         try:
             safe = _re.sub(r"[^A-Za-z0-9_]", "_", view_name).upper()
-            cursor.execute(f"SHOW SEMANTIC VIEWS LIKE '{safe}'")
+            show_sv_sql = f"SHOW SEMANTIC VIEWS LIKE '{safe}'"
+            validate_safe_sql(show_sv_sql)
+            cursor.execute(show_sv_sql)
             return len(cursor.fetchall()) > 0
         except Exception as exc:
             logger.debug(f"SHOW SEMANTIC VIEWS check failed: {exc}")

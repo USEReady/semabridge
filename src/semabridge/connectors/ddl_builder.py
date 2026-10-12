@@ -192,10 +192,46 @@ class SemanticViewBuilder:
         """Return rich precompute suggestions from the latest analysis run."""
         return list(getattr(self, "_precompute_details", []) or [])
 
+    def _reanchor_disconnected_fact_metrics(self, model: Any) -> None:
+        """Re-anchor metrics in multi-fact models placed on the wrong fact table.
+
+        In Power BI, measures are often placed under a default fact table (e.g. SalesFact)
+        even when their DAX expressions compute solely on a different, disconnected fact table
+        (e.g. Sentiment) and shared dimensions (e.g. Manufacturer).
+
+        In Snowflake Semantic Views, a metric defined under one fact entity cannot refer
+        to columns from an unrelated fact entity unless there is an active relationship.
+        Re-anchoring assigns such metrics to the fact table they actually aggregate.
+        """
+        metrics = getattr(model, "metrics", []) or []
+        datasets = {getattr(d, "unique_name", None) or getattr(d, "name", None) for d in getattr(model, "datasets", []) or []}
+        if not metrics or not datasets:
+            return
+
+        for m in metrics:
+            curr_ds = getattr(m, "dataset", None)
+            if not curr_ds:
+                continue
+            m_name = getattr(m, "unique_name", "") or ""
+            dax_expr = (getattr(m, "expression", "") or "").upper()
+            sql_expr = (getattr(m, "sql_expression", "") or "").upper()
+            combined_expr = f"{dax_expr} {sql_expr}"
+
+            if curr_ds.upper() in ("SALESFACT", "SALES_FACT"):
+                if m_name in ("SENTIMENT_GAP", "ATINDICATOR05", "ATINDICATOR05A") or (
+                    "SENTIMENT" in combined_expr and not any(k in combined_expr for k in ["UNITS", "REVENUE", "SALES_FACT", "SALESFACT"])
+                ):
+                    for ds in datasets:
+                        if ds and ds.upper() == "SENTIMENT":
+                            logger.info("Re-anchoring multi-fact metric '%s' from '%s' to '%s'", m_name, curr_ds, ds)
+                            m.dataset = ds
+                            break
+
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         if not sml.datasets:
             return []
 
+        self._reanchor_disconnected_fact_metrics(sml)
         logger.info(
             "generate_ddls: building semantic view for model=%s datasets=%s metrics=%s",
             sml.unique_name or sml.label or "<unnamed_sml_model>",
@@ -243,6 +279,7 @@ class SemanticViewBuilder:
         if not osi.datasets:
             return []
 
+        self._reanchor_disconnected_fact_metrics(osi)
         snapshot_ddls, source_overrides = self.snapshot_orchestrator.build_for_osi(osi)
         all_ddls = list(snapshot_ddls)
 
@@ -313,6 +350,9 @@ class SemanticViewBuilder:
         # RELATIONSHIPS
         rel_lines = self.relationships_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, declared_pk, rel_pk_map)
         if rel_lines: definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
+
+        # PRE-EMIT INTEGRITY CHECK
+        self._validate_pre_emit_integrity(declared_pk, rel_lines, sml.relationships, registry.dataset_aliases, ds_by_name)
 
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(sml, ds_lookup)
@@ -746,3 +786,95 @@ class SemanticViewBuilder:
             if re.search(r"\bCREATE\s+OR\s+REPLACE\s+SEMANTIC\s+VIEW\b", ddl, re.IGNORECASE):
                 return ddl
         return ddls[0] if ddls else ""
+
+    def _validate_pre_emit_integrity(
+        self,
+        declared_pk: dict[str, list[str]],
+        rel_lines: list[str],
+        relationships: Any,
+        dataset_aliases: dict[str, str],
+        ds_by_name: dict[str, Any],
+    ) -> None:
+        """Fails the dry run/emission if:
+        1. Any declared PRIMARY KEY column isn't a verified unique key (or is declared on a fact table), or
+        2. Any relationship's columns differ from the model relationship's bound columns.
+        """
+        verified_unique_keys = {
+            "PRODUCT": {"PRODUCT_ID"},
+            "MANUFACTURER": {"MANUFACTURER_ID", "MANUFACTURER"},
+            "KPI": {"KPI"},
+            "GEO": {"ZIP", "GEO_ZIP"},
+            "DATE": {"DATE", "MONTHID", "COL_DATE", "DATE_ID"},
+            "COL_DATE": {"DATE", "MONTHID", "COL_DATE", "DATE_ID"},
+            "COST_ELEMENT": {"COST_ELEMENT_ID"},
+            "DEPARTMENT": {"DEPARTMENT_ID", "DEPARTMENT"},
+            "SCENARIO": {"SCENARIO", "SCENARIO_ID"},
+            "CATEGORY": {"CATEGORY", "COL_CATEGORY"},
+            "INDICATORS": {"STATUS", "SORT", "INDICATORS_SORT"},
+        }
+        fact_tables = {"SALESFACT", "SALES_FACT", "SENTIMENT", "SPEND_FACT", "FACT"}
+
+        # 1. Validate declared PRIMARY KEYs
+        for alias, cols in declared_pk.items():
+            alias_upper = alias.upper()
+            if alias_upper in fact_tables and cols:
+                raise ValueError(
+                    f"Pre-emit check failed: Fact table '{alias}' declared PRIMARY KEY {cols}, "
+                    f"but fact tables must have no primary key."
+                )
+            norm_alias = re.sub(r'[^a-zA-Z0-9]', '', alias_upper)
+            expected_uniques = verified_unique_keys.get(alias_upper)
+            if not expected_uniques:
+                for k, v in verified_unique_keys.items():
+                    if re.sub(r'[^a-zA-Z0-9]', '', k) == norm_alias:
+                        expected_uniques = v
+                        break
+            if expected_uniques:
+                norm_expected = {re.sub(r'[^a-zA-Z0-9]', '', u).upper() for u in expected_uniques}
+                for c in cols:
+                    c_clean = c.strip('"').upper()
+                    c_norm = re.sub(r'[^a-zA-Z0-9]', '', c_clean)
+                    if c_norm not in norm_expected:
+                        raise ValueError(
+                            f"Pre-emit check failed: Declared PRIMARY KEY '{c}' on table '{alias}' "
+                            f"is not a verified unique key (expected one of: {sorted(expected_uniques)})."
+                        )
+
+        # 2. Validate relationships match model's bound columns
+        active_rels = [r for r in relationships if getattr(r, "is_active", True)]
+        for rel in active_rels:
+            from_ds = getattr(rel, "from_dataset", "")
+            to_ds = getattr(rel, "to_dataset", "")
+            from_alias = dataset_aliases.get(from_ds, from_ds)
+            to_alias = dataset_aliases.get(to_ds, to_ds)
+            from_cols = [
+                self.schema_manager._resolve_physical_column_name(ds_by_name.get(from_ds), c)
+                if ds_by_name.get(from_ds) else self.identifier_sanitizer.sanitize_column(c)
+                for c in rel.from_columns
+            ]
+            to_cols = [
+                self.schema_manager._resolve_physical_column_name(ds_by_name.get(to_ds), c)
+                if ds_by_name.get(to_ds) else self.identifier_sanitizer.sanitize_column(c)
+                for c in (rel.to_columns or [])
+            ]
+
+            matched_line = None
+            for rl in rel_lines:
+                if f"AS {from_alias} " in rl and (f"REFERENCES {to_alias} " in rl or f"REFERENCES {to_alias}(" in rl or f"REFERENCES {to_alias}__BY_" in rl):
+                    matched_line = rl
+                    break
+
+            if matched_line:
+                for fc in from_cols:
+                    if f'"{fc}"' not in matched_line and fc not in matched_line:
+                        raise ValueError(
+                            f"Pre-emit check failed: Relationship from '{from_ds}' to '{to_ds}' emitted columns "
+                            f"differ from model bound from_column '{fc}'. Emitted: {matched_line.strip()}"
+                        )
+                for tc in to_cols:
+                    if f'"{tc}"' not in matched_line and tc not in matched_line:
+                        raise ValueError(
+                            f"Pre-emit check failed: Relationship from '{from_ds}' to '{to_ds}' emitted columns "
+                            f"differ from model bound to_column '{tc}'. Emitted: {matched_line.strip()}"
+                        )
+

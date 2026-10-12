@@ -96,6 +96,8 @@ class DimensionsClauseBuilder:
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
             for attr in dim.attributes:
+                if str(attr.dataset or "").startswith(("LocalDateTable_", "DateTableTemplate_")):
+                    continue
                 alias = dataset_aliases.get(attr.dataset)
                 if not alias:
                     continue
@@ -162,6 +164,8 @@ class DimensionsClauseBuilder:
                     
         # 2. Add raw attributes
         for dataset in datasets:
+            if str(dataset.unique_name or "").startswith(("LocalDateTable_", "DateTableTemplate_")):
+                continue
             alias = dataset_aliases.get(dataset.unique_name)
             if not alias:
                 continue

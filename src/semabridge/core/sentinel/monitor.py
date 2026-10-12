@@ -73,8 +73,19 @@ class QueryMonitor:
         conn = None
         try:
             from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            from semabridge.connectors.sql_guard import validate_safe_sql
             kwargs = get_snowflake_connect_kwargs(self.config)
             conn = snowflake.connector.connect(**kwargs)
+            orig_cursor = conn.cursor
+            def _guarded_cursor(*c_args, **c_kwargs):
+                cur = orig_cursor(*c_args, **c_kwargs)
+                orig_exec = cur.execute
+                def _guarded_execute(sql, *e_args, **e_kwargs):
+                    validate_safe_sql(sql)
+                    return orig_exec(sql, *e_args, **e_kwargs)
+                cur.execute = _guarded_execute
+                return cur
+            conn.cursor = _guarded_cursor
             yield conn
         except Exception as e:
             logger.error(f"Snowflake connection failed: {e}")

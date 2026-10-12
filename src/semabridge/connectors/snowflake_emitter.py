@@ -265,18 +265,12 @@ class SnowflakeEmitter(BaseEmitter):
         return self._id.sanitize_table_name(str(raw)).upper()
 
     def _run_source_data_backfill(self, cursor: Any, model: Any, source_pbix_path: str) -> list:
-        """Opt-in data backfill, namespace-aware.
-
-        Without a namespace this is exactly schema_manager's own
-        _maybe_backfill_source_data. With one, dataset.source_table holds the
-        namespaced TARGET table name while the PBIX still names its tables by
-        the original name, so the PBIX reader is wrapped to translate the
-        namespaced name back before every lookup.
-        """
-        if not self.physical_namespace or not self._namespace_original_sources:
-            return self.schema_manager._maybe_backfill_source_data(
-                cursor, model, source_pbix_path, self._live_schema_metadata,
-            )
+        """Opt-in data backfill is disabled by architecture."""
+        logger.info(
+            "Data loading/backfill is disabled by architecture: "
+            "SemaBridge never writes data or modifies physical tables in Snowflake."
+        )
+        return []
         try:
             from pbixray import PBIXRay
         except Exception as exc:
@@ -364,6 +358,7 @@ class SnowflakeEmitter(BaseEmitter):
                 cur = conn.cursor()
                 # Store model for helper methods
                 self._model = model
+                self._reanchor_disconnected_fact_metrics(model)
                 # Let TablesClauseBuilder precompute anchor literals (e.g.
                 # _CURRENT_FISCAL_PERIOD) via a live lookup instead of
                 # embedding a subquery in the TABLES clause — see
@@ -471,15 +466,15 @@ class SnowflakeEmitter(BaseEmitter):
                     logger.info("🔧 Auto-enrichment enabled - executing pre-compute suggestions...")
                     self._auto_execute_precompute_suggestions(model, cur)
 
-                    if getattr(self.sf_behavior, 'auto_create_enriched_view', False):
-                        for fact_table in self._get_fact_tables_needing_enrichment(model):
-                            enriched_view = self._create_enriched_view(model, cur, fact_table=fact_table)
-                            if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
-                                self._enriched_view_mapping[fact_table] = enriched_view
-                                logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
-                            else:
-                                self._failed_enrichment_datasets.add(fact_table)
-                                self._failed_enrichment_datasets.add(fact_table.casefold())
+                if getattr(self.sf_behavior, 'auto_create_enriched_view', False):
+                    for fact_table in self._get_fact_tables_needing_enrichment(model):
+                        enriched_view = self._create_enriched_view(model, cur, fact_table=fact_table)
+                        if enriched_view and getattr(self.sf_behavior, 'use_enriched_view_for_metrics', False):
+                            self._enriched_view_mapping[fact_table] = enriched_view
+                            logger.info(f"✅ Using enriched view {enriched_view} as source for {fact_table}")
+                        else:
+                            self._failed_enrichment_datasets.add(fact_table)
+                            self._failed_enrichment_datasets.add(fact_table.casefold())
 
                 # Re-render anchor-dependent metrics now that
                 # self.translator.anchor_flag_map holds the REAL,
@@ -623,27 +618,10 @@ class SnowflakeEmitter(BaseEmitter):
                         )
                     _auto_add = getattr(getattr(self, "sf_behavior", None), "auto_add_missing_dims", False)
                     if _auto_add:
-                        logger.info("auto_add_missing_dims=True — attempting ALTER TABLE ADD COLUMN for missing dimensions")
-                        _added_any = False
-                        for _ds_name, _cols in list(_missing_dims.items()):
-                            _src_tbl = _ds_name  # use dataset name as table name fallback
-                            for _ds_obj in (model.datasets if is_osi else getattr(model, "datasets", [])):
-                                if getattr(_ds_obj, "unique_name", None) == _ds_name:
-                                    _src_tbl = getattr(_ds_obj, "source_table", None) or _ds_name
-                                    break
-                            _safe_tbl = _src_tbl.rsplit(".", 1)[-1] if "." in _src_tbl else _src_tbl
-                            for _col in _cols:
-                                _alter_sql = (
-                                    f'ALTER TABLE "{self.connection_manager.config.database}"'
-                                    f'."{self.connection_manager.config.schema_name}"'
-                                    f'."{_safe_tbl}" ADD COLUMN IF NOT EXISTS "{_col}" VARCHAR'
-                                )
-                                try:
-                                    self.connection_manager._execute_sql(cur, _alter_sql, context="add-missing-dim")
-                                    logger.info("Added missing dimension column '%s' to table '%s'", _col, _safe_tbl)
-                                    _added_any = True
-                                except Exception as _alter_exc:
-                                    logger.warning("Could not add missing dim column '%s.%s': %s", _safe_tbl, _col, _alter_exc)
+                        logger.warning(
+                            "auto_add_missing_dims is disabled: SemaBridge is strictly prohibited "
+                            "from executing ALTER TABLE or modifying physical data tables."
+                        )
                         if _added_any:
                             # Refresh live schema so the re-generated DDL picks up the new columns
                             logger.info("Refreshing live schema after adding missing dimension columns")
@@ -683,7 +661,7 @@ class SnowflakeEmitter(BaseEmitter):
                         continue
                     for _em in _enriched_pattern.findall(_s):
                         _en = _em.upper()
-                        if _en in _seen_enriched:
+                        if _en in _seen_enriched or _en in {str(v).upper() for v in (self._enriched_view_mapping or {}).values()}:
                             continue
                         _seen_enriched.add(_en)
                         _refresh_fact_table = self._dataset_for_enriched_view(model, _en)
@@ -1315,6 +1293,11 @@ class SnowflakeEmitter(BaseEmitter):
     # PUBLIC PROXIES (Backward Compatibility)
     # =========================================================================
 
+    def _reanchor_disconnected_fact_metrics(self, model: Any) -> None:
+        """Re-anchor metrics in multi-fact models placed on the wrong fact table."""
+        if hasattr(self, "semantic_view_builder"):
+            self.semantic_view_builder._reanchor_disconnected_fact_metrics(model)
+
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         with self._physical_namespace_scope(sml):
             return self.semantic_view_builder.generate_ddls(sml)
@@ -1803,7 +1786,7 @@ class SnowflakeEmitter(BaseEmitter):
                     AND UPPER(TABLE_NAME) = UPPER('{safe_table_name.replace("'", "''")}')
                 """
                 
-                cursor.execute(query)
+                self.connection_manager._execute_sql(cursor, query, context="check-table-columns")
                 rows = cursor.fetchall()
                 
                 if rows:
@@ -2170,7 +2153,14 @@ class SnowflakeEmitter(BaseEmitter):
         if not resolved_date_col:
             return None
 
-        fact_source_name = getattr(fact_dataset, "source_table", None) or fact_table
+        from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+        modeled_cols = [c.unique_name for c in getattr(fact_dataset, "columns", []) or []]
+        fact_source_name = resolve_dataset_to_physical_table(
+            fact_table,
+            modeled_cols,
+            self._live_schema_metadata,
+            model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
+        )
         fact_source_key = self._id.sanitize_table_name(fact_source_name).upper()
         fact_cols = {
             str(c).upper() for c in self._live_schema_metadata.get(fact_source_key, set())
@@ -2344,13 +2334,11 @@ class SnowflakeEmitter(BaseEmitter):
 
         logger.info("🚀 Auto-executing pre-compute suggestions...")
 
-        rich_details = self.semantic_view_builder.get_precompute_details()
-        if rich_details:
-            logger.info(
-                "Pre-compute suggestions will be projected through enriched views; "
-                "skipping physical base-table mutation."
-            )
-            return
+        logger.info(
+            "Physical base-table mutation is disabled by architecture. "
+            "SemaBridge never modifies physical tables."
+        )
+        return
 
         # Build a live lookup: table_name_upper -> set of existing column names (upper)
         live_meta: dict[str, set[str]] = {}
@@ -2582,7 +2570,15 @@ class SnowflakeEmitter(BaseEmitter):
         resolution = resolver.resolve_single(dataset, getattr(model, "relationships", []) or [])
         if resolution.source not in ("explicit", "relationship"):
             return None
-        return {c.upper() for c in resolution.pk_columns}
+        res_cols = {c.upper() for c in resolution.pk_columns}
+        outbound_fks = {
+            c.upper()
+            for r in getattr(model, "relationships", []) or []
+            if getattr(r, "is_active", True) and getattr(r, "from_dataset", None) == dataset_name
+            for c in getattr(r, "from_columns", []) or []
+        }
+        filtered = res_cols - outbound_fks
+        return filtered if filtered else res_cols
 
     def _edge_is_pk_safe(self, model: Any, edge: Any) -> bool:
         """True if *edge* lands on its next_dataset via that dataset's own
@@ -2595,6 +2591,10 @@ class SnowflakeEmitter(BaseEmitter):
             self._resolve_model_column_name(model, edge.next_dataset, c).upper()
             for c in edge.next_columns
         }
+        norm_next = {re.sub(r'[^A-Z0-9]', '', c) for c in next_cols}
+        norm_pk = {re.sub(r'[^A-Z0-9]', '', c) for c in pk_cols}
+        if norm_next == norm_pk:
+            return True
         return next_cols == pk_cols
 
     def _make_join_alias(self, dataset_name: str, used_aliases: set[str]) -> str:
@@ -2821,23 +2821,22 @@ class SnowflakeEmitter(BaseEmitter):
             # precomputed column) -- fall through to the subquery below
             # rather than risk emitting an incorrect join.
 
-        # Non-unique key (e.g. SENTIMENT_SCORE, where SalesFact has no
-        # relationship path to Sentiment via a column that's actually
-        # unique on the Sentiment side -- Sentiment's real PK is DATEID,
-        # but the path routes through COL_DATE/ZIP/MANUFACTURERID, none of
-        # which is unique per Sentiment row): a bare LEFT JOIN there would
-        # duplicate fact rows. Collapse it to one value per key with a
-        # pre-aggregated derived-table JOIN instead -- still not a
-        # correlated subquery, so it doesn't hit the same Snowflake error
-        # the unsafe case is trying to avoid in the first place. Only when
-        # join_state isn't available (no known caller today, kept for
-        # backward compatibility) does this fall through to the legacy
-        # correlated-subquery-with-LIMIT-1 shape below.
+        # If any hop in the path is not PK-safe, a join would duplicate/fan-out fact rows.
+        # Requirement: If a join would duplicate fact rows (e.g. Sentiment onto SalesFact),
+        # don't include that column; drop it with a reason.
         if join_state is not None:
-            strategy = self._resolve_precompute_aggregation_strategy(model, source_dataset, source_column)
-            return self._build_precompute_aggregation_join(
-                model, path, source_dataset, source_column, precomputed_column, strategy, join_state
+            self.drop_ledger.record(
+                "column",
+                precomputed_column,
+                DropStage.SCHEMA_VALIDATION,
+                f"Join from '{target_dataset}' to '{source_dataset}' is not PK-safe and would duplicate fact rows (fan-out); dropped column '{precomputed_column}'",
+                dataset=target_dataset,
             )
+            logger.warning(
+                "Dropped precomputed column '%s' on '%s': join to '%s' is not PK-safe and would fan out fact rows",
+                precomputed_column, target_dataset, source_dataset,
+            )
+            return None
 
         # Legacy fallback: correlated scalar subquery. Still hits
         # Snowflake's "Unsupported subquery type... inside VIEW object"
@@ -2882,11 +2881,31 @@ class SnowflakeEmitter(BaseEmitter):
                 return True
         return False
 
-    def _enriched_view_name(self, fact_table: str) -> str:
+    def _enriched_view_name(self, fact_table: str, model: Optional[Any] = None) -> str:
         """The ONE naming rule for a fact table's enriched view -- used both
         when the view is created and when its existence is checked, so the two
-        can never disagree."""
-        return self._namespaced_physical_name(f"{fact_table}_ENRICHED")
+        can never disagree.
+        Derived from the bound physical table (Option b: SPEND_FACT_ENRICHED,
+        SALES_FACT_ENRICHED).
+        """
+        clean_fact = str(fact_table or "").strip().strip('"')
+        if clean_fact.upper().endswith("_ENRICHED"):
+            return self._namespaced_physical_name(clean_fact)
+
+        fact_dataset = self._get_dataset_by_name(model, clean_fact) if model else None
+        modeled_cols = [c.unique_name for c in getattr(fact_dataset, "columns", []) or []] if fact_dataset else []
+        from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+        explicit_mapping = getattr(self.sf_behavior, 'source_table_mapping', None) if hasattr(self, 'sf_behavior') else None
+        model_name = getattr(model, "unique_name", None) or getattr(model, "name", None) if model else None
+
+        bound_table = resolve_dataset_to_physical_table(
+            clean_fact,
+            modeled_cols,
+            getattr(self, '_live_schema_metadata', {}),
+            explicit_mapping=explicit_mapping,
+            model_name=model_name,
+        )
+        return self._namespaced_physical_name(f"{bound_table}_ENRICHED")
 
     def _dataset_for_enriched_view(self, model, view_name: str) -> Optional[str]:
         """Which dataset an enriched view belongs to, found by applying
@@ -2898,7 +2917,7 @@ class SnowflakeEmitter(BaseEmitter):
                 return str(fact)
         for dataset in getattr(model, "datasets", None) or []:
             name = getattr(dataset, "unique_name", None)
-            if name and self._enriched_view_name(name).upper() == target:
+            if name and self._enriched_view_name(name, model=model).upper() == target:
                 return str(name)
         return None
 
@@ -2919,9 +2938,21 @@ class SnowflakeEmitter(BaseEmitter):
             return None
         
         date_info = self._find_date_table(model)
-        enriched_view_name = self._enriched_view_name(fact_table)
+        enriched_view_name = self._enriched_view_name(fact_table, model=model)
         fact_dataset = self._get_dataset_by_name(model, fact_table)
-        fact_source_name = getattr(fact_dataset, "source_table", None) or fact_table
+        source_table_mapping = {
+            k: v for k, v in (self._get_source_table_mapping() or {}).items()
+            if not str(v).upper().endswith("_ENRICHED") and "_ENRICHED" not in str(v).upper()
+        }
+        modeled_cols_list = [c.unique_name for c in getattr(fact_dataset, "columns", []) or []]
+        from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+        fact_source_name = resolve_dataset_to_physical_table(
+            fact_table,
+            modeled_cols_list,
+            self._live_schema_metadata,
+            explicit_mapping=source_table_mapping,
+            model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
+        )
         fact_source_safe = self._id.sanitize_table_name(fact_source_name)
         fact_source_ref = f'"{self.config.database}"."{self.config.schema_name}"."{fact_source_safe}"'
         fact_source_key = self._id.sanitize_table_name(fact_source_name).upper()
@@ -2944,7 +2975,7 @@ class SnowflakeEmitter(BaseEmitter):
             # expressions; these anchors have no per-row dependency, so fetch
             # them once here and splice in the literal result instead.
             try:
-                cursor.execute(sql)
+                self.connection_manager._execute_sql(cursor, sql, context="fetch-anchor-literal")
                 row = cursor.fetchone()
                 return format_scalar_sql_literal(row[0] if row else None)
             except Exception as exc:
@@ -3133,11 +3164,45 @@ class SnowflakeEmitter(BaseEmitter):
         select_parts.extend(join_state.get("clauses", []))
 
         create_view_sql = "\n".join(select_parts)
-        full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} AS\n{create_view_sql}"
+        full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} COMMENT = 'Created by SemaBridge' AS\n{create_view_sql}"
         
         local_flag_map = new_flag_map if 'new_flag_map' in locals() else {}
         try:
-            cursor.execute(full_sql)
+            self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")
+
+            # Fan-out check: verify row count and SUM of additive columns equal to the base table
+            self.connection_manager._execute_sql(cursor, f'SELECT COUNT(*) FROM {fact_source_ref}', context="fan-out-check-base-count")
+            base_count = cursor.fetchone()[0]
+            self.connection_manager._execute_sql(cursor, f'SELECT COUNT(*) FROM "{self.config.database}"."{self.config.schema_name}"."{enriched_view_name}"', context="fan-out-check-view-count")
+            view_count = cursor.fetchone()[0]
+            if base_count != view_count:
+                raise ValueError(f"Fan-out detected in enriched view {enriched_view_name}: base rows={base_count}, view rows={view_count}")
+            logger.info("✅ Fan-out check passed for %s: row count matches (%s rows)", enriched_view_name, base_count)
+
+            # Check additive columns (prioritizing UNITS, REVENUE; never ID columns)
+            preferred_terms = ["UNITS", "REVENUE", "AMOUNT", "QTY", "QUANTITY", "COST", "SPEND", "VALUE"]
+            additive_cols = [
+                c for c in sorted(fact_cols)
+                if not c.upper().endswith("_ID") and not c.upper().endswith("ID") and any(term in c.upper() for term in preferred_terms)
+            ]
+            for pc in ["REVENUE", "UNITS"]:
+                matching = [c for c in additive_cols if c.upper() == pc]
+                for m in matching:
+                    additive_cols.remove(m)
+                    additive_cols.insert(0, m)
+            for add_col in additive_cols[:3]:
+                self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM {fact_source_ref}', context="fan-out-check-base-sum")
+                base_sum = cursor.fetchone()[0]
+                self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM "{self.config.database}"."{self.config.schema_name}"."{enriched_view_name}"', context="fan-out-check-view-sum")
+                view_sum = cursor.fetchone()[0]
+                if base_sum is not None and view_sum is not None:
+                    diff = abs(float(base_sum) - float(view_sum))
+                    if diff > 1e-2 and (diff / max(abs(float(base_sum)), 1.0)) > 1e-4:
+                        raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
+                elif base_sum != view_sum:
+                    raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
+                logger.info("✅ Fan-out check passed for %s.%s: sum matches (%s)", enriched_view_name, add_col, base_sum)
+
             enriched_cols = set(fact_cols) | projected_cols
             if enriched_cols:
                 self._live_schema_metadata[enriched_view_name.upper()] = enriched_cols

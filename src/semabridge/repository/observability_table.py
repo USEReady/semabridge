@@ -107,9 +107,21 @@ class ObservabilityTable:
         import snowflake.connector  # deferred — optional dependency
         from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
+        from semabridge.connectors.sql_guard import validate_safe_sql
         kwargs = get_snowflake_connect_kwargs(self._cfg)
         kwargs["session_parameters"] = {"QUERY_TAG": "SemaBridge_Observability"}
-        return snowflake.connector.connect(**kwargs)
+        conn = snowflake.connector.connect(**kwargs)
+        orig_cursor = conn.cursor
+        def _guarded_cursor(*c_args, **c_kwargs):
+            cur = orig_cursor(*c_args, **c_kwargs)
+            orig_exec = cur.execute
+            def _guarded_execute(sql, *e_args, **e_kwargs):
+                validate_safe_sql(sql)
+                return orig_exec(sql, *e_args, **e_kwargs)
+            cur.execute = _guarded_execute
+            return cur
+        conn.cursor = _guarded_cursor
+        return conn
 
     # -------------------------------------------------------------------------
     def ensure_table(self) -> None:

@@ -669,6 +669,10 @@ class TMSLToOSIConverter(BaseConverter):
         if "number" in tokens and any(t in tokens for t in ("job", "model", "ticket", "project", "opportunity", "record")):
             return OSIDataType.STRING
 
+        # Descriptive text columns (names, groups, descriptions, categories) must remain STRING
+        if any(t in tokens for t in ("name", "group", "desc", "description", "category", "channel", "type", "region", "status", "comment", "title", "text", "segment", "country", "city", "state", "vp")):
+            return OSIDataType.STRING
+
         # Format-driven inference is strongest for Fabric text columns.
         if "%" in fmt:
             return OSIDataType.FLOAT

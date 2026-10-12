@@ -17,6 +17,7 @@ from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, SMLDi
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.snowflake_emitter_parts.exceptions import MissingSourceTableWarning
 from semabridge.connectors.business_field_type_hints import infer_business_field_type
+from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
 
 if TYPE_CHECKING:
     from semabridge.intermediate.models import (
@@ -723,10 +724,26 @@ class SnowflakeSchemaManager:
     def _resolve_physical_column_name(self, dataset: SMLDataset, raw_col_name: str, model: Any = None) -> str:
         """Resolve semantic/raw column name to canonical physical column name dynamically."""
         raw_upper = str(raw_col_name).upper()
-        table_name_upper = (dataset.source_table or dataset.unique_name).upper()
+        
+        # Resolve table name via generic table binding resolver
+        mapping_dict = getattr(getattr(getattr(self, "behavior", None), "snowflake", None), "source_table_mapping", {}) or {}
+        modeled_cols_list = [c.unique_name for c in getattr(dataset, "columns", []) or []]
+        resolved_src = resolve_dataset_to_physical_table(
+            dataset.unique_name,
+            modeled_cols_list,
+            self._live_schema_metadata,
+            explicit_mapping=mapping_dict,
+            model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
+        )
+        unq_src = resolved_src.rsplit(".", 1)[-1] if "." in resolved_src else resolved_src
+        table_name_upper = unq_src.upper()
 
         # Get live columns if available, otherwise fall back to dataset's SML/OSI columns
-        live_cols = self._live_schema_metadata.get(table_name_upper, set())
+        live_cols = (
+            self._live_schema_metadata.get(table_name_upper)
+            or self._live_schema_metadata.get(dataset.unique_name.upper())
+            or set()
+        )
         has_confirmed_live_schema = bool(live_cols)
         if not live_cols:
             # Fallback to SML/OSI columns defined in the model
@@ -787,15 +804,54 @@ class SnowflakeSchemaManager:
                 if candidate.upper() in live_cols_upper:
                     return live_cols_upper[candidate.upper()]
 
-        # 4. Prefix / suffix checks (e.g. CAL_YEAR -> CAL_YR, etc.)
+        # 4. Normalized match ignoring case and underscores, with reserved-word & key-suffix handling
+        # 4. Normalized match ignoring case and underscores, with table prefix handling
+        clean_raw = raw_upper.replace("_", "").replace(" ", "").replace("/", "").replace(".", "")
+        ds_name = getattr(dataset, "unique_name", "") or ""
+        ds_prefix = ds_name.upper().replace("_", "")
+        stripped_raw = clean_raw[len(ds_prefix):] if (clean_raw.startswith(ds_prefix) and len(clean_raw) > len(ds_prefix)) else clean_raw
+
+        # 4a. Exact normalized match with full raw name
+        exact_full = [
+            c for c in live_cols
+            if clean_raw == c.upper().replace("_", "").replace(" ", "").replace("/", "").replace(".", "")
+        ]
+        if len(exact_full) == 1:
+            return exact_full[0]
+        elif len(exact_full) > 1:
+            for c in exact_full:
+                if c.upper() == raw_upper:
+                    return c
+            return exact_full[0]
+
+        # 4b. Exact normalized match with table-prefix-stripped raw name (e.g. PRODUCT_PRODUCTID -> PRODUCT_ID)
+        if stripped_raw != clean_raw:
+            exact_stripped = [
+                c for c in live_cols
+                if stripped_raw == c.upper().replace("_", "").replace(" ", "").replace("/", "").replace(".", "")
+            ]
+            if len(exact_stripped) == 1:
+                return exact_stripped[0]
+            elif len(exact_stripped) > 1:
+                for c in exact_stripped:
+                    if c.upper() == stripped_raw:
+                        return c
+                return exact_stripped[0]
+
+        # 4c. Prefix/suffix heuristic match (COL*, CAL*, *ID)
+        heuristic_candidates = []
         for col_name in live_cols:
             col_upper = col_name.upper()
-            if col_upper == f"CAL_{raw_upper}" or col_upper == f"COL_{raw_upper}":
-                return col_name
-            if raw_upper.startswith("CAL_") and col_upper == raw_upper[4:]:
-                return col_name
-            if raw_upper.startswith("COL_") and col_upper == raw_upper[4:]:
-                return col_name
+            clean_col = col_upper.replace("_", "").replace(" ", "").replace("/", "").replace(".", "")
+            if clean_col in (f"COL{stripped_raw}", f"CAL{stripped_raw}") or stripped_raw in (f"COL{clean_col}", f"CAL{clean_col}"):
+                heuristic_candidates.append(col_name)
+            elif clean_col in (f"COL{clean_raw}", f"CAL{clean_raw}") or clean_raw in (f"COL{clean_col}", f"CAL{clean_col}"):
+                heuristic_candidates.append(col_name)
+            elif clean_col == f"{stripped_raw}ID" or stripped_raw == f"{clean_col}ID":
+                heuristic_candidates.append(col_name)
+
+        if len(heuristic_candidates) == 1:
+            return heuristic_candidates[0]
 
         # 5. Fuzzy match fallback using sanitized names
         sanitized_raw = self._sanitize_col_name(raw_col_name).upper()
@@ -805,6 +861,7 @@ class SnowflakeSchemaManager:
 
         # 6. Default to sanitizing raw_col_name if no match is found
         return self._sanitize_col_name(raw_col_name)
+
 
     def _collect_physical_source_columns_osi(self, dataset: OSIDataset) -> dict[str, Any]:
         """Return ordered map of physical Snowflake column name -> OSI column.

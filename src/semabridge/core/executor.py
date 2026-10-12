@@ -445,6 +445,7 @@ class CLIExecutor:
         logger.info("  Pre-flight: Checking Snowflake connectivity...")
         
         try:
+            from semabridge.connectors.sql_guard import validate_safe_sql
             from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
             kwargs = get_snowflake_connect_kwargs(sf)
             conn = snowflake.connector.connect(**kwargs)
@@ -453,7 +454,9 @@ class CLIExecutor:
                 cur = conn.cursor()
                 
                 # Check 1: Current role and context
-                cur.execute("SELECT CURRENT_ROLE(), CURRENT_DATABASE(), CURRENT_SCHEMA()")
+                role_sql = "SELECT CURRENT_ROLE(), CURRENT_DATABASE(), CURRENT_SCHEMA()"
+                validate_safe_sql(role_sql)
+                cur.execute(role_sql)
                 role, db, schema = cur.fetchone()
                 logger.info(f"  Pre-flight: Role={role}, Database={db}, Schema={schema}")
                 
@@ -465,7 +468,9 @@ class CLIExecutor:
                     )
                 
                 # Check 2: Schema visibility
-                cur.execute(f"SHOW SCHEMAS IN DATABASE {sf.database}")
+                show_schemas_sql = f"SHOW SCHEMAS IN DATABASE {sf.database}"
+                validate_safe_sql(show_schemas_sql)
+                cur.execute(show_schemas_sql)
                 schemas = {row[1].upper() for row in cur.fetchall()}
                 
                 if sf.schema_name.upper() not in schemas:

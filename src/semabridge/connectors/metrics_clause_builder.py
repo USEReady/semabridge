@@ -370,12 +370,10 @@ class MetricsClauseBuilder:
                     skipped_metric_names.add(metric.unique_name)
                     self.drop_ledger.record(
                         "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                        f"Metric references table alias(es) {', '.join(sorted(unreachable_aliases))} that are not "
+                        f"Unsupported (disconnected polymorphic selector): metric references table alias(es) {', '.join(sorted(unreachable_aliases))} that are not "
                         f"reachable from its anchor table entity '{metric_entity_alias}' via declared relationships.",
                         dataset=getattr(metric, "dataset", None), detail=expr[:200],
                     )
-                    safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
-                    metrics_lines.append(f'  {metric_entity_alias}."{safe_metric_name}" AS CAST(NULL AS DOUBLE)')
                     continue
 
                 safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)

@@ -25,7 +25,7 @@ class SnowflakeBehavior(BaseModel):
         description="Whether to quote all identifiers in DDL"
     )
     create_missing_tables: bool = Field(
-        default=True,
+        default=False,
         description="Auto-create source tables if missing"
     )
     validate_column_schema: bool = Field(
@@ -37,7 +37,7 @@ class SnowflakeBehavior(BaseModel):
         description="Create transient tables (no fail-safe) for staging"
     )
     apply_inferred_types: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Apply inferred datatypes to physical source tables via CTAS+SWAP "
             "during deploy"

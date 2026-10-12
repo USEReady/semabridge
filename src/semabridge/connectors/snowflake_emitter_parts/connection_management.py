@@ -4,6 +4,7 @@ import time
 from typing import Any, Optional
 
 from semabridge.utils.logger import get_logger
+from semabridge.connectors.sql_guard import validate_safe_sql
 
 logger = get_logger(__name__)
 
@@ -78,6 +79,7 @@ def execute_with_retry(
     )
 
     last_exc: Exception | None = None
+    validate_safe_sql(sql)
     for attempt in range(1, max_retries + 1):
         try:
             if attempt == 1:
