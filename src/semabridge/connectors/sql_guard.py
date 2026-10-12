@@ -171,15 +171,23 @@ def check_view_ownership(
 ) -> None:
     """Verify ownership of a view before replacing or dropping it.
 
-    1. Checks if object name belongs to allowed model objects.
+    1. Checks if object name belongs to allowed model objects (fail-closed if empty).
     2. If cursor is provided, inspects existing view in Snowflake to ensure
        it carries SemaBridge signature comment/tag before allowing DROP or REPLACE.
     """
     base_name = extract_base_object_name(object_name)
 
-    # 1. Allowed object names check
+    # 1. Allowed object names check (FAIL CLOSED: empty set denies everything)
     allowed = get_allowed_model_objects()
-    if allowed and base_name not in allowed:
+    if not allowed:
+        err = (
+            f"Ownership rule violation: No allowed model objects are registered "
+            f"(empty allowed set). Refusing view operation for '{base_name}' (fail closed)."
+        )
+        logger.error("🛑 OWNERSHIP GUARD: %s", err)
+        raise SQLOwnershipSecurityError(err)
+
+    if base_name not in allowed:
         err = (
             f"Ownership rule violation: Object '{base_name}' is not in the list of "
             f"allowed objects for the current project/model ({sorted(allowed)})."
@@ -222,7 +230,7 @@ def check_view_ownership(
 def validate_safe_sql(
     sql: str,
     cursor: Optional[Any] = None,
-    check_ownership: bool = False,
+    check_ownership: bool = True,
 ) -> None:
     """Validate that a SQL statement conforms to the strict allowlist and ownership rules.
 
@@ -232,7 +240,8 @@ def validate_safe_sql(
     Args:
         sql: SQL query string (may contain multiple statements).
         cursor: Optional Snowflake cursor for live ownership checks.
-        check_ownership: If True, performs live Snowflake comment checks for DROP/REPLACE.
+        check_ownership: Kept for backward compatibility; ownership check is always active
+            for CREATE OR REPLACE VIEW / DROP VIEW / DROP SEMANTIC VIEW / CREATE OR REPLACE SEMANTIC VIEW.
 
     Raises:
         SQLSecurityGuardError: If any statement is disallowed.
@@ -283,10 +292,11 @@ def validate_safe_sql(
             raise SQLSecurityGuardError(err_msg)
 
         # 3. Ownership Rule enforcement for VIEW / SEMANTIC VIEW drops and creates
-        if matched_action in ("CREATE_VIEW", "DROP_VIEW", "DROP_SEMANTIC_VIEW"):
-            is_semantic = (matched_action == "DROP_SEMANTIC_VIEW")
+        # Always on for CREATE OR REPLACE VIEW / DROP VIEW / DROP SEMANTIC VIEW / CREATE OR REPLACE SEMANTIC VIEW
+        if matched_action in ("CREATE_VIEW", "DROP_VIEW", "DROP_SEMANTIC_VIEW", "CREATE_SEMANTIC_VIEW"):
+            is_semantic = (matched_action in ("DROP_SEMANTIC_VIEW", "CREATE_SEMANTIC_VIEW"))
             check_view_ownership(
                 object_name=matched_obj,
-                cursor=cursor if check_ownership else None,
+                cursor=cursor,
                 is_semantic_view=is_semantic,
             )

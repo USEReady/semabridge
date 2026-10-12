@@ -62,8 +62,11 @@ class TestSQLSecurityGuard:
         ],
     )
     def test_allowed_statements_pass(self, allowed_sql: str):
-        clear_allowed_model_objects()
-        validate_safe_sql(allowed_sql)
+        set_allowed_model_objects({"SALES_SV", "SALES_FACT_ENRICHED"})
+        try:
+            validate_safe_sql(allowed_sql)
+        finally:
+            clear_allowed_model_objects()
 
     @pytest.mark.parametrize(
         "forbidden_sql, op_name",
@@ -145,8 +148,50 @@ class TestOwnershipRule:
         assert "ownership rule violation" in str(exc_info.value).lower()
         clear_allowed_model_objects()
 
-    def test_live_ownership_check_refuses_replacing_view_without_semabridge_comment(self):
+    def test_empty_allowed_set_fails_closed(self):
         clear_allowed_model_objects()
+        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
+            validate_safe_sql('CREATE OR REPLACE VIEW "SALES_FACT_ENRICHED" AS SELECT 1')
+        assert "empty allowed set" in str(exc_info.value).lower()
+
+        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
+            validate_safe_sql('CREATE OR REPLACE SEMANTIC VIEW "MY_SV" TABLES (t1 AS SELECT 1)')
+        assert "empty allowed set" in str(exc_info.value).lower()
+
+    def test_existing_unmarked_view_with_semabridge_like_name_is_refused(self):
+        # A view with a SemaBridge-like name is registered in allowed_model_objects,
+        # but in Snowflake it exists WITHOUT the "Created by SemaBridge" signature comment.
+        set_allowed_model_objects({"SALES_FACT_ENRICHED", "COMPETITIVE_MARKETING_SV"})
+        mock_cursor = MagicMock()
+        mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
+        # Snowflake returns an existing view with an empty / unmarked comment
+        mock_cursor.fetchall.return_value = [
+            ("SALES_FACT_ENRICHED", "SEMABRIDGE_WORKSPACE", ""),
+        ]
+
+        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
+            validate_safe_sql(
+                'CREATE OR REPLACE VIEW "SALES_FACT_ENRICHED" AS SELECT 1',
+                cursor=mock_cursor,
+                check_ownership=True,
+            )
+        assert "not created by semabridge" in str(exc_info.value).lower()
+
+        # Also test semantic view without signature
+        mock_cursor.fetchall.return_value = [
+            ("COMPETITIVE_MARKETING_SV", "SEMABRIDGE_WORKSPACE", "Manual unmanaged view"),
+        ]
+        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
+            validate_safe_sql(
+                'CREATE OR REPLACE SEMANTIC VIEW "COMPETITIVE_MARKETING_SV" TABLES (t1 AS SELECT 1)',
+                cursor=mock_cursor,
+                check_ownership=True,
+            )
+        assert "not created by semabridge" in str(exc_info.value).lower()
+        clear_allowed_model_objects()
+
+    def test_live_ownership_check_refuses_replacing_view_without_semabridge_comment(self):
+        set_allowed_model_objects({"MY_ANALYTICS_VIEW"})
         mock_cursor = MagicMock()
         # Mock SHOW VIEWS returning a view with an external user's comment
         mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
@@ -162,9 +207,10 @@ class TestOwnershipRule:
                 check_ownership=True,
             )
         assert "not created by semabridge" in str(exc_info.value).lower()
+        clear_allowed_model_objects()
 
     def test_live_ownership_check_allows_replacing_view_with_semabridge_comment(self):
-        clear_allowed_model_objects()
+        set_allowed_model_objects({"SALES_FACT_ENRICHED"})
         mock_cursor = MagicMock()
         mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
         mock_cursor.fetchall.return_value = [
@@ -177,9 +223,10 @@ class TestOwnershipRule:
             cursor=mock_cursor,
             check_ownership=True,
         )
+        clear_allowed_model_objects()
 
     def test_after_timestamp_update_ownership_check_still_passes(self):
-        clear_allowed_model_objects()
+        set_allowed_model_objects({"CORPORATE_SPEND_SEMANTIC"})
         mock_cursor = MagicMock()
         mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
         # After a timestamp update where SemaBridge writes updated timestamp + signature
@@ -192,6 +239,7 @@ class TestOwnershipRule:
             cursor=mock_cursor,
             check_ownership=True,
         )
+        clear_allowed_model_objects()
 
 
 class TestDataIntegrityChecker:

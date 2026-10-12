@@ -2442,13 +2442,44 @@ class SnowflakeSchemaManager:
         view_name = self._get_safe_object_name(model.unique_name or model.label)
         legacy_view = f"{self.config.database}.{self.config.schema_name}.{view_name}_SV"
         
-        try:
-            logger.info(f"Cleaning up legacy view: {legacy_view}")
-            self._execute_sql(cursor, f"DROP VIEW IF EXISTS {legacy_view}", context=f"DROP VIEW {legacy_view}")
-        except Exception as e:
-            logger.warning(f"Failed to drop legacy view {legacy_view}: {e}")
+    def get_verified_unique_columns(self, table_name: str, cursor: Optional[Any] = None) -> Optional[set[str]]:
+        """Return verified-unique column names for a live table using COUNT(DISTINCT col) == COUNT(*).
+        Returns None if live check cannot be performed (e.g. no active cursor).
+        """
+        table_upper = str(table_name or "").strip('"').upper()
+        if not hasattr(self, "_verified_unique_cache"):
+            self._verified_unique_cache = {}
+        if table_upper in self._verified_unique_cache:
+            return self._verified_unique_cache[table_upper]
+
+        cur = cursor or getattr(self, "_active_cursor", None)
+        if cur is None and hasattr(self, "connection_manager"):
+            cur = getattr(self.connection_manager, "_cursor", None)
+
+        if cur is not None:
+            try:
+                schema_fqn = self._schema_fqn()
+                cur.execute(f'SHOW COLUMNS IN TABLE {schema_fqn}."{table_upper}"')
+                cols = [r[2] for r in cur.fetchall()]
+                cur.execute(f'SELECT COUNT(*) FROM {schema_fqn}."{table_upper}"')
+                row = cur.fetchone()
+                total_cnt = row[0] if row else 0
+                uniques: set[str] = set()
+                if total_cnt > 0:
+                    for c in cols:
+                        cur.execute(f'SELECT COUNT(DISTINCT "{c}") FROM {schema_fqn}."{table_upper}"')
+                        dist = cur.fetchone()[0]
+                        if dist == total_cnt:
+                            uniques.add(c.upper())
+                self._verified_unique_cache[table_upper] = uniques
+                return uniques
+            except Exception as exc:
+                logger.debug("Live uniqueness query failed for %s: %s", table_upper, exc)
+
+        return None
 
     @staticmethod
+
     def _resolve_column_name_for_dataset(
         known_columns: set[str],
         candidate: str

@@ -276,6 +276,9 @@ class TablesClauseBuilder:
             )
         ]
 
+        many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
+        one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
+
         relationship_pk_map = {}
         for rel in relationships:
             if rel.is_active and rel.to_dataset and rel.to_columns:
@@ -358,32 +361,45 @@ class TablesClauseBuilder:
                 and dataset.unique_name.upper() != "KPI"
             )
 
+            # Fact detection from metadata:
+            # A table is a fact if it's on the many side of model relationships
+            # or has no verified-unique key (using live uniqueness check).
+            verified_uniques = None
+            if hasattr(self.schema_manager, "get_verified_unique_columns"):
+                verified_uniques = self.schema_manager.get_verified_unique_columns(unqualified_table, cursor=self.cursor)
+
+            is_on_many_side = (dataset.unique_name in many_side_datasets and dataset.unique_name not in one_side_datasets)
+            has_no_unique_key = (verified_uniques is not None and len(verified_uniques) == 0 and bool(known_phys))
+
             is_fact_table = (
                 getattr(dataset, "is_fact", False)
                 or is_fact_like_name(dataset.unique_name)
                 or getattr(dataset, "table_type", "").upper() == "FACT"
-                or dataset.unique_name.upper() in {"FACT", "SPEND_FACT", "SALESFACT", "SALES_FACT", "SENTIMENT"}
-                or unqualified_table.upper() in {"FACT", "SPEND_FACT", "SALESFACT", "SALES_FACT", "SENTIMENT"}
+                or is_on_many_side
+                or has_no_unique_key
             )
 
+            # PKs only from verified-unique columns
             if is_measure_only or is_fact_table:
-                # Fact tables (SPEND_FACT, SALES_FACT, SENTIMENT) get NO primary key
-                # unless a truly unique column exists in live schema.
                 pk_cols = []
             elif relationship_pk_cols:
-                pk_cols = [f'"{relationship_pk_cols[0]}"']
+                cand_pk = relationship_pk_cols[0]
+                if verified_uniques is None or cand_pk.strip('"').upper() in verified_uniques:
+                    pk_cols = [f'"{cand_pk}"']
+                else:
+                    pk_cols = []
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
                 if not key_cols and dataset.unique_name.upper() == "KPI":
                     key_cols = [c for c in dataset.columns if c.unique_name.upper() == "KPI"]
                 if key_cols:
                     res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name, model=self._current_model)
-                    pk_cols = [f'"{res_col}"']
+                    if verified_uniques is None or res_col.strip('"').upper() in verified_uniques:
+                        pk_cols = [f'"{res_col}"']
+                    else:
+                        pk_cols = []
                 else:
-                    if getattr(self.behavior.snowflake, "pk_resolution_mode", None) == "strict":
-                        raise ValueError(f"No PK found for {dataset.unique_name}")
-                    col_name = dataset.columns[0].unique_name if dataset.columns else "ID"
-                    pk_cols = [f'"{self.identifier_sanitizer.sanitize_column(col_name)}"']
+                    pk_cols = []
 
             # Verification: only retain columns that actually exist in the physical table
             verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]

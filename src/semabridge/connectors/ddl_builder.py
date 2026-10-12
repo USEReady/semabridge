@@ -195,37 +195,187 @@ class SemanticViewBuilder:
     def _reanchor_disconnected_fact_metrics(self, model: Any) -> None:
         """Re-anchor metrics in multi-fact models placed on the wrong fact table.
 
-        In Power BI, measures are often placed under a default fact table (e.g. SalesFact)
-        even when their DAX expressions compute solely on a different, disconnected fact table
-        (e.g. Sentiment) and shared dimensions (e.g. Manufacturer).
-
-        In Snowflake Semantic Views, a metric defined under one fact entity cannot refer
-        to columns from an unrelated fact entity unless there is an active relationship.
-        Re-anchoring assigns such metrics to the fact table they actually aggregate.
+        Rule: A metric is placed on a table that reaches every table its expression
+        references via the model's many-to-one relationships. If none can, drop it with a reason.
+        No hardcoded table or metric names!
         """
         metrics = getattr(model, "metrics", []) or []
-        datasets = {getattr(d, "unique_name", None) or getattr(d, "name", None) for d in getattr(model, "datasets", []) or []}
+        datasets = {getattr(d, "unique_name", None): d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None)}
         if not metrics or not datasets:
             return
 
+        def _clean_id(s: Any) -> str:
+            return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).upper()
+
+        # 1. Build reachability graph (many-to-one transitive closure)
+        reach: dict[str, set[str]] = {ds_name: {ds_name} for ds_name in datasets}
+        for rel in getattr(model, "relationships", []):
+            f = getattr(rel, "from_dataset", None)
+            t = getattr(rel, "to_dataset", None)
+            if f in reach and t in datasets:
+                reach[f].add(t)
+
+        changed = True
+        while changed:
+            changed = False
+            for f, targets in reach.items():
+                new_targets = set(targets)
+                for t in list(targets):
+                    new_targets.update(reach.get(t, set()))
+                if len(new_targets) > len(targets):
+                    reach[f] = new_targets
+                    changed = True
+
+        # 2. Map columns to datasets
+        col_to_ds: dict[str, set[str]] = {}
+        ds_cols: dict[str, set[str]] = {}
+        for ds_name, ds in datasets.items():
+            ds_cols[ds_name] = {_clean_id(c.unique_name) for c in getattr(ds, "columns", []) or []}
+            for c in getattr(ds, "columns", []) or []:
+                c_norm = _clean_id(c.unique_name)
+                col_to_ds.setdefault(c_norm, set()).add(ds_name)
+
+        metric_map = {_clean_id(m.unique_name): m for m in metrics}
+
+        # 3. Iteratively resolve and re-anchor metrics
+        for _ in range(3):
+            for m in metrics:
+                curr_ds = getattr(m, "dataset", None)
+                m_name = getattr(m, "unique_name", "") or ""
+                dax_expr = getattr(m, "expression", "") or ""
+                sql_expr = getattr(m, "sql_expression", "") or ""
+                ref_tables: set[str] = set()
+
+                # Check explicit Table[ColOrMeasure] in DAX
+                for t_match, col_match in re.findall(r"'?([a-zA-Z0-9_ ]+)'?\[([a-zA-Z0-9_ ]+)\]", dax_expr):
+                    t_clean = _clean_id(t_match)
+                    col_clean = _clean_id(col_match)
+                    if col_clean in metric_map:
+                        target_m = metric_map[col_clean]
+                        if target_m.dataset:
+                            ref_tables.add(target_m.dataset)
+                    else:
+                        for ds_name in datasets:
+                            if _clean_id(ds_name) == t_clean:
+                                ref_tables.add(ds_name)
+
+                # Check explicit table.col in SQL
+                for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', sql_expr):
+                    t_clean = _clean_id(t_match)
+                    col_clean = _clean_id(col_match)
+                    if col_clean in metric_map:
+                        target_m = metric_map[col_clean]
+                        if target_m.dataset:
+                            ref_tables.add(target_m.dataset)
+                    else:
+                        matched_ds = None
+                        for ds_name in datasets:
+                            if _clean_id(ds_name) == t_clean:
+                                matched_ds = ds_name
+                                break
+                        if matched_ds:
+                            if col_clean in ds_cols.get(matched_ds, set()):
+                                ref_tables.add(matched_ds)
+                            else:
+                                owners = col_to_ds.get(col_clean, set())
+                                if len(owners) == 1:
+                                    ref_tables.add(next(iter(owners)))
+                                elif owners:
+                                    ref_tables.update(owners)
+
+                # Check bare [Identifier] in DAX
+                for col_match in re.findall(r'\[([a-zA-Z0-9_ ]+)\]', dax_expr):
+                    c_clean = _clean_id(col_match)
+                    if c_clean in metric_map:
+                        target_m = metric_map[c_clean]
+                        if target_m.dataset:
+                            ref_tables.add(target_m.dataset)
+                    elif c_clean in col_to_ds:
+                        owners = col_to_ds[c_clean]
+                        if len(owners) == 1:
+                            ref_tables.add(next(iter(owners)))
+                        elif curr_ds not in owners:
+                            ref_tables.update(owners)
+
+                if not ref_tables:
+                    continue
+
+                if curr_ds and ref_tables.issubset(reach.get(curr_ds, set())):
+                    continue
+
+                candidates = [
+                    ds_name for ds_name in datasets
+                    if ref_tables.issubset(reach.get(ds_name, set()))
+                ]
+
+                if candidates:
+                    candidates.sort(key=lambda c: len(reach[c]))
+                    best_cand = candidates[0]
+                    if best_cand != curr_ds:
+                        logger.info("Re-anchoring metric '%s' from '%s' to '%s' (referenced tables: %s)", m_name, curr_ds, best_cand, sorted(ref_tables))
+                        m.dataset = best_cand
+                        if curr_ds and m.sql_expression:
+                            m.sql_expression = re.sub(
+                                rf'\b{re.escape(curr_ds.lower())}\b',
+                                best_cand.lower(),
+                                m.sql_expression,
+                                flags=re.IGNORECASE
+                            )
+
+        # 4. Final verification: drop metrics that cannot reach all referenced tables
+        surviving_metrics = []
+        dropped_metrics = getattr(model, "dropped_metrics", []) or []
         for m in metrics:
             curr_ds = getattr(m, "dataset", None)
-            if not curr_ds:
-                continue
             m_name = getattr(m, "unique_name", "") or ""
-            dax_expr = (getattr(m, "expression", "") or "").upper()
-            sql_expr = (getattr(m, "sql_expression", "") or "").upper()
-            combined_expr = f"{dax_expr} {sql_expr}"
+            dax_expr = getattr(m, "expression", "") or ""
+            sql_expr = getattr(m, "sql_expression", "") or ""
+            ref_tables = set()
 
-            if curr_ds.upper() in ("SALESFACT", "SALES_FACT"):
-                if m_name in ("SENTIMENT_GAP", "ATINDICATOR05", "ATINDICATOR05A") or (
-                    "SENTIMENT" in combined_expr and not any(k in combined_expr for k in ["UNITS", "REVENUE", "SALES_FACT", "SALESFACT"])
-                ):
-                    for ds in datasets:
-                        if ds and ds.upper() == "SENTIMENT":
-                            logger.info("Re-anchoring multi-fact metric '%s' from '%s' to '%s'", m_name, curr_ds, ds)
-                            m.dataset = ds
-                            break
+            for t_match, col_match in re.findall(r"'?([a-zA-Z0-9_ ]+)'?\[([a-zA-Z0-9_ ]+)\]", dax_expr):
+                col_clean = _clean_id(col_match)
+                if col_clean in metric_map:
+                    if metric_map[col_clean].dataset:
+                        ref_tables.add(metric_map[col_clean].dataset)
+                else:
+                    for ds_name in datasets:
+                        if _clean_id(ds_name) == _clean_id(t_match):
+                            ref_tables.add(ds_name)
+
+            for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', sql_expr):
+                col_clean = _clean_id(col_match)
+                if col_clean in metric_map:
+                    if metric_map[col_clean].dataset:
+                        ref_tables.add(metric_map[col_clean].dataset)
+                else:
+                    for ds_name in datasets:
+                        if _clean_id(ds_name) == _clean_id(t_match) and col_clean in ds_cols.get(ds_name, set()):
+                            ref_tables.add(ds_name)
+
+            for col_match in re.findall(r'\[([a-zA-Z0-9_ ]+)\]', dax_expr):
+                c_clean = _clean_id(col_match)
+                if c_clean in metric_map:
+                    if metric_map[c_clean].dataset:
+                        ref_tables.add(metric_map[c_clean].dataset)
+                elif c_clean in col_to_ds:
+                    owners = col_to_ds[c_clean]
+                    if len(owners) == 1:
+                        ref_tables.add(next(iter(owners)))
+
+            if not ref_tables or (curr_ds and ref_tables.issubset(reach.get(curr_ds, set()))):
+                surviving_metrics.append(m)
+            else:
+                reason = f"Unsupported (unreachable tables): metric references tables {sorted(ref_tables)} which cannot all be reached via many-to-one relationships"
+                logger.warning("Dropping unreachable metric '%s': %s", m_name, reason)
+                if getattr(self, "drop_ledger", None):
+                    self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
+                if hasattr(model, "record_dropped_metric"):
+                    model.record_dropped_metric(m_name, reason)
+                elif hasattr(dropped_metrics, "append"):
+                    dropped_metrics.append({"name": m_name, "reason": reason})
+
+        model.metrics = surviving_metrics
+
 
     def generate_ddls(self, sml: SMLModel) -> list[str]:
         if not sml.datasets:
@@ -799,46 +949,37 @@ class SemanticViewBuilder:
         1. Any declared PRIMARY KEY column isn't a verified unique key (or is declared on a fact table), or
         2. Any relationship's columns differ from the model relationship's bound columns.
         """
-        verified_unique_keys = {
-            "PRODUCT": {"PRODUCT_ID"},
-            "MANUFACTURER": {"MANUFACTURER_ID", "MANUFACTURER"},
-            "KPI": {"KPI"},
-            "GEO": {"ZIP", "GEO_ZIP"},
-            "DATE": {"DATE", "MONTHID", "COL_DATE", "DATE_ID"},
-            "COL_DATE": {"DATE", "MONTHID", "COL_DATE", "DATE_ID"},
-            "COST_ELEMENT": {"COST_ELEMENT_ID"},
-            "DEPARTMENT": {"DEPARTMENT_ID", "DEPARTMENT"},
-            "SCENARIO": {"SCENARIO", "SCENARIO_ID"},
-            "CATEGORY": {"CATEGORY", "COL_CATEGORY"},
-            "INDICATORS": {"STATUS", "SORT", "INDICATORS_SORT"},
-        }
-        fact_tables = {"SALESFACT", "SALES_FACT", "SENTIMENT", "SPEND_FACT", "FACT"}
+        # Fact detection from metadata:
+        # A table is a fact if it's on the many side of model relationships or has no verified-unique key.
+        many_side = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
+        one_side = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
+        fact_datasets = {ds for ds in many_side if ds not in one_side}
+        fact_aliases = {dataset_aliases.get(ds, ds).upper() for ds in fact_datasets}
 
         # 1. Validate declared PRIMARY KEYs
         for alias, cols in declared_pk.items():
             alias_upper = alias.upper()
-            if alias_upper in fact_tables and cols:
+            uniques = None
+            if hasattr(self.schema_manager, "get_verified_unique_columns"):
+                uniques = self.schema_manager.get_verified_unique_columns(alias, cursor=self.cursor)
+
+            # Fact tables (on many side or having no verified unique key) must have no PK
+            is_fact = (alias_upper in fact_aliases) or (uniques is not None and len(uniques) == 0)
+            if is_fact and cols:
                 raise ValueError(
                     f"Pre-emit check failed: Fact table '{alias}' declared PRIMARY KEY {cols}, "
                     f"but fact tables must have no primary key."
                 )
-            norm_alias = re.sub(r'[^a-zA-Z0-9]', '', alias_upper)
-            expected_uniques = verified_unique_keys.get(alias_upper)
-            if not expected_uniques:
-                for k, v in verified_unique_keys.items():
-                    if re.sub(r'[^a-zA-Z0-9]', '', k) == norm_alias:
-                        expected_uniques = v
-                        break
-            if expected_uniques:
-                norm_expected = {re.sub(r'[^a-zA-Z0-9]', '', u).upper() for u in expected_uniques}
+
+            if uniques and cols:
                 for c in cols:
                     c_clean = c.strip('"').upper()
-                    c_norm = re.sub(r'[^a-zA-Z0-9]', '', c_clean)
-                    if c_norm not in norm_expected:
+                    if c_clean not in uniques:
                         raise ValueError(
                             f"Pre-emit check failed: Declared PRIMARY KEY '{c}' on table '{alias}' "
-                            f"is not a verified unique key (expected one of: {sorted(expected_uniques)})."
+                            f"is not a verified unique key (verified unique: {sorted(uniques)})."
                         )
+
 
         # 2. Validate relationships match model's bound columns
         active_rels = [r for r in relationships if getattr(r, "is_active", True)]

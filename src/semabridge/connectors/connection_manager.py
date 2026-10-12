@@ -194,7 +194,7 @@ class SnowflakeConnectionManager:
             session_info = None
 
         # SQL Execution Safety Guard: Strictly block any modification to data tables
-        validate_safe_sql(sql)
+        validate_safe_sql(sql, cursor=cursor, check_ownership=True)
 
         if session_info:
             logger.info("%s: session=%s\n%s", context, session_info, self._ddl_preview(sql))
@@ -245,7 +245,7 @@ class SnowflakeConnectionManager:
     ) -> Any:
         """Execute a SQL statement with exponential-backoff retry."""
         # SQL Execution Safety Guard: Strictly block any modification to data tables
-        validate_safe_sql(sql)
+        validate_safe_sql(sql, cursor=cursor, check_ownership=True)
 
         # Snowflake error codes considered transient:
         _TRANSIENT_CODES = {

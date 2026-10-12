@@ -79,7 +79,7 @@ def execute_with_retry(
     )
 
     last_exc: Exception | None = None
-    validate_safe_sql(sql)
+    validate_safe_sql(sql, cursor=cursor, check_ownership=True)
     for attempt in range(1, max_retries + 1):
         try:
             if attempt == 1:

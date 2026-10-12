@@ -359,6 +359,19 @@ class SnowflakeEmitter(BaseEmitter):
                 # Store model for helper methods
                 self._model = model
                 self._reanchor_disconnected_fact_metrics(model)
+
+                # Register allowed model objects for SQL ownership guard
+                from semabridge.connectors.sql_guard import set_allowed_model_objects
+                from semabridge.utils.name_translator import get_target_deployment_name
+                _view_raw = getattr(model, "label", None) or getattr(model, "unique_name", None) or "model"
+                _safe_sv = get_target_deployment_name(_view_raw, "snowflake")
+                _allowed_objs = {_safe_sv.upper()}
+                for _ds in getattr(model, "datasets", []) or []:
+                    _ds_name = getattr(_ds, "unique_name", "") or getattr(_ds, "name", "")
+                    if _ds_name:
+                        _allowed_objs.add(self._enriched_view_name(_ds_name, model=model).upper())
+                set_allowed_model_objects(_allowed_objs)
+
                 # Let TablesClauseBuilder precompute anchor literals (e.g.
                 # _CURRENT_FISCAL_PERIOD) via a live lookup instead of
                 # embedding a subquery in the TABLES clause — see
@@ -2289,11 +2302,16 @@ class SnowflakeEmitter(BaseEmitter):
                     if to_cols:
                         return to_cols[0].upper()
         
-        # Common default keys
-        common_keys = ['PRODUCTID', 'ID', 'CUSTOMERID', 'BUSINESS_UNIT', 'FISCAL_YR_PERIOD']
-        for key in common_keys:
-            if key in table1.upper() or key in table2.upper():
-                return key
+        # Fall back to matching column names between both tables if schema available
+        if hasattr(self, '_live_schema_metadata') and self._live_schema_metadata:
+            t1_cols = {c.upper() for c in self._live_schema_metadata.get(table1.upper(), set())}
+            t2_cols = {c.upper() for c in self._live_schema_metadata.get(table2.upper(), set())}
+            common = t1_cols & t2_cols
+            if common:
+                id_cols = [c for c in sorted(common) if c.endswith("_ID") or c.endswith("ID") or c.endswith("KEY")]
+                if id_cols:
+                    return id_cols[0]
+                return sorted(common)[0]
         
         return "ID"
 
@@ -2939,6 +2957,8 @@ class SnowflakeEmitter(BaseEmitter):
         
         date_info = self._find_date_table(model)
         enriched_view_name = self._enriched_view_name(fact_table, model=model)
+        from semabridge.connectors.sql_guard import get_allowed_model_objects, set_allowed_model_objects
+        set_allowed_model_objects(get_allowed_model_objects() | {enriched_view_name.upper()})
         fact_dataset = self._get_dataset_by_name(model, fact_table)
         source_table_mapping = {
             k: v for k, v in (self._get_source_table_mapping() or {}).items()
@@ -3179,29 +3199,33 @@ class SnowflakeEmitter(BaseEmitter):
                 raise ValueError(f"Fan-out detected in enriched view {enriched_view_name}: base rows={base_count}, view rows={view_count}")
             logger.info("✅ Fan-out check passed for %s: row count matches (%s rows)", enriched_view_name, base_count)
 
-            # Check additive columns (prioritizing UNITS, REVENUE; never ID columns)
-            preferred_terms = ["UNITS", "REVENUE", "AMOUNT", "QTY", "QUANTITY", "COST", "SPEND", "VALUE"]
-            additive_cols = [
+            # Check additive columns (non-ID columns; skips non-numeric if SUM fails)
+            candidate_additive = [
                 c for c in sorted(fact_cols)
-                if not c.upper().endswith("_ID") and not c.upper().endswith("ID") and any(term in c.upper() for term in preferred_terms)
+                if not c.upper().endswith("_ID") and not c.upper().endswith("ID") and c.upper() != "ID"
             ]
-            for pc in ["REVENUE", "UNITS"]:
-                matching = [c for c in additive_cols if c.upper() == pc]
-                for m in matching:
-                    additive_cols.remove(m)
-                    additive_cols.insert(0, m)
-            for add_col in additive_cols[:3]:
-                self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM {fact_source_ref}', context="fan-out-check-base-sum")
-                base_sum = cursor.fetchone()[0]
-                self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM "{self.config.database}"."{self.config.schema_name}"."{enriched_view_name}"', context="fan-out-check-view-sum")
-                view_sum = cursor.fetchone()[0]
-                if base_sum is not None and view_sum is not None:
-                    diff = abs(float(base_sum) - float(view_sum))
-                    if diff > 1e-2 and (diff / max(abs(float(base_sum)), 1.0)) > 1e-4:
+            checked_count = 0
+            for add_col in candidate_additive:
+                if checked_count >= 3:
+                    break
+                try:
+                    self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM {fact_source_ref}', context="fan-out-check-base-sum")
+                    base_sum = cursor.fetchone()[0]
+                    self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM "{self.config.database}"."{self.config.schema_name}"."{enriched_view_name}"', context="fan-out-check-view-sum")
+                    view_sum = cursor.fetchone()[0]
+                    checked_count += 1
+                    if base_sum is not None and view_sum is not None:
+                        diff = abs(float(base_sum) - float(view_sum))
+                        if diff > 1e-2 and (diff / max(abs(float(base_sum)), 1.0)) > 1e-4:
+                            raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
+                    elif base_sum != view_sum:
                         raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
-                elif base_sum != view_sum:
-                    raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
-                logger.info("✅ Fan-out check passed for %s.%s: sum matches (%s)", enriched_view_name, add_col, base_sum)
+                    logger.info("✅ Fan-out check passed for %s.%s: sum matches (%s)", enriched_view_name, add_col, base_sum)
+                except ValueError:
+                    raise
+                except Exception as _sum_exc:
+                    # Non-numeric column; skip
+                    continue
 
             enriched_cols = set(fact_cols) | projected_cols
             if enriched_cols:

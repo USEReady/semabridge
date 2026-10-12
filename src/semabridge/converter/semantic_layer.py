@@ -39,50 +39,25 @@ class JoinType(Enum):
     RIGHT = "RIGHT JOIN"
 
 
-# Table schemas: maps table name to list of valid columns
-TABLE_SCHEMAS = {
-    "SalesFact": [
-        "DATE",           # FK to Date table
-        "PRODUCTID",      # FK to Product table
-        "REVENUE",        # Measure
-        "UNITS",          # Measure
-        "ZIP",            # Dimension
-        "QUANTITY",       # Measure
-        "COST",           # Measure
-    ],
-    "Product": [
-        "PRODUCTID",      # PK
-        "ISVANARSDEL",    # Attribute (Y/N)
-        "PRODUCTNAME",    # Attribute
-        "CATEGORY",       # Attribute
-        "MANUFACTURER",   # FK to Manufacturer
-    ],
-    "Date": [
-        "DATE",           # PK
-        "MONTHINDEX",     # Attribute
-        "YEAR",           # Attribute
-        "MONTH",          # Attribute
-        "DAYOFWEEK",      # Attribute
-        "QUARTER",        # Attribute
-    ],
-    "Sentiment": [
-        "PRODUCTID",      # FK to Product
-        "SCORE",          # Measure
-        "SENTIMENT_TEXT", # Attribute
-    ],
-    "Manufacturer": [
-        "MFGISVANARSDEL", # Attribute (Y/N)
-        "MFGNAME",        # Attribute
-    ],
-}
+# Table schemas: maps table name to list of valid columns (empty by default; register dynamically or via test fixtures)
+TABLE_SCHEMAS: Dict[str, List[str]] = {}
 
 # Relationship definitions: (source_table.column, target_table.column)
-RELATIONSHIPS = [
-    ("SalesFact.PRODUCTID", "Product.PRODUCTID"),
-    ("SalesFact.DATE", "Date.DATE"),
-    ("SalesFact.PRODUCTID", "Sentiment.PRODUCTID"),
-    ("Product.MANUFACTURER", "Manufacturer.MFGNAME"),  # Note: Different join key
-]
+RELATIONSHIPS: List[Tuple[str, str]] = []
+
+
+def register_table_schemas(
+    schemas: Dict[str, List[str]],
+    relationships: Optional[List[Tuple[str, str]]] = None,
+) -> None:
+    """Register table schemas and relationships dynamically into semantic layer."""
+    global TABLE_SCHEMAS, RELATIONSHIPS
+    TABLE_SCHEMAS.clear()
+    TABLE_SCHEMAS.update({k: [col.upper() for col in cols] for k, cols in schemas.items()})
+    if relationships is not None:
+        RELATIONSHIPS.clear()
+        RELATIONSHIPS.extend(relationships)
+
 
 
 # ============================================================================

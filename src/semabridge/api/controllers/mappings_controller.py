@@ -428,24 +428,24 @@ async def _run_dry_run_pipeline(
             # Predict anchor_flag_map & re-render metrics so trial DDL emission tests the EXACT deployment SQL
             try:
                 predicted_map = trial_emitter.predict_anchor_flag_map(trial_sml)
-                    for ft in predicted_map:
-                        vname = trial_emitter._enriched_view_name(ft, model=trial_sml)
-                        trial_emitter._enriched_view_mapping[ft] = vname
-                        trial_emitter.semantic_view_builder.enriched_view_mapping[ft] = vname
-                        trial_emitter.translator.anchor_flag_map.setdefault(str(ft).casefold(), {}).update(predicted_map[ft])
-                    from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
-                    from semabridge.converter.dax_translator import DAXTranslator
+                for ft in predicted_map:
+                    vname = trial_emitter._enriched_view_name(ft, model=trial_sml)
+                    trial_emitter._enriched_view_mapping[ft] = vname
+                    trial_emitter.semantic_view_builder.enriched_view_mapping[ft] = vname
+                    trial_emitter.translator.anchor_flag_map.setdefault(str(ft).casefold(), {}).update(predicted_map[ft])
+                from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
+                from semabridge.converter.dax_translator import DAXTranslator
 
-                    dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(
-                        getattr(trial_sml, "datasets", []) or []
-                    )
-                    rerender_anchor_dependent_metrics(
-                        trial_sml,
-                        predicted_map,
-                        dataset_col_lookup,
-                        dataset_aliases,
-                        label="predicted",
-                    )
+                dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(
+                    getattr(trial_sml, "datasets", []) or []
+                )
+                rerender_anchor_dependent_metrics(
+                    trial_sml,
+                    predicted_map,
+                    dataset_col_lookup,
+                    dataset_aliases,
+                    label="predicted",
+                )
             except Exception as pred_err:
                 logger.warning("[DryRun] Trial anchor flag map prediction failed (non-fatal): %s", pred_err)
 
