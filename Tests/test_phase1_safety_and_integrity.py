@@ -158,87 +158,49 @@ class TestOwnershipRule:
             validate_safe_sql('CREATE OR REPLACE SEMANTIC VIEW "MY_SV" TABLES (t1 AS SELECT 1)')
         assert "empty allowed set" in str(exc_info.value).lower()
 
-    def test_existing_unmarked_view_with_semabridge_like_name_is_refused(self):
-        # A view with a SemaBridge-like name is registered in allowed_model_objects,
-        # but in Snowflake it exists WITHOUT the "Created by SemaBridge" signature comment.
-        set_allowed_model_objects({"SALES_FACT_ENRICHED", "COMPETITIVE_MARKETING_SV"})
-        mock_cursor = MagicMock()
-        mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
-        # Snowflake returns an existing view with an empty / unmarked comment
-        mock_cursor.fetchall.return_value = [
-            ("SALES_FACT_ENRICHED", "SEMABRIDGE_WORKSPACE", ""),
-        ]
-
-        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
-            validate_safe_sql(
-                'CREATE OR REPLACE VIEW "SALES_FACT_ENRICHED" AS SELECT 1',
-                cursor=mock_cursor,
-                check_ownership=True,
-            )
-        assert "not created by semabridge" in str(exc_info.value).lower()
-
-        # Also test semantic view without signature
-        mock_cursor.fetchall.return_value = [
-            ("COMPETITIVE_MARKETING_SV", "SEMABRIDGE_WORKSPACE", "Manual unmanaged view"),
-        ]
-        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
-            validate_safe_sql(
-                'CREATE OR REPLACE SEMANTIC VIEW "COMPETITIVE_MARKETING_SV" TABLES (t1 AS SELECT 1)',
-                cursor=mock_cursor,
-                check_ownership=True,
-            )
-        assert "not created by semabridge" in str(exc_info.value).lower()
-        clear_allowed_model_objects()
-
-    def test_live_ownership_check_refuses_replacing_view_without_semabridge_comment(self):
-        set_allowed_model_objects({"MY_ANALYTICS_VIEW"})
-        mock_cursor = MagicMock()
-        # Mock SHOW VIEWS returning a view with an external user's comment
-        mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
-        mock_cursor.fetchall.return_value = [
-            ("MY_ANALYTICS_VIEW", "PUBLIC", "Created by external data science team"),
-        ]
-
-        # Validating replacing this view with live ownership check must fail!
-        with pytest.raises(SQLOwnershipSecurityError) as exc_info:
-            validate_safe_sql(
-                'CREATE OR REPLACE VIEW "MY_ANALYTICS_VIEW" AS SELECT 1',
-                cursor=mock_cursor,
-                check_ownership=True,
-            )
-        assert "not created by semabridge" in str(exc_info.value).lower()
-        clear_allowed_model_objects()
-
-    def test_live_ownership_check_allows_replacing_view_with_semabridge_comment(self):
-        set_allowed_model_objects({"SALES_FACT_ENRICHED"})
+    def test_resync_permitted_without_comment_on_existing_views(self):
+        # A view name generated for this model is registered in allowed_model_objects.
+        # Even if Snowflake has an existing view with NO comment, an empty comment, or an external comment,
+        # CREATE OR REPLACE / DROP is permitted without requiring any comment check.
+        set_allowed_model_objects({"SALES_FACT_ENRICHED", "COMPETITIVE_MARKETING_SV", "CORPORATE_SPEND_SEMANTIC"})
         mock_cursor = MagicMock()
         mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
         mock_cursor.fetchall.return_value = [
-            ("SALES_FACT_ENRICHED", "SEMABRIDGE_WORKSPACE", f"{SEMABRIDGE_SIGNATURE_COMMENT} - auto helper view"),
+            ("SALES_FACT_ENRICHED", "SEMABRIDGE_WORKSPACE", None),
+            ("COMPETITIVE_MARKETING_SV", "SEMABRIDGE_WORKSPACE", ""),
+            ("CORPORATE_SPEND_SEMANTIC", "SEMABRIDGE_WORKSPACE", "Some arbitrary comment"),
         ]
 
-        # Replacing a view that carries the signature comment passes!
+        # All of these succeed without needing any comment on existing views
         validate_safe_sql(
             'CREATE OR REPLACE VIEW "SALES_FACT_ENRICHED" AS SELECT 1',
             cursor=mock_cursor,
             check_ownership=True,
         )
-        clear_allowed_model_objects()
-
-    def test_after_timestamp_update_ownership_check_still_passes(self):
-        set_allowed_model_objects({"CORPORATE_SPEND_SEMANTIC"})
-        mock_cursor = MagicMock()
-        mock_cursor.description = [("name",), ("schema_name",), ("comment",)]
-        # After a timestamp update where SemaBridge writes updated timestamp + signature
-        mock_cursor.fetchall.return_value = [
-            ("CORPORATE_SPEND_SEMANTIC", "SEMABRIDGE_WORKSPACE", f"{SEMABRIDGE_SIGNATURE_COMMENT} | Last updated: 2026-10-12T15:30:00Z"),
-        ]
-        # Subsequent CREATE OR REPLACE or DROP statement must still pass ownership verification!
         validate_safe_sql(
-            'CREATE OR REPLACE SEMANTIC VIEW "CORPORATE_SPEND_SEMANTIC" TABLES (t1 AS SELECT 1)',
+            'CREATE OR REPLACE SEMANTIC VIEW "COMPETITIVE_MARKETING_SV" TABLES (t1 AS SELECT 1)',
             cursor=mock_cursor,
             check_ownership=True,
         )
+        validate_safe_sql(
+            'DROP SEMANTIC VIEW IF EXISTS "CORPORATE_SPEND_SEMANTIC"',
+            cursor=mock_cursor,
+            check_ownership=True,
+        )
+        clear_allowed_model_objects()
+
+    def test_data_table_operations_strictly_forbidden_regardless_of_allowed_set(self):
+        # Even if an object name is in allowed_model_objects, data-table modifications
+        # (CREATE/ALTER/DROP TABLE, INSERT, UPDATE, DELETE, COPY, etc.) are strictly refused.
+        set_allowed_model_objects({"SALES_FACT", "SALES_FACT_ENRICHED"})
+        with pytest.raises(SQLSecurityGuardError):
+            validate_safe_sql('DROP TABLE "SALES_FACT"')
+        with pytest.raises(SQLSecurityGuardError):
+            validate_safe_sql('ALTER TABLE "SALES_FACT" ADD COLUMN X INT')
+        with pytest.raises(SQLSecurityGuardError):
+            validate_safe_sql('CREATE TABLE "SALES_FACT" (ID INT)')
+        with pytest.raises(SQLSecurityGuardError):
+            validate_safe_sql('TRUNCATE TABLE "SALES_FACT"')
         clear_allowed_model_objects()
 
 

@@ -171,13 +171,14 @@ def check_view_ownership(
 ) -> None:
     """Verify ownership of a view before replacing or dropping it.
 
-    1. Checks if object name belongs to allowed model objects (fail-closed if empty).
-    2. If cursor is provided, inspects existing view in Snowflake to ensure
-       it carries SemaBridge signature comment/tag before allowing DROP or REPLACE.
+    CREATE OR REPLACE / DROP of a VIEW or SEMANTIC VIEW is allowed if the object name
+    is one that SemaBridge's naming function generates for the project/model being synced
+    (its semantic view and its enriched views). No comment check is performed.
+    Any other name is refused under ownership rules (fail closed).
     """
     base_name = extract_base_object_name(object_name)
 
-    # 1. Allowed object names check (FAIL CLOSED: empty set denies everything)
+    # Allowed object names check (FAIL CLOSED: empty set denies everything)
     allowed = get_allowed_model_objects()
     if not allowed:
         err = (
@@ -194,37 +195,6 @@ def check_view_ownership(
         )
         logger.error("🛑 OWNERSHIP GUARD: %s", err)
         raise SQLOwnershipSecurityError(err)
-
-    # 2. Check existing object comment in Snowflake if cursor provided
-    if cursor is not None:
-        try:
-            if is_semantic_view:
-                cursor.execute(f"SHOW SEMANTIC VIEWS LIKE '{base_name}'")
-            else:
-                cursor.execute(f"SHOW VIEWS LIKE '{base_name}'")
-            rows = cursor.fetchall()
-            if rows:
-                # View already exists. Check its comment column.
-                # Snowflake SHOW VIEWS columns include 'comment' (often index 12 or by description).
-                # Check column descriptions if available
-                desc = [c[0].lower() for c in cursor.description] if cursor.description else []
-                name_idx = desc.index("name") if "name" in desc else (1 if len(desc) > 1 else 0)
-                comment_idx = desc.index("comment") if "comment" in desc else -1
-                for r in rows:
-                    name_in_row = str(r[name_idx] if name_idx < len(r) else r[0]).strip('"').upper()
-                    if name_in_row == base_name:
-                        comment_val = str(r[comment_idx] if 0 <= comment_idx < len(r) else "")
-                        if not comment_val or SEMABRIDGE_SIGNATURE_COMMENT.lower() not in comment_val.lower():
-                            err = (
-                                f"Ownership rule violation: Existing view '{base_name}' was not created "
-                                f"by SemaBridge (comment={comment_val!r}). Refusing to replace or drop foreign view."
-                            )
-                            logger.error("🛑 OWNERSHIP GUARD: %s", err)
-                            raise SQLOwnershipSecurityError(err)
-        except SQLOwnershipSecurityError:
-            raise
-        except Exception as exc:
-            logger.warning("Could not verify view ownership comment for '%s' (non-fatal): %s", base_name, exc)
 
 
 def validate_safe_sql(
