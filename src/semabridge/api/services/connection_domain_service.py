@@ -1146,37 +1146,43 @@ async def get_connections_status(user_id: int = 0):
         _CONNECTOR_MAP = {"FABRIC": "fabric", "SNOWFLAKE": "snowflake", "DATABRICKS": "databricks"}
         try:
             with db_manager.get_session() as session:
-                accounts = session.execute(select(Account)).scalars().all()
+                stmt = select(Account)
+                if user_id:
+                    stmt = stmt.where((Account.owner_id == user_id) | (Account.owner_id == None))
+                accounts = session.execute(stmt).scalars().all()
+
+                accounts_by_svc: Dict[str, list] = {"fabric": [], "snowflake": [], "databricks": []}
                 for acct in accounts:
-                    svc = _CONNECTOR_MAP.get(acct.connector_type.upper())
-                    if not svc:
-                        continue
+                    connector_type_str = str(acct.connector_type or "").upper()
+                    svc = _CONNECTOR_MAP.get(connector_type_str)
+                    if svc in accounts_by_svc:
+                        accounts_by_svc[svc].append(acct)
+
+                for svc in ("fabric", "snowflake", "databricks"):
                     svc_status = status.get(svc, {})
-                    # Mark as configured if a valid account exists
-                    svc_status["has_account"] = True
-                    svc_status["account_tag"] = acct.tag
-                    svc_status["account_id"] = str(acct.id)
-                    svc_status["identity_email"] = acct.identity_email or ""
-                    # Resolve missing fields from account bundle
-                    if acct.encrypted_token:
-                        try:
-                            import json
-                            from semabridge.auth.encryption import decrypt_token
-                            bundle = json.loads(decrypt_token(acct.encrypted_token))
-                            if isinstance(bundle, dict):
-                                remaining_missing = [f for f in svc_status.get("missing_fields", []) if f not in bundle]
-                                svc_status["missing_fields"] = remaining_missing
-                                if not remaining_missing and (svc != "fabric" or svc_status.get("has_auth") or bundle.get("access_token") or bundle.get("client_secret")):
-                                    svc_status["configured"] = True
-                                    svc_status["status"] = "connected"
-                        except Exception:
-                            pass
-                    # Fabric: if account exists with a valid token, mark as configured
-                    if svc == "fabric" and acct.encrypted_token:
+                    svc_accounts = accounts_by_svc.get(svc, [])
+                    if not svc_accounts:
+                        # When the account is not added to the connector configuration,
+                        # it MUST show disconnected and configured=False.
+                        svc_status["has_account"] = False
+                        svc_status["configured"] = False
+                        svc_status["status"] = "disconnected"
+                        svc_status["account_tag"] = None
+                        svc_status["account_id"] = None
+                        svc_status["identity_email"] = ""
+                        svc_status["accounts_count"] = 0
+                    else:
+                        acct = svc_accounts[0]
+                        svc_status["has_account"] = True
                         svc_status["configured"] = True
                         svc_status["status"] = "connected"
-                        svc_status["has_auth"] = True
-                        svc_status["auth_method"] = "interactive"
+                        svc_status["account_tag"] = acct.tag
+                        svc_status["account_id"] = str(acct.id)
+                        svc_status["identity_email"] = acct.identity_email or ""
+                        svc_status["accounts_count"] = len(svc_accounts)
+                        if svc == "fabric":
+                            svc_status["has_auth"] = True
+                            svc_status["auth_method"] = "interactive"
                     status[svc] = svc_status
         except Exception as acc_err:
             logger.warning("Could not load Account table for status: %s", acc_err)

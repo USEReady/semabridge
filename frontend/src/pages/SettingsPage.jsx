@@ -135,7 +135,7 @@ export default function SettingsPage() {
 
       // Fabric connector
       const fabricConn = status?.fabric;
-      const fabricConfigured = fabricConn?.configured === true;
+      const fabricConfigured = fabricConn?.configured === true && fabricConn?.status === 'connected';
       const fabricStatus = fabricConfigured ? 'connected' : 'disconnected';
       rows.push({
         id: 'fabric',
@@ -143,13 +143,13 @@ export default function SettingsPage() {
         type: 'Analytics Platform',
         status: normalizeStatus(fabricStatus),
         last_sync: null,
-        detail: fabricConfigured ? 'Configured' : 'Not configured',
+        detail: fabricConfigured ? (fabricConn?.account_tag ? `Configured (${fabricConn.account_tag})` : 'Configured') : 'Not configured',
         tags: ['production', 'analytics'],
       });
 
       // Snowflake connector
       const snowConn = status?.snowflake;
-      const snowConfigured = snowConn?.configured === true;
+      const snowConfigured = snowConn?.configured === true && snowConn?.status === 'connected';
       const snowStatus = snowConfigured ? 'connected' : 'disconnected';
       rows.push({
         id: 'snowflake',
@@ -157,13 +157,13 @@ export default function SettingsPage() {
         type: 'Data Warehouse',
         status: normalizeStatus(snowStatus),
         last_sync: null,
-        detail: snowConfigured ? 'Configured' : 'Not configured',
+        detail: snowConfigured ? (snowConn?.account_tag ? `Configured (${snowConn.account_tag})` : 'Configured') : 'Not configured',
         tags: ['warehouse', 'target'],
       });
 
       // Databricks connector
       const dbConn = status?.databricks;
-      const dbConfigured = dbConn?.configured === true;
+      const dbConfigured = dbConn?.configured === true && dbConn?.status === 'connected';
       const dbStatus = dbConfigured ? 'connected' : 'disconnected';
       rows.push({
         id: 'databricks',
@@ -171,7 +171,7 @@ export default function SettingsPage() {
         type: 'Data Intelligence Platform',
         status: normalizeStatus(dbStatus),
         last_sync: null,
-        detail: dbConfigured ? 'Configured' : 'Not configured',
+        detail: dbConfigured ? (dbConn?.account_tag ? `Configured (${dbConn.account_tag})` : 'Configured') : 'Not configured',
         tags: ['warehouse', 'target'],
       });
 
