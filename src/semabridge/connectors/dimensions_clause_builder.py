@@ -267,7 +267,7 @@ class DimensionsClauseBuilder:
             candidate_cols: Set[str] = set()
             if live_col_lookup and dataset.unique_name in live_col_lookup:
                 candidate_cols.update(live_col_lookup[dataset.unique_name])
-            if dataset_col_lookup and dataset.unique_name in dataset_col_lookup:
+            elif dataset_col_lookup and dataset.unique_name in dataset_col_lookup:
                 candidate_cols.update(dataset_col_lookup[dataset.unique_name])
 
             if self.translator and getattr(self.translator, "anchor_flag_map", None):

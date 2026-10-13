@@ -394,6 +394,7 @@ class SMLMetric(BaseModel):
         description="Maps each synonym string to its provenance: 'manual_override' | 'tmsl_authored' | 'auto_generated' | 'report_alias'",
     )
     has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
+    is_placeholder: bool = Field(default=False, description="Whether this metric is a non-computable placeholder emitted as NULL")
     source_file: Optional[str] = Field(
         default=None,
         description="Full path to the source .pbix file this metric was extracted from — "

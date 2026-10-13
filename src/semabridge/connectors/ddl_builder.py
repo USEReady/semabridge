@@ -28,6 +28,7 @@ from semabridge.connectors.relationships_clause_builder import RelationshipsClau
 from semabridge.connectors.dimensions_clause_builder import DimensionsClauseBuilder
 from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
 from semabridge.connectors.ddl_validator import validate_semantic_ddl
+from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.core.exceptions import ConnectorError
 
 logger = get_logger(__name__)
@@ -158,6 +159,8 @@ class SemanticViewBuilder:
                 )
 
         for metric in model.metrics:
+            if getattr(metric, "is_placeholder", False) or is_null_cast_sql(getattr(metric, "sql_expression", None)):
+                continue
             dax = getattr(metric, 'expression', '') or ''
             metric_dataset = getattr(metric, "dataset", "") or ""
 
@@ -365,14 +368,28 @@ class SemanticViewBuilder:
             if not ref_tables or (curr_ds and ref_tables.issubset(reach.get(curr_ds, set()))):
                 surviving_metrics.append(m)
             else:
-                reason = f"Unsupported (unreachable tables): metric references tables {sorted(ref_tables)} which cannot all be reached via many-to-one relationships"
-                logger.warning("Dropping unreachable metric '%s': %s", m_name, reason)
-                if getattr(self, "drop_ledger", None):
-                    self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
-                if hasattr(model, "record_dropped_metric"):
-                    model.record_dropped_metric(m_name, reason)
-                elif hasattr(dropped_metrics, "append"):
-                    dropped_metrics.append({"name": m_name, "reason": reason})
+                is_empty_string = not bool(dax_expr.strip().strip('"\'')) if dax_expr else False
+                if is_empty_string:
+                    reason = f"Unsupported (empty string constant)"
+                    logger.warning("Dropping empty string constant metric '%s': %s", m_name, reason)
+                    if getattr(self, "drop_ledger", None):
+                        self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
+                    if hasattr(model, "record_dropped_metric"):
+                        model.record_dropped_metric(m_name, reason)
+                    elif hasattr(dropped_metrics, "append"):
+                        dropped_metrics.append({"name": m_name, "reason": reason})
+                else:
+                    reason = "placeholder: not computable"
+                    logger.warning("Emitting unreachable metric '%s' on '%s' as NULL placeholder: %s", m_name, curr_ds, reason)
+                    m.sql_expression = "CAST(NULL AS DOUBLE)"
+                    m.is_placeholder = True
+                    surviving_metrics.append(m)
+                    if getattr(self, "drop_ledger", None):
+                        self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
+                    if hasattr(model, "record_dropped_metric"):
+                        model.record_dropped_metric(m_name, reason)
+                    elif hasattr(dropped_metrics, "append"):
+                        dropped_metrics.append({"name": m_name, "reason": reason})
 
         model.metrics = surviving_metrics
 
@@ -956,12 +973,18 @@ class SemanticViewBuilder:
         fact_datasets = {ds for ds in many_side if ds not in one_side}
         fact_aliases = {dataset_aliases.get(ds, ds).upper() for ds in fact_datasets}
 
-        # 1. Validate declared PRIMARY KEYs
+        alias_to_ds = {a.upper(): ds_by_name[ds_n] for ds_n, a in dataset_aliases.items() if ds_n in ds_by_name}
         for alias, cols in declared_pk.items():
             alias_upper = alias.upper()
+            target_obj = alias
+            if alias_upper in alias_to_ds:
+                ds_obj = alias_to_ds[alias_upper]
+                target_obj = getattr(ds_obj, "source_table", None) or getattr(ds_obj, "unique_name", None) or alias
             uniques = None
             if hasattr(self.schema_manager, "get_verified_unique_columns"):
-                uniques = self.schema_manager.get_verified_unique_columns(alias, cursor=self.cursor)
+                uniques = self.schema_manager.get_verified_unique_columns(target_obj, cursor=self.cursor)
+                if uniques is None and target_obj != alias:
+                    uniques = self.schema_manager.get_verified_unique_columns(alias, cursor=self.cursor)
 
             # Fact tables (on many side or having no verified unique key) must have no PK
             is_fact = (alias_upper in fact_aliases) or (uniques is not None and len(uniques) == 0)

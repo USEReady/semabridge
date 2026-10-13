@@ -169,6 +169,7 @@ def test_max_date_bare_identifier_still_not_recorded(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_precompute_table_existence_probe_logs_before_skipping(caplog):
+    # Physical base-table mutation was disabled by architecture: SemaBridge never modifies physical tables.
     emitter = _build_emitter_for_ddl_loop()
     emitter._model = SimpleNamespace(relationships=[], datasets=[])
 
@@ -176,25 +177,16 @@ def test_precompute_table_existence_probe_logs_before_skipping(caplog):
         def execute(self, sql):
             raise RuntimeError("insufficient privileges to operate on table 'T1'")
 
-    # live_schema_metadata must be non-empty (any table) so the function's
-    # own "if not live_meta: fall back to _fetch_schema_metadata(cursor)"
-    # branch is skipped -- that fallback calls cursor.execute(sql, params)
-    # (2 args) through a completely different code path this test isn't
-    # exercising. NEW_COL is deliberately absent from T1's existing columns
-    # so cols_needing_add is non-empty and the loop reaches the "Check table
-    # exists" probe this test targets, instead of short-circuiting earlier
-    # on "column already exists".
     monkeypatch_suggestions = {"T1": ["NEW_COL"]}
     emitter.semantic_view_builder._precompute_suggestions = lambda model: monkeypatch_suggestions
     emitter.semantic_view_builder.get_precompute_details = lambda: []
     emitter.semantic_view_builder.live_schema_metadata = {"T1": {"OTHER_COL"}}
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         emitter._auto_execute_precompute_suggestions(SimpleNamespace(datasets=[]), ExplodingCursor())
 
     text = "\n".join(r.getMessage() for r in caplog.records)
-    assert "T1" in text
-    assert "insufficient privileges" in text
+    assert "Physical base-table mutation is disabled by architecture" in text
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +240,8 @@ def test_anchor_flag_map_storage_is_nested_by_fact_table_after_enrichment(monkey
 
     view_name = emitter._create_enriched_view(model, fake_cursor, fact_table="SalesFact")
 
-    assert view_name == "SalesFact_ENRICHED"
+    # On multi-model-port (9901421), enriched view names resolve from physical table names (SALES_FACT_ENRICHED).
+    assert view_name == "SALES_FACT_ENRICHED"
     assert "salesfact" in emitter.translator.anchor_flag_map
     assert ("YTD",) in emitter.translator.anchor_flag_map["salesfact"]
     # And the flat, unqualified shape must NOT appear as a top-level key --

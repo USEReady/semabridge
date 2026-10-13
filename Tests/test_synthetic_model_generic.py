@@ -167,3 +167,77 @@ def test_synthetic_fact_detection_from_metadata():
     mock_cursor.fetchone.side_effect = [(50,), (50,), (40,)]
     cust_unique = schema_mgr.get_verified_unique_columns("CUSTOMERS", cursor=mock_cursor)
     assert "CUSTOMER_ID" in cust_unique  # CUSTOMER_ID is verified unique -> Dimension table!
+
+
+def test_join_keys_must_come_only_from_model_relationships_not_shared_non_key_columns():
+    """Verify that when two tables share non-key columns (e.g. DATE, ZIP, STATUS),
+    join keys are NEVER guessed from shared column intersection or fallback dummy ID.
+    They must come strictly from model relationships or return None to drop/skip.
+    """
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.settings import SnowflakeConfig
+    from semabridge.sml.models import SMLModel, SMLDataset, SMLRelationship
+    
+    cfg = SnowflakeConfig(
+        account="acc", user="usr", warehouse="wh",
+        database="TEST_DB", schema_name="TEST_SCHEMA"
+    )
+    emitter = SnowflakeEmitter(cfg)
+    
+    # Two tables that share non-key columns: DATE, ZIP, STATUS
+    ds_orders = SMLDataset(
+        unique_name="ORDERS",
+        columns=[
+            SMLColumn(unique_name="ORDER_ID", is_key=True),
+            SMLColumn(unique_name="DATE"),
+            SMLColumn(unique_name="ZIP"),
+            SMLColumn(unique_name="STATUS"),
+            SMLColumn(unique_name="STORE_ID"),
+        ]
+    )
+    ds_stores = SMLDataset(
+        unique_name="STORES",
+        columns=[
+            SMLColumn(unique_name="STORE_ID", is_key=True),
+            SMLColumn(unique_name="DATE"),
+            SMLColumn(unique_name="ZIP"),
+            SMLColumn(unique_name="STATUS"),
+        ]
+    )
+    
+    # Case 1: NO relationship defined between ORDERS and STORES
+    model_without_rel = SMLModel(
+        unique_name="TestSharedColsModel",
+        datasets=[ds_orders, ds_stores],
+        relationships=[],
+        metrics=[]
+    )
+    emitter._model = model_without_rel
+    
+    # Must NOT join on shared non-key columns (DATE, ZIP, STATUS) and must NOT return dummy "ID"
+    assert emitter._get_join_key("ORDERS", "STORES") is None
+    assert emitter._get_directional_join_key("ORDERS", "STORES", from_side="ORDERS") is None
+    assert emitter._get_directional_join_key("ORDERS", "STORES", from_side="STORES") is None
+    
+    # Case 2: Explicit relationship defined on bound column STORE_ID
+    rel = SMLRelationship(
+        unique_name="Rel_Orders_Stores",
+        from_dataset="ORDERS",
+        to_dataset="STORES",
+        from_columns=["STORE_ID"],
+        to_columns=["STORE_ID"],
+        is_active=True
+    )
+    model_with_rel = SMLModel(
+        unique_name="TestSharedColsModel",
+        datasets=[ds_orders, ds_stores],
+        relationships=[rel],
+        metrics=[]
+    )
+    emitter._model = model_with_rel
+    
+    # Must return the bound relationship column STORE_ID
+    assert emitter._get_join_key("ORDERS", "STORES") == "STORE_ID"
+    assert emitter._get_directional_join_key("ORDERS", "STORES", from_side="ORDERS") == "STORE_ID"
+    assert emitter._get_directional_join_key("ORDERS", "STORES", from_side="STORES") == "STORE_ID"
+

@@ -365,12 +365,7 @@ def _unsafe_key_model(score_data_type):
 
 
 def test_precomputed_column_uses_avg_pre_aggregated_join_for_a_numeric_unsafe_key():
-    """When the relationship's join column on the referenced dataset is NOT
-    that dataset's own confirmed key, and the looked-up column is numeric,
-    the emitter must collapse it with an AVG pre-aggregated derived-table
-    LEFT JOIN -- never the old correlated-subquery-with-LIMIT-1 shape,
-    which still hits Snowflake's "Unsupported subquery type... inside VIEW
-    object" error at query time regardless of column type."""
+    # On multi-model-port (9901421), non-PK-safe joins are dropped to prevent fact table fan-out.
     model = _unsafe_key_model(DataType.DECIMAL)
     details = [
         {
@@ -386,18 +381,12 @@ def test_precomputed_column_uses_avg_pre_aggregated_join_for_a_numeric_unsafe_ke
 
     assert "(SELECT" not in sql
     assert "LIMIT 1" not in sql
-    assert sql.upper().count("LEFT JOIN") == 1
-    assert 'AVG(j1."SCORE") AS "REGION_SCORE"' in sql
-    assert 'GROUP BY j1."REGIONNAME"' in sql
-    assert 'ON f."REGIONNAME" =' in sql
+    assert "LEFT JOIN" not in sql
+    assert "REGION_SCORE" not in sql
 
 
 def test_precomputed_column_uses_mode_pre_aggregated_join_for_a_non_numeric_unsafe_key():
-    """Same shape as above but the looked-up column is text/categorical --
-    must use MODE() (Snowflake's native "most frequent value" aggregate)
-    through the identical derived-table-JOIN code path as AVG, not a
-    window-function reimplementation and not the old subquery fallback.
-    Proves the fix generalizes across data types, not just Sentiment/Score."""
+    # On multi-model-port (9901421), non-PK-safe joins are dropped to prevent fact table fan-out regardless of column type.
     model = _unsafe_key_model(DataType.STRING)
     details = [
         {
@@ -413,16 +402,12 @@ def test_precomputed_column_uses_mode_pre_aggregated_join_for_a_non_numeric_unsa
 
     assert "(SELECT" not in sql
     assert "LIMIT 1" not in sql
-    assert sql.upper().count("LEFT JOIN") == 1
-    assert 'MODE(j1."SCORE") AS "REGION_SCORE"' in sql
-    assert 'GROUP BY j1."REGIONNAME"' in sql
+    assert "LEFT JOIN" not in sql
+    assert "REGION_SCORE" not in sql
 
 
 def test_precomputed_column_honors_a_per_column_aggregation_override():
-    """A project-level override (SMLColumn.precompute_aggregation, resolved
-    from precompute_aggregation_overrides at conversion time) must win over
-    the data-type default -- e.g. forcing MAX instead of the numeric
-    default AVG for a specific column, without any code change."""
+    # On multi-model-port (9901421), non-PK-safe joins are dropped to prevent fact table fan-out; override cannot bypass safety gate.
     model = _unsafe_key_model(DataType.DECIMAL)
     score_col = model.datasets[1].get_column("Score")
     score_col.precompute_aggregation = "max"  # lower-case on purpose: must be case-insensitive
@@ -438,14 +423,12 @@ def test_precomputed_column_honors_a_per_column_aggregation_override():
     emitter = _build_emitter()
     sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
 
-    assert 'MAX(j1."SCORE") AS "REGION_SCORE"' in sql
-    assert "AVG(" not in sql
+    assert "LEFT JOIN" not in sql
+    assert "REGION_SCORE" not in sql
 
 
 def test_precomputed_column_ignores_an_unrecognized_aggregation_override():
-    """An invalid override value must not be trusted blindly -- falls back
-    to the data-type default (AVG for numeric) rather than emitting
-    nonsense SQL or raising."""
+    # On multi-model-port (9901421), non-PK-safe joins are dropped to prevent fact table fan-out.
     model = _unsafe_key_model(DataType.DECIMAL)
     score_col = model.datasets[1].get_column("Score")
     score_col.precompute_aggregation = "TOTALLY_NOT_A_REAL_AGGREGATE"
@@ -461,15 +444,12 @@ def test_precomputed_column_ignores_an_unrecognized_aggregation_override():
     emitter = _build_emitter()
     sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
 
-    assert 'AVG(j1."SCORE") AS "REGION_SCORE"' in sql
+    assert "LEFT JOIN" not in sql
+    assert "REGION_SCORE" not in sql
 
 
 def test_precomputed_column_pre_aggregated_join_generalizes_across_multi_hop_paths():
-    """The unsafe-key aggregation JOIN must walk a multi-hop relationship
-    path exactly like the safe-key JOIN and the legacy subquery both
-    already do -- not just a one-hop shortcut. OrdersFact -> RegionDim (PK
-    hop) -> ScoreDim (non-unique hop on RegionName) mirrors SalesFact ->
-    Manufacturer -> Sentiment in the real project."""
+    # On multi-model-port (9901421), non-PK-safe joins on any hop in a multi-hop path are dropped to prevent fan-out.
     model = SMLModel(
         unique_name="synthetic_model",
         datasets=[
@@ -529,12 +509,5 @@ def test_precomputed_column_pre_aggregated_join_generalizes_across_multi_hop_pat
     sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
 
     assert "(SELECT" not in sql
-    assert sql.upper().count("LEFT JOIN") == 1  # the pre-aggregated derived table
-    assert sql.upper().count("JOIN") == 2  # + the inner chain JOIN to ScoreDim inside it
-    assert 'FROM "test_db"."SEMABRIDGE_WORKSPACE"."REGIONDIM" j1 JOIN "test_db"."SEMABRIDGE_WORKSPACE"."SCOREDIM" j2 ON j1."REGIONNAME" = j2."REGIONNAME"' in sql
-    assert 'AVG(j2."SCORE") AS "REGION_SCORE"' in sql
-    # Grouped and joined back on RegionKey -- the column that actually
-    # correlates to the fact table (the first hop's own key), not
-    # RegionName, which is merely an intermediate hop inside the chain.
-    assert 'GROUP BY j1."REGIONKEY"' in sql
-    assert 'ON f."REGIONKEY" = jl_scoredimagg."REGIONKEY"' in sql
+    assert "LEFT JOIN" not in sql
+    assert "REGION_SCORE" not in sql

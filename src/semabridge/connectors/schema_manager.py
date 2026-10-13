@@ -2358,6 +2358,7 @@ class SnowflakeSchemaManager:
         """Fetch all table and column names from the current schema for pre-validation."""
         cached = self._get_cached_schema_metadata()
         if cached:
+            self._live_schema_metadata.update(cached)
             return cached
         query = (
             "SELECT table_name, column_name "
@@ -2383,6 +2384,7 @@ class SnowflakeSchemaManager:
         """Fetch metadata only for tables referenced in the current model."""
         cached = self._get_cached_schema_metadata()
         if cached:
+            self._live_schema_metadata.update(cached)
             return cached
         table_names = [
             (d.source_table or d.unique_name).upper()

@@ -1086,7 +1086,7 @@ class MetricExpressionTranslator:
             if not dataset_name:
                 continue
             known_columns = self._get_effective_known_columns(dataset_name, dataset_col_lookup)
-            resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
+            resolved_col = self._resolve_column_name_for_dataset(known_columns, col_name) or self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
                 owners = [ds for ds, cols in dataset_col_lookup.items() if self._resolve_column_name_for_dataset(cols, sanitized_col_name)]
                 if len(owners) == 1:
@@ -1142,7 +1142,7 @@ class MetricExpressionTranslator:
             if not dataset_name:
                 continue
             known_columns = self._get_effective_known_columns(dataset_name, dataset_col_lookup)
-            resolved_col = self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
+            resolved_col = self._resolve_column_name_for_dataset(known_columns, col_name) or self._resolve_column_name_for_dataset(known_columns, sanitized_col_name)
             if not resolved_col:
                 owners = [ds for ds, cols in dataset_col_lookup.items() if self._resolve_column_name_for_dataset(cols, sanitized_col_name)]
                 if len(owners) == 1:

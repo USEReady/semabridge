@@ -141,6 +141,7 @@ class SnowflakeEmitter(BaseEmitter):
             connection_manager=self.connection_manager,
             dup_name_repo=self._dup_name_repo,
         )
+        self.schema_manager._live_schema_metadata = self._live_schema_metadata
         self.translator = MetricExpressionTranslator(
             identifier_sanitizer=self._id
         )
@@ -2277,12 +2278,15 @@ class SnowflakeEmitter(BaseEmitter):
         return None
 
 
-    def _get_join_key(self, table1: str, table2: str) -> str:
+    def _get_join_key(self, table1: str, table2: str) -> Optional[str]:
         """
         Find the join key between two tables from relationships.
+        Join keys must come ONLY from the model's relationships (bound columns).
+        If no relationship exists, returns None (do not fall back to shared column names
+        like DATE, ZIP, MANUFACTURER which multiply rows, or fallback dummy 'ID').
         """
         if not hasattr(self, '_model') or not self._model:
-            return "ID"
+            return None
         
         relationships = getattr(self._model, 'relationships', [])
         
@@ -2302,18 +2306,7 @@ class SnowflakeEmitter(BaseEmitter):
                     if to_cols:
                         return to_cols[0].upper()
         
-        # Fall back to matching column names between both tables if schema available
-        if hasattr(self, '_live_schema_metadata') and self._live_schema_metadata:
-            t1_cols = {c.upper() for c in self._live_schema_metadata.get(table1.upper(), set())}
-            t2_cols = {c.upper() for c in self._live_schema_metadata.get(table2.upper(), set())}
-            common = t1_cols & t2_cols
-            if common:
-                id_cols = [c for c in sorted(common) if c.endswith("_ID") or c.endswith("ID") or c.endswith("KEY")]
-                if id_cols:
-                    return id_cols[0]
-                return sorted(common)[0]
-        
-        return "ID"
+        return None
 
 
     def _find_date_table(self, model):
@@ -2449,6 +2442,9 @@ class SnowflakeEmitter(BaseEmitter):
                 # Resolve join keys
                 from_key = self._get_directional_join_key(table, source_table, from_side=table)
                 to_key = self._get_directional_join_key(table, source_table, from_side=source_table)
+                if not from_key or not to_key:
+                    logger.warning("No model relationship between %s and %s; skipping pre-compute join for %s", table, source_table, col)
+                    continue
 
                 # Add column if not exists
                 try:
@@ -2493,12 +2489,14 @@ class SnowflakeEmitter(BaseEmitter):
                 return c
         return ""
 
-    def _get_directional_join_key(self, table1: str, table2: str, from_side: str) -> str:
+    def _get_directional_join_key(self, table1: str, table2: str, from_side: str) -> Optional[str]:
         """
         Return the join column for `from_side` in the relationship between table1 and table2.
+        Must come strictly from model relationships (bound columns).
+        If no relationship exists, returns None.
         """
         if not hasattr(self, '_model') or not self._model:
-            return "ID"
+            return None
         for rel in getattr(self._model, 'relationships', []):
             from_ds = getattr(rel, 'from_dataset', None)
             to_ds = getattr(rel, 'to_dataset', None)
@@ -2506,11 +2504,11 @@ class SnowflakeEmitter(BaseEmitter):
                 continue
             if from_ds.upper() == table1.upper() and to_ds.upper() == table2.upper():
                 cols = getattr(rel, 'from_columns', []) if from_side.upper() == table1.upper() else getattr(rel, 'to_columns', [])
-                return cols[0].upper() if cols else "ID"
+                return cols[0].upper() if cols else None
             if from_ds.upper() == table2.upper() and to_ds.upper() == table1.upper():
                 cols = getattr(rel, 'to_columns', []) if from_side.upper() == table1.upper() else getattr(rel, 'from_columns', [])
-                return cols[0].upper() if cols else "ID"
-        return "ID"
+                return cols[0].upper() if cols else None
+        return None
 
     def _get_dataset_by_name(self, model: Any, dataset_name: str) -> Optional[Any]:
         for dataset in getattr(model, "datasets", []) or []:
@@ -2939,10 +2937,11 @@ class SnowflakeEmitter(BaseEmitter):
                 return str(name)
         return None
 
-    def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None):
+    def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None, dry_run: bool = False):
         """
         Automatically create an enriched view with pre-computed columns and anchors.
         This view can be used as the source for semantic model.
+        When dry_run=True, returns (enriched_view_name, full_sql) without executing SQL.
 
         `fact_table` may be passed explicitly by callers that already know which
         dataset needs enrichment (e.g. looping over every fact table identified by
@@ -3187,6 +3186,18 @@ class SnowflakeEmitter(BaseEmitter):
         full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} COMMENT = 'Created by SemaBridge' AS\n{create_view_sql}"
         
         local_flag_map = new_flag_map if 'new_flag_map' in locals() else {}
+        if dry_run:
+            enriched_cols = set(fact_cols) | projected_cols
+            if enriched_cols:
+                self._live_schema_metadata[enriched_view_name.upper()] = enriched_cols
+                if hasattr(self, "semantic_view_builder"):
+                    self.semantic_view_builder.live_schema_metadata[enriched_view_name.upper()] = enriched_cols
+            if hasattr(self, "translator") and self.translator is not None and local_flag_map:
+                self.translator.anchor_flag_map.setdefault(
+                    str(fact_table).casefold(), {}
+                ).update(local_flag_map)
+            return (enriched_view_name, full_sql)
+
         try:
             self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")
 
@@ -3199,13 +3210,19 @@ class SnowflakeEmitter(BaseEmitter):
                 raise ValueError(f"Fan-out detected in enriched view {enriched_view_name}: base rows={base_count}, view rows={view_count}")
             logger.info("✅ Fan-out check passed for %s: row count matches (%s rows)", enriched_view_name, base_count)
 
-            # Check additive columns (non-ID columns; skips non-numeric if SUM fails)
+            # Check additive columns (prioritize numeric/measure terms; never ID or date columns)
+            preferred_terms = ["UNITS", "REVENUE", "AMOUNT", "QTY", "QUANTITY", "COST", "SPEND", "VALUE"]
             candidate_additive = [
                 c for c in sorted(fact_cols)
                 if not c.upper().endswith("_ID") and not c.upper().endswith("ID") and c.upper() != "ID"
+                and not any(term in c.upper() for term in ["DATE", "TIME", "DAY", "MONTH", "YEAR"])
             ]
+            preferred = [c for c in candidate_additive if any(t in c.upper() for t in preferred_terms)]
+            others = [c for c in candidate_additive if c not in preferred]
+            ordered_additive = preferred + others
+
             checked_count = 0
-            for add_col in candidate_additive:
+            for add_col in ordered_additive:
                 if checked_count >= 3:
                     break
                 try:
@@ -3215,14 +3232,21 @@ class SnowflakeEmitter(BaseEmitter):
                     view_sum = cursor.fetchone()[0]
                     checked_count += 1
                     if base_sum is not None and view_sum is not None:
-                        diff = abs(float(base_sum) - float(view_sum))
-                        if diff > 1e-2 and (diff / max(abs(float(base_sum)), 1.0)) > 1e-4:
+                        try:
+                            f_base = float(base_sum)
+                            f_view = float(view_sum)
+                        except (ValueError, TypeError):
+                            continue
+                        diff = abs(f_base - f_view)
+                        if diff > 1e-2 and (diff / max(abs(f_base), 1.0)) > 1e-4:
                             raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
                     elif base_sum != view_sum:
                         raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
                     logger.info("✅ Fan-out check passed for %s.%s: sum matches (%s)", enriched_view_name, add_col, base_sum)
-                except ValueError:
-                    raise
+                except ValueError as ve:
+                    if "Fan-out" in str(ve):
+                        raise
+                    continue
                 except Exception as _sum_exc:
                     # Non-numeric column; skip
                     continue

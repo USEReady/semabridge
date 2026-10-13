@@ -886,6 +886,9 @@ class MetricsClauseBuilder:
         sql_expr = getattr(metric, "sql_expression", None)
         dax_expr = getattr(metric, "expression", None)
 
+        if getattr(metric, "is_placeholder", False):
+            return sql_expr or "CAST(NULL AS DOUBLE)"
+
         if sql_expr and is_null_cast_sql(sql_expr):
             # A prior stage (or a previous run's persisted translation) already
             # gave up on this metric and stored the NULL-cast placeholder as

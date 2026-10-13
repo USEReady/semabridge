@@ -390,8 +390,15 @@ class TablesClauseBuilder:
                     pk_cols = []
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
-                if not key_cols and dataset.unique_name.upper() == "KPI":
-                    key_cols = [c for c in dataset.columns if c.unique_name.upper() == "KPI"]
+                if not key_cols and verified_uniques is not None:
+                    for c in dataset.columns:
+                        res_c = self.identifier_sanitizer.sanitize_column(c.unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, c.unique_name, model=self._current_model)
+                        if res_c and res_c.strip('"').upper() in verified_uniques:
+                            key_cols = [c]
+                            break
+                if not key_cols and dataset.columns:
+                    key_cols = [dataset.columns[0]]
+
                 if key_cols:
                     res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name, model=self._current_model)
                     if verified_uniques is None or res_col.strip('"').upper() in verified_uniques:

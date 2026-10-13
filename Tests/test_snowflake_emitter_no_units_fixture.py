@@ -45,12 +45,16 @@ def _model_with_units_column() -> SMLModel:
 
 
 def test_create_enriched_view_never_injects_a_units_specific_total_column():
+    # _create_enriched_view runs post-creation fan-out checks on cursor, so assert on the CREATE VIEW call specifically.
     emitter = _build_emitter()
     cursor = MagicMock()
     model = _model_with_units_column()
 
     emitter._create_enriched_view(model, cursor, fact_table="SalesFact")
 
-    executed_sql = cursor.execute.call_args[0][0]
-    assert "TOTAL_UNITS_ALL" not in executed_sql
-    assert 'SUM("UNITS")' not in executed_sql
+    create_view_sql = next(
+        call[0][0] for call in cursor.execute.call_args_list
+        if "CREATE OR REPLACE VIEW" in str(call[0][0]).upper()
+    )
+    assert "TOTAL_UNITS_ALL" not in create_view_sql
+    assert 'SUM("UNITS")' not in create_view_sql

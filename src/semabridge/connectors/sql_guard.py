@@ -43,7 +43,7 @@ _ALLOWED_MODEL_OBJECTS: Set[str] = set()
 def set_allowed_model_objects(names: Set[str]) -> None:
     """Register the set of valid object names (uppercase) produced by SemaBridge for current project/model."""
     global _ALLOWED_MODEL_OBJECTS
-    _ALLOWED_MODEL_OBJECTS = {n.strip('"').upper() for n in names if n}
+    _ALLOWED_MODEL_OBJECTS.update({n.strip('"').upper() for n in names if n})
 
 def get_allowed_model_objects() -> Set[str]:
     """Get currently registered allowed object names."""
