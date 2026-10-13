@@ -9,7 +9,7 @@ import os
 import threading
 import time as _time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -1218,17 +1218,121 @@ def _project_cfg_for_report(project_id: str) -> str:
     )
 
 
+def _combine_model_summaries(
+    run: Dict[str, Any],
+    model_summaries: List[Tuple[str, Dict[str, Any]]],
+    project_cfg: str,
+) -> Dict[str, Any]:
+    from semabridge.api.services.run_report_service import (
+        _describe_source,
+        _format_duration,
+        _STATUS_LABELS,
+    )
+
+    project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    run_id = str(run.get("run_id") or run.get("id") or "unknown")
+    status = str(run.get("status") or "failed").lower()
+    status_label, _ = _STATUS_LABELS.get(status, ("Unknown", "❓"))
+    source_kind, source_files = _describe_source(project_cfg, run)
+
+    header = {
+        "run_id": run_id,
+        "project_name": project_name,
+        "status": status,
+        "status_label": status_label,
+        "source_kind": source_kind,
+        "source_files": source_files,
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "duration_label": _format_duration(run.get("duration_ms")),
+    }
+
+    if len(model_summaries) == 1:
+        _, single_summary = model_summaries[0]
+        return {**header, **{k: v for k, v in single_summary.items() if k not in header}}
+
+    multi_model = len(model_summaries) > 1
+    counts = {
+        "tables": sum(s.get("counts", {}).get("tables", 0) for _, s in model_summaries),
+        "columns": sum(s.get("counts", {}).get("columns", 0) for _, s in model_summaries),
+        "calculations": sum(s.get("counts", {}).get("calculations", 0) for _, s in model_summaries),
+        "relationships": sum(s.get("counts", {}).get("relationships", 0) for _, s in model_summaries),
+        "converted_total": sum(s.get("counts", {}).get("converted_total", 0) for _, s in model_summaries),
+        "standard": sum(s.get("counts", {}).get("standard", 0) for _, s in model_summaries),
+        "ai_assisted": sum(s.get("counts", {}).get("ai_assisted", 0) for _, s in model_summaries),
+        "needs_review": sum(s.get("counts", {}).get("needs_review", 0) for _, s in model_summaries),
+        "dropped": sum(s.get("counts", {}).get("dropped", 0) for _, s in model_summaries),
+        "excluded_by_design": sum(s.get("counts", {}).get("excluded_by_design", 0) for _, s in model_summaries),
+        "data_backfill_loaded": sum(s.get("counts", {}).get("data_backfill_loaded", 0) for _, s in model_summaries),
+        "data_backfill_skipped": sum(s.get("counts", {}).get("data_backfill_skipped", 0) for _, s in model_summaries),
+        "data_backfill_failed": sum(s.get("counts", {}).get("data_backfill_failed", 0) for _, s in model_summaries),
+        "data_backfill_ambiguous": sum(s.get("counts", {}).get("data_backfill_ambiguous", 0) for _, s in model_summaries),
+    }
+
+    standard = []
+    ai_assisted = []
+    needs_review = []
+    dropped_by_stage: Dict[str, Dict[str, Any]] = {}
+    excluded_by_stage: Dict[str, Dict[str, Any]] = {}
+
+    for model_label, summary in model_summaries:
+        sec = summary.get("sections") or {}
+        prefix = f"{model_label}: " if multi_model else ""
+        for item in sec.get("standard") or []:
+            standard.append({**item, "name": f"{prefix}{item.get('name', '')}"})
+        for item in sec.get("ai_assisted") or []:
+            ai_assisted.append({**item, "name": f"{prefix}{item.get('name', '')}"})
+        for item in sec.get("needs_review") or []:
+            needs_review.append({**item, "name": f"{prefix}{item.get('name', '')}"})
+
+        for group in sec.get("dropped") or []:
+            st = group.get("stage") or "unknown"
+            if st not in dropped_by_stage:
+                dropped_by_stage[st] = {
+                    "stage": st,
+                    "label": group.get("label") or st,
+                    "items": [],
+                }
+            for itm in group.get("items") or []:
+                dropped_by_stage[st]["items"].append({**itm, "name": f"{prefix}{itm.get('name', '')}"})
+
+        for group in sec.get("excluded_by_design") or []:
+            st = group.get("stage") or "unknown"
+            if st not in excluded_by_stage:
+                excluded_by_stage[st] = {
+                    "stage": st,
+                    "label": group.get("label") or st,
+                    "items": [],
+                }
+            for itm in group.get("items") or []:
+                excluded_by_stage[st]["items"].append({**itm, "name": f"{prefix}{itm.get('name', '')}"})
+
+    data_backfill = []
+    for model_label, summary in model_summaries:
+        for bf in summary.get("data_backfill") or []:
+            data_backfill.append({**bf, "model": model_label})
+
+    return {
+        **header,
+        "crashed": False,
+        "unavailable": False,
+        "counts": counts,
+        "sections": {
+            "standard": standard,
+            "ai_assisted": ai_assisted,
+            "needs_review": needs_review,
+            "dropped": list(dropped_by_stage.values()),
+            "excluded_by_design": list(excluded_by_stage.values()),
+        },
+        "data_backfill": data_backfill,
+    }
+
+
 async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[Dict[str, Any]]:
     """JSON counterpart to get_run_report_compat(), for the frontend's
     accordion-style summary view (RunReportSummary.jsx): finds the same
     in-memory run record and calls build_run_report_data(run, project_cfg)
     instead of reading the rendered Markdown file.
-
-    Returns None if no in-memory run record exists (e.g. after a restart
-    evicted it) -- there is no file-based fallback for this JSON view the
-    way get_run_report_compat has for the Markdown file, since JSON is
-    always freshly recomputed, never persisted to disk (matches
-    demo_version_ref's own documented design choice for this endpoint).
     """
     from semabridge.api.services.run_report_service import build_run_report_data
 
@@ -1239,9 +1343,42 @@ async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[D
             run = candidate
             break
     if run is None:
+        runs = await get_project_runs_compat(project_id)
+        for candidate in runs:
+            if str(candidate.get("run_id") or candidate.get("id") or "") == run_id:
+                run = candidate
+                break
+    if run is None:
         return None
 
-    return build_run_report_data(run, _project_cfg_for_report(project_id))
+    project_cfg = _project_cfg_for_report(project_id)
+    data = build_run_report_data(run, project_cfg)
+
+    # If run had no live results in memory (e.g. stripped on store save/restart),
+    # check for persisted model report summaries on disk and combine them.
+    if not data or data.get("crashed"):
+        from semabridge.api.services.run_report_service import load_persisted_model_reports
+        from semabridge.api.services.run_model_results import load_model_summary
+
+        manifest = load_persisted_model_reports(project_id, run_id)
+        if manifest:
+            summaries = []
+            for entry in manifest:
+                m_label = entry.get("model")
+                if m_label:
+                    s = load_model_summary(project_id, run_id, m_label)
+                    if s and not s.get("crashed"):
+                        summaries.append((m_label, s))
+            if summaries:
+                data = _combine_model_summaries(run, summaries, project_cfg)
+
+    if data and _is_run_demo_masked(project_id, run_id):
+        if isinstance(data.get("summary"), dict):
+            data["summary"]["status"] = "SUCCESS"
+            data["summary"]["errors"] = []
+        if not data.get("crashed"):
+            data["status"] = "success"
+    return data
 
 
 def _is_run_demo_masked(project_id: str, run_id: str) -> bool:

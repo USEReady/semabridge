@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import usePageCache from '../hooks/usePageCache';
 import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -182,6 +183,7 @@ function RunDiffViewer({ run, projectId }) {
 }
 
 export default function ProjectJobsPage() {
+  const location = useLocation();
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -202,6 +204,18 @@ export default function ProjectJobsPage() {
   const setExpandedRunId = (v) => setJobsCache({ expandedRunId: typeof v === 'function' ? v(expandedRunId) : v });
   const [liveManifests, setLiveManifests] = useState({});
   const [expandedModelSections, setExpandedModelSections] = useState({});
+
+  // Auto-expand newly triggered run or running run when routed to /jobs
+  useEffect(() => {
+    const targetRunId = location.state?.runId;
+    if (targetRunId) {
+      setExpandedRunId(targetRunId);
+    } else if (location.state?.autoExpand && runs.length > 0) {
+      setExpandedRunId(runs[0].id);
+    } else if (!expandedRunId && runs.length > 0 && runs[0].status === 'running') {
+      setExpandedRunId(runs[0].id);
+    }
+  }, [location.state, runs, expandedRunId]);
 
   useEffect(() => {
     if (!expandedRunId) return;
@@ -377,12 +391,12 @@ export default function ProjectJobsPage() {
 
   // preselectModel: optional model_reports[].model label -- the per-model
   // sections of a multi-model run open the modal on that model's own
-  // report. Ignored for single-file runs (no model selector there).
+  // report. When multi-model without preselectModel, defaults to the first model's report.
   const openReportModal = async (run, preselectModel = null) => {
     const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
-    const initialModel = modelEntries.length > 1
-      ? (preselectModel && modelEntries.some((e) => e.model === preselectModel) ? preselectModel : modelEntries[0].model)
-      : null;
+    const initialModel = preselectModel
+      ? (modelEntries.some((e) => e.model === preselectModel) ? preselectModel : null)
+      : (modelEntries.length > 1 ? modelEntries[0].model : null);
     setReportModalRun(run);
     setReportModalModel(initialModel);
     setReportModalMaximized(false);
@@ -392,8 +406,9 @@ export default function ProjectJobsPage() {
 
   const selectReportModel = async (modelLabel) => {
     if (!reportModalRun) return;
-    setReportModalModel(modelLabel);
-    await loadReportForModel(reportModalRun, modelLabel);
+    const targetModel = modelLabel || null;
+    setReportModalModel(targetModel);
+    await loadReportForModel(reportModalRun, targetModel);
   };
 
   const closeReportModal = () => {
@@ -891,7 +906,8 @@ export default function ProjectJobsPage() {
                             </div>
                             {perModelEntries.map((entry) => {
                               const shouldOpenByDefault = (
-                                perModelEntries.length === 1 ||
+                                perModelEntries.length <= 3 ||
+                                entry.status === 'running' ||
                                 entry.status === 'failed' ||
                                 entry.status === 'conflict' ||
                                 (Array.isArray(entry.droppedEntities) && entry.droppedEntities.length > 0)
@@ -994,7 +1010,7 @@ export default function ProjectJobsPage() {
                 cursor: 'pointer',
               }}
             >
-              <Download size={14} /> Download Raw .md
+              <Download size={14} /> {reportModalModel ? `Download ${cleanPbixLabel(reportModalModel)} .md` : 'Download Combined .md'}
             </button>
             <button
               type="button"
@@ -1016,21 +1032,52 @@ export default function ProjectJobsPage() {
         }
       >
         {Array.isArray(reportModalRun?.model_reports) && reportModalRun.model_reports.length > 1 && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
-              File
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+              Model
             </label>
-            <select
-              value={reportModalModel || ''}
-              onChange={(e) => selectReportModel(e.target.value)}
-              style={{ ...inputStyle, width: '100%', maxWidth: 360, cursor: 'pointer' }}
-            >
-              {reportModalRun.model_reports.map((entry) => (
-                <option key={entry.model} value={entry.model}>
-                  {cleanPbixLabel(entry.model)}
-                </option>
-              ))}
-            </select>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {reportModalRun.model_reports.map((entry) => {
+                const isSelected = reportModalModel === entry.model;
+                return (
+                  <button
+                    key={entry.model}
+                    type="button"
+                    onClick={() => selectReportModel(entry.model)}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: isSelected ? '1px solid var(--accent-primary, #3b82f6)' : '1px solid var(--border-main)',
+                      background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'var(--bg-surface-raised)',
+                      color: isSelected ? 'var(--accent-primary, #3b82f6)' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {cleanPbixLabel(entry.model)}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => selectReportModel('')}
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: !reportModalModel ? '1px solid var(--accent-primary, #3b82f6)' : '1px solid var(--border-main)',
+                  background: !reportModalModel ? 'rgba(59, 130, 246, 0.12)' : 'var(--bg-surface-raised)',
+                  color: !reportModalModel ? 'var(--accent-primary, #3b82f6)' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                All Models (Combined)
+              </button>
+            </div>
           </div>
         )}
         <div style={{ display: 'flex', gap: 4, padding: '0 4px 12px 4px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 8 }}>
@@ -1088,7 +1135,7 @@ export default function ProjectJobsPage() {
                 entirely when that summary is unavailable/crashed (nothing
                 reliable to show at a glance; the markdown below already
                 carries its own status line either way). */}
-            {reportSummary && !reportSummary.crashed && (
+            {reportSummary && !reportSummary.crashed && reportSummary.counts && (
               <div
                 style={{
                   display: 'flex',

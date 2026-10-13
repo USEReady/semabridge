@@ -97,10 +97,12 @@ function AccordionSection({ sectionKey, count, children, defaultOpen }) {
   );
 }
 
-function MetricList({ entries, renderDetail }) {
+function MetricList({ entries = [], renderDetail }) {
+  const items = Array.isArray(entries) ? entries : [];
+  if (items.length === 0) return null;
   return (
     <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {entries.map((entry, index) => (
+      {items.map((entry, index) => (
         <li
           key={`${entry.name}-${index}`}
           style={{
@@ -188,13 +190,15 @@ function CrashedNotice({ unavailable, error }) {
   );
 }
 
-function DroppedSection({ groups }) {
+function DroppedSection({ groups = [] }) {
+  const groupList = Array.isArray(groups) ? groups : [];
+  if (groupList.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {groups.map((group) => (
+      {groupList.map((group) => (
         <div key={group.stage}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 6 }}>
-            {group.label} ({group.items.length})
+            {group.label} ({Array.isArray(group.items) ? group.items.length : 0})
           </div>
           <MetricList
             entries={group.items}
@@ -211,17 +215,18 @@ function DroppedSection({ groups }) {
 export default function RunReportSummary({ data }) {
   if (!data) return null;
 
-  if (data.crashed) {
+  if (data.crashed || !data.counts || !data.sections) {
     // `unavailable` means the run itself completed fine -- its detailed
     // report data just isn't available in this session anymore (e.g. after
     // a server restart), which reads very differently from a genuine
     // pre-extraction crash. See run_report_service.py's
     // _gather_run_report_data() for why these can't be told apart from
     // run.results alone and need this explicit signal.
-    return <CrashedNotice unavailable={data.unavailable} error={data.error} />;
+    return <CrashedNotice unavailable={data.unavailable} error={data.error || 'Report summary data is not available for this run.'} />;
   }
 
-  const { counts, sections } = data;
+  const counts = data.counts || {};
+  const sections = data.sections || {};
 
   return (
     <div style={{ padding: '4px 2px' }}>
@@ -238,38 +243,38 @@ export default function RunReportSummary({ data }) {
           color: 'var(--text-secondary)',
         }}
       >
-        <span><strong style={{ color: 'var(--text-primary)' }}>{counts.tables}</strong> tables</span>
-        <span><strong style={{ color: 'var(--text-primary)' }}>{counts.columns}</strong> columns</span>
-        <span><strong style={{ color: 'var(--text-primary)' }}>{counts.calculations}</strong> calculations found</span>
-        {counts.relationships > 0 && (
+        <span><strong style={{ color: 'var(--text-primary)' }}>{counts.tables || 0}</strong> tables</span>
+        <span><strong style={{ color: 'var(--text-primary)' }}>{counts.columns || 0}</strong> columns</span>
+        <span><strong style={{ color: 'var(--text-primary)' }}>{counts.calculations || 0}</strong> calculations found</span>
+        {(counts.relationships || 0) > 0 && (
           <span><strong style={{ color: 'var(--text-primary)' }}>{counts.relationships}</strong> relationships</span>
         )}
         <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--text-primary)' }}>
-          {counts.converted_total} of {counts.calculations} calculations converted
+          {counts.converted_total || 0} of {counts.calculations || 0} calculations converted
         </span>
       </div>
 
-      <AccordionSection sectionKey="standard" count={counts.standard}>
+      <AccordionSection sectionKey="standard" count={counts.standard || 0}>
         <MetricList entries={sections.standard} renderDetail={AdvisoryDetail} />
       </AccordionSection>
 
-      <AccordionSection sectionKey="ai_assisted" count={counts.ai_assisted}>
+      <AccordionSection sectionKey="ai_assisted" count={counts.ai_assisted || 0}>
         <MetricList entries={sections.ai_assisted} renderDetail={AiAssistedDetail} />
       </AccordionSection>
 
-      <AccordionSection sectionKey="needs_review" count={counts.needs_review}>
+      <AccordionSection sectionKey="needs_review" count={counts.needs_review || 0}>
         <MetricList entries={sections.needs_review} renderDetail={AdvisoryDetail} />
       </AccordionSection>
 
-      <AccordionSection sectionKey="dropped" count={counts.dropped}>
+      <AccordionSection sectionKey="dropped" count={counts.dropped || 0}>
         <DroppedSection groups={sections.dropped} />
       </AccordionSection>
 
-      <AccordionSection sectionKey="excluded_by_design" count={counts.excluded_by_design}>
+      <AccordionSection sectionKey="excluded_by_design" count={counts.excluded_by_design || 0}>
         <DroppedSection groups={sections.excluded_by_design} />
       </AccordionSection>
 
-      {counts.converted_total === 0 && counts.dropped === 0 && counts.excluded_by_design === 0 && (
+      {(counts.converted_total || 0) === 0 && (counts.dropped || 0) === 0 && (counts.excluded_by_design || 0) === 0 && (
         <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Nothing to report for this run.</p>
       )}
     </div>

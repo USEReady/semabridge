@@ -112,13 +112,13 @@ const HelpTooltip = ({ text }) => (
   </div>
 );
 
-const ConnectionStatus = ({ connected = true }) => (
+const ConnectionStatus = ({ connected = false }) => (
   <div style={{ 
     display: 'inline-flex', 
     alignItems: 'center', 
     gap: 4, 
     fontSize: 11, 
-    color: connected ? 'var(--color-success)' : 'var(--text-tertiary)',
+    color: connected ? 'var(--color-success)' : 'var(--color-error, #ef4444)',
     marginLeft: 8,
     fontWeight: 600
   }}>
@@ -126,7 +126,7 @@ const ConnectionStatus = ({ connected = true }) => (
       width: 6, 
       height: 6, 
       borderRadius: '50%', 
-      background: connected ? 'var(--color-success)' : 'var(--text-tertiary)',
+      background: connected ? 'var(--color-success)' : 'var(--color-error, #ef4444)',
       boxShadow: connected ? '0 0 8px var(--color-success)' : 'none'
     }} />
     {connected ? 'Connected' : 'Disconnected'}
@@ -218,10 +218,23 @@ const ToggleSwitch = ({ checked, onChange, label, description, showBorder = fals
   </div>
 );
 
-function ProjectDashboard({ project, configForm, setConfigForm }) {
+function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus }) {
   const updateField = (field, value) => {
     setConfigForm({ ...configForm, [field]: value });
   };
+
+  const isSourceConnected = (() => {
+    const srcType = String(configForm.source_type || 'fabric').toLowerCase();
+    if (srcType === 'pbix') {
+      return Boolean(configForm.pbix_path || configForm.pbix_folder || (Array.isArray(configForm.pbix_models) && configForm.pbix_models.length > 0));
+    }
+    return connectionStatus?.[srcType]?.status === 'connected';
+  })();
+
+  const isTargetConnected = (() => {
+    const tgtType = String(configForm.target_type || 'snowflake').toLowerCase();
+    return connectionStatus?.[tgtType]?.status === 'connected';
+  })();
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', paddingBottom: 120 }}>
@@ -230,7 +243,7 @@ function ProjectDashboard({ project, configForm, setConfigForm }) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center' }}>
               <FormLabel>Source Type</FormLabel>
-              <ConnectionStatus connected={true} />
+              <ConnectionStatus connected={isSourceConnected} />
             </div>
             <FormSelect value={configForm.source_type || 'fabric'} onChange={e => updateField('source_type', e.target.value)}>
               <option value="fabric">Microsoft Fabric</option>
@@ -242,7 +255,7 @@ function ProjectDashboard({ project, configForm, setConfigForm }) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center' }}>
               <FormLabel>Target Destination</FormLabel>
-              <ConnectionStatus connected={true} />
+              <ConnectionStatus connected={isTargetConnected} />
             </div>
             <FormSelect value={configForm.target_type || 'snowflake'} onChange={e => updateField('target_type', e.target.value)}>
               <option value="snowflake">Snowflake</option>
@@ -481,6 +494,11 @@ export default function ProjectConfigPage() {
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const [runPreview, setRunPreview] = useState(null);
   const [runPreviewLoading, setRunPreviewLoading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState(null);
+
+  useEffect(() => {
+    api.getConnectionsStatus().then(st => setConnectionStatus(st)).catch(() => {});
+  }, []);
   const timezoneOptions = useMemo(() => ([
     'UTC',
     'Asia/Kolkata',
@@ -1179,7 +1197,8 @@ export default function ProjectConfigPage() {
     }
   };
 
-  const handleRunNow = async () => {
+  const executeRunNow = async () => {
+    setSyncConfirmOpen(false);
     if (
       String(configForm.source_type || '').toLowerCase() === 'pbix'
       && !String(configForm.pbix_path || '').trim()
@@ -1191,23 +1210,7 @@ export default function ProjectConfigPage() {
       setSaveInfo(msg);
       return;
     }
-    // Load snapshot diff preview (fast — no extraction required) before
-    // opening the confirm modal so the user can see what changed last time.
-    setRunPreview(null);
-    setRunPreviewLoading(true);
-    setSyncConfirmOpen(true);
-    try {
-      const preview = await api.getRunPreview(id);
-      setRunPreview(preview);
-    } catch {
-      setRunPreview(null);
-    } finally {
-      setRunPreviewLoading(false);
-    }
-  };
 
-  const executeRunNow = async () => {
-    setSyncConfirmOpen(false);
     setSyncing(true);
     try {
       const saved = await handleSave();
@@ -1218,13 +1221,12 @@ export default function ProjectConfigPage() {
 
       const run = await api.runProjectNow(id, { sync_mode: syncMode });
       const runId = run?.run_id || run?.id;
-      const status = String(run?.status || '').toLowerCase();
       if (runId) {
         saveRunLogs(runId, buildMockRunLogs(run));
       }
 
-      // Sync Now is the primary execution entry point. Route users directly to Runs page.
-      navigate('/jobs');
+      // Sync Now is the primary execution entry point. Route users directly to Runs page showing model runs.
+      navigate('/jobs', { state: { runId, autoExpand: true } });
       return;
     } catch (err) {
       const msg = err?.message || 'Sync failed due to unexpected error.';
@@ -1233,6 +1235,10 @@ export default function ProjectConfigPage() {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleRunNow = async () => {
+    await executeRunNow();
   };
 
   const buildRestoreOverrides = () => {
@@ -1851,6 +1857,7 @@ export default function ProjectConfigPage() {
               <ProjectDashboard
                 project={project}
                 configForm={configForm}
+                connectionStatus={connectionStatus}
                 setConfigForm={(next) => {
                   setConfigForm(next);
                   try {

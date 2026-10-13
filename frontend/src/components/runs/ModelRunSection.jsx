@@ -1,11 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight, FileText, Download, AlertTriangle, RefreshCw, Copy, Check, Info } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { ChevronDown, ChevronRight, AlertTriangle, Copy, Check } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
-import RunReportSummary from '../RunReportSummary';
-import { api } from '../../utils/api';
-import { cleanPbixLabel } from '../../utils/pbixLabel';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
@@ -18,27 +13,6 @@ const STATUS_BADGE = {
   warning: { status: 'warning' },
   running: { status: 'running' },
   unknown: { status: 'pending', label: 'Unknown' },
-};
-
-const actionButtonStyle = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  padding: '6px 12px',
-  borderRadius: 6,
-  fontSize: 12,
-  fontWeight: 600,
-  background: 'var(--bg-surface-raised)',
-  color: 'var(--text-primary)',
-  border: '1px solid var(--border-main)',
-  cursor: 'pointer',
-  transition: 'all 0.15s ease',
-};
-
-const disabledActionButtonStyle = {
-  ...actionButtonStyle,
-  opacity: 0.45,
-  cursor: 'not-allowed',
 };
 
 function ReconciliationSummary({ reconciliation }) {
@@ -425,15 +399,6 @@ export default function ModelRunSection({
   const [logs, setLogs] = useState(entry?.logs || []);
   const logsContainerRef = useRef(null);
 
-  // In-place Report preview state
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTab, setPreviewTab] = useState('summary'); // 'summary' | 'raw'
-  const [summaryData, setSummaryData] = useState(null);
-  const [rawMarkdown, setRawMarkdown] = useState('');
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState(null);
-  const [downloadingJson, setDownloadingJson] = useState(false);
-
   // Sync logs when entry updates
   useEffect(() => {
     if (Array.isArray(entry?.logs)) {
@@ -441,74 +406,10 @@ export default function ModelRunSection({
     }
   }, [entry?.logs]);
 
-  const modelName = entry?.model || '';
-
-  // Load preview data when preview is opened
-  const loadPreview = async () => {
-    if (!projectId || !runId || !modelName) return;
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      const [sum, raw] = await Promise.all([
-        api.getRunModelReportSummary(projectId, runId, modelName).catch(() => null),
-        api.getRunModelReport(projectId, runId, modelName).catch(() => null),
-      ]);
-      setSummaryData(sum);
-      setRawMarkdown(raw || '');
-    } catch (err) {
-      setPreviewError(err?.message || 'Failed to load report preview');
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
-
-  const handleTogglePreview = () => {
-    const next = !previewOpen;
-    setPreviewOpen(next);
-    if (next && (!summaryData && !rawMarkdown)) {
-      loadPreview();
-    }
-  };
-
-  const handleDownloadMarkdown = async () => {
-    if (!projectId || !runId || !modelName) return;
-    try {
-      await api.downloadRunModelReport(projectId, runId, modelName);
-    } catch (err) {
-      console.error('Failed to download markdown report:', err);
-    }
-  };
-
-  const handleDownloadJsonSummary = async () => {
-    if (!projectId || !runId || !modelName) return;
-    setDownloadingJson(true);
-    try {
-      const data = summaryData || await api.getRunModelReportSummary(projectId, runId, modelName);
-      if (data) {
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const safeLabel = cleanPbixLabel(modelName).replace(/[^a-zA-Z0-9._-]+/g, '_');
-        const filename = `${projectId}_${safeLabel}_${runId}_summary.json`.replace(/\s+/g, '_');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-      }
-    } catch (err) {
-      console.error('Failed to download JSON summary:', err);
-    } finally {
-      setDownloadingJson(false);
-    }
-  };
-
   if (!entry) return null;
 
   const badge = STATUS_BADGE[entry.status] || { status: entry.status || 'pending' };
   const durationLabel = entry.durationMs && formatDuration ? formatDuration(entry.durationMs) : null;
-  const hasReport = Boolean(entry.has_report || entry.reportModel || entry.has_summary);
 
   return (
     <div
@@ -566,125 +467,8 @@ export default function ModelRunSection({
 
       {open && (
         <div style={{ padding: '0 12px 12px 12px', borderTop: '1px solid var(--border-subtle, var(--border-main))' }}>
-          {/* Action Bar for this model */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, margin: '10px 0' }}>
-            <button
-              type="button"
-              onClick={handleTogglePreview}
-              disabled={!hasReport}
-              style={hasReport ? actionButtonStyle : disabledActionButtonStyle}
-              title={hasReport ? 'View in-place report preview' : 'Report is not yet generated for this model'}
-            >
-              <FileText size={14} /> {previewOpen ? 'Hide Preview' : 'View Report Preview'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadMarkdown}
-              disabled={!hasReport}
-              style={hasReport ? actionButtonStyle : disabledActionButtonStyle}
-              title={hasReport ? 'Download Markdown report' : 'Report not available'}
-            >
-              <Download size={14} /> Markdown
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadJsonSummary}
-              disabled={!hasReport || downloadingJson}
-              style={hasReport && !downloadingJson ? actionButtonStyle : disabledActionButtonStyle}
-              title={hasReport ? 'Download JSON summary' : 'Summary not available'}
-            >
-              <Download size={14} /> {downloadingJson ? 'Downloading...' : 'JSON Summary'}
-            </button>
-          </div>
-
-          {/* In-place Report Preview Container */}
-          {previewOpen && (
-            <div
-              style={{
-                margin: '12px 0',
-                padding: 14,
-                borderRadius: 8,
-                border: '1px solid var(--border-main)',
-                background: 'var(--bg-surface-raised)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTab('summary')}
-                    style={{
-                      padding: '4px 12px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      border: 'none',
-                      cursor: 'pointer',
-                      background: previewTab === 'summary' ? 'var(--accent-primary, #3b82f6)' : 'transparent',
-                      color: previewTab === 'summary' ? '#fff' : 'var(--text-secondary)',
-                    }}
-                  >
-                    Summary
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTab('raw')}
-                    style={{
-                      padding: '4px 12px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      border: 'none',
-                      cursor: 'pointer',
-                      background: previewTab === 'raw' ? 'var(--accent-primary, #3b82f6)' : 'transparent',
-                      color: previewTab === 'raw' ? '#fff' : 'var(--text-secondary)',
-                    }}
-                  >
-                    Raw Report
-                  </button>
-                </div>
-                {previewLoading && (
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <RefreshCw size={12} className="animate-spin" /> Loading report...
-                  </div>
-                )}
-              </div>
-
-              {previewError ? (
-                <div style={{ color: 'var(--color-error)', fontSize: 12, padding: 8 }}>{previewError}</div>
-              ) : previewLoading ? (
-                <div style={{ color: 'var(--text-tertiary)', fontSize: 12, padding: 16, textAlign: 'center' }}>Loading report preview...</div>
-              ) : previewTab === 'summary' ? (
-                summaryData ? (
-                  <RunReportSummary data={summaryData} />
-                ) : (
-                  <div style={{ color: 'var(--text-tertiary)', fontSize: 12, padding: 12 }}>No summary data available.</div>
-                )
-              ) : (
-                rawMarkdown ? (
-                  <div
-                    style={{
-                      maxHeight: 400,
-                      overflowY: 'auto',
-                      padding: 12,
-                      background: 'var(--bg-input)',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      lineHeight: 1.6,
-                      color: 'var(--text-primary)',
-                    }}
-                  >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{rawMarkdown}</ReactMarkdown>
-                  </div>
-                ) : (
-                  <div style={{ color: 'var(--text-tertiary)', fontSize: 12, padding: 12 }}>No raw markdown available.</div>
-                )
-              )}
-            </div>
-          )}
-
           {entry.targetArtifactPath && (
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, overflowWrap: 'anywhere' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '10px 0 8px 0', overflowWrap: 'anywhere' }}>
               Artifact: <span style={{ fontFamily: MONO }}>{entry.targetArtifactPath}</span>
             </div>
           )}
