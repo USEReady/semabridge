@@ -29,41 +29,40 @@ def normalize_col_name(name: str) -> str:
     return c
 
 
+def is_column_contained(
+    model_col: str,
+    live_upper: Set[str],
+    live_clean: Set[str],
+    live_norm: Set[str],
+) -> bool:
+    """Check if model column exists in the live table's columns."""
+    if model_col.upper() in live_upper:
+        return True
+    c = clean_ident(model_col)
+    if c in live_clean:
+        return True
+    if normalize_col_name(model_col) in live_norm:
+        return True
+    # Table ID match: e.g. model col 'DEPARTMENT' matches live 'DEPARTMENT_ID' / 'DEPARTMENTID', or 'DEPARTMENT_ID' matches 'DEPARTMENT'
+    if (c + "ID") in live_clean or (c.endswith("ID") and c[:-2] in live_clean):
+        return True
+    return False
+
+
 def compute_column_compatibility(
     model_col_names: List[str],
     live_cols: Set[str]
 ) -> float:
-    """Compute compatibility score [0.0 - 1.0] between model columns and a live table's columns.
-    
-    Awards:
-    - 1.0 for exact case-insensitive column match
-    - 0.95 for clean match (ignoring spaces/underscores/punctuation, e.g. COST ELEMENT ID == COST_ELEMENT_ID)
-    - 0.70 for reserved-word alias match (e.g. DATE == COL_DATE, VALUE == COL_VALUE)
-    - 0.70 for meaningful substring match (e.g. DEPARTMENT in DEPARTMENT_ID)
-    """
+    """Compute fraction [0.0 - 1.0] of model columns contained in the live table."""
     if not model_col_names or not live_cols:
         return 0.0
 
-    live_upper = {c.upper(): c for c in live_cols}
-    live_clean = {clean_ident(c): c for c in live_cols}
-    live_norm = {normalize_col_name(c): c for c in live_cols}
+    live_upper = {c.upper() for c in live_cols}
+    live_clean = {clean_ident(c) for c in live_cols}
+    live_norm = {normalize_col_name(c) for c in live_cols}
 
-    score = 0.0
-    for mc in model_col_names:
-        mc_upper = mc.upper()
-        mc_clean = clean_ident(mc)
-        mc_norm = normalize_col_name(mc)
-
-        if mc_upper in live_upper:
-            score += 1.0
-        elif mc_clean in live_clean:
-            score += 0.95
-        elif mc_norm in live_norm:
-            score += 0.70
-        elif any(mc_clean in lc or lc in mc_clean for lc in live_clean if len(lc) >= 3):
-            score += 0.70
-
-    return score / len(model_col_names)
+    matched = sum(1 for mc in model_col_names if is_column_contained(mc, live_upper, live_clean, live_norm))
+    return matched / len(model_col_names)
 
 
 def rank_table_candidates(
@@ -71,7 +70,10 @@ def rank_table_candidates(
     dataset_columns: List[str],
     live_schema_metadata: Dict[str, Set[str]],
 ) -> List[Dict[str, Any]]:
-    """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match."""
+    """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match.
+    
+    NEVER binds on name similarity alone: only considers tables where column compatibility >= 0.8.
+    """
     norm_ds = clean_ident(dataset_name)
 
     # Filter out auto-generated temp tables and enriched views
@@ -83,6 +85,12 @@ def rank_table_candidates(
 
     candidates = []
     for tbl_name, live_cols in viable_tables.items():
+        col_compat = compute_column_compatibility(dataset_columns, live_cols)
+
+        # NEVER bind on name similarity alone! Require high column compatibility (>= 0.8)
+        if col_compat < 0.8:
+            continue
+
         tbl_norm = clean_ident(tbl_name)
 
         # Name matching score [0 - 100]
@@ -95,12 +103,6 @@ def rank_table_candidates(
             name_score = 65
         elif norm_ds in tbl_norm or tbl_norm in norm_ds:
             name_score = 45
-
-        col_compat = compute_column_compatibility(dataset_columns, live_cols)
-
-        # Require either some name similarity or high column compatibility (>= 0.6)
-        if name_score == 0 and col_compat < 0.6:
-            continue
 
         candidates.append({
             "table_name": tbl_name,
@@ -124,9 +126,8 @@ def resolve_dataset_to_physical_table(
 ) -> str:
     """Resolve a dataset to its canonical live physical table dynamically.
 
-    Candidates are ranked primarily by column compatibility (how accurately the table's
-    columns match the model's columns) and normalized name match.
-    Returns the resolved physical table name.
+    Binds to an existing table ONLY if it contains the PBIX table's columns (col_compat >= 0.8).
+    Never binds on name similarity alone. Otherwise the table counts as missing.
     """
     if explicit_mapping and dataset_name in explicit_mapping:
         return explicit_mapping[dataset_name]
@@ -140,7 +141,7 @@ def resolve_dataset_to_physical_table(
 
     candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata)
 
-    if candidates and (candidates[0]["col_compat"] >= 0.4 or candidates[0]["name_score"] >= 45):
+    if candidates and candidates[0]["col_compat"] >= 0.8:
         best = candidates[0]
         logger.debug(
             "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d)",
@@ -149,4 +150,37 @@ def resolve_dataset_to_physical_table(
         return best["table"]
 
     return dataset_name
+
+
+def check_table_name_collision_blocker(
+    dataset_name: str,
+    dataset_columns: List[str],
+    live_schema_metadata: Dict[str, Set[str]],
+) -> Optional[Dict[str, Any]]:
+    """Check if the needed table name already exists in Snowflake but its columns don't match (compat < 0.8).
+
+    Returns blocker dict if collision detected, otherwise None.
+    """
+    if not live_schema_metadata:
+        return None
+
+    clean_ds = clean_ident(dataset_name)
+    for tbl_name, live_cols in live_schema_metadata.items():
+        if tbl_name.startswith(("__FIXED", "DATETABLETEMPLATE_", "LOCALDATETABLE_")) or tbl_name.endswith("_ENRICHED"):
+            continue
+        clean_tbl = clean_ident(tbl_name)
+        if clean_ds == clean_tbl:
+            compat = compute_column_compatibility(dataset_columns, live_cols)
+            if compat < 0.8:
+                return {
+                    "dataset_name": dataset_name,
+                    "table_name": tbl_name,
+                    "col_compat": compat,
+                    "message": (
+                        f"Target table '{tbl_name}' already exists in Snowflake but its columns do not match "
+                        f"PBIX table '{dataset_name}' (compatibility {compat:.1%} < 80%). "
+                        f"Cannot bind or create without overwriting."
+                    ),
+                }
+    return None
 

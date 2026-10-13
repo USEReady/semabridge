@@ -250,151 +250,101 @@ class SnowflakeSchemaManager:
 
     def _ensure_source_tables_exist(self, cursor, sml: SMLModel) -> None:
         """
-        Check if source tables exist in Snowflake, create them if missing.
-        Also verify column structure matches and handle discrepancies:
-        - Missing columns: recreate table
-        - Extra columns: drop them using ALTER TABLE DROP COLUMN (preserves data)
-        Tables are created with structure based on SML column definitions.
-
-        Uses ``_verified_tables`` cache (P2b) to skip redundant SHOW TABLES
-        queries for source tables already confirmed by a prior model deploy
-        within the same session.
+        Check if source tables exist in Snowflake, create missing ones EMPTY (CREATE TABLE IF NOT EXISTS, no data).
+        Existing tables are NEVER touched (no ALTER, DROP, INSERT, CTAS, REPLACE, SWAP).
+        If the needed name exists but columns do not match (compat < 0.8), raises a blocker.
         """
+        from semabridge.connectors.table_binding_resolver import (
+            resolve_dataset_to_physical_table,
+            check_table_name_collision_blocker,
+            clean_ident,
+        )
+        from semabridge.connectors.sql_guard import (
+            set_allowed_absent_tables,
+            get_allowed_absent_tables,
+        )
+
         # Collect which datasets actually need checking (skip cached ones)
         datasets_to_check = []
         for dataset in sml.datasets:
-            source_table = dataset.source_table or dataset.unique_name
-            safe_table_name = self._safe_table_name(source_table)
-            if safe_table_name in self._verified_tables:
-                logger.debug(f"Table '{safe_table_name}' already verified this session â€” skipping")
+            ds_name = dataset.unique_name
+            safe_name = self._safe_table_name(ds_name)
+            if safe_name in self._verified_tables:
                 continue
             datasets_to_check.append(dataset)
 
         if not datasets_to_check:
-            logger.debug("All source tables already verified â€” skipping SHOW TABLES")
+            logger.debug("All source tables already verified — skipping SHOW TABLES")
             return
 
-        # Only query Snowflake if we have datasets to check
+        # Fetch current existing tables and views in target schema
         self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
-        
-        # Get list of existing views (to avoid collision)
+
         self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn()}", context="SHOW VIEWS")
         existing_views = {row[1].upper() for row in cursor.fetchall()}
-        
+
         all_existing = existing_tables | existing_views
-        
-        # Check each dataset's source table
+
+        absent_tables_to_create = []
+        mapping_dict = getattr(getattr(getattr(self, "behavior", None), "snowflake", None), "source_table_mapping", {}) or {}
+
         for dataset in datasets_to_check:
-            source_table = dataset.source_table or dataset.unique_name
-            safe_table_name = self._safe_table_name(source_table)
-            quoted_table = f'"{safe_table_name}"'
-            
-            needs_creation = False
-            
-            if safe_table_name not in all_existing:
-                needs_creation = True
-                logger.info(f"Source table '{safe_table_name}' not found, creating...")
-            else:
-                # Table exists - verify columns match
-                if self.sf_behavior.validate_column_schema:
-                    missing_columns, extra_columns = self._verify_table_columns(cursor, safe_table_name, dataset)
-                else:
-                    missing_columns = set()
-                    extra_columns = set()
-                
-                # Use EVOLVE (additive) approach for shared source tables
-                if missing_columns:
-                    logger.info(f"Table '{safe_table_name}' missing columns: {missing_columns}. Adding them...")
-                    physical_cols = self._collect_physical_source_columns(dataset)
-                    for col_name in missing_columns:
-                        # Find canonical source column from the resolved physical map
-                        orig_col = physical_cols.get(col_name)
-                        if orig_col:
-                            type_map = {
-                                "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
-                                "DECIMAL": "DECIMAL(18,2)", "BOOLEAN": "BOOLEAN", "DATETIME": "TIMESTAMP_NTZ",
-                                "DATE": "DATE", "BINARY": "BINARY",
-                            }
-                            sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
-                            try:
-                                self._execute_sql(
-                                    cursor,
-                                    f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}',
-                                    context=f"ALTER TABLE ADD COLUMN {safe_table_name}.{col_name}",
-                                )
-                                self._newly_added_columns.setdefault(safe_table_name, set()).add(col_name)
-                            except Exception as e:
-                                logger.warning(f"Could not add column {col_name} to {safe_table_name}: {e}")
-                                # Fallback: if ALTER fails (e.g. constraints), we might need recreation
-                                # but for now we try to stay additive.
-                
-                # Skip dropping extra columns by default to allow sharing tables across models
-                # self._drop_extra_columns(cursor, safe_table_name, extra_columns, dataset=dataset)
+            ds_name = dataset.unique_name
+            modeled_cols = [c.unique_name for c in getattr(dataset, "columns", []) or []]
 
-            
-            if needs_creation:
-                # Generate CREATE TABLE DDL
-                if source_table.upper() == "DIM_DATE":
-                    create_ddl = self._generate_date_dim_ddl(source_table)
-                else:
-                    create_ddl = self._generate_create_table_ddl(dataset, source_table)
-                
-                try:
-                    self._execute_sql(cursor, create_ddl, context=f"CREATE TABLE {safe_table_name}")
-                    logger.info(f"Created table: {safe_table_name}")
+            # 1. Check if dataset binds to an existing physical table (col_compat >= 0.8)
+            bound_table = resolve_dataset_to_physical_table(
+                ds_name,
+                modeled_cols,
+                self._live_schema_metadata,
+                explicit_mapping=mapping_dict,
+                model_name=getattr(sml, "unique_name", None) or getattr(sml, "name", None),
+            )
 
-                    # Belt-and-suspenders: after CREATE TABLE IF NOT EXISTS
-                    # the table may have already existed (created by a prior
-                    # model's deployment or an external process) with a
-                    # different column set. Verify columns match and
-                    # rebuild if they don't.  This prevents the subsequent
-                    # INSERT from hitting "invalid identifier" errors.
-                    if source_table.upper() != "DIM_DATE":
-                        missing_post, _ = self._verify_table_columns(
-                            cursor, safe_table_name, dataset
-                        )
-                        if missing_post:
-                            physical_cols = self._collect_physical_source_columns(dataset)
-                            for col_name in missing_post:
-                                # Find canonical source column from the resolved physical map
-                                orig_col = physical_cols.get(col_name)
-                                if orig_col:
-                                    type_map = {
-                                        "STRING": "VARCHAR(500)", "INTEGER": "INTEGER", "FLOAT": "FLOAT",
-                                        "DECIMAL": "DECIMAL(18,2)", "BOOLEAN": "BOOLEAN", "DATETIME": "TIMESTAMP_NTZ",
-                                        "DATE": "DATE", "BINARY": "BINARY",
-                                    }
-                                    sf_type = type_map.get(orig_col.data_type.value, "VARCHAR(500)")
-                                    self._execute_sql(
-                                        cursor,
-                                        f'ALTER TABLE {self.config.schema_name}.{quoted_table} ADD COLUMN "{col_name}" {sf_type}',
-                                        context=f"ALTER TABLE ADD COLUMN {safe_table_name}.{col_name}",
-                                    )
-                                    self._newly_added_columns.setdefault(safe_table_name, set()).add(col_name)
+            # If bound to an existing table, DO NOT TOUCH IT!
+            if bound_table.upper() in all_existing:
+                logger.debug(f"Dataset '{ds_name}' is bound to existing table '{bound_table}' — leaving untouched.")
+                self._verified_tables.add(self._safe_table_name(bound_table))
+                continue
 
+            # 2. Check collision blocker: if the needed name exists in Snowflake but its columns don't match
+            collision = check_table_name_collision_blocker(ds_name, modeled_cols, self._live_schema_metadata)
+            if collision:
+                msg = collision["message"]
+                logger.error(f"🛑 Collision blocker: {msg}")
+                raise ConnectorError(msg)
 
-                    if source_table.upper() == "DIM_DATE":
-                         logger.info("Populated DIM_DATE with generated data")
-                    else:
-                        # Insert sample data if this is an imported model
-                        sample_insert = self._generate_sample_insert(dataset, source_table)
-                        if sample_insert:
-                            self._execute_sql(cursor, sample_insert, context=f"INSERT SAMPLE ROWS {safe_table_name}")
-                            logger.info(f"Inserted sample data into: {safe_table_name}")
-                        
-                except Exception as e:
-                    logger.error(
-                        f"Failed to create required source table '{safe_table_name}': {e}. "
-                        f"Downstream semantic view DDL will fail."
-                    )
-                    raise ConnectorError(
-                        f"Cannot create source table '{safe_table_name}' in "
-                        f"{self.config.database}.{self.config.schema_name}: {e}"
-                    ) from e
+            safe_target_name = self._safe_table_name(ds_name)
+            if safe_target_name.upper() in all_existing:
+                msg = (
+                    f"Target table '{safe_target_name}' already exists in Snowflake schema {self._schema_fqn()} "
+                    f"but its columns do not match PBIX table '{ds_name}' (compatibility < 80%). "
+                    f"Cannot bind or create without overwriting."
+                )
+                logger.error(f"🛑 Collision blocker: {msg}")
+                raise ConnectorError(msg)
 
-            # Mark table as verified for this session (P2b cache)
-            self._verified_tables.add(safe_table_name)
+            # 3. Table is confirmed absent in live schema: create it empty named after PBIX table
+            absent_tables_to_create.append((dataset, safe_target_name))
+
+        if not absent_tables_to_create:
+            return
+
+        # Register confirmed absent tables in sql_guard
+        allowed_names = {tbl.upper() for _, tbl in absent_tables_to_create}
+        set_allowed_absent_tables(get_allowed_absent_tables() | allowed_names)
+
+        for dataset, safe_table_name in absent_tables_to_create:
+            # Generate empty table DDL with PBIX columns and types (no data, no CTAS)
+            create_ddl = self._generate_create_table_ddl(dataset, safe_table_name)
+            try:
+                self._execute_sql(cursor, create_ddl, context=f"CREATE TABLE {safe_table_name}")
+                logger.info(f"Created empty missing source table: {safe_table_name}")
+                self._verified_tables.add(safe_table_name)
+            except Exception as e:
+                logger.error(f"Failed to create missing source table '{safe_table_name}': {e}")
+                raise ConnectorError(f"Cannot create missing source table '{safe_table_name}': {e}") from e
     
     def _verify_table_columns(self, cursor, table_name: str, dataset: SMLDataset) -> tuple:
         """

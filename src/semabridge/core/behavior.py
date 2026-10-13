@@ -25,7 +25,7 @@ class SnowflakeBehavior(BaseModel):
         description="Whether to quote all identifiers in DDL"
     )
     create_missing_tables: bool = Field(
-        default=False,
+        default=True,
         description="Auto-create source tables if missing"
     )
     validate_column_schema: bool = Field(

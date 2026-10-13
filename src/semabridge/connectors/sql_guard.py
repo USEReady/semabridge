@@ -39,6 +39,7 @@ class SQLOwnershipSecurityError(SQLSecurityGuardError):
 
 # Global or thread-local set of object names allowed for current project/model
 _ALLOWED_MODEL_OBJECTS: Set[str] = set()
+_ALLOWED_ABSENT_TABLES: Set[str] = set()
 
 def set_allowed_model_objects(names: Set[str]) -> None:
     """Register the set of valid object names (uppercase) produced by SemaBridge for current project/model."""
@@ -55,6 +56,21 @@ def clear_allowed_model_objects() -> None:
     _ALLOWED_MODEL_OBJECTS = set()
 
 
+def set_allowed_absent_tables(names: Set[str]) -> None:
+    """Register uppercase physical table names confirmed absent in the live schema that SemaBridge may create empty."""
+    global _ALLOWED_ABSENT_TABLES
+    _ALLOWED_ABSENT_TABLES.update({n.strip('"').upper() for n in names if n})
+
+def get_allowed_absent_tables() -> Set[str]:
+    """Get currently registered allowed absent table names."""
+    return _ALLOWED_ABSENT_TABLES
+
+def clear_allowed_absent_tables() -> None:
+    """Clear registered allowed absent table names."""
+    global _ALLOWED_ABSENT_TABLES
+    _ALLOWED_ABSENT_TABLES = set()
+
+
 # Strip SQL comments: /* ... */ and -- ...
 _COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\r\n]*", re.DOTALL)
 
@@ -63,8 +79,11 @@ _EXPLICIT_FORBIDDEN_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\bEXECUTE\s+IMMEDIATE\b", re.IGNORECASE), "EXECUTE IMMEDIATE"),
     (re.compile(r"^\s*CALL\b", re.IGNORECASE), "CALL"),
     (re.compile(r"\bCLONE\b", re.IGNORECASE), "CLONE"),
-    (re.compile(r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMPORARY\s+|TRANSIENT\s+)?TABLE\b", re.IGNORECASE), "CREATE TABLE"),
+    (re.compile(r"^\s*CREATE\s+OR\s+REPLACE\s+(?:TEMPORARY\s+|TRANSIENT\s+)?TABLE\b", re.IGNORECASE), "CREATE OR REPLACE TABLE"),
+    (re.compile(r"^\s*CREATE\s+(?:TEMPORARY\s+|TRANSIENT\s+)TABLE\b", re.IGNORECASE), "CREATE TEMPORARY/TRANSIENT TABLE"),
+    (re.compile(r"^\s*CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\b)", re.IGNORECASE), "CREATE TABLE (without IF NOT EXISTS)"),
     (re.compile(r"\bAS\s+SELECT\b.*\bTABLE\b", re.IGNORECASE), "CTAS"),
+    (re.compile(r"^\s*CREATE\s+TABLE\b.*?\bAS\s+SELECT\b", re.IGNORECASE | re.DOTALL), "CTAS"),
     (re.compile(r"^\s*ALTER\s+TABLE\b", re.IGNORECASE), "ALTER TABLE"),
     (re.compile(r"^\s*DROP\s+TABLE\b", re.IGNORECASE), "DROP TABLE"),
     (re.compile(r"^\s*DROP\s+(?:DATABASE|SCHEMA)\b", re.IGNORECASE), "DROP DATABASE/SCHEMA"),
@@ -94,6 +113,7 @@ _ALLOWLIST_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"^\s*CREATE\s+OR\s+REPLACE\s+(?:TEMPORARY\s+)?VIEW\s+([a-zA-Z0-9_\"`.]+)", re.IGNORECASE), "CREATE_VIEW"),
     (re.compile(r"^\s*DROP\s+VIEW\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_\"`.]+)", re.IGNORECASE), "DROP_VIEW"),
     (re.compile(r"^\s*DROP\s+SEMANTIC\s+VIEW\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_\"`.]+)", re.IGNORECASE), "DROP_SEMANTIC_VIEW"),
+    (re.compile(r"^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z0-9_\"`.]+)", re.IGNORECASE), "CREATE_TABLE_IF_NOT_EXISTS"),
 ]
 
 
@@ -261,7 +281,26 @@ def validate_safe_sql(
             logger.error("🛑 SECURITY GUARD: %s", err_msg)
             raise SQLSecurityGuardError(err_msg)
 
-        # 3. Ownership Rule enforcement for VIEW / SEMANTIC VIEW drops and creates
+        # 3. Absent Table enforcement for CREATE TABLE IF NOT EXISTS
+        if matched_action == "CREATE_TABLE_IF_NOT_EXISTS":
+            base_tbl = extract_base_object_name(matched_obj)
+            allowed_absent = get_allowed_absent_tables()
+            if not allowed_absent:
+                err = (
+                    f"SQL execution guard blocked CREATE TABLE IF NOT EXISTS for '{base_tbl}': "
+                    "No allowed absent tables are registered for the current model (fail closed)."
+                )
+                logger.error("🛑 SECURITY GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+            if base_tbl not in allowed_absent:
+                err = (
+                    f"SQL execution guard blocked CREATE TABLE IF NOT EXISTS for '{base_tbl}': "
+                    f"Table is not in the confirmed absent tables for the current model ({sorted(allowed_absent)})."
+                )
+                logger.error("🛑 SECURITY GUARD: %s", err)
+                raise SQLSecurityGuardError(err)
+
+        # 4. Ownership Rule enforcement for VIEW / SEMANTIC VIEW drops and creates
         # Always on for CREATE OR REPLACE VIEW / DROP VIEW / DROP SEMANTIC VIEW / CREATE OR REPLACE SEMANTIC VIEW
         if matched_action in ("CREATE_VIEW", "DROP_VIEW", "DROP_SEMANTIC_VIEW", "CREATE_SEMANTIC_VIEW"):
             is_semantic = (matched_action in ("DROP_SEMANTIC_VIEW", "CREATE_SEMANTIC_VIEW"))
