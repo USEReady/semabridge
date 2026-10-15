@@ -4,6 +4,12 @@ Resolves model datasets to live physical tables purely from:
 1. Column compatibility scoring against the live database schema
 2. Normalized identifier matching (case, spaces, punctuation, underscores ignored)
 3. Explicit per-project confirmed overrides (if user-edited)
+4. Bindings saved by an earlier successful sync of the same project/model
+   (LiveSchemaMetadata.pinned_bindings), so every later sync binds the same way
+
+Among tables with equal column compatibility the order is deterministic: a
+populated table before an empty one (EMPTY_TABLE_MAX_ROWS), then the better
+name match, then more rows, then table name.
 
 No hardcoded table names or model names in code or configs!
 """
@@ -12,6 +18,41 @@ import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# A table with at most this many rows counts as empty when breaking binding
+# ties: stub tables left by earlier syncs hold a single placeholder row
+# (e.g. ZIP='Sample_Zip'), and must never win over the populated table.
+EMPTY_TABLE_MAX_ROWS = 1
+
+
+def _is_empty(row_count: Optional[int]) -> bool:
+    return row_count is not None and row_count <= EMPTY_TABLE_MAX_ROWS
+
+
+class LiveSchemaMetadata(dict):
+    """TABLE -> {COLUMN} map of the live schema, plus this deploy's binding state.
+
+    A plain dict for every existing reader. The extra attributes ride along
+    with the one metadata object an emitter shares with its schema manager
+    and DDL builders, so every resolve_dataset_to_physical_table() call site
+    sees the same pins and row counts and records into the same log.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # clean_ident(dataset) -> physical table saved by an earlier sync.
+        self.pinned_bindings: Dict[str, str] = {}
+        # TABLE (upper) -> row count, for tie-breaking.
+        self.row_counts: Dict[str, int] = {}
+        # clean_ident(dataset) -> {dataset, table, matched_by, tie}
+        self.binding_log: Dict[str, Dict[str, Any]] = {}
+
+    def clear(self) -> None:
+        super().clear()
+        self.pinned_bindings.clear()
+        self.row_counts.clear()
+        self.binding_log.clear()
 
 
 def clean_ident(name: str) -> str:
@@ -72,7 +113,9 @@ def rank_table_candidates(
 ) -> List[Dict[str, Any]]:
     """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match.
     
-    NEVER binds on name similarity alone: only considers tables where column compatibility >= 0.8.
+    A table is a candidate when column compatibility >= 0.8 or its normalized
+    name equals the dataset's; column compatibility ranks first, so a
+    name-only match never beats a column match.
     """
     norm_ds = clean_ident(dataset_name)
 
@@ -86,12 +129,12 @@ def rank_table_candidates(
     candidates = []
     for tbl_name, live_cols in viable_tables.items():
         col_compat = compute_column_compatibility(dataset_columns, live_cols)
-
-        # NEVER bind on name similarity alone! Require high column compatibility (>= 0.8)
-        if col_compat < 0.8:
-            continue
-
         tbl_norm = clean_ident(tbl_name)
+
+        # A candidate needs matching columns (>= 0.8) or the same normalized
+        # name; columns rank first, so a name-only match never beats them.
+        if col_compat < 0.8 and tbl_norm != norm_ds:
+            continue
 
         # Name matching score [0 - 100]
         name_score = 0
@@ -112,9 +155,37 @@ def rank_table_candidates(
             "col_compat": col_compat,
         })
 
-    # Rank primarily by column compatibility, tie-breaking by name match score
-    candidates.sort(key=lambda x: (x["col_compat"], x["name_score"]), reverse=True)
+    # Rank by column compatibility; among equally compatible tables: populated
+    # before empty, then name match score, then more rows (unknown counts
+    # last), then table name — fully deterministic.
+    row_counts = getattr(live_schema_metadata, "row_counts", None) or {}
+    for candidate in candidates:
+        candidate["row_count"] = row_counts.get(candidate["table"].upper())
+    candidates.sort(key=lambda x: (
+        -x["col_compat"],
+        _is_empty(x["row_count"]),
+        -x["name_score"],
+        -(x["row_count"] if x["row_count"] is not None else -1),
+        x["table"],
+    ))
     return candidates
+
+
+def _is_viable(candidate: Dict[str, Any]) -> bool:
+    return candidate["col_compat"] >= 0.8 or candidate["name_score"] == 100
+
+
+def _log_binding(live_schema_metadata: Any, dataset_name: str, table: str, matched_by: str,
+                 tie: Optional[List[Dict[str, Any]]] = None) -> None:
+    log = getattr(live_schema_metadata, "binding_log", None)
+    if log is None:
+        return
+    log[clean_ident(dataset_name)] = {
+        "dataset": dataset_name,
+        "table": table,
+        "matched_by": matched_by,
+        "tie": tie or [],
+    }
 
 
 def resolve_dataset_to_physical_table(
@@ -126,8 +197,10 @@ def resolve_dataset_to_physical_table(
 ) -> str:
     """Resolve a dataset to its canonical live physical table dynamically.
 
-    Binds to an existing table ONLY if it contains the PBIX table's columns (col_compat >= 0.8).
-    Never binds on name similarity alone. Otherwise the table counts as missing.
+    Order: explicit mapping, then the binding saved by an earlier sync of
+    this project/model (if that table still exists), then the best existing
+    table by columns (>= 0.8) or normalized name. Otherwise the table counts
+    as missing.
     """
     if explicit_mapping and dataset_name in explicit_mapping:
         return explicit_mapping[dataset_name]
@@ -139,13 +212,32 @@ def resolve_dataset_to_physical_table(
     if not live_schema_metadata:
         return dataset_name
 
+    pinned = (getattr(live_schema_metadata, "pinned_bindings", None) or {}).get(clean_ident(dataset_name))
+    if pinned and pinned.upper() in live_schema_metadata:
+        _log_binding(live_schema_metadata, dataset_name, pinned, "saved")
+        return pinned
+
     candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata)
 
-    if candidates and candidates[0]["col_compat"] >= 0.8:
+    if candidates and _is_viable(candidates[0]):
         best = candidates[0]
+        # Equally compatible tables whose names also relate to the dataset:
+        # the choice between them is a tie worth showing in the dry run.
+        tied = [
+            {"table": c["table"], "row_count": c["row_count"]}
+            for c in candidates
+            if c["col_compat"] == best["col_compat"] and (c is best or c["name_score"] > 0)
+        ]
         logger.debug(
-            "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d)",
-            dataset_name, best["table"], best["col_compat"], best["name_score"]
+            "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d, tie=%s)",
+            dataset_name, best["table"], best["col_compat"], best["name_score"], tied,
+        )
+        _log_binding(
+            live_schema_metadata,
+            dataset_name,
+            best["table"],
+            "columns" if best["col_compat"] >= 0.8 else "name",
+            tied if len(tied) > 1 else [],
         )
         return best["table"]
 

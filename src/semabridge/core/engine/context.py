@@ -78,6 +78,14 @@ class RunContext:
     target_artifact_path: Optional[str] = None
     routing_summary: Optional[dict[str, Any]] = None
     sync_mode: str = "copy"
+    # UPSERT delta sync (see core/upsert_delta.py): the per-kind delta
+    # against the last deployed snapshot of this model, set in Step 6a.
+    # None for COPY runs. upsert_delta["has_changes"] False skips Step 9.
+    upsert_delta: Optional[Dict[str, Any]] = None
+    # Dry run only (Snowflake target): {"tables": [{dataset, action
+    # "bind"|"create", table, matched_by, tie}], "error"} — see
+    # SnowflakeSchemaManager.plan_source_tables.
+    table_binding_plan: Optional[Dict[str, Any]] = None
 
     # Threaded through so Step 6's OSI→SML conversion can apply
     # metric-name mapping overrides to the OSI model's DAX bracket

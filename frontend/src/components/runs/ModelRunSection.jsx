@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, AlertTriangle, Copy, Check } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
+import UpsertChangesView from '../UpsertChangesView';
+import { PLACEHOLDER_NOTE, isMetricEntry, isPlaceholderEntry } from '../../utils/placeholderMetric';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
@@ -196,9 +198,14 @@ function DroppedFieldsSection({ droppedEntities }) {
   const [open, setOpen] = useState(true);
   if (!count) return null;
 
+  // Metric issues are warnings (yellow): the metric is a NULL placeholder or
+  // left out, but the sync itself succeeded. Red is kept for anything else.
+  const metricWarningCount = droppedEntities.filter((e) => !e?.by_design && isMetricEntry(e)).length;
+  const placeholderCount = droppedEntities.filter(isPlaceholderEntry).length;
   const rejectedCount = droppedEntities.filter(
-    (e) => !e?.by_design || String(e?.stage || '').includes('deployment') || String(e?.reason || '').toLowerCase().includes('snowflake')
+    (e) => !isMetricEntry(e) && (!e?.by_design || String(e?.stage || '').includes('deployment') || String(e?.reason || '').toLowerCase().includes('snowflake'))
   ).length;
+  const byDesignCount = count - rejectedCount - metricWarningCount;
 
   const hasErrors = rejectedCount > 0;
   const accentColor = hasErrors ? 'var(--color-error, #ef4444)' : 'var(--color-warning, #f59e0b)';
@@ -255,7 +262,24 @@ function DroppedFieldsSection({ droppedEntities }) {
               {rejectedCount} Rejected / Failed
             </span>
           )}
-          {count > rejectedCount && (
+          {metricWarningCount > 0 && (
+            <span
+              style={{
+                fontSize: 10,
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: 'rgba(245, 158, 11, 0.18)',
+                color: '#f59e0b',
+                fontWeight: 700,
+                border: '1px solid rgba(245, 158, 11, 0.4)',
+              }}
+            >
+              {placeholderCount > 0
+                ? `${placeholderCount} NULL placeholder${placeholderCount !== 1 ? 's' : ''}`
+                : `${metricWarningCount} metric warning${metricWarningCount !== 1 ? 's' : ''}`}
+            </span>
+          )}
+          {byDesignCount > 0 && (
             <span
               style={{
                 fontSize: 10,
@@ -266,7 +290,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                 fontWeight: 600,
               }}
             >
-              {count - rejectedCount} by design
+              {byDesignCount} by design
             </span>
           )}
         </div>
@@ -291,7 +315,9 @@ function DroppedFieldsSection({ droppedEntities }) {
               const reason = item.reason || item.message || item.error || 'Excluded during sync';
               const detail = item.detail || item.details || item.raw_error || item.stack || item.sql || null;
               const byDesign = Boolean(item.by_design);
-              const isSnowflakeReject = rawStage === 'ddl_deployment' || String(reason).toLowerCase().includes('snowflake');
+              const isPlaceholder = isPlaceholderEntry(item);
+              const isMetricWarning = !byDesign && isMetricEntry(item);
+              const isSnowflakeReject = !isMetricWarning && (rawStage === 'ddl_deployment' || String(reason).toLowerCase().includes('snowflake'));
 
               return (
                 <div
@@ -300,7 +326,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                     padding: '10px 12px',
                     borderRadius: 6,
                     background: byDesign ? 'var(--bg-surface-raised)' : 'var(--bg-input)',
-                    border: `1px solid ${isSnowflakeReject ? 'rgba(239, 68, 68, 0.4)' : byDesign ? 'var(--border-main)' : 'rgba(245, 158, 11, 0.3)'}`,
+                    border: `1px solid ${isSnowflakeReject ? 'rgba(239, 68, 68, 0.4)' : byDesign ? 'var(--border-main)' : 'rgba(245, 158, 11, 0.4)'}`,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
@@ -332,9 +358,9 @@ function DroppedFieldsSection({ droppedEntities }) {
                           fontSize: 10,
                           padding: '1px 7px',
                           borderRadius: 3,
-                          background: stageMeta.bg,
-                          color: stageMeta.color,
-                          border: `1px solid ${stageMeta.border}`,
+                          background: isMetricWarning ? 'rgba(245, 158, 11, 0.12)' : stageMeta.bg,
+                          color: isMetricWarning ? '#f59e0b' : stageMeta.color,
+                          border: `1px solid ${isMetricWarning ? 'rgba(245, 158, 11, 0.35)' : stageMeta.border}`,
                           fontWeight: 700,
                           textTransform: 'capitalize',
                         }}
@@ -347,6 +373,10 @@ function DroppedFieldsSection({ droppedEntities }) {
                       {byDesign ? (
                         <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', fontWeight: 600 }}>
                           Excluded by design
+                        </span>
+                      ) : isMetricWarning ? (
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', fontWeight: 700, border: '1px solid rgba(245, 158, 11, 0.35)' }}>
+                          {isPlaceholder ? 'Warning · NULL placeholder' : 'Warning'}
                         </span>
                       ) : (
                         <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', fontWeight: 700, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
@@ -365,6 +395,12 @@ function DroppedFieldsSection({ droppedEntities }) {
                       {reason}
                     </span>
                   </div>
+
+                  {isPlaceholder && (
+                    <div style={{ fontSize: 12, color: '#f59e0b', lineHeight: 1.5 }}>
+                      {PLACEHOLDER_NOTE}
+                    </div>
+                  )}
 
                   {/* Detailed Error / Rejection Log */}
                   <DroppedItemDetail detail={detail} />
@@ -467,41 +503,49 @@ export default function ModelRunSection({
 
       {open && (
         <div style={{ padding: '0 12px 12px 12px', borderTop: '1px solid var(--border-subtle, var(--border-main))' }}>
-          {entry.targetArtifactPath && (
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '10px 0 8px 0', overflowWrap: 'anywhere' }}>
-              Artifact: <span style={{ fontFamily: MONO }}>{entry.targetArtifactPath}</span>
-            </div>
-          )}
-
-          {/* Reconciliation */}
-          <ReconciliationSummary reconciliation={entry.reconciliation} />
-
-          {/* Dropped Fields */}
-          <DroppedFieldsSection droppedEntities={entry.droppedEntities || entry.dropped_entities} />
-
-          {/* Execution Stages / Logs */}
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '12px 0 8px 0' }}>
-            Execution Stages
-          </div>
-          <div
-            ref={logsContainerRef}
-            style={{
-              borderRadius: 8,
-              border: '1px solid var(--border-main)',
-              background: 'var(--bg-input)',
-              padding: 12,
-              fontFamily: MONO,
-              fontSize: 12,
-              lineHeight: 1.65,
-              color: 'var(--text-primary)',
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
-              maxHeight: 420,
-              overflowY: 'auto',
-            }}
+          <UpsertChangesView
+            delta={entry.upsertDelta}
+            modelLabel={entry.label}
+            runContext={{ projectId, runId, model: entry.model }}
           >
-            {logs?.length ? logs.join('\n') : 'No logs recorded for this model.'}
-          </div>
+            <>
+              {entry.targetArtifactPath && (
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', margin: '10px 0 8px 0', overflowWrap: 'anywhere' }}>
+                  Artifact: <span style={{ fontFamily: MONO }}>{entry.targetArtifactPath}</span>
+                </div>
+              )}
+
+              {/* Reconciliation */}
+              <ReconciliationSummary reconciliation={entry.reconciliation} />
+
+              {/* Dropped Fields */}
+              <DroppedFieldsSection droppedEntities={entry.droppedEntities || entry.dropped_entities} />
+
+              {/* Execution Stages / Logs */}
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', margin: '12px 0 8px 0' }}>
+                Execution Stages
+              </div>
+              <div
+                ref={logsContainerRef}
+                style={{
+                  borderRadius: 8,
+                  border: '1px solid var(--border-main)',
+                  background: 'var(--bg-input)',
+                  padding: 12,
+                  fontFamily: MONO,
+                  fontSize: 12,
+                  lineHeight: 1.65,
+                  color: 'var(--text-primary)',
+                  whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                  maxHeight: 420,
+                  overflowY: 'auto',
+                }}
+              >
+                {logs?.length ? logs.join('\n') : 'No logs recorded for this model.'}
+              </div>
+            </>
+          </UpsertChangesView>
         </div>
       )}
     </div>

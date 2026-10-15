@@ -11,6 +11,9 @@ import { ToggleOption } from '../WizardUIComponents';
 import DryRunMappingTable from '../DryRunMappingTable';
 import FieldMappingEditor from '../FieldMappingEditor';
 import MultiFileDryRunStatus from './MultiFileDryRunStatus';
+import UpsertChangesView from '../UpsertChangesView';
+import PanelBoundary from '../common/PanelBoundary';
+import TableBindingPlan from '../TableBindingPlan';
 import { resolveMultiModelReadiness, flattenSectionRows } from '../../utils/multiFileDryRunReadiness';
 
 export function StepMappingOptions({
@@ -626,28 +629,33 @@ export function StepMappingOptions({
       {/* ── New DryRunMappingTable — shown after a successful dry run ─────── */}
       {!multiDryRunJob?.job_id && dryRunStatus === 'success' && detectedMappings.length > 0 && (
         <div ref={mappingTableRef}>
-          <DryRunMappingTable
-            mappings={detectedMappings}
-            summary={dryRunData?.summary}
-            relationships={(() => {
-              try {
-                const stored = sessionStorage.getItem('detectedRelationships');
-                return stored ? JSON.parse(stored) : [];
-              } catch { return []; }
-            })()}
-            onEdit={(rowId) => {
-              const row = detectedMappings.find(r => r.id === rowId);
-              if (row) setEditingRow(row);
-            }}
-            onBulkResolved={onBulkResolved}
-            onSynonymUpdate={onSynonymUpdate}
-            projectId={projectId}
-            schemaConflicts={dryRunData?.schema_conflicts || []}
-            compatibilityScore={dryRunData?.compatibility_score ?? null}
-            onReSync={onRunDryRun}
-            droppedEntities={dryRunData?.dropped_entities || []}
-            unresolvedReportFieldReferences={dryRunData?.unresolved_report_field_references || []}
-          />
+          <PanelBoundary name="Target tables">
+            <TableBindingPlan plan={dryRunData?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+          </PanelBoundary>
+          <UpsertChangesView delta={dryRunData?.upsert_delta} modelLabel={dryRunData?.model_name || dryRunData?.label} isDryRun>
+            <DryRunMappingTable
+              mappings={detectedMappings}
+              summary={dryRunData?.summary}
+              relationships={(() => {
+                try {
+                  const stored = sessionStorage.getItem('detectedRelationships');
+                  return stored ? JSON.parse(stored) : [];
+                } catch { return []; }
+              })()}
+              onEdit={(rowId) => {
+                const row = detectedMappings.find(r => r.id === rowId);
+                if (row) setEditingRow(row);
+              }}
+              onBulkResolved={onBulkResolved}
+              onSynonymUpdate={onSynonymUpdate}
+              projectId={projectId}
+              schemaConflicts={dryRunData?.schema_conflicts || []}
+              compatibilityScore={dryRunData?.compatibility_score ?? null}
+              onReSync={onRunDryRun}
+              droppedEntities={dryRunData?.dropped_entities || []}
+              unresolvedReportFieldReferences={dryRunData?.unresolved_report_field_references || []}
+            />
+          </UpsertChangesView>
         </div>
       )}
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 import yaml
 from pydantic import Field
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
@@ -130,6 +130,54 @@ def _resolve_load_source_data(context: RunContext) -> "tuple[bool, Optional[str]
     return load_source_data, ("explicit" if load_source_data else None)
 
 
+def table_binding_scope(context: RunContext) -> Optional[Tuple[str, str]]:
+    """(project_id, model_key) under which this model's table bindings are saved."""
+    from semabridge.core.upsert_delta import normalize_model_name
+
+    model = getattr(context, "sml_model", None)
+    model_key = normalize_model_name(getattr(model, "unique_name", None) or getattr(model, "label", None))
+    # Dry runs execute under a preview project id; bindings belong to the real one.
+    project_id = (context.config_payload or {}).get("binding_project_id") or context.project_id
+    if not (project_id and model_key):
+        return None
+    return str(project_id), model_key
+
+
+def preview_table_bindings(context: RunContext) -> Dict[str, Any]:
+    """Dry run: which existing table each dataset binds to (with any tie) and
+    which tables a sync would create. Read-only against Snowflake."""
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.engine.targets.snowflake import emitter_physical_namespace
+
+    try:
+        emitter = SnowflakeEmitter(
+            context.config.snowflake,
+            behavior=context.behavior,
+            physical_namespace=emitter_physical_namespace(context),
+        )
+        emitter.binding_scope = table_binding_scope(context)
+        return {"tables": emitter.preview_table_bindings(context.sml_model), "error": None}
+    except Exception as exc:
+        logger.warning("Table binding preview failed: %s", exc)
+        return {"tables": [], "error": str(exc)}
+
+
+def _save_table_bindings(emitter) -> None:
+    """After a successful deploy, persist bindings this deploy resolved for the
+    first time, so every later sync of the project/model reuses them."""
+    if not getattr(emitter, "binding_scope", None):
+        return
+    try:
+        new_bindings = emitter.new_table_bindings()
+        if not new_bindings:
+            return
+        project_id, model_key = emitter.binding_scope
+        saved = ModelRepository().save_table_bindings(project_id, model_key, new_bindings)
+        logger.info("Saved %d table binding(s) for %s/%s", saved, project_id, model_key)
+    except Exception as exc:
+        logger.warning("Could not save table bindings: %s", exc)
+
+
 def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
     """Inner helper to perform Snowflake deployment with resolved config."""
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
@@ -140,6 +188,7 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
         behavior=context.behavior,
         physical_namespace=emitter_physical_namespace(context),
     )
+    emitter.binding_scope = table_binding_scope(context)
     deployment_method = getattr(sf_cfg, "deployment_method", "ddl") or "ddl"
 
     # DDL path
@@ -230,6 +279,7 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             raise DeploymentError(
                 f"Snowflake DDL deployment returned unsuccessful status: {error_msg}"
             )
+        _save_table_bindings(emitter)
         self._export_inferred_osi_artifacts(context)
 
     # Stored-procedure / Cortex YAML path

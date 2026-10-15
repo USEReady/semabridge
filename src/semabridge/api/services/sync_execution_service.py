@@ -557,6 +557,12 @@ def _run_single_job_impl(
     # Every job gets its own deep copy of the config: nothing a job (or the
     # engine running it) mutates can leak into a concurrently running sibling.
     local_config = copy.deepcopy(_config_with_model_scoped_overrides(config, job))
+    preview = local_config.get("delta_preview_overrides")
+    if isinstance(preview, dict):
+        # Same per-model filtering a real run of the project applies.
+        preview["mappings_overrides"] = _config_with_model_scoped_overrides(
+            {"mappings_overrides": preview.get("mappings_overrides") or []}, job
+        ).get("mappings_overrides") or []
     target_view_name = get_target_deployment_name(
         str(job.get("resolved_display_name") or model_label), target_type
     )
@@ -626,6 +632,7 @@ def _run_single_job_impl(
                 "missing_dims": summary_data.get("missing_dims") or {},
                 "dropped_entities": summary_data.get("dropped_entities") or [],
                 "data_backfill_results": summary_data.get("data_backfill_results") or [],
+                "upsert_delta": summary_data.get("upsert_delta"),
                 "pbix_path": job.get("pbix_path"),
                 "view_name": _resolve_result_view_name(run_context, target_type),
                 "target_artifact_path": summary_data.get("target_artifact_path")
@@ -745,6 +752,7 @@ def _failed_result(
         "missing_dims": {},
         "dropped_entities": drops,
         "data_backfill_results": [],
+        "upsert_delta": None,
         "pbix_path": job.get("pbix_path"),
         "view_name": None,
         "target_artifact_path": None,
@@ -969,9 +977,21 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         executor_kind=executor_kind,
     )
     
-    sync_mode = str(payload.get("sync_mode") or config.get("sync_mode") or "copy").lower()
+    from semabridge.core.run_helpers import sync_mode_from_project_config
+
+    sync_mode = str(
+        payload.get("sync_mode") or sync_mode_from_project_config(config) or "copy"
+    ).lower()
     if sync_mode not in {"copy", "upsert"}:
         sync_mode = "copy"
+    # UPSERT delta baseline: dry runs execute under a preview project id but
+    # must diff against the real project's last deployed snapshot.
+    if payload.get("binding_project_id") and isinstance(config, dict):
+        config["binding_project_id"] = str(payload["binding_project_id"])
+    if payload.get("delta_baseline_project_id") and isinstance(config, dict):
+        config["delta_baseline_project_id"] = str(payload["delta_baseline_project_id"])
+        if isinstance(payload.get("delta_preview_overrides"), dict):
+            config["delta_preview_overrides"] = payload["delta_preview_overrides"]
     effective_force = force or bool(payload.get("force", False))
 
     logger.info(

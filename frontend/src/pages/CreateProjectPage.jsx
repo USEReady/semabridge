@@ -1559,13 +1559,16 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (dryRun) setMappingDryRunStatus('running');
     setMappingLoading(true);
     try {
-      const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+      // Editing an existing project: dry-run against it (its sync mode and
+      // last deployment drive the UPSERT delta), not an anonymous preview.
+      const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
       const effectivePbixPath = pbixSourceMode === 'TAG' ? selectedPbixFilePath : pbixUploadPath;
       const { sourceConfig, targetConfig } = buildDryRunPayload({
         sourceConnector,
         targetConnectors,
         fabricAccountId,
         fabricWorkspaceId,
+        snowflakeAccountId,
         snowflakeDatabase,
         targetDatabase,
         selectedModelNames,
@@ -1576,7 +1579,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         source_config: sourceConfig,
         target_config: targetConfig,
         selected_sources: selectedModelNames,
-        reset_manual: resetManual
+        reset_manual: resetManual,
+        sync_mode: useProjectWizardStore.getState().wizard.write_strategy || undefined,
       };
 
       let response;
@@ -1633,7 +1637,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     setMultiDryRunJob(null);
     setEditingRow(null);
 
-    const projectId = createdProject?.id || createdProject?.project_id || 'preview';
+    // Editing an existing project: dry-run against it (its sync mode and last
+    // deployment drive the UPSERT delta), not an anonymous preview.
+    const projectId = createdProject?.id || createdProject?.project_id || (editMode && initialData?.id) || 'preview';
     // Same derived source list the save uses (buildSourceConfig).
     const isMulti = effectiveSources.isMulti;
     const { sourceConfig, targetConfig } = buildDryRunPayload({
@@ -1641,6 +1647,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       targetConnectors,
       fabricAccountId,
       fabricWorkspaceId,
+      snowflakeAccountId,
       snowflakeDatabase,
       targetDatabase,
       selectedModelNames,
@@ -1680,6 +1687,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         source_config: sourceConfig,
         target_config: targetConfig,
         selected_sources: selectedSources,
+        sync_mode: useProjectWizardStore.getState().wizard.write_strategy || undefined,
       });
 
       if (response?.success === false) {

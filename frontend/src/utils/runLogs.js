@@ -256,6 +256,7 @@ export function getPerModelRunEntries(run) {
       has_log: true,
       droppedEntities,
       reconciliation: reconciliation && typeof reconciliation === 'object' ? reconciliation : null,
+      upsertDelta: run.upsert_delta || run.summary?.upsert_delta || null,
       hasResult: true,
     }];
   }
@@ -316,6 +317,7 @@ export function getPerModelRunEntries(run) {
       has_log: hasLog,
       droppedEntities,
       reconciliation: reconciliation && typeof reconciliation === 'object' ? reconciliation : null,
+      upsertDelta: result.upsert_delta || result.summary?.upsert_delta || null,
       hasResult: true,
     };
   });
@@ -336,6 +338,7 @@ export function getPerModelRunEntries(run) {
       reportModel: model,
       droppedEntities: [],
       reconciliation: null,
+      upsertDelta: null,
       hasResult: false,
     });
   });

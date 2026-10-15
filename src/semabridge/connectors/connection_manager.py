@@ -328,6 +328,10 @@ class SnowflakeConnectionManager:
         m = re.search(r"[Ii]nvalid metric definition for '([^']+)'", msg)
         if m:
             return m.group(1)
+        # Any other compile error naming a metric ('ALIAS.METRIC_NAME')
+        m = re.search(r"metric '([^']+\.[^']+)'", msg, flags=re.IGNORECASE)
+        if m:
+            return m.group(1)
         return None
 
     @staticmethod

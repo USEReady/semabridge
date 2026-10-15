@@ -365,12 +365,11 @@ def test_remediate_invalid_identifier_bare_underscore_ignores_like_wildcard_lite
     assert fixed_ddl == ddl
 
 
-def test_remediate_invalid_identifier_removes_emptied_relationships_and_dimensions_clauses():
-    """Defense-in-depth: if remediation empties RELATIONSHIPS or DIMENSIONS
-    out entirely, the clause's header and closing paren must be removed
-    too -- leaving 'RELATIONSHIPS (\\n)' behind is syntactically invalid
-    Snowflake DDL. METRICS, which never referenced the bad column, is
-    untouched."""
+def test_remediate_invalid_identifier_never_touches_relationships_or_dimensions():
+    """Only metrics may be nulled: an identifier Snowflake rejects that no
+    metric uses (here a relationship/dimension column) leaves the DDL
+    unchanged, so the deploy reports Snowflake's real error instead of
+    silently dropping a relationship or dimension."""
     sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
     ddl = """CREATE OR REPLACE SEMANTIC VIEW "DB"."SCHEMA"."MODEL"
 TABLES (
@@ -388,10 +387,9 @@ METRICS (
 
     fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "BADCOL")
 
-    assert changed is True
-    assert "RELATIONSHIPS (" not in fixed_ddl
-    assert "DIMENSIONS (" not in fixed_ddl
-    assert 'SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS")' in fixed_ddl
+    assert changed is False
+    assert nulled == []
+    assert fixed_ddl == ddl
 
 
 def test_remediate_invalid_identifier_cleans_up_preexisting_empty_relationships_clause():

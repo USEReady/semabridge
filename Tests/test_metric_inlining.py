@@ -38,8 +38,9 @@ def test_metric_inlining_strips_inner_synonyms_clause():
     assert "WITH SYNONYMS = ('compete_share'" not in at_line.split("AS ")[1]
 
 
-def test_metric_inlining_fails_closed_when_referenced_metric_invalid():
-    """Safeguard B: If referenced metric's SQL is null/invalid/dropped, referencing metric must drop."""
+def test_metric_referencing_a_null_placeholder_becomes_a_placeholder():
+    """Safeguard B: a metric referencing a NULL placeholder is emitted as a
+    NULL placeholder too (never dropped, never computed from a NULL input)."""
     id_sanitizer = IdentifierSanitizer()
     sanitizer = SemanticDDLSanitizer(id_sanitizer)
     drop_ledger = DropLedger()
@@ -61,9 +62,8 @@ def test_metric_inlining_fails_closed_when_referenced_metric_invalid():
 
     pruned = builder._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
 
-    # ATINDICATOR01 must be dropped (failed closed)
     at_lines = [l for l in pruned if "ATINDICATOR01" in l]
-    assert len(at_lines) == 0
+    assert at_lines == ['  SALESFACT."ATINDICATOR01" AS CAST(NULL AS DOUBLE)']
 
 
 def test_metric_inlining_handles_nested_metric_references():

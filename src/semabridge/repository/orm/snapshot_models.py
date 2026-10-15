@@ -40,6 +40,10 @@ class SnapshotRow(Base):
     run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     sync_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="copy")
+    # Set when this snapshot's model was successfully deployed to the target
+    # (or confirmed unchanged by an UPSERT run). UPSERT delta sync diffs the
+    # next sync against the latest deployed snapshot of the same model.
+    deployed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="snapshots")
@@ -180,3 +184,26 @@ class SchemaVersionRow(Base):
             f"<SchemaVersionRow(version_id={self.version_id!r}, "
             f"model_name={self.model_name!r}, version_number={self.version_number})>"
         )
+
+
+class TableBinding(Base):
+    """Physical table a model dataset was bound to by the first successful
+    sync of a project/model. Later syncs (COPY and UPSERT) reuse it while the
+    table still exists, so binding never flips between equally good tables."""
+
+    __tablename__ = "table_bindings"
+    __table_args__ = (
+        Index("ux_table_bindings_scope", "project_id", "model_key", "dataset_key", unique=True),
+    )
+
+    binding_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Alphanumeric-normalized model name / dataset name (see upsert_delta.normalize_model_name
+    # and table_binding_resolver.clean_ident).
+    model_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    dataset_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    dataset_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    matched_by: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, server_default=func.now())

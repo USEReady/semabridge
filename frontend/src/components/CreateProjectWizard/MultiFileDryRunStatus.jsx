@@ -19,6 +19,9 @@ import { useCallback, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RotateCcw } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import DryRunMappingTable from '../DryRunMappingTable';
+import UpsertChangesView from '../UpsertChangesView';
+import PanelBoundary from '../common/PanelBoundary';
+import TableBindingPlan from '../TableBindingPlan';
 
 function pluralize(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -196,25 +199,30 @@ export default function MultiFileDryRunStatus({
                 )}
                 {section.loaded && (
                   <div style={{ paddingTop: 12 }}>
-                    <DryRunMappingTable
-                      // key: a re-run (new attempt) starts with fresh filter state.
-                      key={section.attempt}
-                      // Rows are already NormalizedRow[] -- useMultiDryRunJob runs
-                      // every per-file result through normalizeRows() on load.
-                      mappings={section.rows}
-                      summary={section.result?.summary}
-                      relationships={relationships}
-                      onEdit={(rowId, updates) => onEditRow?.(section.fileId, rowId, updates)}
-                      onBulkResolved={(resolvedMap) => onBulkResolved?.(section.fileId, resolvedMap)}
-                      onSynonymUpdate={(rowId, synonyms) => onSynonymUpdate?.(section.fileId, rowId, synonyms)}
-                      projectId={section.previewProjectId || section.result?.project_id || projectId}
-                      modelName={section.result?.model_name || section.label}
-                      schemaConflicts={section.result?.schema_conflicts || []}
-                      compatibilityScore={section.compatibilityScore}
-                      onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
-                      droppedEntities={section.result?.dropped_entities || []}
-                      unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
-                    />
+                    <PanelBoundary name="Target tables">
+                      <TableBindingPlan plan={section.result?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+                    </PanelBoundary>
+                    <UpsertChangesView delta={section.result?.upsert_delta} modelLabel={section.result?.model_name || section.label} isDryRun>
+                      <DryRunMappingTable
+                        // key: a re-run (new attempt) starts with fresh filter state.
+                        key={section.attempt}
+                        // Rows are already NormalizedRow[] -- useMultiDryRunJob runs
+                        // every per-file result through normalizeRows() on load.
+                        mappings={section.rows}
+                        summary={section.result?.summary}
+                        relationships={relationships}
+                        onEdit={(rowId, updates) => onEditRow?.(section.fileId, rowId, updates)}
+                        onBulkResolved={(resolvedMap) => onBulkResolved?.(section.fileId, resolvedMap)}
+                        onSynonymUpdate={(rowId, synonyms) => onSynonymUpdate?.(section.fileId, rowId, synonyms)}
+                        projectId={section.previewProjectId || section.result?.project_id || projectId}
+                        modelName={section.result?.model_name || section.label}
+                        schemaConflicts={section.result?.schema_conflicts || []}
+                        compatibilityScore={section.compatibilityScore}
+                        onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
+                        droppedEntities={section.result?.dropped_entities || []}
+                        unresolvedReportFieldReferences={section.result?.unresolved_report_field_references || []}
+                      />
+                    </UpsertChangesView>
                   </div>
                 )}
               </div>

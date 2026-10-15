@@ -169,6 +169,8 @@ def _apply_schema_compatibility_fixes() -> None:
             pending_alters.append(f"ALTER TABLE snapshots ADD COLUMN deleted_at {expires_type}")
         if "sync_mode" not in snapshot_columns:
             pending_alters.append("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
+        if "deployed_at" not in snapshot_columns:
+            pending_alters.append(f"ALTER TABLE snapshots ADD COLUMN deployed_at {expires_type}")
 
     if _table_exists(engine, "model_versions"):
         mv_columns = _get_column_names(engine, "model_versions")

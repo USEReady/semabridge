@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from semabridge.core.engine.conversion.base import _step6_convert_to_sml
+import pytest
+
+from semabridge.core.engine.conversion.base import _step6_convert_to_sml, _step6a_apply_upsert_delta
+from semabridge.core.engine.exceptions import ConversionError
+from semabridge.repository.schemas import Snapshot
 from semabridge.sml.models import (
     DataType,
     SMLAttribute,
@@ -13,9 +17,19 @@ from semabridge.sml.models import (
 
 
 class Step6Harness:
-    def __init__(self, source_model: SMLModel):
+    def __init__(self, source_model: SMLModel, snapshot=None, lookup_error=None):
         self._current_step = 0
         self.source_model = source_model
+        self.db_manager = SimpleNamespace(get_last_deployed_snapshot=self._lookup)
+        self._snapshot = snapshot
+        self._lookup_error = lookup_error
+        self.lookups = []
+
+    def _lookup(self, project_id, model_names):
+        self.lookups.append((project_id, list(model_names)))
+        if self._lookup_error:
+            raise self._lookup_error
+        return self._snapshot
 
     def _convert_fabric_to_sml(self, context, workspace_id, dataset_id):
         return self.source_model
@@ -43,19 +57,49 @@ def _dataset(name: str, columns=None) -> SMLDataset:
     )
 
 
-def test_step6_upsert_merges_live_target_sml_and_preserves_custom_metric():
+def _snapshot(model: SMLModel) -> Snapshot:
+    return Snapshot(
+        snapshot_id="snap-1",
+        project_id="proj-1",
+        timestamp="2026-10-15 10:00:00",
+        sml_blob=model.model_dump(mode="json"),
+    )
+
+
+def _context(sync_mode, model, payload=None):
+    return SimpleNamespace(
+        source_type="fabric",
+        sync_mode=sync_mode,
+        project_id="proj-1",
+        config_payload=payload,
+        sml_model=model,
+        upsert_delta=None,
+    )
+
+
+def test_step6_does_not_merge_anything_itself():
     source_model = _model(
         "FabricModel",
         datasets=[_dataset("COL_DATE")],
         metrics=[SMLMetric(unique_name="MEASURE", dataset="COL_DATE", expression="COUNT(*)")],
     )
-    target_model = _model(
+    context = SimpleNamespace(source_type="fabric", sync_mode="copy")
+
+    converted = _step6_convert_to_sml(Step6Harness(source_model), context, None, None)
+
+    assert [dataset.unique_name for dataset in converted.datasets] == ["COL_DATE"]
+    assert [metric.unique_name for metric in converted.metrics] == ["MEASURE"]
+
+
+def test_step6a_upsert_merges_last_deployed_snapshot_and_preserves_target_only_items():
+    source_model = _model(
         "FabricModel",
-        datasets=[
-            _dataset("COL_DATE"),
-            _dataset("CONTINENT_1"),
-            _dataset("DIM_DATE"),
-        ],
+        datasets=[_dataset("COL_DATE")],
+        metrics=[SMLMetric(unique_name="MEASURE", dataset="COL_DATE", expression="COUNT(*)")],
+    )
+    deployed = _model(
+        "FabricModel",
+        datasets=[_dataset("COL_DATE"), _dataset("CONTINENT_1")],
         metrics=[
             SMLMetric(unique_name="MEASURE", dataset="CONTINENT_1", expression="COUNT(*)"),
             SMLMetric(unique_name="CUSTOM_TEST_METRIC", dataset="CONTINENT_1", expression="COUNT(*)"),
@@ -65,56 +109,44 @@ def test_step6_upsert_merges_live_target_sml_and_preserves_custom_metric():
                 unique_name="CUSTOM_DIMENSION",
                 dataset="CONTINENT_1",
                 attributes=[
-                    SMLAttribute(
-                        unique_name="CUSTOM_ATTR",
-                        dataset="CONTINENT_1",
-                        dataset_column="COLUMN1",
-                    )
+                    SMLAttribute(unique_name="CUSTOM_ATTR", dataset="CONTINENT_1", dataset_column="COLUMN1")
                 ],
             )
         ],
     )
-    context = SimpleNamespace(
-        source_type="fabric",
-        sync_mode="upsert",
-        target_sml_model=target_model,
-    )
+    harness = Step6Harness(source_model, snapshot=_snapshot(deployed))
+    context = _context("upsert", source_model)
 
-    merged = _step6_convert_to_sml(Step6Harness(source_model), context, None, None)
+    _step6a_apply_upsert_delta(harness, context)
 
-    assert {dataset.unique_name for dataset in merged.datasets} == {
-        "COL_DATE",
-        "CONTINENT_1",
-        "DIM_DATE",
-    }
-    assert {metric.unique_name for metric in merged.metrics} == {
-        "MEASURE",
-        "CUSTOM_TEST_METRIC",
-    }
-    assert merged.get_metric("MEASURE").dataset == "COL_DATE"
+    merged = context.sml_model
+    assert {d.unique_name for d in merged.datasets} == {"COL_DATE", "CONTINENT_1"}
+    assert {m.unique_name for m in merged.metrics} == {"MEASURE", "CUSTOM_TEST_METRIC"}
+    assert merged.get_metric("MEASURE").dataset == "COL_DATE"  # source wins
     assert merged.get_dimension("CUSTOM_DIMENSION") is not None
+    delta = context.upsert_delta
+    assert delta["has_changes"] is True
+    assert [m["name"] for m in delta["kinds"]["metrics"]["modified"]] == ["MEASURE"]
+    assert harness.lookups == [("proj-1", ["FabricModel", "FabricModel"])]
 
 
-def test_step6_copy_keeps_source_only_behavior():
-    source_model = _model(
-        "FabricModel",
-        datasets=[_dataset("COL_DATE")],
-        metrics=[SMLMetric(unique_name="MEASURE", dataset="COL_DATE", expression="COUNT(*)")],
-    )
-    target_model = _model(
-        "FabricModel",
-        datasets=[_dataset("COL_DATE"), _dataset("CONTINENT_1")],
-        metrics=[
-            SMLMetric(unique_name="CUSTOM_TEST_METRIC", dataset="CONTINENT_1", expression="COUNT(*)")
-        ],
-    )
-    context = SimpleNamespace(
-        source_type="fabric",
-        sync_mode="copy",
-        target_sml_model=target_model,
-    )
+def test_step6a_upsert_uses_dry_run_baseline_project():
+    source_model = _model("FabricModel", datasets=[_dataset("COL_DATE")])
+    harness = Step6Harness(source_model, snapshot=None)
+    context = _context("upsert", source_model, payload={"delta_baseline_project_id": "proj-real"})
 
-    copied = _step6_convert_to_sml(Step6Harness(source_model), context, None, None)
+    _step6a_apply_upsert_delta(harness, context)
 
-    assert [dataset.unique_name for dataset in copied.datasets] == ["COL_DATE"]
-    assert [metric.unique_name for metric in copied.metrics] == ["MEASURE"]
+    assert harness.lookups[0][0] == "proj-real"
+    assert context.upsert_delta["first_deployment"] is True
+    assert context.upsert_delta["has_changes"] is True
+
+
+def test_step6a_upsert_unreadable_snapshot_stops_the_run():
+    source_model = _model("FabricModel", datasets=[_dataset("COL_DATE")])
+    harness = Step6Harness(source_model, lookup_error=ValueError("Snapshot snap-9 could not be read"))
+    context = _context("upsert", source_model)
+
+    with pytest.raises(ConversionError, match="could not be read"):
+        _step6a_apply_upsert_delta(harness, context)
+    assert context.sml_model is source_model

@@ -29,6 +29,7 @@
 import { useState, useMemo } from 'react';
 import { AlertTriangle, ChevronRight, Info } from 'lucide-react';
 import { cleanPbixLabel } from '../../utils/pbixLabel';
+import { PLACEHOLDER_NOTE, isPlaceholderEntry } from '../../utils/placeholderMetric';
 
 const STAGE_LABELS = {
   extraction: 'Extraction',
@@ -103,6 +104,7 @@ function DropStageGroups({ groups }) {
 
 function DropEntryRow({ entry }) {
   const byDesign = Boolean(entry?.by_design);
+  const isPlaceholder = isPlaceholderEntry(entry);
   return (
     <div
       style={{
@@ -139,6 +141,11 @@ function DropEntryRow({ entry }) {
               By Design
             </span>
           )}
+          {isPlaceholder && (
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', fontWeight: 700, border: '1px solid rgba(245,158,11,0.35)' }}>
+              NULL placeholder
+            </span>
+          )}
         </div>
         <p style={{ margin: '4px 0 0 0', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
           {entry?.reason || 'No reason recorded.'}
@@ -146,6 +153,11 @@ function DropEntryRow({ entry }) {
         {entry?.detail && (
           <p style={{ margin: '4px 0 0 0', fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', wordBreak: 'break-word' }}>
             {entry.detail}
+          </p>
+        )}
+        {isPlaceholder && (
+          <p style={{ margin: '6px 0 0 0', fontSize: 12, color: '#f59e0b', lineHeight: 1.5 }}>
+            {PLACEHOLDER_NOTE}
           </p>
         )}
       </div>
@@ -164,6 +176,8 @@ export default function DroppedFieldsPanel({ entries = [], title = 'Dropped Fiel
   const isMultiModel = modelGroups.length > 1;
   const total = entries.length;
   const actionableCount = entries.filter((e) => !e?.by_design).length;
+  const placeholderCount = entries.filter(isPlaceholderEntry).length;
+  const excludedCount = actionableCount - placeholderCount;
 
   if (total === 0) return null;
 
@@ -194,9 +208,11 @@ export default function DroppedFieldsPanel({ entries = [], title = 'Dropped Fiel
           {title}
         </span>
         <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-          {actionableCount > 0
-            ? `${actionableCount} excluded from the deployed model${total > actionableCount ? `, ${total - actionableCount} by design` : ''}`
-            : `${total} by design`}
+          {[
+            placeholderCount > 0 && `${placeholderCount} deployed as NULL placeholder${placeholderCount !== 1 ? 's' : ''}`,
+            excludedCount > 0 && `${excludedCount} excluded from the deployed model`,
+            total > actionableCount && `${total - actionableCount} by design`,
+          ].filter(Boolean).join(', ')}
         </span>
       </button>
 

@@ -248,85 +248,126 @@ class SnowflakeSchemaManager:
                 self._schema_fqn(), exc,
             )
 
-    def _ensure_source_tables_exist(self, cursor, sml: SMLModel) -> None:
-        """
-        Check if source tables exist in Snowflake, create missing ones EMPTY (CREATE TABLE IF NOT EXISTS, no data).
-        Existing tables are NEVER touched (no ALTER, DROP, INSERT, CTAS, REPLACE, SWAP).
-        If the needed name exists but columns do not match (compat < 0.8), raises a blocker.
+    def _load_row_counts(self, cursor) -> None:
+        """Row count of every base table in the schema, for binding tie-breaks."""
+        counts = getattr(self._live_schema_metadata, "row_counts", None)
+        if counts is None:
+            return
+        db = str(self.config.database).replace('"', '""')
+        schema = str(self.config.schema_name).upper().replace("'", "''")
+        try:
+            self._execute_sql(
+                cursor,
+                f'SELECT table_name, row_count FROM "{db}".information_schema.tables '
+                f"WHERE table_schema = '{schema}' AND table_type = 'BASE TABLE'",
+                context="FETCH TABLE ROW COUNTS",
+            )
+            for table, row_count in cursor.fetchall() or []:
+                counts[str(table).upper()] = int(row_count or 0)
+        except Exception as exc:
+            # Ties then fall back to name order; saved bindings still apply.
+            logger.warning("Could not fetch table row counts for binding tie-breaks: %s", exc)
+
+    def plan_source_tables(self, cursor, sml: SMLModel) -> List[Dict[str, Any]]:
+        """Decide, per dataset, which existing table it binds to or what to create.
+
+        Looks at ALL tables and views in the target schema (fresh metadata,
+        never a partial or cached view). A dataset binds to an existing table
+        whose normalized name matches or whose columns match (>= 0.8), or to
+        the table saved for it by an earlier sync; an empty table is planned
+        for creation only when nothing matches. Read-only.
+
+        Each entry: {dataset, action: "bind"|"create", table, matched_by, tie}.
         """
         from semabridge.connectors.table_binding_resolver import (
-            resolve_dataset_to_physical_table,
-            check_table_name_collision_blocker,
             clean_ident,
-        )
-        from semabridge.connectors.sql_guard import (
-            set_allowed_absent_tables,
-            get_allowed_absent_tables,
+            resolve_dataset_to_physical_table,
         )
 
-        # Collect which datasets actually need checking (skip cached ones)
-        datasets_to_check = []
-        for dataset in sml.datasets:
-            ds_name = dataset.unique_name
-            safe_name = self._safe_table_name(ds_name)
-            if safe_name in self._verified_tables:
-                continue
-            datasets_to_check.append(dataset)
-
-        if not datasets_to_check:
-            logger.debug("All source tables already verified — skipping SHOW TABLES")
-            return
-
-        # Fetch current existing tables and views in target schema
         self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
-
         self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn()}", context="SHOW VIEWS")
-        existing_views = {row[1].upper() for row in cursor.fetchall()}
+        all_existing = existing_tables | {row[1].upper() for row in cursor.fetchall()}
 
-        all_existing = existing_tables | existing_views
+        self.refresh_schema_cache()
+        self._fetch_schema_metadata(cursor)
+        self._load_row_counts(cursor)
 
-        absent_tables_to_create = []
         mapping_dict = getattr(getattr(getattr(self, "behavior", None), "snowflake", None), "source_table_mapping", {}) or {}
+        binding_log = getattr(self._live_schema_metadata, "binding_log", None)
+        model_name = getattr(sml, "unique_name", None) or getattr(sml, "name", None)
 
-        for dataset in datasets_to_check:
+        plan: List[Dict[str, Any]] = []
+        for dataset in sml.datasets:
             ds_name = dataset.unique_name
             modeled_cols = [c.unique_name for c in getattr(dataset, "columns", []) or []]
-
-            # 1. Check if dataset binds to an existing physical table (col_compat >= 0.8)
             bound_table = resolve_dataset_to_physical_table(
                 ds_name,
                 modeled_cols,
                 self._live_schema_metadata,
                 explicit_mapping=mapping_dict,
-                model_name=getattr(sml, "unique_name", None) or getattr(sml, "name", None),
+                model_name=model_name,
             )
-
-            # If bound to an existing table, DO NOT TOUCH IT!
-            if bound_table.upper() in all_existing:
-                logger.debug(f"Dataset '{ds_name}' is bound to existing table '{bound_table}' — leaving untouched.")
-                self._verified_tables.add(self._safe_table_name(bound_table))
-                continue
-
-            # 2. Check collision blocker: if the needed name exists in Snowflake but its columns don't match
-            collision = check_table_name_collision_blocker(ds_name, modeled_cols, self._live_schema_metadata)
-            if collision:
-                msg = collision["message"]
-                logger.error(f"🛑 Collision blocker: {msg}")
-                raise ConnectorError(msg)
-
+            logged = (binding_log or {}).get(clean_ident(ds_name)) or {}
             safe_target_name = self._safe_table_name(ds_name)
-            if safe_target_name.upper() in all_existing:
-                msg = (
-                    f"Target table '{safe_target_name}' already exists in Snowflake schema {self._schema_fqn()} "
-                    f"but its columns do not match PBIX table '{ds_name}' (compatibility < 80%). "
-                    f"Cannot bind or create without overwriting."
-                )
-                logger.error(f"🛑 Collision blocker: {msg}")
-                raise ConnectorError(msg)
+            if bound_table.upper() in all_existing:
+                plan.append({
+                    "dataset": ds_name,
+                    "action": "bind",
+                    "table": bound_table,
+                    "matched_by": logged.get("matched_by") or "mapping",
+                    "tie": logged.get("tie") or [],
+                })
+            elif safe_target_name.upper() in all_existing:
+                # Same sanitized name already taken (e.g. by a view): never
+                # create a duplicate next to it.
+                plan.append({
+                    "dataset": ds_name,
+                    "action": "bind",
+                    "table": safe_target_name,
+                    "matched_by": "name",
+                    "tie": [],
+                })
+            else:
+                plan.append({
+                    "dataset": ds_name,
+                    "action": "create",
+                    "table": safe_target_name,
+                    "matched_by": None,
+                    "tie": [],
+                })
+        return plan
 
-            # 3. Table is confirmed absent in live schema: create it empty named after PBIX table
-            absent_tables_to_create.append((dataset, safe_target_name))
+    def _ensure_source_tables_exist(self, cursor, sml: SMLModel) -> None:
+        """
+        Create missing source tables EMPTY (CREATE TABLE IF NOT EXISTS, no data)
+        — only for datasets that match no existing table at all (see
+        plan_source_tables). Existing tables are NEVER touched (no ALTER, DROP,
+        INSERT, CTAS, REPLACE, SWAP) and never duplicated.
+        """
+        from semabridge.connectors.sql_guard import (
+            set_allowed_absent_tables,
+            get_allowed_absent_tables,
+        )
+
+        if all(self._safe_table_name(d.unique_name) in self._verified_tables for d in sml.datasets):
+            logger.debug("All source tables already verified — skipping SHOW TABLES")
+            return
+
+        absent_tables_to_create = []
+        datasets_by_name = {d.unique_name: d for d in sml.datasets}
+        for entry in self.plan_source_tables(cursor, sml):
+            if entry["action"] == "bind":
+                if entry["matched_by"] == "name":
+                    logger.warning(
+                        "Dataset '%s' bound to existing table '%s' by name only (columns differ); not creating a duplicate.",
+                        entry["dataset"], entry["table"],
+                    )
+                else:
+                    logger.debug("Dataset '%s' is bound to existing table '%s' — leaving untouched.", entry["dataset"], entry["table"])
+                self._verified_tables.add(self._safe_table_name(entry["table"]))
+            else:
+                absent_tables_to_create.append((datasets_by_name[entry["dataset"]], entry["table"]))
 
         if not absent_tables_to_create:
             return

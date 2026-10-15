@@ -138,7 +138,7 @@ flowchart LR
     classDef external fill:#7f5217,stroke:#54370f,color:#fff;
     classDef db fill:#4a4a4a,stroke:#2b2b2b,color:#fff;
 
-    U1["BI Developer / Admin<br/>(React UI :5173)"]:::user
+    U1["BI Developer / Admin<br/>(React UI :5180)"]:::user
     U2["CLI / Automation Script<br/>(python -m semabridge.cli)"]:::user
 
     SB["SemaBridge Engine & API<br/>FastAPI Port :8000<br/>src/semabridge/"]:::system
@@ -880,7 +880,7 @@ npm run dev
 ```
 
 * **Backend API URL**: `http://localhost:8000` (Swagger UI at `/docs`)
-* **Frontend UI URL**: `http://localhost:5173`
+* **Frontend UI URL**: `http://localhost:5180`
 
 ### Executing Test Suites
 

@@ -758,6 +758,9 @@ async def patch_project_compat(project_id: str, payload: dict):
         project["connection_tag"] = payload.get("connection_tag")
     if "notification_email" in (payload or {}):
         project["notification_email"] = payload.get("notification_email") or None
+    requested_sync_mode = str(payload.get("sync_mode") or "").strip().lower()
+    if requested_sync_mode in {"copy", "upsert"}:
+        project["sync_mode"] = requested_sync_mode
     if payload.get("account_id"):
         project["account_id"] = str(payload.get("account_id")).strip() or project.get("account_id")
     if payload.get("user_id"):

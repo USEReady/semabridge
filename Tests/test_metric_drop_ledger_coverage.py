@@ -151,7 +151,7 @@ def test_metric_with_no_dataset_alias_is_recorded_not_silently_dropped():
     assert records[0]["dataset"] == "NoSuchDataset"
 
 
-def test_metric_referencing_a_dropped_metric_gets_pruned_with_ledger_record():
+def test_metric_referencing_an_untranslatable_metric_survives_via_placeholder():
     """The concrete bug found via reconciliation against a real run: a metric
     whose SQL references another metric's name (valid at emission time,
     since the referenced name is a known metric) is silently pruned once
@@ -181,17 +181,19 @@ def test_metric_referencing_a_dropped_metric_gets_pruned_with_ledger_record():
         emittable_metric_name_set=set(),
     )
 
-    # Both metrics vanish from the DDL: Base has nothing to emit, and Derived
-    # only referenced Base's name -- once Base never materializes, Derived's
-    # line is unresolvable and gets pruned.
-    assert lines == []
+    # Base has no SQL, so it is emitted as a NULL placeholder on its home
+    # table instead of vanishing -- and Derived, which only computes from
+    # Base, is a NULL placeholder too (NULL propagates) instead of being
+    # cascade-pruned.
+    joined = "\n".join(lines)
+    assert 'SALESFACT."BASE_METRIC" AS CAST(NULL AS DOUBLE)' in joined
+    assert 'SALESFACT."DERIVED_METRIC" AS CAST(NULL AS DOUBLE)' in joined
 
-    records = builder.drop_ledger.to_json()
-    names = {r["entity_name"] for r in records}
-    assert "Base Metric" in names  # already-instrumented "nothing to emit" path
-    assert "Derived Metric" in names  # the fix: cascading prune is now recorded
-    derived_record = next(r for r in records if r["entity_name"] == "Derived Metric")
-    assert derived_record["stage"] == DropStage.DDL_EMISSION.value
+    records = {r["entity_name"]: r for r in builder.drop_ledger.to_json()}
+    assert set(records) == {"Base Metric", "Derived Metric"}
+    assert all(r["reason"] == "placeholder: not translatable" for r in records.values())
+    assert all(r["stage"] == DropStage.DAX_TRANSLATION.value for r in records.values())
+    assert records["Derived Metric"]["detail"] == "depends on placeholder metric BASE_METRIC"
 
 
 def test_stale_null_cast_sql_expression_is_recorded_not_silently_emitted():
@@ -218,11 +220,12 @@ def test_stale_null_cast_sql_expression_is_recorded_not_silently_emitted():
         emittable_metric_name_set=set(),
     )
 
-    assert lines == []
+    assert lines == ['  SALESFACT."PLACEHOLDER_METRIC" AS CAST(NULL AS DOUBLE)']
     records = builder.drop_ledger.to_json()
     assert len(records) == 1
     assert records[0]["entity_name"] == "Placeholder Metric"
     assert records[0]["stage"] == DropStage.DAX_TRANSLATION.value
+    assert records[0]["reason"] == "placeholder: not translatable"
 
 
 def test_real_sql_expression_mentioning_null_keyword_is_still_emitted():
@@ -309,7 +312,7 @@ def test_record_ddl_deployment_drops_records_every_metric_nulled_in_one_sweep():
     assert all(r["stage"] == DropStage.DDL_DEPLOYMENT.value for r in records)
 
 
-def test_date_expression_compared_to_integer_column_is_dropped_not_emitted():
+def test_date_expression_compared_to_integer_column_becomes_null_placeholder():
     """Regression test for a real incident: a Tier-5 (Anthropic) translation
     for a rolling-12-month metric produced a date-arithmetic expression
     (DATE_ADDDAYSTODATE-shaped) compared directly against an INTEGER
@@ -372,28 +375,27 @@ def test_date_expression_compared_to_integer_column_is_dropped_not_emitted():
         emittable_metric_name_set=set(),
     )
 
-    # (a) the mismatched metric never reaches the DDL ...
+    # (a) the mismatched SQL never reaches the DDL; the metric is a NULL placeholder ...
     joined = "\n".join(lines)
     assert "DATE_ADDDAYSTODATE" not in joined
-    assert "Rolling Metric Bad" not in joined
+    assert 'SALESFACT."ROLLING_METRIC_BAD" AS CAST(NULL AS DOUBLE)' in joined
 
-    # (b) ... and is recorded with a clear reason, not silently vanished
+    # (b) ... recorded as a placeholder with the type-mismatch cause
     records = builder.drop_ledger.to_json()
     bad_records = [r for r in records if r["entity_name"] == "Rolling Metric Bad"]
     assert len(bad_records) == 1
-    assert bad_records[0]["stage"] == DropStage.DDL_EMISSION.value
-    assert "Type mismatch" in bad_records[0]["reason"]
-    assert "DATE" in bad_records[0]["reason"]
-    assert "INTEGER" in bad_records[0]["reason"]
+    assert bad_records[0]["reason"] == "placeholder: not translatable"
+    assert "Type mismatch" in bad_records[0]["detail"]
+    assert "DATE" in bad_records[0]["detail"]
+    assert "INTEGER" in bad_records[0]["detail"]
 
-    # (c) the rest of the deploy proceeds normally -- the sibling metric
-    # still gets emitted with its own, unrelated, valid line.
-    assert len(lines) == 1
-    assert 'SUM(SALESFACT."UNITS")' in lines[0]
+    # (c) the sibling metric is emitted unchanged.
+    assert len(lines) == 2
+    assert any('SUM(SALESFACT."UNITS")' in line for line in lines)
     assert not any(r["entity_name"] == "Sibling Metric" for r in records)
 
 
-def test_nested_aggregate_expression_is_dropped_not_emitted():
+def test_nested_aggregate_expression_becomes_null_placeholder():
     """Regression test for a real incident: a Tier-5 translation for a
     rolling-window metric produced SUM(CASE WHEN MAX(...) ... END) -- an
     aggregate nested inside another aggregate's row-level argument. Nothing
@@ -435,33 +437,26 @@ def test_nested_aggregate_expression_is_dropped_not_emitted():
 
     # (a) the nested-aggregate metric never reaches the DDL ...
     joined = "\n".join(lines)
-    assert "Rolling Metric Bad" not in joined
     assert 'MAX(SALESFACT."MONTHINDEX")' not in joined
+    assert 'SALESFACT."ROLLING_METRIC_BAD" AS CAST(NULL AS DOUBLE)' in joined
 
-    # (b) ... and is recorded with a clear reason, not silently vanished or
-    # crashing the build.
+    # (b) ... recorded as a placeholder with the nested-aggregate cause.
     records = builder.drop_ledger.to_json()
     bad_records = [r for r in records if r["entity_name"] == "Rolling Metric Bad"]
     assert len(bad_records) == 1
-    assert bad_records[0]["stage"] == DropStage.DDL_EMISSION.value
-    assert "Nested aggregate" in bad_records[0]["reason"]
-    assert "SUM" in bad_records[0]["reason"] and "MAX" in bad_records[0]["reason"]
+    assert bad_records[0]["reason"] == "placeholder: not translatable"
+    assert "Nested aggregate" in bad_records[0]["detail"]
+    assert "SUM" in bad_records[0]["detail"] and "MAX" in bad_records[0]["detail"]
 
-    # (c) the rest of the deploy proceeds normally -- the sibling metric
-    # still gets emitted with its own, unrelated, valid line.
-    assert len(lines) == 1
-    assert 'SUM(SALESFACT."UNITS")' in lines[0]
+    # (c) the sibling metric is emitted unchanged.
+    assert len(lines) == 2
+    assert any('SUM(SALESFACT."UNITS")' in line for line in lines)
     assert not any(r["entity_name"] == "Sibling Metric" for r in records)
 
 
-def test_record_ddl_deployment_drops_falls_back_to_single_name_when_sweep_nulled_no_metric():
-    """When the remediated identifier was fixed inside TABLES/RELATIONSHIPS/
-    DIMENSIONS instead of METRICS, remediate_invalid_identifier's
-    nulled_metric_names is empty (no metric was nulled at all) —
-    _record_ddl_deployment_drops must fall back to resolving one name from
-    the raw DDL text, exactly as it did before this fix, so that path's
-    existing behavior (some record, even if approximate, rather than none)
-    is unchanged."""
+def test_record_ddl_deployment_drops_records_nothing_when_no_metric_was_nulled():
+    """Only metrics are ever nulled, and only nulled metrics are recorded:
+    with an empty nulled_metric_names nothing is guessed from the DDL text."""
     fake_self = SimpleNamespace(
         _dropped_metrics=[],
         drop_ledger=DropLedger(),
@@ -474,8 +469,5 @@ def test_record_ddl_deployment_drops_falls_back_to_single_name_when_sweep_nulled
         fake_self, "SALESFACT.BAD_COL", [], ddl, RuntimeError("boom"),
     )
 
-    assert len(fake_self._dropped_metrics) == 1
-    assert fake_self._dropped_metrics[0]["metric"] == "SOME_METRIC"
-    records = fake_self.drop_ledger.to_json()
-    assert len(records) == 1
-    assert records[0]["entity_name"] == "SOME_METRIC"
+    assert fake_self._dropped_metrics == []
+    assert fake_self.drop_ledger.to_json() == []

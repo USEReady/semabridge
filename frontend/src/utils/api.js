@@ -389,6 +389,16 @@ function readPersistentListCache(key) {
     }
 }
 
+function removeFromPersistentListCache(key, id) {
+    try {
+        const items = readPersistentListCache(key);
+        const kept = items.filter(item => String(item?.id ?? item?.project_id ?? '') !== String(id));
+        if (kept.length !== items.length) localStorage.setItem(key, JSON.stringify(kept));
+    } catch {
+        // Storage unavailable: nothing cached to correct.
+    }
+}
+
 function emitAuthExpiredOnce() {
     const now = Date.now();
     if (now - _lastAuthExpiredEventAt < AUTH_EXPIRED_EVENT_COOLDOWN_MS) return;
@@ -1411,8 +1421,13 @@ export const api = {
         const res = await authFetch(`${API_BASE_URL}/projects/${projectId}`, {
             method: 'DELETE',
         });
-        if (res.status === 204) return null;
-        return handleResponse(res);
+        const result = res.status === 204 ? null : await handleResponse(res);
+        // Deleted on the server: also drop it from the list caches. A list
+        // fetched while the DELETE was in flight (or saved in localStorage
+        // for the next page load) would otherwise bring the project back.
+        invalidateApiCache('projects:list');
+        removeFromPersistentListCache('semabridge:cache:projects', projectId);
+        return result;
     },
 
 
@@ -1802,6 +1817,15 @@ export const api = {
         if (res.status === 404) {
             return { status: 'deleted', project_id: projectId, schedule_type: 'manual', enabled: false };
         }
+        return handleResponse(res);
+    },
+
+    async getUpsertMetricValue(projectId, runId, model, metric) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/runs/${encodeURIComponent(runId)}/metric-value`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, metric }),
+        });
         return handleResponse(res);
     },
 

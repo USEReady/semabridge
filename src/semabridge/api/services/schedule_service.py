@@ -49,9 +49,32 @@ async def list_job_runs_compat():
 
     all_runs: List[Dict[str, Any]] = []
     for project_id in all_project_ids:
-        all_runs.extend(await get_project_runs_compat(project_id))
+        if not _is_real_project(project_id):
+            continue
+        all_runs.extend(
+            run for run in await get_project_runs_compat(project_id) if _is_project_run(run)
+        )
     all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
     return all_runs
+
+
+def _is_real_project(project_id: str) -> bool:
+    """A listed project — not a deleted one, nor a transient dry-run preview."""
+    project = _compat_projects.get(project_id)
+    if not isinstance(project, dict):
+        return False
+    return not (
+        project.get("is_transient_preview")
+        or str(project.get("status") or "").lower() == "preview"
+        or str(project_id).startswith("preview-")
+    )
+
+
+def _is_project_run(run: Dict[str, Any]) -> bool:
+    """A run started for a project (manual, scheduled or restore), which gets a
+    "run-<ms>" id. The ORM `runs` table also holds one engine row per model
+    (uuid ids, no project name or duration); those are not runs to list."""
+    return str(run.get("id") or run.get("run_id") or "").startswith("run-")
 
 
 async def get_jobs_config_compat():

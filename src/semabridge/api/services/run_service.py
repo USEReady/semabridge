@@ -28,7 +28,13 @@ from semabridge.api.services.project_shared import (
     _compat_snapshot_groups,
     _compat_project_snapshots,
 )
-from semabridge.core.run_helpers import elapsed_ms, mask_run_for_display, normalize_sync_mode, resolve_run_status
+from semabridge.core.run_helpers import (
+    elapsed_ms,
+    mask_run_for_display,
+    normalize_sync_mode,
+    resolve_run_status,
+    sync_mode_from_project_config,
+)
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 # Backward-compatible alias
@@ -281,8 +287,13 @@ def _create_project_run(
     run_type: str = "SYNC",
     project_cfg_override: Optional[str] = None,
     restore_snapshot_id: Optional[str] = None,
-    sync_mode: str = "copy",
+    sync_mode: Optional[str] = None,
+    fallback_sync_mode: Optional[str] = None,
 ) -> tuple:
+    """Create a run record. ``sync_mode`` is set explicitly only for RESTORE
+    runs (the restored snapshot's mode); every other run uses the mode
+    selected in the project configuration, then ``fallback_sync_mode``
+    (e.g. a run-now request's own value), then "copy"."""
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise NotFoundError("Project not found")
@@ -298,6 +309,13 @@ def _create_project_run(
         or _compat_default_project_yaml(_compat_projects[project_id])
     )
     project_meta = _compat_projects[project_id]
+    if not _compat_normalize_sync_mode(sync_mode):
+        sync_mode = (
+            sync_mode_from_project_config(project_cfg)
+            or _compat_normalize_sync_mode(project_meta.get("sync_mode"))
+            or _compat_normalize_sync_mode(fallback_sync_mode)
+            or "copy"
+        )
     run = {
         "run_id": run_id,
         "id": run_id,
@@ -678,7 +696,7 @@ async def _perform_project_run(run: dict, project_cfg: str, started: float) -> d
                             changes_summary=run.get("summary") or {},
                             results=run.get("results") or [],
                             recipient_email=_notify_email,
-                            frontend_url=_os.environ.get("FRONTEND_URL", "http://localhost:5173"),
+                            frontend_url=_os.environ.get("FRONTEND_URL", "http://localhost:5180"),
                         ),
                         daemon=True,
                     ).start()
@@ -894,6 +912,8 @@ async def get_project_runs_compat(project_id: str):
 
             results: List[Dict[str, Any]] = []
             for row in rows:
+                if str(getattr(row, "run_type", "") or "").upper() == "DRY_RUN":
+                    continue  # previews are not runs
                 def _parse_list(attr_name: str) -> List[Any]:
                     val = getattr(row, attr_name, None)
                     if not val:
@@ -1118,8 +1138,9 @@ async def run_project_now_compat(
         sync_mode=(
             _compat_sync_mode_for_restore_snapshot(project_id, restore_snapshot_id, payload)
             if run_type == "RESTORE" and restore_snapshot_id
-            else (_compat_normalize_sync_mode((payload or {}).get("sync_mode")) or "copy")
+            else None
         ),
+        fallback_sync_mode=(payload or {}).get("sync_mode"),
     )
     user_id = (payload or {}).get("user_id")
     force = bool((payload or {}).get("force", False))

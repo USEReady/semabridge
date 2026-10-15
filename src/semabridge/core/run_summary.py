@@ -115,6 +115,20 @@ class RunSummary(BaseModel):
         description="Per-table data-backfill outcomes (loaded/skipped/failed/ambiguous_needs_review/columns_backfilled), only populated when options.load_source_data is enabled",
     )
 
+    # UPSERT runs only: added/modified/removed/unchanged per kind against the
+    # last deployed snapshot (see core/upsert_delta.py). None for COPY runs.
+    upsert_delta: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="UPSERT delta vs the last deployed snapshot (None for COPY runs)",
+    )
+
+    # Dry run only: per dataset, the existing table it binds to (and any tie)
+    # or the empty table a sync would create.
+    table_binding_plan: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Dry-run table binding preview ({tables, error})",
+    )
+
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)
 

@@ -239,6 +239,13 @@ class ExecutionEngine:
             )
             context.config_path = config_path
             context.config_payload = config_dict
+            if dry_run:
+                # Dry runs are previews, not runs: tag the row so run
+                # listings can leave it out.
+                try:
+                    self.db_manager.mark_run_type(context.run_id, "DRY_RUN")
+                except Exception as mark_exc:
+                    logger.warning("Could not tag dry run %s: %s", context.run_id, mark_exc)
             context.physical_namespace = (str(physical_namespace).strip() or None) if physical_namespace else None
             context.batch_model_count = max(1, int(batch_model_count or 1))
             context.batch_name_registry = batch_name_registry
@@ -347,16 +354,17 @@ class ExecutionEngine:
             # Step 5: Validate and Parse Source Format
             self._step5_validate_source(context)
             
-            # Step 6a: Extract Target Model for UPSERT (if applicable) - BEFORE Step 6
-            if hasattr(context, 'sync_mode') and context.sync_mode == "upsert" and target:
-                self._step6a_extract_target_for_upsert(context, target)
-            
-            # Step 6: Convert to Canonical SML (with target context if UPSERT)
+            # Step 6: Convert to Canonical SML
             sml_model = self._step6_convert_to_sml(context, workspace_id, dataset_id, force=force)
             
             if config_path is not None and not context.mapping_overrides_applied:
                 self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
             context.sml_model = sml_model
+
+            # Step 6a: UPSERT delta against the last deployed snapshot of
+            # this model; replaces context.sml_model with the merged model.
+            if context.sync_mode == "upsert":
+                self._step6a_apply_upsert_delta(context)
 
             # Step 6b: Predict time-intelligence flag columns (Snowflake
             # target only) and upgrade anchor-dependent metrics'
@@ -373,6 +381,12 @@ class ExecutionEngine:
             # Step 7: Persist Artifacts
             self._step7_persist_artifacts(context, tag)
             
+            # Dry run: preview table bindings / tables to be created.
+            if dry_run and target == "snowflake":
+                from semabridge.core.engine.deployment.snowflake import preview_table_bindings
+
+                context.table_binding_plan = preview_table_bindings(context)
+
             # Step 8: Convert to Target Format (Optional)
             if target and not dry_run:
                 self._step8_convert_to_target(context)
@@ -381,7 +395,26 @@ class ExecutionEngine:
             
             # Step 9: Deploy to Target (Optional)
             if deploy and target and not dry_run:
-                self._step9_deploy(context)
+                upsert_delta = context.upsert_delta
+                if upsert_delta is not None and not upsert_delta.get("has_changes"):
+                    self._record_step(
+                        9,
+                        StepStatus.SKIPPED,
+                        "UPSERT: no changes since the last deployment; deploy skipped",
+                    )
+                else:
+                    self._step9_deploy(context)
+                # The target now holds this snapshot's model (deployed, or
+                # unchanged since the last deploy): the next UPSERT diffs
+                # against it.
+                if context.sml_snapshot_id:
+                    try:
+                        self.db_manager.mark_snapshot_deployed(context.sml_snapshot_id)
+                    except Exception as mark_exc:
+                        logger.warning(
+                            "Could not mark snapshot %s as deployed: %s",
+                            context.sml_snapshot_id, mark_exc,
+                        )
             else:
                 self._record_step(9, StepStatus.SKIPPED, "Deployment skipped")
             
@@ -471,7 +504,6 @@ from semabridge.core.engine.extraction import snowflake as _ext_sf
 from semabridge.core.engine.extraction import fabric as _ext_fab
 from semabridge.core.engine.extraction import pbix as _ext_pbix
 ExecutionEngine._step4_extract                    = _ext_base._step4_extract
-ExecutionEngine._step6a_extract_target_for_upsert = _ext_base._step6a_extract_target_for_upsert
 ExecutionEngine._extract_snowflake                = _ext_sf._extract_snowflake
 ExecutionEngine._extract_snowflake_scoped         = _ext_sf._extract_snowflake_scoped
 ExecutionEngine._extract_snowflake_unscoped       = _ext_sf._extract_snowflake_unscoped
@@ -487,6 +519,8 @@ from semabridge.core.engine.conversion import fabric as _conv_fab
 from semabridge.core.engine.conversion import pbix as _conv_pbix
 ExecutionEngine._step5_validate_source              = _conv_base._step5_validate_source
 ExecutionEngine._step6_convert_to_sml               = _conv_base._step6_convert_to_sml
+ExecutionEngine._step6a_apply_upsert_delta          = _conv_base._step6a_apply_upsert_delta
+ExecutionEngine._upsert_delta_preview_model         = _conv_base._upsert_delta_preview_model
 ExecutionEngine._normalize_relationships_for_target = _conv_base._normalize_relationships_for_target
 ExecutionEngine._has_path                           = _conv_base._has_path
 ExecutionEngine._select_strongest_relationship      = _conv_base._select_strongest_relationship

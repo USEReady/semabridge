@@ -131,6 +131,39 @@ def _step7_persist_artifacts(
         self._record_step(7, StepStatus.FAILED, str(e))
         raise PersistenceError(f"Artifact persistence failed: {e}") from e
 
+def _annotated_upsert_delta(summary: Any, context: RunContext) -> Dict[str, Any]:
+    """The UPSERT delta with each item's status (deployed / placeholder /
+    kept in Snowflake), deployed SQL, and the view to query metric values."""
+    from semabridge.core.upsert_delta import annotate_delta
+
+    delta = context.upsert_delta
+    try:
+        deployed = any(
+            getattr(step, "step_number", None) == 9
+            and str(getattr(getattr(step, "status", ""), "value", getattr(step, "status", ""))).lower() == "success"
+            for step in getattr(summary, "steps_completed", []) or []
+        )
+        dropped = [
+            record.model_dump(mode="json") if hasattr(record, "model_dump") else dict(record)
+            for record in (summary.dropped_entities or [])
+        ]
+        view = None
+        sf_cfg = getattr(context.config, "_snowflake", None) or getattr(context.config, "snowflake", None)
+        if deployed and context.deployed_view_name and sf_cfg is not None and context.target_type == "snowflake":
+            view = {
+                "database": str(getattr(sf_cfg, "database", "") or ""),
+                "schema": str(getattr(sf_cfg, "schema_name", "") or ""),
+                "name": str(context.deployed_view_name),
+            }
+        annotate_delta(
+            delta, context.sml_model, dropped,
+            deployed=deployed, deployed_ddl=context.deployed_ddl_text, view=view,
+        )
+    except Exception as exc:
+        logger.warning("Could not annotate UPSERT delta: %s", exc)
+    return delta
+
+
 def _reconcile_dropped_entities(context: RunContext) -> list[DropRecord]:
     """Filter context.drop_ledger's records against the DDL that was
     actually deployed this run, so RunSummary.dropped_entities reflects the
@@ -276,6 +309,10 @@ def _step10_finalize(
         self._summary.dropped_entities = _reconcile_dropped_entities(context)
     if context.data_backfill_results:
         self._summary.data_backfill_results = context.data_backfill_results
+    if context.upsert_delta is not None:
+        self._summary.upsert_delta = _annotated_upsert_delta(self._summary, context)
+    if context.table_binding_plan is not None:
+        self._summary.table_binding_plan = context.table_binding_plan
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

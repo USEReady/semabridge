@@ -16,7 +16,6 @@ from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
 from semabridge.core.settings import Settings, get_settings
 from semabridge.core.config_loader import get_project_file_path
 from semabridge.core.behavior import ConnectorBehavior
-from semabridge.core.sync_modes import apply_sync_mode
 from semabridge.core.run_summary import (
     STEP_NAMES,
     RunStatus,
@@ -89,7 +88,6 @@ def _step6_convert_to_sml(
 
     - Map validated Source Format into canonical SML
     - Ensure schema correctness and semantic consistency
-    - Apply sync_mode logic (UPSERT: merge with target; COPY: use source only)
     """
     self._current_step = 6
     logger.info("Step 6: Converting to canonical SML")
@@ -108,46 +106,111 @@ def _step6_convert_to_sml(
         # target conversions and deployments operate on the same final model.
         self._normalize_relationships_for_target(sml_model)
         
-        # Apply sync_mode logic after source conversion so target-only Snowflake
-        # objects are preserved before target-format generation/deployment.
-        sync_mode = str(getattr(context, 'sync_mode', 'copy') or 'copy').strip().lower()
-        target_model = getattr(context, 'target_sml_model', None)
-
-        if sync_mode == "copy":
-            logger.info(f"COPY mode: Using source only (target-only entities will be deleted)")
-        elif sync_mode == "upsert":
-            logger.info("UPSERT mode: fetching live target state")
-            if target_model is not None:
-                logger.info("Live target fetched, applying merge")
-                logger.info(
-                    "UPSERT source before merge: %d datasets, %d metrics, %d dimensions",
-                    len(sml_model.datasets),
-                    len(sml_model.metrics),
-                    len(sml_model.dimensions),
-                )
-                logger.info(
-                    "UPSERT target before merge: %d datasets, %d metrics, %d dimensions",
-                    len(target_model.datasets),
-                    len(target_model.metrics),
-                    len(target_model.dimensions),
-                )
-                sml_model = apply_sync_mode(sml_model, target_model, "upsert")
-                logger.info(
-                    "Merge complete: %d datasets, %d metrics, %d dimensions",
-                    len(sml_model.datasets),
-                    len(sml_model.metrics),
-                    len(sml_model.dimensions),
-                )
-            else:
-                logger.warning("Could not fetch live target, falling back to COPY behavior")
-        elif target_model is None:
-            logger.info(f"No existing target found - treating as new deployment (source-only behavior)")
-        
         return sml_model
 
     except Exception as e:
         self._record_step(6, StepStatus.FAILED, str(e))
         raise ConversionError(f"SML conversion failed: {e}") from e
+
+def _step6a_apply_upsert_delta(self, context: RunContext) -> None:
+    """Step 6a (UPSERT only): diff against the last deployed snapshot and merge.
+
+    The baseline is the latest snapshot of this project/model that was
+    deployed to the target; the live target DDL is never read back. The
+    model to deploy is the new source model plus baseline-only items
+    (upsert keeps target-only items). A missing baseline means a first
+    deployment; an unreadable one fails the run (no fallback to COPY).
+
+    Dry runs pass ``delta_preview_overrides`` (the real project's mapping
+    overrides): the delta is then computed on a model converted with those
+    overrides, as the real sync would, and nothing is merged — the dry-run
+    output itself stays the raw source model.
+    """
+    from semabridge.core.upsert_delta import compute_delta, merge_upsert, parse_baseline_blob
+
+    model = context.sml_model
+    payload = context.config_payload or {}
+    baseline_project_id = str(payload.get("delta_baseline_project_id") or context.project_id)
+    preview_overrides = payload.get("delta_preview_overrides")
+    model_names = [model.unique_name, model.label]
+
+    try:
+        snapshot = self.db_manager.get_last_deployed_snapshot(baseline_project_id, model_names)
+    except Exception as exc:
+        self._record_step(6, StepStatus.FAILED, f"UPSERT: previous deployed snapshot unreadable: {exc}")
+        raise ConversionError(
+            f"UPSERT stopped: the last deployed snapshot of '{model.label or model.unique_name}' "
+            f"in project '{baseline_project_id}' could not be read: {exc}"
+        ) from exc
+
+    comparison_model = model
+    if isinstance(preview_overrides, dict):
+        comparison_model = self._upsert_delta_preview_model(context, preview_overrides)
+
+    if snapshot is None:
+        logger.info(
+            "UPSERT: no deployed snapshot for %s in project %s; first deployment",
+            model.unique_name, baseline_project_id,
+        )
+        context.upsert_delta = compute_delta(comparison_model, None)
+        return
+
+    try:
+        baseline = parse_baseline_blob(snapshot.sml_blob, snapshot.snapshot_id)
+    except Exception as exc:
+        self._record_step(6, StepStatus.FAILED, f"UPSERT: previous deployed snapshot unreadable: {exc}")
+        raise ConversionError(f"UPSERT stopped: {exc}") from exc
+
+    delta = compute_delta(
+        comparison_model,
+        baseline,
+        baseline_snapshot_id=snapshot.snapshot_id,
+        baseline_timestamp=snapshot.timestamp,
+    )
+    context.upsert_delta = delta
+    if preview_overrides is None:
+        context.sml_model = merge_upsert(model, baseline)
+    logger.info(
+        "UPSERT delta vs snapshot %s (%s): %s",
+        snapshot.snapshot_id, snapshot.timestamp, delta["summary_text"],
+    )
+
+
+def _upsert_delta_preview_model(self, context: RunContext, preview_overrides: Dict[str, Any]) -> SMLModel:
+    """Re-convert the extracted source with the real project's mapping
+    overrides, on a shadow context, so a dry run's delta compares names the
+    way the deployed snapshot has them. Leaves `context` and the run summary
+    untouched."""
+    import copy
+
+    from semabridge.core.drop_ledger import DropLedger
+
+    shadow = copy.copy(context)
+    shadow.drop_ledger = DropLedger()
+    shadow.config_payload = {
+        **(context.config_payload or {}),
+        "mappings_overrides": list(preview_overrides.get("mappings_overrides") or []),
+        "targets": list(preview_overrides.get("targets") or []),
+    }
+    shadow.config_path = Path("upsert-delta-preview.yaml")
+    shadow.mapping_overrides_applied = False
+
+    saved_summary, saved_step = self._summary, self._current_step
+    self._summary = None
+    try:
+        if context.source_type == "pbix":
+            converted = self._convert_pbix_to_sml(shadow)
+        else:
+            converted = context.sml_model.model_copy(deep=True)
+        if not shadow.mapping_overrides_applied:
+            self._apply_mapping_overrides_from_config(
+                converted, shadow.config_path, config_payload=shadow.config_payload
+            )
+        self._normalize_relationships_for_target(converted)
+    finally:
+        self._summary, self._current_step = saved_summary, saved_step
+    return converted
+
 
 def _normalize_relationships_for_target(self, model: SMLModel) -> None:
     """Canonicalize and deduplicate relationships on the final SML model.

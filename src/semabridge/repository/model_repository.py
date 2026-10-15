@@ -266,6 +266,9 @@ class ModelRepository:
                             snapshot_columns.discard("trigger")
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
+                        if "deployed_at" not in snapshot_columns:
+                            ts_type = "TIMESTAMP WITH TIME ZONE" if conn.dialect.name == "postgresql" else "TIMESTAMP"
+                            conn.exec_driver_sql(f"ALTER TABLE snapshots ADD COLUMN deployed_at {ts_type}")
                     if _tbl_exists("runs"):
                         run_columns = _col_names("runs")
                         if "sync_mode" not in run_columns:
@@ -606,6 +609,128 @@ class ModelRepository:
             )
         return updated
 
+    def get_table_bindings(self, project_id: str, model_key: str) -> Dict[str, str]:
+        """Saved dataset_key -> physical table bindings of one project/model."""
+        from semabridge.repository.orm.models import TableBinding
+
+        with self._session() as session:
+            rows = session.execute(
+                select(TableBinding).where(
+                    and_(TableBinding.project_id == project_id, TableBinding.model_key == model_key)
+                )
+            ).scalars().all()
+            return {row.dataset_key: row.table_name for row in rows}
+
+    def save_table_bindings(self, project_id: str, model_key: str, bindings: List[Dict[str, Any]]) -> int:
+        """Insert or update bindings ({dataset_key, dataset, table, matched_by})."""
+        from semabridge.repository.orm.models import TableBinding
+
+        saved = 0
+        with self._session() as session:
+            for entry in bindings:
+                row = session.execute(
+                    select(TableBinding).where(
+                        and_(
+                            TableBinding.project_id == project_id,
+                            TableBinding.model_key == model_key,
+                            TableBinding.dataset_key == entry["dataset_key"],
+                        )
+                    )
+                ).scalars().first()
+                if row is None:
+                    session.add(TableBinding(
+                        binding_id=str(uuid.uuid4()),
+                        project_id=project_id,
+                        model_key=model_key,
+                        dataset_key=entry["dataset_key"],
+                        dataset_name=entry["dataset"],
+                        table_name=entry["table"],
+                        matched_by=entry.get("matched_by"),
+                    ))
+                elif row.table_name != entry["table"]:
+                    row.table_name = entry["table"]
+                    row.matched_by = entry.get("matched_by")
+                    row.updated_at = datetime.utcnow()
+                else:
+                    continue
+                saved += 1
+            session.commit()
+        return saved
+
+    def mark_snapshot_deployed(self, snapshot_id: str) -> bool:
+        """Record that `snapshot_id`'s model is what the target now holds."""
+        with self._session() as session:
+            result = session.execute(
+                update(SnapshotRow)
+                .where(SnapshotRow.snapshot_id == snapshot_id)
+                .values(deployed_at=datetime.utcnow())
+            )
+            session.commit()
+        return bool(getattr(result, "rowcount", 0))
+
+    def get_last_deployed_snapshot(
+        self,
+        project_id: str,
+        model_names: List[str],
+        scan_limit: int = 500,
+    ) -> Optional[Snapshot]:
+        """Latest snapshot of this project whose model was deployed to the target.
+
+        Snapshots carry no model column (every model of a multi-model project
+        shares `project_id`), so the model is identified by the SML name in
+        the payload, matched case/punctuation-insensitively against
+        `model_names`. Snapshots marked `deployed_at` win; snapshots written
+        before that column existed fall back to "its run completed with
+        status success against a target".
+
+        Raises ValueError when a candidate snapshot's payload can't be read
+        — callers must not silently treat that as "never deployed".
+        """
+        from semabridge.core.upsert_delta import normalize_model_name
+
+        wanted = {normalize_model_name(n) for n in model_names if n}
+        if not wanted:
+            raise ValueError("No model name given to locate the last deployed snapshot")
+
+        with self._session() as session:
+            rows = session.execute(
+                select(SnapshotRow, Run.status, Run.target_type)
+                .outerjoin(Run, Run.run_id == SnapshotRow.run_id)
+                .where(
+                    and_(
+                        SnapshotRow.project_id == project_id,
+                        SnapshotRow.status == 'success',
+                        SnapshotRow.deleted_at.is_(None),
+                    )
+                )
+                .order_by(SnapshotRow.timestamp.desc())
+                .limit(scan_limit)
+            ).all()
+
+        def _matches(row: SnapshotRow) -> bool:
+            if not row.sml_blob:
+                return False
+            blob = _deserialize_sml_blob(row.sml_blob)
+            if not blob:
+                raise ValueError(
+                    f"Snapshot {row.snapshot_id} of project {project_id} could not be read"
+                )
+            names = {normalize_model_name(blob.get("unique_name")), normalize_model_name(blob.get("label"))}
+            return bool(names & wanted)
+
+        for row, _status, _target in rows:
+            if row.deployed_at is not None and _matches(row):
+                return self._row_to_snapshot(row)
+        for row, run_status, target_type in rows:
+            if (
+                row.deployed_at is None
+                and str(run_status or "").lower() == "success"
+                and target_type
+                and _matches(row)
+            ):
+                return self._row_to_snapshot(row)
+        return None
+
     def rollback(
         self,
         project_id: str,
@@ -787,6 +912,12 @@ class ModelRepository:
     # ------------------------------------------------------------------
     # Run tracking
     # ------------------------------------------------------------------
+
+    def mark_run_type(self, run_id: str, run_type: str) -> None:
+        """Set a run row's run_type (e.g. "DRY_RUN" for engine dry runs)."""
+        with self._session() as session:
+            session.execute(update(Run).where(Run.run_id == run_id).values(run_type=run_type))
+            session.commit()
 
     def record_run_start(
         self,

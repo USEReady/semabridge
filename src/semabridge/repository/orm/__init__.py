@@ -42,6 +42,7 @@ from semabridge.repository.orm.snapshot_models import (
     ModelVersion,
     ModelVersionHistory,
     SchemaVersionRow,
+    TableBinding,
 )
 from semabridge.repository.orm.schedule_models import (
     SyncJob,
@@ -86,6 +87,7 @@ __all__ = [
     "ModelVersion",
     "ModelVersionHistory",
     "SchemaVersionRow",
+    "TableBinding",
     # Job scheduling
     "SyncJob",
     "SyncJobItem",

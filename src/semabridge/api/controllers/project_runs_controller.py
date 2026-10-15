@@ -132,6 +132,16 @@ async def get_run_conflicts(run_id: str, request: Request):
     return await get_run_conflicts_compat(run_id)
 
 
+@router.post("/api/projects/{project_id}/runs/{run_id}/metric-value")
+async def get_upsert_metric_value(project_id: str, run_id: str, request: Request, payload: dict = Body(default_factory=dict)):
+    """Value of a metric an UPSERT run added/modified, read once through SEMANTIC_VIEW."""
+    from semabridge.api.services.upsert_metric_value_service import query_upsert_metric_value
+
+    user_id = require_request_user_id(request)
+    _assert_project_access(project_id, user_id)
+    return await query_upsert_metric_value(project_id, run_id, payload)
+
+
 @router.get("/api/projects/{project_id}/run-preview")
 async def get_run_preview(project_id: str, request: Request):
     """Return a fast snapshot diff summary so the UI can show what changed

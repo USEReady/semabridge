@@ -29,6 +29,7 @@ from semabridge.repository.duplicate_name_mapping_repository import DuplicateNam
 # Import domain managers
 from semabridge.connectors.connection_manager import SnowflakeConnectionManager
 from semabridge.connectors.schema_manager import SnowflakeSchemaManager
+from semabridge.connectors.table_binding_resolver import LiveSchemaMetadata
 from semabridge.connectors.measure_sync import MeasureSynchronizer
 from semabridge.connectors.ddl_builder import SemanticViewBuilder
 from semabridge.connectors.tables_clause_builder import resolve_source_table_mapping
@@ -115,7 +116,12 @@ class SnowflakeEmitter(BaseEmitter):
             additional_reserved=set(getattr(self.behavior.compatibility, 'additional_reserved_words', []) or []),
         )
 
-        self._live_schema_metadata: Dict[str, set[str]] = {}
+        # Also carries this deploy's table-binding state (saved pins, row
+        # counts, binding log) — see table_binding_resolver.LiveSchemaMetadata.
+        self._live_schema_metadata: LiveSchemaMetadata = LiveSchemaMetadata()
+        # (project_id, model_key) whose saved table bindings this emitter
+        # reuses; set by the engine before deploy. None = no saved bindings.
+        self.binding_scope: Optional[Tuple[str, str]] = None
         self._verified_tables: set[str] = set()
         # Local mapping for enriched views when behavior config lacks an explicit mapping
         self._enriched_view_mapping: Dict[str, str] = {}
@@ -343,12 +349,16 @@ class SnowflakeEmitter(BaseEmitter):
             # prior deploy's time-intelligence flag-column map into this one
             # (see _create_enriched_view / converter/time_intelligence_shapes.py).
             self.translator.anchor_flag_map.clear()
+            self._load_saved_bindings()
             deploy_started_at = time.perf_counter()
             model_name = getattr(model, "unique_name", None) or getattr(model, "label", None) or "<unnamed_model>"
             path_type = "OSI" if is_osi else "SML"
             effective_sync_mode = str(sync_mode or "copy").lower()
             if effective_sync_mode not in {"copy", "upsert"}:
                 effective_sync_mode = "copy"
+            # UPSERT only: leave an enriched view alone when its regenerated
+            # definition matches the live one (see _create_enriched_view).
+            self._skip_unchanged_enriched_views = effective_sync_mode == "upsert"
             
             logger.info("[%s] start model=%s", path_type, model_name)
 
@@ -427,6 +437,7 @@ class SnowflakeEmitter(BaseEmitter):
                     datasets = list(getattr(model, "datasets", []) or [])
                     sf_meta = self.schema_manager._fetch_model_table_metadata(cur, datasets)
                 self._live_schema_metadata.update(sf_meta or {})
+                self.schema_manager._load_row_counts(cur)
 
                 # Step 1.6: Opt-in data-backfill (options.load_source_data,
                 # see core/engine/config.py's _step1_load_config). Off by
@@ -807,7 +818,8 @@ class SnowflakeEmitter(BaseEmitter):
                         _sanitizer = SemanticDDLSanitizer(self._id)
                         _current_sql = sql
                         _current_exc = ddl_exc
-                        _MAX_PASSES = 10
+                        # At most 5 retries; each pass nulls only metrics.
+                        _MAX_PASSES = 5
                         _remediated = False
                         for _pass in range(_MAX_PASSES):
                             # The identifier-extraction/sanitizer/drop-recording
@@ -1112,17 +1124,13 @@ class SnowflakeEmitter(BaseEmitter):
         that path's behavior (some record, even if imprecise, rather than
         none) is unchanged.
         """
-        names_to_record = nulled_metric_names or [
-            self._resolve_metric_name_for_invalid_identifier(current_sql, invalid_id)
-        ]
-        for dropped_metric_name in names_to_record:
+        error_text = " ".join(str(exc).split())
+        for dropped_metric_name in nulled_metric_names:
             self._dropped_metrics.append({"metric": dropped_metric_name, "reason": str(exc)})
             self.drop_ledger.record(
                 "metric", dropped_metric_name, DropStage.DDL_DEPLOYMENT,
-                "Snowflake rejected this identifier when executing the "
-                "compiled semantic-view DDL, and it could not be "
-                "automatically remediated.",
-                detail=str(exc)[:300],
+                f"placeholder: rejected by Snowflake: {error_text[:240]}",
+                detail=f"Emitted as CAST(NULL AS DOUBLE) after Snowflake rejected '{invalid_id}'.",
             )
 
     def _log_dropped_metrics_summary(self, path_type: str, model_name: str) -> None:
@@ -1514,6 +1522,39 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as exc:
             logger.warning("Failed to retrieve semantic view %s: %s", view_name, exc)
             return None
+        finally:
+            if owns_conn:
+                conn.close()
+
+    def _load_saved_bindings(self) -> None:
+        """Pin this project/model's saved table bindings for the deploy."""
+        if not self.binding_scope:
+            return
+        from semabridge.repository.model_repository import ModelRepository
+
+        project_id, model_key = self.binding_scope
+        pins = ModelRepository().get_table_bindings(project_id, model_key)
+        self._live_schema_metadata.pinned_bindings.update(pins)
+        if pins:
+            logger.info("Reusing %d saved table binding(s) for %s/%s", len(pins), project_id, model_key)
+
+    def new_table_bindings(self) -> List[Dict[str, Any]]:
+        """Bindings resolved by this deploy that aren't saved yet (to persist)."""
+        return [
+            {"dataset_key": key, **entry}
+            for key, entry in self._live_schema_metadata.binding_log.items()
+            if entry.get("matched_by") != "saved"
+        ]
+
+    def preview_table_bindings(self, model: Any) -> List[Dict[str, Any]]:
+        """Read-only: per dataset, the table it would bind to or create (dry run)."""
+        self._live_schema_metadata.clear()
+        self._load_saved_bindings()
+        conn, owns_conn = self.connection_manager.get_connection()
+        try:
+            cur = conn.cursor()
+            with self._physical_namespace_scope(model):
+                return self.schema_manager.plan_source_tables(cur, model)
         finally:
             if owns_conn:
                 conn.close()
@@ -2941,6 +2982,35 @@ class SnowflakeEmitter(BaseEmitter):
                 return str(name)
         return None
 
+    def _live_view_matches(self, cursor, view_name: str, create_sql: str) -> bool:
+        """True when the live view's stored definition equals `create_sql`'s body.
+
+        Compares the SELECT after the first "AS" line, whitespace-collapsed
+        (Snowflake re-cases the COMMENT clause in its stored text). Any
+        lookup failure counts as "changed" so the view gets recreated.
+        """
+        def _body(sql: str) -> Optional[str]:
+            parts = re.split(r"\bAS[ \t]*\n", str(sql or ""), maxsplit=1, flags=re.IGNORECASE)
+            return re.sub(r"\s+", " ", parts[1]).strip() if len(parts) == 2 else None
+
+        try:
+            safe_name = str(view_name).replace("'", "''")
+            self.connection_manager._execute_sql(
+                cursor,
+                f"SHOW VIEWS LIKE '{safe_name}' IN SCHEMA \"{self.config.database}\".\"{self.config.schema_name}\"",
+                context="upsert-enriched-view-compare",
+            )
+            columns = [d[0].lower() for d in (cursor.description or [])]
+            for row in cursor.fetchall() or []:
+                record = dict(zip(columns, row))
+                if str(record.get("name") or "").upper() != str(view_name).upper():
+                    continue
+                live_body, new_body = _body(record.get("text")), _body(create_sql)
+                return live_body is not None and live_body == new_body
+        except Exception as exc:
+            logger.warning("Could not compare live enriched view %s: %s", view_name, exc)
+        return False
+
     def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None, dry_run: bool = False):
         """
         Automatically create an enriched view with pre-computed columns and anchors.
@@ -3201,6 +3271,21 @@ class SnowflakeEmitter(BaseEmitter):
                     str(fact_table).casefold(), {}
                 ).update(local_flag_map)
             return (enriched_view_name, full_sql)
+
+        if getattr(self, "_skip_unchanged_enriched_views", False) and self._live_view_matches(
+            cursor, enriched_view_name, full_sql
+        ):
+            enriched_cols = set(fact_cols) | projected_cols
+            if enriched_cols:
+                self._live_schema_metadata[enriched_view_name.upper()] = enriched_cols
+                if hasattr(self, "semantic_view_builder"):
+                    self.semantic_view_builder.live_schema_metadata[enriched_view_name.upper()] = enriched_cols
+            if hasattr(self, "translator") and self.translator is not None and local_flag_map:
+                self.translator.anchor_flag_map.setdefault(
+                    str(fact_table).casefold(), {}
+                ).update(local_flag_map)
+            logger.info("UPSERT: enriched view %s unchanged; not recreated", enriched_view_name)
+            return enriched_view_name
 
         try:
             self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")

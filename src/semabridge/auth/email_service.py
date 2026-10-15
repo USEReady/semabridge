@@ -31,7 +31,7 @@ def send_password_reset_email(to_email: str, reset_token: str, username: str) ->
     config = _get_smtp_config()
 
     if not config["host"] or not config["user"]:
-        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5180")
         reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
         # Always print full reset URL when SMTP is not configured so the
         # developer can complete the flow without reading truncated logs.
@@ -50,7 +50,7 @@ def send_password_reset_email(to_email: str, reset_token: str, username: str) ->
         )
         return False, reset_url
 
-    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5180")
     reset_url = f"{frontend_url}/auth/reset-password/{reset_token}"
     expiry_minutes = int(os.environ.get("RESET_TOKEN_EXPIRY_MINUTES", "60"))
 
@@ -123,7 +123,7 @@ def send_run_summary_notification(
     """
     config = _get_smtp_config()
     if not frontend_url:
-        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5180")
 
     run_url = f"{frontend_url}/jobs"
 

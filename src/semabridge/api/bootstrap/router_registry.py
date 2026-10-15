@@ -80,7 +80,7 @@ def register_routers(app: FastAPI) -> None:
     # CORS — must be added after routers so it wraps the full app.
     _cors_raw = os.environ.get(
         "CORS_ORIGINS",
-        "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000",
+        "http://localhost:5180,http://localhost:3000,http://127.0.0.1:5180,http://127.0.0.1:3000",
     )
     _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
     app.add_middleware(

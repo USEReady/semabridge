@@ -18,6 +18,9 @@ export default defineConfig(({ mode }) => {
     envDir: repoRoot,
     plugins: [react(), tailwindcss()],
     server: {
+      // 5173 (Vite's default) is used by another local project.
+      port: 5180,
+      strictPort: true,
       proxy: {
         '/api': {
           target,

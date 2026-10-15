@@ -74,8 +74,8 @@ class SemanticDDLSanitizer:
         must record a drop for each of them, not just one. Always empty for
         the two anchor-substitution special cases (MAX_DATE/MAX_MONTHINDEX)
         below, since those keep every metric's real semantics instead of
-        nulling anything, and for TABLES/RELATIONSHIPS/DIMENSIONS-only fixes,
-        since no metric was nulled in those cases either.
+        nulling anything. Only METRICS lines are ever changed: a rejected
+        identifier no metric uses leaves the DDL unchanged (changed=False).
         """
         if not ddl or not invalid_identifier:
             return ddl, False, []
@@ -122,20 +122,10 @@ class SemanticDDLSanitizer:
         in_dimensions = False
         in_metrics = False
         changed = False
-        metric_nulled_in_this_step = False
 
         metric_line_pattern = re.compile(
             r'^\s*(\w+)\."([^"]+)"\s+AS\s+', flags=re.IGNORECASE
         )
-        table_pk_pattern = re.compile(
-            r'^(\s*)(\w+)(\s+AS\s+.+?)\s+PRIMARY\s+KEY\s+\("([^"]+)"\)\s*(?P<comma>,?)\s*$',
-            flags=re.IGNORECASE,
-        )
-        dim_fallback_pattern = re.compile(
-            r'^\s*(\w+)\."[^"]+"\s+AS\s+\w+\."([^"]+)"\s*,?\s*$',
-            flags=re.IGNORECASE,
-        )
-
         # Build exact token patterns:
         # If invalid_identifier has alias.col (e.g. COL_DATE.RUNNING_YEAR or KPI.KPI01),
         # require the full qualified alias.col or alias."col" reference inside metric expressions.
@@ -149,33 +139,6 @@ class SemanticDDLSanitizer:
                 rf'(?<![A-Z0-9_]){re.escape(invalid_col or invalid_norm)}(?![A-Z0-9_])',
                 flags=re.IGNORECASE,
             )
-
-        invalid_token_pattern = re.compile(
-            rf'(?<![A-Z0-9_]){re.escape(invalid_col or invalid_norm)}(?![A-Z0-9_])',
-            flags=re.IGNORECASE,
-        )
-
-        # Determine deterministic fallback PK columns from DIMENSIONS by alias.
-        fallback_pk_by_alias: dict[str, str] = {}
-        in_dim_scan = False
-        for line in lines:
-            stripped_upper = line.strip().upper()
-            if stripped_upper.startswith("DIMENSIONS ("):
-                in_dim_scan = True
-                continue
-            if in_dim_scan and line.strip().startswith(")"):
-                in_dim_scan = False
-                continue
-            if not in_dim_scan:
-                continue
-            dim_match = dim_fallback_pattern.match(line)
-            if not dim_match:
-                continue
-            alias_name = dim_match.group(1).upper()
-            physical_name = dim_match.group(2).upper()
-            if physical_name == (invalid_col or ""):
-                continue
-            fallback_pk_by_alias.setdefault(alias_name, physical_name)
 
         for line in lines:
             stripped_upper = line.strip().upper()
@@ -210,41 +173,15 @@ class SemanticDDLSanitizer:
 
             line_norm = line.upper().replace('"', "")
             line_norm_for_match = re.sub(r"'(?:''|[^'])*'", "''", line_norm)
-            contains_invalid = bool(invalid_token_pattern.search(line_norm_for_match))
 
-            if in_tables and contains_invalid:
-                pk_match = table_pk_pattern.match(line)
-                if pk_match and invalid_col:
-                    line_alias = pk_match.group(2).upper()
-                    line_pk = pk_match.group(4).upper()
-                    alias_matches = (invalid_alias is None) or (line_alias == invalid_alias)
-                    if alias_matches and line_pk == invalid_col:
-                        indent = pk_match.group(1)
-                        alias_token = pk_match.group(2)
-                        as_clause = pk_match.group(3)
-                        comma = pk_match.group("comma") or ""
-                        fallback_pk_col = fallback_pk_by_alias.get(line_alias)
-                        if fallback_pk_col:
-                            remediated_lines.append(
-                                f'{indent}{alias_token}{as_clause} PRIMARY KEY ("{fallback_pk_col}"){comma}'
-                            )
-                        else:
-                            remediated_lines.append(f"{indent}{alias_token}{as_clause}{comma}")
-                        changed = True
-                        continue
-
-            if in_relationships and contains_invalid:
-                changed = True
-                continue
-
-            if in_dimensions and contains_invalid:
-                changed = True
-                continue
-
+            # Only metrics are ever nulled. TABLES, RELATIONSHIPS and
+            # DIMENSIONS lines are left exactly as generated: if the rejected
+            # identifier isn't used by any metric, nothing changes and the
+            # caller reports Snowflake's original error.
             if in_metrics:
                 metric_match = metric_line_pattern.match(line)
                 should_null_metric = False
-                if metric_match and not metric_nulled_in_this_step:
+                if metric_match:
                     line_entity_alias = metric_match.group(1).upper()
                     line_metric_name = metric_match.group(2).upper()
 
@@ -263,7 +200,6 @@ class SemanticDDLSanitizer:
                     trailing_comma = "," if raw_after_as.rstrip().endswith(",") or "," in raw_after_as else ""
                     remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){trailing_comma}")
                     changed = True
-                    metric_nulled_in_this_step = True
                     continue
 
             remediated_lines.append(line)

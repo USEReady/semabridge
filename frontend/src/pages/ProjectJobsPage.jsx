@@ -71,6 +71,14 @@ function sourceIcon(sourceType) {
   return <Link2 size={14} color="var(--text-tertiary)" />;
 }
 
+// UPSERT runs with a delta show only what changed, per model (see
+// UpsertChangesView); the run-wide dropped banner and snapshot diff would
+// repeat or contradict it, so they are left out for those runs.
+function isUpsertFocusedRun(run) {
+  return String(run?.sync_mode || '').toLowerCase() === 'upsert'
+    && (run?.results || []).some(r => r?.upsert_delta || r?.summary?.upsert_delta);
+}
+
 function RunDiffViewer({ run, projectId }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -776,7 +784,7 @@ export default function ProjectJobsPage() {
                                 <InfoCard label="Message" value={run.message || run.error || '—'} />
                               </div>
 
-                              {totalDroppedCount > 0 && (
+                              {totalDroppedCount > 0 && !isUpsertFocusedRun(run) && (
                                 <div
                                   style={{
                                     marginBottom: 12,
@@ -850,7 +858,7 @@ export default function ProjectJobsPage() {
                           </div>
                         )}
 
-                        {run.status === 'success' && (
+                        {run.status === 'success' && !isUpsertFocusedRun(run) && (
                           <RunDiffViewer run={run} projectId={run.project_id} />
                         )}
 

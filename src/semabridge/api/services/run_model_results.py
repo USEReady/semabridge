@@ -125,6 +125,20 @@ def persist_run_model_results(run: Dict[str, Any], project_cfg: str) -> int:
         return 0
 
 
+def _summary_upsert_delta(summary_path: Optional[str]) -> Optional[Dict[str, Any]]:
+    """UPSERT delta from a persisted per-model summary file (None for COPY)."""
+    if not summary_path:
+        return None
+    try:
+        data = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    entries = data.get("upsert_deltas") if isinstance(data, dict) else None
+    if entries and isinstance(entries[0], dict):
+        return entries[0].get("delta")
+    return None
+
+
 def _row_to_result(row: Any) -> Dict[str, Any]:
     def _loads(value, default):
         try:
@@ -144,6 +158,7 @@ def _row_to_result(row: Any) -> Dict[str, Any]:
         "report_path": row.report_path,
         "summary_path": row.summary_path,
         "log_path": row.log_path,
+        "upsert_delta": _summary_upsert_delta(row.summary_path),
         "persisted": True,
     }
 
@@ -230,6 +245,7 @@ def run_model_manifest(project_id: str, run_id: str) -> List[Dict[str, Any]]:
             "duration_ms": result.get("duration_ms"),
             "dropped_entities": result.get("dropped_entities") or [],
             "reconciliation": result.get("reconciliation"),
+            "upsert_delta": result.get("upsert_delta"),
             "error": _error_message(result),
         })
     if not order and str(run.get("status") or "").lower() == "running":

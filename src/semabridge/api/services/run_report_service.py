@@ -259,6 +259,10 @@ def humanize_drop_reason(record: Dict[str, Any]) -> str:
     reason = str(record.get("reason") or "")
     stage = str(record.get("stage") or "")
     lowered = reason.lower()
+    # NULL placeholders keep their exact reason ("placeholder: not
+    # translatable" / "placeholder: rejected by Snowflake: <error>").
+    if lowered.startswith("placeholder:"):
+        return reason
     for needle, plain in _REASON_RULES:
         if needle in lowered:
             return plain
@@ -512,6 +516,66 @@ def _describe_source_for_result(
 # ---------------------------------------------------------------------------
 
 
+def _collect_upsert_deltas(model_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Per-model UPSERT delta entries ({model, delta}); empty for COPY runs."""
+    deltas: List[Dict[str, Any]] = []
+    for result in model_results:
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        delta = result.get("upsert_delta") or summary.get("upsert_delta")
+        if isinstance(delta, dict):
+            deltas.append({"model": str(result.get("model") or ""), "delta": delta})
+    return deltas
+
+
+_UPSERT_KIND_LABELS = (
+    ("metrics", "Metrics"),
+    ("dimensions", "Dimensions"),
+    ("relationships", "Relationships"),
+    ("tables", "Tables"),
+)
+
+
+def _upsert_delta_markdown(entries: List[Dict[str, Any]]) -> List[str]:
+    lines = ["## UPSERT Delta", ""]
+    lines.append(
+        "Compared with the last deployed snapshot of each model. Only added "
+        "and modified items are applied; items only in the target are kept."
+    )
+    lines.append("")
+    for entry in entries:
+        delta = entry["delta"]
+        lines.append(f"### {entry['model'] or 'Model'}")
+        lines.append("")
+        lines.append(f"**{delta.get('summary_text') or ''}**")
+        lines.append("")
+        if not delta.get("has_changes") and not delta.get("first_deployment"):
+            lines.append("No changes: deploy skipped.")
+            lines.append("")
+        lines.append("| Kind | Added | Modified | Removed (kept) | Unchanged |")
+        lines.append("|---|---:|---:|---:|---:|")
+        kinds = delta.get("kinds") or {}
+        for key, label in _UPSERT_KIND_LABELS:
+            bucket = kinds.get(key) or {}
+            lines.append(
+                f"| {label} | {len(bucket.get('added') or [])} | {len(bucket.get('modified') or [])} "
+                f"| {len(bucket.get('removed') or [])} | {bucket.get('unchanged', 0)} |"
+            )
+        lines.append("")
+        for key, label in _UPSERT_KIND_LABELS:
+            bucket = kinds.get(key) or {}
+            for item in bucket.get("added") or []:
+                lines.append(f"- Added {label[:-1].lower()}: **{item.get('name')}**")
+            for item in bucket.get("modified") or []:
+                lines.append(f"- Modified {label[:-1].lower()}: **{item.get('name')}**")
+                if "old_expression" in item:
+                    lines.append(f"  - old: `{item.get('old_expression')}`")
+                    lines.append(f"  - new: `{item.get('new_expression')}`")
+            for item in bucket.get("removed") or []:
+                lines.append(f"- Removed from source, kept in target ({label[:-1].lower()}): **{item.get('name')}**")
+        lines.append("")
+    return lines
+
+
 def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     """Single source of truth for one run's (or one model's, when `run` has
     already been scoped to a single result -- see generate_per_model_reports()'s
@@ -640,6 +704,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "dropped_by_stage": dropped_by_stage,
         "excluded_by_design_by_stage": excluded_by_design_by_stage,
         "data_backfill_results": data_backfill_results,
+        "upsert_deltas": _collect_upsert_deltas(model_results),
     }
 
 
@@ -742,6 +807,8 @@ def build_run_report_data(
         # enabled -- empty list (and all three counts 0 above) for every
         # other run, matching that feature's off-by-default contract.
         "data_backfill": data_backfill_results,
+        # UPSERT runs only: per-model delta vs the last deployed snapshot.
+        "upsert_deltas": data.get("upsert_deltas") or [],
     }
 
 
@@ -1021,6 +1088,10 @@ def generate_run_report_markdown(
                 name = record.get("entity_name") or "(unnamed)"
                 lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
             lines.append("")
+
+    upsert_deltas = _collect_upsert_deltas(model_results)
+    if upsert_deltas:
+        lines.extend(_upsert_delta_markdown(upsert_deltas))
 
     # --- Data backfill (only present when options.load_source_data was
     # enabled for this run — omitted entirely otherwise) -------------------

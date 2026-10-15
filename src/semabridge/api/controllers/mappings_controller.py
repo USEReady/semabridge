@@ -2,7 +2,7 @@ import os
 import uuid
 import yaml
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel
 
 
@@ -38,6 +38,8 @@ class DryRunRequest(BaseModel):
     source_config: Dict[str, Any]
     target_config: Dict[str, Any]
     selected_sources: List[str]
+    # Sync mode chosen in the wizard (copy/upsert); overrides the saved one.
+    sync_mode: Optional[str] = None
 
 class UpdateMappingRequest(BaseModel):
     target_name: Optional[str] = None
@@ -199,6 +201,29 @@ def _build_config_yaml_from_request(
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
 
 
+def _project_sync_settings(project_id: str) -> Tuple[str, Dict[str, Any]]:
+    """(sync mode, parsed config) from the stored configuration of `project_id`."""
+    import yaml
+
+    import semabridge.api.services.project_shared as project_shared
+    from semabridge.core.run_helpers import normalize_sync_mode, sync_mode_from_project_config
+
+    try:
+        bundle = project_shared._compat_load_modular_project(project_id) or {}
+        config_yaml = bundle.get("config_yaml") or project_shared._compat_project_configs.get(project_id)
+        project = project_shared._compat_projects.get(project_id) or {}
+        parsed = yaml.safe_load(config_yaml) if isinstance(config_yaml, str) else {}
+        mode = (
+            sync_mode_from_project_config(parsed)
+            or normalize_sync_mode(project.get("sync_mode"))
+            or "copy"
+        )
+        return mode, parsed if isinstance(parsed, dict) else {}
+    except Exception as exc:
+        logger.warning("Could not resolve sync mode for project %s: %s", project_id, exc)
+        return "copy", {}
+
+
 async def _run_dry_run_pipeline(
     *,
     project_id: str,
@@ -206,6 +231,7 @@ async def _run_dry_run_pipeline(
     source_config: Dict[str, Any],
     target_config: Dict[str, Any],
     selected_sources: List[str],
+    sync_mode_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The actual dry-run pipeline: builds a preview project, runs the real
     extraction -> OSI -> SML pipeline with dry_run=True, builds entity
@@ -301,10 +327,26 @@ async def _run_dry_run_pipeline(
     # ── 3. Run the real pipeline with dry_run=True (no deployment) ──────────
     #    This runs: connector extraction → OSI conversion → SML generation
     #    and stores the resulting SML snapshot so entity mappings can be built.
+    #    A project configured for UPSERT also gets its delta against the real
+    #    project's last deployed snapshot (the preview id has none).
+    sync_mode, project_cfg = _project_sync_settings(project_id)
+    from semabridge.core.run_helpers import normalize_sync_mode
+    sync_mode = normalize_sync_mode(sync_mode_override) or sync_mode
+    delta_preview_overrides = None
+    if sync_mode == "upsert":
+        delta_preview_overrides = {
+            "mappings_overrides": project_cfg.get("mappings_overrides") or [],
+            "targets": project_cfg.get("targets") or ([project_cfg["target"]] if isinstance(project_cfg.get("target"), dict) else []),
+        }
     sync_result = await sync_models({
         "project_id": preview_project_id,
         "content": config_yaml,
         "dry_run": True,
+        "sync_mode": sync_mode,
+        "delta_baseline_project_id": project_id if sync_mode == "upsert" else None,
+        "delta_preview_overrides": delta_preview_overrides,
+        # Table-binding preview reads the real project's saved bindings.
+        "binding_project_id": project_id,
         # Pass account_id and user_id so credential scoping works for the
         # transient preview project (not in ORM, so sync_models can't resolve
         # account_id automatically via the DB lookup).
@@ -328,9 +370,21 @@ async def _run_dry_run_pipeline(
     # PBIX only: report-layer aliases claimed by more than one field and
     # therefore excluded from synonyms (see SourceFormat.ambiguous_report_aliases).
     ambiguous_report_aliases: List[Dict[str, Any]] = []
+    upsert_delta: Optional[Dict[str, Any]] = None
+    table_binding_plan: Optional[Dict[str, Any]] = None
     for r in results:
         summary = r.get("summary") or {}
         print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
+        if table_binding_plan is None:
+            table_binding_plan = summary.get("table_binding_plan")
+        if sync_mode == "upsert" and upsert_delta is None:
+            upsert_delta = r.get("upsert_delta") or summary.get("upsert_delta")
+            if upsert_delta is None and str(r.get("status") or "").lower() != "success":
+                errors = summary.get("errors") or []
+                upsert_delta = {
+                    "sync_mode": "upsert",
+                    "error": (errors[0].get("message") if errors else None) or "UPSERT delta could not be computed",
+                }
         unresolved_report_field_references.extend(
             summary.get("unresolved_report_field_references") or []
         )
@@ -608,6 +662,9 @@ async def _run_dry_run_pipeline(
         "dropped_entities": data.get("dropped_entities", []),
         "unresolved_report_field_references": unresolved_report_field_references,
         "ambiguous_report_aliases": ambiguous_report_aliases,
+        "sync_mode": sync_mode,
+        "upsert_delta": upsert_delta,
+        "table_binding_plan": table_binding_plan,
         "summary": {
             "total_fields": len(filtered_mappings),
             "auto_mapped": auto_count,
@@ -676,6 +733,7 @@ async def dry_run_mapping(
             source_config=request.source_config,
             target_config=request.target_config,
             selected_sources=selected_sources,
+            sync_mode_override=request.sync_mode,
         )
 
     except ValidationError as e:

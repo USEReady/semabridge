@@ -3,6 +3,7 @@ export function buildDryRunPayload({
   targetConnectors,
   fabricAccountId,
   fabricWorkspaceId,
+  snowflakeAccountId,
   snowflakeDatabase,
   targetDatabase,
   selectedModelNames,
@@ -31,6 +32,8 @@ export function buildDryRunPayload({
 
   if (targetConfig.type === 'snowflake') {
     if (targetDatabase) targetConfig.database = targetDatabase;
+    // The dry run checks target tables live; it needs the chosen account.
+    if (snowflakeAccountId) targetConfig.identity_id = snowflakeAccountId;
   }
 
   if (targetConfig.type === 'fabric') {

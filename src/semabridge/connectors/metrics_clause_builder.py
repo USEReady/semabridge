@@ -17,6 +17,11 @@ from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metri
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.utils.null_sentinel import is_null_cast_sql
+
+NULL_PLACEHOLDER_SQL = "CAST(NULL AS DOUBLE)"
+# Drop-ledger reason for a metric emitted as a NULL placeholder because its
+# DAX could not be translated; the original cause goes in the record detail.
+PLACEHOLDER_NOT_TRANSLATABLE = "placeholder: not translatable"
 from semabridge.connectors.type_safety_validator import (
     build_dataset_col_types,
     detect_date_numeric_type_mismatch,
@@ -236,17 +241,10 @@ class MetricsClauseBuilder:
                     for k in ["TOTALYTD", "SAMEPERIODLASTYEAR", "DATESYTD", "DATEADD", "PARALLELPERIOD", "MONTHINDEX", "RUNNING_YEAR", "COL_DATE.DATE_DATE", "_YTD", "_SPLY", "_R12M"]
                 )
             )
-            if is_ti and ds_fold in self.no_populated_date_link_datasets:
-                skipped_metric_names.add(metric.unique_name)
-                self.drop_ledger.record(
-                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                    "no populated date link on fact table",
-                    dataset=getattr(metric, "dataset", None),
-                )
-                continue
 
             alias = dataset_aliases.get(metric.dataset)
             if not alias:
+                # No home table in this view to hold even a NULL placeholder.
                 self.drop_ledger.record(
                     "metric", metric.unique_name, DropStage.DDL_EMISSION,
                     f"Metric's dataset '{metric.dataset}' has no TABLES alias in "
@@ -282,79 +280,48 @@ class MetricsClauseBuilder:
             metric_name = self._resolve_unique_metric_alias(metric_alias_seed, used_metric_names, metric.unique_name)
             expected_metrics.append((alias, metric_name, metric.unique_name))
 
-            expr = self._generate_metric_expression(
-                metric, metric_name, alias, dataset_by_name, dataset_aliases,
-                dataset_col_lookup, alias_by_raw, metric_name_set,
-                all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
-                fact_aliases=fact_aliases,
-                metric_to_alias=metric_to_alias,
-                dataset_col_types=dataset_col_types,
-                metric_shapes=metric_shapes,
-            )
-
-            if expr:
-                expr = normalize_snowflake_metric_sql(expr)
-
-            if expr and not self._is_scalar_metric_sql(expr):
-                logger.warning(
-                    "Skipping metric '%s': non-scalar SQL detected (SELECT/JOIN/CTE).",
-                    metric.unique_name,
+            # A metric whose DAX can't become valid metric SQL (for any
+            # reason) is emitted as a NULL placeholder on its home table —
+            # never dropped, so it can't fail the sync or cascade-drop the
+            # metrics that reference it. By-design exclusions stay excluded.
+            failure: Optional[Tuple[str, Optional[str]]] = None
+            expr: Optional[str] = None
+            if is_ti and ds_fold in self.no_populated_date_link_datasets:
+                failure = ("no populated date link on fact table", None)
+            else:
+                ledger_mark = len(self.drop_ledger.records)
+                expr = self._generate_metric_expression(
+                    metric, metric_name, alias, dataset_by_name, dataset_aliases,
+                    dataset_col_lookup, alias_by_raw, metric_name_set,
+                    all_physical_col_names, emittable_metric_name_set, skipped_metric_names, model_name, is_osi,
+                    fact_aliases=fact_aliases,
+                    metric_to_alias=metric_to_alias,
+                    dataset_col_types=dataset_col_types,
+                    metric_shapes=metric_shapes,
                 )
-                skipped_metric_names.add(metric.unique_name)
-                self.drop_ledger.record(
-                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                    "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
-                    "which Snowflake's semantic-view METRICS clause does not support.",
-                    dataset=getattr(metric, "dataset", None), detail=expr[:200] if expr else None,
-                )
-                continue
+                if expr:
+                    expr = normalize_snowflake_metric_sql(expr)
+                if not expr:
+                    failure = self._take_translation_failure(metric, ledger_mark)
+                    if failure is None:
+                        continue  # by-design exclusion: stays excluded
+                elif not self._is_scalar_metric_sql(expr):
+                    failure = (
+                        "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
+                        "which Snowflake's semantic-view METRICS clause does not support.",
+                        expr[:200],
+                    )
+                else:
+                    reason = (
+                        self._detect_untranslated_dax_syntax(expr)
+                        or detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
+                        or detect_nested_aggregate(expr)
+                    )
+                    if reason:
+                        failure = (reason, expr[:200])
 
-            if expr:
-                stray_dax_reason = self._detect_untranslated_dax_syntax(expr)
-                if stray_dax_reason:
-                    logger.warning(
-                        "Skipping metric '%s': %s",
-                        metric.unique_name, stray_dax_reason,
-                    )
-                    skipped_metric_names.add(metric.unique_name)
-                    self.drop_ledger.record(
-                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                        stray_dax_reason,
-                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
-                    )
-                    continue
-
-            if expr:
-                type_mismatch_reason = detect_date_numeric_type_mismatch(expr, dataset_aliases, dataset_col_types)
-                if type_mismatch_reason:
-                    logger.warning(
-                        "Skipping metric '%s': %s",
-                        metric.unique_name, type_mismatch_reason,
-                    )
-                    skipped_metric_names.add(metric.unique_name)
-                    self.drop_ledger.record(
-                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                        type_mismatch_reason,
-                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
-                    )
-                    continue
-
-            if expr:
-                nested_aggregate_reason = detect_nested_aggregate(expr)
-                if nested_aggregate_reason:
-                    logger.warning(
-                        "Skipping metric '%s': %s",
-                        metric.unique_name, nested_aggregate_reason,
-                    )
-                    skipped_metric_names.add(metric.unique_name)
-                    self.drop_ledger.record(
-                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                        nested_aggregate_reason,
-                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
-                    )
-                    continue
-
-            if expr:
+            metric_entity_alias = alias
+            if failure is None:
                 metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
                 valid_aliases_set = set(dataset_aliases.values())
                 ref_aliases = self._extract_referenced_table_aliases(expr, valid_aliases_set)
@@ -363,36 +330,45 @@ class MetricsClauseBuilder:
                     if not self._is_reachable_alias(relationship_graph, metric_entity_alias, ra)
                 ]
                 if unreachable_aliases:
-                    logger.warning(
-                        "Skipping metric '%s': references table alias(es) %s unreachable from anchor table '%s'.",
-                        metric.unique_name, unreachable_aliases, metric_entity_alias,
-                    )
-                    skipped_metric_names.add(metric.unique_name)
-                    self.drop_ledger.record(
-                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    failure = (
                         f"Unsupported (disconnected polymorphic selector): metric references table alias(es) {', '.join(sorted(unreachable_aliases))} that are not "
                         f"reachable from its anchor table entity '{metric_entity_alias}' via declared relationships.",
-                        dataset=getattr(metric, "dataset", None), detail=expr[:200],
+                        expr[:200],
                     )
-                    continue
+                    metric_entity_alias = alias
 
-                safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
-                if metric_name != safe_metric_name:
-                    logger.info(
-                        "METRIC DDL FIX: '%s' -> '%s'",
-                        metric_name,
-                        safe_metric_name,
-                    )
-                syns_to_emit = list(getattr(metric, "synonyms", []) or [])
-                if "CAST(NULL AS DOUBLE)" in expr or not getattr(metric, "sync_enabled", True):
-                    syns_to_emit = []
-
-                metrics_lines.append(
-                    f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
-                    f'{synonyms_clause(syns_to_emit)}'
+            if failure is not None:
+                reason, detail = failure
+                logger.warning(
+                    "Emitting metric '%s' on '%s' as NULL placeholder (not translatable): %s",
+                    metric.unique_name, alias, reason,
                 )
-                metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
-                emittable_metric_name_set.add(self.identifier_sanitizer.sanitize_alias(metric.unique_name))
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DAX_TRANSLATION,
+                    PLACEHOLDER_NOT_TRANSLATABLE,
+                    dataset=getattr(metric, "dataset", None),
+                    detail=f"{reason}" + (f" | {detail}" if detail else ""),
+                )
+                expr = NULL_PLACEHOLDER_SQL
+                skipped_metric_names.discard(metric.unique_name)
+
+            safe_metric_name = self.identifier_sanitizer.sanitize_column(metric_name)
+            if metric_name != safe_metric_name:
+                logger.info(
+                    "METRIC DDL FIX: '%s' -> '%s'",
+                    metric_name,
+                    safe_metric_name,
+                )
+            syns_to_emit = list(getattr(metric, "synonyms", []) or [])
+            if "CAST(NULL AS DOUBLE)" in expr or not getattr(metric, "sync_enabled", True):
+                syns_to_emit = []
+
+            metrics_lines.append(
+                f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
+                f'{synonyms_clause(syns_to_emit)}'
+            )
+            metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
+            emittable_metric_name_set.add(self.identifier_sanitizer.sanitize_alias(metric.unique_name))
 
         # Map every DDL-visible metric name back to its original unique_name +
         # dataset, so drops detected below (line removed between before/after
@@ -410,6 +386,7 @@ class MetricsClauseBuilder:
             ddl_name_to_dataset[_safe] = getattr(_owner, "dataset", None) if _owner else None
 
         # Pruning and Fallbacks...
+        self._null_propagated = {}
         pre_prune_lines = list(metrics_lines)
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
         self._record_removed_metric_lines(
@@ -427,6 +404,14 @@ class MetricsClauseBuilder:
             pre_prune_lines, metrics_lines, ddl_name_to_unique, ddl_name_to_dataset,
             "Metric references an unmapped, dropped, or invalid metric and failed closed.",
         )
+
+        for ddl_name, ref_name in sorted(self._null_propagated.items()):
+            self.drop_ledger.record(
+                "metric", ddl_name_to_unique.get(ddl_name, ddl_name), DropStage.DAX_TRANSLATION,
+                PLACEHOLDER_NOT_TRANSLATABLE,
+                dataset=ddl_name_to_dataset.get(ddl_name),
+                detail=f"depends on placeholder metric {ref_name}",
+            )
 
         # OSI Fallback Loop
         if is_osi:
@@ -453,6 +438,23 @@ class MetricsClauseBuilder:
             final_metrics_lines.append(f"{line}{comma}")
 
         return final_metrics_lines
+
+    def _take_translation_failure(self, metric: Any, ledger_mark: int) -> Optional[Tuple[str, Optional[str]]]:
+        """Why this metric produced no SQL, taken back out of the drop ledger.
+
+        _generate_metric_expression records a drop for every metric it gives
+        up on; those records are replaced by one placeholder record. Returns
+        None for a by-design exclusion (left in the ledger, metric stays out).
+        """
+        records = self.drop_ledger.records
+        mine = [r for r in records[ledger_mark:] if r.entity_name == metric.unique_name]
+        if any(getattr(r, "by_design", False) for r in mine):
+            return None
+        for record in mine:
+            records.remove(record)
+        reason = "; ".join(r.reason for r in mine) or "DAX translation produced no SQL"
+        detail = next((r.detail for r in mine if r.detail), None)
+        return reason, detail
 
     @staticmethod
     def _names_in_lines(lines: List[str]) -> Set[str]:
@@ -1381,19 +1383,27 @@ class MetricsClauseBuilder:
                 refs = set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
                 metric_refs = [r for r in refs if r in metric_name_set and r != name]
 
-                # 1. Fail-closed: check if any referenced metric is missing or invalid/null
+                # 1. Fail-closed: a reference to an undefined metric removes
+                # the line; a reference to a NULL placeholder makes this
+                # metric a NULL placeholder too (NULL propagates) instead.
                 unresolved_or_invalid = False
+                null_ref = None
                 for r in metric_refs:
                     if r not in defined:
                         unresolved_or_invalid = True
                         break
                     r_expr = expr_by_name.get(r)
                     if not r_expr or "CAST(NULL AS" in r_expr.upper() or r_expr.strip().upper() == "NULL":
-                        unresolved_or_invalid = True
-                        break
+                        null_ref = null_ref or r
 
                 if unresolved_or_invalid:
                     removed = True
+                    continue
+
+                if null_ref and expr.strip().upper() != NULL_PLACEHOLDER_SQL:
+                    self.__dict__.setdefault("_null_propagated", {})[name] = null_ref
+                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL}')
+                    rewritten = True
                     continue
 
                 # 2. Inline valid referenced metrics that haven't been inlined into this line yet

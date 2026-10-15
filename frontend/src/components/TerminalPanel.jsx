@@ -5,7 +5,7 @@ export default function TerminalPanel() {
     const [isOpen, setIsOpen] = useState(true);
     const [messages, setMessages] = useState([
         { type: 'info', text: 'Vite v7.3.1 ready in 5695 ms', time: '18:15:03' },
-        { type: 'info', text: '➜ Local: http://localhost:5173/', time: '18:15:03' },
+        { type: 'info', text: '➜ Local: http://localhost:5180/', time: '18:15:03' },
         { type: 'success', text: 'FastAPI backend connected at http://localhost:8000', time: '18:16:12' },
         { type: 'warning', text: 'Snowflake connection established with read-only permissions.', time: '18:20:45' },
     ]);

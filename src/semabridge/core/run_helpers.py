@@ -52,6 +52,31 @@ def normalize_sync_mode(value: Any) -> Optional[str]:
     return mode if mode in {"copy", "upsert"} else None
 
 
+def sync_mode_from_project_config(config: Any) -> Optional[str]:
+    """Sync mode selected in a project configuration, or ``None`` if unset.
+
+    *config* is the project YAML (text or parsed dict). The project
+    configuration page saves the choice as ``options.write_strategy``;
+    a top-level ``sync_mode`` / ``write_strategy`` is honoured too.
+    """
+    if isinstance(config, str):
+        try:
+            import yaml
+
+            config = yaml.safe_load(config)
+        except Exception:
+            return None
+    if not isinstance(config, dict):
+        return None
+    options = config.get("options") if isinstance(config.get("options"), dict) else {}
+    for value in (options.get("write_strategy"), options.get("sync_mode"),
+                  config.get("sync_mode"), config.get("write_strategy")):
+        mode = normalize_sync_mode(value)
+        if mode:
+            return mode
+    return None
+
+
 def resolve_run_status(sync_result: Dict[str, Any]) -> str:
     """Map a sync-result payload to a canonical run-status string.
 
