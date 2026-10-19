@@ -239,6 +239,7 @@ class ExecutionEngine:
             )
             context.config_path = config_path
             context.config_payload = config_dict
+            context.dry_run = bool(dry_run)
             if dry_run:
                 # Dry runs are previews, not runs: tag the row so run
                 # listings can leave it out.
@@ -387,8 +388,10 @@ class ExecutionEngine:
 
                 context.table_binding_plan = preview_table_bindings(context)
 
-            # Step 8: Convert to Target Format (Optional)
-            if target and not dry_run:
+            # Step 8: Convert to Target Format (Optional). A Snowflake dry
+            # run builds the DDL too (read-only, against the live schema) so
+            # its preview reports exactly what the sync would.
+            if target and (not dry_run or target == "snowflake"):
                 self._step8_convert_to_target(context)
             else:
                 self._record_step(8, StepStatus.SKIPPED, "No target or dry run")
@@ -464,7 +467,7 @@ class ExecutionEngine:
         if status_text == "FAILED":
             logger.error(log_msg)
         elif status_text == "SKIPPED":
-            logger.warning(log_msg)
+            logger.info(log_msg)
         else:
             logger.info(log_msg)
 

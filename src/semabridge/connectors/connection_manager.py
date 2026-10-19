@@ -160,7 +160,7 @@ class SnowflakeConnectionManager:
         quoted_col = self._quote_ident(column)
         sql = f"SELECT DISTINCT {quoted_col} FROM {qualified} WHERE {quoted_col} IS NOT NULL LIMIT {int(limit)}"
         try:
-            self._execute_sql(cursor, sql, context=f"sample_values[{table}.{column}]")
+            self._execute_sql(cursor, sql, context=f"sample_values[{table}.{column}]", expected_failure=True)
             rows = cursor.fetchall()
         except Exception as exc:
             logger.debug("Sample-value fetch failed for %s.%s: %s", table, column, exc)
@@ -174,8 +174,12 @@ class SnowflakeConnectionManager:
         params: Optional[tuple[Any, ...]] = None,
         *,
         context: str = "SQL",
+        expected_failure: bool = False,
     ) -> Any:
         """Log and execute a Snowflake statement in one place.
+
+        expected_failure: the caller handles a failure (best-effort lookups),
+        so it's logged at DEBUG instead of ERROR.
 
         This wrapper adds richer session context to logs and provides
         targeted hints for common failures (e.g. SHOW TABLES against a
@@ -231,7 +235,12 @@ class SnowflakeConnectionManager:
             if hint:
                 message = f"{message} -- HINT: {hint}"
 
-            logger.error(message, exc_info=True)
+            # No traceback here: the error is re-raised with its cause chained,
+            # and whoever doesn't handle it records it.
+            if expected_failure:
+                logger.debug(message)
+            else:
+                logger.error(message)
             raise ConnectorError(message) from exc
 
     def _execute_with_retry(

@@ -7,9 +7,10 @@ Resolves model datasets to live physical tables purely from:
 4. Bindings saved by an earlier successful sync of the same project/model
    (LiveSchemaMetadata.pinned_bindings), so every later sync binds the same way
 
-Among tables with equal column compatibility the order is deterministic: a
-populated table before an empty one (EMPTY_TABLE_MAX_ROWS), then the better
-name match, then more rows, then table name.
+The binding never depends on table data (row counts or contents). Order:
+explicit mapping, saved binding, the table named exactly like the PBIX table,
+then the best column-set match. If two tables still tie, the sync stops with
+TableBindingAmbiguityError listing them.
 
 No hardcoded table names or model names in code or configs!
 """
@@ -20,14 +21,23 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 
-# A table with at most this many rows counts as empty when breaking binding
-# ties: stub tables left by earlier syncs hold a single placeholder row
-# (e.g. ZIP='Sample_Zip'), and must never win over the populated table.
-EMPTY_TABLE_MAX_ROWS = 1
+AMBIGUOUS_TABLE_BINDING = "Ambiguous table binding"
 
 
-def _is_empty(row_count: Optional[int]) -> bool:
-    return row_count is not None and row_count <= EMPTY_TABLE_MAX_ROWS
+class TableBindingAmbiguityError(ValueError):
+    """Two or more tables match a dataset equally well by name and columns.
+
+    The sync stops: the user saves a binding (or maps the table explicitly)
+    rather than SemaBridge guessing from table contents.
+    """
+
+    def __init__(self, dataset_name: str, candidates: List[str]):
+        self.dataset_name = dataset_name
+        self.candidates = list(candidates)
+        super().__init__(
+            f"{AMBIGUOUS_TABLE_BINDING} for '{dataset_name}': {', '.join(self.candidates)} "
+            f"match equally by name and columns. Map the table explicitly or save a binding."
+        )
 
 
 class LiveSchemaMetadata(dict):
@@ -43,7 +53,7 @@ class LiveSchemaMetadata(dict):
         super().__init__(*args, **kwargs)
         # clean_ident(dataset) -> physical table saved by an earlier sync.
         self.pinned_bindings: Dict[str, str] = {}
-        # TABLE (upper) -> row count, for tie-breaking.
+        # Kept for callers that still read it; never used to bind.
         self.row_counts: Dict[str, int] = {}
         # clean_ident(dataset) -> {dataset, table, matched_by, tie}
         self.binding_log: Dict[str, Dict[str, Any]] = {}
@@ -155,19 +165,9 @@ def rank_table_candidates(
             "col_compat": col_compat,
         })
 
-    # Rank by column compatibility; among equally compatible tables: populated
-    # before empty, then name match score, then more rows (unknown counts
-    # last), then table name — fully deterministic.
-    row_counts = getattr(live_schema_metadata, "row_counts", None) or {}
-    for candidate in candidates:
-        candidate["row_count"] = row_counts.get(candidate["table"].upper())
-    candidates.sort(key=lambda x: (
-        -x["col_compat"],
-        _is_empty(x["row_count"]),
-        -x["name_score"],
-        -(x["row_count"] if x["row_count"] is not None else -1),
-        x["table"],
-    ))
+    # Rank by column compatibility, then name match; table name only orders
+    # the list (an equal top rank is an ambiguity, see resolve below).
+    candidates.sort(key=lambda x: (-x["col_compat"], -x["name_score"], x["table"]))
     return candidates
 
 
@@ -198,9 +198,10 @@ def resolve_dataset_to_physical_table(
     """Resolve a dataset to its canonical live physical table dynamically.
 
     Order: explicit mapping, then the binding saved by an earlier sync of
-    this project/model (if that table still exists), then the best existing
+    this project/model (if that table still exists), then the table named
+    exactly like the dataset (if its columns match), then the best existing
     table by columns (>= 0.8) or normalized name. Otherwise the table counts
-    as missing.
+    as missing. Raises TableBindingAmbiguityError when the best match is tied.
     """
     if explicit_mapping and dataset_name in explicit_mapping:
         return explicit_mapping[dataset_name]
@@ -219,25 +220,31 @@ def resolve_dataset_to_physical_table(
 
     candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata)
 
+    exact = [
+        c for c in candidates
+        if c["table"].upper() == str(dataset_name).upper() and c["col_compat"] >= 0.8
+    ]
+    if exact:
+        _log_binding(live_schema_metadata, dataset_name, exact[0]["table"], "exact name")
+        return exact[0]["table"]
+
     if candidates and _is_viable(candidates[0]):
         best = candidates[0]
-        # Equally compatible tables whose names also relate to the dataset:
-        # the choice between them is a tie worth showing in the dry run.
         tied = [
-            {"table": c["table"], "row_count": c["row_count"]}
-            for c in candidates
-            if c["col_compat"] == best["col_compat"] and (c is best or c["name_score"] > 0)
+            c["table"] for c in candidates
+            if c["col_compat"] == best["col_compat"] and c["name_score"] == best["name_score"]
         ]
+        if len(tied) > 1:
+            raise TableBindingAmbiguityError(dataset_name, tied)
         logger.debug(
-            "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d, tie=%s)",
-            dataset_name, best["table"], best["col_compat"], best["name_score"], tied,
+            "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d)",
+            dataset_name, best["table"], best["col_compat"], best["name_score"],
         )
         _log_binding(
             live_schema_metadata,
             dataset_name,
             best["table"],
             "columns" if best["col_compat"] >= 0.8 else "name",
-            tied if len(tied) > 1 else [],
         )
         return best["table"]
 

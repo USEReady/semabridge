@@ -148,6 +148,7 @@ def test_flagged_metric_still_gets_nulled_at_deploy_time_exactly_as_before(monke
     monkeypatch.setattr(emitter.connection_manager, "get_connection", lambda: (fake_conn, True))
     monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_duplicate_mappings", lambda *a, **k: None)
     monkeypatch.setattr(emitter.schema_manager, "refresh_schema_cache", lambda: None)
+    monkeypatch.setattr(emitter.schema_manager, "_ensure_schema_exists", lambda cur: None)
     monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {"DUMMY": set()})
 
     # A single DDL statement, standing in for the real generate_ddls()

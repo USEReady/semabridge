@@ -54,6 +54,16 @@ class MissingSourceTableWarning(UserWarning):
     pass
 
 
+LIVE_SCHEMA_UNAVAILABLE = "Live Snowflake schema unavailable"
+
+
+class LiveSchemaUnavailableError(ConnectorError):
+    """The live Snowflake schema could not be loaded. A run or dry run must
+    stop on this: DDL built without the live schema would bind the wrong
+    tables, drop live-only columns and turn time-intelligence metrics into
+    NULL placeholders for reasons that have nothing to do with the DAX."""
+
+
 class _NamespacedPbixTableReader:
     """PBIXRay proxy translating namespaced target table names back to the
     PBIX's own table names (see SnowflakeEmitter._run_source_data_backfill)."""
@@ -436,8 +446,12 @@ class SnowflakeEmitter(BaseEmitter):
                 if not sf_meta:
                     datasets = list(getattr(model, "datasets", []) or [])
                     sf_meta = self.schema_manager._fetch_model_table_metadata(cur, datasets)
-                self._live_schema_metadata.update(sf_meta or {})
-                self.schema_manager._load_row_counts(cur)
+                if not sf_meta:
+                    raise LiveSchemaUnavailableError(
+                        f"{LIVE_SCHEMA_UNAVAILABLE}: no tables found in "
+                        f"{self.config.database}.{self.config.schema_name}"
+                    )
+                self._live_schema_metadata.update(sf_meta)
 
                 # Step 1.6: Opt-in data-backfill (options.load_source_data,
                 # see core/engine/config.py's _step1_load_config). Off by
@@ -772,26 +786,8 @@ class SnowflakeEmitter(BaseEmitter):
                     else:
                         ddls = self.semantic_view_builder.generate_ddls(model)
 
-                # Pre-pass B: DROP existing semantic views before (re)creating them.
-                # Snowflake error 002057 fires when a CREATE OR REPLACE SEMANTIC VIEW
-                # changes the number of declared columns vs the existing view definition.
-                # Dropping first eliminates that constraint entirely.
-                for _s in ddls:
-                    if not _s:
-                        continue
-                    _upper = _s.upper()
-                    if "CREATE" in _upper and "SEMANTIC VIEW" in _upper:
-                        _vm = _re_drop.search(
-                            r'CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+"?(\w+)"?',
-                            _s, _re_drop.IGNORECASE,
-                        )
-                        if _vm:
-                            _drop_sql = f'DROP SEMANTIC VIEW IF EXISTS "{_vm.group(1)}"'
-                            try:
-                                self.connection_manager._execute_sql(cur, _drop_sql, context="pre-drop-semantic-view")
-                                logger.info("Pre-dropped semantic view '%s' before recreation", _vm.group(1))
-                            except Exception as _drop_exc:
-                                logger.warning("Pre-drop of semantic view '%s' failed (non-fatal): %s", _vm.group(1), _drop_exc)
+                # No pre-drop: CREATE OR REPLACE SEMANTIC VIEW replaces the view
+                # atomically, so a failed create leaves the existing view in place.
 
                 # Tracked so that if this loop fails partway through, the
                 # outer exception handler can report an honest "N of M
@@ -1278,11 +1274,28 @@ class SnowflakeEmitter(BaseEmitter):
             values: list = []
             ds = next((d for d in sml.datasets if d.unique_name == dataset_unique_name), None)
             if ds is not None and column:
-                safe_table = self._safe_table_name(ds.source_table or ds.unique_name)
-                safe_column = self._sanitize_col_name(column)
-                values = self.connection_manager.fetch_distinct_sample_values(
-                    cur, self.config.database, self.config.schema_name, safe_table, safe_column,
+                # The bound physical table and column -- the same names the
+                # semantic view uses -- never the model's own names.
+                from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+
+                source_table_mapping = {
+                    k: v for k, v in (self._get_source_table_mapping() or {}).items()
+                    if "_ENRICHED" not in str(v).upper()
+                }
+                bound_table = resolve_dataset_to_physical_table(
+                    ds.unique_name,
+                    [c.unique_name for c in getattr(ds, "columns", []) or []],
+                    self._live_schema_metadata,
+                    explicit_mapping=source_table_mapping,
+                    model_name=getattr(sml, "unique_name", None),
                 )
+                safe_table = self._safe_table_name(bound_table)
+                safe_column = self.schema_manager._resolve_physical_column_name(ds, column, model=sml)
+                live_cols = {str(c).upper() for c in self._live_schema_metadata.get(safe_table.upper(), set())}
+                if safe_column and (not live_cols or safe_column.upper() in live_cols):
+                    values = self.connection_manager.fetch_distinct_sample_values(
+                        cur, self.config.database, self.config.schema_name, safe_table, safe_column,
+                    )
             cache[key] = values
             return values
 
@@ -1556,6 +1569,103 @@ class SnowflakeEmitter(BaseEmitter):
             with self._physical_namespace_scope(model):
                 return self.schema_manager.plan_source_tables(cur, model)
         finally:
+            if owns_conn:
+                conn.close()
+
+    def generate_ddls_live(self, model: Any) -> list[str]:
+        """Read-only: build this model's DDLs against the live Snowflake schema
+        (saved table bindings, real columns, enriched-view flag columns) the
+        way a deploy builds them, without creating or altering anything.
+
+        Raises LiveSchemaUnavailableError when the live schema can't be
+        loaded (no connection, bad credentials, missing database/schema, or
+        no tables) -- never falls back to a schema-less build.
+        """
+        self._live_schema_metadata.clear()
+        self.drop_ledger.clear()
+        self.translator.anchor_flag_map.clear()
+        self._enriched_view_mapping.clear()
+        self._failed_enrichment_datasets.clear()
+        self._load_saved_bindings()
+        target = f"{self.config.database}.{self.config.schema_name}"
+        try:
+            conn, owns_conn = self.connection_manager.get_connection()
+        except Exception as exc:
+            raise LiveSchemaUnavailableError(
+                f"{LIVE_SCHEMA_UNAVAILABLE}: could not connect to {target}: {exc}"
+            ) from exc
+        try:
+            cur = conn.cursor()
+            with self._physical_namespace_scope(model):
+                self._model = model
+                self.semantic_view_builder.cursor = cur
+                try:
+                    self.schema_manager.refresh_schema_cache()
+                    sf_meta = self.schema_manager._fetch_schema_metadata(cur)
+                    if not sf_meta:
+                        sf_meta = self.schema_manager._fetch_model_table_metadata(
+                            cur, list(getattr(model, "datasets", []) or [])
+                        )
+                except Exception as exc:
+                    raise LiveSchemaUnavailableError(
+                        f"{LIVE_SCHEMA_UNAVAILABLE}: could not read {target}: {exc}"
+                    ) from exc
+                if not sf_meta:
+                    raise LiveSchemaUnavailableError(
+                        f"{LIVE_SCHEMA_UNAVAILABLE}: no tables found in {target}"
+                    )
+                self._live_schema_metadata.update(sf_meta)
+                self.semantic_view_builder._precompute_duplicate_mappings(model)
+
+                # Same order as the deploy: re-anchor metrics on the right
+                # fact first, then pre-render with the predicted flag map, so
+                # the fact tables planned for enrichment are the deploy's.
+                self._reanchor_disconnected_fact_metrics(model)
+                from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
+                from semabridge.converter.dax_translator import DAXTranslator as _DAXTranslator
+
+                predicted_map = self.predict_anchor_flag_map(model)
+                if predicted_map:
+                    self.translator.anchor_flag_map.update(predicted_map)
+                    _dataset_col_lookup, _dataset_aliases = _DAXTranslator.build_schema_lookup(
+                        getattr(model, "datasets", []) or []
+                    )
+                    rerender_anchor_dependent_metrics(
+                        model,
+                        self.translator.anchor_flag_map,
+                        _dataset_col_lookup,
+                        _dataset_aliases,
+                        label="predicted_deploy",
+                    )
+
+                # Enriched views as a deploy would build them (dry_run: nothing
+                # is created). Planning notes it records aren't drops of the
+                # semantic view -- a deploy doesn't report them either -- so
+                # they're discarded.
+                planned_from = len(self.drop_ledger.records)
+                if getattr(self.sf_behavior, "auto_create_enriched_view", False):
+                    for fact_table in self._get_fact_tables_needing_enrichment(model):
+                        planned = self._create_enriched_view(model, cur, fact_table=fact_table, dry_run=True)
+                        if planned and getattr(self.sf_behavior, "use_enriched_view_for_metrics", False):
+                            self._enriched_view_mapping[fact_table] = planned[0]
+                        else:
+                            self._failed_enrichment_datasets.add(fact_table)
+                            self._failed_enrichment_datasets.add(fact_table.casefold())
+                del self.drop_ledger.records[planned_from:]
+
+                _dataset_col_lookup, _dataset_aliases = _DAXTranslator.build_schema_lookup(
+                    getattr(model, "datasets", []) or []
+                )
+                rerender_anchor_dependent_metrics(
+                    model,
+                    self.translator.anchor_flag_map,
+                    _dataset_col_lookup,
+                    _dataset_aliases,
+                    label="confirmed",
+                )
+                return self.semantic_view_builder.generate_ddls(model)
+        finally:
+            self.semantic_view_builder.cursor = None
             if owns_conn:
                 conn.close()
 
@@ -2830,7 +2940,7 @@ class SnowflakeEmitter(BaseEmitter):
     ) -> Optional[str]:
         path = self._find_relationship_path(model, target_dataset, source_dataset)
         if not path:
-            logger.warning(
+            logger.info(
                 "No active relationship path from %s to %s; cannot precompute %s.%s",
                 target_dataset,
                 source_dataset,
@@ -2893,7 +3003,7 @@ class SnowflakeEmitter(BaseEmitter):
                 f"Join from '{target_dataset}' to '{source_dataset}' is not PK-safe and would duplicate fact rows (fan-out); dropped column '{precomputed_column}'",
                 dataset=target_dataset,
             )
-            logger.warning(
+            logger.info(
                 "Dropped precomputed column '%s' on '%s': join to '%s' is not PK-safe and would fan out fact rows",
                 precomputed_column, target_dataset, source_dataset,
             )
@@ -3061,20 +3171,6 @@ class SnowflakeEmitter(BaseEmitter):
             }
         projected_cols: set[str] = set()
 
-        from semabridge.connectors.ddl_helpers import format_scalar_sql_literal
-
-        def _fetch_literal(sql: str) -> Optional[str]:
-            # Snowflake rejects subqueries embedded inside CREATE VIEW column
-            # expressions; these anchors have no per-row dependency, so fetch
-            # them once here and splice in the literal result instead.
-            try:
-                self.connection_manager._execute_sql(cursor, sql, context="fetch-anchor-literal")
-                row = cursor.fetchone()
-                return format_scalar_sql_literal(row[0] if row else None)
-            except Exception as exc:
-                logger.warning("Could not precompute enriched-view anchor value (%s): %s", sql[:80], exc)
-                return None
-
         select_parts = [f"SELECT f.*"]
 
         # Shared across every precomputed column below so that columns
@@ -3104,7 +3200,11 @@ class SnowflakeEmitter(BaseEmitter):
             if projection:
                 select_parts.append(projection)
                 projected_cols.add(detail["precomputed_column"].upper())
-        # Add YTD anchor
+        # Anchors: computed inside the view by a one-row join over the data
+        # (never a literal fixed at sync time), so the view's SQL depends only
+        # on the model and the schema. An empty or all-NULL date column falls
+        # back to CURRENT_DATE() at query time.
+        anchor_joins: list[str] = []
         if date_info and self._is_fact_table_date_eligible(model, fact_table, date_info[0], date_info[1], fact_cols):
             date_table, date_col, fiscal_col = date_info
             source_table_mapping = self._get_source_table_mapping()
@@ -3129,79 +3229,27 @@ class SnowflakeEmitter(BaseEmitter):
                 resolved_date_col = self._id.sanitize_column(date_col)
                 resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
 
-            # Probe date anchor in order:
-            # (a) fact table's own date column (or via relationship join if all-NULL/key)
-            # (b) populated DATE/TIMESTAMP column on the fact table with non-NULL values
-            # (c) date dimension or related date tables in model with non-NULL values
-            max_date_literal = None
+            # The fact's own date column (schema-based): the modelled one, else
+            # the first date-named column of the fact.
+            fact_date_col = self._resolve_fact_enrichment_date_column(model, fact_table)
+            if not fact_date_col and resolved_date_col in fact_cols:
+                fact_date_col = resolved_date_col
+            if not fact_date_col:
+                fact_date_col = next(
+                    (
+                        _fc for _fc in sorted(fact_cols)
+                        if any(_t in _fc.upper() for _t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR"])
+                    ),
+                    None,
+                )
 
-            # 1. Direct probe on fact table
-            if resolved_date_col in fact_cols:
-                max_date_literal = _fetch_literal(f'SELECT MAX("{resolved_date_col}") FROM {fact_source_ref} WHERE "{resolved_date_col}" IS NOT NULL')
-
-            # 2. Relationship join probe if direct probe returned NULL
-            if max_date_literal is None or str(max_date_literal).strip().upper() == "NULL":
-                for rel in getattr(model, "relationships", []) or []:
-                    from_ds = getattr(rel, "from_dataset", "")
-                    to_ds = getattr(rel, "to_dataset", "")
-                    if (from_ds == fact_table and to_ds == date_table) or (to_ds == fact_table and from_ds == date_table):
-                        fact_rel_col = getattr(rel, "from_column", None) or (getattr(rel, "from_columns", []) or [None])[0] if from_ds == fact_table else getattr(rel, "to_column", None) or (getattr(rel, "to_columns", []) or [None])[0]
-                        date_rel_col = getattr(rel, "to_column", None) or (getattr(rel, "to_columns", []) or [None])[0] if from_ds == fact_table else getattr(rel, "from_column", None) or (getattr(rel, "from_columns", []) or [None])[0]
-                        if fact_rel_col and date_rel_col:
-                            f_col_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, fact_rel_col, model=model) if fact_dataset else self._id.sanitize_column(fact_rel_col)
-                            d_col_phys = self.schema_manager._resolve_physical_column_name(date_dataset, date_rel_col, model=model) if date_dataset else self._id.sanitize_column(date_rel_col)
-                            if f_col_phys in fact_cols:
-                                target_d_col = resolved_date_col
-                                if date_dataset:
-                                    target_d_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_rel_col, model=model) or resolved_date_col
-                                join_sql = f'SELECT MAX(d."{target_d_col}") FROM {fact_source_ref} f JOIN {date_table_ref} d ON f."{f_col_phys}" = d."{d_col_phys}" WHERE d."{target_d_col}" IS NOT NULL'
-                                max_date_literal = _fetch_literal(join_sql)
-                                if max_date_literal is not None and str(max_date_literal).strip().upper() != "NULL":
-                                    break
-
-            # 3. Probe any populated DATE/TIMESTAMP column on fact table
-            if max_date_literal is None or str(max_date_literal).strip().upper() == "NULL":
-                for col_name in sorted(fact_cols):
-                    if any(t in col_name.upper() for t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR", "YR"]):
-                        candidate_literal = _fetch_literal(f'SELECT MAX("{col_name}") FROM {fact_source_ref} WHERE "{col_name}" IS NOT NULL')
-                        if candidate_literal is not None and str(candidate_literal).strip().upper() != "NULL":
-                            max_date_literal = candidate_literal
-                            resolved_date_col = col_name
-                            break
-
-            # Ensure resolved_date_col is identified if available
-            if not resolved_date_col:
-                fact_date_cand = self._resolve_fact_enrichment_date_column(model, fact_table)
-                if fact_date_cand and fact_date_cand in fact_cols:
-                    resolved_date_col = fact_date_cand
-                else:
-                    for _fc in sorted(fact_cols):
-                        if any(_t in _fc.upper() for _t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR", "YR"]):
-                            resolved_date_col = _fc
-                            break
-
-            # Probe 4: If no fact rows join to populated date values, fall back to CURRENT_DATE() if date column exists
-            if max_date_literal is None or str(max_date_literal).strip().upper() == "NULL":
-                if resolved_date_col:
-                    logger.info(
-                        "Date anchor MAX('%s') for fact dataset '%s' evaluated to NULL (empty table or NULL dates); "
-                        "falling back to CURRENT_DATE() anchor for enriched view.",
-                        resolved_date_col,
-                        fact_table,
-                    )
-                    max_date_literal = "CURRENT_DATE()"
-                else:
-                    logger.warning(
-                        "No populated date link or date column found for fact dataset '%s'; marking dataset as having no usable dates.",
-                        fact_table,
-                    )
-                    self.no_populated_date_link_datasets.add(str(fact_table).casefold())
-                    if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
-                        self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
-
-
-            if max_date_literal is not None and str(max_date_literal).strip().upper() != "NULL":
-                select_parts.append(f'\n            , {max_date_literal} AS "MAX_DATE"')
+            if fact_date_col:
+                anchor_joins.append(
+                    f'CROSS JOIN (SELECT COALESCE(MAX("{fact_date_col}"), CURRENT_DATE()) AS "MAX_DATE" '
+                    f'FROM {fact_source_ref}) anchor_max'
+                )
+                max_date_sql = 'anchor_max."MAX_DATE"'
+                select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
                 projected_cols.add("MAX_DATE")
 
                 from semabridge.converter.time_intelligence_shapes import (
@@ -3211,25 +3259,22 @@ class SnowflakeEmitter(BaseEmitter):
                 )
 
                 shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
-                fact_date_col = self._resolve_fact_enrichment_date_column(model, fact_table) or resolved_date_col
-                if fact_date_col not in fact_cols:
-                    for _fc in sorted(fact_cols):
-                        if any(_t in _fc.upper() for _t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR"]):
-                            fact_date_col = _fc
-                            break
                 fact_date_col_sql = f'f."{fact_date_col}"'
                 new_flag_map = {}
                 for shape in sorted(shapes):
                     flag_name = flag_column_name(shape)
-                    flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_literal)
+                    flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_sql)
                     select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
                     projected_cols.add(flag_name)
                     new_flag_map[shape] = flag_name
             else:
-                logger.warning(
-                    "Date anchor MAX('%s') for dataset '%s' evaluated to NULL; skipping anchor flags for this dataset.",
-                    resolved_date_col, fact_table
+                logger.info(
+                    "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
+                    fact_table,
                 )
+                self.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
+                    self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
 
             date_source_key = self._id.sanitize_table_name(
                 (date_dataset.source_table or date_dataset.unique_name) if date_dataset else date_table
@@ -3244,16 +3289,16 @@ class SnowflakeEmitter(BaseEmitter):
                     for c in getattr(date_dataset, "columns", []) or []
                     if getattr(c, "unique_name", None)
                 }
-            if resolved_fiscal_col in date_cols and resolved_date_col in date_cols:
-                fiscal_period_literal = _fetch_literal(
-                    f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
-                    f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
+            if resolved_fiscal_col in date_cols and resolved_date_col in date_cols and resolved_fiscal_col != resolved_date_col:
+                anchor_joins.append(
+                    f'CROSS JOIN (SELECT MAX("{resolved_fiscal_col}") AS "_CURRENT_FISCAL_PERIOD" '
+                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" = CURRENT_DATE()) anchor_fiscal'
                 )
-                if fiscal_period_literal is not None and str(fiscal_period_literal).strip().upper() != "NULL":
-                    select_parts.append(f'\n            , {fiscal_period_literal} AS "_CURRENT_FISCAL_PERIOD"')
-                    projected_cols.add("_CURRENT_FISCAL_PERIOD")
-        
+                select_parts.append('\n            , anchor_fiscal."_CURRENT_FISCAL_PERIOD" AS "_CURRENT_FISCAL_PERIOD"')
+                projected_cols.add("_CURRENT_FISCAL_PERIOD")
+
         select_parts.append(f"FROM {fact_source_ref} f")
+        select_parts.extend(anchor_joins)
         select_parts.extend(join_state.get("clauses", []))
 
         create_view_sql = "\n".join(select_parts)
@@ -3290,55 +3335,9 @@ class SnowflakeEmitter(BaseEmitter):
         try:
             self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")
 
-            # Fan-out check: verify row count and SUM of additive columns equal to the base table
-            self.connection_manager._execute_sql(cursor, f'SELECT COUNT(*) FROM {fact_source_ref}', context="fan-out-check-base-count")
-            base_count = cursor.fetchone()[0]
-            self.connection_manager._execute_sql(cursor, f'SELECT COUNT(*) FROM "{self.config.database}"."{self.config.schema_name}"."{enriched_view_name}"', context="fan-out-check-view-count")
-            view_count = cursor.fetchone()[0]
-            if base_count != view_count:
-                raise ValueError(f"Fan-out detected in enriched view {enriched_view_name}: base rows={base_count}, view rows={view_count}")
-            logger.info("✅ Fan-out check passed for %s: row count matches (%s rows)", enriched_view_name, base_count)
-
-            # Check additive columns (prioritize numeric/measure terms; never ID or date columns)
-            preferred_terms = ["UNITS", "REVENUE", "AMOUNT", "QTY", "QUANTITY", "COST", "SPEND", "VALUE"]
-            candidate_additive = [
-                c for c in sorted(fact_cols)
-                if not c.upper().endswith("_ID") and not c.upper().endswith("ID") and c.upper() != "ID"
-                and not any(term in c.upper() for term in ["DATE", "TIME", "DAY", "MONTH", "YEAR"])
-            ]
-            preferred = [c for c in candidate_additive if any(t in c.upper() for t in preferred_terms)]
-            others = [c for c in candidate_additive if c not in preferred]
-            ordered_additive = preferred + others
-
-            checked_count = 0
-            for add_col in ordered_additive:
-                if checked_count >= 3:
-                    break
-                try:
-                    self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM {fact_source_ref}', context="fan-out-check-base-sum")
-                    base_sum = cursor.fetchone()[0]
-                    self.connection_manager._execute_sql(cursor, f'SELECT SUM("{add_col}") FROM "{self.config.database}"."{self.config.schema_name}"."{enriched_view_name}"', context="fan-out-check-view-sum")
-                    view_sum = cursor.fetchone()[0]
-                    checked_count += 1
-                    if base_sum is not None and view_sum is not None:
-                        try:
-                            f_base = float(base_sum)
-                            f_view = float(view_sum)
-                        except (ValueError, TypeError):
-                            continue
-                        diff = abs(f_base - f_view)
-                        if diff > 1e-2 and (diff / max(abs(f_base), 1.0)) > 1e-4:
-                            raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
-                    elif base_sum != view_sum:
-                        raise ValueError(f"Fan-out sum mismatch in enriched view {enriched_view_name} on {add_col}: base sum={base_sum}, view sum={view_sum}")
-                    logger.info("✅ Fan-out check passed for %s.%s: sum matches (%s)", enriched_view_name, add_col, base_sum)
-                except ValueError as ve:
-                    if "Fan-out" in str(ve):
-                        raise
-                    continue
-                except Exception as _sum_exc:
-                    # Non-numeric column; skip
-                    continue
+            # No data check: the view only LEFT JOINs along many-to-one PBIX
+            # relationships onto the one-side key (_edge_is_pk_safe), so it
+            # can't fan out fact rows by construction.
 
             enriched_cols = set(fact_cols) | projected_cols
             if enriched_cols:

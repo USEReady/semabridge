@@ -70,10 +70,13 @@ def test_enriched_view_null_max_date_fallback():
     assert view_name is not None
     create_view_sql = [s for s in executed_sql if "CREATE OR REPLACE VIEW" in s][0]
     print("Generated CREATE VIEW SQL:\n", create_view_sql)
-    assert "CURRENT_DATE() AS \"MAX_DATE\"" in create_view_sql
+    # The anchor is computed inside the view (empty/NULL dates fall back to
+    # CURRENT_DATE() at query time); no anchor query runs at sync time.
+    assert 'COALESCE(MAX("' in create_view_sql and 'CURRENT_DATE()) AS "MAX_DATE"' in create_view_sql
+    assert not [s for s in executed_sql if s.lstrip().upper().startswith("SELECT MAX(")]
     assert "AS \"IS_YTD\"" in create_view_sql
     assert "IS_YTD" in emitter._live_schema_metadata.get(view_name.upper(), set())
-    print("\nSUCCESS! Enriched view projects IS_YTD with CURRENT_DATE() fallback.")
+    print("\nSUCCESS! Enriched view projects IS_YTD with a computed MAX_DATE anchor.")
 
 if __name__ == "__main__":
     test_enriched_view_null_max_date_fallback()

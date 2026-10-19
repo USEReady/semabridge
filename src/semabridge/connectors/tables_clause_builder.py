@@ -171,65 +171,17 @@ class TablesClauseBuilder:
             if _live_cols and resolved_fiscal_col not in _live_cols:
                 # Fiscal column confirmed absent from live schema — skip anchor.
                 import logging as _log
-                _log.getLogger(__name__).warning(
+                _log.getLogger(__name__).debug(
                     "Skipping _CURRENT_FISCAL_PERIOD anchor: column '%s' not found "
                     "in live Snowflake schema for table '%s'.",
                     resolved_fiscal_col, safe_table,
                 )
                 return source_fq
 
-        if source_fq.upper().endswith('_ENRICHED"') or source_fq.upper().endswith('_ENRICHED'):
-            return source_fq
-
-        anchor_literal = self._fetch_fiscal_anchor_literal(date_table_ref, resolved_date_col, resolved_fiscal_col)
-        if anchor_literal is None:
-            return source_fq
-
-        return f"""(
-    SELECT
-        f.*,
-        {anchor_literal} AS "_CURRENT_FISCAL_PERIOD"
-    FROM {source_fq} f
-)"""
-
-    def _fetch_fiscal_anchor_literal(
-        self, date_table_ref: str, resolved_date_col: str, resolved_fiscal_col: str
-    ) -> Optional[str]:
-        """Compute the current-fiscal-period anchor once via a plain scalar
-        SELECT and return it as a ready-to-splice SQL literal.
-
-        Snowflake rejects subqueries embedded inside a semantic view's
-        TABLES clause (or any view-like definition), even uncorrelated
-        scalar ones. This value has no per-row dependency on the fact
-        table it will be attached to, so fetching it once here and
-        splicing in the literal result keeps the base table SELECT free
-        of any subquery.
-        """
-        if self.cursor is None:
-            return None
-        cache_key = (date_table_ref, resolved_date_col, resolved_fiscal_col)
-        if cache_key in self._anchor_literal_cache:
-            return self._anchor_literal_cache[cache_key]
-        literal: Optional[str] = None
-        try:
-            sql_anchor = (
-                f'SELECT MAX("{resolved_fiscal_col}") FROM {date_table_ref} '
-                f'WHERE "{resolved_date_col}" = CURRENT_DATE()'
-            )
-            validate_safe_sql(sql_anchor)
-            self.cursor.execute(sql_anchor)
-            row = self.cursor.fetchone()
-            from semabridge.connectors.ddl_helpers import format_scalar_sql_literal
-            literal = format_scalar_sql_literal(row[0] if row else None)
-        except Exception:
-            import logging as _log
-            _log.getLogger(__name__).warning(
-                "Could not precompute _CURRENT_FISCAL_PERIOD anchor value; "
-                "skipping anchor for this deploy.",
-            )
-            literal = None
-        self._anchor_literal_cache[cache_key] = literal
-        return literal
+        # Anchors (_CURRENT_FISCAL_PERIOD, MAX_DATE) are computed inside the
+        # fact's enriched view (see SnowflakeEmitter._create_enriched_view),
+        # never fetched from table data at sync time and spliced in here.
+        return source_fq
 
     def build_for_sml(
         self,
@@ -361,50 +313,42 @@ class TablesClauseBuilder:
                 and dataset.unique_name.upper() != "KPI"
             )
 
-            # Fact detection from metadata:
-            # A table is a fact if it's on the many side of model relationships
-            # or has no verified-unique key (using live uniqueness check).
-            verified_uniques = None
-            if hasattr(self.schema_manager, "get_verified_unique_columns"):
-                verified_uniques = self.schema_manager.get_verified_unique_columns(unqualified_table, cursor=self.cursor)
-
+            # Facts and keys come from the PBIX model and the Snowflake schema
+            # only, never from table data: a fact is on the many side of the
+            # model's relationships (or flagged/named as one). A key is the
+            # one-side column of a relationship, else the PBIX key column,
+            # else a primary key declared in Snowflake, else the first column.
             is_on_many_side = (dataset.unique_name in many_side_datasets and dataset.unique_name not in one_side_datasets)
-            has_no_unique_key = (verified_uniques is not None and len(verified_uniques) == 0 and bool(known_phys))
 
             is_fact_table = (
                 getattr(dataset, "is_fact", False)
                 or is_fact_like_name(dataset.unique_name)
                 or getattr(dataset, "table_type", "").upper() == "FACT"
                 or is_on_many_side
-                or has_no_unique_key
             )
 
-            # PKs only from verified-unique columns
+            def _physical(col_name: str) -> str:
+                if is_osi:
+                    return self.identifier_sanitizer.sanitize_column(col_name)
+                return self.schema_manager._resolve_physical_column_name(dataset, col_name, model=self._current_model)
+
             if is_measure_only or is_fact_table:
                 pk_cols = []
             elif relationship_pk_cols:
-                cand_pk = relationship_pk_cols[0]
-                if verified_uniques is None or cand_pk.strip('"').upper() in verified_uniques:
-                    pk_cols = [f'"{cand_pk}"']
-                else:
-                    pk_cols = []
+                pk_cols = [f'"{relationship_pk_cols[0]}"']
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
-                if not key_cols and verified_uniques is not None:
-                    for c in dataset.columns:
-                        res_c = self.identifier_sanitizer.sanitize_column(c.unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, c.unique_name, model=self._current_model)
-                        if res_c and res_c.strip('"').upper() in verified_uniques:
-                            key_cols = [c]
-                            break
-                if not key_cols and dataset.columns:
-                    key_cols = [dataset.columns[0]]
-
+                declared = []
+                if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
+                    declared = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
+                        str(unqualified_table).strip('"').upper(), []
+                    )
                 if key_cols:
-                    res_col = self.identifier_sanitizer.sanitize_column(key_cols[0].unique_name) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, key_cols[0].unique_name, model=self._current_model)
-                    if verified_uniques is None or res_col.strip('"').upper() in verified_uniques:
-                        pk_cols = [f'"{res_col}"']
-                    else:
-                        pk_cols = []
+                    pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
+                elif declared:
+                    pk_cols = [f'"{c}"' for c in declared]
+                elif dataset.columns:
+                    pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
                 else:
                     pk_cols = []
 
@@ -415,6 +359,10 @@ class TablesClauseBuilder:
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
                 relationship_target_alias[(dataset.unique_name, verified_pk[0].strip('"').upper())] = alias
+                if hasattr(self.schema_manager, "warn_if_key_not_unique"):
+                    self.schema_manager.warn_if_key_not_unique(
+                        unqualified_table, [c.strip('"') for c in verified_pk], cursor=self.cursor
+                    )
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             

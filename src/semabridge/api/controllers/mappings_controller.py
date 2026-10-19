@@ -31,6 +31,8 @@ from semabridge.api.services.project_ownership_service import (
 )
 from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
 from semabridge.domain.exceptions import ValidationError
+from semabridge.connectors.snowflake_emitter import LIVE_SCHEMA_UNAVAILABLE
+from semabridge.connectors.table_binding_resolver import AMBIGUOUS_TABLE_BINDING
 
 # --- Request Models ---
 
@@ -184,6 +186,8 @@ def _build_config_yaml_from_request(
         target_section["account"] = target_config["account"]
     if target_config.get("warehouse"):
         target_section["warehouse"] = target_config["warehouse"]
+    if target_config.get("role"):
+        target_section["role"] = target_config["role"]
     if target_config.get("identity_id"):
         target_section["identity_id"] = target_config["identity_id"]
     if target_config.get("workspace_id"):
@@ -199,6 +203,28 @@ def _build_config_yaml_from_request(
         },
     }
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
+
+
+def _saved_project_target(project_cfg: Dict[str, Any], requested: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The saved project target matching the requested target type, or None
+    when the project has no saved configuration (new project wizard)."""
+    if not project_cfg:
+        return None
+    target_type = str((requested or {}).get("type") or "").strip().lower()
+    candidates = [t for t in (project_cfg.get("targets") or []) if isinstance(t, dict)]
+    if isinstance(project_cfg.get("target"), dict):
+        candidates.append(project_cfg["target"])
+    for target in candidates:
+        if str(target.get("type") or "").strip().lower() == target_type:
+            saved = {"type": target_type}
+            for key in ("identity_id", "account", "database", "schema", "warehouse", "role", "workspace_id"):
+                value = target.get(key) or (target.get("schema_name") if key == "schema" else None)
+                if value:
+                    saved[key] = value
+            if "identity_id" not in saved and (requested or {}).get("identity_id"):
+                saved["identity_id"] = requested["identity_id"]
+            return saved
+    return None
 
 
 def _project_sync_settings(project_id: str) -> Tuple[str, Dict[str, Any]]:
@@ -314,6 +340,14 @@ async def _run_dry_run_pipeline(
         selected_sources,
     )
 
+    # An existing project's dry run targets exactly what its real sync uses:
+    # the saved target (account, database, schema, warehouse, role) — not
+    # values the wizard filled in by default but never saved.
+    sync_mode, project_cfg = _project_sync_settings(project_id)
+    saved_target = _saved_project_target(project_cfg, target_config)
+    if saved_target is not None:
+        target_config = saved_target
+
     # ── 2. Build a real config YAML from the wizard's source/target config ─
     config_yaml = _build_config_yaml_from_request(
         source_config=source_config,
@@ -329,7 +363,6 @@ async def _run_dry_run_pipeline(
     #    and stores the resulting SML snapshot so entity mappings can be built.
     #    A project configured for UPSERT also gets its delta against the real
     #    project's last deployed snapshot (the preview id has none).
-    sync_mode, project_cfg = _project_sync_settings(project_id)
     from semabridge.core.run_helpers import normalize_sync_mode
     sync_mode = normalize_sync_mode(sync_mode_override) or sync_mode
     delta_preview_overrides = None
@@ -372,8 +405,25 @@ async def _run_dry_run_pipeline(
     ambiguous_report_aliases: List[Dict[str, Any]] = []
     upsert_delta: Optional[Dict[str, Any]] = None
     table_binding_plan: Optional[Dict[str, Any]] = None
+    # Step 8 of the engine dry run built the target DDL against the live
+    # schema; its drops/placeholders are what the sync would report.
+    target_ddl_drops: List[Dict[str, Any]] = []
     for r in results:
         summary = r.get("summary") or {}
+        live_schema_error = next(
+            (
+                str(e.get("message") or "")
+                for e in (summary.get("errors") or [])
+                if isinstance(e, dict) and any(
+                    marker in str(e.get("message") or "")
+                    for marker in (LIVE_SCHEMA_UNAVAILABLE, AMBIGUOUS_TABLE_BINDING)
+                )
+            ),
+            None,
+        )
+        if live_schema_error:
+            raise HTTPException(status_code=422, detail=live_schema_error)
+        target_ddl_drops.extend(summary.get("dropped_entities") or [])
         print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
         if table_binding_plan is None:
             table_binding_plan = summary.get("table_binding_plan")
@@ -451,69 +501,12 @@ async def _run_dry_run_pipeline(
     )
     dropped_entities = list(built.get("dropped_entities", []))
 
-    # ── Trial DDL-build pass ──────────────────────────────────────────────
-    # Runs the real DDL-emission builders (with placeholder Snowflake creds,
-    # never connecting) purely to surface Tier C / DDL-emission-time drops
-    # (e.g. metrics whose DAX translation failed) in the dry-run preview,
-    # before deployment. generate_ddls() is pure string-building — no
-    # network calls, no writes beyond a local debug .sql file — so this is
-    # safe to re-run on every mapping-iteration dry-run call.
+    # Target DDL drops come from the engine dry run's live-schema Step 8 —
+    # never from a schema-less build (it would drop live-only columns and
+    # turn time-intelligence metrics into placeholders).
     trial_sml = None
     if sml_blob and target_connector == "snowflake":
-        try:
-            from semabridge.sml.serializer import SMLSerializer
-            from semabridge.core.settings import SnowflakeConfig
-            from semabridge.core.behavior import ConnectorBehavior
-            from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
-
-            trial_sml = SMLSerializer._dict_to_model(sml_blob)
-            target_cfg = target_config or {}
-            trial_cfg = SnowflakeConfig(
-                account=str(target_cfg.get("account") or "placeholder"),
-                user=str(target_cfg.get("user") or "placeholder"),
-                warehouse=str(target_cfg.get("warehouse") or "placeholder"),
-                database=str(target_cfg.get("database") or "placeholder"),
-            )
-            trial_behavior = ConnectorBehavior()
-            trial_behavior.snowflake.auto_create_enriched_view = True
-            trial_behavior.snowflake.use_enriched_view_for_metrics = True
-            trial_emitter = SnowflakeEmitter(config=trial_cfg, behavior=trial_behavior)
-
-            # Predict anchor_flag_map & re-render metrics so trial DDL emission tests the EXACT deployment SQL
-            try:
-                predicted_map = trial_emitter.predict_anchor_flag_map(trial_sml)
-                for ft in predicted_map:
-                    vname = trial_emitter._enriched_view_name(ft, model=trial_sml)
-                    trial_emitter._enriched_view_mapping[ft] = vname
-                    trial_emitter.semantic_view_builder.enriched_view_mapping[ft] = vname
-                    trial_emitter.translator.anchor_flag_map.setdefault(str(ft).casefold(), {}).update(predicted_map[ft])
-                from semabridge.connectors.anchor_flag_rerender import rerender_anchor_dependent_metrics
-                from semabridge.converter.dax_translator import DAXTranslator
-
-                dataset_col_lookup, dataset_aliases = DAXTranslator.build_schema_lookup(
-                    getattr(trial_sml, "datasets", []) or []
-                )
-                rerender_anchor_dependent_metrics(
-                    trial_sml,
-                    predicted_map,
-                    dataset_col_lookup,
-                    dataset_aliases,
-                    label="predicted",
-                )
-            except Exception as pred_err:
-                logger.warning("[DryRun] Trial anchor flag map prediction failed (non-fatal): %s", pred_err)
-
-            try:
-                trial_emitter.generate_ddls(trial_sml)
-            except Exception as ddl_err:
-                # Expected for models with unresolvable drops (e.g. every
-                # metric fails translation) — the ledger is still populated
-                # incrementally by the sub-builders before such a raise.
-                logger.info("[DryRun] Trial DDL-build pass raised (non-fatal): %s", ddl_err)
-            dropped_entities.extend(trial_emitter.drop_ledger.to_json())
-        except Exception as trial_setup_err:
-            logger.warning("[DryRun] Trial DDL-build pass skipped: %s", trial_setup_err)
-            trial_sml = None
+        dropped_entities.extend(target_ddl_drops)
 
     # ── Reconcile: a field the trial DDL pass just dropped (e.g. a
     # live-schema-only column like MonthIndex when no live schema was

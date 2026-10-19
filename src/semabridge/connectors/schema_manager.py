@@ -120,8 +120,13 @@ class SnowflakeSchemaManager:
             if key in _SCHEMA_CACHE:
                 del _SCHEMA_CACHE[key]
 
-    def _execute_sql(self, cursor, sql: str, params: Any = None, context: str = "") -> Any:
-        return self.connection_manager._execute_sql(cursor, sql, params, context=context)
+    def _execute_sql(self, cursor, sql: str, params: Any = None, context: str = "", expected_failure: bool = False) -> Any:
+        kwargs: Dict[str, Any] = {"context": context}
+        if expected_failure:
+            kwargs["expected_failure"] = True
+        if params is None:
+            return self.connection_manager._execute_sql(cursor, sql, **kwargs)
+        return self.connection_manager._execute_sql(cursor, sql, params, **kwargs)
 
     def _build_fixed_table_name(self, safe_table_name: str) -> str:
         """Create a collision-resistant temp table name for CTAS+SWAP."""
@@ -223,29 +228,31 @@ class SnowflakeSchemaManager:
             return preferred_name
 
     def _ensure_schema_exists(self, cursor) -> None:
-        """Create this project's target schema if it doesn't exist yet.
+        """Stop with a clear error when the project's target schema doesn't exist.
 
-        Every project now defaults to its own per-project schema (see
-        _apply_default_snowflake_schema in project_projects_impl.py) instead
-        of a single shared one, so unlike before, a brand-new project's
-        schema will not already exist in Snowflake. IF NOT EXISTS makes this
-        an idempotent no-op for any project still pointed at a pre-existing
-        (e.g. legacy shared, or manually provisioned) schema. Non-fatal on
-        failure -- e.g. a role without CREATE SCHEMA privilege but granted
-        USAGE on an already-provisioned schema -- so this never blocks a
-        deploy that would otherwise have worked exactly as before.
+        SemaBridge never creates schemas (the SQL guard only permits its own
+        views and semantic views), so a missing schema is a setup problem
+        the user fixes in Snowflake; checking up front reports it plainly
+        instead of failing later on the first statement that touches it.
         """
+        db = str(self.config.database or "").strip()
+        schema = str(self.config.schema_name or "").strip().rsplit(".", 1)[-1]
+        like = schema.upper().replace("'", "''")
         try:
             self._execute_sql(
                 cursor,
-                f"CREATE SCHEMA IF NOT EXISTS {self._schema_fqn()}",
-                context="CREATE SCHEMA IF NOT EXISTS",
+                f"SHOW SCHEMAS LIKE '{like}' IN DATABASE \"{db.replace(chr(34), chr(34) * 2)}\"",
+                context="CHECK SCHEMA EXISTS",
             )
+            found = any(str(row[1]).upper() == schema.upper() for row in cursor.fetchall() or [])
         except Exception as exc:
-            logger.warning(
-                "Could not ensure schema %s exists (continuing -- it may already "
-                "exist under a role without CREATE SCHEMA privilege): %s",
-                self._schema_fqn(), exc,
+            raise ConnectorError(
+                f"Could not check that target schema {self._schema_fqn()} exists: {exc}"
+            ) from exc
+        if not found:
+            raise ConnectorError(
+                f"Target schema {self._schema_fqn()} does not exist or this role can't see it. "
+                f"Create it in Snowflake (or pick an existing schema for the project) and re-run."
             )
 
     def _load_row_counts(self, cursor) -> None:
@@ -291,7 +298,6 @@ class SnowflakeSchemaManager:
 
         self.refresh_schema_cache()
         self._fetch_schema_metadata(cursor)
-        self._load_row_counts(cursor)
 
         mapping_dict = getattr(getattr(getattr(self, "behavior", None), "snowflake", None), "source_table_mapping", {}) or {}
         binding_log = getattr(self._live_schema_metadata, "binding_log", None)
@@ -2435,41 +2441,70 @@ class SnowflakeSchemaManager:
         view_name = self._get_safe_object_name(model.unique_name or model.label)
         legacy_view = f"{self.config.database}.{self.config.schema_name}.{view_name}_SV"
         
-    def get_verified_unique_columns(self, table_name: str, cursor: Optional[Any] = None) -> Optional[set[str]]:
-        """Return verified-unique column names for a live table using COUNT(DISTINCT col) == COUNT(*).
-        Returns None if live check cannot be performed (e.g. no active cursor).
+    def declared_primary_keys(self, cursor: Optional[Any] = None) -> Dict[str, List[str]]:
+        """TABLE -> primary key columns declared in Snowflake for this schema.
+
+        Metadata only (SHOW PRIMARY KEYS); empty when none are declared or
+        the lookup isn't possible. Cached per schema manager.
         """
-        table_upper = str(table_name or "").strip('"').upper()
-        if not hasattr(self, "_verified_unique_cache"):
-            self._verified_unique_cache = {}
-        if table_upper in self._verified_unique_cache:
-            return self._verified_unique_cache[table_upper]
-
+        cached = getattr(self, "_declared_pk_cache", None)
+        if cached is not None:
+            return cached
         cur = cursor or getattr(self, "_active_cursor", None)
-        if cur is None and hasattr(self, "connection_manager"):
-            cur = getattr(self.connection_manager, "_cursor", None)
-
+        keys: Dict[str, List[tuple]] = {}
         if cur is not None:
             try:
-                schema_fqn = self._schema_fqn()
-                cur.execute(f'SHOW COLUMNS IN TABLE {schema_fqn}."{table_upper}"')
-                cols = [r[2] for r in cur.fetchall()]
-                cur.execute(f'SELECT COUNT(*) FROM {schema_fqn}."{table_upper}"')
-                row = cur.fetchone()
-                total_cnt = row[0] if row else 0
-                uniques: set[str] = set()
-                if total_cnt > 0:
-                    for c in cols:
-                        cur.execute(f'SELECT COUNT(DISTINCT "{c}") FROM {schema_fqn}."{table_upper}"')
-                        dist = cur.fetchone()[0]
-                        if dist == total_cnt:
-                            uniques.add(c.upper())
-                self._verified_unique_cache[table_upper] = uniques
-                return uniques
+                self._execute_sql(
+                    cur, f"SHOW PRIMARY KEYS IN SCHEMA {self._schema_fqn()}",
+                    context="SHOW PRIMARY KEYS", expected_failure=True,
+                )
+                names = [str(d[0]).lower() for d in (cur.description or [])]
+                t_i, c_i = names.index("table_name"), names.index("column_name")
+                s_i = names.index("key_sequence") if "key_sequence" in names else None
+                for row in cur.fetchall() or []:
+                    seq = int(row[s_i]) if s_i is not None and row[s_i] is not None else 0
+                    keys.setdefault(str(row[t_i]).upper(), []).append((seq, str(row[c_i]).upper()))
             except Exception as exc:
-                logger.debug("Live uniqueness query failed for %s: %s", table_upper, exc)
+                logger.debug("Declared primary keys unavailable for %s: %s", self._schema_fqn(), exc)
+        result = {t: [c for _, c in sorted(cols)] for t, cols in keys.items()}
+        if cur is not None:
+            self._declared_pk_cache = result
+        return result
 
-        return None
+    def warn_if_key_not_unique(self, table_name: str, columns: List[str], cursor: Optional[Any] = None) -> None:
+        """Log a WARNING when a declared primary key isn't unique in the data.
+
+        Advisory only: the key is chosen from the PBIX model and the schema,
+        and this check never changes it.
+        """
+        table_upper = str(table_name or "").strip('"').upper()
+        cols = [str(c).strip('"') for c in columns or [] if c]
+        checked = getattr(self, "_key_uniqueness_checked", None)
+        if checked is None:
+            checked = self._key_uniqueness_checked = set()
+        cur = cursor or getattr(self, "_active_cursor", None)
+        if cur is None or not cols or (table_upper, tuple(cols)) in checked:
+            return
+        checked.add((table_upper, tuple(cols)))
+        col_list = ", ".join(f'"{c}"' for c in cols)
+        try:
+            self._execute_sql(
+                cur,
+                f"SELECT COUNT(*), COUNT(DISTINCT {col_list}) FROM {self._schema_fqn()}.\"{table_upper}\"",
+                context=f"KEY UNIQUENESS {table_upper}",
+                expected_failure=True,
+            )
+            row = cur.fetchone() or (0, 0)
+            total, distinct = int(row[0] or 0), int(row[1] or 0)
+        except Exception as exc:
+            logger.debug("Key uniqueness check skipped for %s: %s", table_upper, exc)
+            return
+        if distinct < total:
+            logger.warning(
+                "Primary key %s on %s is not unique in the data (%d rows, %d distinct); "
+                "the semantic view keeps it as modelled.",
+                cols, table_upper, total, distinct,
+            )
 
     @staticmethod
 

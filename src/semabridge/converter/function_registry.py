@@ -26,7 +26,12 @@ class FunctionRegistry:
         try:
             path = self.registry_path
             if not path.is_absolute():
-                path = (Path.cwd() / path).resolve()
+                # Relative to the working directory, else to the repo root
+                # (a server started from another directory must still find it).
+                candidate = (Path.cwd() / path).resolve()
+                if not candidate.exists():
+                    candidate = (Path(__file__).resolve().parents[3] / path).resolve()
+                path = candidate
             if not path.exists():
                 logger.debug("Function registry not found at %s", path)
                 return

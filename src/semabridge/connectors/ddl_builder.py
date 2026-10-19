@@ -128,6 +128,19 @@ class SemanticViewBuilder:
             clean = str(name or "").strip().strip("'\"")
             return dataset_names.get(clean.casefold(), clean)
 
+        # Measure references (Table[Measure]) aren't columns to pre-compute.
+        metric_names = {
+            str(getattr(m, "unique_name", "") or "").strip().casefold()
+            for m in getattr(model, "metrics", []) or []
+        }
+        columns_by_dataset = {
+            str(getattr(ds, "unique_name", "")).strip().casefold(): {
+                str(getattr(c, "unique_name", "") or "").strip().casefold()
+                for c in getattr(ds, "columns", []) or []
+            }
+            for ds in getattr(model, "datasets", []) or []
+        }
+
         def precomputed_name(source_table: str, column: str) -> str:
             return self.identifier_sanitizer.sanitize_column(f"{source_table}_{column}")
 
@@ -138,6 +151,11 @@ class SemanticViewBuilder:
             if not target_dataset or not source_table or not column:
                 return
             if target_dataset.casefold() == source_table.casefold():
+                return
+            source_columns = columns_by_dataset.get(source_table.casefold())
+            if source_columns is None:
+                return
+            if column.casefold() in metric_names and column.casefold() not in source_columns:
                 return
             col_alias = precomputed_name(source_table, column)
             suggestions.setdefault(target_dataset, [])
@@ -180,14 +198,10 @@ class SemanticViewBuilder:
         self._precompute_details = details
         
         if suggestions:
-            logger.warning("=" * 70)
-            logger.warning("🔍 PRE-COMPUTE SUGGESTIONS FOR CROSS-TABLE REFERENCES")
-            logger.warning("=" * 70)
-            for table, cols in suggestions.items():
-                logger.warning(f"  Target dataset: {table}")
-                logger.warning(f"  Columns to project: {', '.join(cols)}")
-                logger.warning("-" * 70)
-            logger.warning("=" * 70)
+            logger.debug(
+                "Pre-compute suggestions for cross-table references: %s",
+                "; ".join(f"{table}: {', '.join(cols)}" for table, cols in suggestions.items()),
+            )
         
         return suggestions
 
@@ -380,7 +394,7 @@ class SemanticViewBuilder:
                         dropped_metrics.append({"name": m_name, "reason": reason})
                 else:
                     reason = "placeholder: not computable"
-                    logger.warning("Emitting unreachable metric '%s' on '%s' as NULL placeholder: %s", m_name, curr_ds, reason)
+                    logger.info("Emitting unreachable metric '%s' on '%s' as NULL placeholder: %s", m_name, curr_ds, reason)
                     m.sql_expression = "CAST(NULL AS DOUBLE)"
                     m.is_placeholder = True
                     surviving_metrics.append(m)
@@ -963,45 +977,25 @@ class SemanticViewBuilder:
         ds_by_name: dict[str, Any],
     ) -> None:
         """Fails the dry run/emission if:
-        1. Any declared PRIMARY KEY column isn't a verified unique key (or is declared on a fact table), or
+        1. A PRIMARY KEY is declared on a fact table, or
         2. Any relationship's columns differ from the model relationship's bound columns.
+
+        Both from the model only; whether a key is unique in the data is a
+        warning (schema_manager.warn_if_key_not_unique), never a failure.
         """
-        # Fact detection from metadata:
-        # A table is a fact if it's on the many side of model relationships or has no verified-unique key.
+        # Fact detection from the model: a fact is on the many side of the
+        # relationships and never on the one side.
         many_side = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
         one_side = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
         fact_datasets = {ds for ds in many_side if ds not in one_side}
         fact_aliases = {dataset_aliases.get(ds, ds).upper() for ds in fact_datasets}
 
-        alias_to_ds = {a.upper(): ds_by_name[ds_n] for ds_n, a in dataset_aliases.items() if ds_n in ds_by_name}
         for alias, cols in declared_pk.items():
-            alias_upper = alias.upper()
-            target_obj = alias
-            if alias_upper in alias_to_ds:
-                ds_obj = alias_to_ds[alias_upper]
-                target_obj = getattr(ds_obj, "source_table", None) or getattr(ds_obj, "unique_name", None) or alias
-            uniques = None
-            if hasattr(self.schema_manager, "get_verified_unique_columns"):
-                uniques = self.schema_manager.get_verified_unique_columns(target_obj, cursor=self.cursor)
-                if uniques is None and target_obj != alias:
-                    uniques = self.schema_manager.get_verified_unique_columns(alias, cursor=self.cursor)
-
-            # Fact tables (on many side or having no verified unique key) must have no PK
-            is_fact = (alias_upper in fact_aliases) or (uniques is not None and len(uniques) == 0)
-            if is_fact and cols:
+            if alias.upper() in fact_aliases and cols:
                 raise ValueError(
                     f"Pre-emit check failed: Fact table '{alias}' declared PRIMARY KEY {cols}, "
                     f"but fact tables must have no primary key."
                 )
-
-            if uniques and cols:
-                for c in cols:
-                    c_clean = c.strip('"').upper()
-                    if c_clean not in uniques:
-                        raise ValueError(
-                            f"Pre-emit check failed: Declared PRIMARY KEY '{c}' on table '{alias}' "
-                            f"is not a verified unique key (verified unique: {sorted(uniques)})."
-                        )
 
 
         # 2. Validate relationships match model's bound columns

@@ -64,6 +64,7 @@ def _wire(emitter, monkeypatch, fail_with):
     monkeypatch.setattr(emitter.connection_manager, "get_connection", lambda: (conn, True))
     monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_duplicate_mappings", lambda *a, **k: None)
     monkeypatch.setattr(emitter.schema_manager, "refresh_schema_cache", lambda: None)
+    monkeypatch.setattr(emitter.schema_manager, "_ensure_schema_exists", lambda cur: None)
     monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {"DUMMY": set()})
     monkeypatch.setattr(emitter.semantic_view_builder, "generate_ddls", lambda model: [DDL])
     executed = []

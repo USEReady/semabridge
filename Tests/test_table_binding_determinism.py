@@ -1,3 +1,4 @@
+import pytest
 """Deterministic table binding, saved bindings, and no-duplicate table creation."""
 
 from semabridge.connectors.schema_manager import SnowflakeSchemaManager, clear_schema_cache
@@ -35,14 +36,36 @@ def test_names_normalize_case_space_underscore_and_punctuation():
     assert resolve_dataset_to_physical_table("Business Area", ["Business Area", "Business Area ID"], meta) == "BUSINESS_AREA"
 
 
-def test_tie_prefers_populated_table_regardless_of_metadata_order():
-    counts = {"SALESFACT": 1, "SALES_FACT": 1_260_752}
-    for order in (["SALESFACT", "SALES_FACT"], ["SALES_FACT", "SALESFACT"]):
-        meta = _meta(order, counts)
-        assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta) == "SALES_FACT"
-        logged = meta.binding_log["SALESFACT"]
-        assert logged["matched_by"] == "columns"
-        assert {t["table"] for t in logged["tie"]} == {"SALESFACT", "SALES_FACT"}
+def test_exact_name_wins_regardless_of_row_counts_and_metadata_order():
+    # Row counts never decide: the table named exactly like the dataset wins.
+    for counts in ({"SALESFACT": 1, "SALES_FACT": 1_260_752}, {"SALESFACT": 1_260_752, "SALES_FACT": 1}, {}):
+        for order in (["SALESFACT", "SALES_FACT"], ["SALES_FACT", "SALESFACT"]):
+            meta = _meta(order, counts)
+            assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta) == "SALESFACT"
+            assert meta.binding_log["SALESFACT"]["matched_by"] == "exact name"
+
+
+def test_exact_name_with_incompatible_columns_falls_through_to_column_match():
+    meta = LiveSchemaMetadata({
+        "SALESFACT": {"ID", "PAYLOAD"},
+        "SALES_FACT": {"PRODUCT_ID", "DATE", "ZIP", "UNITS", "REVENUE"},
+    })
+    assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta) == "SALES_FACT"
+    assert meta.binding_log["SALESFACT"]["matched_by"] == "columns"
+
+
+def test_equal_matches_without_exact_name_stop_with_the_candidates():
+    from semabridge.connectors.table_binding_resolver import TableBindingAmbiguityError
+
+    for order in (["SALES_FACT", "SALES__FACT"], ["SALES__FACT", "SALES_FACT"]):
+        meta = _meta(order, {"SALES_FACT": 1_260_752, "SALES__FACT": 1})
+        with pytest.raises(TableBindingAmbiguityError) as err:
+            resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta)
+        assert set(err.value.candidates) == {"SALES_FACT", "SALES__FACT"}
+    # A saved binding settles it.
+    meta = _meta(["SALES_FACT", "SALES__FACT"])
+    meta.pinned_bindings["SALESFACT"] = "SALES_FACT"
+    assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta) == "SALES_FACT"
 
 
 def test_tie_without_row_counts_is_alphabetical():
@@ -143,14 +166,14 @@ def test_salesfact_binds_existing_sales_fact_and_never_creates_salesfact():
     clear_schema_cache()
 
 
-def test_populated_table_beats_exact_name_stub():
-    # Corporate Spend 'Fact': the 1-row stub FACT must not beat SPEND_FACT.
+def test_exact_name_beats_a_larger_column_match():
+    # Binding never looks at row counts: the exactly-named table wins.
     cols = ["Date", "Value", "Business Area ID"]
     live = {"DATE", "VALUE", "BUSINESS_AREA_ID"}
     meta = LiveSchemaMetadata({"FACT": set(live), "SPEND_FACT": set(live), "BUSINESS_AREA": {"BUSINESS_AREA", "BUSINESS_AREA_ID"}})
     meta.row_counts.update({"FACT": 1, "SPEND_FACT": 166_216, "BUSINESS_AREA": 7})
-    assert resolve_dataset_to_physical_table("Fact", cols, meta) == "SPEND_FACT"
-    assert {t["table"] for t in meta.binding_log["FACT"]["tie"]} == {"FACT", "SPEND_FACT"}
+    assert resolve_dataset_to_physical_table("Fact", cols, meta) == "FACT"
+    assert meta.binding_log["FACT"]["matched_by"] == "exact name"
     # A dimension still binds by name over an unrelated, larger fact table.
     assert resolve_dataset_to_physical_table(
         "Business Area", ["Business Area", "Business Area ID"],

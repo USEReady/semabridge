@@ -93,6 +93,7 @@ def _wire_single_ddl(emitter, monkeypatch, ddl_text, error_then_success):
     monkeypatch.setattr(emitter.connection_manager, "get_connection", lambda: (fake_conn, True))
     monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_duplicate_mappings", lambda *a, **k: None)
     monkeypatch.setattr(emitter.schema_manager, "refresh_schema_cache", lambda: None)
+    monkeypatch.setattr(emitter.schema_manager, "_ensure_schema_exists", lambda cur: None)
     monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {"DUMMY": set()})
     monkeypatch.setattr(emitter.semantic_view_builder, "generate_ddls", lambda model: [ddl_text])
 

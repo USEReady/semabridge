@@ -35,7 +35,13 @@ class DateResolutionConfig:
         try:
             path = self.path
             if not path.is_absolute():
-                path = (Path.cwd() / path).resolve()
+                # Relative to the working directory, else to the repo root —
+                # a server started from another directory (e.g. src/) must
+                # still find it, or every date anchor is silently skipped.
+                candidate = (Path.cwd() / path).resolve()
+                if not candidate.exists():
+                    candidate = (Path(__file__).resolve().parents[3] / path).resolve()
+                path = candidate
             if not path.exists():
                 logger.debug("Date resolution config not found at %s", path)
                 return

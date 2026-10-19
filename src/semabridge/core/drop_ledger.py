@@ -77,6 +77,17 @@ class DropLedger:
         detail: Optional[str] = None,
         by_design: bool = False,
     ) -> None:
+        # A pass that runs twice (e.g. re-anchoring before and during DDL
+        # generation) records the same drop once.
+        for existing in self.records:
+            if (
+                existing.entity_kind == entity_kind
+                and existing.entity_name == str(entity_name)
+                and existing.dataset == dataset
+                and existing.stage == stage
+                and existing.reason == reason
+            ):
+                return
         self.records.append(
             DropRecord(
                 entity_kind=entity_kind,

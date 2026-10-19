@@ -17,6 +17,31 @@ from semabridge.utils.null_sentinel import is_null_cast_sql
 
 logger = get_logger(__name__)
 
+# Set once OpenAI rejects the configured API key: the AI translation tier is
+# then skipped for the rest of the process instead of failing on every call.
+_OPENAI_KEY_REJECTED = False
+
+
+def _openai_key_rejected() -> bool:
+    return _OPENAI_KEY_REJECTED
+
+
+def _note_openai_auth_failure(exc: Exception) -> bool:
+    """True (and logged once) when *exc* means the API key is invalid."""
+    global _OPENAI_KEY_REJECTED
+    status = getattr(exc, "status_code", None)
+    text = str(exc)
+    if status != 401 and type(exc).__name__ != "AuthenticationError" and "invalid_api_key" not in text:
+        return False
+    if not _OPENAI_KEY_REJECTED:
+        _OPENAI_KEY_REJECTED = True
+        logger.warning(
+            "OpenAI rejected the configured API key (%s); AI-assisted DAX translation is "
+            "skipped until the key is fixed and the service restarted.",
+            status or type(exc).__name__,
+        )
+    return True
+
 # Matches a DAX qualified column reference, e.g. 'Date'[Running Year] or
 # Date[Running Year] -- used to build a column-name -> DAX-source-table hint
 # map (see MetricExpressionTranslator._extract_dax_table_hints) so that when
@@ -551,8 +576,8 @@ class MetricExpressionTranslator:
             return
         self._openai_prefetch_done = True
 
-        api_key = os.getenv("OPENAI_API_KEY") or "FAKE_KEY_FOR_TESTING"
-        if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key or _openai_key_rejected():
             return
         try:
             from openai import OpenAI
@@ -610,6 +635,8 @@ class MetricExpressionTranslator:
                     if sql and self._is_safe_llm_metric_sql(sql):
                         self._openai_prefetch_sql_by_metric[name] = sql
             except Exception as exc:
+                if _note_openai_auth_failure(exc):
+                    return
                 logger.warning("OpenAI prefetch batch failed for %d metrics: %s", len(chunk), exc)
 
         if self._openai_prefetch_sql_by_metric:
@@ -677,7 +704,7 @@ class MetricExpressionTranslator:
         dataset_col_lookup: Dict[str, set[str]],
     ) -> Optional[str]:
         api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
+        if not api_key or _openai_key_rejected():
             return None
 
         try:
@@ -725,6 +752,8 @@ class MetricExpressionTranslator:
                 sql = (response.choices[0].message.content or "").strip()
                 break
             except Exception as exc:
+                if _note_openai_auth_failure(exc):
+                    return None
                 logger.warning(
                     "OpenAI DAX translation attempt %d/%d failed for metric '%s': %s",
                     attempt,

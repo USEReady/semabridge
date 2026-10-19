@@ -48,13 +48,14 @@ from semabridge.core.engine.exceptions import (
 
 logger = get_logger(__name__)
 
-def _deploy_to_snowflake(self, context: RunContext) -> None:
-    """
-    Deploy to Snowflake, dispatching based on ``deployment_method`` setting
-    and utilizing single-tenant environment scoping if ``identity_id`` is supplied.
-    """
-    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+def target_snowflake_config(context: RunContext):
+    """The Snowflake config this run's target uses: built from the target's
+    linked account (identity_id) when it has one, else the run's config.
 
+    Every Snowflake call of a run -- Step 8's live-schema DDL build, the dry
+    run's binding preview and Step 9's deploy -- goes through this, so they
+    all read the same account, database, schema, warehouse and role.
+    """
     target_configs = getattr(context.config, "targets", None) or []
     identity_id = ""
     for tc in target_configs:
@@ -68,48 +69,49 @@ def _deploy_to_snowflake(self, context: RunContext) -> None:
         if target_config and getattr(target_config, "type", "") == "snowflake":
             identity_id = str(getattr(target_config, "identity_id", "") or "").strip()
 
-    if identity_id:
-        from sqlalchemy import select
-        from semabridge.repository.orm.models import Account
-        from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.auth.credential_builder import build_snowflake_config
+    if not identity_id:
+        return context.config.snowflake
 
-        with db_manager.get_session() as session:
-            account = session.execute(
-                select(Account).where(
-                    Account.connector_type == "SNOWFLAKE",
-                    Account.id == identity_id,
-                )
-            ).scalars().first()
+    from sqlalchemy import select
+    from semabridge.repository.orm.models import Account
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.auth.credential_builder import build_snowflake_config, project_snowflake_target
 
-            if not account:
-                logger.warning(
-                    "No linked Snowflake account found for identity_id %s; falling back to global Snowflake settings",
-                    identity_id,
-                )
-                sf_cfg = context.config.snowflake
-                self._do_snowflake_deploy(context, sf_cfg)
-                return
-
-            # Thread-safe: builds an isolated SnowflakeConfig object rather than
-            # mutating os.environ (scoped_account_env), which is unsafe when
-            # multiple syncs from the same batch run concurrently.
-            from semabridge.auth.credential_builder import project_snowflake_target
-
-            sf_cfg = build_snowflake_config(
-                account, session, context.config.snowflake,
-                project_target=project_snowflake_target(context.config),
+    with db_manager.get_session() as session:
+        account = session.execute(
+            select(Account).where(
+                Account.connector_type == "SNOWFLAKE",
+                Account.id == identity_id,
             )
-            logger.info(
-                "Snowflake deployment scoped to account %s (%s) — thread-safe config, no os.environ mutation",
-                account.tag, identity_id,
-            )
-            self._do_snowflake_deploy(context, sf_cfg)
-            return
+        ).scalars().first()
 
-    # Fallback to legacy global execution
-    sf_cfg = context.config.snowflake
-    self._do_snowflake_deploy(context, sf_cfg)
+        if not account:
+            logger.warning(
+                "No linked Snowflake account found for identity_id %s; falling back to global Snowflake settings",
+                identity_id,
+            )
+            return context.config.snowflake
+
+        # Thread-safe: builds an isolated SnowflakeConfig object rather than
+        # mutating os.environ (scoped_account_env), which is unsafe when
+        # multiple syncs from the same batch run concurrently.
+        sf_cfg = build_snowflake_config(
+            account, session, context.config.snowflake,
+            project_target=project_snowflake_target(context.config),
+        )
+        logger.info(
+            "Snowflake target scoped to account %s (%s) — thread-safe config, no os.environ mutation",
+            account.tag, identity_id,
+        )
+        return sf_cfg
+
+
+def _deploy_to_snowflake(self, context: RunContext) -> None:
+    """
+    Deploy to Snowflake, dispatching based on ``deployment_method`` setting
+    and utilizing single-tenant environment scoping if ``identity_id`` is supplied.
+    """
+    self._do_snowflake_deploy(context, target_snowflake_config(context))
 
 _UNSET = object()
 
@@ -145,21 +147,35 @@ def table_binding_scope(context: RunContext) -> Optional[Tuple[str, str]]:
 
 def preview_table_bindings(context: RunContext) -> Dict[str, Any]:
     """Dry run: which existing table each dataset binds to (with any tie) and
-    which tables a sync would create. Read-only against Snowflake."""
-    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    which tables a sync would create. Read-only against Snowflake.
+
+    Raises LiveSchemaUnavailableError when the live schema can't be read: a
+    dry run stops rather than previewing against a schema it never saw.
+    """
+    from semabridge.connectors.snowflake_emitter import (
+        LIVE_SCHEMA_UNAVAILABLE,
+        LiveSchemaUnavailableError,
+        SnowflakeEmitter,
+    )
+    from semabridge.connectors.table_binding_resolver import TableBindingAmbiguityError
     from semabridge.core.engine.targets.snowflake import emitter_physical_namespace
 
+    sf_cfg = target_snowflake_config(context)
     try:
         emitter = SnowflakeEmitter(
-            context.config.snowflake,
+            sf_cfg,
             behavior=context.behavior,
             physical_namespace=emitter_physical_namespace(context),
         )
         emitter.binding_scope = table_binding_scope(context)
         return {"tables": emitter.preview_table_bindings(context.sml_model), "error": None}
+    except TableBindingAmbiguityError:
+        raise
     except Exception as exc:
-        logger.warning("Table binding preview failed: %s", exc)
-        return {"tables": [], "error": str(exc)}
+        raise LiveSchemaUnavailableError(
+            f"{LIVE_SCHEMA_UNAVAILABLE} for "
+            f"{getattr(sf_cfg, 'database', None)}.{getattr(sf_cfg, 'schema_name', None)}: {exc}"
+        ) from exc
 
 
 def _save_table_bindings(emitter) -> None:

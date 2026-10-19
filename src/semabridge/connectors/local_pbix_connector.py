@@ -167,7 +167,7 @@ class LocalPBIXConnector(BaseConnector):
             schema = self._extract_data_model_schema()
         except PBIXParsingError as exc:
             schema_parse_error = exc
-            logger.warning(f"JSON DataModelSchema parse failed; trying pbixray fallback: {exc}")
+            logger.info(f"JSON DataModelSchema parse failed; trying pbixray fallback: {exc}")
 
         if schema:
             self._data_model_schema = schema
@@ -297,7 +297,7 @@ class LocalPBIXConnector(BaseConnector):
                             for (f, k, tbl) in conflicting_keys
                         ],
                     })
-                logger.warning(
+                logger.info(
                     "Excluded %d report-layer alias(es) claimed by more than one "
                     "field from synonyms, to avoid ambiguous business-term "
                     "resolution: %s",
@@ -816,7 +816,7 @@ class LocalPBIXConnector(BaseConnector):
             attempted.append(candidate)
             schema = self._parse_json_candidate(data)
             if not schema:
-                logger.warning(
+                logger.info(
                     f"Skipping non-JSON or unsupported schema payload in archive member: {candidate}"
                 )
                 continue

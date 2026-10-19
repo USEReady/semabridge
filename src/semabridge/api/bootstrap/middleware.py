@@ -149,7 +149,9 @@ class RequestResponseLoggingMiddleware:
         log_msg = f'[REQUEST] {method} {path}'
         if query_string:
             log_msg += f'?{query_string}'
-        logger.info(log_msg)
+        # Reads (mostly UI polling) at DEBUG; changes at INFO.
+        log_ok = logger.debug if method == "GET" else logger.info
+        log_ok(log_msg)
 
         start_time = time.time()
         status_code = 0
@@ -177,4 +179,4 @@ class RequestResponseLoggingMiddleware:
         if status_code >= 400:
             logger.warning(f'[RESPONSE] {method} {path} -> {status_code} ({elapsed:.2f}s)')
         else:
-            logger.info(f'[RESPONSE] {method} {path} -> {status_code} ({elapsed:.2f}s)')
+            log_ok(f'[RESPONSE] {method} {path} -> {status_code} ({elapsed:.2f}s)')

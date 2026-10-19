@@ -99,8 +99,8 @@ def test_synthetic_generic_reachability_reanchor():
     # Check that m2 re-anchored to Returns
     assert m2.dataset == "Returns"
 
-def test_synthetic_unreachable_metric_dropped_with_reason():
-    """Verifies that if a metric references disconnected tables with no common root, it is dropped."""
+def test_synthetic_unreachable_metric_emitted_as_placeholder_with_reason():
+    """Verifies that if a metric references disconnected tables with no common root, it is emitted as a placeholder."""
     ds_a = SMLDataset(unique_name="TableA", columns=[SMLColumn(unique_name="ColA")])
     ds_b = SMLDataset(unique_name="TableB", columns=[SMLColumn(unique_name="ColB")])
     
@@ -128,45 +128,45 @@ def test_synthetic_unreachable_metric_dropped_with_reason():
     )
     
     builder._reanchor_disconnected_fact_metrics(model)
-    # Must be dropped from metrics list
-    assert m_cross not in model.metrics
-    # Dropped in ledger with explicit reason
+    # Emitted as placeholder in surviving metrics
+    assert m_cross in model.metrics
+    assert m_cross.is_placeholder is True
+    assert m_cross.sql_expression == "CAST(NULL AS DOUBLE)"
+    # Dropped in ledger with explicit placeholder reason
     drops = [d for d in ledger.records if d.entity_name == "CrossMetric"]
     assert len(drops) == 1
-    assert "unreachable" in drops[0].reason.lower()
+    assert "placeholder" in drops[0].reason.lower()
 
 
-def test_synthetic_fact_detection_from_metadata():
-    """Verifies that a table is identified as a fact if it is on the many side
-    of relationships or has no verified-unique key, completely free of hardcoded names."""
+def test_synthetic_keys_come_from_schema_metadata_never_from_data(caplog):
+    """Declared Snowflake primary keys are read from metadata (SHOW PRIMARY
+    KEYS); a key that isn't unique in the data only logs a warning -- the
+    data never decides a key, completely free of hardcoded names."""
+    import logging
     from semabridge.connectors.schema_manager import SnowflakeSchemaManager
-    
+
     mock_cursor = MagicMock()
-    
     schema_mgr = SnowflakeSchemaManager(
         config=MagicMock(schema_name="SC", database="DB"),
         behavior=MagicMock(),
         identifier_sanitizer=MagicMock(),
         connection_manager=MagicMock(),
     )
-    
-    def mock_cur_execute(sql, *args, **kwargs):
-        pass
-        
-    mock_cursor.execute.side_effect = mock_cur_execute
-    
-    # Test ORDERS (no column has count(distinct) == total_count)
-    mock_cursor.fetchall.return_value = [("DB", "SC", "ORDER_ID"), ("DB", "SC", "CUSTOMER_ID"), ("DB", "SC", "AMOUNT")]
-    # total_count = 100, distinct counts = 50, 50, 20 (none unique)
-    mock_cursor.fetchone.side_effect = [(100,), (50,), (50,), (20,)]
-    orders_unique = schema_mgr.get_verified_unique_columns("ORDERS", cursor=mock_cursor)
-    assert len(orders_unique) == 0  # 0 unique columns -> fact table!
-    
-    # Test CUSTOMERS (CUSTOMER_ID has count(distinct) == total_count = 50)
-    mock_cursor.fetchall.return_value = [("DB", "SC", "CUSTOMER_ID"), ("DB", "SC", "NAME")]
-    mock_cursor.fetchone.side_effect = [(50,), (50,), (40,)]
-    cust_unique = schema_mgr.get_verified_unique_columns("CUSTOMERS", cursor=mock_cursor)
-    assert "CUSTOMER_ID" in cust_unique  # CUSTOMER_ID is verified unique -> Dimension table!
+
+    mock_cursor.description = [("created_on",), ("database_name",), ("schema_name",), ("table_name",),
+                               ("column_name",), ("key_sequence",)]
+    mock_cursor.fetchall.return_value = [
+        (None, "DB", "SC", "CUSTOMERS", "CUSTOMER_ID", 1),
+        (None, "DB", "SC", "ORDER_LINES", "LINE_NO", 2),
+        (None, "DB", "SC", "ORDER_LINES", "ORDER_ID", 1),
+    ]
+    keys = schema_mgr.declared_primary_keys(cursor=mock_cursor)
+    assert keys == {"CUSTOMERS": ["CUSTOMER_ID"], "ORDER_LINES": ["ORDER_ID", "LINE_NO"]}
+
+    mock_cursor.fetchone.return_value = (100, 40)
+    with caplog.at_level(logging.WARNING):
+        assert schema_mgr.warn_if_key_not_unique("CUSTOMERS", ["CUSTOMER_ID"], cursor=mock_cursor) is None
+    assert "not unique in the data" in caplog.text
 
 
 def test_join_keys_must_come_only_from_model_relationships_not_shared_non_key_columns():

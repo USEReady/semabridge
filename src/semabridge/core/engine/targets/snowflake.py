@@ -57,16 +57,26 @@ def emitter_physical_namespace(context: RunContext) -> Optional[str]:
 
 
 def _convert_to_snowflake_target(self, context: RunContext) -> None:
-    """Generate Snowflake DDL."""
+    """Generate Snowflake DDL against the live Snowflake schema.
+
+    The live schema (table bindings, real columns, enriched-view flag
+    columns) is required: if it can't be loaded the step fails and the run
+    stops -- it never falls back to a schema-less build, which would report
+    NULL placeholders and dropped columns that a real deploy wouldn't have.
+    """
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.core.engine.deployment.snowflake import (
+        table_binding_scope,
+        target_snowflake_config,
+    )
     from semabridge.sml.serializer import SMLSerializer
 
-    config = context.config
     emitter = SnowflakeEmitter(
-        config.snowflake,
+        target_snowflake_config(context),
         behavior=context.behavior,
         physical_namespace=emitter_physical_namespace(context),
     )
+    emitter.binding_scope = table_binding_scope(context)
 
     if not context.sml_model:
         raise ConversionError("No SML model available for target conversion. Ensure Stage 6 completed successfully.")
@@ -80,13 +90,7 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
         "snowflake",
     )
 
-    output_dir = self._model_output_dir(
-        "reverse",
-        model_name=context.project_id,
-        model_subdir=getattr(context, "physical_namespace", None),
-    )
-
-    ddls = emitter.generate_ddls(context.sml_model)
+    ddls = emitter.generate_ddls_live(context.sml_model)
     # Surface DDL-emission-time drops (DAX translation failures, unresolved
     # references, dropped relationships) on the shared context ledger so
     # they reach RunSummary.dropped_entities even when Stage 9 (deploy) is
@@ -95,6 +99,16 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
     _emitter_ledger = getattr(emitter, "drop_ledger", None)
     if _emitter_ledger is not None:
         context.drop_ledger.extend(_emitter_ledger)
+    if getattr(context, "dry_run", False):
+        # Preview only: the drops/placeholders above are what a sync would
+        # report; no target artifact is written or promoted.
+        return
+
+    output_dir = self._model_output_dir(
+        "reverse",
+        model_name=context.project_id,
+        model_subdir=getattr(context, "physical_namespace", None),
+    )
     full_ddl = "\n\n".join(ddls)
     yaml_out = emitter.generate_cortex_yaml(context.sml_model)
 

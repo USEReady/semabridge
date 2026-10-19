@@ -86,6 +86,9 @@ class RunContext:
     # "bind"|"create", table, matched_by, tie}], "error"} — see
     # SnowflakeSchemaManager.plan_source_tables.
     table_binding_plan: Optional[Dict[str, Any]] = None
+    # Dry run: Step 8 builds the target DDL (against the live schema) for
+    # the preview but writes no target artifacts.
+    dry_run: bool = False
 
     # Threaded through so Step 6's OSI→SML conversion can apply
     # metric-name mapping overrides to the OSI model's DAX bracket
