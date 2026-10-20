@@ -44,6 +44,9 @@ class SnapshotRow(Base):
     # (or confirmed unchanged by an UPSERT run). UPSERT delta sync diffs the
     # next sync against the latest deployed snapshot of the same model.
     deployed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    target_database: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    target_schema: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    view_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="snapshots")

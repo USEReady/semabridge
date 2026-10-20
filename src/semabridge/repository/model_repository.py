@@ -23,10 +23,10 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import select, update, delete, and_
+from sqlalchemy import select, update, delete, and_, or_, func
 from sqlalchemy.orm import Session, sessionmaker
 
 from semabridge.repository.orm.base import Base
@@ -269,6 +269,12 @@ class ModelRepository:
                         if "deployed_at" not in snapshot_columns:
                             ts_type = "TIMESTAMP WITH TIME ZONE" if conn.dialect.name == "postgresql" else "TIMESTAMP"
                             conn.exec_driver_sql(f"ALTER TABLE snapshots ADD COLUMN deployed_at {ts_type}")
+                        if "target_database" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN target_database VARCHAR(255)")
+                        if "target_schema" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN target_schema VARCHAR(255)")
+                        if "view_name" not in snapshot_columns:
+                            conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN view_name VARCHAR(255)")
                     if _tbl_exists("runs"):
                         run_columns = _col_names("runs")
                         if "sync_mode" not in run_columns:
@@ -520,6 +526,9 @@ class ModelRepository:
         run_id: Optional[str] = None,
         sync_mode: str = "copy",
         error_message: Optional[str] = None,
+        target_database: Optional[str] = None,
+        target_schema: Optional[str] = None,
+        view_name: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """Commit a new version of the model.
 
@@ -557,6 +566,9 @@ class ModelRepository:
                     error_message=error_message,
                     run_id=run_id,
                     sync_mode=sync_mode,
+                    target_database=target_database,
+                    target_schema=target_schema,
+                    view_name=view_name,
                 )
             )
 
@@ -657,78 +669,163 @@ class ModelRepository:
             session.commit()
         return saved
 
-    def mark_snapshot_deployed(self, snapshot_id: str) -> bool:
-        """Record that `snapshot_id`'s model is what the target now holds."""
+    def mark_snapshot_deployed(
+        self,
+        snapshot_id: str,
+        target_database: Optional[str] = None,
+        target_schema: Optional[str] = None,
+        view_name: Optional[str] = None,
+    ) -> bool:
+        """Record that `snapshot_id`'s model was successfully deployed to the target.
+
+        Dry runs are never a baseline and must never have deployed_at set.
+        """
         with self._session() as session:
-            result = session.execute(
-                update(SnapshotRow)
+            row_data = session.execute(
+                select(SnapshotRow, Run.run_type)
+                .outerjoin(Run, Run.run_id == SnapshotRow.run_id)
                 .where(SnapshotRow.snapshot_id == snapshot_id)
-                .values(deployed_at=datetime.utcnow())
-            )
+            ).first()
+            if not row_data:
+                return False
+            row, run_type = row_data
+            if str(run_type or "").upper() == "DRY_RUN":
+                logger.warning(
+                    "Refusing to mark snapshot %s as deployed: created by DRY_RUN",
+                    snapshot_id,
+                )
+                return False
+
+            row.deployed_at = datetime.utcnow()
+            if target_database:
+                row.target_database = str(target_database).strip()
+            if target_schema:
+                row.target_schema = str(target_schema).strip()
+            if view_name:
+                row.view_name = str(view_name).strip()
             session.commit()
-        return bool(getattr(result, "rowcount", 0))
+            return True
 
     def get_last_deployed_snapshot(
         self,
-        project_id: str,
-        model_names: List[str],
+        project_id: Optional[str] = None,
+        model_names: Optional[List[str]] = None,
+        target_database: Optional[str] = None,
+        target_schema: Optional[str] = None,
+        view_name: Optional[str] = None,
         scan_limit: int = 500,
     ) -> Optional[Snapshot]:
-        """Latest snapshot of this project whose model was deployed to the target.
+        """Latest snapshot deployed to the same target semantic view from ANY SemaBridge project.
 
-        Snapshots carry no model column (every model of a multi-model project
-        shares `project_id`), so the model is identified by the SML name in
-        the payload, matched case/punctuation-insensitively against
-        `model_names`. Snapshots marked `deployed_at` win; snapshots written
-        before that column existed fall back to "its run completed with
-        status success against a target".
-
-        Raises ValueError when a candidate snapshot's payload can't be read
-        — callers must not silently treat that as "never deployed".
+        Dry runs are never a baseline and are excluded everywhere, including
+        the legacy fallback.
         """
         from semabridge.core.upsert_delta import normalize_model_name
+        from semabridge.utils.name_translator import get_target_deployment_name
 
-        wanted = {normalize_model_name(n) for n in model_names if n}
-        if not wanted:
-            raise ValueError("No model name given to locate the last deployed snapshot")
+        wanted = {normalize_model_name(n) for n in (model_names or []) if n}
+        norm_view = view_name.strip().upper() if view_name else None
+        norm_db = target_database.strip().upper() if target_database else None
+        norm_schema = target_schema.strip().upper() if target_schema else None
+
+        if not wanted and not norm_view:
+            raise ValueError("No model or view name given to locate the last deployed snapshot")
 
         with self._session() as session:
-            rows = session.execute(
-                select(SnapshotRow, Run.status, Run.target_type)
+            query = (
+                select(
+                    SnapshotRow,
+                    Run.status,
+                    Run.target_type,
+                    Run.run_type,
+                    Project.database,
+                    Project.schema,
+                )
                 .outerjoin(Run, Run.run_id == SnapshotRow.run_id)
+                .outerjoin(Project, Project.project_id == SnapshotRow.project_id)
                 .where(
                     and_(
-                        SnapshotRow.project_id == project_id,
                         SnapshotRow.status == 'success',
                         SnapshotRow.deleted_at.is_(None),
+                        # Dry runs are never a baseline: exclude DRY_RUN everywhere
+                        or_(Run.run_type.is_(None), func.upper(Run.run_type) != 'DRY_RUN'),
+                        # Only real successful runs
+                        or_(Run.status.is_(None), func.lower(Run.status) == 'success'),
                     )
                 )
-                .order_by(SnapshotRow.timestamp.desc())
-                .limit(scan_limit)
+            )
+
+            # If no target view is specified, fall back to project-scoped lookup
+            if not norm_view and project_id:
+                query = query.where(SnapshotRow.project_id == project_id)
+
+            rows = session.execute(
+                query.order_by(SnapshotRow.timestamp.desc()).limit(scan_limit)
             ).all()
 
-        def _matches(row: SnapshotRow) -> bool:
+        def _matches(row: SnapshotRow, proj_db: Optional[str], proj_schema: Optional[str]) -> bool:
+            # 1. Database & Schema check if target database/schema is provided
+            if norm_db:
+                cand_db = (row.target_database or proj_db or "").strip().upper()
+                if cand_db and cand_db != norm_db:
+                    return False
+            if norm_schema:
+                cand_schema = (row.target_schema or proj_schema or "").strip().upper()
+                if cand_schema and cand_schema != norm_schema:
+                    return False
+
+            # 2. Check view / model match
             if not row.sml_blob:
                 return False
             blob = _deserialize_sml_blob(row.sml_blob)
             if not blob:
                 raise ValueError(
-                    f"Snapshot {row.snapshot_id} of project {project_id} could not be read"
+                    f"Snapshot {row.snapshot_id} of project {row.project_id} could not be read"
                 )
-            names = {normalize_model_name(blob.get("unique_name")), normalize_model_name(blob.get("label"))}
-            return bool(names & wanted)
 
-        for row, _status, _target in rows:
-            if row.deployed_at is not None and _matches(row):
+            # Direct view name match
+            if norm_view:
+                row_vn = (row.view_name or "").strip().upper()
+                if row_vn and row_vn == norm_view:
+                    return True
+                # If view_name was not stored on row, derive it from sml_blob
+                derived_vn = get_target_deployment_name(
+                    blob.get("unique_name") or blob.get("label") or "model",
+                    "snowflake",
+                ).strip().upper()
+                if derived_vn == norm_view:
+                    return True
+
+            # Model name match
+            if wanted:
+                names = {
+                    normalize_model_name(blob.get("unique_name")),
+                    normalize_model_name(blob.get("label")),
+                }
+                if bool(names & wanted):
+                    return True
+
+            return False
+
+        # Pass 1: Snapshots explicitly marked deployed_at win
+        for row, _status, _target, run_type, proj_db, proj_schema in rows:
+            if str(run_type or "").upper() == "DRY_RUN":
+                continue
+            if row.deployed_at is not None and _matches(row, proj_db, proj_schema):
                 return self._row_to_snapshot(row)
-        for row, run_status, target_type in rows:
+
+        # Pass 2: Legacy fallback for snapshots written before deployed_at column existed
+        for row, run_status, target_type, run_type, proj_db, proj_schema in rows:
+            if str(run_type or "").upper() == "DRY_RUN":
+                continue
             if (
                 row.deployed_at is None
                 and str(run_status or "").lower() == "success"
                 and target_type
-                and _matches(row)
+                and _matches(row, proj_db, proj_schema)
             ):
                 return self._row_to_snapshot(row)
+
         return None
 
     def rollback(
@@ -838,7 +935,7 @@ class ModelRepository:
             return None
 
         artifact_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
 
         if raw_json is not None:
             content = raw_json
@@ -928,7 +1025,7 @@ class ModelRepository:
         sync_mode: str = "copy",
     ) -> None:
         """Record the start of an execution run."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         with self._session() as session:
             existing = session.get(Run, run_id)
             if existing:

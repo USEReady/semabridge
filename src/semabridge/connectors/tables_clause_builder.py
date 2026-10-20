@@ -301,7 +301,7 @@ class TablesClauseBuilder:
             relationship_pk_cols: list[str] = []
             if dataset.unique_name in relationship_pk_map:
                 for rel_col in relationship_pk_map[dataset.unique_name]:
-                    resolved = self.identifier_sanitizer.sanitize_column(rel_col) if is_osi else self.schema_manager._resolve_physical_column_name(dataset, rel_col, model=self._current_model)
+                    resolved = self.schema_manager._resolve_physical_column_name(dataset, rel_col, model=self._current_model)
                     if not known_phys or resolved in known_phys:
                         if resolved not in relationship_pk_cols:
                             relationship_pk_cols.append(resolved)
@@ -328,8 +328,6 @@ class TablesClauseBuilder:
             )
 
             def _physical(col_name: str) -> str:
-                if is_osi:
-                    return self.identifier_sanitizer.sanitize_column(col_name)
                 return self.schema_manager._resolve_physical_column_name(dataset, col_name, model=self._current_model)
 
             if is_measure_only or is_fact_table:

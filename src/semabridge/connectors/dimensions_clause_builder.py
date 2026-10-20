@@ -92,6 +92,7 @@ class DimensionsClauseBuilder:
         added_dimensions = set()
         added_physical_dimensions = set()
         used_dimension_aliases_by_dataset: Dict[str, Set[str]] = {}
+        alias_to_phys_col: Dict[Tuple[str, str], str] = {}
 
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
@@ -102,14 +103,11 @@ class DimensionsClauseBuilder:
                 if not alias:
                     continue
 
-                if is_osi:
-                    phys_col = self.identifier_sanitizer.sanitize_column(attr.source_column)
-                else:
-                    raw_col = getattr(attr, "dataset_column", None) or attr.unique_name
-                    dataset_obj = dataset_by_name.get(attr.dataset)
-                    if not dataset_obj:
-                        continue
-                    phys_col = self.schema_manager._resolve_physical_column_name(dataset_obj, raw_col)
+                dataset_obj = dataset_by_name.get(attr.dataset)
+                if not dataset_obj:
+                    continue
+                raw_col = getattr(attr, "dataset_column", None) or getattr(attr, "source_column", None) or attr.unique_name
+                phys_col = self.schema_manager._resolve_physical_column_name(dataset_obj, raw_col)
                 
                 # Prefer live (confirmed Snowflake) schema over modeled fallback.
                 _live = (live_col_lookup or {}).get(attr.dataset)
@@ -154,6 +152,17 @@ class DimensionsClauseBuilder:
                         dataset_by_name,
                         phys_col,
                     )
+                    # If logical name changed or has a collision suffix, keep PBIX name as synonym
+                    orig_pbix = getattr(attr, "unique_name", None) or getattr(attr, "source_column", None)
+                    if orig_pbix and str(orig_pbix).strip().upper() != emitted_name.strip().upper():
+                        if orig_pbix not in col_synonyms:
+                            col_synonyms.append(orig_pbix)
+
+                    alias_to_phys_col[(alias, emitted_name.strip().upper())] = phys_col
+                    alias_to_phys_col[(alias, semantic_name.strip().upper())] = phys_col
+                    if orig_pbix:
+                        alias_to_phys_col[(alias, str(orig_pbix).strip().upper())] = phys_col
+
                     dims_lines.append(
                         f'  {alias}."{emitted_name}" AS '
                         f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
@@ -163,6 +172,7 @@ class DimensionsClauseBuilder:
                     added_physical_dimensions.add(physical_dim_key)
                     
         # 2. Add raw attributes
+        added_dataset_cols: Set[Tuple[str, str]] = set()
         for dataset in datasets:
             if str(dataset.unique_name or "").startswith(("LocalDateTable_", "DateTableTemplate_")):
                 continue
@@ -183,8 +193,23 @@ class DimensionsClauseBuilder:
                 if col.unique_name.upper() in _SYNTHETIC_COLS:
                     continue
 
-                if is_osi:
-                    phys_col = self.identifier_sanitizer.sanitize_column(col.unique_name)
+                col_key = (alias, col.unique_name.strip().upper())
+                if col_key in added_dataset_cols:
+                    continue
+                added_dataset_cols.add(col_key)
+
+                semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
+                semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
+
+                # Duplicate (_2) dimensions must point to the same physical column as the dimension they duplicate.
+                # No expression may reference another dimension's logical name.
+                dup_phys = (
+                    alias_to_phys_col.get((alias, col.unique_name.strip().upper()))
+                    or alias_to_phys_col.get((alias, semantic_name.strip().upper()))
+                    or alias_to_phys_col.get((alias, semantic_source_name.strip().upper()))
+                )
+                if dup_phys:
+                    phys_col = dup_phys
                 else:
                     phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
 
@@ -204,9 +229,6 @@ class DimensionsClauseBuilder:
                 source_expr = getattr(col, 'source_expression', None)
                 if source_expr and not IdentifierSanitizer.is_physical_source_column(source_expr):
                     continue
-
-                semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
-                semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
 
                 _live = (live_col_lookup or {}).get(dataset.unique_name)
                 if _live is not None:
@@ -231,13 +253,11 @@ class DimensionsClauseBuilder:
                             "(no live Snowflake schema was fetched to confirm it)",
                             dataset=dataset.unique_name,
                         )
-                        continue
-
                 dim_key = (alias, semantic_name, phys_col)
                 physical_dim_key = (alias, phys_col)
                 if dim_key in added_dimensions or physical_dim_key in added_physical_dimensions:
                     continue
-                
+
                 sync_all = self.behavior.semantic_model.sync_all_attributes
                 if not is_osi and getattr(col, "is_measure_candidate", False) and not sync_all:
                     continue
@@ -250,13 +270,18 @@ class DimensionsClauseBuilder:
                 emitted_name = self._resolve_unique_dimension_alias(
                     semantic_name, ds_used, semantic_source_name
                 )
+                col_syns = list(getattr(col, "synonyms", []) or [])
+                if semantic_source_name and semantic_source_name.strip().upper() != emitted_name.strip().upper():
+                    if semantic_source_name not in col_syns:
+                        col_syns.append(semantic_source_name)
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                    f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
+                    f'{synonyms_clause(col_syns)}'
                 )
-                added_dimensions.add(dim_key)
-                added_physical_dimensions.add(physical_dim_key)
+                added_dimensions.add((alias, emitted_name, phys_col))
+                added_physical_dimensions.add((alias, phys_col))
+                alias_to_phys_col[(alias, emitted_name.strip().upper())] = phys_col
 
         # 3. Add extra physical/synthetic columns present in live_col_lookup / dataset_col_lookup
         for dataset in datasets:

@@ -84,15 +84,48 @@ def _step7_persist_artifacts(
         sml_dict = context.sml_model.model_dump(mode='json') if context.sml_model else {}
         sync_mode = getattr(context, 'sync_mode', 'copy')
 
-        committed, snapshot_id = self.db_manager.commit_model(
-            project_id=context.project_id,
-            sml_json=sml_dict,
-            tag=tag,
-            status="success",
-            duration_ms=int((time.time() - context.start_time) * 1000),
-            run_id=context.run_id,
-            sync_mode=sync_mode,
-        )
+        sf_cfg = None
+        try:
+            from semabridge.core.engine.deployment.snowflake import target_snowflake_config
+            sf_cfg = target_snowflake_config(context)
+        except Exception:
+            pass
+        t_db = getattr(sf_cfg, "database", None)
+        t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+        t_vn = getattr(context, "deployed_view_name", None)
+        if not t_vn and context.sml_model:
+            try:
+                from semabridge.utils.name_translator import get_target_deployment_name
+                t_vn = get_target_deployment_name(
+                    getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
+                    "snowflake",
+                )
+            except Exception:
+                pass
+
+        try:
+            committed, snapshot_id = self.db_manager.commit_model(
+                project_id=context.project_id,
+                sml_json=sml_dict,
+                tag=tag,
+                status="success",
+                duration_ms=int((time.time() - context.start_time) * 1000),
+                run_id=context.run_id,
+                sync_mode=sync_mode,
+                target_database=t_db,
+                target_schema=t_schema,
+                view_name=t_vn,
+            )
+        except TypeError:
+            committed, snapshot_id = self.db_manager.commit_model(
+                project_id=context.project_id,
+                sml_json=sml_dict,
+                tag=tag,
+                status="success",
+                duration_ms=int((time.time() - context.start_time) * 1000),
+                run_id=context.run_id,
+                sync_mode=sync_mode,
+            )
 
         context.sml_snapshot_id = snapshot_id
 
@@ -309,6 +342,8 @@ def _step10_finalize(
         self._summary.dropped_entities = _reconcile_dropped_entities(context)
     if context.data_backfill_results:
         self._summary.data_backfill_results = context.data_backfill_results
+    if getattr(context, "cortex_validation_results", None):
+        self._summary.cortex_validation_results = context.cortex_validation_results
     if context.upsert_delta is not None:
         self._summary.upsert_delta = _annotated_upsert_delta(self._summary, context)
     if context.table_binding_plan is not None:

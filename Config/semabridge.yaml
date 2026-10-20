@@ -1,9 +1,9 @@
-project_name: upsert-test
+project_name: copy-mode
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-upsert-test/71e3e265c7a64d1abdf61eb31af99133_Competitive
+  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-copy-mode/3f003d679d9848fdb08b5d5ecb4c0ea8_Competitive
     Marketing Analysis (More Synonyms)_updated.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-upsert-test/71e3e265c7a64d1abdf61eb31af99133_Competitive
+  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-copy-mode/3f003d679d9848fdb08b5d5ecb4c0ea8_Competitive
     Marketing Analysis (More Synonyms)_updated.pbix
 targets:
 - type: snowflake
@@ -208,8 +208,8 @@ mappings_overrides:
   target_name: SUM_OF_SCORE
 - source_path: metrics.Average of Score
   target_name: AVERAGE_OF_SCORE
-- source_path: metrics.New Demo Measure
-  target_name: NEW_DEMO_MEASURE
+- source_path: metrics.Revenue per Unit
+  target_name: REVENUE_PER_UNIT
 ui:
   intermediate_format: osi
   editor_mode: form
@@ -217,5 +217,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-upsert-test
-display_name: upsert-test
+project_id: proj-copy-mode
+display_name: copy-mode

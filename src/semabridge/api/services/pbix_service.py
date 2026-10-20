@@ -21,6 +21,10 @@ from semabridge.api.services.project_domain_service import (
     import_pbix,
 )
 from semabridge.domain.exceptions import NotFoundError, ValidationError
+from semabridge.api.services.project_shared import (
+    _compat_load_project_yaml_text,
+    _compat_save_project_yaml_text,
+)
 
 def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     """Persist PBIX path in project metadata and cached project YAML."""
@@ -35,7 +39,8 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     _compat_projects[project_id] = project
 
     yaml_text = (
-        _compat_project_configs.get(project_id)
+        _compat_load_project_yaml_text(project_id)
+        or _compat_project_configs.get(project_id)
         or _compat_load_repo_yaml_text()
         or _compat_default_project_yaml(project)
     )
@@ -51,6 +56,10 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
 
     rebuilt = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
     _compat_project_configs[project_id] = rebuilt
+    try:
+        _compat_save_project_yaml_text(project_id, rebuilt)
+    except Exception as exc:
+        logger.warning("Could not write PBIX config to project YAML: %s", exc)
     try:
         _compat_repo_yaml_path().write_text(rebuilt, encoding="utf-8")
     except Exception as exc:

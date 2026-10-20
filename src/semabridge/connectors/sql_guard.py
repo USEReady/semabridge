@@ -77,7 +77,8 @@ _COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\r\n]*", re.DOTALL)
 # Explicitly forbidden patterns (high-priority error messages)
 _EXPLICIT_FORBIDDEN_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\bEXECUTE\s+IMMEDIATE\b", re.IGNORECASE), "EXECUTE IMMEDIATE"),
-    (re.compile(r"^\s*CALL\b", re.IGNORECASE), "CALL"),
+    (re.compile(r"^\s*CALL\s+(?!SYSTEM\$CREATE_SEMANTIC_VIEW_FROM_YAML\b)", re.IGNORECASE), "CALL"),
+    (re.compile(r"^\s*CALL\s+SYSTEM\$CREATE_SEMANTIC_VIEW_FROM_YAML\b(?!.*?(?:,\s*TRUE\s*|\bTRUE\b\s*)\)\s*$)", re.IGNORECASE | re.DOTALL), "CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML (non-verify mode)"),
     (re.compile(r"\bCLONE\b", re.IGNORECASE), "CLONE"),
     (re.compile(r"^\s*CREATE\s+OR\s+REPLACE\s+(?:TEMPORARY\s+|TRANSIENT\s+)?TABLE\b", re.IGNORECASE), "CREATE OR REPLACE TABLE"),
     (re.compile(r"^\s*CREATE\s+(?:TEMPORARY\s+|TRANSIENT\s+)TABLE\b", re.IGNORECASE), "CREATE TEMPORARY/TRANSIENT TABLE"),
@@ -100,6 +101,12 @@ _EXPLICIT_FORBIDDEN_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"^\s*MERGE\s+INTO\b", re.IGNORECASE), "MERGE INTO"),
 ]
 
+# Specifically allowed verify-only CALL pattern
+_VERIFY_YAML_PATTERN = re.compile(
+    r"^\s*CALL\s+SYSTEM\$CREATE_SEMANTIC_VIEW_FROM_YAML\s*\(.*?(?:,\s*TRUE\s*|\bTRUE\b\s*)\)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # Strict Allowlist Patterns: ONLY these statement types can ever pass
 _ALLOWLIST_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"^\s*SELECT\b", re.IGNORECASE), "SELECT"),
@@ -107,6 +114,7 @@ _ALLOWLIST_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"^\s*SHOW\b", re.IGNORECASE), "SHOW"),
     (re.compile(r"^\s*DESC(?:RIBE)?\b", re.IGNORECASE), "DESCRIBE"),
     (re.compile(r"^\s*USE\s+(?:ROLE|WAREHOUSE|DATABASE|SCHEMA)\b", re.IGNORECASE), "USE"),
+    (_VERIFY_YAML_PATTERN, "VERIFY_SEMANTIC_VIEW_YAML"),
     (re.compile(r"^\s*ALTER\s+SESSION\b", re.IGNORECASE), "ALTER_SESSION"),
     (re.compile(r"^\s*CREATE\s+OR\s+REPLACE\s+SEMANTIC\s+VIEW\s+([a-zA-Z0-9_\"`.]+)", re.IGNORECASE), "CREATE_SEMANTIC_VIEW"),
     (re.compile(r"^\s*ALTER\s+SEMANTIC\s+VIEW\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_\"`.]+)\s+(?:SET|UNSET)\s+COMMENT\b", re.IGNORECASE), "ALTER_SEMANTIC_VIEW_COMMENT"),

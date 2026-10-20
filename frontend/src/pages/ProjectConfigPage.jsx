@@ -276,6 +276,63 @@ function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus
             />
           </div>
 
+          {String(configForm.source_type || '').toLowerCase() === 'pbix' && (
+            <div style={{ gridColumn: 'span 2' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <FormLabel>PBIX Source File</FormLabel>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    type="file"
+                    id="pbix-replace-input"
+                    accept=".pbix"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const targetId = project?.id || project?.project_id || configForm?.project_id;
+                        const res = targetId
+                          ? await api.uploadProjectPbix(targetId, file)
+                          : await api.uploadPbix(file);
+                        if (res?.path) {
+                          updateField('pbix_path', res.path);
+                          updateField('pbix_uploaded_path', res.path);
+                        }
+                      } catch (err) {
+                        console.error('Failed to upload PBIX:', err);
+                      } finally {
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById('pbix-replace-input')?.click()}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--accent-blue)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      padding: 0,
+                    }}
+                  >
+                    Replace / Upload PBIX
+                  </button>
+                </div>
+              </div>
+              <FormInput
+                value={configForm.pbix_path || configForm.pbix_uploaded_path || ''}
+                onChange={e => updateField('pbix_path', e.target.value)}
+                placeholder="C:/models/Finance.pbix"
+              />
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                Active PBIX file path for this project. Click 'Replace / Upload PBIX' to upload a modified file.
+              </div>
+            </div>
+          )}
+
           {/* Workspace Identity / ID and Include Models (Allow-list) fields hidden as requested
           <div style={{ gridColumn: 'span 2' }}>
              <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -2803,12 +2860,37 @@ function FormEditor({
         {value.source_type === 'pbix' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
                 <label style={{ ...LABEL, margin: 0 }}>PBIX File Path</label>
-                {uploadedPbixPath && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="file"
+                    id="form-pbix-replace-input"
+                    accept=".pbix"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const targetId = value.project_id || value.id;
+                        const res = targetId
+                          ? await api.uploadProjectPbix(targetId, file)
+                          : await api.uploadPbix(file);
+                        if (res?.path) {
+                          patch('pbix_path', res.path);
+                          patch('pbix_uploaded_path', res.path);
+                          setOverridePbixPath(false);
+                        }
+                      } catch (err) {
+                        console.error('Failed to upload PBIX:', err);
+                      } finally {
+                        e.target.value = '';
+                      }
+                    }}
+                  />
                   <button
                     type="button"
-                    onClick={() => setOverridePbixPath(prev => !prev)}
+                    onClick={() => document.getElementById('form-pbix-replace-input')?.click()}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -2819,9 +2901,26 @@ function FormEditor({
                       padding: 0,
                     }}
                   >
-                    {overridePbixPath ? 'Use uploaded path' : 'Edit manually'}
+                    Replace PBIX
                   </button>
-                )}
+                  {uploadedPbixPath && (
+                    <button
+                      type="button"
+                      onClick={() => setOverridePbixPath(prev => !prev)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--accent-blue)',
+                        cursor: 'pointer',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: 0,
+                      }}
+                    >
+                      {overridePbixPath ? 'Use uploaded path' : 'Edit manually'}
+                    </button>
+                  )}
+                </div>
               </div>
               <input
                 value={value.pbix_path || ''}

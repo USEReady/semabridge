@@ -96,16 +96,12 @@ class RelationshipsClauseBuilder:
             from_cols: list[str] = []
             to_cols: list[str] = []
 
-            if is_osi:
-                from_cols = [self.identifier_sanitizer.sanitize_column(c) for c in rel.from_columns]
-                to_cols = [self.identifier_sanitizer.sanitize_column(c) for c in (rel.to_columns or [])]
-            else:
-                for c in rel.from_columns:
-                    resolved = self.schema_manager._resolve_physical_column_name(from_ds, c) if from_ds else self.identifier_sanitizer.sanitize_column(c)
-                    from_cols.append(resolved)
-                for c in (rel.to_columns or []):
-                    resolved = self.schema_manager._resolve_physical_column_name(to_ds, c) if to_ds else self.identifier_sanitizer.sanitize_column(c)
-                    to_cols.append(resolved)
+            for c in rel.from_columns:
+                resolved = self.schema_manager._resolve_physical_column_name(from_ds, c) if from_ds else self.identifier_sanitizer.sanitize_column(c)
+                from_cols.append(resolved)
+            for c in (rel.to_columns or []):
+                resolved = self.schema_manager._resolve_physical_column_name(to_ds, c) if to_ds else self.identifier_sanitizer.sanitize_column(c)
+                to_cols.append(resolved)
 
             if not from_cols or any(not c for c in from_cols):
                 logger.warning(

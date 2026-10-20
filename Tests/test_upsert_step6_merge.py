@@ -135,11 +135,10 @@ def test_step6a_upsert_uses_dry_run_baseline_project():
     harness = Step6Harness(source_model, snapshot=None)
     context = _context("upsert", source_model, payload={"delta_baseline_project_id": "proj-real"})
 
-    _step6a_apply_upsert_delta(harness, context)
+    with pytest.raises(ConversionError, match="No previous deployment of FABRICMODEL_SEMANTIC found. Run a Copy sync first."):
+        _step6a_apply_upsert_delta(harness, context)
 
     assert harness.lookups[0][0] == "proj-real"
-    assert context.upsert_delta["first_deployment"] is True
-    assert context.upsert_delta["has_changes"] is True
 
 
 def test_step6a_upsert_unreadable_snapshot_stops_the_run():

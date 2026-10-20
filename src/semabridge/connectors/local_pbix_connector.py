@@ -385,9 +385,9 @@ class LocalPBIXConnector(BaseConnector):
             confirmed-empty-model handling below), or None when fallback is
             unavailable or parsing genuinely fails.
         """
-        try:
-            from pbixray import PBIXRay  # type: ignore[import-untyped]
-        except ImportError:
+        from semabridge.connectors.pbixray_compat import get_pbixray
+        PBIXRay = get_pbixray()
+        if PBIXRay is None:
             logger.warning("pbixray is not installed; cannot parse binary DataModel PBIX")
             return None
 

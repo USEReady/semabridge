@@ -128,15 +128,43 @@ def _step6a_apply_upsert_delta(self, context: RunContext) -> None:
     """
     from semabridge.core.upsert_delta import compute_delta, merge_upsert, parse_baseline_blob
 
+    from semabridge.core.engine.deployment.snowflake import target_snowflake_config
+    from semabridge.utils.name_translator import get_target_deployment_name
+
     model = context.sml_model
     payload = context.config_payload or {}
     baseline_project_id = str(payload.get("delta_baseline_project_id") or context.project_id)
     preview_overrides = payload.get("delta_preview_overrides")
     model_names = [model.unique_name, model.label]
 
+    target_database = None
+    target_schema = None
     try:
-        snapshot = self.db_manager.get_last_deployed_snapshot(baseline_project_id, model_names)
+        sf_cfg = target_snowflake_config(context)
+        target_database = getattr(sf_cfg, "database", None)
+        target_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+    except Exception:
+        pass
+
+    target_view_name = getattr(context, "deployed_view_name", None) or get_target_deployment_name(
+        getattr(model, "unique_name", None) or getattr(model, "label", None) or "model",
+        "snowflake",
+    )
+
+    try:
+        try:
+            snapshot = self.db_manager.get_last_deployed_snapshot(
+                project_id=baseline_project_id,
+                model_names=model_names,
+                target_database=target_database,
+                target_schema=target_schema,
+                view_name=target_view_name,
+            )
+        except TypeError:
+            snapshot = self.db_manager.get_last_deployed_snapshot(baseline_project_id, model_names)
     except Exception as exc:
+        if isinstance(exc, ConversionError):
+            raise
         self._record_step(6, StepStatus.FAILED, f"UPSERT: previous deployed snapshot unreadable: {exc}")
         raise ConversionError(
             f"UPSERT stopped: the last deployed snapshot of '{model.label or model.unique_name}' "
@@ -148,12 +176,10 @@ def _step6a_apply_upsert_delta(self, context: RunContext) -> None:
         comparison_model = self._upsert_delta_preview_model(context, preview_overrides)
 
     if snapshot is None:
-        logger.info(
-            "UPSERT: no deployed snapshot for %s in project %s; first deployment",
-            model.unique_name, baseline_project_id,
-        )
-        context.upsert_delta = compute_delta(comparison_model, None)
-        return
+        view_display = target_view_name or getattr(model, "label", None) or getattr(model, "unique_name", None) or "view"
+        msg = f"No previous deployment of {view_display} found. Run a Copy sync first."
+        self._record_step(6, StepStatus.FAILED, msg)
+        raise ConversionError(msg)
 
     try:
         baseline = parse_baseline_blob(snapshot.sml_blob, snapshot.snapshot_id)

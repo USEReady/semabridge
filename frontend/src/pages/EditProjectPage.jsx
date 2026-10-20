@@ -84,6 +84,9 @@ export default function EditProjectPage() {
       tags: meta?.tags || project?.tags || [],
       // persist sync mode if provided by the wizard (only copy|upsert allowed)
       ...(nextSyncMode ? { sync_mode: nextSyncMode } : {}),
+      ...(meta?.pbix_uploaded_path || meta?.pbix_file_path || meta?.pbix_path
+        ? { pbix_file_path: meta.pbix_uploaded_path || meta.pbix_file_path || meta.pbix_path }
+        : {}),
       // Dry-run provenance so the backend can migrate synonyms edited during
       // this edit session's dry run (single: preview_project_id; multi-model:
       // dry_run_job_id + preview_project_ids) onto this project.

@@ -842,7 +842,8 @@ def _sweep_stale_runs():
                             run_ts = None
                     if run_ts and run_ts.tzinfo is None:
                         run_ts = run_ts.replace(tzinfo=timezone.utc)
-                if not run_ts or run_ts < cutoff:
+                is_stale = not run_ts or (now - run_ts.astimezone(timezone.utc)).total_seconds() > 300
+                if is_stale:
                     r.status = "failed"
                     r.error_message = r.error_message or "Run timed out or was interrupted."
                     if not r.completed_at:
@@ -1050,7 +1051,7 @@ async def run_project_now_compat(
     project_id: str, background_tasks: BackgroundTasks, payload: Optional[Dict[str, Any]] = None
 ):
     _compat_ensure_loaded()
-    if bool((payload or {}).get("dry_run", False)):
+    if bool((payload or {}).get("dry_run", False)) or str((payload or {}).get("run_type") or "").upper() == "DRY_RUN":
         from semabridge.api.services.mapping_service import auto_map_compat
         preview_payload = dict(payload or {})
         preview_payload["project_id"] = project_id
@@ -1138,7 +1139,7 @@ async def run_project_now_compat(
         sync_mode=(
             _compat_sync_mode_for_restore_snapshot(project_id, restore_snapshot_id, payload)
             if run_type == "RESTORE" and restore_snapshot_id
-            else None
+            else (payload or {}).get("sync_mode")
         ),
         fallback_sync_mode=(payload or {}).get("sync_mode"),
     )

@@ -331,6 +331,7 @@ class OSIMetric(OSIBaseModel):
         "independent extraction and never merges with another file's entities.",
     )
     sql_expression: Optional[str] = None          # Pre-translated SQL (from Snowflake extract)
+    is_placeholder: bool = Field(default=False, description="Flag indicating if metric is emitted as NULL placeholder")
     complexity_tier: int = 0                       # 0=unknown, 1-5 from DAX analysis
     depends_on_measures: List[str] = Field(default_factory=list)  # Dependency graph
 

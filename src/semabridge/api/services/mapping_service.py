@@ -967,14 +967,17 @@ async def auto_map_compat(payload: dict):
     sync_result: Dict[str, Any] = {}  # populated in project-backed branch; empty otherwise
     if project_id and not preview_mode:
         from semabridge.api.services.core_domain_service import sync_models
-        preferred_snapshot_id = ""
         try:
-            sync_result = await sync_models({
+            sync_mode = (payload or {}).get("sync_mode")
+            sync_models_payload = {
                 "project_id": project_id,
                 "content": config_yaml or None,
                 "dry_run": True,
                 "user_id": user_id,
-            })
+            }
+            if sync_mode:
+                sync_models_payload["sync_mode"] = sync_mode
+            sync_result = await sync_models(sync_models_payload)
             preferred_snapshot_id = _compat_preferred_snapshot_id_from_sync_result(sync_result, selected_model_names)
         except Exception as exc:
             has_existing_project_mappings = any(
@@ -1153,6 +1156,8 @@ async def auto_map_compat(payload: dict):
         "diagnostics": diagnostics,
         "schema_conflicts": schema_conflicts,
         "compatibility_score": compatibility_score,
+        "upsert_delta": (sync_result.get("results") or [{}])[0].get("upsert_delta") if isinstance(sync_result, dict) else None,
+        "results": sync_result.get("results") if isinstance(sync_result, dict) else [],
         "status": "ok",
     }
 

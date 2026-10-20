@@ -181,7 +181,9 @@ def _resolve_node_shape(
         # Structurally precise rolling months detection on AST repr string
         full_node_str = str(node)
         if "MONTHINDEX" in full_node_str.upper():
-            m_r = re.search(r"MONTHINDEX.*?op='-'.*?value=(\d+)", full_node_str, re.IGNORECASE | re.DOTALL)
+            m_r = re.search(r"MONTHINDEX.*?(?:op='-'|value=-)\s*(\d+)", full_node_str, re.IGNORECASE | re.DOTALL)
+            if not m_r:
+                m_r = re.search(r"MONTHINDEX.*?value=-?(\d+)", full_node_str, re.IGNORECASE | re.DOTALL)
             if m_r:
                 n_months = int(m_r.group(1))
                 return (f"R{n_months}M",)

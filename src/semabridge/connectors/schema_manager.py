@@ -1569,13 +1569,13 @@ class SnowflakeSchemaManager:
         _backfill_one_table's try/except, and this method's own PBIXRay-open
         step is wrapped here for the same reason.
         """
-        try:
-            from pbixray import PBIXRay
-        except Exception as exc:
-            logger.warning("Data backfill requested but pbixray is unavailable: %s", exc)
+        from semabridge.connectors.pbixray_compat import get_pbixray
+        PBIXRay = get_pbixray()
+        if PBIXRay is None:
+            logger.warning("Data backfill requested but pbixray is unavailable")
             return [{
                 "table": None, "dataset": None, "status": "failed", "row_count": 0,
-                "reason": f"pbixray is not installed/importable: {exc}",
+                "reason": "pbixray is not installed/importable",
             }]
 
         try:

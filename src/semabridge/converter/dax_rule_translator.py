@@ -319,7 +319,12 @@ def rule_based_translation(
     )
     for pattern_name, translator in additional_translators:
         try:
-            result = translator(clean_dax, table_alias)
+            import inspect
+            sig = inspect.signature(translator)
+            if "anchor_flag_map" in sig.parameters:
+                result = translator(clean_dax, table_alias, anchor_flag_map=anchor_flag_map)
+            else:
+                result = translator(clean_dax, table_alias)
             if result:
                 logger.info(
                     "Deterministic translator successful: %s -> %s",
@@ -807,7 +812,11 @@ def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
     )
 
 
-def translate_rolling_12_months(dax: str, table_alias: str) -> Optional[str]:
+def translate_rolling_12_months(
+    dax: str,
+    table_alias: str,
+    anchor_flag_map: Optional[dict] = None,
+) -> Optional[str]:
     """Convert common R12M CALCULATE/FILTER pattern into CASE-based SUM.
 
     Looks for patterns that compare a month index to a MAX_MONTHINDEX anchor
@@ -815,27 +824,24 @@ def translate_rolling_12_months(dax: str, table_alias: str) -> Optional[str]:
     """
     if not dax or not isinstance(dax, str):
         return None
-    # crude pattern detection
-    m = re.search(r"SUM\s*\(\s*\[([^\]]+)\]\s*\).*?MonthIndex\s*(?:<=|<)\s*MAX\([^)]*\)\s*.*?-\s*(\d+)", dax, re.IGNORECASE | re.DOTALL)
+    # match pattern like SUM([Units]) ... MonthIndex ... - 12
+    m = re.search(r"SUM\s*\(\s*(?:\[([^\]]+)\]|([a-zA-Z0-9_]+))\s*\).*?MonthIndex.*?-\s*(\d+)", dax, re.IGNORECASE | re.DOTALL)
     if not m:
         return None
-    col = m.group(1).strip()
-    months = m.group(2).strip()
+    col = (m.group(1) or m.group(2)).strip()
+    months = int(m.group(3).strip())
+
+    flag_name = (anchor_flag_map or {}).get((f"R{months}M",)) or (anchor_flag_map or {}).get(("R12M",))
+    if flag_name:
+        return f"SUM(CASE WHEN {table_alias}.\"{flag_name}\" THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
+
     date_alias = _date_alias()
-    # Native current-month-index expression instead of a MAX_MONTHINDEX
-    # anchor column — unlike MAX_DATE, MAX_MONTHINDEX is never actually
-    # computed anywhere in the enriched-view builder, only assumed to exist
-    # by several consumers (semantic_ddl_sanitizer.py's own missing-column
-    # fallback confirms this). Formula matches that existing fallback
-    # verbatim. Same known tradeoff as the MAX_DATE substitution above:
-    # calendar-today, not last-synced-date — see that comment for the
-    # year/period-boundary silent-zero failure mode this can produce if
-    # synced data lags behind real time.
-    current_month_index = "(EXTRACT(YEAR FROM CURRENT_DATE()) * 12 + EXTRACT(MONTH FROM CURRENT_DATE()))"
+    # Generically data-independent: use the enriched view anchor _CURRENT_FISCAL_PERIOD, never CURRENT_DATE()
     return (
-        f"SUM(CASE WHEN {date_alias}.MONTHINDEX <= {current_month_index} "
-        f"AND {date_alias}.MONTHINDEX > {current_month_index} - {months} "
-        f"THEN {table_alias}.{_quote_identifier(col)} ELSE 0 END)"
+        f"SUM(CASE WHEN {table_alias}.\"_CURRENT_FISCAL_PERIOD\" IS NOT NULL "
+        f"AND {date_alias}.MONTHINDEX <= {table_alias}.\"_CURRENT_FISCAL_PERIOD\" "
+        f"AND {date_alias}.MONTHINDEX > {table_alias}.\"_CURRENT_FISCAL_PERIOD\" - {months} "
+        f"THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
     )
 
 

@@ -609,6 +609,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
                     "summary": top_summary,
                     "dropped_entities": top_summary.get("dropped_entities") or [],
                     "data_backfill_results": top_summary.get("data_backfill_results") or [],
+                    "cortex_validation_results": top_summary.get("cortex_validation_results") or [],
                 }
             ]
 
@@ -638,6 +639,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     data_backfill_results: List[Dict[str, Any]] = []
+    cortex_validation_results: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -651,6 +653,9 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
             if isinstance(backfill_entry, dict):
                 data_backfill_results.append({**backfill_entry, "model": model_label})
+        for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
+            if isinstance(cortex_entry, dict):
+                cortex_validation_results.append({**cortex_entry, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         if snap_data:
@@ -807,6 +812,7 @@ def build_run_report_data(
         # enabled -- empty list (and all three counts 0 above) for every
         # other run, matching that feature's off-by-default contract.
         "data_backfill": data_backfill_results,
+        "cortex_validation": cortex_validation_results,
         # UPSERT runs only: per-model delta vs the last deployed snapshot.
         "upsert_deltas": data.get("upsert_deltas") or [],
     }
@@ -874,6 +880,7 @@ def generate_run_report_markdown(
                     "summary": top_summary,
                     "dropped_entities": top_summary.get("dropped_entities") or [],
                     "data_backfill_results": top_summary.get("data_backfill_results") or [],
+                    "cortex_validation_results": top_summary.get("cortex_validation_results") or [],
                 }
             ]
 
@@ -897,6 +904,7 @@ def generate_run_report_markdown(
     dropped_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     data_backfill_results: List[Dict[str, Any]] = []
+    cortex_validation_results: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -910,6 +918,9 @@ def generate_run_report_markdown(
         for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
             if isinstance(backfill_entry, dict):
                 data_backfill_results.append({**backfill_entry, "model": model_label})
+        for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
+            if isinstance(cortex_entry, dict):
+                cortex_validation_results.append({**cortex_entry, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
         if snap_data:
@@ -1137,6 +1148,34 @@ def generate_run_report_markdown(
             reason = str(entry.get("reason") or "").replace("|", "\\|")
             lines.append(f"| {table} | {status} | {row_count} | {columns_cell} | {trigger} | {reason} |")
         lines.append("")
+
+    if cortex_validation_results:
+        lines.append("## Cortex Analyst Validation")
+        lines.append("")
+        lines.append(
+            "Every deployed semantic view underwent automated Cortex Analyst safety checks "
+            "(YAML verify-only round-trip and zero-row element compilation):"
+        )
+        lines.append("")
+        lines.append("| Semantic View | YAML Validation | Dimensions Tested | Metrics Tested | Status |")
+        lines.append("|---|---|---|---|---|")
+        for cv in cortex_validation_results:
+            view = cv.get("view_name") or "(unknown)"
+            yaml_stat = "✅ Valid" if cv.get("yaml_verified") else "❌ Failed"
+            dims = f"{cv.get('dimensions_passed', 0)} / {cv.get('dimensions_checked', 0)} passed"
+            mets = f"{cv.get('metrics_passed', 0)} / {cv.get('metrics_checked', 0)} passed"
+            remediated = cv.get("remediated_metrics") or []
+            if remediated:
+                stat = f"⚠️ {len(remediated)} metric(s) nulled"
+            else:
+                stat = "✅ Valid"
+            lines.append(f"| `{view}` | {yaml_stat} | {dims} | {mets} | {stat} |")
+        lines.append("")
+        for cv in cortex_validation_results:
+            remediated = cv.get("remediated_metrics") or []
+            if remediated:
+                lines.append(f"**Remediated metrics for `{cv.get('view_name')}` (replaced with NULL placeholder):** " + ", ".join(f"`{m}`" for m in remediated))
+                lines.append("")
 
     return "\n".join(lines)
 

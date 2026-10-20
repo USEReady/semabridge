@@ -144,3 +144,4 @@ class RunContext:
     # Fields UI). Each entry: {table, dataset, status: "loaded"|"skipped"|
     # "failed", row_count, reason}.
     data_backfill_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
+    cortex_validation_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)

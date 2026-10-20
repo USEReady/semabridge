@@ -412,7 +412,31 @@ class ExecutionEngine:
                 # against it.
                 if context.sml_snapshot_id:
                     try:
-                        self.db_manager.mark_snapshot_deployed(context.sml_snapshot_id)
+                        sf_cfg = None
+                        try:
+                            from semabridge.core.engine.deployment.snowflake import target_snowflake_config
+                            sf_cfg = target_snowflake_config(context)
+                        except Exception:
+                            pass
+                        t_db = getattr(sf_cfg, "database", None)
+                        t_schema = getattr(sf_cfg, "schema_name", None) or getattr(sf_cfg, "schema", None)
+                        t_vn = getattr(context, "deployed_view_name", None)
+                        if not t_vn and context.sml_model:
+                            from semabridge.utils.name_translator import get_target_deployment_name
+                            t_vn = get_target_deployment_name(
+                                getattr(context.sml_model, "unique_name", None) or getattr(context.sml_model, "label", None) or "model",
+                                "snowflake",
+                            )
+
+                        try:
+                            self.db_manager.mark_snapshot_deployed(
+                                context.sml_snapshot_id,
+                                target_database=t_db,
+                                target_schema=t_schema,
+                                view_name=t_vn,
+                            )
+                        except TypeError:
+                            self.db_manager.mark_snapshot_deployed(context.sml_snapshot_id)
                     except Exception as mark_exc:
                         logger.warning(
                             "Could not mark snapshot %s as deployed: %s",

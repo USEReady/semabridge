@@ -114,6 +114,10 @@ class RunSummary(BaseModel):
         default_factory=list,
         description="Per-table data-backfill outcomes (loaded/skipped/failed/ambiguous_needs_review/columns_backfilled), only populated when options.load_source_data is enabled",
     )
+    cortex_validation_results: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Cortex Analyst built-in safety validation results",
+    )
 
     # UPSERT runs only: added/modified/removed/unchanged per kind against the
     # last deployed snapshot (see core/upsert_delta.py). None for COPY runs.

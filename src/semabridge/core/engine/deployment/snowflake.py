@@ -255,6 +255,7 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             {**entry, "trigger": backfill_trigger}
             for entry in (getattr(emitter, "data_backfill_results", None) or [])
         ]
+        context.cortex_validation_results = list(getattr(emitter, "cortex_validation_results", None) or [])
         # Propagate the live deployed DDL (captured by deploy() itself via
         # GET_DDL, on the connection it already had open — see
         # snowflake_emitter.py's Step 6b) so Step 10 can reconcile

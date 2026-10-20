@@ -537,7 +537,7 @@ class MetricSqlValidator:
         pattern = r'(?P<id>[A-Z_][A-Z0-9_\.]+)\s*<=\s*MAX\(\s*(?P=id)\s*\)\s*AND\s*(?P=id)\s*>\s*MAX\(\s*(?P=id)\s*\)\s*-\s*12'
         def _replace(match: re.Match) -> str:
             month_index_id = match.group('id')
-            return f"{month_index_id} > ((YEAR(CURRENT_DATE()) * 12) + MONTH(CURRENT_DATE()) - 12)"
+            return f"{month_index_id} <= _CURRENT_FISCAL_PERIOD AND {month_index_id} > _CURRENT_FISCAL_PERIOD - 12"
         return re.sub(pattern, _replace, normalized, flags=re.IGNORECASE)
 
     def _qualify_bare_partition_identifiers(self, metric_sql: str, dataset_col_lookup: Dict[str, set], dataset_aliases: Dict[str, str], preferred_table_alias: Optional[str] = None) -> str:
