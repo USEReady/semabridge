@@ -203,6 +203,79 @@ class TablesClauseBuilder:
         self._current_model = osi
         return self._build(osi.datasets, osi.relationships, registry, metric_counts_by_dataset, related_datasets, is_osi=True)
 
+    def _is_uniqueness_guaranteed(
+        self,
+        dataset: Any,
+        target_cols: list[str],
+        relationships: list[Any],
+        unqualified_table: str,
+    ) -> bool:
+        """Determine whether uniqueness of target_cols on dataset is guaranteed.
+
+        Guaranteed if:
+        1. Model column metadata explicitly marks all target columns with is_key=True.
+        2. Snowflake schema metadata declares a primary key or unique key matching target_cols.
+        3. Model relationships targeting this dataset on target_cols have 1:1 or Many-to-One
+           cardinality (in Power BI / Tabular models, the 'One' side of 1:1 or M:1 is enforced
+           unique by the engine).
+        4. Or verified by schema_manager data checks if available.
+        """
+        # 1. Column metadata
+        cols = getattr(dataset, "columns", []) or []
+        col_map = {str(c.unique_name).upper(): c for c in cols}
+        matched = [col_map[c.upper()] for c in target_cols if c.upper() in col_map]
+        if len(matched) == len(target_cols) and all(getattr(c, "is_key", False) for c in matched):
+            return True
+
+        # 2. Snowflake schema metadata
+        if hasattr(self.schema_manager, "declared_primary_keys"):
+            pks = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
+                str(unqualified_table).strip('"').upper(), []
+            )
+            if pks and [p.upper() for p in pks] == [c.upper() for c in target_cols]:
+                return True
+
+        # 3. Model relationship cardinality
+        target_cols_upper = [c.upper() for c in target_cols]
+        target_ds_names = {
+            getattr(dataset, "unique_name", None),
+            getattr(dataset, "name", None),
+        } - {None}
+
+        for rel in relationships:
+            card = getattr(rel, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "").lower().replace("_", "-")
+
+            # Check if this rel targets dataset on target_cols
+            if getattr(rel, "to_dataset", None) in target_ds_names:
+                rel_to_cols = [
+                    self.schema_manager._resolve_physical_column_name(dataset, c, model=self._current_model).upper()
+                    if hasattr(self.schema_manager, "_resolve_physical_column_name")
+                    else self.identifier_sanitizer.sanitize_column(c).upper()
+                    for c in (getattr(rel, "to_columns", None) or [])
+                ]
+                if rel_to_cols == target_cols_upper:
+                    if card_str in ("1:1", "one-to-one", "onetoone"):
+                        return True
+                    if card_str in ("m:1", "many-to-one", "manytoone"):
+                        return True
+
+            # Check if 1:1 where dataset is the from_dataset
+            if getattr(rel, "from_dataset", None) in target_ds_names:
+                rel_from_cols = [
+                    self.schema_manager._resolve_physical_column_name(dataset, c, model=self._current_model).upper()
+                    if hasattr(self.schema_manager, "_resolve_physical_column_name")
+                    else self.identifier_sanitizer.sanitize_column(c).upper()
+                    for c in (getattr(rel, "from_columns", None) or [])
+                ]
+                if rel_from_cols == target_cols_upper:
+                    if card_str in ("1:1", "one-to-one", "onetoone"):
+                        return True
+                    if card_str in ("1:m", "one-to-many", "onetomany"):
+                        return True
+
+        return False
+
     def _build(
         self,
         datasets: List[Any],
@@ -231,14 +304,14 @@ class TablesClauseBuilder:
         many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
         one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
 
-        relationship_pk_map = {}
+        target_keys_by_dataset: dict[str, list[list[str]]] = {}
         for rel in relationships:
-            if rel.is_active and rel.to_dataset and rel.to_columns:
-                if rel.to_dataset not in relationship_pk_map:
-                    relationship_pk_map[rel.to_dataset] = []
-                for col in rel.to_columns:
-                    if col not in relationship_pk_map[rel.to_dataset]:
-                        relationship_pk_map[rel.to_dataset].append(col)
+            if rel.to_dataset and rel.to_columns:
+                if rel.to_dataset not in target_keys_by_dataset:
+                    target_keys_by_dataset[rel.to_dataset] = []
+                col_list = [c for c in rel.to_columns]
+                if col_list not in target_keys_by_dataset[rel.to_dataset]:
+                    target_keys_by_dataset[rel.to_dataset].append(col_list)
 
         dataset_col_lookup: dict[str, set[str]] = {}
         # live_col_lookup contains ONLY confirmed-live columns from Snowflake schema
@@ -296,15 +369,19 @@ class TablesClauseBuilder:
             full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
-
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
-            relationship_pk_cols: list[str] = []
-            if dataset.unique_name in relationship_pk_map:
-                for rel_col in relationship_pk_map[dataset.unique_name]:
-                    resolved = self.schema_manager._resolve_physical_column_name(dataset, rel_col, model=self._current_model)
-                    if not known_phys or resolved in known_phys:
-                        if resolved not in relationship_pk_cols:
-                            relationship_pk_cols.append(resolved)
+
+            def _physical(col_name: str) -> str:
+                return self.schema_manager._resolve_physical_column_name(dataset, col_name, model=self._current_model)
+
+            # Resolve target keys for this dataset to physical column names
+            raw_target_keys = target_keys_by_dataset.get(dataset.unique_name, [])
+            resolved_target_keys: list[list[str]] = []
+            for raw_key in raw_target_keys:
+                resolved_cols = [_physical(c) for c in raw_key]
+                if not known_phys or all(c in known_phys for c in resolved_cols):
+                    if resolved_cols not in resolved_target_keys:
+                        resolved_target_keys.append(resolved_cols)
 
             is_measure_only = (
                 metric_counts_by_dataset.get(dataset.unique_name, 0) > 0
@@ -327,54 +404,100 @@ class TablesClauseBuilder:
                 or is_on_many_side
             )
 
-            def _physical(col_name: str) -> str:
-                return self.schema_manager._resolve_physical_column_name(dataset, col_name, model=self._current_model)
+            # Resolve primary key
+            pk_cols: list[str] = []
 
-            if is_measure_only or is_fact_table:
+            if is_measure_only:
                 pk_cols = []
-            elif relationship_pk_cols:
-                pk_cols = [f'"{relationship_pk_cols[0]}"']
+            elif resolved_target_keys:
+                # Find the first target key whose uniqueness is guaranteed
+                for tkey in resolved_target_keys:
+                    if self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
+                        pk_cols = [f'"{c}"' for c in tkey]
+                        break
+
+                if not pk_cols:
+                    if is_fact_table:
+                        # Safeguard: unreferenced or unverified fact table keys are never guessed
+                        pk_cols = []
+                    else:
+                        # Dimension table fallback
+                        key_cols = [c for c in dataset.columns if c.is_key]
+                        declared = []
+                        if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
+                            declared = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
+                                str(unqualified_table).strip('"').upper(), []
+                            )
+                        if key_cols:
+                            pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
+                        elif declared:
+                            pk_cols = [f'"{c}"' for c in declared]
+                        elif dataset.columns:
+                            pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
             else:
-                key_cols = [c for c in dataset.columns if c.is_key]
-                declared = []
-                if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
-                    declared = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
-                        str(unqualified_table).strip('"').upper(), []
-                    )
-                if key_cols:
-                    pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
-                elif declared:
-                    pk_cols = [f'"{c}"' for c in declared]
-                elif dataset.columns:
-                    pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
-                else:
+                if is_fact_table:
+                    # Safeguard: fact table not targeted by any relationship has PK suppressed
                     pk_cols = []
+                else:
+                    key_cols = [c for c in dataset.columns if c.is_key]
+                    declared = []
+                    if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
+                        declared = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
+                            str(unqualified_table).strip('"').upper(), []
+                        )
+                    if key_cols:
+                        pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
+                    elif declared:
+                        pk_cols = [f'"{c}"' for c in declared]
+                    elif dataset.columns:
+                        pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
 
             # Verification: only retain columns that actually exist in the physical table
-            verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]
+            verified_pk = [p for p in pk_cols if p.strip('"') in known_phys] if known_phys else pk_cols
 
+            # Resolve secondary UNIQUE constraints for remaining target keys
+            unique_clauses: list[str] = []
+            verified_pk_upper = [p.strip('"').upper() for p in verified_pk]
+            declared_unique_keys: list[list[str]] = []
+
+            for tkey in resolved_target_keys:
+                tkey_upper = [c.upper() for c in tkey]
+                if tkey_upper == verified_pk_upper:
+                    continue
+                if any(tkey_upper == [c.upper() for c in u] for u in declared_unique_keys):
+                    continue
+                if self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
+                    u_cols = ", ".join(f'"{c}"' for c in tkey)
+                    unique_clauses.append(f"UNIQUE ({u_cols})")
+                    declared_unique_keys.append(tkey)
+                else:
+                    import logging as _log
+                    _log.getLogger(__name__).warning(
+                        "Unresolved key constraint for relationship target '%s' on %s: uniqueness cannot be guaranteed.",
+                        dataset.unique_name, tkey
+                    )
 
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
-                relationship_target_alias[(dataset.unique_name, verified_pk[0].strip('"').upper())] = alias
+                for c in verified_pk:
+                    relationship_target_alias[(dataset.unique_name, c.strip('"').upper())] = alias
                 if hasattr(self.schema_manager, "warn_if_key_not_unique"):
                     self.schema_manager.warn_if_key_not_unique(
                         unqualified_table, [c.strip('"') for c in verified_pk], cursor=self.cursor
                     )
 
+            for ukey in declared_unique_keys:
+                for c in ukey:
+                    relationship_target_alias[(dataset.unique_name, c.upper())] = alias
+
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
-            
+            constraints = [c for c in [pk_clause, *unique_clauses] if c]
+            pk_suffix = f" {' '.join(constraints)}" if constraints else ""
+
             if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or is_fact_like_name(dataset.unique_name)):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
-            pk_suffix = f" {pk_clause}" if pk_clause else ""
             tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}')
-
-            for rel_pk in relationship_pk_cols[1:]:
-                rel_alias = self._get_unique_alias(f"{dataset.unique_name}__BY_{rel_pk}", registry)
-                tables_lines.append(f'  {rel_alias} AS {full_table} PRIMARY KEY ("{rel_pk}")')
-                declared_pk_by_alias[rel_alias] = [rel_pk]
-                relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
 
         return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
 

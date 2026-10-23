@@ -8,13 +8,18 @@ logger = logging.getLogger('semabridge.api')
 
 
 def _get_column_names(engine, table_name: str) -> set[str]:
-    """Return the column names for *table_name* using information_schema.
+    """Return the column names for *table_name* using information_schema or dialect inspection.
 
     Uses information_schema.columns instead of SQLAlchemy's inspector
     reflection, which fires pg_catalog.pg_collation queries that DuckDB
-    does not support.
+    does not support. For SQLite, queries PRAGMA table_info.
     """
     from sqlalchemy import text
+
+    if engine.dialect.name == "sqlite":
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"PRAGMA table_info('{table_name}')")).fetchall()
+        return {row[1] for row in rows}
 
     with engine.connect() as conn:
         rows = conn.execute(
@@ -28,8 +33,19 @@ def _get_column_names(engine, table_name: str) -> set[str]:
 
 
 def _table_exists(engine, table_name: str) -> bool:
-    """Check whether *table_name* exists using information_schema."""
+    """Check whether *table_name* exists using information_schema or sqlite_master."""
     from sqlalchemy import text
+
+    if engine.dialect.name == "sqlite":
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name = :tbl LIMIT 1"
+                ),
+                {"tbl": table_name},
+            ).fetchone()
+        return row is not None
 
     with engine.connect() as conn:
         row = conn.execute(

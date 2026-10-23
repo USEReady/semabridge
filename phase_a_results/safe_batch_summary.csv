@@ -1,0 +1,13 @@
+model,source,ddl_relationships,ddl_tables,EMITTED,MISSING,EXTRA,key_missing
+2020SU09_Blog_Demo_-_September,0,0,3,0,0,0,0
+Adventure_Works_DW_2020,13,11,11,11,2,0,6
+Artificial_Intelligence_Sample,10,8,11,8,2,0,0
+Competitive_Marketing_Analysis,8,8,9,8,0,0,0
+Corporate_Spend,7,7,8,7,0,0,0
+Employee_Hiring_and_History,8,8,9,3,1,1,0
+Human_Resources_Sample_PBIX,8,8,9,7,0,0,0
+Life_expectancy_v202009,7,7,13,7,0,0,0
+Power_BI_Visuals,0,0,8,0,0,0,0
+Revenue_Opportunities,7,6,7,6,1,0,1
+Sales_Returns_Sample_v201912,8,6,16,6,2,0,2
+Supply_Chain_Sample,2,2,7,2,0,0,0

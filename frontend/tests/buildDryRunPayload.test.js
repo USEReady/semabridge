@@ -73,3 +73,27 @@ test('buildDryRunPayload includes PBIX pbix_path in sourceConfig', () => {
     database: 'REPORTING',
   });
 });
+
+test('buildDryRunPayload includes snowflakeSchema and targetSchema', () => {
+  const payload = buildDryRunPayload({
+    sourceConnector: 'snowflake',
+    targetConnectors: new Set(['snowflake']),
+    snowflakeDatabase: 'SRC_DB',
+    snowflakeSchema: 'SRC_SCHEMA',
+    targetDatabase: 'TGT_DB',
+    targetSchema: 'TGT_SCHEMA',
+    selectedModelNames: [],
+  });
+
+  assert.deepEqual(payload.sourceConfig, {
+    type: 'snowflake',
+    database: 'SRC_DB',
+    schema: 'SRC_SCHEMA',
+  });
+
+  assert.deepEqual(payload.targetConfig, {
+    type: 'snowflake',
+    database: 'TGT_DB',
+    schema: 'TGT_SCHEMA',
+  });
+});

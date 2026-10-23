@@ -8,7 +8,7 @@ intermediate representation, applying semantic enrichment like DAX translation.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError

@@ -235,6 +235,9 @@ class ModelRepository:
                     Base.metadata.create_all(bind=conn)
 
                     def _col_names(tbl: str) -> set:
+                        if conn.dialect.name == "sqlite":
+                            rows = conn.execute(_text(f"PRAGMA table_info('{tbl}')")).fetchall()
+                            return {r[1] for r in rows}
                         rows = conn.execute(
                             _text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
                             {"t": tbl},
@@ -242,6 +245,11 @@ class ModelRepository:
                         return {r[0] for r in rows}
 
                     def _tbl_exists(tbl: str) -> bool:
+                        if conn.dialect.name == "sqlite":
+                            return conn.execute(
+                                _text("SELECT 1 FROM sqlite_master WHERE type='table' AND name = :t LIMIT 1"),
+                                {"t": tbl},
+                            ).fetchone() is not None
                         return conn.execute(
                             _text("SELECT 1 FROM information_schema.tables WHERE table_name = :t LIMIT 1"),
                             {"t": tbl},
@@ -256,14 +264,23 @@ class ModelRepository:
                             except Exception:
                                 pass
                         if "initiated_by" in snapshot_columns:
-                            conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN initiated_by")
-                            snapshot_columns.discard("initiated_by")
+                            try:
+                                conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN initiated_by")
+                                snapshot_columns.discard("initiated_by")
+                            except Exception:
+                                pass
                         if "connector_id" in snapshot_columns:
-                            conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN connector_id")
-                            snapshot_columns.discard("connector_id")
+                            try:
+                                conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN connector_id")
+                                snapshot_columns.discard("connector_id")
+                            except Exception:
+                                pass
                         if "trigger" in snapshot_columns:
-                            conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN trigger")
-                            snapshot_columns.discard("trigger")
+                            try:
+                                conn.exec_driver_sql("ALTER TABLE snapshots DROP COLUMN trigger")
+                                snapshot_columns.discard("trigger")
+                            except Exception:
+                                pass
                         if "sync_mode" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN sync_mode VARCHAR(20) NOT NULL DEFAULT 'copy'")
                         if "deployed_at" not in snapshot_columns:

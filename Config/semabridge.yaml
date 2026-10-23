@@ -1,16 +1,16 @@
-project_name: copy-mode
+project_name: Competitive Marketing Analysis
 source:
   type: pbix
-  pbix_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-copy-mode/3f003d679d9848fdb08b5d5ecb4c0ea8_Competitive
-    Marketing Analysis (More Synonyms)_updated.pbix
-  pbix_file_path: C:/Users/charank/AppData/Local/Temp/semabridge/projects/proj-copy-mode/3f003d679d9848fdb08b5d5ecb4c0ea8_Competitive
-    Marketing Analysis (More Synonyms)_updated.pbix
+  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-competitive-marketing-analysis/03fbb728e91d484a8b0682b07a992478_Competitive
+    Marketing Analysis.pbix
+  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-competitive-marketing-analysis/03fbb728e91d484a8b0682b07a992478_Competitive
+    Marketing Analysis.pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
-  schema: SEMABRIDGE_WORKSPACE
+  schema: COMPE_FINAL
   warehouse: DI_OTH_POC_WH
-  identity_id: 8d93a0af-3132-4418-b9d2-a4cd3e70f8ac
+  identity_id: 766ac499-4d9b-4f9f-adc9-5206789f1d57
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY
@@ -184,6 +184,8 @@ mappings_overrides:
   target_name: TOTAL_UNITS_YTD_VAR_PCT
 - source_path: metrics.Sum of Units
   target_name: SUM_OF_UNITS
+- source_path: metrics.Sum of Revenue
+  target_name: SUM_OF_REVENUE
 - source_path: metrics.@Indicator01
   target_name: ATINDICATOR01
 - source_path: metrics.@Indicator02
@@ -208,8 +210,8 @@ mappings_overrides:
   target_name: SUM_OF_SCORE
 - source_path: metrics.Average of Score
   target_name: AVERAGE_OF_SCORE
-- source_path: metrics.Revenue per Unit
-  target_name: REVENUE_PER_UNIT
+- source_path: metrics.New Demo Measure
+  target_name: NEW_DEMO_MEASURE
 ui:
   intermediate_format: osi
   editor_mode: form
@@ -217,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-copy-mode
-display_name: copy-mode
+project_id: proj-competitive-marketing-analysis
+display_name: Competitive Marketing Analysis

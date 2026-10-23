@@ -1015,17 +1015,23 @@ class TMSLToOSIConverter(BaseConverter):
              
              card_map = {
                  "manytoone": OSICardinality.MANY_TO_ONE,
+                 "m:1": OSICardinality.MANY_TO_ONE,
                  "onetoone": OSICardinality.ONE_TO_ONE,
+                 "1:1": OSICardinality.ONE_TO_ONE,
                  "onetomany": OSICardinality.ONE_TO_MANY,
-                 "manytomany": OSICardinality.MANY_TO_MANY
+                 "1:m": OSICardinality.ONE_TO_MANY,
+                 "manytomany": OSICardinality.MANY_TO_MANY,
+                 "m:m": OSICardinality.MANY_TO_MANY,
              }
-             raw_card = rel_def.get("cardinality", "ManyToOne").lower()
+             raw_card = str(rel_def.get("cardinality", "ManyToOne") or "ManyToOne").strip().lower().replace("-", "").replace("_", "")
              
              cf_map = {
                  "single": OSICrossFilterDirection.SINGLE,
-                 "both": OSICrossFilterDirection.BOTH
+                 "onedirection": OSICrossFilterDirection.SINGLE,
+                 "both": OSICrossFilterDirection.BOTH,
+                 "bothdirections": OSICrossFilterDirection.BOTH,
              }
-             raw_cf = rel_def.get("crossFilteringBehavior", "Single").lower()
+             raw_cf = str(rel_def.get("crossFilteringBehavior", "Single") or "Single").strip().lower().replace("-", "").replace("_", "")
 
              return OSIRelationship(
                  unique_name=name,

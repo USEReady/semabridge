@@ -1,0 +1,13 @@
+model,EMITTED,EMITTED_DIFFERENT,EXTRA,MISSING,clean,ddl_relationships,ddl_tables,error,key_missing,source
+2020SU09_Blog_Demo_-_September,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
+Adventure_Works_DW_2020,11,,0,2,False,11,11,,6,13
+Artificial_Intelligence_Sample,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
+Competitive_Marketing_Analysis,8,,0,,True,8,9,,0,8
+Corporate_Spend,7,,0,,True,7,8,,0,7
+Employee_Hiring_and_History,3,4,1,1,False,8,9,,0,8
+Human_Resources_Sample_PBIX,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
+Life_expectancy_v202009,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
+Power_BI_Visuals,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
+Revenue_Opportunities,6,,0,1,False,6,7,,1,7
+Sales_Returns_Sample_v201912,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
+Supply_Chain_Sample,2,,0,,True,2,7,,0,2

@@ -1570,7 +1570,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         fabricWorkspaceId,
         snowflakeAccountId,
         snowflakeDatabase,
+        snowflakeSchema,
         targetDatabase,
+        targetSchema,
         selectedModelNames,
         pbixPath: effectivePbixPath,
       });
@@ -1628,7 +1630,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setMappingLoading(false);
     }
-  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, targetDatabase, pbixSourceMode, selectedPbixFilePath, pbixUploadPath]);
+  }, [addLog, currentMappingSignature, sourceConnector, targetConnectors, selectedModelNames, createdProject, fabricWorkspaceId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, pbixSourceMode, selectedPbixFilePath, pbixUploadPath]);
 
   // ── handleDryRun — triggers the dry-run API and populates detectedMappings ──
   const handleDryRun = useCallback(async () => {
@@ -1649,7 +1651,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       fabricWorkspaceId,
       snowflakeAccountId,
       snowflakeDatabase,
+      snowflakeSchema,
       targetDatabase,
+      targetSchema,
       selectedModelNames,
       pbixPath: isMulti ? '' : effectiveSources.singlePbixPath,
     });
@@ -1724,8 +1728,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     }
   }, [
     createdProject, sourceConnector, fabricWorkspaceId, snowflakeDatabase,
-    targetConnectors, targetDatabase, selectedModelNames, currentMappingSignature,
-    fabricAccountId, effectiveSources,
+    snowflakeSchema, targetConnectors, targetDatabase, targetSchema,
+    selectedModelNames, currentMappingSignature, fabricAccountId, effectiveSources,
   ]);
 
   // ── Multi-model dry run: polling + per-model rows/edits keyed by file_id ──

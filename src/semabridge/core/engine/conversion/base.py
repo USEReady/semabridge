@@ -245,93 +245,94 @@ def _normalize_relationships_for_target(self, model: SMLModel) -> None:
     target-format conversion/deployment.
 
     Deduplication strategy:
-    1. Remove exact endpoint duplicates (same columns)
-    2. Remove multiple relationships between same table pair (keep strongest)
-    3. Remove direct relationships that create cycles (redundant paths)
-       - If A->B exists and A->C->B exists, remove A->B (shorter path preferred)
-       - Fabric's ambiguous path error indicates we need to break cycles
+    1. Remove exact endpoint duplicates (same tables and same columns),
+       keeping the strongest/active relationship.
+    2. Detect and break genuine directed cycles in the relationship graph.
+       - Alternate paths through other tables (diamond/DAG topology) are preserved.
+       - Circular dependencies (where to_table can already reach from_table) are broken.
+    3. Canonicalize relationship names.
     """
     if not getattr(model, "relationships", None):
         return
 
-    normalized: list[SMLRelationship] = []
-    seen_endpoints: set[tuple[str, str, str, str]] = set()
-    table_pair_candidates: dict[tuple[str, str], list[SMLRelationship]] = {}
     renamed_count = 0
     deduped_count = 0
 
-    # First pass: collect by exact endpoint and table pair
+    # First pass: Deduplicate genuine duplicate endpoints (same source and target columns)
+    endpoint_groups: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], list[SMLRelationship]] = {}
     for rel in model.relationships:
-        from_col = rel.from_columns[0] if rel.from_columns else ""
-        to_col = rel.to_columns[0] if rel.to_columns else ""
+        from_cols = tuple(c.upper() for c in (rel.from_columns or []))
+        to_cols = tuple(c.upper() for c in (rel.to_columns or []))
         endpoint_key = (
             rel.from_dataset.upper(),
-            from_col.upper(),
+            from_cols,
             rel.to_dataset.upper(),
-            to_col.upper(),
+            to_cols,
         )
+        endpoint_groups.setdefault(endpoint_key, []).append(rel)
 
-        # Skip exact endpoint duplicates
-        if endpoint_key in seen_endpoints:
-            deduped_count += 1
-            continue
-        seen_endpoints.add(endpoint_key)
-
-        # Group by table pair for ambiguity detection
-        table_pair = (rel.from_dataset.upper(), rel.to_dataset.upper())
-        if table_pair not in table_pair_candidates:
-            table_pair_candidates[table_pair] = []
-        table_pair_candidates[table_pair].append(rel)
-
-    # Second pass: resolve ambiguous table pairs (keep strongest relationship)
     candidate_rels: list[SMLRelationship] = []
-    for table_pair, rel_group in table_pair_candidates.items():
-        if len(rel_group) > 1:
-            # Multiple relationships between same tables - keep strongest
-            best_rel = self._select_strongest_relationship(rel_group)
+    for endpoint_key, group in endpoint_groups.items():
+        if len(group) > 1:
+            best_rel = self._select_strongest_relationship(group)
             logger.info(
-                "Ambiguous relationships detected for %s -> %s: "
+                "Duplicate relationship endpoints detected for %s%s -> %s%s: "
                 "keeping %s (others removed)",
-                table_pair[0],
-                table_pair[1],
+                endpoint_key[0],
+                endpoint_key[1],
+                endpoint_key[2],
+                endpoint_key[3],
                 best_rel.unique_name,
             )
-            deduped_count += len(rel_group) - 1
+            deduped_count += len(group) - 1
             candidate_rels.append(best_rel)
         else:
-            candidate_rels.append(rel_group[0])
+            candidate_rels.append(group[0])
 
-    # Third pass: detect and break cycles/transitive ambiguities
-    # Build a graph to detect if keeping A->B creates redundant paths
+    # Second pass: Detect and break genuine directed cycles
+    # Active and explicit relationships enter the DAG first
+    candidate_rels_sorted = sorted(
+        candidate_rels,
+        key=lambda r: (
+            1 if getattr(r, "is_active", True) else 0,
+            1 if getattr(r, "is_explicit_fk", False) else 0,
+        ),
+        reverse=True,
+    )
+
+    final_rels: list[SMLRelationship] = []
     graph: dict[str, set[str]] = {}
-    for rel in candidate_rels:
+    for rel in candidate_rels_sorted:
         from_table = rel.from_dataset.upper()
         to_table = rel.to_dataset.upper()
+
+        # Check for self-referencing relationship
+        if from_table == to_table:
+            logger.warning(
+                "Self-referencing relationship detected on %s: removing %s to prevent cycle",
+                from_table,
+                rel.unique_name,
+            )
+            deduped_count += 1
+            continue
+
+        # Check if an actual directed cycle would be created (path exists from to_table to from_table)
+        if self._has_path(to_table, from_table, graph):
+            logger.warning(
+                "Directed cycle detected between %s and %s: removing edge %s to break circular dependency",
+                from_table,
+                to_table,
+                rel.unique_name,
+            )
+            deduped_count += 1
+            continue
+
         if from_table not in graph:
             graph[from_table] = set()
         graph[from_table].add(to_table)
+        final_rels.append(rel)
 
-    # Check each relationship to see if removing it eliminates cycles
-    final_rels: list[SMLRelationship] = []
-    for rel in candidate_rels:
-        from_table = rel.from_dataset.upper()
-        to_table = rel.to_dataset.upper()
-
-        # Check if there's an alternate path (excluding this direct edge)
-        has_alternate_path = self._has_path(from_table, to_table, graph, exclude_edge=(from_table, to_table))
-
-        if has_alternate_path:
-            logger.info(
-                "Cycle detected for %s -> %s: removing direct edge (alternate path exists via other tables)",
-                from_table,
-                to_table,
-            )
-            deduped_count += 1
-            # Skip this relationship - the alternate path will handle connectivity
-        else:
-            final_rels.append(rel)
-
-    # Fourth pass: canonicalize names
+    # Third pass: canonicalize names
     for rel in final_rels:
         from_col = rel.from_columns[0] if rel.from_columns else ""
         to_col = rel.to_columns[0] if rel.to_columns else ""
@@ -414,6 +415,10 @@ def _select_strongest_relationship(self, candidates: list[SMLRelationship]) -> S
         score = 0
         from_col = rel.from_columns[0] if rel.from_columns else ""
         to_dataset = rel.to_dataset.upper()
+
+        # Preference 0: Active relationship over inactive relationship
+        if getattr(rel, "is_active", True):
+            score += 200
 
         # Preference 1: Explicit foreign key (marked in metadata)
         if getattr(rel, "is_explicit_fk", False):

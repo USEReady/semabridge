@@ -1,0 +1,45 @@
+[
+  {
+    "name": "CUSTOMER.ID unique",
+    "sql": "SELECT COUNT(*) - COUNT(DISTINCT \"ID\") FROM SEMABRIDGE.SALES_AND_RETURNS.CUSTOMER",
+    "expect": 0
+  },
+  {
+    "name": "SALES.ID unique",
+    "sql": "SELECT COUNT(*) - COUNT(DISTINCT \"ID\") FROM SEMABRIDGE.SALES_AND_RETURNS.SALES",
+    "expect": 0
+  },
+  {
+    "name": "Same ID set in CUSTOMER and SALES",
+    "sql": "SELECT COUNT(*) FROM SEMABRIDGE.SALES_AND_RETURNS.CUSTOMER c FULL OUTER JOIN SEMABRIDGE.SALES_AND_RETURNS.SALES s ON c.\"ID\" = s.\"ID\" WHERE c.\"ID\" IS NULL OR s.\"ID\" IS NULL",
+    "expect": 0
+  },
+  {
+    "name": "CUSTOMER.AMOUNT / UNIT are copies of SALES",
+    "sql": "SELECT COUNT_IF(c.\"AMOUNT\" <> s.\"AMOUNT\"), COUNT_IF(c.\"UNIT\" <> s.\"UNIT\") FROM SEMABRIDGE.SALES_AND_RETURNS.CUSTOMER c JOIN SEMABRIDGE.SALES_AND_RETURNS.SALES s ON c.\"ID\" = s.\"ID\"",
+    "expect": [0, 0]
+  },
+  {
+    "name": "PRODUCT.PRODUCTID unique",
+    "sql": "SELECT COUNT(*) - COUNT(DISTINCT \"PRODUCTID\") FROM SEMABRIDGE.SALES_AND_RETURNS.PRODUCT",
+    "expect": 0
+  },
+  {
+    "name": "QA: net sales total",
+    "sql": "SELECT SUM(\"AMOUNT\") FROM SEMABRIDGE.SALES_AND_RETURNS.SALES WHERE \"STATUS\" = 'Sold'",
+    "expect": 1248013,
+    "tolerance": 1
+  },
+  {
+    "name": "QA: net sales Male / Female",
+    "sql": "SELECT SUM(IFF(c.\"GENDER\" = 'Male', s.\"AMOUNT\", 0)), SUM(IFF(c.\"GENDER\" = 'Female', s.\"AMOUNT\", 0)) FROM SEMABRIDGE.SALES_AND_RETURNS.SALES s JOIN SEMABRIDGE.SALES_AND_RETURNS.CUSTOMER c ON s.\"ID\" = c.\"ID\" WHERE s.\"STATUS\" = 'Sold'",
+    "expect": [890883, 357130],
+    "tolerance": 1
+  },
+  {
+    "name": "QA: net sales Office 365 / Power Platform / XBOX",
+    "sql": "SELECT SUM(IFF(p.\"CATEGORY\" = 'Office 365', s.\"AMOUNT\", 0)), SUM(IFF(p.\"CATEGORY\" = 'Power Platform', s.\"AMOUNT\", 0)), SUM(IFF(p.\"CATEGORY\" = 'XBOX', s.\"AMOUNT\", 0)) FROM SEMABRIDGE.SALES_AND_RETURNS.SALES s JOIN SEMABRIDGE.SALES_AND_RETURNS.PRODUCT p ON s.\"PRODUCTID\" = p.\"PRODUCTID\" WHERE s.\"STATUS\" = 'Sold'",
+    "expect": [738677, 295456, 213880],
+    "tolerance": 1
+  }
+]

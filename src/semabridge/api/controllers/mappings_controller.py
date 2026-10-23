@@ -168,8 +168,9 @@ def _build_config_yaml_from_request(
         source_section["identity_id"] = source_config["identity_id"]
     if source_config.get("database"):
         source_section["database"] = source_config["database"]
-    if source_config.get("schema"):
-        source_section["schema"] = source_config["schema"]
+    source_schema = source_config.get("schema") or source_config.get("schema_name")
+    if source_schema:
+        source_section["schema"] = source_schema
     if source_config.get("pbix_path"):
         source_section["pbix_path"] = source_config["pbix_path"]
     if source_config.get("pbix_folder"):
@@ -180,8 +181,9 @@ def _build_config_yaml_from_request(
     target_section: Dict[str, Any] = {"type": target_type}
     if target_config.get("database"):
         target_section["database"] = target_config["database"]
-    if target_config.get("schema"):
-        target_section["schema"] = target_config["schema"]
+    target_schema = target_config.get("schema") or target_config.get("schema_name")
+    if target_schema:
+        target_section["schema"] = target_schema
     if target_config.get("account"):
         target_section["account"] = target_config["account"]
     if target_config.get("warehouse"):
@@ -740,6 +742,18 @@ async def dry_run_mapping(
                 "success": False,
                 "error": str(e),
                 "use_dry_run_jobs": "/dry-run-jobs" in str(e),
+                "entity_mappings": [],
+                "dropped_entities": [],
+                "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},
+            },
+        )
+    except HTTPException as e:
+        logger.warning("[Dry Run] Pipeline raised HTTPException: status=%s detail=%s", e.status_code, e.detail)
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                "success": False,
+                "error": str(e.detail or e),
                 "entity_mappings": [],
                 "dropped_entities": [],
                 "summary": {"total_fields": 0, "auto_mapped": 0, "unmapped": 0, "collisions": 0},

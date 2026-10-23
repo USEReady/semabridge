@@ -708,14 +708,19 @@ class LocalPBIXConnector(BaseConnector):
             to_column = str(rel.get("to_column", "") or "").strip()
             if not (from_table and from_column and to_table and to_column):
                 continue
+            rel_name = str(rel.get("name", "") or "")
+            cardinality = self._normalize_pbixray_cardinality(rel.get("cardinality"))
+            cross_filter = self._normalize_pbixray_cross_filtering(rel.get("cross_filtering_behavior"))
             relationships.append(
                 {
-                    "name": str(rel.get("name", "") or ""),
+                    "name": rel_name,
                     "fromTable": from_table,
                     "fromColumn": from_column,
                     "toTable": to_table,
                     "toColumn": to_column,
                     "isActive": bool(rel.get("is_active", True)),
+                    "cardinality": cardinality,
+                    "crossFilteringBehavior": cross_filter,
                 }
             )
 
@@ -737,6 +742,35 @@ class LocalPBIXConnector(BaseConnector):
             len(relationships),
         )
         return {"model": model_payload}
+
+    @staticmethod
+    def _normalize_pbixray_cardinality(raw_card: Any) -> str:
+        """Map pbixray cardinality into TMSL-compatible cardinality string."""
+        text = str(raw_card or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+        mapping = {
+            "1:1": "OneToOne",
+            "onetoone": "OneToOne",
+            "1:m": "OneToMany",
+            "onetomany": "OneToMany",
+            "m:1": "ManyToOne",
+            "manytoone": "ManyToOne",
+            "m:m": "ManyToMany",
+            "manytomany": "ManyToMany",
+        }
+        return mapping.get(text, "ManyToOne")
+
+    @staticmethod
+    def _normalize_pbixray_cross_filtering(raw_cf: Any) -> str:
+        """Map pbixray cross filtering behavior into TMSL-compatible string."""
+        text = str(raw_cf or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+        mapping = {
+            "both": "Both",
+            "bothdirections": "Both",
+            "twodirections": "Both",
+            "single": "Single",
+            "onedirection": "Single",
+        }
+        return mapping.get(text, "Single")
 
     @staticmethod
     def _normalize_pbixray_data_type(raw_type: Any) -> str:

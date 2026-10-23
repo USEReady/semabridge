@@ -1,0 +1,84 @@
+{
+  "Sales & Returns Sample v201912": [
+    {
+      "source_relationship": "Association[RightItemSetId] -> Associated Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    },
+    {
+      "source_relationship": "Sales[StoreID] -> Store[StoreID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_STOREID_STORE_STOREID: SALES['STOREID'] -> STORE['STOREID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[ProductID] -> Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_PRODUCTID_PRODUCT_PRODUCTID: SALES['PRODUCTID'] -> PRODUCT['PRODUCTID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Date] -> Calendar[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_DATE_CALENDAR_DATE: SALES['COL_DATE'] -> CALENDAR['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Customer[ID] -> Sales[ID]",
+      "active": "yes",
+      "cardinality": "1:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CUSTOMER_ID_SALES_ID: CUSTOMER['ID'] -> SALES['ID']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'SALES' has no PRIMARY KEY/UNIQUE on ['ID']"
+    },
+    {
+      "source_relationship": "Association[LeftItemSetId] -> Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "ASSOCIATION_LEFTITEMSETID_PRODUCT_PRODUCTID: ASSOCIATION['LEFTITEMSETID'] -> PRODUCT['PRODUCTID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Product[Product] -> Associated Product[Product]",
+      "active": "NO",
+      "cardinality": "1:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "PRODUCT_PRODUCT_ASSOCIATED_PRODUCT_PRODUCT: PRODUCT['PRODUCT'] -> ASSOCIATED_PRODUCT['PRODUCT']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'ASSOCIATED_PRODUCT' has no PRIMARY KEY/UNIQUE on ['PRODUCT']"
+    },
+    {
+      "source_relationship": "Customer[Product] -> Associated Product[Product]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    }
+  ]
+}
