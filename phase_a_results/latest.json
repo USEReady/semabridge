@@ -1,0 +1,909 @@
+{
+  "2020SU09_Blog_Demo_-_September": [],
+  "Adventure_Works_DW_2020": [
+    {
+      "source_relationship": "Sales[SalesTerritoryKey] -> Sales Territory[SalesTerritoryKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_SALESTERRITORYKEY_SALES_TERRITORY_SALESTERRITORYKEY: SALES['SALESTERRITORYKEY'] -> SALES_TERRITORY['SALESTERRITORYKEY']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'SALES_TERRITORY' has no PRIMARY KEY/UNIQUE on ['SALESTERRITORYKEY']"
+    },
+    {
+      "source_relationship": "Sales[ProductKey] -> Product[ProductKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_PRODUCTKEY_PRODUCT_PRODUCTKEY: SALES['PRODUCTKEY'] -> PRODUCT['PRODUCTKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[SalesOrderLineKey] -> Sales Order[SalesOrderLineKey]",
+      "active": "yes",
+      "cardinality": "1:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_SALESORDERLINEKEY_SALES_ORDER_SALESORDERLINEKEY: SALES['SALESORDERLINEKEY'] -> SALES_ORDER['SALESORDERLINEKEY']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'SALES_ORDER' has no PRIMARY KEY/UNIQUE on ['SALESORDERLINEKEY']"
+    },
+    {
+      "source_relationship": "Sales[CustomerKey] -> Customer[CustomerKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_CUSTOMERKEY_CUSTOMER_CUSTOMERKEY: SALES['CUSTOMERKEY'] -> CUSTOMER['CUSTOMERKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[OrderDateKey] -> Date[DateKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_ORDERDATEKEY_DATE_DATEKEY: SALES['ORDERDATEKEY'] -> COL_DATE['DATEKEY']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'COL_DATE' has no PRIMARY KEY/UNIQUE on ['DATEKEY']"
+    },
+    {
+      "source_relationship": "Sales[DueDateKey] -> Date[DateKey]",
+      "active": "NO",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    },
+    {
+      "source_relationship": "Sales[ShipDateKey] -> Date[DateKey]",
+      "active": "NO",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    },
+    {
+      "source_relationship": "Sales[ResellerKey] -> Reseller[ResellerKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_RESELLERKEY_RESELLER_RESELLERKEY: SALES['RESELLERKEY'] -> RESELLER['RESELLERKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Currency Rate[CurrencyKey] -> Currency[CurrencyKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CURRENCY_RATE_CURRENCYKEY_CURRENCY_CURRENCYKEY: CURRENCY_RATE['CURRENCYKEY'] -> CURRENCY['CURRENCYKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Currency Rate[DateKey] -> Date[DateKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CURRENCY_RATE_DATEKEY_DATE_DATEKEY: CURRENCY_RATE['DATEKEY'] -> COL_DATE['DATEKEY']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'COL_DATE' has no PRIMARY KEY/UNIQUE on ['DATEKEY']"
+    },
+    {
+      "source_relationship": "Sales[CurrencyKey] -> Currency[CurrencyKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_CURRENCYKEY_CURRENCY_CURRENCYKEY: SALES['CURRENCYKEY'] -> CURRENCY['CURRENCYKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales Reason Bridge[SalesReasonKey] -> Sales Reason[SalesReasonKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_REASON_BRIDGE_SALESREASONKEY_SALES_REASON_SALESREASONKEY: SALES_REASON_BRIDGE['SALESREASONKEY'] -> SALES_REASON['SALESREASONKEY']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'SALES_REASON' has no PRIMARY KEY/UNIQUE on ['SALESREASONKEY']"
+    },
+    {
+      "source_relationship": "Sales Reason Bridge[SalesOrderLineKey] -> Sales Order[SalesOrderLineKey]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_REASON_BRIDGE_SALESORDERLINEKEY_SALES_ORDER_SALESORDERLINEKEY: SALES_REASON_BRIDGE['SALESORDERLINEKEY'] -> SALES_ORDER['SALESORDERLINEKEY']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'SALES_ORDER' has no PRIMARY KEY/UNIQUE on ['SALESORDERLINEKEY']"
+    }
+  ],
+  "Artificial_Intelligence_Sample": [
+    {
+      "source_relationship": "Accounts[Account Owner] -> Owners[Sales owner]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "ACCOUNTS_ACCOUNT_OWNER_OWNERS_SALES_OWNER: ACCOUNTS['ACCOUNT_OWNER'] -> OWNERS['SALES_OWNER']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'OWNERS' has no PRIMARY KEY/UNIQUE on ['SALES_OWNER']"
+    },
+    {
+      "source_relationship": "Opportunities[AccountSeq] -> Accounts[AccountSeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "OPPORTUNITIES_ACCOUNTSEQ_ACCOUNTS_ACCOUNTSEQ: OPPORTUNITIES['ACCOUNTSEQ'] -> ACCOUNTS['ACCOUNTSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Cases[AccountSeq] -> Accounts[AccountSeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CASES_ACCOUNTSEQ_ACCOUNTS_ACCOUNTSEQ: CASES['ACCOUNTSEQ'] -> ACCOUNTS['ACCOUNTSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Contacts[AccountSeq] -> Accounts[AccountSeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CONTACTS_ACCOUNTSEQ_ACCOUNTS_ACCOUNTSEQ: CONTACTS['ACCOUNTSEQ'] -> ACCOUNTS['ACCOUNTSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Accounts[IndustrySeq] -> Industries[IndustrySeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "ACCOUNTS_INDUSTRYSEQ_INDUSTRIES_INDUSTRYSEQ: ACCOUNTS['INDUSTRYSEQ'] -> INDUSTRIES['INDUSTRYSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Opportunities[ProductSeq] -> Products[ProductSeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "OPPORTUNITIES_PRODUCTSEQ_PRODUCTS_PRODUCTSEQ: OPPORTUNITIES['PRODUCTSEQ'] -> PRODUCTS['PRODUCTSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Cases[ProductSeq] -> Products[ProductSeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CASES_PRODUCTSEQ_PRODUCTS_PRODUCTSEQ: CASES['PRODUCTSEQ'] -> PRODUCTS['PRODUCTSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Opportunities[SystemUserSeq] -> Owners[SystemUserSeq]",
+      "active": "NO",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "OPPORTUNITIES_SYSTEMUSERSEQ_OWNERS_SYSTEMUSERSEQ: OPPORTUNITIES['SYSTEMUSERSEQ'] -> OWNERS['SYSTEMUSERSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Cases[SystemUserSeq] -> Owners[SystemUserSeq]",
+      "active": "NO",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CASES_SYSTEMUSERSEQ_OWNERS_SYSTEMUSERSEQ: CASES['SYSTEMUSERSEQ'] -> OWNERS['SYSTEMUSERSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Opportunities[CloseDate] -> Opportunity Calendar[DAY]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "OPPORTUNITIES_CLOSEDATE_OPPORTUNITY_CALENDAR_DAY: OPPORTUNITIES['CLOSEDATE'] -> OPPORTUNITY_CALENDAR['DAY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Opportunities[CampaignSeq] -> Campaigns[CampaignSeq]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "OPPORTUNITIES_CAMPAIGNSEQ_CAMPAIGNS_CAMPAIGNSEQ: OPPORTUNITIES['CAMPAIGNSEQ'] -> CAMPAIGNS['CAMPAIGNSEQ']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Cases[Case Created On] -> Case Calendar[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED_DIFFERENT",
+      "ddl_relationship": "CASES_CASE_CREATED_ON_CASE_CALENDAR_DATE: CASES['CASE_CREATED_ON'] -> CASE_CALENDAR['DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "COVID-19_US_Tracking_Sample": [
+    {
+      "source_relationship": "COVID[State] -> StateDim[State code]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "COVID_STATE_STATEDIM_STATE_CODE: COVID['STATE'] -> STATEDIM['STATE_CODE']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'STATEDIM' has no PRIMARY KEY/UNIQUE on ['STATE_CODE']"
+    }
+  ],
+  "Competitive_Marketing_Analysis": [
+    {
+      "source_relationship": "Product[ManufacturerID] -> Manufacturer[ManufacturerID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "PRODUCT_MANUFACTURERID_MANUFACTURER_MANUFACTURERID: PRODUCT['MANUFACTURERID'] -> MANUFACTURER['MANUFACTURERID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[ProductID] -> Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALESFACT_PRODUCTID_PRODUCT_PRODUCTID: SALESFACT['PRODUCTID'] -> PRODUCT['PRODUCTID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Date] -> Date[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALESFACT_DATE_DATE_DATE: SALESFACT['COL_DATE'] -> COL_DATE['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Zip] -> Geo[Zip]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALESFACT_ZIP_GEO_ZIP: SALESFACT['ZIP'] -> GEO['ZIP']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sentiment[zip] -> Geo[Zip]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SENTIMENT_ZIP_GEO_ZIP: SENTIMENT['ZIP'] -> GEO['ZIP']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sentiment[Date] -> Date[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SENTIMENT_DATE_DATE_DATE: SENTIMENT['COL_DATE'] -> COL_DATE['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sentiment[ManufacturerID] -> Manufacturer[ManufacturerID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SENTIMENT_MANUFACTURERID_MANUFACTURER_MANUFACTURERID: SENTIMENT['MANUFACTURERID'] -> MANUFACTURER['MANUFACTURERID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Product[Segment] -> Category[Category]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "PRODUCT_SEGMENT_CATEGORY_CATEGORY: PRODUCT['SEGMENT'] -> CATEGORY['CATEGORY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "Corporate_Spend": [
+    {
+      "source_relationship": "Calculations[Scenario ID] -> Scenario[Scenario ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_SCENARIO_ID_SCENARIO_SCENARIO_ID: CALCULATIONS['SCENARIO_ID'] -> SCENARIO['SCENARIO_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Calculations[IT Sub Area ID] -> IT Area[IT Sub Area ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_IT_SUB_AREA_ID_IT_AREA_IT_SUB_AREA_ID: CALCULATIONS['IT_SUB_AREA_ID'] -> IT_AREA['IT_SUB_AREA_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Calculations[Business Area ID] -> Business Area[Business Area ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_BUSINESS_AREA_ID_BUSINESS_AREA_BUSINESS_AREA_ID: CALCULATIONS['BUSINESS_AREA_ID'] -> BUSINESS_AREA['BUSINESS_AREA_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Calculations[Country/Region ID] -> Country Region[Country/Region ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_COUNTRY_REGION_ID_COUNTRY_REGION_COUNTRY_REGION_ID: CALCULATIONS['COUNTRY_REGION_ID'] -> COUNTRY_REGION['COUNTRY_REGION_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Calculations[Cost Element ID] -> Cost Element[Cost Element ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_COST_ELEMENT_ID_COST_ELEMENT_COST_ELEMENT_ID: CALCULATIONS['COST_ELEMENT_ID'] -> COST_ELEMENT['COST_ELEMENT_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Calculations[Department] -> Department[Department]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_DEPARTMENT_DEPARTMENT_DEPARTMENT: CALCULATIONS['DEPARTMENT'] -> DEPARTMENT['DEPARTMENT']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Calculations[Date] -> Date[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CALCULATIONS_DATE_DATE_DATE: CALCULATIONS['COL_DATE'] -> COL_DATE['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "Employee_Hiring_and_History": [
+    {
+      "source_relationship": "Employee[date] -> Date[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "table not in DDL: Date"
+    },
+    {
+      "source_relationship": "Employee[FP] -> Employee type[Employee type ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_FP_EMPLOYEE_TYPE_EMPLOYEE_TYPE_ID: EMPLOYEE['FP'] -> EMPLOYEE_TYPE['EMPLOYEE_TYPE_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[EthnicGroup] -> Ethnicity[Ethnicity group ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_ETHNICGROUP_ETHNICITY_ETHNICITY_GROUP_ID: EMPLOYEE['ETHNICGROUP'] -> ETHNICITY['ETHNICITY_GROUP_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[Gender] -> Gender[Gender ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED_DIFFERENT",
+      "ddl_relationship": "EMPLOYEE_GENDER_GENDER_GENDER_ID: EMPLOYEE['GENDER'] -> GENDER['ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[PayTypeID] -> Pay type[Pay type ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED_DIFFERENT",
+      "ddl_relationship": "EMPLOYEE_PAYTYPEID_PAY_TYPE_PAY_TYPE_ID: EMPLOYEE['PAYTYPEID'] -> PAY_TYPE['PAYTYPEID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[BU] -> Business unit[BU]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_BU_BUSINESS_UNIT_BU: EMPLOYEE['BU'] -> BUSINESS_UNIT['BU']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[AgeGroupID] -> Age[Age group ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED_DIFFERENT",
+      "ddl_relationship": "EMPLOYEE_AGEGROUPID_AGE_AGE_GROUP_ID: EMPLOYEE['AGEGROUPID'] -> AGE['AGEGROUPID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[TermReason] -> Separation reason[Separation reason ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED_DIFFERENT",
+      "ddl_relationship": "EMPLOYEE_TERMREASON_SEPARATION_REASON_SEPARATION_REASON_ID: EMPLOYEE['TERMREASON'] -> SEPARATION_REASON['SEPARATIONREASON']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "Human_Resources_Sample_PBIX": [
+    {
+      "source_relationship": "Employee[date] -> Date[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_DATE_DATE_DATE: EMPLOYEE['COL_DATE'] -> COL_DATE['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[FP] -> FP[FP]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_FP_FP_FP: EMPLOYEE['FP'] -> FP['FP']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[EthnicGroup] -> Ethnicity[Ethnic Group]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_ETHNICGROUP_ETHNICITY_ETHNIC_GROUP: EMPLOYEE['ETHNICGROUP'] -> ETHNICITY['ETHNIC_GROUP']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[Gender] -> Gender[ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_GENDER_GENDER_ID: EMPLOYEE['GENDER'] -> GENDER['ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[PayTypeID] -> PayType[PayTypeID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED_DIFFERENT",
+      "ddl_relationship": "EMPLOYEE_PAYTYPEID_PAYTYPE_PAYTYPEID: EMPLOYEE['PAYTYPEID'] -> PAYTYPE['PAY_TYPE_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[BU] -> BU[BU]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_BU_BU_BU: EMPLOYEE['BU'] -> BU['BU']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[AgeGroupID] -> AgeGroup[AgeGroupID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_AGEGROUPID_AGEGROUP_AGEGROUPID: EMPLOYEE['AGEGROUPID'] -> AGEGROUP['AGEGROUPID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Employee[TermReason] -> SeparationReason[SeparationTypeID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EMPLOYEE_TERMREASON_SEPARATIONREASON_SEPARATIONTYPEID: EMPLOYEE['TERMREASON'] -> SEPARATIONREASON['SEPARATIONTYPEID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "Life_expectancy_v202009": [
+    {
+      "source_relationship": "Indicators[Year] -> Year[Year]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "INDICATORS_YEAR_YEAR_YEAR: INDICATORS['YEAR'] -> YEAR['YEAR']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Indicators[Country Code] -> Country[Country Code]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "INDICATORS_COUNTRY_CODE_COUNTRY_COUNTRY_CODE: INDICATORS['COUNTRY_CODE'] -> COUNTRY['COUNTRY_CODE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Indicators[Sex] -> Sex[Sex]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "INDICATORS_SEX_SEX_SEX: INDICATORS['SEX'] -> SEX['SEX']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Variance Analysis[Country] -> Country[Country Code]",
+      "active": "yes",
+      "cardinality": "1:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "VARIANCE_ANALYSIS_COUNTRY_COUNTRY_COUNTRY_CODE: VARIANCE_ANALYSIS['COUNTRY'] -> COUNTRY['COUNTRY_CODE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Flags[Country Code] -> Country[Country Code]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "FLAGS_COUNTRY_CODE_COUNTRY_COUNTRY_CODE: FLAGS['COUNTRY_CODE'] -> COUNTRY['COUNTRY_CODE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Indicators[Year] -> Years[Years]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "INDICATORS_YEAR_YEARS_YEARS: INDICATORS['YEAR'] -> YEARS['YEARS']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Population[Code] -> Country[Country Code]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "POPULATION_CODE_COUNTRY_COUNTRY_CODE: POPULATION['CODE'] -> COUNTRY['COUNTRY_CODE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Population[Year] -> Years[Years]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "POPULATION_YEAR_YEARS_YEARS: POPULATION['YEAR'] -> YEARS['YEARS']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Indicators[Life Exp Buckets] -> Buckets[Category]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "INDICATORS_LIFE_EXP_BUCKETS_BUCKETS_CATEGORY: INDICATORS['LIFE_EXP_BUCKETS'] -> BUCKETS['CATEGORY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "PerformanceAnalyzerExportReport": [
+    {
+      "source_relationship": "Events[event_type] -> EventTypes[event_type]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EVENTS_EVENT_TYPE_EVENTTYPES_EVENT_TYPE: EVENTS['EVENT_TYPE'] -> EVENTTYPES['EVENT_TYPE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "EventEdges[event_type] -> EventTypes[event_type]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    },
+    {
+      "source_relationship": "Events[Root] -> RootActions[Root]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    },
+    {
+      "source_relationship": "EventEdges[Root] -> RootActions[Root]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    }
+  ],
+  "Power_BI_Visuals": [
+    {
+      "source_relationship": "Financials[Date] -> Date[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    }
+  ],
+  "Revenue_Opportunities": [
+    {
+      "source_relationship": "Sales[Opportunity ID] -> Opportunities[Opportunity ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_OPPORTUNITY_ID_OPPORTUNITIES_OPPORTUNITY_ID: SALES['OPPORTUNITY_ID'] -> OPPORTUNITIES['OPPORTUNITY_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Sales Stage ID] -> SalesStages[Sales Stage ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_SALES_STAGE_ID_SALESSTAGES_SALES_STAGE_ID: SALES['SALES_STAGE_ID'] -> SALESSTAGES['SALES_STAGE_ID']",
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'SALESSTAGES' has no PRIMARY KEY/UNIQUE on ['SALES_STAGE_ID']"
+    },
+    {
+      "source_relationship": "Sales[Product ID] -> Products[Product ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_PRODUCT_ID_PRODUCTS_PRODUCT_ID: SALES['PRODUCT_ID'] -> PRODUCTS['PRODUCT_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Account ID] -> Accounts[Account ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_ACCOUNT_ID_ACCOUNTS_ACCOUNT_ID: SALES['ACCOUNT_ID'] -> ACCOUNTS['ACCOUNT_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Partner ID] -> Partners[Partner ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_PARTNER_ID_PARTNERS_PARTNER_ID: SALES['PARTNER_ID'] -> PARTNERS['PARTNER_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Sales Date] -> Dates[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_SALES_DATE_DATES_DATE: SALES['SALES_DATE'] -> DATES['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Closed Date] -> Dates[Date]",
+      "active": "NO",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "MISSING",
+      "ddl_relationship": "",
+      "key_on_referenced_side": "",
+      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+    }
+  ],
+  "Sales_Returns_Sample_v201912": [
+    {
+      "source_relationship": "Association[RightItemSetId] -> Associated Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "ASSOCIATION_RIGHTITEMSETID_ASSOCIATED_PRODUCT_PRODUCTID: ASSOCIATION['RIGHTITEMSETID'] -> ASSOCIATED_PRODUCT['PRODUCTID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[StoreID] -> Store[StoreID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_STOREID_STORE_STOREID: SALES['STOREID'] -> STORE['STOREID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[ProductID] -> Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_PRODUCTID_PRODUCT_PRODUCTID: SALES['PRODUCTID'] -> PRODUCT['PRODUCTID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Sales[Date] -> Calendar[Date]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_DATE_CALENDAR_DATE: SALES['COL_DATE'] -> CALENDAR['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Customer[ID] -> Sales[ID]",
+      "active": "yes",
+      "cardinality": "1:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CUSTOMER_ID_SALES_ID: CUSTOMER['ID'] -> SALES['ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Association[LeftItemSetId] -> Product[ProductID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "ASSOCIATION_LEFTITEMSETID_PRODUCT_PRODUCTID: ASSOCIATION['LEFTITEMSETID'] -> PRODUCT['PRODUCTID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Product[Product] -> Associated Product[Product]",
+      "active": "NO",
+      "cardinality": "1:1",
+      "cross_filter": "Both",
+      "outcome": "EMITTED",
+      "ddl_relationship": "PRODUCT_PRODUCT_ASSOCIATED_PRODUCT_PRODUCT: PRODUCT['PRODUCT'] -> ASSOCIATED_PRODUCT['PRODUCT']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Customer[Product] -> Associated Product[Product]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CUSTOMER_PRODUCT_ASSOCIATED_PRODUCT_PRODUCT: CUSTOMER['PRODUCT'] -> ASSOCIATED_PRODUCT['PRODUCT']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ],
+  "Supply_Chain_Sample": [
+    {
+      "source_relationship": "Explanations[Product ID] -> Risk[Product ID]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "EXPLANATIONS_PRODUCT_ID_RISK_PRODUCT_ID: EXPLANATIONS['PRODUCT_ID'] -> RISK['PRODUCT_ID']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    },
+    {
+      "source_relationship": "Backorder Percentage[Month] -> Month[Month]",
+      "active": "yes",
+      "cardinality": "M:1",
+      "cross_filter": "Single",
+      "outcome": "EMITTED",
+      "ddl_relationship": "BACKORDER_PERCENTAGE_MONTH_MONTH_MONTH: BACKORDER_PERCENTAGE['MONTH'] -> MONTH['MONTH']",
+      "key_on_referenced_side": "yes",
+      "note": ""
+    }
+  ]
+}

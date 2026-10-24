@@ -746,7 +746,8 @@ class SyncOrchestrator:
         from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
-        connector = LocalPBIXConnector({"pbix_path": item.source_path})
+        drop_ledger = getattr(self, "drop_ledger", None)
+        connector = LocalPBIXConnector({"pbix_path": item.source_path}, drop_ledger=drop_ledger)
         discovered = connector.discover()
         raw_tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
         converter = TMSLToOSIConverter()

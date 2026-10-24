@@ -1,13 +1,15 @@
-model,EMITTED,EMITTED_DIFFERENT,EXTRA,MISSING,clean,ddl_relationships,ddl_tables,error,key_missing,source
-2020SU09_Blog_Demo_-_September,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
-Adventure_Works_DW_2020,11,,0,2,False,11,11,,6,13
-Artificial_Intelligence_Sample,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
-Competitive_Marketing_Analysis,8,,0,,True,8,9,,0,8
-Corporate_Spend,7,,0,,True,7,8,,0,7
-Employee_Hiring_and_History,3,4,1,1,False,8,9,,0,8
-Human_Resources_Sample_PBIX,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
-Life_expectancy_v202009,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
-Power_BI_Visuals,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
-Revenue_Opportunities,6,,0,1,False,6,7,,1,7
-Sales_Returns_Sample_v201912,,,,,,,,"sequence item 0: expected str instance, NoneType found",,
-Supply_Chain_Sample,2,,0,,True,2,7,,0,2
+model,EMITTED,EMITTED_DIFFERENT,EXTRA,MISSING,clean,ddl_relationships,ddl_tables,key_missing,source
+2020SU09_Blog_Demo_-_September,,,0,,True,0,3,0,0
+Adventure_Works_DW_2020,11,,0,2,False,11,11,6,13
+Artificial_Intelligence_Sample,11,1,0,,False,12,12,1,12
+COVID-19_US_Tracking_Sample,1,,0,,False,1,5,1,1
+Competitive_Marketing_Analysis,8,,0,,True,8,9,0,8
+Corporate_Spend,7,,0,,True,7,8,0,7
+Employee_Hiring_and_History,3,4,1,1,False,8,9,0,8
+Human_Resources_Sample_PBIX,7,1,0,,False,8,9,0,8
+Life_expectancy_v202009,9,,0,,True,9,13,0,9
+PerformanceAnalyzerExportReport,1,,0,3,False,1,6,0,4
+Power_BI_Visuals,,,0,1,False,0,8,0,1
+Revenue_Opportunities,6,,0,1,False,6,7,1,7
+Sales_Returns_Sample_v201912,8,,0,,True,8,16,0,8
+Supply_Chain_Sample,2,,0,,True,2,7,0,2

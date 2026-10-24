@@ -1,22 +1,24 @@
 # Phase A relationship report
 
-Models: 12 | traces loaded: 0 | log files: 0
+Models: 14 | traces loaded: 0 | log files: 0
 
 ## Summary
 
 | Model | Source | DDL | Emitted | Missing | Key missing | Clean |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2020SU09_Blog_Demo_-_September | ERROR: sequence item 0: expected str instance, NoneType found | | | | | |
+| 2020SU09_Blog_Demo_-_September | 0 | 0 | 0 | 0 | 0 | yes |
 | Adventure_Works_DW_2020 | 13 | 11 | 11 | 2 | 6 | NO |
-| Artificial_Intelligence_Sample | ERROR: sequence item 0: expected str instance, NoneType found | | | | | |
+| Artificial_Intelligence_Sample | 12 | 12 | 11 | 0 | 1 | NO |
+| COVID-19_US_Tracking_Sample | 1 | 1 | 1 | 0 | 1 | NO |
 | Competitive_Marketing_Analysis | 8 | 8 | 8 | 0 | 0 | yes |
 | Corporate_Spend | 7 | 7 | 7 | 0 | 0 | yes |
 | Employee_Hiring_and_History | 8 | 8 | 3 | 1 | 0 | NO |
-| Human_Resources_Sample_PBIX | ERROR: sequence item 0: expected str instance, NoneType found | | | | | |
-| Life_expectancy_v202009 | ERROR: sequence item 0: expected str instance, NoneType found | | | | | |
-| Power_BI_Visuals | ERROR: sequence item 0: expected str instance, NoneType found | | | | | |
+| Human_Resources_Sample_PBIX | 8 | 8 | 7 | 0 | 0 | NO |
+| Life_expectancy_v202009 | 9 | 9 | 9 | 0 | 0 | yes |
+| PerformanceAnalyzerExportReport | 4 | 1 | 1 | 3 | 0 | NO |
+| Power_BI_Visuals | 1 | 0 | 0 | 1 | 0 | NO |
 | Revenue_Opportunities | 7 | 6 | 6 | 1 | 1 | NO |
-| Sales_Returns_Sample_v201912 | ERROR: sequence item 0: expected str instance, NoneType found | | | | | |
+| Sales_Returns_Sample_v201912 | 8 | 8 | 8 | 0 | 0 | yes |
 | Supply_Chain_Sample | 2 | 2 | 2 | 0 | 0 | yes |
 
 ## Problem relationships and root-cause stage
@@ -69,7 +71,43 @@ Models: 12 | traces loaded: 0 | log files: 0
 - Stage: **EMITTED WITHOUT KEY**
 - Detail: referenced side 'SALES_ORDER' has no PRIMARY KEY/UNIQUE on ['SALESORDERLINEKEY'].
 
+### Artificial_Intelligence_Sample: Accounts[Account Owner] -> Owners[Sales owner]
+
+- Source: active=yes, cardinality=M:1, outcome=EMITTED
+- Stage: **EMITTED WITHOUT KEY**
+- Detail: referenced side 'OWNERS' has no PRIMARY KEY/UNIQUE on ['SALES_OWNER'].
+
+### COVID-19_US_Tracking_Sample: COVID[State] -> StateDim[State code]
+
+- Source: active=yes, cardinality=M:1, outcome=EMITTED
+- Stage: **EMITTED WITHOUT KEY**
+- Detail: referenced side 'STATEDIM' has no PRIMARY KEY/UNIQUE on ['STATE_CODE'].
+
 ### Employee_Hiring_and_History: Employee[date] -> Date[Date]
+
+- Source: active=yes, cardinality=M:1, outcome=MISSING
+- Stage: **NO TRACE**
+- Detail: Run a dry run through semabridge_trace.py for this model, then re-run.
+
+### PerformanceAnalyzerExportReport: EventEdges[event_type] -> EventTypes[event_type]
+
+- Source: active=yes, cardinality=M:1, outcome=MISSING
+- Stage: **NO TRACE**
+- Detail: Run a dry run through semabridge_trace.py for this model, then re-run.
+
+### PerformanceAnalyzerExportReport: Events[Root] -> RootActions[Root]
+
+- Source: active=yes, cardinality=M:1, outcome=MISSING
+- Stage: **NO TRACE**
+- Detail: Run a dry run through semabridge_trace.py for this model, then re-run.
+
+### PerformanceAnalyzerExportReport: EventEdges[Root] -> RootActions[Root]
+
+- Source: active=yes, cardinality=M:1, outcome=MISSING
+- Stage: **NO TRACE**
+- Detail: Run a dry run through semabridge_trace.py for this model, then re-run.
+
+### Power_BI_Visuals: Financials[Date] -> Date[Date]
 
 - Source: active=yes, cardinality=M:1, outcome=MISSING
 - Stage: **NO TRACE**
@@ -89,5 +127,5 @@ Models: 12 | traces loaded: 0 | log files: 0
 
 ## DDL files without a matching .pbix
 
-- output\debug\debug_generated_sql_COVID-19_US_Tracking_Sample.sql
-- output\debug\debug_generated_sql_PerformanceAnalyzerExportReport.sql
+- output\debug\debug_generated_sql_Client_Data.sql
+- output\debug\debug_generated_sql_Shared_Quantity_Model.sql
