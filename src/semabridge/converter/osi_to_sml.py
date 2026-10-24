@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, Iterable, List, Optional
-
+from ast import Set
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
 from semabridge.connectors.dataset_classification_keywords import is_calendar_like_name
@@ -68,7 +68,7 @@ _TRANSLATION_ADVISORY_NOTES = {
 }
 
 
-def _apply_translation_advisories(metric, translation) -> None:
+def _apply_translation_advisories(metric: SMLMetric, translation: DAXTranslation) -> None:
     """Mirror translation.advisory_categories onto metric.advisory_categories/notes.
 
     Idempotent (checked by category membership) so re-running a convergence
