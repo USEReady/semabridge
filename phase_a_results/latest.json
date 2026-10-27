@@ -8,8 +8,8 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "SALES_SALESTERRITORYKEY_SALES_TERRITORY_SALESTERRITORYKEY: SALES['SALESTERRITORYKEY'] -> SALES_TERRITORY['SALESTERRITORYKEY']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'SALES_TERRITORY' has no PRIMARY KEY/UNIQUE on ['SALESTERRITORYKEY']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[ProductKey] -> Product[ProductKey]",
@@ -28,8 +28,8 @@
       "cross_filter": "Both",
       "outcome": "EMITTED",
       "ddl_relationship": "SALES_SALESORDERLINEKEY_SALES_ORDER_SALESORDERLINEKEY: SALES['SALESORDERLINEKEY'] -> SALES_ORDER['SALESORDERLINEKEY']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'SALES_ORDER' has no PRIMARY KEY/UNIQUE on ['SALESORDERLINEKEY']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[CustomerKey] -> Customer[CustomerKey]",
@@ -48,28 +48,28 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "SALES_ORDERDATEKEY_DATE_DATEKEY: SALES['ORDERDATEKEY'] -> COL_DATE['DATEKEY']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'COL_DATE' has no PRIMARY KEY/UNIQUE on ['DATEKEY']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[DueDateKey] -> Date[DateKey]",
       "active": "NO",
       "cardinality": "M:1",
       "cross_filter": "Single",
-      "outcome": "MISSING",
-      "ddl_relationship": "",
-      "key_on_referenced_side": "",
-      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_DUEDATEKEY_DATE_DATEKEY: SALES['DUEDATEKEY'] -> COL_DATE['DATEKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[ShipDateKey] -> Date[DateKey]",
       "active": "NO",
       "cardinality": "M:1",
       "cross_filter": "Single",
-      "outcome": "MISSING",
-      "ddl_relationship": "",
-      "key_on_referenced_side": "",
-      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_SHIPDATEKEY_DATE_DATEKEY: SALES['SHIPDATEKEY'] -> COL_DATE['DATEKEY']",
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[ResellerKey] -> Reseller[ResellerKey]",
@@ -98,8 +98,8 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "CURRENCY_RATE_DATEKEY_DATE_DATEKEY: CURRENCY_RATE['DATEKEY'] -> COL_DATE['DATEKEY']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'COL_DATE' has no PRIMARY KEY/UNIQUE on ['DATEKEY']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[CurrencyKey] -> Currency[CurrencyKey]",
@@ -118,8 +118,8 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "SALES_REASON_BRIDGE_SALESREASONKEY_SALES_REASON_SALESREASONKEY: SALES_REASON_BRIDGE['SALESREASONKEY'] -> SALES_REASON['SALESREASONKEY']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'SALES_REASON' has no PRIMARY KEY/UNIQUE on ['SALESREASONKEY']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales Reason Bridge[SalesOrderLineKey] -> Sales Order[SalesOrderLineKey]",
@@ -128,8 +128,8 @@
       "cross_filter": "Both",
       "outcome": "EMITTED",
       "ddl_relationship": "SALES_REASON_BRIDGE_SALESORDERLINEKEY_SALES_ORDER_SALESORDERLINEKEY: SALES_REASON_BRIDGE['SALESORDERLINEKEY'] -> SALES_ORDER['SALESORDERLINEKEY']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'SALES_ORDER' has no PRIMARY KEY/UNIQUE on ['SALESORDERLINEKEY']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     }
   ],
   "Artificial_Intelligence_Sample": [
@@ -140,8 +140,8 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "ACCOUNTS_ACCOUNT_OWNER_OWNERS_SALES_OWNER: ACCOUNTS['ACCOUNT_OWNER'] -> OWNERS['SALES_OWNER']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'OWNERS' has no PRIMARY KEY/UNIQUE on ['SALES_OWNER']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Opportunities[AccountSeq] -> Accounts[AccountSeq]",
@@ -248,22 +248,10 @@
       "active": "yes",
       "cardinality": "M:1",
       "cross_filter": "Single",
-      "outcome": "EMITTED_DIFFERENT",
-      "ddl_relationship": "CASES_CASE_CREATED_ON_CASE_CALENDAR_DATE: CASES['CASE_CREATED_ON'] -> CASE_CALENDAR['DATE']",
+      "outcome": "EMITTED",
+      "ddl_relationship": "CASES_CASE_CREATED_ON_CASE_CALENDAR_DATE: CASES['CASE_CREATED_ON'] -> CASE_CALENDAR['COL_DATE']",
       "key_on_referenced_side": "yes",
       "note": ""
-    }
-  ],
-  "COVID-19_US_Tracking_Sample": [
-    {
-      "source_relationship": "COVID[State] -> StateDim[State code]",
-      "active": "yes",
-      "cardinality": "M:1",
-      "cross_filter": "Single",
-      "outcome": "EMITTED",
-      "ddl_relationship": "COVID_STATE_STATEDIM_STATE_CODE: COVID['STATE'] -> STATEDIM['STATE_CODE']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'STATEDIM' has no PRIMARY KEY/UNIQUE on ['STATE_CODE']"
     }
   ],
   "Competitive_Marketing_Analysis": [
@@ -278,7 +266,7 @@
       "note": ""
     },
     {
-      "source_relationship": "Sales[ProductID] -> Product[ProductID]",
+      "source_relationship": "SalesFact[ProductID] -> Product[ProductID]",
       "active": "yes",
       "cardinality": "M:1",
       "cross_filter": "Single",
@@ -288,7 +276,7 @@
       "note": ""
     },
     {
-      "source_relationship": "Sales[Date] -> Date[Date]",
+      "source_relationship": "SalesFact[Date] -> Date[Date]",
       "active": "yes",
       "cardinality": "M:1",
       "cross_filter": "Single",
@@ -298,7 +286,7 @@
       "note": ""
     },
     {
-      "source_relationship": "Sales[Zip] -> Geo[Zip]",
+      "source_relationship": "SalesFact[Zip] -> Geo[Zip]",
       "active": "yes",
       "cardinality": "M:1",
       "cross_filter": "Single",
@@ -676,48 +664,6 @@
       "note": ""
     }
   ],
-  "PerformanceAnalyzerExportReport": [
-    {
-      "source_relationship": "Events[event_type] -> EventTypes[event_type]",
-      "active": "yes",
-      "cardinality": "M:1",
-      "cross_filter": "Single",
-      "outcome": "EMITTED",
-      "ddl_relationship": "EVENTS_EVENT_TYPE_EVENTTYPES_EVENT_TYPE: EVENTS['EVENT_TYPE'] -> EVENTTYPES['EVENT_TYPE']",
-      "key_on_referenced_side": "yes",
-      "note": ""
-    },
-    {
-      "source_relationship": "EventEdges[event_type] -> EventTypes[event_type]",
-      "active": "yes",
-      "cardinality": "M:1",
-      "cross_filter": "Single",
-      "outcome": "MISSING",
-      "ddl_relationship": "",
-      "key_on_referenced_side": "",
-      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
-    },
-    {
-      "source_relationship": "Events[Root] -> RootActions[Root]",
-      "active": "yes",
-      "cardinality": "M:1",
-      "cross_filter": "Single",
-      "outcome": "MISSING",
-      "ddl_relationship": "",
-      "key_on_referenced_side": "",
-      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
-    },
-    {
-      "source_relationship": "EventEdges[Root] -> RootActions[Root]",
-      "active": "yes",
-      "cardinality": "M:1",
-      "cross_filter": "Single",
-      "outcome": "MISSING",
-      "ddl_relationship": "",
-      "key_on_referenced_side": "",
-      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
-    }
-  ],
   "Power_BI_Visuals": [
     {
       "source_relationship": "Financials[Date] -> Date[Date]",
@@ -748,8 +694,8 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "SALES_SALES_STAGE_ID_SALESSTAGES_SALES_STAGE_ID: SALES['SALES_STAGE_ID'] -> SALESSTAGES['SALES_STAGE_ID']",
-      "key_on_referenced_side": "NO",
-      "note": "referenced side 'SALESSTAGES' has no PRIMARY KEY/UNIQUE on ['SALES_STAGE_ID']"
+      "key_on_referenced_side": "yes",
+      "note": ""
     },
     {
       "source_relationship": "Sales[Product ID] -> Products[Product ID]",
@@ -796,10 +742,10 @@
       "active": "NO",
       "cardinality": "M:1",
       "cross_filter": "Single",
-      "outcome": "MISSING",
-      "ddl_relationship": "",
-      "key_on_referenced_side": "",
-      "note": "both tables in DDL, relationship not -> dropped; trace logs / drop ledger"
+      "outcome": "EMITTED",
+      "ddl_relationship": "SALES_CLOSED_DATE_DATES_DATE: SALES['CLOSED_DATE'] -> DATES['COL_DATE']",
+      "key_on_referenced_side": "yes",
+      "note": ""
     }
   ],
   "Sales_Returns_Sample_v201912": [
@@ -810,8 +756,8 @@
       "cross_filter": "Single",
       "outcome": "EMITTED",
       "ddl_relationship": "ASSOCIATION_RIGHTITEMSETID_ASSOCIATED_PRODUCT_PRODUCTID: ASSOCIATION['RIGHTITEMSETID'] -> ASSOCIATED_PRODUCT['PRODUCTID']",
-      "key_on_referenced_side": "yes",
-      "note": ""
+      "key_on_referenced_side": "NO",
+      "note": "referenced side 'ASSOCIATED_PRODUCT' has no PRIMARY KEY/UNIQUE on ['PRODUCTID']"
     },
     {
       "source_relationship": "Sales[StoreID] -> Store[StoreID]",
