@@ -847,6 +847,14 @@ class DaxSqlRenderer:
         "COUNTA": "COUNT",
     }
 
+    _ITERATOR_MAP = {
+        "SUMX": "SUM",
+        "AVERAGEX": "AVG",
+        "MINX": "MIN",
+        "MAXX": "MAX",
+        "COUNTAX": "COUNT",
+    }
+
     # DAX function calls this renderer turns into a numeric (FLOAT/aggregate)
     # SQL expression rather than an inherently boolean one. DAX allows using
     # such an expression directly as an IF condition — 0/BLANK() is falsy,
@@ -1087,6 +1095,10 @@ class DaxSqlRenderer:
         if node.op == "-":
             return f"(-{inner})"
         if node.op.upper() == "NOT":
+            if isinstance(node.operand, FunctionCallNode) and node.operand.func.upper() == "ISBLANK":
+                if len(node.operand.args) == 1:
+                    arg_sql = self._render_node(node.operand.args[0])
+                    return f"({arg_sql} IS NOT NULL)"
             return f"NOT ({inner})"
         return inner
 
@@ -1115,6 +1127,69 @@ class DaxSqlRenderer:
 
         if func == "DATEADD":
             return self._render_dateadd(node.args)
+
+        # Iterators (SUMX, AVERAGEX, MINX, MAXX, COUNTAX)
+        if func in self._ITERATOR_MAP:
+            if len(node.args) < 2:
+                raise self.DaxRenderError(f"Iterator {func} requires at least 2 arguments")
+            sql_func = self._ITERATOR_MAP[func]
+            table_arg = node.args[0]
+            expr_arg = node.args[1]
+            
+            # Check if first arg is FILTER(table, predicate)
+            if isinstance(table_arg, FunctionCallNode) and table_arg.func.upper() == "FILTER":
+                if len(table_arg.args) < 2:
+                    raise self.DaxRenderError("FILTER requires table and predicate arguments")
+                filter_tbl_node = table_arg.args[0]
+                if isinstance(filter_tbl_node, FunctionCallNode) and filter_tbl_node.func.upper() == "KEEPFILTERS":
+                    filter_tbl_node = filter_tbl_node.args[0]
+                filter_tbl_name = getattr(filter_tbl_node, "name", None) or getattr(filter_tbl_node, "raw", None)
+                if filter_tbl_name and self.primary_table_name:
+                    if str(filter_tbl_name).strip("'\"").upper() != self.primary_table_name.strip("'\"").upper():
+                        raise self.DaxRenderError(
+                            f"Iterator FILTER table '{filter_tbl_name}' does not match primary table '{self.primary_table_name}'"
+                        )
+                pred_sql = self._render_node(table_arg.args[1])
+                expr_sql = self._render_node(expr_arg)
+                if func == "COUNTAX" and expr_sql in ("TRUE", "true", "True", "1"):
+                    case_expr = f"CASE WHEN {pred_sql} THEN 1 END"
+                else:
+                    case_expr = f"CASE WHEN {pred_sql} THEN {expr_sql} END"
+                cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+                return f"{sql_func}({case_expr}{cast})"
+            
+            expr_sql = self._render_node(expr_arg)
+            if func == "COUNTAX" and expr_sql in ("TRUE", "true", "True", "1"):
+                return "COUNT(*)"
+            cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+            return f"{sql_func}({expr_sql}{cast})"
+
+        if func == "KEEPFILTERS":
+            if not node.args:
+                raise self.DaxRenderError("KEEPFILTERS requires 1 argument")
+            return self._render_node(node.args[0])
+
+        if func == "NOT":
+            if len(node.args) != 1:
+                raise self.DaxRenderError("NOT requires 1 argument")
+            inner = node.args[0]
+            if isinstance(inner, FunctionCallNode) and inner.func.upper() == "ISBLANK":
+                if len(inner.args) != 1:
+                    raise self.DaxRenderError("ISBLANK requires 1 argument")
+                arg_sql = self._render_node(inner.args[0])
+                return f"({arg_sql} IS NOT NULL)"
+            arg_sql = self._render_node(inner)
+            return f"NOT ({arg_sql})"
+
+        if func == "DATEDIFF":
+            if len(node.args) != 3:
+                raise self.DaxRenderError("DATEDIFF requires 3 arguments (start_date, end_date, interval)")
+            start_sql = self._render_node(node.args[0])
+            end_sql = self._render_node(node.args[1])
+            interval_node = node.args[2]
+            interval_str = getattr(interval_node, "name", None) or getattr(interval_node, "raw", None) or str(interval_node)
+            interval_clean = interval_str.strip("'\" ").upper()
+            return f"DATEDIFF({interval_clean}, {start_sql}, {end_sql})"
 
         # Aggregations (SUM, AVERAGE, MIN, MAX, COUNT, etc.)
         if func in self._AGG_MAP:
@@ -1284,12 +1359,24 @@ class DaxSqlRenderer:
 
     def _rewrite_filtered_aggregate(self, agg_node: FunctionCallNode, condition_sql: str) -> str:
         func = agg_node.func.upper()
-        if func not in self._AGG_MAP:
+        if func not in self._AGG_MAP and func not in self._ITERATOR_MAP:
             raise self.DaxRenderError(f"Function {func} is not a recognized direct aggregation")
         
         if func == "COUNTROWS":
             case_expr = f"CASE WHEN {condition_sql} THEN 1 END"
             return f"COUNT({case_expr})"
+
+        if func in self._ITERATOR_MAP:
+            sql_func = self._ITERATOR_MAP[func]
+            if len(agg_node.args) < 2:
+                raise self.DaxRenderError(f"Iterator {func} requires at least 2 arguments")
+            expr_sql = self._render_node(agg_node.args[1])
+            if func == "COUNTAX" and expr_sql in ("TRUE", "true", "True", "1"):
+                case_expr = f"CASE WHEN {condition_sql} THEN 1 END"
+            else:
+                case_expr = f"CASE WHEN {condition_sql} THEN {expr_sql} END"
+            cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+            return f"{sql_func}({case_expr}{cast})"
             
         if not agg_node.args:
             raise self.DaxRenderError(f"Aggregation {func} requires at least 1 argument")
@@ -1496,7 +1583,9 @@ class DaxSqlRenderer:
             )
         elif filter_clauses:
             where = " AND ".join(filter_clauses)
-            if isinstance(args[0], FunctionCallNode) and args[0].func.upper() in self._AGG_MAP:
+            if isinstance(args[0], FunctionCallNode) and (
+                args[0].func.upper() in self._AGG_MAP or args[0].func.upper() in self._ITERATOR_MAP
+            ):
                 return self._rewrite_filtered_aggregate(args[0], where)
             # Base isn't a direct aggregate call — the common real-world
             # shape here is a measure reference, e.g. CALCULATE([Measure],
@@ -2028,13 +2117,15 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
         return False
 
     def _refs_data(n: DaxNode) -> bool:
-        if isinstance(n, (ColumnRefNode, MeasureRefNode)):
+        if isinstance(n, (ColumnRefNode, MeasureRefNode, IdentifierNode)):
             return True
         if isinstance(n, BinaryOpNode):
             return _refs_data(n.left) or _refs_data(n.right)
         if isinstance(n, UnaryOpNode):
             return _refs_data(n.operand)
         if isinstance(n, FunctionCallNode):
+            if n.func.upper() in ("COUNTROWS", "COUNTAX", "SUMX", "AVERAGEX", "MINX", "MAXX"):
+                return True
             return any(_refs_data(a) for a in n.args)
         if isinstance(n, VarNode):
             # A VAR is a named sub-expression, not a boundary that hides

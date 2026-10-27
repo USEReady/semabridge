@@ -974,6 +974,30 @@ def _parse_simple_predicate_conditions(filter_expr: str, table_alias: str) -> Op
     conditions: List[str] = []
     for predicate in re.split(r"\s+\bAND\b\s+", filter_expr, flags=re.IGNORECASE):
         predicate = predicate.strip()
+        # NOT(ISBLANK(col)) or NOT ISBLANK(col)
+        not_blank_match = re.match(
+            r"^NOT\s*\(?\s*ISBLANK\s*\(\s*(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*\)\s*\)?$",
+            predicate,
+            re.IGNORECASE,
+        )
+        if not_blank_match:
+            table = (not_blank_match.group(1) or not_blank_match.group(2) or table_alias).strip()
+            column = not_blank_match.group(3).strip()
+            conditions.append(f"{_column_ref(table, column, table_alias)} IS NOT NULL")
+            continue
+
+        # ISBLANK(col)
+        blank_match = re.match(
+            r"^ISBLANK\s*\(\s*(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*\)$",
+            predicate,
+            re.IGNORECASE,
+        )
+        if blank_match:
+            table = (blank_match.group(1) or blank_match.group(2) or table_alias).strip()
+            column = blank_match.group(3).strip()
+            conditions.append(f"{_column_ref(table, column, table_alias)} IS NULL")
+            continue
+
         pred_match = re.match(
             r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*(<=|>=|<>|=|<|>)\s*"
             r"(\"[^\"]*\"|'[^']*'|[-+]?\d+(?:\.\d+)?)\s*$",
@@ -993,7 +1017,7 @@ def _parse_simple_predicate_conditions(filter_expr: str, table_alias: str) -> Op
 
 
 def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
-    """Translate SUMX/AVERAGEX/MINX/MAXX iterator expressions, including
+    """Translate SUMX/AVERAGEX/MINX/MAXX/COUNTAX iterator expressions, including
     the common SUMX(FILTER(table, predicate), expr) idiom.
 
     Iterating a filtered row-set and reducing is exactly equivalent to
@@ -1006,7 +1030,7 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     for a predicate this hasn't proven correct for.
     """
     match = re.match(
-        r"\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(\s*(.+)\s*\)\s*$",
+        r"\s*(SUMX|AVERAGEX|MINX|MAXX|COUNTAX)\s*\(\s*(.+)\s*\)\s*$",
         dax or "",
         re.IGNORECASE | re.DOTALL,
     )
@@ -1014,7 +1038,7 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
         return None
 
     func = match.group(1).upper()
-    sql_func = {"SUMX": "SUM", "AVERAGEX": "AVG", "MINX": "MIN", "MAXX": "MAX"}[func]
+    sql_func = {"SUMX": "SUM", "AVERAGEX": "AVG", "MINX": "MIN", "MAXX": "MAX", "COUNTAX": "COUNT"}[func]
 
     # Paren-depth-aware split (not a naive first-comma regex) so a
     # FILTER(table, predicate) first argument — which itself contains a
@@ -1024,32 +1048,59 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
         return None
     iterator_arg, expression = parts[0].strip(), parts[1].strip()
 
-    filter_match = re.match(r"FILTER\s*\(\s*(.+)\s*\)\s*$", iterator_arg, re.IGNORECASE | re.DOTALL)
+    filter_match = re.match(r"^FILTER\s*\(\s*(.+)\s*\)$", iterator_arg, re.IGNORECASE | re.DOTALL)
     where_conditions: Optional[List[str]] = None
     if filter_match:
         filter_parts = _split_top_level(filter_match.group(1))
         if len(filter_parts) != 2:
             return None
-        iterator_table = filter_parts[0].strip().strip("'\"") or table_alias
+        inner_table_arg = filter_parts[0].strip()
+        inner_keep = re.match(r"^KEEPFILTERS\s*\(\s*(.+)\s*\)$", inner_table_arg, re.IGNORECASE | re.DOTALL)
+        if inner_keep:
+            inner_table_arg = inner_keep.group(1).strip()
+        iterator_table = inner_table_arg.strip("'\"") or table_alias
+        if iterator_table and table_alias and iterator_table.upper() != table_alias.upper():
+            return None
         where_conditions = _parse_simple_predicate_conditions(filter_parts[1], table_alias)
         if where_conditions is None:
             return None
     else:
+        keep_match = re.match(r"^KEEPFILTERS\s*\(\s*(.+)\s*\)$", iterator_arg, re.IGNORECASE | re.DOTALL)
+        if keep_match:
+            iterator_arg = keep_match.group(1).strip()
         iterator_table = iterator_arg.strip().strip("'\"") or table_alias
 
     def repl_col(col_match: re.Match) -> str:
-        return _column_ref(iterator_table, col_match.group(1), table_alias)
+        tbl = (col_match.group(1) or col_match.group(2) or iterator_table).strip()
+        col = col_match.group(3).strip()
+        return _column_ref(tbl, col, table_alias)
 
-    expr_sql = re.sub(r"\[([^\]]+)\]", repl_col, expression)
+    col_pat = r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]"
+    expr_sql = re.sub(col_pat, repl_col, expression)
     if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|SELECTEDVALUE)\b", expr_sql, re.IGNORECASE):
         return None
+
+    # Map DAX DATEDIFF(start, end, interval) to Snowflake DATEDIFF(interval, start, end)
+    datediff_match = re.search(r"\bDATEDIFF\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)", expr_sql, re.IGNORECASE)
+    if datediff_match:
+        d_start = datediff_match.group(1).strip()
+        d_end = datediff_match.group(2).strip()
+        d_interval = datediff_match.group(3).strip().strip("'\"").upper()
+        expr_sql = expr_sql[:datediff_match.start()] + f"DATEDIFF({d_interval}, {d_start}, {d_end})" + expr_sql[datediff_match.end():]
+
+    if func == "COUNTAX" and expr_sql.strip().upper() in ("TRUE", "TRUE()", "1"):
+        if where_conditions is not None:
+            where = " AND ".join(where_conditions)
+            return f"COUNT(CASE WHEN {where} THEN 1 END)"
+        return "COUNT(*)"
 
     if where_conditions is not None:
         where = " AND ".join(where_conditions)
         cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
-        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} ELSE 0 END)"
+        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql} END{cast})"
 
-    return f"{sql_func}({expr_sql})"
+    cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+    return f"{sql_func}({expr_sql}{cast})"
 
 
 
