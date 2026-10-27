@@ -69,7 +69,7 @@ class DAXTranslator:
     # Regex patterns for Tier 1
     # Matches: FUNC('Table'[Column]) or FUNC([Column])
     _TIER1_PATTERN = re.compile(
-        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'?[^'\[\]]+'?\[([^\[\]]+)\]|\[([^\[\]]+)\])\s*\)\s*$",
+        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'?(?P<table>[^'\[\]]+)'?\[(?P<col1>[^\[\]]+)\]|\[(?P<col2>[^\[\]]+)\])\s*\)\s*$",
         re.IGNORECASE
     )
     
@@ -430,13 +430,14 @@ class DAXTranslator:
         # so this can only recover cases that would otherwise reach Tier 5.
         from semabridge.converter.dax_ast_parser import try_ast_translate
         resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
-        if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures):
+        all_measure_names = self._all_measure_names(metrics_context)
+        if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures, all_measure_names):
             general_ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
                 date_alias=self._get_date_alias(),
                 measure_sql_map=resolved_measures,
-                known_measure_names=self._all_measure_names(metrics_context),
+                known_measure_names=all_measure_names,
                 anchor_flag_map=anchor_flag_map,
                 primary_table_name=dataset_name,
                 table_aliases=dataset_aliases,
@@ -603,19 +604,22 @@ class DAXTranslator:
         return resolved_measures, all_measure_names
 
     def _has_unresolved_bracket_reference(
-        self, dax: str, resolved_measures: Dict[str, str]
+        self, dax: str, resolved_measures: Dict[str, str], all_measure_names: Optional[Set[str]] = None
     ) -> bool:
         """
-        True if `dax` contains any bare [MeasureName] reference that is not
-        a key of `resolved_measures`.
-        Uses the AST tokenizer/parser as single source of truth.
+        True if `dax` contains any bare [MeasureName] reference that names a known measure
+        (in all_measure_names) that has not yet been resolved to SQL (not in resolved_measures).
+        Bare [ColumnName] references (not in all_measure_names) are columns of the current table.
         """
         if not dax:
             return False
         resolved_lower = {str(k).casefold() for k in (resolved_measures or {}).keys()}
+        known_lower = {str(k).casefold() for k in (all_measure_names or ())}
         for ref in extract_measure_references_from_ast(dax):
-            if ref.casefold() not in resolved_lower:
-                return True
+            ref_lower = ref.casefold()
+            if known_lower:
+                if ref_lower in known_lower and ref_lower not in resolved_lower:
+                    return True
         return False
 
     def _try_dependency_translation(
@@ -1003,7 +1007,7 @@ class DAXTranslator:
             else:
                 return None
 
-            lhs_table = sanitize_column(table_name, force_uppercase=True)
+            lhs_table = to_alias(table_name) if table_name else table_alias
             lhs_column = sanitize_column(column_name, force_uppercase=True)
             condition_sql = f"{lhs_table}.{lhs_column} = {literal}"
 
@@ -1273,8 +1277,8 @@ class DAXTranslator:
             return None
         
         func = match.group(1).upper()
-        # Group 2 has Table[Column] format col name, Group 3 has [Column] format
-        col_name = match.group(2) or match.group(3)
+        table_name = match.group("table")
+        col_name = match.group("col1") or match.group("col2")
         
         # Map DAX function to SQL function
         func_map = {
@@ -1286,7 +1290,8 @@ class DAXTranslator:
             "DISTINCTCOUNT": "COUNT(DISTINCT {col})"
         }
         
-        col_ref = f"{table_alias}.{self._quote(col_name)}"
+        resolved_alias = to_alias(table_name) if table_name else table_alias
+        col_ref = f"{resolved_alias}.{self._quote(col_name)}"
         sql_template = func_map.get(func)
         
         if not sql_template:

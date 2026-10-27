@@ -82,15 +82,15 @@ COMPLEXITY_INDICATORS = {
 SIMPLE_PATTERNS = {
     # Pattern name: (regex, translation function)
     'direct_agg': (
-        r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[([^\[\]]+)\]|\[([^\[\]]+)\])\s*\)\s*$",
         'translate_direct_agg',
     ),
     'sum_simple_arithmetic': (
-        r"^\s*SUM\s*\(\s*(?:\[(.+?)\]\s*)\)\s*(?:\+|-|\*|/)\s*\d+\s*$",
+        r"^\s*SUM\s*\(\s*(?:\[([^\[\]]+)\]\s*)\)\s*(?:\+|-|\*|/)\s*\d+\s*$",
         'translate_simple_arithmetic',
     ),
     'count_distinct': (
-        r"^\s*(?:DISTINCTCOUNT|VALUES)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(?:DISTINCTCOUNT|VALUES)\s*\(\s*(?:'?[\w\s]+'?\[([^\[\]]+)\]|\[([^\[\]]+)\])\s*\)\s*$",
         'translate_count_distinct',
     ),
 }

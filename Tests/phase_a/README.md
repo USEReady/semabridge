@@ -70,3 +70,34 @@ Acceptance on real DDL (after regenerating it):
 
     $env:ACCEPT_BATCH_CSV = "phase_a\batch.csv"; $env:ACCEPT_BASELINE = "phase_a_results\baseline.json"
     uv run python -m pytest phase_a\tests\test_acceptance_ddl.py -q
+
+## Measures: where are they dropped or NULLed? (`measure_inventory.py`)
+
+Compares every Power BI measure (from your model-wise Excel report, or the .pbix) with the generated DDL,
+the run log and the SML model, and gives each measure one outcome (REAL_SQL / NULL_PLACEHOLDER / MISSING),
+a reason (UNREACHABLE, NOT_TRANSLATABLE, COLUMN_NOT_RESOLVED, VALIDATION_GATE, CIRCULAR, CASCADED,
+NO_EXPRESSION, BY_DESIGN, UNKNOWN) and the pipeline stage. `simple_but_null = yes` marks simple DAX that
+still failed - check those first.
+
+    # all models: finds output\debug\debug_generated_sql_<model>.sql, newest output\runs\**\<model>.log, sml model.yaml
+    uv run python phase_a\measure_inventory.py --report "C:\Users\manoj.s\Downloads\PowerBI_Measures_Report_Model_wise.xlsx" --repo . --translate
+
+    # one model, explicit files
+    uv run python phase_a\measure_inventory.py --report <report.xlsx> --model "Life expectancy v202009" `
+        --ddl output\debug\debug_generated_sql_Life_expectancy_v202009.sql `
+        --log output\runs\proj-life-expect\<run>\Life_expectancy_v202009.log `
+        --sml output\reverse\proj-life-expect\sml\model.yaml --translate
+
+Output in `measure_results\`: measure_inventory.csv (one row per measure), measure_summary.csv (per model),
+measure_extra_in_ddl.csv (metrics in the view that are not in the report), baseline.json (later runs list changes).
+
+## Step 1 - are all measures extracted? (`measure_stage_diagnostic.py`)
+
+Tracks every measure (and its table) through S1 raw model -> S2 pbixray -> S3 SemaBridge pbixray extraction ->
+S4 TMSL -> S5 OSI -> S6 SML (what the translator receives) -> S7 generated DDL, and reports the FIRST stage where
+each one disappears, plus the kind of table it lives on (normal / calculated / measure-only / hidden / auto-date).
+
+    uv run python phase_a\measure_stage_diagnostic.py --pbix-dir "C:\Users\manoj.s\Downloads\PBIX Files"
+    uv run python phase_a\measure_stage_diagnostic.py --pbix "<model>.pbix" --ddl output\debug\debug_generated_sql_<model>.sql
+
+Output (`measure_stage_results\`): measure_stages.csv, table_stages.csv, stage_summary.csv.

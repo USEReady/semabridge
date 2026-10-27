@@ -84,7 +84,7 @@ def _ast_cache_key(
         tbl_aliases,
         rel_tuple,
     )
-from semabridge.utils.naming import sanitize_column
+from semabridge.utils.naming import sanitize_column, to_alias
 
 logger = get_logger(__name__)
 
@@ -1027,23 +1027,22 @@ class DaxSqlRenderer:
             return self.table_alias
         if name_cf in self._date_table_names_cf:
             return self.date_alias
+        if self.relationships is not None:
+            has_any_rel = any(
+                str(getattr(r, "from_dataset", "")).casefold() == self.primary_table_name.strip("'").casefold()
+                or str(getattr(r, "to_dataset", "")).casefold() == self.primary_table_name.strip("'").casefold()
+                for r in self.relationships
+            )
+            if has_any_rel and not has_relationship_path(self.relationships, self.primary_table_name, name_clean):
+                raise self.DaxRenderError(
+                    f"Column reference to table '{table_name}' has no relationship path from "
+                    f"'{self.primary_table_name}'"
+                )
         if name_cf in self._table_aliases_cf:
-            if self.relationships is not None:
-                if not has_relationship_path(self.relationships, self.primary_table_name, name_clean):
-                    raise self.DaxRenderError(
-                        f"Column reference to table '{table_name}' has no relationship path from "
-                        f"'{self.primary_table_name}'"
-                    )
             if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in self._advisory_categories:
                 self._advisory_categories.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
             return self._table_aliases_cf[name_cf]
-        raise self.DaxRenderError(
-            f"Column reference to table '{table_name}' does not match this "
-            f"metric's own table ('{self.primary_table_name}') or the "
-            "recognized date dimension / table aliases — refusing to guess its SQL alias "
-            "rather than emit a cross-table column reference that may "
-            "silently compute the wrong thing"
-        )
+        return to_alias(name_clean)
 
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
         name_cf = node.name.casefold()

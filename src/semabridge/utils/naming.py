@@ -398,11 +398,28 @@ def sanitize_sql_expression(
     return result
 
 
+_UPPER_COL_SANITIZER = None
+_RAW_COL_SANITIZER = None
+
+
+def _get_col_sanitizer(force_uppercase: bool):
+    global _UPPER_COL_SANITIZER, _RAW_COL_SANITIZER
+    from semabridge.utils.identifiers import IdentifierSanitizer
+    if force_uppercase:
+        if _UPPER_COL_SANITIZER is None:
+            _UPPER_COL_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
+        return _UPPER_COL_SANITIZER
+    else:
+        if _RAW_COL_SANITIZER is None:
+            _RAW_COL_SANITIZER = IdentifierSanitizer(force_uppercase=False, suppress_reserved=True)
+        return _RAW_COL_SANITIZER
+
+
 def sanitize_column(name: str, force_uppercase: bool = True) -> str:
     """Sanitize a column name for Snowflake physical column identifiers.
 
     * Strips TMSL bracket notation ``[Col Name]``
-    * Replaces spaces, dots, slashes → ``_``
+    * Replaces spaces, dots, slashes and special characters ($, %, etc.)
     * Escapes embedded double-quotes
     * Optionally uppercases
 
@@ -412,18 +429,7 @@ def sanitize_column(name: str, force_uppercase: bool = True) -> str:
     if not name:
         return "UNKNOWN"
 
-    clean = name.strip()
-    if clean.startswith("[") and clean.endswith("]"):
-        clean = clean[1:-1]
-
-    for ch in (" ", ".", "/", "\\"):
-        clean = clean.replace(ch, "_")
-
-    clean = clean.replace('"', '""')
-
-    if force_uppercase:
-        return clean.upper()
-    return clean
+    return _get_col_sanitizer(force_uppercase).sanitize_column(name)
 
 
 def sanitize_semantic_label(name: str, force_uppercase: bool = True) -> str:
