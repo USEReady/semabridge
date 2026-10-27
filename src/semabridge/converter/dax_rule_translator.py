@@ -76,6 +76,7 @@ COMPLEXITY_INDICATORS = {
     'SAMPLE': r'SAMPLE\s*\(',
     'GENERATE': r'GENERATE\s*\(',
     'GENERATESERIES': r'GENERATESERIES\s*\(',
+    'VAR': r'\bVAR\b',
 }
 
 # Simple patterns that can be translated without LLM

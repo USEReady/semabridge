@@ -395,11 +395,11 @@ class DAXTranslator:
                     ast_sql, 3, clean_dax, advisory_categories=time_intel_advisories
                 ))
 
-        # Tier 4: Complex CALCULATE / FILTER / ALL / ALLEXCEPT — attempt AST translation
+        # Tier 4: Complex CALCULATE / FILTER / ALL / ALLEXCEPT / VAR — attempt AST translation
         is_complex = any(
             re.search(pattern, clean_dax, re.IGNORECASE)
             for pattern in self.UNSUPPORTED_PATTERNS
-        )
+        ) or bool(re.search(r"\bVAR\b", clean_dax, re.IGNORECASE))
         if is_complex:
             from semabridge.converter.dax_ast_parser import try_ast_translate
             resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)

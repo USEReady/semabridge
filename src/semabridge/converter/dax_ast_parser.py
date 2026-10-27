@@ -961,6 +961,31 @@ class DaxSqlRenderer:
         self._advisory_categories: List[str] = (
             advisory_categories if advisory_categories is not None else []
         )
+        self._var_scopes: List[Dict[str, str]] = []
+
+    def _lookup_var(self, name: str) -> Optional[str]:
+        clean = str(name or "").strip("[]").casefold()
+        for scope in reversed(self._var_scopes):
+            if clean in scope:
+                return scope[clean]
+        return None
+
+    def _render_var_node(self, node: VarNode) -> str:
+        new_scope: Dict[str, str] = {}
+        self._var_scopes.append(new_scope)
+        try:
+            for var_name, var_expr in node.variables:
+                var_sql = self._render_node(var_expr)
+                if not var_sql or not validate_emitted_sql(var_sql):
+                    raise self.DaxRenderError(f"Failed to render variable '{var_name}'")
+                clean_name = str(var_name or "").strip("[]").casefold()
+                new_scope[clean_name] = f"({var_sql})"
+            body_sql = self._render_node(node.body)
+            if not body_sql or not validate_emitted_sql(body_sql):
+                raise self.DaxRenderError("Failed to render RETURN body")
+            return body_sql
+        finally:
+            self._var_scopes.pop()
 
     def render(self, node: Optional[DaxNode]) -> Optional[str]:
         """
@@ -980,6 +1005,8 @@ class DaxSqlRenderer:
             return None
 
     def _render_node(self, node: DaxNode) -> str:
+        if isinstance(node, VarNode):
+            return self._render_var_node(node)
         if isinstance(node, LiteralNode):
             return self._render_literal(node)
         if isinstance(node, ColumnRefNode):
@@ -993,6 +1020,9 @@ class DaxSqlRenderer:
         if isinstance(node, FunctionCallNode):
             return self._render_function(node)
         if isinstance(node, IdentifierNode):
+            var_sql = self._lookup_var(node.name)
+            if var_sql is not None:
+                return var_sql
             return f'"{sanitize_column(node.name)}"'
         raise self.DaxRenderError(f"Unknown node type: {type(node).__name__}")
 
@@ -1052,7 +1082,18 @@ class DaxSqlRenderer:
             return self._table_aliases_cf[name_cf]
         return to_alias(name_clean)
 
+    _PRECEDENCE = {
+        "OR": 10,
+        "AND": 20,
+        "=": 30, "<>": 30, "<": 30, "<=": 30, ">": 30, ">=": 30,
+        "+": 40, "-": 40,
+        "*": 50, "/": 50,
+    }
+
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
+        var_sql = self._lookup_var(node.name)
+        if var_sql is not None:
+            return var_sql
         name_cf = node.name.casefold()
         if name_cf in self._measure_sql_map_by_casefold:
             return f"({self._measure_sql_map_by_casefold[name_cf]})"
@@ -1079,12 +1120,25 @@ class DaxSqlRenderer:
     def _render_binary(self, node: BinaryOpNode) -> str:
         left = self._render_node(node.left)
         right = self._render_node(node.right)
+        op_clean = node.op.upper()
+        parent_prec = self._PRECEDENCE.get(op_clean, 0)
+
+        if isinstance(node.left, BinaryOpNode):
+            left_prec = self._PRECEDENCE.get(node.left.op.upper(), 0)
+            if left_prec < parent_prec:
+                left = f"({left})"
+
+        if isinstance(node.right, BinaryOpNode):
+            right_prec = self._PRECEDENCE.get(node.right.op.upper(), 0)
+            if right_prec < parent_prec or (op_clean in ("-", "/") and right_prec <= parent_prec):
+                right = f"({right})"
+
         op_map = {
             "=": "=", "<>": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=",
             "+": "+", "-": "-", "*": "*", "/": "/",
             "AND": "AND", "OR": "OR",
         }
-        sql_op = op_map.get(node.op.upper(), node.op)
+        sql_op = op_map.get(op_clean, node.op)
         # Wrap operands in parens for clarity on logical operators
         if sql_op in ("AND", "OR"):
             return f"({left}) {sql_op} ({right})"
@@ -2688,6 +2742,8 @@ def _node_contains_measure_ref(node: DaxNode) -> bool:
         return _node_contains_measure_ref(node.operand)
     if isinstance(node, FunctionCallNode):
         return any(_node_contains_measure_ref(a) for a in node.args)
+    if isinstance(node, VarNode):
+        return any(_node_contains_measure_ref(v) for _, v in node.variables) or _node_contains_measure_ref(node.body)
     return False
 
 
@@ -2700,6 +2756,8 @@ def _node_is_pure_literal(node: DaxNode) -> bool:
         return _node_is_pure_literal(node.left) and _node_is_pure_literal(node.right)
     if isinstance(node, UnaryOpNode):
         return _node_is_pure_literal(node.operand)
+    if isinstance(node, VarNode):
+        return all(_node_is_pure_literal(v) for _, v in node.variables) and _node_is_pure_literal(node.body)
     return False
 
 
@@ -2719,6 +2777,10 @@ def _collect_measure_ref_names(node: DaxNode) -> Set[str]:
         elif isinstance(n, FunctionCallNode):
             for a in n.args:
                 _walk(a)
+        elif isinstance(n, VarNode):
+            for _, value_expr in n.variables:
+                _walk(value_expr)
+            _walk(n.body)
 
     _walk(node)
     return names
