@@ -363,8 +363,22 @@ class MetricsClauseBuilder:
             if "CAST(NULL AS DOUBLE)" in expr or not getattr(metric, "sync_enabled", True):
                 syns_to_emit = []
 
+            non_additive_clause = ""
+            if getattr(metric, "non_additive_dimension", None) and expr != NULL_PLACEHOLDER_SQL:
+                dim_table, dim_col = metric.non_additive_dimension
+                dim_alias = None
+                if dim_table:
+                    for ds, a in dataset_aliases.items():
+                        if ds.casefold() == dim_table.casefold():
+                            dim_alias = a
+                            break
+                if not dim_alias:
+                    dim_alias = metric_entity_alias
+                safe_dim_col = self.identifier_sanitizer.sanitize_column(dim_col)
+                non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{safe_dim_col}" ASC )'
+
             metrics_lines.append(
-                f'  {metric_entity_alias}."{safe_metric_name}" AS {expr}'
+                f'  {metric_entity_alias}."{safe_metric_name}"{non_additive_clause} AS {expr}'
                 f'{synonyms_clause(syns_to_emit)}'
             )
             metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
@@ -464,7 +478,7 @@ class MetricsClauseBuilder:
         silently removed."""
         names: Set[str] = set()
         for line in lines:
-            m = re.search(r'\."([^"]+)"\s+AS\s+', line)
+            m = re.search(r'\."([^"]+)"(?:\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+', line)
             if m:
                 names.add(m.group(1))
         return names
@@ -1361,21 +1375,22 @@ class MetricsClauseBuilder:
             parsed = []
             expr_by_name = {}
             for line in current:
-                m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
+                m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"(\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
                 if not m:
-                    parsed.append((line, None, None, "", ""))
+                    parsed.append((line, None, None, "", "", ""))
                     continue
-                alias, name, expr = m.groups()
+                alias, name, non_additive_clause, expr = m.groups()
+                non_additive_clause = non_additive_clause or ""
                 expr, synonym_suffix = self._split_outer_synonyms_clause(expr)
                 defined.add(name)
                 expr_by_name[name] = expr
                 if re.search(r'\bOVER\b', expr, flags=re.IGNORECASE):
                     window_metrics.add(name)
-                parsed.append((line, alias, name, expr, synonym_suffix))
+                parsed.append((line, alias, name, non_additive_clause, expr, synonym_suffix))
 
             removed = rewritten = False
             next_lines = []
-            for line, alias, name, expr, synonym_suffix in parsed:
+            for line, alias, name, non_additive_clause, expr, synonym_suffix in parsed:
                 if not name:
                     next_lines.append(line)
                     continue
@@ -1383,9 +1398,8 @@ class MetricsClauseBuilder:
                 refs = set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
                 metric_refs = [r for r in refs if r in metric_name_set and r != name]
 
-                # 1. Fail-closed: a reference to an undefined metric removes
-                # the line; a reference to a NULL placeholder makes this
-                # metric a NULL placeholder too (NULL propagates) instead.
+                # 1. Fail-closed: a reference to an undefined metric emits NULL placeholder;
+                # a reference to a NULL placeholder makes this metric a NULL placeholder too (NULL propagates).
                 unresolved_or_invalid = False
                 null_ref = None
                 for r in metric_refs:
@@ -1397,7 +1411,9 @@ class MetricsClauseBuilder:
                         null_ref = null_ref or r
 
                 if unresolved_or_invalid:
-                    removed = True
+                    self.__dict__.setdefault("_null_propagated", {})[name] = "missing/unresolved dependency"
+                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL}')
+                    rewritten = True
                     continue
 
                 if null_ref and expr.strip().upper() != NULL_PLACEHOLDER_SQL:
@@ -1429,7 +1445,7 @@ class MetricsClauseBuilder:
                             substituted = True
 
                     if substituted:
-                        next_lines.append(f'  {alias}."{name}" AS {expanded_expr}{synonym_suffix}')
+                        next_lines.append(f'  {alias}."{name}"{non_additive_clause} AS {expanded_expr}{synonym_suffix}')
                         rewritten = True
                         continue
 

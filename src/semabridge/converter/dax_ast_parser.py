@@ -56,12 +56,14 @@ def _ast_cache_key(
     allow_unshifted_fallback: bool = False,
     table_aliases: Optional[Dict[str, str]] = None,
     relationships: Optional[Iterable[Any]] = None,
+    measure_non_additive_map: Optional[Dict[str, Tuple[Optional[str], str]]] = None,
 ) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
     names = tuple(sorted(known_measure_names or ()))
     flags = tuple(sorted((anchor_flag_map or {}).items()))
     date_tables = tuple(sorted(str(n).casefold() for n in (date_table_names or ())))
     tbl_aliases = tuple(sorted((table_aliases or {}).items()))
+    non_add_items = tuple(sorted((measure_non_additive_map or {}).items()))
     rel_tuple = tuple(
         sorted(
             (
@@ -83,6 +85,7 @@ def _ast_cache_key(
         allow_unshifted_fallback,
         tbl_aliases,
         rel_tuple,
+        non_add_items,
     )
 from semabridge.utils.naming import sanitize_column, to_alias
 
@@ -143,7 +146,8 @@ _DAX_FUNCTIONS = {
     "values", "distinct", "hasonevalue", "selectedvalue",
     "related", "relatedtable", "userelationship", "crossfilter",
     "if", "switch", "iferror", "isblank", "isfiltered", "hasonefilter",
-    "divide", "round", "roundup", "rounddown", "int", "abs", "ceiling", "floor",
+    "divide", "round", "roundup", "rounddown", "mround", "int", "abs", "ceiling", "floor",
+    "value",
     "totalytd", "totalmtd", "totalqtd",
     "sameperiodlastyear", "previousyear", "previousmonth", "previousquarter",
     "dateadd", "datesytd", "datesmtd", "datesqtd",
@@ -869,6 +873,7 @@ class DaxSqlRenderer:
     _NUMERIC_TRUTHINESS_FUNCS = frozenset({
         "SUM", "AVERAGE", "AVG", "COUNT", "COUNTA", "COUNTROWS", "COUNTBLANK",
         "DISTINCTCOUNT", "MIN", "MAX", "CALCULATE", "DIVIDE",
+        "VALUE", "MROUND", "ROUNDUP", "ROUNDDOWN",
         "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
         "TOTALYTD", "TOTALMTD", "TOTALQTD",
     })
@@ -893,11 +898,14 @@ class DaxSqlRenderer:
         advisory_categories: Optional[List[str]] = None,
         table_aliases: Optional[Dict[str, str]] = None,
         relationships: Optional[Iterable[Any]] = None,
+        measure_non_additive_map: Optional[Dict[str, Tuple[Optional[str], str]]] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
         self.measure_sql_map = measure_sql_map or {}
+        self.measure_non_additive_map = measure_non_additive_map or {}
+        self.non_additive_dimensions: List[Tuple[Optional[str], str]] = []
         # The DAX table name (e.g. "KPI") that table_alias physically
         # represents for this metric, if the caller knows it. None means
         # the caller hasn't opted into table-aware column resolution yet —
@@ -1299,14 +1307,57 @@ class DaxSqlRenderer:
                 right = self._render_node(node.args[1])
                 return f"CONCAT({left}, {right})"
 
-        # String functions with direct Snowflake equivalents
+        # VALUE -> TRY_TO_NUMBER
+        if func == "VALUE":
+            if not node.args:
+                raise self.DaxRenderError("VALUE requires at least 1 argument")
+            arg_sql = self._render_node(node.args[0])
+            return f"TRY_TO_NUMBER({arg_sql})"
+
+        # LEFT / RIGHT (optional length defaults to 1 in DAX)
+        if func in ("LEFT", "RIGHT"):
+            if not node.args:
+                raise self.DaxRenderError(f"{func} requires at least 1 argument")
+            s = self._render_node(node.args[0])
+            n = self._render_node(node.args[1]) if len(node.args) > 1 else "1"
+            return f"{func}({s}, {n})"
+
+        # MID -> SUBSTR (1-based, same as Snowflake)
+        if func == "MID":
+            if len(node.args) < 3:
+                raise self.DaxRenderError("MID requires 3 arguments")
+            s = self._render_node(node.args[0])
+            start = self._render_node(node.args[1])
+            num = self._render_node(node.args[2])
+            return f"SUBSTR({s}, {start}, {num})"
+
+        # MROUND
+        if func == "MROUND":
+            if len(node.args) < 2:
+                raise self.DaxRenderError("MROUND requires 2 arguments")
+            x_sql = self._render_node(node.args[0])
+            n_sql = self._render_node(node.args[1])
+            return f"ROUND(({x_sql}) / ({n_sql})) * ({n_sql})"
+
+        # ROUNDUP / ROUNDDOWN (negative-aware away-from-zero / towards-zero)
+        if func in ("ROUNDUP", "ROUNDDOWN"):
+            if not node.args:
+                raise self.DaxRenderError(f"{func} requires at least 1 argument")
+            x_sql = self._render_node(node.args[0])
+            sql_fn = "CEIL" if func == "ROUNDUP" else "FLOOR"
+            if len(node.args) >= 2:
+                d_sql = self._render_node(node.args[1])
+                return f"SIGN({x_sql}) * {sql_fn}(ABS({x_sql}), {d_sql})"
+            return f"SIGN({x_sql}) * {sql_fn}(ABS({x_sql}))"
+
+        # String and math functions with direct Snowflake equivalents
         _direct_sql = {
-            "LEFT": "LEFT", "RIGHT": "RIGHT", "LEN": "LENGTH", "TRIM": "TRIM",
+            "LEN": "LENGTH", "TRIM": "TRIM",
             "UPPER": "UPPER", "LOWER": "LOWER",
             "YEAR": "YEAR", "MONTH": "MONTH", "DAY": "DAY",
             "HOUR": "HOUR", "MINUTE": "MINUTE", "SECOND": "SECOND",
             "ABS": "ABS", "CEILING": "CEIL", "FLOOR": "FLOOR",
-            "ROUND": "ROUND", "ROUNDUP": "CEIL", "ROUNDDOWN": "FLOOR",
+            "ROUND": "ROUND",
             "INT": "FLOOR", "NOW": "CURRENT_TIMESTAMP()", "TODAY": "CURRENT_DATE()",
         }
         if func in _direct_sql:
@@ -1415,6 +1466,11 @@ class DaxSqlRenderer:
         func = agg_node.func.upper()
         if func not in self._AGG_MAP and func not in self._ITERATOR_MAP:
             raise self.DaxRenderError(f"Function {func} is not a recognized direct aggregation")
+
+        if self._AGG_CALL_START.search(condition_sql):
+            raise self.DaxRenderError(
+                f"Filter condition contains an aggregate function, which cannot be nested inside {func}: {condition_sql}"
+            )
         
         if func == "COUNTROWS":
             case_expr = f"CASE WHEN {condition_sql} THEN 1 END"
@@ -1499,6 +1555,8 @@ class DaxSqlRenderer:
         filter).
         """
         clean = (rendered_sql or "").strip()
+        if not clean or self._AGG_CALL_START.search(condition_sql):
+            return None
         if clean.startswith("(") and clean.endswith(")"):
             clean = clean[1:-1].strip()
 
@@ -1530,6 +1588,37 @@ class DaxSqlRenderer:
 
         return rewritten
 
+    def _extract_closing_balance_dimension(self, node: DaxNode) -> Optional[Tuple[Optional[str], str]]:
+        """Detect closing-balance / last-period filter patterns:
+          FILTER(ALL(table[col]), col = MAX(col))
+          FILTER(table, col = MAX(col))
+          col = MAX(col)
+        Returns (table_name, column_name) if matched, else None.
+        """
+        pred_node = node
+        if isinstance(node, FunctionCallNode) and node.func.upper() == "FILTER" and len(node.args) >= 2:
+            pred_node = node.args[1]
+
+        if isinstance(pred_node, BinaryOpNode) and pred_node.op in ("=", "=="):
+            dim = self._match_col_equals_max(pred_node.left, pred_node.right) or self._match_col_equals_max(pred_node.right, pred_node.left)
+            if dim:
+                return dim
+        return None
+
+    def _match_col_equals_max(self, col_node: DaxNode, max_node: DaxNode) -> Optional[Tuple[Optional[str], str]]:
+        if isinstance(col_node, ColumnRefNode) and isinstance(max_node, FunctionCallNode):
+            if max_node.func.upper() == "MAX" and len(max_node.args) == 1:
+                arg = max_node.args[0]
+                if isinstance(arg, ColumnRefNode):
+                    c1 = col_node.column.strip("[]'\"").casefold()
+                    c2 = arg.column.strip("[]'\"").casefold()
+                    if c1 == c2:
+                        t1 = col_node.table.strip("[]'\"").casefold() if col_node.table else None
+                        t2 = arg.table.strip("[]'\"").casefold() if arg.table else None
+                        if t1 is None or t2 is None or t1 == t2:
+                            return (col_node.table or arg.table, col_node.column)
+        return None
+
     def _render_calculate(self, args: List[DaxNode]) -> str:
         """
         Translate CALCULATE(agg_expr, filter1, filter2, ...) to a subquery or CASE expression.
@@ -1547,6 +1636,15 @@ class DaxSqlRenderer:
         filter_clauses: List[str] = []
         partition_cols: List[str] = []
         is_window = False
+
+        # If base is a measure reference, check if it brings a non-additive dimension
+        if isinstance(args[0], MeasureRefNode):
+            m_name = args[0].name
+            for k, v in self.measure_non_additive_map.items():
+                if k.casefold() == m_name.casefold():
+                    if v and v not in self.non_additive_dimensions:
+                        self.non_additive_dimensions.append(v)
+                    break
 
         # Support lag-period time-intelligence functions inside CALCULATE —
         # DAX allows this shape (CALCULATE(agg, SAMEPERIODLASTYEAR(Date[Date])))
@@ -1575,6 +1673,13 @@ class DaxSqlRenderer:
             return self._render_lag_period([args[0], date_arg], interval=lag_interval, amount=-1)
 
         for filter_arg in args[1:]:
+            # Closing-balance pattern check: handled via NON ADDITIVE BY instead of row-level predicate
+            cb_dim = self._extract_closing_balance_dimension(filter_arg)
+            if cb_dim:
+                if cb_dim not in self.non_additive_dimensions:
+                    self.non_additive_dimensions.append(cb_dim)
+                continue
+
             if isinstance(filter_arg, FunctionCallNode):
                 fname = filter_arg.func.upper()
 
@@ -1780,14 +1885,14 @@ class DaxSqlRenderer:
     ) -> str:
         """
         Translate SAMEPERIODLASTYEAR / PREVIOUSxxx to scalar CASE WHEN bounded aggregates.
-
+ 
         Snowflake METRICS clause does NOT allow window functions (OVER / LAG).
         """
         if not args:
             raise self.DaxRenderError("Period function requires arguments")
         if len(args) != 2:
             raise self.DaxRenderError("Period function expects (aggregate, date_column) arguments")
-
+ 
         d = self.date_alias
         extracted_col = None
         for arg in args:
@@ -1812,13 +1917,13 @@ class DaxSqlRenderer:
         agg_node = args[0]
         lag_component = self._LAG_COMPONENT[interval]
         base_flag = self.anchor_flag_map.get((lag_component,))
-
+ 
         if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
             inner_func = agg_node.func.upper()
             col_sql = self._render_node(agg_node.args[0]) if agg_node.args else f'{self.table_alias}."UNITS"'
             sql_func = "AVG" if inner_func == "AVERAGE" else inner_func
             cast = "::FLOAT" if inner_func in ("SUM", "AVERAGE") else ""
-
+ 
             if base_flag:
                 condition_sql = f'{self.table_alias}."{base_flag}"'
             elif interval == "year":
@@ -1838,7 +1943,7 @@ class DaxSqlRenderer:
                     f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date}))"
                 )
             return f"{sql_func}(CASE WHEN {condition_sql} THEN {col_sql}{cast} END)"
-
+ 
         # Base argument isn't a direct aggregation call — e.g. a measure
         # reference such as SAMEPERIODLASTYEAR([Total Sales], 'Date'[Date]).
         agg_sql = self._render_node(agg_node)
@@ -1847,7 +1952,7 @@ class DaxSqlRenderer:
             "quarter": f"DATEADD(QUARTER, -1, {max_date})",
             "month": f"DATEADD(MONTH, -1, {max_date})",
         }[interval]
-
+ 
         if self.anchor_flag_map:
             # Shape-flag mode: a boolean flag column can't be shifted with
             # DATEADD the way a literal date value can (see the MAX_DATE
@@ -1882,7 +1987,7 @@ class DaxSqlRenderer:
                     "the shape-discovery pass and the enriched view must agree on "
                     "every nested time-intelligence composition actually used"
                 )
-
+ 
             if base_flag:
                 rewritten = self._inject_case_filter_into_rendered_aggregate(
                     agg_sql, f'{self.table_alias}."{base_flag}"'
@@ -1898,7 +2003,7 @@ class DaxSqlRenderer:
             # enrichment disagree, or this shape wasn't anticipated) — fall
             # through to the inline MAX_DATE logic below rather than emit
             # something silently wrong.
-
+ 
         if max_date in agg_sql:
             # The referenced measure's own SQL already anchors a date
             # window to CURRENT_DATE() (e.g. TOTALYTD's own "date <=
@@ -1914,7 +2019,7 @@ class DaxSqlRenderer:
             # an always-empty CASE WHEN, never a crash, so it never
             # surfaced as a translation failure).
             return agg_sql.replace(max_date, shift_expr)
-
+ 
         legacy_max_date = f'{self.table_alias}."MAX_DATE"'
         if legacy_max_date in agg_sql:
             # The inner expression was rendered by an earlier translation of
@@ -1936,7 +2041,7 @@ class DaxSqlRenderer:
                 "month": f"DATEADD(MONTH, -1, {legacy_max_date})",
             }[interval]
             return agg_sql.replace(legacy_max_date, legacy_shift_expr)
-
+ 
         # No existing anchor to shift — the referenced measure has no date
         # window of its own (e.g. a plain SUM with no date filter at all),
         # so there is nothing to conflict with. Inject a new period
@@ -1966,7 +2071,7 @@ class DaxSqlRenderer:
             f"Period function base expression '{agg_sql}' is not a simple aggregate this "
             "renderer can safely apply a date-range filter to without risking a nested aggregate",
         )
-
+ 
     def _render_dateadd(self, args: List[DaxNode]) -> str:
         """Translate DATEADD(dates, n_intervals, interval) to Snowflake DATEADD."""
         if len(args) < 3:
@@ -2001,61 +2106,14 @@ def try_ast_translate(
     advisory_categories: Optional[List[str]] = None,
     table_aliases: Optional[Dict[str, str]] = None,
     relationships: Optional[Iterable[Any]] = None,
+    measure_non_additive_map: Optional[Dict[str, Tuple[Optional[str], str]]] = None,
+    non_additive_dimensions: Optional[List[Tuple[Optional[str], str]]] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
 
     This is the entry-point called by DAXTranslator for Tier 3/4 expressions
     that cannot be handled by the fast-path regex approach.
-
-    Args:
-        known_measure_names: names of measures the caller's model tracks
-            (whether or not they have resolved SQL yet). Lets the renderer
-            fail closed on a genuinely unresolved measure reference while
-            still falling back to a column reference for bracket names it
-            has no measure-registry knowledge of at all (the common
-            SUM([Column]) shape). Omit (or pass an empty collection) to
-            preserve the historical "unknown bracket name -> column"
-            fallback for every bracket reference, e.g. for callers with no
-            measure registry to consult.
-        anchor_flag_map: shape tuple -> precomputed flag column name (see
-            converter/time_intelligence_shapes.py). Omit (or pass empty) to
-            preserve the historical inline-MAX_DATE rendering exactly —
-            required for the schema-blind dry-run/preview path, which has
-            no live enriched view to reference flags on.
-        primary_table_name: the DAX table name (e.g. "KPI") that
-            table_alias represents for this metric. Enables table-aware
-            resolution of 'TableName'[Column] references inside CALCULATE/
-            FILTER predicates: a column named on a table that is neither
-            this one nor date_table_names now fails closed (DaxRenderError,
-            caught by renderer.render -> None) instead of silently
-            qualifying it with table_alias — the bug where a filter like
-            'Date'[Running Year]=1 on a KPI-table measure rendered as
-            kpi."RUNNING_YEAR" (wrong table) rather than the date table's
-            own column. Omit to preserve the historical behavior for
-            callers not yet passing it.
-        date_table_names: DAX names recognized as the date/calendar
-            dimension for alias resolution (default: {"date", "calendar"}).
-            Only consulted when primary_table_name is provided.
-        allow_unshifted_fallback: opt-in only (default False preserves
-            historical fail-closed behavior for every existing caller). A
-            lag-period function (SAMEPERIODLASTYEAR/PREVIOUSYEAR/PREVIOUSMONTH/
-            PREVIOUSQUARTER) wrapping a measure reference whose own SQL
-            isn't a shape the renderer can safely apply a date-range filter
-            to (e.g. a nested aggregate) normally fails closed (returns
-            None). Set True to instead ship that measure's own unmodified
-            SQL — real, valid, but the CURRENT period's value, not shifted
-            to the requested prior period — and record
-            ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK in
-            `advisory_categories` so the caller can flag it for human
-            review instead of silently trusting it.
-        advisory_categories: caller-provided list, appended to in place
-            (same pattern as DropLedger elsewhere in this codebase) with
-            any advisory category codes produced by this translation
-            attempt. Ignored unless allow_unshifted_fallback is True.
-
-    Returns:
-        SQL string on success, None on failure.
     """
     cache_key = _ast_cache_key(
         dax,
@@ -2069,19 +2127,27 @@ def try_ast_translate(
         allow_unshifted_fallback,
         table_aliases,
         relationships,
+        measure_non_additive_map,
     )
     if cache_key in _AST_CACHE:
-        cached_sql, cached_categories = _AST_CACHE[cache_key]
+        entry = _AST_CACHE[cache_key]
+        cached_sql = entry[0]
+        cached_categories = entry[1]
+        cached_dims = entry[2] if len(entry) > 2 else ()
         if advisory_categories is not None:
             for category in cached_categories:
                 if category not in advisory_categories:
                     advisory_categories.append(category)
+        if non_additive_dimensions is not None:
+            for d in cached_dims:
+                if d not in non_additive_dimensions:
+                    non_additive_dimensions.append(d)
         return cached_sql
 
     parser = DaxAstParser()
     ast = parser.parse(dax)
     if ast is None:
-        _AST_CACHE[cache_key] = (None, ())
+        _AST_CACHE[cache_key] = (None, (), ())
         return None
 
     renderer = DaxSqlRenderer(
@@ -2096,16 +2162,22 @@ def try_ast_translate(
         advisory_categories=advisory_categories,
         table_aliases=table_aliases,
         relationships=relationships,
+        measure_non_additive_map=measure_non_additive_map,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:
         _AST_CACHE.clear()
     produced_categories = tuple(renderer._advisory_categories)
-    _AST_CACHE[cache_key] = (sql, produced_categories)
+    produced_dims = tuple(renderer.non_additive_dimensions)
+    _AST_CACHE[cache_key] = (sql, produced_categories, produced_dims)
     if advisory_categories is not None:
         for category in produced_categories:
             if category not in advisory_categories:
                 advisory_categories.append(category)
+    if non_additive_dimensions is not None:
+        for d in produced_dims:
+            if d not in non_additive_dimensions:
+                non_additive_dimensions.append(d)
     return sql
 
 
@@ -2171,7 +2243,7 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
         return False
 
     def _refs_data(n: DaxNode) -> bool:
-        if isinstance(n, (ColumnRefNode, MeasureRefNode, IdentifierNode)):
+        if isinstance(n, (ColumnRefNode, MeasureRefNode)):
             return True
         if isinstance(n, BinaryOpNode):
             return _refs_data(n.left) or _refs_data(n.right)
@@ -2197,7 +2269,7 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
 
 
 _CONTEXT_TRANSITION_REASON = (
-    f"{BY_DESIGN_EXCLUDED_PREFIX}: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate "
+    "DAX ALLEXCEPT/ALL requires re-partitioning the aggregate "
     "independently of the query's own grouping (a SQL window "
     "function) — Snowflake's semantic-view METRICS clause does not "
     "support window functions, and no derived-metric/precomputed-"

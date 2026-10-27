@@ -87,7 +87,7 @@ def deduplicate_metrics_lines(lines: List[str]) -> List[str]:
     unique_lines: List[str] = []
 
     for line in lines:
-        match = re.search(r'(\w+)\."([^\"]+)"\s+AS\s+', line)
+        match = re.search(r'(\w+)\."([^\"]+)"(?:\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+', line)
         if match:
             table_alias = match.group(1)
             metric_name = match.group(2)
@@ -111,7 +111,7 @@ def deduplicate_metrics_lines_osi(lines: List[str]) -> List[str]:
 
 
 def extract_expr_key(def_line: str) -> Optional[str]:
-    match = re.search(r'(\w+)\."([^\"]+)"\s+AS\s+', def_line)
+    match = re.search(r'(\w+)\."([^\"]+)"(?:\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+', def_line)
     if not match:
         return None
     return f"{match.group(1)}.{match.group(2)}"

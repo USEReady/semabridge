@@ -33,11 +33,17 @@ class DAXTranslationResult:
         validation_notes: Optional[List[str]] = None,
         llm_self_reported_confidence: Optional[float] = None,
         advisory_categories: Optional[List[str]] = None,
+        failure_reason: Optional[str] = None,
+        sync_enabled: bool = True,
+        non_additive_dimension: Optional[Tuple[Optional[str], str]] = None,
     ):
         self.sql = sql
         self.tier = tier  # 0=Override, 1=Direct, 2=Branching/Arith, 3=Opaque (Failed)
         self.original_dax = original_dax
         self.is_success = sql is not None
+        self.failure_reason = failure_reason
+        self.sync_enabled = sync_enabled
+        self.non_additive_dimension: Optional[Tuple[Optional[str], str]] = non_additive_dimension
         # All three keyword-only with None/empty defaults so every existing
         # 3-positional-arg call site in this file (the vast majority --
         # Tiers 1-4 never populate these) is unaffected. Only the two
@@ -377,6 +383,8 @@ class DAXTranslator:
             # falls back to the exact same unshifted SQL, now for a genuine
             # reason.
             time_intel_advisories: List[str] = []
+            cb_dims: List[Tuple[Optional[str], str]] = []
+            measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
@@ -389,10 +397,13 @@ class DAXTranslator:
                 advisory_categories=time_intel_advisories,
                 table_aliases=dataset_aliases,
                 relationships=relationships,
+                measure_non_additive_map=measure_non_additive_map,
+                non_additive_dimensions=cb_dims,
             )
             if ast_sql:
                 return _wrap_res(DAXTranslationResult(
-                    ast_sql, 3, clean_dax, advisory_categories=time_intel_advisories
+                    ast_sql, 3, clean_dax, advisory_categories=time_intel_advisories,
+                    non_additive_dimension=cb_dims[0] if cb_dims else None,
                 ))
 
         # Tier 4: Complex CALCULATE / FILTER / ALL / ALLEXCEPT / VAR — attempt AST translation
@@ -407,6 +418,8 @@ class DAXTranslator:
             resolved_measures, all_measure_names = self._consistent_ast_measure_args(
                 clean_dax, resolved_measures, all_measure_names
             )
+            cb_dims = []
+            measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
             ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
@@ -417,9 +430,14 @@ class DAXTranslator:
                 primary_table_name=dataset_name,
                 table_aliases=dataset_aliases,
                 relationships=relationships,
+                measure_non_additive_map=measure_non_additive_map,
+                non_additive_dimensions=cb_dims,
             )
             if ast_sql:
-                return _wrap_res(DAXTranslationResult(ast_sql, 4, clean_dax))
+                return _wrap_res(DAXTranslationResult(
+                    ast_sql, 4, clean_dax,
+                    non_additive_dimension=cb_dims[0] if cb_dims else None,
+                ))
 
         # General deterministic fallback: attempt AST translation for any
         # remaining shape the AST renderer can already express structurally —
@@ -432,6 +450,8 @@ class DAXTranslator:
         resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
         all_measure_names = self._all_measure_names(metrics_context)
         if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures, all_measure_names):
+            cb_dims = []
+            measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
             general_ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
@@ -442,9 +462,18 @@ class DAXTranslator:
                 primary_table_name=dataset_name,
                 table_aliases=dataset_aliases,
                 relationships=relationships,
+                measure_non_additive_map=measure_non_additive_map,
+                non_additive_dimensions=cb_dims,
             )
             if general_ast_sql:
-                return _wrap_res(DAXTranslationResult(general_ast_sql, 4, clean_dax))
+                return _wrap_res(DAXTranslationResult(
+                    general_ast_sql, 4, clean_dax,
+                    non_additive_dimension=cb_dims[0] if cb_dims else None,
+                ))
+
+        rule_sql = rule_based_translation(clean_dax, table_alias, anchor_flag_map=anchor_flag_map)
+        if rule_sql:
+            return _wrap_res(DAXTranslationResult(rule_sql, 4, clean_dax))
 
         if skip_tier5:
             # Tiers 1-4 above already declined. Return the identical shape
@@ -524,6 +553,9 @@ class DAXTranslator:
             clean_dax, resolved_measures, all_measure_names
         )
 
+        cb_dims: List[Tuple[Optional[str], str]] = []
+        measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
+
         is_time_intel = any(func.upper() in clean_dax.upper() for func in self.TIME_INTEL_FUNCTIONS)
         if is_time_intel:
             from semabridge.converter.dax_ast_parser import try_ast_translate
@@ -538,9 +570,14 @@ class DAXTranslator:
                 primary_table_name=dataset_name,
                 table_aliases=dataset_aliases,
                 relationships=relationships,
+                measure_non_additive_map=measure_non_additive_map,
+                non_additive_dimensions=cb_dims,
             )
             if ast_sql:
-                return DAXTranslationResult(ast_sql, 3, clean_dax)
+                return DAXTranslationResult(
+                    ast_sql, 3, clean_dax,
+                    non_additive_dimension=cb_dims[0] if cb_dims else None,
+                )
 
         is_complex = any(
             re.search(pattern, clean_dax, re.IGNORECASE)
@@ -559,9 +596,14 @@ class DAXTranslator:
                 primary_table_name=dataset_name,
                 table_aliases=dataset_aliases,
                 relationships=relationships,
+                measure_non_additive_map=measure_non_additive_map,
+                non_additive_dimensions=cb_dims,
             )
             if ast_sql:
-                return DAXTranslationResult(ast_sql, 4, clean_dax)
+                return DAXTranslationResult(
+                    ast_sql, 4, clean_dax,
+                    non_additive_dimension=cb_dims[0] if cb_dims else None,
+                )
 
         return None
 
@@ -917,6 +959,21 @@ class DAXTranslator:
             if sql:
                 resolved[name] = sql
         return resolved
+
+    def _build_measure_non_additive_map(
+        self, metrics_context: Optional[List[Any]]
+    ) -> Dict[str, Tuple[Optional[str], str]]:
+        """Map measure unique_name -> non_additive_dimension tuple for any
+        measure that has already resolved a non-additive dimension."""
+        cb_map: Dict[str, Tuple[Optional[str], str]] = {}
+        if not metrics_context:
+            return cb_map
+        for metric in metrics_context:
+            name = getattr(metric, "unique_name", None)
+            dim = getattr(metric, "non_additive_dimension", None)
+            if name and dim:
+                cb_map[name] = dim
+        return cb_map
 
     @staticmethod
     def _all_measure_names(metrics_context: Optional[List[Any]]) -> set:

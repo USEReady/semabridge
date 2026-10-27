@@ -216,6 +216,7 @@ class OSIToSMLConverter(BaseConverter):
                             metric.complexity_tier = translation.tier
                             metric.sync_enabled = True
                             metric.sync_failure_reason = None
+                            metric.non_additive_dimension = getattr(translation, "non_additive_dimension", None)
                             # Display-only Tier-5 metadata -- None for
                             # Tiers 1-4, since translation.llm_self_reported_
                             # confidence/validation_notes are only ever
@@ -490,14 +491,12 @@ class OSIToSMLConverter(BaseConverter):
         )
         
         # Attempt Translation using automated deterministic/AST/rule tiers only
-        # (Tiers 1-4). skip_tier5=True: this runs once per metric for every
-        # metric in the model, so resolving Tier 5 here too would mean one
-        # sequential Tier5Service.translate() API call per hard-to-translate
-        # metric -- exactly the multi-minute dry-run cost this was fixed to
-        # avoid. Anything Tiers 1-4 decline falls through to Step 3c/3d below
-        # (from_osi()), which now collects every such metric across the whole
-        # model and resolves them all in one batch_translate_tier5() call.
-        if expression:
+        # (Tiers 1-4). If the expression references other measures, defer to
+        # Step 3c (_resolve_metric_dependencies) where full metrics_context is
+        # available and dependencies can be properly inlined.
+        from semabridge.converter.dax_ast_parser import extract_measure_references_from_ast
+        has_measure_deps = bool(extract_measure_references_from_ast(expression)) if expression else False
+        if expression and not has_measure_deps:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
             translation = self.dax_translator.translate(
@@ -516,6 +515,7 @@ class OSIToSMLConverter(BaseConverter):
                 metric.complexity_tier = translation.tier
                 metric.sync_enabled = True
                 metric.sync_failure_reason = None
+                metric.non_additive_dimension = getattr(translation, "non_additive_dimension", None)
                 # skip_tier5=True above means this call never reaches
                 # Tier5Service, so these are always None/empty here --
                 # copied through anyway for consistency with the other two
@@ -602,6 +602,7 @@ class OSIToSMLConverter(BaseConverter):
                     metric.complexity_tier = translation.tier
                     metric.sync_enabled = True
                     metric.sync_failure_reason = None
+                    metric.non_additive_dimension = getattr(translation, "non_additive_dimension", None)
                     metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
                     metric.validation_notes = list(translation.validation_notes or [])
                     _apply_translation_advisories(metric, translation)

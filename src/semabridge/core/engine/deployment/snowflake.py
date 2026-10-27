@@ -236,47 +236,26 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
         )
         load_source_data, backfill_trigger = _resolve_load_source_data(context)
 
-        deployed = emitter.deploy(
-            context.sml_model,
-            sync_mode=getattr(context, "sync_mode", "copy"),
-            source_pbix_path=source_pbix_path,
-            load_source_data=load_source_data,
-        )
-        # Mirror the drop_ledger merge below: the emitter accumulates
-        # backfill outcomes on its own instance during deploy(), copied
-        # onto context here so Step 10 (finalize.py) can put them on
-        # RunSummary. Runs even when load_source_data was false -- the
-        # list is just empty in that case, same no-op cost as every other
-        # project that never opts in. `trigger` records WHY this run's
-        # backfill ran at all ("explicit" config vs. "first_sync_default"),
-        # so the run report can say so plainly rather than looking like an
-        # unexplained, silent behavior change.
-        context.data_backfill_results = [
-            {**entry, "trigger": backfill_trigger}
-            for entry in (getattr(emitter, "data_backfill_results", None) or [])
-        ]
-        context.cortex_validation_results = list(getattr(emitter, "cortex_validation_results", None) or [])
-        # Propagate the live deployed DDL (captured by deploy() itself via
-        # GET_DDL, on the connection it already had open — see
-        # snowflake_emitter.py's Step 6b) so Step 10 can reconcile
-        # context.drop_ledger against what's actually deployed instead of
-        # trusting whichever pass populated it first. None when deploy()
-        # failed before reaching that capture point, or the capture itself
-        # failed non-fatally — either way Step 10 just falls back to the
-        # unreconciled ledger, no regression.
-        context.deployed_ddl_text = getattr(emitter, "_last_deployed_ddl_text", None)
-        # deploy() rebuilds DDL from scratch internally, so emitter.drop_ledger
-        # also re-contains every DDL-emission-stage drop Step 8 already merged
-        # into context.drop_ledger. Only merge the deployment-stage entries
-        # here (genuinely new — Snowflake-rejected identifiers etc.) to avoid
-        # duplicating the Step 8 entries. Runs even on failure — the ledger is
-        # populated incrementally as generate_ddls()/execute run, before any raise.
-        # getattr guards test doubles / stub emitters that don't carry a drop_ledger.
-        from semabridge.core.drop_ledger import DropStage as _DropStage
-        _emitter_ledger = getattr(emitter, "drop_ledger", None)
-        for _rec in getattr(_emitter_ledger, "records", None) or []:
-            if _rec.stage == _DropStage.DDL_DEPLOYMENT:
-                context.drop_ledger.records.append(_rec)
+        deployed = False
+        try:
+            deployed = emitter.deploy(
+                context.sml_model,
+                sync_mode=getattr(context, "sync_mode", "copy"),
+                source_pbix_path=source_pbix_path,
+                load_source_data=load_source_data,
+            )
+        finally:
+            context.data_backfill_results = [
+                {**entry, "trigger": backfill_trigger}
+                for entry in (getattr(emitter, "data_backfill_results", None) or [])
+            ]
+            context.cortex_validation_results = list(getattr(emitter, "cortex_validation_results", None) or [])
+            context.deployed_ddl_text = getattr(emitter, "_last_deployed_ddl_text", None)
+            from semabridge.core.drop_ledger import DropStage as _DropStage
+            _emitter_ledger = getattr(emitter, "drop_ledger", None)
+            for _rec in getattr(_emitter_ledger, "records", None) or []:
+                if _rec.stage == _DropStage.DDL_DEPLOYMENT:
+                    context.drop_ledger.records.append(_rec)
         if not deployed:
             error_msg = emitter.last_deployment_error or "unknown deployment error"
 

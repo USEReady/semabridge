@@ -21,7 +21,7 @@ import os
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -313,6 +313,10 @@ class OSIMetric(OSIBaseModel):
         default=None, description="Metric ownership contact (OSI attribute)"
     )
     is_hidden: bool = Field(default=False, description="Hidden from end users")
+    non_additive_dimension: Optional[Tuple[Optional[str], str]] = Field(
+        default=None,
+        description="Non-additive dimension (table, column) for semi-additive metrics",
+    )
     # Cortex Analyst access and NLP metadata
     access_modifier: Optional[str] = Field(
         default=None,

@@ -1086,8 +1086,7 @@ class TestTimeIntelligenceAnchorsUseNativeExpressionsNotSyntheticColumns:
         result = translate_rolling_12_months(dax, "sometable")
         assert result is not None
         assert "MAX_MONTHINDEX" not in result.upper()
-        assert "EXTRACT(YEAR FROM CURRENT_DATE())" in result
-        assert "EXTRACT(MONTH FROM CURRENT_DATE())" in result
+        assert "_CURRENT_FISCAL_PERIOD" in result
         assert "SOMECOLUMN" in result.upper()
 
 

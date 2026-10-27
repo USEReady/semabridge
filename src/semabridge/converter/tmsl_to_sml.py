@@ -286,6 +286,7 @@ class TMSLTransformer:
                             metric.complexity_tier = translation.tier
                             metric.sync_enabled = True
                             metric.sync_failure_reason = None
+                            metric.non_additive_dimension = getattr(translation, "non_additive_dimension", None)
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
 
             # Step 2c: Resolve inter-measure dependencies now that every metric
@@ -851,6 +852,7 @@ class TMSLTransformer:
                     metric.complexity_tier = translation.tier
                     metric.sync_enabled = True
                     metric.sync_failure_reason = None
+                    metric.non_additive_dimension = getattr(translation, "non_additive_dimension", None)
                     resolved_this_pass += 1
 
             if resolved_this_pass == 0:
@@ -1068,6 +1070,7 @@ class TMSLTransformer:
             metric.complexity_tier = translation.tier
             metric.sync_enabled = True
             metric.sync_failure_reason = None
+            metric.non_additive_dimension = getattr(translation, "non_additive_dimension", None)
         elif metric.sync_enabled and not translation.is_success:
             # Translation failed but was expected to work - update status with descriptive reason
             if unsupported_reason:

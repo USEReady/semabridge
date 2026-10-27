@@ -1098,7 +1098,7 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     if where_conditions is not None:
         where = " AND ".join(where_conditions)
         cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
-        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql} END{cast})"
+        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} ELSE 0 END)"
 
     cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
     return f"{sql_func}({expr_sql}{cast})"

@@ -599,6 +599,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     gone from this process, not that the run failed.
     """
     project_name = str(run.get("project_name") or run.get("project_id") or "Project")
+    cortex_validation_results: List[Dict[str, Any]] = []
     model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
     if not model_results:
         top_summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
@@ -870,6 +871,7 @@ def generate_run_report_markdown(
     lines.append(f"**Run ID:** `{run_id}`")
     lines.append("")
 
+    cortex_validation_results: List[Dict[str, Any]] = []
     model_results = [r for r in (run.get("results") or []) if isinstance(r, dict)]
     if not model_results:
         top_summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
