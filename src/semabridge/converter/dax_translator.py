@@ -69,7 +69,7 @@ class DAXTranslator:
     # Regex patterns for Tier 1
     # Matches: FUNC('Table'[Column]) or FUNC([Column])
     _TIER1_PATTERN = re.compile(
-        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'?[^'\[\]]+'?\[([^\[\]]+)\]|\[([^\[\]]+)\])\s*\)\s*$",
         re.IGNORECASE
     )
     

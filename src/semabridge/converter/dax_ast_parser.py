@@ -97,6 +97,7 @@ class DaxTokenType(Enum):
     # Literals
     NUMBER = auto()
     STRING = auto()
+    BOOLEAN = auto()
     # Identifiers
     COLUMN_REF = auto()    # 'TableName'[ColumnName]
     MEASURE_REF = auto()   # [MeasureName]
@@ -178,8 +179,13 @@ class DaxLexer:
                 tok = self._read_measure_ref()
             elif ch == '"':
                 tok = self._read_string('"')
-            elif ch.isdigit() or (ch == "." and self._peek_next_is_digit()) or (ch == "-" and self._peek_next_is_digit()):
+            elif ch.isdigit() or (ch == "." and self._peek_next_is_digit()):
                 tok = self._read_number()
+            elif ch == "-" and self._peek_next_is_digit():
+                if self._is_unary_minus_context():
+                    tok = self._read_number()
+                else:
+                    tok = self._read_operator()
             elif ch.isalpha() or ch == "_":
                 tok = self._read_identifier()
             else:
@@ -192,8 +198,49 @@ class DaxLexer:
 
     # ------------------------------------------------------------------
     def _skip_whitespace(self) -> None:
-        while self.pos < len(self.text) and self.text[self.pos] in " \t\r\n":
-            self.pos += 1
+        while self.pos < len(self.text):
+            ch = self.text[self.pos]
+            if ch in " \t\r\n":
+                self.pos += 1
+                continue
+            two = self.text[self.pos : self.pos + 2]
+            if two in ("--", "//"):
+                self.pos += 2
+                while self.pos < len(self.text) and self.text[self.pos] not in "\r\n":
+                    self.pos += 1
+                continue
+            if two == "/*":
+                self.pos += 2
+                while self.pos < len(self.text) and self.text[self.pos : self.pos + 2] != "*/":
+                    self.pos += 1
+                if self.pos < len(self.text):
+                    self.pos += 2  # skip */
+                continue
+            break
+
+    def _is_unary_minus_context(self) -> bool:
+        if not self.tokens:
+            return True
+        last_type = self.tokens[-1].type
+        return last_type in (
+            DaxTokenType.PLUS,
+            DaxTokenType.MINUS,
+            DaxTokenType.STAR,
+            DaxTokenType.SLASH,
+            DaxTokenType.EQ,
+            DaxTokenType.NEQ,
+            DaxTokenType.LT,
+            DaxTokenType.LTE,
+            DaxTokenType.GT,
+            DaxTokenType.GTE,
+            DaxTokenType.AND,
+            DaxTokenType.OR,
+            DaxTokenType.NOT,
+            DaxTokenType.LPAREN,
+            DaxTokenType.COMMA,
+            DaxTokenType.VAR,
+            DaxTokenType.RETURN,
+        )
 
     def _peek_next_is_digit(self) -> bool:
         nxt = self.pos + 1
@@ -269,7 +316,12 @@ class DaxLexer:
         if word_lower == "not":
             return DaxToken(DaxTokenType.NOT, word, start)
         if word_lower in ("true", "false"):
-            return DaxToken(DaxTokenType.NUMBER, word, start)
+            peek_pos = self.pos
+            while peek_pos < len(self.text) and self.text[peek_pos] in " \t\r\n":
+                peek_pos += 1
+            if peek_pos < len(self.text) and self.text[peek_pos] == "(":
+                return DaxToken(DaxTokenType.FUNC_NAME, word.upper(), start)
+            return DaxToken(DaxTokenType.BOOLEAN, word.upper(), start)
         return DaxToken(DaxTokenType.IDENTIFIER, word, start)
 
     def _read_operator(self) -> DaxToken:
@@ -437,6 +489,10 @@ class DaxAstParser:
             self.tokens = lexer.tokenize()
             self.pos = 0
             node = self._parse_expr()
+            if self._peek().type != DaxTokenType.EOF:
+                raise DaxParseError(
+                    f"Unexpected trailing token {self._peek().type.name}('{self._peek().value}') at pos {self._peek().pos}"
+                )
             return node
         except DaxParseError as exc:
             logger.debug(f"DAX parse error (recoverable): {exc} | DAX: {dax[:80]}")
@@ -600,6 +656,11 @@ class DaxAstParser:
                 bracket_tok = self._advance()  # consume [Column]
                 column = bracket_tok.value.strip("[]")
                 return ColumnRefNode(table=tok.value, column=column, raw=f"{tok.value}{bracket_tok.value}")
+
+        if tok.type == DaxTokenType.BOOLEAN:
+            self._advance()
+            val = (tok.value.upper() == "TRUE")
+            return LiteralNode(value=val, raw=tok.value.upper())
 
         if tok.type == DaxTokenType.NUMBER:
             self._advance()
@@ -1032,6 +1093,9 @@ class DaxSqlRenderer:
 
     def _render_function(self, node: FunctionCallNode) -> str:
         func = node.func.upper()
+
+        if func in ("TRUE", "FALSE"):
+            return func
 
         # CALCULATE (lazy/CASE-based evaluation of filters)
         if func == "CALCULATE":
