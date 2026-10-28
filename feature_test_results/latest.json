@@ -395,15 +395,15 @@
   "solution": "A filter on top of a non-additive measure keeps its NON ADDITIVE BY."
  },
  "F15.3": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: depends on non-additive metric",
   "sql": null,
   "title": "ratio over a non-additive measure",
   "solution": "Never inline a non-additive metric's SQL into another metric (loses NON ADDITIVE BY -> counts every period). Reference the metric by name if supported, else CAST(NULL) + reason."
  },
  "F15.4": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: depends on non-additive metric",
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."

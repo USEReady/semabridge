@@ -672,27 +672,27 @@
   "ddl_sql": "COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NULL) THEN SNAPSHOT.EMP_ID ELSE NULL END)"
  },
  "F15.3": {
-  "status": "FAIL",
-  "msg": "emitted as REAL metric",
+  "status": "PASS",
+  "msg": "not emitted",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": true,
-   "DDL": "REAL"
+   "SML_SQL": false,
+   "DDL": "MISSING"
   },
   "title": "ratio over a non-additive measure",
-  "ddl_sql": "(COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NOT NULL) THEN SNAPSHOT.EMP_ID END)) / NULLIF((COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NULL) THEN SNAPSHOT.EMP_ID ELSE NULL END)), 0)"
+  "ddl_sql": null
  },
  "F15.4": {
-  "status": "FAIL",
-  "msg": "emitted as REAL metric",
+  "status": "PASS",
+  "msg": "not emitted",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": true,
-   "DDL": "REAL"
+   "SML_SQL": false,
+   "DDL": "MISSING"
   },
   "title": "arithmetic between two non-additive measures",
-  "ddl_sql": "(COUNT(SNAPSHOT.EMP_ID)) - (COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NULL) THEN SNAPSHOT.EMP_ID ELSE NULL END))"
+  "ddl_sql": null
  }
 }

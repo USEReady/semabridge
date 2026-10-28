@@ -4535,11 +4535,19 @@ def is_by_design_excluded(sync_failure_reason: Optional[str]) -> bool:
 
     """True if `sync_failure_reason` marks a metric as by-design excluded
 
-    (constant expression / string-producing root) rather than a genuine,
+    (constant expression / string-producing root / non-additive dependency)
 
-    still-open DAX translation failure."""
+    rather than a genuine, still-open DAX translation failure."""
 
-    return str(sync_failure_reason or "").startswith(BY_DESIGN_EXCLUDED_PREFIX)
+    reason_str = str(sync_failure_reason or "")
+
+    return (
+
+        reason_str.startswith(BY_DESIGN_EXCLUDED_PREFIX)
+
+        or "depends on non-additive" in reason_str.lower()
+
+    )
 
 
 

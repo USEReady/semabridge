@@ -93,9 +93,10 @@ def _call(dax, home, name, ctx):
 def translate(dax, home_table, name, context=None):
     ctx = []
     for cname, (chome, cdax) in (context or {}).items():
-        cres = translate(cdax, chome, cname)
+        cres = translate(cdax, chome, cname, {k: v for k, v in (context or {}).items() if k != cname})
         ctx.append(SimpleNamespace(unique_name=cname, name=cname, label=cname, expression=cdax, dataset=chome,
-                                   sql_expression=cres["sql"], tier=1, sync_enabled=cres["sql"] is not None))
+                                   sql_expression=cres["sql"], tier=1, sync_enabled=cres["sql"] is not None,
+                                   non_additive_dimension=cres.get("non_additive_dimension")))
     try:
         res = _call(dax, home_table, name, ctx)
     except Exception as exc:                     # a crash is a failure, with the message
@@ -103,7 +104,7 @@ def translate(dax, home_table, name, context=None):
     sql = getattr(res, "sql", None)
     reason = " ".join(str(getattr(res, a, "") or "") for a in ("failure_reason", "reason", "exclusion_reason", "status"))
     if getattr(res, "is_success", False) and sql and not re.match(r"^\(?\s*CAST\s*\(\s*NULL", sql, re.I):
-        return {"status": "ok", "sql": sql, "reason": reason.strip()}
+        return {"status": "ok", "sql": sql, "reason": reason.strip(), "non_additive_dimension": getattr(res, "non_additive_dimension", None)}
     if getattr(res, "sync_enabled", True) is False or NA_WORDS.search(reason):
-        return {"status": "not_applicable", "sql": None, "reason": reason.strip()}
-    return {"status": "fail", "sql": None, "reason": reason.strip()}
+        return {"status": "not_applicable", "sql": None, "reason": reason.strip(), "non_additive_dimension": getattr(res, "non_additive_dimension", None)}
+    return {"status": "fail", "sql": None, "reason": reason.strip(), "non_additive_dimension": getattr(res, "non_additive_dimension", None)}

@@ -202,5 +202,53 @@
   },
   "title": "ALL(one column) with measure references",
   "ddl_sql": null
+ },
+ "F15.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "closing balance (value at the last period)",
+  "ddl_sql": "COUNT(TBL_DELTA_F9.COL_PRISM_N8)"
+ },
+ "F15.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "filtered closing balance (actives)",
+  "ddl_sql": "COUNT(CASE WHEN (TBL_DELTA_F9.COL_OMEGA_Y9 IS NULL) THEN TBL_DELTA_F9.COL_PRISM_N8 ELSE NULL END)"
+ },
+ "F15.3": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "MISSING"
+  },
+  "title": "ratio over a non-additive measure",
+  "ddl_sql": null
+ },
+ "F15.4": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "MISSING"
+  },
+  "title": "arithmetic between two non-additive measures",
+  "ddl_sql": null
  }
 }

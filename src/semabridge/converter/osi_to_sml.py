@@ -638,6 +638,9 @@ class OSIToSMLConverter(BaseConverter):
                     metric.validation_notes = list(translation.validation_notes or [])
                     _apply_translation_advisories(metric, translation)
                     resolved_this_pass += 1
+                elif getattr(translation, "sync_enabled", True) is False:
+                    metric.sync_enabled = False
+                    metric.sync_failure_reason = getattr(translation, "failure_reason", None)
 
             if resolved_this_pass == 0:
                 break

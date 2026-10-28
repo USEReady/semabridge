@@ -542,6 +542,52 @@ class DAXTranslator:
         
 
         clean_dax = dax.strip()
+        measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
+        if measure_non_additive_map:
+            from semabridge.converter.dax_ast_parser import DaxAstParser, MeasureRefNode, FunctionCallNode
+            parsed_ast = DaxAstParser().parse(clean_dax)
+            if parsed_ast:
+                def _get_measure_refs(n):
+                    refs = set()
+                    def _walk(cur):
+                        if isinstance(cur, MeasureRefNode):
+                            refs.add(cur.name)
+                        for child in getattr(cur, "args", []) or []:
+                            _walk(child)
+                        for attr in ("left", "right", "operand"):
+                            if hasattr(cur, attr) and getattr(cur, attr) is not None:
+                                _walk(getattr(cur, attr))
+                    _walk(n)
+                    return refs
+
+                all_refs = _get_measure_refs(parsed_ast)
+                non_add_refs = [
+                    m for m in all_refs
+                    if any(m.casefold() == k.casefold() for k in measure_non_additive_map)
+                ]
+                if non_add_refs:
+                    is_pure_filtered = False
+                    if isinstance(parsed_ast, MeasureRefNode):
+                        is_pure_filtered = True
+                    elif (
+                        isinstance(parsed_ast, FunctionCallNode)
+                        and parsed_ast.func.upper() == "CALCULATE"
+                        and len(parsed_ast.args) >= 1
+                        and isinstance(parsed_ast.args[0], MeasureRefNode)
+                    ):
+                        filter_refs = set()
+                        for f_arg in parsed_ast.args[1:]:
+                            filter_refs.update(_get_measure_refs(f_arg))
+                        if not filter_refs:
+                            is_pure_filtered = True
+
+                    if not is_pure_filtered:
+                        return DAXTranslationResult(
+                            None, 4, clean_dax,
+                            failure_reason="depends on non-additive metric",
+                            sync_enabled=False,
+                        )
+
 
         from semabridge.converter.dax_ast_parser import (
             dax_context_transition_failure_reason,
