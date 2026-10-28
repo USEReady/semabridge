@@ -822,17 +822,16 @@ class MetricsClauseBuilder:
         # like a DAX empty-string literal into a valid — but meaningless —
         # SQL empty-string literal, silently undoing the earlier exclusion.
         from semabridge.converter.dax_ast_parser import is_by_design_excluded
-        if is_by_design_excluded(getattr(metric, "sync_failure_reason", None)):
+        if getattr(metric, "sync_enabled", True) is False or is_by_design_excluded(getattr(metric, "sync_failure_reason", None)):
             logger.debug(
-                "Metric '%s': by-design excluded — skipping DDL emission "
-                "rather than re-attempting translation.",
+                "Metric '%s': not applicable / disabled — emitting NULL placeholder in DDL.",
                 metric.unique_name,
             )
             self.drop_ledger.record(
-                "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                metric.sync_failure_reason or "By-design excluded from metric translation.",
+                "metric", metric.unique_name, DropStage.DAX_TRANSLATION,
+                getattr(metric, "sync_failure_reason", None) or "Metric translation disabled (not applicable).",
                 dataset=getattr(metric, "dataset", None),
-                by_design=True,
+                by_design=False,
             )
             return None
 

@@ -325,43 +325,43 @@
  },
  "F6.1": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "text label",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F6.2": {
-  "status": "FAIL",
-  "msg": "emitted as REAL metric",
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": true,
-   "DDL": "REAL"
+   "SML_SQL": false,
+   "DDL": "NULL"
   },
   "title": "colour string",
-  "ddl_sql": "CASE WHEN SUM(ORDERS.QTY::FLOAT) > 10 THEN '#00FF00' ELSE '#FF0000' END"
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F6.3": {
-  "status": "FAIL",
-  "msg": "emitted as REAL metric",
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": true,
-   "DDL": "REAL"
+   "SML_SQL": false,
+   "DDL": "NULL"
   },
-  "title": "what-if slicer value",
-  "ddl_sql": "IFF(COUNT(DISTINCT PARAM.COL_VALUE) + MAX(IFF(PARAM.COL_VALUE IS NULL, 1, 0)) = 1, MAX(PARAM.COL_VALUE), 0) / 100"
+  "title": "compare to the rest",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F6.4": {
-  "status": "FAIL",
-  "msg": "emitted as NULL metric",
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -373,15 +373,15 @@
  },
  "F6.5": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
-  "title": "share of total (ALL)",
-  "ddl_sql": null
+  "title": "constant",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F7.1": {
   "status": "PASS",
@@ -625,27 +625,27 @@
  },
  "F14.1": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "ALL(dimension table) in the denominator",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F14.2": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "ALL(one column) with measure references",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F15.1": {
   "status": "PASS",
@@ -673,27 +673,27 @@
  },
  "F15.3": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "ratio over a non-additive measure",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "arithmetic between two non-additive measures",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F13.4": {
   "status": "PASS",
@@ -706,5 +706,17 @@
   },
   "title": "USERELATIONSHIP with special characters in dim and FK",
   "ddl_sql": "SUM(CASE WHEN DIM_AND_DATES_PCT_DOLSHIP_AND_PCT_DATE.MONTH_AND_PCT = 3 THEN ORDERS.AMOUNT END::FLOAT)"
+ },
+ "F16.1": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "IF over a disconnected selector",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  }
 }

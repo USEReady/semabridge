@@ -128,7 +128,7 @@ def main():
             elif status == "PASS":
                 status, msg = "SKIP", "no DDL generated"
         elif kind == "not_applicable":
-            status, msg = (("FAIL", f"emitted as {st['DDL']} metric") if st["DDL"] in ("REAL", "NULL") else ("PASS", "not emitted"))
+            status, msg = (("FAIL", "emitted as REAL metric") if st["DDL"] == "REAL" else ("PASS", "emitted as NULL placeholder" if st["DDL"] == "NULL" else "not emitted"))
         else:
             status, msg = ("FAIL", "malformed DAX emitted as REAL SQL") if st["DDL"] == "REAL" else ("PASS", "not emitted")
         rows[c["id"]] = {"status": status, "msg": msg, "stages": st, "title": c["title"], "ddl_sql": d["expr"][:300] if d else None}

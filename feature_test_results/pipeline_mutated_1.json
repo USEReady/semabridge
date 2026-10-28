@@ -141,7 +141,7 @@
    "DDL": "REAL"
   },
   "title": "filter on a date-dimension attribute (active relationship)",
-  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1.COL_ORBIT_G7 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)"
+  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1.COL_PRISM_W6 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)"
  },
  "F13.1": {
   "status": "PASS",
@@ -153,7 +153,7 @@
    "DDL": "REAL"
   },
   "title": "USERELATIONSHIP on the inactive date path",
-  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_SIGMA_Q6 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
+  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_PRISM_W6 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
  },
  "F13.2": {
   "status": "PASS",
@@ -165,7 +165,7 @@
    "DDL": "REAL"
   },
   "title": "USERELATIONSHIP with a row count",
-  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_SIGMA_Q6 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_PRISM_W6 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
  },
  "F13.3": {
   "status": "PASS",
@@ -177,31 +177,31 @@
    "DDL": "REAL"
   },
   "title": "without USERELATIONSHIP the ACTIVE path is used",
-  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1.COL_SIGMA_Q6 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1.COL_PRISM_W6 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
  },
  "F14.1": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "ALL(dimension table) in the denominator",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F14.2": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "ALL(one column) with measure references",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F15.1": {
   "status": "PASS",
@@ -213,7 +213,7 @@
    "DDL": "REAL"
   },
   "title": "closing balance (value at the last period)",
-  "ddl_sql": "COUNT(TBL_DELTA_F9.COL_PRISM_N8)"
+  "ddl_sql": "COUNT(TBL_DELTA_F9.COL_ORBIT_G7)"
  },
  "F15.2": {
   "status": "PASS",
@@ -225,31 +225,31 @@
    "DDL": "REAL"
   },
   "title": "filtered closing balance (actives)",
-  "ddl_sql": "COUNT(CASE WHEN (TBL_DELTA_F9.COL_OMEGA_Y9 IS NULL) THEN TBL_DELTA_F9.COL_PRISM_N8 ELSE NULL END)"
+  "ddl_sql": "COUNT(CASE WHEN (TBL_DELTA_F9.COL_ALPHA_S6 IS NULL) THEN TBL_DELTA_F9.COL_ORBIT_G7 ELSE NULL END)"
  },
  "F15.3": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "ratio over a non-additive measure",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "not emitted",
+  "msg": "emitted as NULL placeholder",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "arithmetic between two non-additive measures",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F13.4": {
   "status": "PASS",
@@ -261,6 +261,426 @@
    "DDL": "REAL"
   },
   "title": "USERELATIONSHIP with special characters in dim and FK",
-  "ddl_sql": "SUM(CASE WHEN TBL_KAPPA_A4_COL_ORBIT_U4.COL_ORBIT_Q8 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
+  "ddl_sql": "SUM(CASE WHEN TBL_KAPPA_A4_COL_ZETA_T6.COL_ALPHA_U9 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
+ },
+ "F1.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "-- comment inside a FILTER",
+  "ddl_sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Open' THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F1.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "// and /* */ comments",
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT)"
+ },
+ "F1.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "TRUE() in a boolean filter",
+  "ddl_sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.IS_URGENT_U2 = TRUE THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F1.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "FALSE() in a boolean filter",
+  "ddl_sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.IS_URGENT_U2 = FALSE THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F1.5": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "trailing -1 after a function",
+  "ddl_sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) / 2, 1) - 1"
+ },
+ "F1.6": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DIVIDE(...)-1 (variance %)",
+  "ddl_sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT), 0) = 0, 0, (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) / (SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT))) - 1"
+ },
+ "F1.7": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "negative literal after an operator / comma",
+  "ddl_sql": "CASE WHEN SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) > 0 THEN -1 * SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) ELSE -1 END"
+ },
+ "F1.8": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "leftover tokens must fail, not return partial SQL",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F2.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "bare [Column] inside a nested function",
+  "ddl_sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT), 0)"
+ },
+ "F2.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "measure on an empty measure table keeps the DAX table",
+  "ddl_sql": "SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)"
+ },
+ "F2.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "column name with spaces and special characters",
+  "ddl_sql": "AVG(TRANSACTIONS_LOG_V2.PRICE_EACH_DOL_H6)"
+ },
+ "F2.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "several SUMs of different columns added together",
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) + SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT) + SUM(TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT)"
+ },
+ "F3.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "SUMX over the own table",
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.UNITS_P4 * TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT)"
+ },
+ "F3.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "CALCULATE(SUMX, FILTER(own table))",
+  "ddl_sql": "SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
+ },
+ "F3.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "COUNTAX(FILTER(KEEPFILTERS(...)))",
+  "ddl_sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F3.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "COUNTAX(table, TRUE()) = row count",
+  "ddl_sql": "COUNT(*)"
+ },
+ "F3.5": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "COUNTROWS(table)",
+  "ddl_sql": "COUNT(*)"
+ },
+ "F3.6": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "CALCULATE(COUNT, FILTER(NOT(ISBLANK(...))))",
+  "ddl_sql": "COUNT(CASE WHEN (TRANSACTIONS_LOG_V2.DISPATCH_DATE_K1 IS NOT NULL) THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F3.7": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "CALCULATE(COUNT, FILTER(ISBLANK(...)))",
+  "ddl_sql": "COUNT(CASE WHEN (TRANSACTIONS_LOG_V2.DISPATCH_DATE_K1 IS NULL) THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F3.8": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "AVERAGEX with DATEDIFF",
+  "ddl_sql": "AVG(DATEDIFF(DAY, TRANSACTIONS_LOG_V2.PLACED_ON_Y4, TRANSACTIONS_LOG_V2.DISPATCH_DATE_K1)::FLOAT)"
+ },
+ "F3.9": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "MAXX / MINX",
+  "ddl_sql": "MAX(TRANSACTIONS_LOG_V2.UNITS_P4 * TRANSACTIONS_LOG_V2.UNIT_RATE_A9) - MIN(TRANSACTIONS_LOG_V2.UNIT_RATE_A9)"
+ },
+ "F4.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "two variables, DIVIDE in RETURN",
+  "ddl_sql": "((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT))) / NULLIF((SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT)), 0)"
+ },
+ "F4.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "variable using another variable",
+  "ddl_sql": "((SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)) * 2) + (SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT))"
+ },
+ "F5.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "VALUE(LEFT(...)) inside a filter",
+  "ddl_sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(TRANSACTIONS_LOG_V2.PIPELINE_STAGE_X5, 1)) >= 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
+ },
+ "F5.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "MROUND",
+  "ddl_sql": "ROUND((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) / (100)) * (100)"
+ },
+ "F5.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "ROUNDUP / ROUNDDOWN",
+  "ddl_sql": "SIGN(AVG(TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT)) * CEIL(ABS(AVG(TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT)), 0) + SIGN(AVG(TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT)) * FLOOR(ABS(AVG(TRANSACTIONS_LOG_V2.UNIT_RATE_A9::FLOAT)), 0)"
+ },
+ "F5.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DIVIDE with alternate result on zero",
+  "ddl_sql": "IFF(COALESCE(SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Missing' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT), 0) = 0, 0, (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) / (SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Missing' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT)))"
+ },
+ "F6.1": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "text label",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F6.2": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "colour string",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F6.3": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "compare to the rest",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F6.4": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "ranking",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F6.5": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "constant",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F16.1": {
+  "status": "PASS",
+  "msg": "emitted as NULL placeholder",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "NULL"
+  },
+  "title": "IF over a disconnected selector",
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F7.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "arithmetic over two base measures",
+  "ddl_sql": "(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) - (SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT))"
+ },
+ "F7.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "ratio over a base measure that lives on the measure table",
+  "ddl_sql": "COALESCE((SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)), 0), 0)"
  }
 }

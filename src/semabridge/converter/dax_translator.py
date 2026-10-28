@@ -543,78 +543,21 @@ class DAXTranslator:
 
         clean_dax = dax.strip()
         measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
-        if measure_non_additive_map:
-            from semabridge.converter.dax_ast_parser import DaxAstParser, MeasureRefNode, FunctionCallNode
-            parsed_ast = DaxAstParser().parse(clean_dax)
-            if parsed_ast:
-                def _get_measure_refs(n):
-                    refs = set()
-                    def _walk(cur):
-                        if isinstance(cur, MeasureRefNode):
-                            refs.add(cur.name)
-                        for child in getattr(cur, "args", []) or []:
-                            _walk(child)
-                        for attr in ("left", "right", "operand"):
-                            if hasattr(cur, attr) and getattr(cur, attr) is not None:
-                                _walk(getattr(cur, attr))
-                    _walk(n)
-                    return refs
-
-                all_refs = _get_measure_refs(parsed_ast)
-                non_add_refs = [
-                    m for m in all_refs
-                    if any(m.casefold() == k.casefold() for k in measure_non_additive_map)
-                ]
-                if non_add_refs:
-                    is_pure_filtered = False
-                    if isinstance(parsed_ast, MeasureRefNode):
-                        is_pure_filtered = True
-                    elif (
-                        isinstance(parsed_ast, FunctionCallNode)
-                        and parsed_ast.func.upper() == "CALCULATE"
-                        and len(parsed_ast.args) >= 1
-                        and isinstance(parsed_ast.args[0], MeasureRefNode)
-                    ):
-                        filter_refs = set()
-                        for f_arg in parsed_ast.args[1:]:
-                            filter_refs.update(_get_measure_refs(f_arg))
-                        if not filter_refs:
-                            is_pure_filtered = True
-
-                    if not is_pure_filtered:
-                        return DAXTranslationResult(
-                            None, 4, clean_dax,
-                            failure_reason="depends on non-additive metric",
-                            sync_enabled=False,
-                        )
-
-
-        from semabridge.converter.dax_ast_parser import (
-            dax_context_transition_failure_reason,
-            dax_has_zero_data_dependencies,
-            dax_root_is_string_producing,
-        )
-        context_transition_reason = dax_context_transition_failure_reason(clean_dax)
-        if context_transition_reason:
-            return DAXTranslationResult(
-                None, 4, clean_dax,
-                failure_reason=context_transition_reason,
-                sync_enabled=False,
+        from semabridge.converter.dax_ast_parser import DaxAstParser, classify_dax_ast_not_applicable
+        parsed_ast = DaxAstParser().parse(clean_dax)
+        if parsed_ast:
+            na_reason = classify_dax_ast_not_applicable(
+                parsed_ast,
+                relationships=relationships,
+                non_additive_map=measure_non_additive_map,
+                metrics_context=metrics_context,
             )
-        if dax_has_zero_data_dependencies(clean_dax):
-            return DAXTranslationResult(
-                None, 4, clean_dax,
-                failure_reason="Expression has no data dependencies (compile-time constant)",
-                sync_enabled=False,
-            )
-        if dax_root_is_string_producing(clean_dax):
-            return DAXTranslationResult(
-                None, 4, clean_dax,
-                failure_reason="Expression root operation produces string, not numeric aggregate",
-                sync_enabled=False,
-            )
-
-
+            if na_reason:
+                return DAXTranslationResult(
+                    None, 4, clean_dax,
+                    failure_reason=na_reason,
+                    sync_enabled=False,
+                )
 
         def _wrap_res(result: Optional[DAXTranslationResult]) -> DAXTranslationResult:
 
@@ -2071,37 +2014,22 @@ class DAXTranslator:
 
 
     def _build_measure_non_additive_map(
-
         self, metrics_context: Optional[List[Any]]
-
     ) -> Dict[str, Tuple[Optional[str], str]]:
-
         """Map measure unique_name -> non_additive_dimension tuple for any
-
         measure that has already resolved a non-additive dimension."""
-
         cb_map: Dict[str, Tuple[Optional[str], str]] = {}
-
         if not metrics_context:
-
             return cb_map
-
         for metric in metrics_context:
-
             name = getattr(metric, "unique_name", None)
-
             dim = getattr(metric, "non_additive_dimension", None)
-
-            if name and dim:
-
-                cb_map[name] = dim
-
+            reason = str(getattr(metric, "sync_failure_reason", "") or "")
+            if name and (dim or "depends on non-additive" in reason.lower() or "non-additive" in reason.lower()):
+                cb_map[name] = dim or (None, "")
         return cb_map
 
-
-
     @staticmethod
-
     def _all_measure_names(metrics_context: Optional[List[Any]]) -> set:
 
         """Every measure name tracked in `metrics_context`, resolved or not.

@@ -190,37 +190,37 @@
  },
  "F6.1": {
   "status": "PASS",
-  "msg": "excluded: Expression root operation produces string, not numeric aggregate",
+  "msg": "excluded: not applicable: text result",
   "sql": null,
   "title": "text label",
   "solution": ""
  },
  "F6.2": {
-  "status": "FAIL",
-  "msg": "translated to a metric although it is text",
-  "sql": "CASE WHEN SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) > 10 THEN '#00FF00' ELSE '#FF0000' END",
+  "status": "PASS",
+  "msg": "excluded: not applicable: text result",
+  "sql": null,
   "title": "colour string",
   "solution": ""
  },
  "F6.3": {
-  "status": "FAIL",
-  "msg": "translated to a metric although it is what-if",
-  "sql": "IFF(COUNT(DISTINCT whatifpctv3.\"PCT_VALUE_S5\") + MAX(IFF(whatifpctv3.\"PCT_VALUE_S5\" IS NULL, 1, 0)) = 1, MAX(whatifpctv3.\"PCT_VALUE_S5\"), 0) / 100",
-  "title": "what-if slicer value",
+  "status": "PASS",
+  "msg": "excluded: not applicable: needs window metric",
+  "sql": null,
+  "title": "compare to the rest",
   "solution": ""
  },
  "F6.4": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: not applicable: needs window metric (ranking)",
   "sql": null,
   "title": "ranking",
   "solution": ""
  },
  "F6.5": {
   "status": "PASS",
-  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
+  "msg": "excluded: not applicable: constant",
   "sql": null,
-  "title": "share of total (ALL)",
+  "title": "constant",
   "solution": ""
  },
  "F10.1": {
@@ -317,41 +317,41 @@
  "F12.4": {
   "status": "PASS",
   "msg": "90.0 == 90.0",
-  "sql": "SUM(CASE WHEN tblomegak9.COL_ALPHA_B1 = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN tblomegak9.COL_DELTA_F9 = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
   "title": "filter on a date-dimension attribute (active relationship)",
   "solution": "Date dimension attribute through the ACTIVE relationship (Order Date): enriched copy or join."
  },
  "F13.1": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_ALPHA_B1\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_DELTA_F9\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
   "title": "USERELATIONSHIP on the inactive date path",
   "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
  },
  "F13.2": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_ALPHA_B1\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
+  "sql": "COUNT(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_DELTA_F9\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
   "title": "USERELATIONSHIP with a row count",
   "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
  },
  "F13.3": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN tblomegak9.\"COL_ALPHA_B1\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
+  "sql": "COUNT(CASE WHEN tblomegak9.\"COL_DELTA_F9\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "solution": "The alias must not change measures that do not ask for it."
  },
  "F14.1": {
   "status": "PASS",
-  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
+  "msg": "excluded: not applicable: needs window metric",
   "sql": null,
   "title": "ALL(dimension table) in the denominator",
   "solution": "Until window metrics are available: CAST(NULL AS DOUBLE) + reason 'needs window metric'. Never drop silently, never emit a constant (1.0 is only right at grand total)."
  },
  "F14.2": {
   "status": "PASS",
-  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
+  "msg": "excluded: not applicable: needs window metric",
   "sql": null,
   "title": "ALL(one column) with measure references",
   "solution": "Same as F14.1."
@@ -359,27 +359,27 @@
  "F15.1": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(tblprismv7.\"COL_OMEGA_H4\")",
+  "sql": "COUNT(tblprismv7.\"COL_ALPHA_Q1\")",
   "title": "closing balance (value at the last period)",
   "solution": "FILTER(ALL(T[p]), T[p] = MAX(T[p])) -> plain aggregate + NON ADDITIVE BY (T.p, direction proven to take the LAST period)."
  },
  "F15.2": {
   "status": "PASS",
   "msg": "3.0 == 3.0",
-  "sql": "COUNT(CASE WHEN (tblprismv7.\"COL_ALPHA_Q1\" IS NULL) THEN tblprismv7.\"COL_OMEGA_H4\" ELSE NULL END)",
+  "sql": "COUNT(CASE WHEN (tblprismv7.\"COL_ALPHA_N6\" IS NULL) THEN tblprismv7.\"COL_ALPHA_Q1\" ELSE NULL END)",
   "title": "filtered closing balance (actives)",
   "solution": "A filter on top of a non-additive measure keeps its NON ADDITIVE BY."
  },
  "F15.3": {
   "status": "PASS",
-  "msg": "excluded: depends on non-additive metric",
+  "msg": "excluded: not applicable: depends on non-additive metric [Actives]",
   "sql": null,
   "title": "ratio over a non-additive measure",
   "solution": "Never inline a non-additive metric's SQL into another metric (loses NON ADDITIVE BY -> counts every period). Reference the metric by name if supported, else CAST(NULL) + reason."
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "excluded: depends on non-additive metric",
+  "msg": "excluded: not applicable: depends on non-additive metric [Actives]",
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."
@@ -387,8 +387,15 @@
  "F13.4": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN tbl_omega_g8_col_orbit_n2.\"COL_BRAVO_D2\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN tbl_omega_g8_col_sigma_a4.\"COL_SIGMA_J3\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
   "title": "USERELATIONSHIP with special characters in dim and FK",
   "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
+ },
+ "F16.1": {
+  "status": "PASS",
+  "msg": "excluded: not applicable: text result",
+  "sql": null,
+  "title": "IF over a disconnected selector",
+  "solution": "Selector over a table with no relationships -> original not applicable; numeric branches become their own metrics (opt-in)."
  }
 }

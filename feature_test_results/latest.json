@@ -190,37 +190,37 @@
  },
  "F6.1": {
   "status": "PASS",
-  "msg": "excluded: Expression root operation produces string, not numeric aggregate",
+  "msg": "excluded: not applicable: text result",
   "sql": null,
   "title": "text label",
   "solution": ""
  },
  "F6.2": {
-  "status": "FAIL",
-  "msg": "translated to a metric although it is text",
-  "sql": "CASE WHEN SUM(orders.\"QTY\"::FLOAT) > 10 THEN '#00FF00' ELSE '#FF0000' END",
+  "status": "PASS",
+  "msg": "excluded: not applicable: text result",
+  "sql": null,
   "title": "colour string",
   "solution": ""
  },
  "F6.3": {
-  "status": "FAIL",
-  "msg": "translated to a metric although it is what-if",
-  "sql": "IFF(COUNT(DISTINCT param.\"COL_VALUE\") + MAX(IFF(param.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(param.\"COL_VALUE\"), 0) / 100",
-  "title": "what-if slicer value",
+  "status": "PASS",
+  "msg": "excluded: not applicable: needs window metric",
+  "sql": null,
+  "title": "compare to the rest",
   "solution": ""
  },
  "F6.4": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: not applicable: needs window metric (ranking)",
   "sql": null,
   "title": "ranking",
   "solution": ""
  },
  "F6.5": {
   "status": "PASS",
-  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
+  "msg": "excluded: not applicable: constant",
   "sql": null,
-  "title": "share of total (ALL)",
+  "title": "constant",
   "solution": ""
  },
  "F7.1": {
@@ -368,14 +368,14 @@
  },
  "F14.1": {
   "status": "PASS",
-  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
+  "msg": "excluded: not applicable: needs window metric",
   "sql": null,
   "title": "ALL(dimension table) in the denominator",
   "solution": "Until window metrics are available: CAST(NULL AS DOUBLE) + reason 'needs window metric'. Never drop silently, never emit a constant (1.0 is only right at grand total)."
  },
  "F14.2": {
   "status": "PASS",
-  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
+  "msg": "excluded: not applicable: needs window metric",
   "sql": null,
   "title": "ALL(one column) with measure references",
   "solution": "Same as F14.1."
@@ -396,14 +396,14 @@
  },
  "F15.3": {
   "status": "PASS",
-  "msg": "excluded: depends on non-additive metric",
+  "msg": "excluded: not applicable: depends on non-additive metric [Actives]",
   "sql": null,
   "title": "ratio over a non-additive measure",
   "solution": "Never inline a non-additive metric's SQL into another metric (loses NON ADDITIVE BY -> counts every period). Reference the metric by name if supported, else CAST(NULL) + reason."
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "excluded: depends on non-additive metric",
+  "msg": "excluded: not applicable: depends on non-additive metric [Headcount]",
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."
@@ -414,5 +414,12 @@
   "sql": "SUM(CASE WHEN dim_and_dates_pct_dolship_and_pct_date.\"MONTH_AND_PCT\" = 3 THEN orders.\"AMOUNT\" END::FLOAT)",
   "title": "USERELATIONSHIP with special characters in dim and FK",
   "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
+ },
+ "F16.1": {
+  "status": "PASS",
+  "msg": "excluded: not applicable: text result",
+  "sql": null,
+  "title": "IF over a disconnected selector",
+  "solution": "Selector over a table with no relationships -> original not applicable; numeric branches become their own metrics (opt-in)."
  }
 }

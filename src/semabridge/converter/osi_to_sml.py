@@ -570,6 +570,9 @@ class OSIToSMLConverter(BaseConverter):
                 metric.llm_self_reported_confidence = translation.llm_self_reported_confidence
                 metric.validation_notes = list(translation.validation_notes or [])
                 _apply_translation_advisories(metric, translation)
+            elif getattr(translation, "sync_enabled", True) is False or translation.failure_reason:
+                metric.sync_enabled = getattr(translation, "sync_enabled", False)
+                metric.sync_failure_reason = translation.failure_reason
             elif metric.sync_enabled:
                 from semabridge.converter.dax_ast_parser import (
                     dax_context_transition_failure_reason,

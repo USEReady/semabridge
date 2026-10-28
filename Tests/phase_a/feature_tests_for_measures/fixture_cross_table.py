@@ -22,6 +22,7 @@ def extend(TABLES, RELATIONSHIPS, INACTIVE):
         "End Date":  [None, None, None, None, dt.date(2024, 2, 20), None, None, None, None, None, dt.date(2024, 3, 25)],
     })
     TABLES["Dim & Dates %"] = pd.DataFrame({"Date Key": days, "Month & %": [d.month for d in days]})
+    TABLES["Selector"] = pd.DataFrame({"K": [1, 2, 3]})
     if "Orders" in TABLES and "$Ship & % Date" not in TABLES["Orders"].columns:
         TABLES["Orders"]["$Ship & % Date"] = TABLES["Orders"]["Ship Date"]
 

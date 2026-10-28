@@ -4533,37 +4533,339 @@ BY_DESIGN_EXCLUDED_PREFIX = "BY_DESIGN_EXCLUDED"
 
 
 def is_by_design_excluded(sync_failure_reason: Optional[str]) -> bool:
-
     """True if `sync_failure_reason` marks a metric as by-design excluded
-
-    (constant expression / string-producing root / non-additive dependency)
-
+    (constant expression / string-producing root / non-additive dependency / not applicable)
     rather than a genuine, still-open DAX translation failure."""
-
-    reason_str = str(sync_failure_reason or "")
-
+    reason_str = str(sync_failure_reason or "").lower()
     return (
-
-        reason_str.startswith(BY_DESIGN_EXCLUDED_PREFIX)
-
-        or "depends on non-additive" in reason_str.lower()
-
+        reason_str.startswith(BY_DESIGN_EXCLUDED_PREFIX.lower())
+        or "not applicable" in reason_str
+        or "depends on non-additive" in reason_str
     )
 
 
-
-
-
 _STRING_PRODUCING_FUNCS = {
-
     "CONCATENATE", "LEFT", "RIGHT", "MID", "FORMAT", "SUBSTITUTE", "REPT",
-
-    "TRIM", "UPPER", "LOWER",
-
+    "TRIM", "UPPER", "LOWER", "EXACT", "FIND", "SEARCH", "REPLACE",
+    "CONCATENATEX", "COMBINEVALUES", "UNICHAR", "FIXED",
 }
 
 
+def _is_text_producing_node(node: DaxNode) -> bool:
+    if isinstance(node, LiteralNode):
+        return isinstance(node.value, str)
+    if isinstance(node, BinaryOpNode):
+        if node.op == "&":
+            return True
+        if node.op in ("+", "-", "*", "/", "^"):
+            return False
+        if node.op in ("=", "<>", "<", "<=", ">", ">="):
+            return False
+    if isinstance(node, FunctionCallNode):
+        func = node.func.upper()
+        if func in _STRING_PRODUCING_FUNCS:
+            return True
+        if func == "IF" and len(node.args) >= 2:
+            then_b = node.args[1]
+            else_b = node.args[2] if len(node.args) >= 3 else None
+            if _is_text_producing_node(then_b) or (else_b and _is_text_producing_node(else_b)):
+                return True
+        if func == "SWITCH":
+            for i in range(2, len(node.args), 2):
+                if _is_text_producing_node(node.args[i]):
+                    return True
+            if len(node.args) % 2 == 0 and len(node.args) > 2:
+                if _is_text_producing_node(node.args[-1]):
+                    return True
+    if isinstance(node, VarNode):
+        return _is_text_producing_node(node.body)
+    return False
 
+
+def _refs_any_data(node: DaxNode) -> bool:
+    if isinstance(node, (ColumnRefNode, MeasureRefNode)):
+        return True
+    if isinstance(node, BinaryOpNode):
+        return _refs_any_data(node.left) or _refs_any_data(node.right)
+    if isinstance(node, UnaryOpNode):
+        return _refs_any_data(node.operand)
+    if isinstance(node, FunctionCallNode):
+        func = node.func.upper()
+        if func in ("COUNTROWS", "COUNTAX", "SUMX", "AVERAGEX", "MINX", "MAXX", "SELECTEDVALUE"):
+            return True
+        return any(_refs_any_data(a) for a in node.args)
+    if isinstance(node, VarNode):
+        return any(_refs_any_data(v) for _, v in node.variables) or _refs_any_data(node.body)
+    return False
+
+
+def _has_ranking_function(node: DaxNode) -> bool:
+    res = False
+    def _walk(cur):
+        nonlocal res
+        if res or cur is None:
+            return
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() in ("RANKX", "ISINSCOPE", "RANK", "DENSE_RANK", "ROWNUMBER"):
+                res = True
+                return
+            for a in cur.args:
+                _walk(a)
+        elif isinstance(cur, BinaryOpNode):
+            _walk(cur.left)
+            _walk(cur.right)
+        elif isinstance(cur, UnaryOpNode):
+            _walk(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return res
+
+
+def _has_time_intel_function(node: DaxNode) -> bool:
+    res = False
+    time_funcs = {
+        "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
+        "DATEADD", "PARALLELPERIOD", "TOTALYTD", "TOTALMTD", "TOTALQTD",
+    }
+    def _walk(cur):
+        nonlocal res
+        if res or cur is None:
+            return
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() in time_funcs:
+                res = True
+                return
+            for a in cur.args:
+                _walk(a)
+        elif isinstance(cur, BinaryOpNode):
+            _walk(cur.left)
+            _walk(cur.right)
+        elif isinstance(cur, UnaryOpNode):
+            _walk(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return res
+
+
+def _extract_closing_balance_dim(node: DaxNode) -> Optional[Tuple[Optional[str], str]]:
+    pred_node = node
+    if isinstance(node, FunctionCallNode) and node.func.upper() == "FILTER" and len(node.args) >= 2:
+        pred_node = node.args[1]
+    if isinstance(pred_node, BinaryOpNode) and pred_node.op in ("=", "=="):
+        if isinstance(pred_node.left, ColumnRefNode) and isinstance(pred_node.right, FunctionCallNode) and pred_node.right.func.upper() == "MAX":
+            return (pred_node.left.table, pred_node.left.column)
+        if isinstance(pred_node.right, ColumnRefNode) and isinstance(pred_node.left, FunctionCallNode) and pred_node.left.func.upper() == "MAX":
+            return (pred_node.right.table, pred_node.right.column)
+    return None
+
+
+def _has_closing_balance(node: DaxNode) -> bool:
+    if isinstance(node, FunctionCallNode) and node.func.upper() == "CALCULATE":
+        for a in node.args[1:]:
+            if _extract_closing_balance_dim(a):
+                return True
+    return False
+
+
+def _has_selectedvalue_in_filter_all(node: DaxNode) -> bool:
+    res = False
+    def _has_selectedvalue(n):
+        if n is None:
+            return False
+        if isinstance(n, FunctionCallNode):
+            if n.func.upper() == "SELECTEDVALUE":
+                return True
+            return any(_has_selectedvalue(a) for a in n.args)
+        if isinstance(n, BinaryOpNode):
+            return _has_selectedvalue(n.left) or _has_selectedvalue(n.right)
+        if isinstance(n, UnaryOpNode):
+            return _has_selectedvalue(n.operand)
+        return False
+
+    def _walk(cur):
+        nonlocal res
+        if res or cur is None:
+            return
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() == "FILTER" and len(cur.args) >= 2:
+                first_arg = cur.args[0]
+                is_all_table = False
+                if isinstance(first_arg, FunctionCallNode) and first_arg.func.upper() in ("ALL", "ALLEXCEPT", "ALLSELECTED"):
+                    is_all_table = True
+                if is_all_table and any(_has_selectedvalue(a) for a in cur.args[1:]):
+                    res = True
+                    return
+            for a in cur.args:
+                _walk(a)
+        elif isinstance(cur, BinaryOpNode):
+            _walk(cur.left)
+            _walk(cur.right)
+        elif isinstance(cur, UnaryOpNode):
+            _walk(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return res
+
+
+def _get_tables_in_node(node: DaxNode) -> Set[str]:
+    tables: Set[str] = set()
+    def _walk(cur):
+        if cur is None:
+            return
+        if isinstance(cur, ColumnRefNode) and cur.table:
+            tables.add(cur.table.strip("'"))
+        for child in getattr(cur, "args", []) or []:
+            _walk(child)
+        for attr in ("left", "right", "operand"):
+            if hasattr(cur, attr) and getattr(cur, attr) is not None:
+                _walk(getattr(cur, attr))
+        if isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return tables
+
+
+def _is_selector_over_disconnected_table(node: DaxNode, relationships: Optional[Iterable[Any]]) -> bool:
+    if not isinstance(node, FunctionCallNode) or node.func.upper() not in ("IF", "SWITCH"):
+        return False
+    if not relationships:
+        return False
+    connected: Set[str] = set()
+    for r in relationships:
+        ft = getattr(r, "from_dataset", None) or getattr(r, "from_table", None)
+        tt = getattr(r, "to_dataset", None) or getattr(r, "to_table", None)
+        if ft:
+            connected.add(str(ft).casefold())
+        if tt:
+            connected.add(str(tt).casefold())
+
+    if node.func.upper() == "IF" and len(node.args) >= 2:
+        cond_tables = _get_tables_in_node(node.args[0])
+        if cond_tables and all(t.casefold() not in connected for t in cond_tables):
+            branch_tables: Set[str] = set()
+            for b in node.args[1:]:
+                branch_tables.update(_get_tables_in_node(b))
+            other_tables = [t for t in branch_tables if not any(t.casefold() == ct.casefold() for ct in cond_tables)]
+            if other_tables:
+                return True
+    elif node.func.upper() == "SWITCH" and len(node.args) >= 3:
+        cond_tables = _get_tables_in_node(node.args[0])
+        if cond_tables and all(t.casefold() not in connected for t in cond_tables):
+            branch_tables: Set[str] = set()
+            for i in range(2, len(node.args), 2):
+                branch_tables.update(_get_tables_in_node(node.args[i]))
+            if len(node.args) % 2 == 0 and len(node.args) > 2:
+                branch_tables.update(_get_tables_in_node(node.args[-1]))
+            other_tables = [t for t in branch_tables if not any(t.casefold() == ct.casefold() for ct in cond_tables)]
+            if other_tables:
+                return True
+    return False
+
+
+def _get_measure_refs(n: DaxNode) -> Set[str]:
+    refs: Set[str] = set()
+    def _walk(cur):
+        if isinstance(cur, MeasureRefNode):
+            refs.add(cur.name)
+        for child in getattr(cur, "args", []) or []:
+            _walk(child)
+        for attr in ("left", "right", "operand"):
+            if hasattr(cur, attr) and getattr(cur, attr) is not None:
+                _walk(getattr(cur, attr))
+        if isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(n)
+    return refs
+
+
+def classify_dax_ast_not_applicable(
+    parsed_ast: DaxNode,
+    relationships: Optional[Iterable[Any]] = None,
+    non_additive_map: Optional[Dict[str, Any]] = None,
+    metrics_context: Optional[Iterable[Any]] = None,
+) -> Optional[str]:
+    """Classify unrepresentable DAX patterns from AST and model metadata before SQL rendering:
+    1. text result -> 'not applicable: text result'
+    2. constant -> 'not applicable: constant'
+    3. ranking -> 'not applicable: needs window metric (ranking)'
+    4. window metric -> 'not applicable: needs window metric'
+    5. non-additive closing balance + time intelligence -> 'not applicable: depends on non-additive metric'
+    5. non-additive dependency -> 'not applicable: depends on non-additive metric [X]'
+    6. disconnected selector -> 'not applicable: selector over a disconnected table'
+    """
+    if parsed_ast is None:
+        return None
+    node = unwrap_var_body(parsed_ast)
+
+    # 1. Text result
+    if _is_text_producing_node(node):
+        return "not applicable: text result"
+
+    # 2. Compile-time constant
+    if not _refs_any_data(parsed_ast):
+        return "not applicable: constant"
+
+    # 3. Ranking functions
+    if _has_ranking_function(parsed_ast):
+        return "not applicable: needs window metric (ranking)"
+
+    # 4. Window metric
+    if _has_selectedvalue_in_filter_all(parsed_ast) or _calculate_has_direct_all_or_allexcept_modifier(parsed_ast):
+        return "not applicable: needs window metric"
+
+    # 5. Non-additive closing balance + time intelligence
+    if _has_closing_balance(parsed_ast) and _has_time_intel_function(parsed_ast):
+        return "not applicable: depends on non-additive metric"
+
+    # 5. Non-additive dependencies
+    if non_additive_map:
+        all_refs = _get_measure_refs(parsed_ast)
+        non_add_refs = [
+            m for m in all_refs
+            if any(m.casefold() == k.casefold() for k in non_additive_map)
+        ]
+        if non_add_refs:
+            is_pure_filtered = False
+            if isinstance(node, MeasureRefNode):
+                is_pure_filtered = True
+            elif (
+                isinstance(node, FunctionCallNode)
+                and node.func.upper() == "CALCULATE"
+                and len(node.args) >= 1
+                and isinstance(node.args[0], MeasureRefNode)
+            ):
+                filter_refs: Set[str] = set()
+                has_time_intel = False
+                for f_arg in node.args[1:]:
+                    filter_refs.update(_get_measure_refs(f_arg))
+                    if _has_time_intel_function(f_arg):
+                        has_time_intel = True
+                if not filter_refs and not has_time_intel:
+                    is_pure_filtered = True
+
+            if not is_pure_filtered:
+                first_ref = next((m for m in non_add_refs if non_additive_map.get(m) and non_additive_map[m][0]), non_add_refs[0])
+                return f"not applicable: depends on non-additive metric [{first_ref}]"
+
+    # 6. Disconnected selector
+    if relationships is not None:
+        if _is_selector_over_disconnected_table(node, relationships):
+            return "not applicable: selector over a disconnected table"
+
+    return None
 
 
 def dax_root_is_string_producing(dax: str) -> bool:
