@@ -116,6 +116,8 @@ def _ast_cache_key(
 
     measure_non_additive_map: Optional[Dict[str, Tuple[Optional[str], str]]] = None,
 
+    table_key_map: Optional[Dict[str, str]] = None,
+
 ) -> tuple:
 
     items = tuple(sorted((measure_sql_map or {}).items()))
@@ -130,6 +132,8 @@ def _ast_cache_key(
 
     non_add_items = tuple(sorted((measure_non_additive_map or {}).items()))
 
+    key_items = tuple(sorted((table_key_map or {}).items()))
+
     rel_tuple = tuple(
 
         sorted(
@@ -138,7 +142,13 @@ def _ast_cache_key(
 
                 str(getattr(r, "from_dataset", "")).casefold(),
 
+                tuple(str(c).casefold() for c in (getattr(r, "from_columns", None) or ())),
+
                 str(getattr(r, "to_dataset", "")).casefold(),
+
+                tuple(str(c).casefold() for c in (getattr(r, "to_columns", None) or ())),
+
+                bool(getattr(r, "is_active", True)),
 
             )
 
@@ -173,6 +183,8 @@ def _ast_cache_key(
         rel_tuple,
 
         non_add_items,
+
+        key_items,
 
     )
 
@@ -1800,6 +1812,8 @@ class DaxSqlRenderer:
 
         measure_non_additive_map: Optional[Dict[str, Tuple[Optional[str], str]]] = None,
 
+        table_key_map: Optional[Dict[str, str]] = None,
+
     ) -> None:
 
         # Keep alias as provided (caller passes the correct form)
@@ -1813,6 +1827,10 @@ class DaxSqlRenderer:
         self.measure_non_additive_map = measure_non_additive_map or {}
 
         self.non_additive_dimensions: List[Tuple[Optional[str], str]] = []
+
+        self.table_key_map = table_key_map or {}
+
+        self._userel_overrides: Dict[str, str] = {}
 
         # The DAX table name (e.g. "KPI") that table_alias physically
 
@@ -2155,6 +2173,24 @@ class DaxSqlRenderer:
         name_clean = str(table_name or "").strip().strip("'")
 
         name_cf = name_clean.casefold()
+
+        if hasattr(self, "_userel_overrides") and self._userel_overrides:
+
+            if name_cf in self._userel_overrides:
+
+                return self._userel_overrides[name_cf]
+
+            ali_cf = to_alias(name_clean).casefold()
+
+            if ali_cf in self._userel_overrides:
+
+                return self._userel_overrides[ali_cf]
+
+            san_cf = sanitize_column(name_clean).casefold()
+
+            if san_cf in self._userel_overrides:
+
+                return self._userel_overrides[san_cf]
 
         if not self.primary_table_name:
 
@@ -2992,7 +3028,87 @@ class DaxSqlRenderer:
 
         if func == "COUNTROWS":
 
-            case_expr = f"CASE WHEN {condition_sql} THEN 1 END"
+            target_col = None
+
+            tbl_name = None
+
+            if agg_node.args:
+
+                tbl_node = agg_node.args[0]
+
+                tbl_name = getattr(tbl_node, "name", None) or getattr(tbl_node, "table", None) or str(tbl_node)
+
+            if not tbl_name:
+
+                tbl_name = self.primary_table_name
+
+
+
+            target_alias = self._resolve_table_alias(tbl_name) if tbl_name else self.table_alias
+
+
+
+            if self.table_key_map and tbl_name:
+
+                clean_t = str(tbl_name).strip("'").casefold()
+
+                target_col = (
+
+                    self.table_key_map.get(clean_t)
+
+                    or self.table_key_map.get(target_alias.casefold())
+
+                    or self.table_key_map.get(to_alias(clean_t).casefold())
+
+                )
+
+
+
+            if not target_col and self.relationships and tbl_name:
+
+                clean_t = str(tbl_name).strip("'").casefold()
+
+                for r in self.relationships:
+
+                    if str(getattr(r, "from_dataset", "")).strip("'").casefold() == clean_t:
+
+                        cols = getattr(r, "from_columns", None)
+
+                        if cols:
+
+                            target_col = cols[0]
+
+                            break
+
+                    elif str(getattr(r, "to_dataset", "")).strip("'").casefold() == clean_t:
+
+                        cols = getattr(r, "to_columns", None)
+
+                        if cols:
+
+                            target_col = cols[0]
+
+                            break
+
+
+
+            if target_col:
+
+                san_col = sanitize_column(target_col)
+
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", san_col):
+
+                    col_ref = f"{target_alias}.{san_col}"
+
+                else:
+
+                    col_ref = f'{target_alias}."{san_col}"'
+
+                case_expr = f"CASE WHEN {condition_sql} THEN {col_ref} END"
+
+            else:
+
+                case_expr = f"CASE WHEN {condition_sql} THEN 1 END"
 
             return f"COUNT({case_expr})"
 
@@ -3212,7 +3328,29 @@ class DaxSqlRenderer:
 
         for start, end, func, arg in sorted(calls, key=lambda c: c[0], reverse=True):
 
-            replacement = f"{func}(CASE WHEN {condition_sql} THEN {arg} ELSE NULL END)"
+            if arg == "*":
+
+                key_col = None
+
+                if self.table_key_map and self.primary_table_name:
+
+                    key_col = self.table_key_map.get(self.primary_table_name.strip("'").casefold())
+
+                if key_col:
+
+                    san_col = sanitize_column(key_col)
+
+                    col_ref = f"{self.table_alias}.{san_col}" if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", san_col) else f'{self.table_alias}."{san_col}"'
+
+                    replacement = f"{func}(CASE WHEN {condition_sql} THEN {col_ref} END)"
+
+                else:
+
+                    replacement = f"{func}(CASE WHEN {condition_sql} THEN 1 END)"
+
+            else:
+
+                replacement = f"{func}(CASE WHEN {condition_sql} THEN {arg} ELSE NULL END)"
 
             rewritten = rewritten[:start] + replacement + rewritten[end + 1 :]
 
@@ -3308,267 +3446,216 @@ class DaxSqlRenderer:
 
             raise self.DaxRenderError("CALCULATE requires at least 1 argument")
 
-
-
-        agg_expr = self._render_node(args[0])
-
-        filter_clauses: List[str] = []
-
-        partition_cols: List[str] = []
-
-        is_window = False
-
-
-
-        # If base is a measure reference, check if it brings a non-additive dimension
-
-        if isinstance(args[0], MeasureRefNode):
-
-            m_name = args[0].name
-
-            for k, v in self.measure_non_additive_map.items():
-
-                if k.casefold() == m_name.casefold():
-
-                    if v and v not in self.non_additive_dimensions:
-
-                        self.non_additive_dimensions.append(v)
-
-                    break
-
-
-
-        # Support lag-period time-intelligence functions inside CALCULATE —
-
-        # DAX allows this shape (CALCULATE(agg, SAMEPERIODLASTYEAR(Date[Date])))
-
-        # as an alternative to the direct SAMEPERIODLASTYEAR(agg, Date[Date])
-
-        # form _render_lag_period already handles. These are the same DAX
-
-        # operation expressed two different ways — delegate to that single
-
-        # shared implementation rather than keeping a second, independent
-
-        # copy of the same CASE WHEN/anchor-shift logic here. (This
-
-        # duplication is exactly how a quarter/month measure-reference
-
-        # fallback existed in _render_lag_period but not here, and how an
-
-        # anchor-shift bug got fixed in one copy but not the other.)
-
-        lag_filter_arg = None
-
-        lag_interval = "year"
-
+        userel_overrides = {}
+        filtered_args = [args[0]]
         for filter_arg in args[1:]:
-
-            if isinstance(filter_arg, FunctionCallNode):
-
-                fname = filter_arg.func.upper()
-
-                if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
-
-                    lag_interval = "year" if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR") else ("quarter" if fname == "PREVIOUSQUARTER" else "month")
-
-                    lag_filter_arg = filter_arg
-
-                    break
-
-
-
-        if lag_filter_arg is not None:
-
-            date_arg = lag_filter_arg.args[0] if lag_filter_arg.args else None
-
-            if date_arg is None:
-
-                raise self.DaxRenderError(f"{lag_filter_arg.func} requires a date-column argument")
-
-            return self._render_lag_period([args[0], date_arg], interval=lag_interval, amount=-1)
-
-
-
-        for filter_arg in args[1:]:
-
-            # Closing-balance pattern check: handled via NON ADDITIVE BY instead of row-level predicate
-
-            cb_dim = self._extract_closing_balance_dimension(filter_arg)
-
-            if cb_dim:
-
-                if cb_dim not in self.non_additive_dimensions:
-
-                    self.non_additive_dimensions.append(cb_dim)
-
+            if isinstance(filter_arg, FunctionCallNode) and filter_arg.func.upper() == "USERELATIONSHIP":
+                if len(filter_arg.args) >= 2:
+                    c1, c2 = filter_arg.args[0], filter_arg.args[1]
+                    t1 = getattr(c1, "table", "")
+                    col1 = getattr(c1, "column", "")
+                    t2 = getattr(c2, "table", "")
+                    col2 = getattr(c2, "column", "")
+                    dim_tbl, fk_col = None, None
+                    if self.relationships is not None:
+                        for r in self.relationships:
+                            f_ds = str(getattr(r, "from_dataset", "")).strip("'").casefold()
+                            t_ds = str(getattr(r, "to_dataset", "")).strip("'").casefold()
+                            if (t1.casefold() == f_ds and t2.casefold() == t_ds):
+                                dim_tbl, fk_col = t2, col1
+                                break
+                            elif (t2.casefold() == f_ds and t1.casefold() == t_ds):
+                                dim_tbl, fk_col = t1, col2
+                                break
+                    if not dim_tbl and self.primary_table_name:
+                        p_cf = self.primary_table_name.strip("'").casefold()
+                        if t1.casefold() == p_cf:
+                            dim_tbl, fk_col = t2, col1
+                        elif t2.casefold() == p_cf:
+                            dim_tbl, fk_col = t1, col2
+                    if not dim_tbl:
+                        dim_tbl, fk_col = t2, col1
+                    if dim_tbl and fk_col:
+                        inact_alias = re.sub(r"[^A-Za-z0-9_]+", "_", f"{dim_tbl} {fk_col}").strip("_").lower()
+                        userel_overrides[dim_tbl.casefold()] = inact_alias
+                        userel_overrides[to_alias(dim_tbl).casefold()] = inact_alias
+                        userel_overrides[sanitize_column(dim_tbl).casefold()] = inact_alias
                 continue
+            filtered_args.append(filter_arg)
 
+        prev_userel = getattr(self, "_userel_overrides", {})
+        self._userel_overrides = {**prev_userel, **userel_overrides}
 
+        try:
+            agg_expr = self._render_node(filtered_args[0])
 
-            if isinstance(filter_arg, FunctionCallNode):
+            filter_clauses: List[str] = []
 
-                fname = filter_arg.func.upper()
+            partition_cols: List[str] = []
 
+            is_window = False
 
+            # If base is a measure reference, check if it brings a non-additive dimension
 
-                if fname == "ALL":
+            if isinstance(filtered_args[0], MeasureRefNode):
 
-                    # ALL(table) strips all filters → no WHERE, use window over full table
+                m_name = filtered_args[0].name
 
-                    is_window = True
+                for k, v in self.measure_non_additive_map.items():
 
+                    if k.casefold() == m_name.casefold():
 
+                        if v and v not in self.non_additive_dimensions:
 
-                elif fname == "ALLEXCEPT":
+                            self.non_additive_dimensions.append(v)
 
-                    # ALLEXCEPT(table, col1, col2,...) → PARTITION BY col1, col2
+                        break
 
-                    is_window = True
+            lag_filter_arg = None
 
-                    for col_arg in filter_arg.args[1:]:
+            lag_interval = "year"
 
-                        if isinstance(col_arg, ColumnRefNode):
+            for filter_arg in filtered_args[1:]:
 
-                            partition_cols.append(f'{self.table_alias}."{sanitize_column(col_arg.column)}"')
+                if isinstance(filter_arg, FunctionCallNode):
 
-                        elif isinstance(col_arg, MeasureRefNode):
+                    fname = filter_arg.func.upper()
 
-                            partition_cols.append(f'"{sanitize_column(col_arg.name)}"')
+                    if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
 
+                        lag_interval = "year" if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR") else ("quarter" if fname == "PREVIOUSQUARTER" else "month")
 
+                        lag_filter_arg = filter_arg
 
-                elif fname == "FILTER":
+                        break
 
-                    # FILTER(table, predicate) → extract predicate as WHERE clause
+            if lag_filter_arg is not None:
 
-                    if len(filter_arg.args) >= 2:
+                date_arg = lag_filter_arg.args[0] if lag_filter_arg.args else None
 
-                        pred = self._render_node(filter_arg.args[1])
+                if date_arg is None:
 
-                        filter_clauses.append(pred)
+                    raise self.DaxRenderError(f"{lag_filter_arg.func} requires a date-column argument")
+
+                return self._render_lag_period([filtered_args[0], date_arg], interval=lag_interval, amount=-1)
+
+            for filter_arg in filtered_args[1:]:
+
+                # Closing-balance pattern check: handled via NON ADDITIVE BY instead of row-level predicate
+
+                cb_dim = self._extract_closing_balance_dimension(filter_arg)
+
+                if cb_dim:
+
+                    if cb_dim not in self.non_additive_dimensions:
+
+                        self.non_additive_dimensions.append(cb_dim)
+
+                    continue
+
+                if isinstance(filter_arg, FunctionCallNode):
+
+                    fname = filter_arg.func.upper()
+
+                    if fname == "ALL":
+
+                        # ALL(table) strips all filters → no WHERE, use window over full table
+
+                        is_window = True
+
+                    elif fname == "ALLEXCEPT":
+
+                        # ALLEXCEPT(table, col1, col2,...) → PARTITION BY col1, col2
+
+                        is_window = True
+
+                        for col_arg in filter_arg.args[1:]:
+
+                            if isinstance(col_arg, ColumnRefNode):
+
+                                partition_cols.append(f'{self.table_alias}."{sanitize_column(col_arg.column)}"')
+
+                            elif isinstance(col_arg, MeasureRefNode):
+
+                                partition_cols.append(f'"{sanitize_column(col_arg.name)}"')
+
+                    elif fname == "FILTER":
+
+                        # FILTER(table, predicate) → extract predicate as WHERE clause
+
+                        if len(filter_arg.args) >= 2:
+
+                            pred = self._render_node(filter_arg.args[1])
+
+                            filter_clauses.append(pred)
+
+                        else:
+
+                            raise self.DaxRenderError("FILTER requires table and predicate arguments")
 
                     else:
 
-                        raise self.DaxRenderError("FILTER requires table and predicate arguments")
+                        # Unrecognized modifier
 
+                        raise self.DaxRenderError(f"CALCULATE filter modifier not supported: {fname}")
 
+                elif isinstance(filter_arg, BinaryOpNode):
+
+                    # Direct comparison inside CALCULATE, e.g. CALCULATE(SUM(...), 'Date'[Year] = 2024)
+
+                    filter_clauses.append(self._render_node(filter_arg))
 
                 else:
 
-                    # Unrecognized modifier
+                    raise self.DaxRenderError(
 
-                    raise self.DaxRenderError(f"CALCULATE filter modifier not supported: {fname}")
+                        f"CALCULATE filter argument of type {type(filter_arg).__name__} "
 
+                        "is not a recognized filter modifier or comparison predicate"
 
+                    )
 
-            elif isinstance(filter_arg, BinaryOpNode):
-
-                # Direct comparison inside CALCULATE, e.g. CALCULATE(SUM(...), 'Date'[Year] = 2024)
-
-                filter_clauses.append(self._render_node(filter_arg))
-
-
-
-            else:
-
-                # Anything else (a bare measure/column reference, literal, etc.)
-
-                # is not a recognized filter shape. Raise rather than silently
-
-                # dropping it — a dropped filter argument changes what the
-
-                # expression computes without any indication that happened.
+            if is_window:
 
                 raise self.DaxRenderError(
 
-                    f"CALCULATE filter argument of type {type(filter_arg).__name__} "
+                    "ALLEXCEPT/ALL context-transition requires a SQL window "
 
-                    "is not a recognized filter modifier or comparison predicate"
+                    "function, which Snowflake's semantic-view METRICS clause "
+
+                    "does not support"
 
                 )
 
+            elif filter_clauses:
 
+                where = " AND ".join(filter_clauses)
 
-        if is_window:
+                if isinstance(filtered_args[0], FunctionCallNode) and (
 
-            # ALL(...)/ALLEXCEPT(...) mean "re-partition this aggregate
+                    filtered_args[0].func.upper() in self._AGG_MAP or filtered_args[0].func.upper() in self._ITERATOR_MAP
 
-            # independently of the query's own grouping" — inherently a SQL
+                ):
 
-            # window function. Snowflake's semantic-view METRICS clause
+                    return self._rewrite_filtered_aggregate(filtered_args[0], where)
 
-            # forbids window functions (see metrics_clause_builder.py's and
+                rewritten = self._inject_case_filter_into_rendered_aggregate(agg_expr, where)
 
-            # snowflake_metric_sql.py's own OVER/PARTITION BY guards), and
+                if rewritten:
 
-            # this codebase has no derived-metric/precomputed-column
+                    return rewritten
 
-            # mechanism to materialize the windowed value another way.
+                raise self.DaxRenderError(
 
-            # Emitting OVER(...) here used to look like a successful Tier 4
+                    f"Base aggregation {filtered_args[0]} is too complex to rewrite as CASE-based filtered aggregate"
 
-            # translation while actually being invalid Snowflake METRICS
+                )
 
-            # SQL (silently NULL at query time) — fail closed instead, so
+            else:
 
-            # the metric correctly escalates to Tier 5 like any other
-
-            # genuinely unresolved pattern.
-
-            raise self.DaxRenderError(
-
-                "ALLEXCEPT/ALL context-transition requires a SQL window "
-
-                "function, which Snowflake's semantic-view METRICS clause "
-
-                "does not support"
-
-            )
-
-        elif filter_clauses:
-
-            where = " AND ".join(filter_clauses)
-
-            if isinstance(args[0], FunctionCallNode) and (
-
-                args[0].func.upper() in self._AGG_MAP or args[0].func.upper() in self._ITERATOR_MAP
-
-            ):
-
-                return self._rewrite_filtered_aggregate(args[0], where)
-
-            # Base isn't a direct aggregate call — the common real-world
-
-            # shape here is a measure reference, e.g. CALCULATE([Measure],
-
-            # <filter>). Inject the filter into ITS aggregate argument
-
-            # rather than wrapping the already-aggregated expression in a
-
-            # second outer aggregate — the same fallback already used for
-
-            # TOTALYTD/lag-period measure-reference bases
-
-            # (_render_period_to_date/_render_lag_period), just never
-
-            # applied to this branch until now.
-
-            rewritten = self._inject_case_filter_into_rendered_aggregate(agg_expr, where)
-
-            if rewritten:
-
-                return rewritten
-
-            raise self.DaxRenderError(
-
-                f"Base aggregation {args[0]} is too complex to rewrite as CASE-based filtered aggregate"
-
-            )
-
-        else:
-
-            return agg_expr
+                return agg_expr
+        finally:
+            self._userel_overrides = prev_userel
 
 
 
@@ -4262,6 +4349,8 @@ def try_ast_translate(
 
     non_additive_dimensions: Optional[List[Tuple[Optional[str], str]]] = None,
 
+    table_key_map: Optional[Dict[str, str]] = None,
+
 ) -> Optional[str]:
 
     """
@@ -4301,6 +4390,8 @@ def try_ast_translate(
         relationships,
 
         measure_non_additive_map,
+
+        table_key_map,
 
     )
 
@@ -4371,6 +4462,8 @@ def try_ast_translate(
         relationships=relationships,
 
         measure_non_additive_map=measure_non_additive_map,
+
+        table_key_map=table_key_map,
 
     )
 

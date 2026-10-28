@@ -477,7 +477,9 @@ class DAXTranslator:
 
                   skip_tier5: bool = False,
 
-                  relationships: Optional[Iterable[Any]] = None) -> DAXTranslationResult:
+                  relationships: Optional[Iterable[Any]] = None,
+
+                  table_key_map: Optional[Dict[str, str]] = None) -> DAXTranslationResult:
 
         """
 
@@ -586,6 +588,8 @@ class DAXTranslator:
             dataset_aliases=dataset_aliases,
 
             relationships=relationships,
+
+            table_key_map=table_key_map,
 
         )
 
@@ -789,6 +793,8 @@ class DAXTranslator:
 
                 non_additive_dimensions=cb_dims,
 
+                table_key_map=table_key_map,
+
             )
 
             if ast_sql:
@@ -855,6 +861,8 @@ class DAXTranslator:
 
                 non_additive_dimensions=cb_dims,
 
+                table_key_map=table_key_map,
+
             )
 
             if ast_sql:
@@ -918,6 +926,8 @@ class DAXTranslator:
                 measure_non_additive_map=measure_non_additive_map,
 
                 non_additive_dimensions=cb_dims,
+
+                table_key_map=table_key_map,
 
             )
 
@@ -1029,6 +1039,8 @@ class DAXTranslator:
 
         relationships: Optional[Iterable[Any]] = None,
 
+        table_key_map: Optional[Dict[str, str]] = None,
+
     ) -> Optional[DAXTranslationResult]:
 
         tier1_sql = self._try_tier1(clean_dax, table_alias)
@@ -1135,6 +1147,8 @@ class DAXTranslator:
 
                 non_additive_dimensions=cb_dims,
 
+                table_key_map=table_key_map,
+
             )
 
             if ast_sql:
@@ -1186,6 +1200,8 @@ class DAXTranslator:
                 measure_non_additive_map=measure_non_additive_map,
 
                 non_additive_dimensions=cb_dims,
+
+                table_key_map=table_key_map,
 
             )
 

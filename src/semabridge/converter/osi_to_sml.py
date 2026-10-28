@@ -147,6 +147,25 @@ class OSIToSMLConverter(BaseConverter):
             # hardcoded to any table/column/model name.
             dax_dataset_col_lookup, dax_dataset_aliases = DAXTranslator.build_schema_lookup(sml.datasets)
 
+            table_key_map = {}
+            for d in getattr(sml, "datasets", []) or []:
+                key_col = None
+                for c in getattr(d, "columns", []) or []:
+                    if getattr(c, "is_key", False):
+                        key_col = c.unique_name
+                        break
+                if not key_col:
+                    for c in getattr(d, "columns", []) or []:
+                        if re.search(r"(?:^|_)id$", c.unique_name, re.I) or re.search(r"(?:^|_)key$", c.unique_name, re.I):
+                            key_col = c.unique_name
+                            break
+                if not key_col and getattr(d, "columns", []):
+                    key_col = d.columns[0].unique_name
+                if key_col:
+                    from semabridge.utils.naming import to_alias
+                    table_key_map[d.unique_name.casefold()] = key_col
+                    table_key_map[to_alias(d.unique_name).casefold()] = key_col
+
             # 3. Convert Metrics with automated translation pipeline
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
 
@@ -156,6 +175,7 @@ class OSIToSMLConverter(BaseConverter):
                     dataset_col_lookup=dax_dataset_col_lookup,
                     dataset_aliases=dax_dataset_aliases,
                     relationships=osi_model.relationships,
+                    table_key_map=table_key_map,
                 )
                 sml.metrics.append(sml_metric)
 
@@ -174,6 +194,7 @@ class OSIToSMLConverter(BaseConverter):
                 dataset_aliases=dax_dataset_aliases,
                 relationships=osi_model.relationships,
                 skip_tier5=True,
+                table_key_map=table_key_map,
             )
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
@@ -241,6 +262,7 @@ class OSIToSMLConverter(BaseConverter):
                     dataset_aliases=dax_dataset_aliases,
                     relationships=osi_model.relationships,
                     skip_tier5=True,
+                    table_key_map=table_key_map,
                 )
 
                 # Step 3f: real incident -- '% Unit Market Share YOY Change'
@@ -377,6 +399,7 @@ class OSIToSMLConverter(BaseConverter):
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         dataset_aliases: Optional[Dict[str, str]] = None,
         relationships: Optional[Iterable[Any]] = None,
+        table_key_map: Optional[Dict[str, str]] = None,
     ) -> SMLMetric:
         # --- Snowflake-sourced metrics already have sql_expression ---
         # When the source is a Snowflake semantic view, the expression is already
@@ -508,6 +531,7 @@ class OSIToSMLConverter(BaseConverter):
                 dataset_aliases=dataset_aliases,
                 skip_tier5=True,
                 relationships=relationships,
+                table_key_map=table_key_map,
             )
             
             if translation.is_success:
@@ -554,6 +578,7 @@ class OSIToSMLConverter(BaseConverter):
         dataset_aliases: Optional[Dict[str, str]] = None,
         relationships: Optional[Iterable[Any]] = None,
         skip_tier5: bool = False,
+        table_key_map: Optional[Dict[str, str]] = None,
     ) -> None:
         """Resolve unresolved metrics using full metric context in deterministic passes.
 
@@ -596,6 +621,7 @@ class OSIToSMLConverter(BaseConverter):
                     dataset_aliases=dataset_aliases,
                     skip_tier5=skip_tier5,
                     relationships=relationships,
+                    table_key_map=table_key_map,
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql

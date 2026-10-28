@@ -198,6 +198,11 @@ class MetricsClauseBuilder:
         for rel in getattr(model, "relationships", []) or []:
             from_a = dataset_aliases.get(getattr(rel, "from_dataset", None))
             to_a = dataset_aliases.get(getattr(rel, "to_dataset", None))
+            if not getattr(rel, "is_active", True):
+                from_cols_raw = getattr(rel, "from_columns", None) or []
+                fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
+                if fk_col_raw:
+                    to_a = re.sub(r"[^A-Za-z0-9_]+", "_", f"{rel.to_dataset} {fk_col_raw}").strip("_").upper()
             if from_a and to_a:
                 relationship_graph.setdefault(from_a, set()).add(to_a)
                 relationship_graph.setdefault(to_a, set()).add(from_a)

@@ -16,14 +16,14 @@
  "F1.3": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"IS_URGENT_U2\" = TRUE THEN 1 END)",
+  "sql": "COUNT(CASE WHEN transactionslogv2.\"IS_URGENT_U2\" = TRUE THEN transactionslogv2.SKU_ID_A1 END)",
   "title": "TRUE() in a boolean filter",
   "solution": ""
  },
  "F1.4": {
   "status": "PASS",
   "msg": "6.0 == 6.0",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"IS_URGENT_U2\" = FALSE THEN 1 END)",
+  "sql": "COUNT(CASE WHEN transactionslogv2.\"IS_URGENT_U2\" = FALSE THEN transactionslogv2.SKU_ID_A1 END)",
   "title": "FALSE() in a boolean filter",
   "solution": ""
  },
@@ -322,23 +322,23 @@
   "solution": "Date dimension attribute through the ACTIVE relationship (Order Date): enriched copy or join."
  },
  "F13.1": {
-  "status": "FAIL",
-  "msg": "fail: ",
-  "sql": null,
+  "status": "PASS",
+  "msg": "30.0 == 30.0",
+  "sql": "SUM(CASE WHEN tbl_alpha_s1_dispatch_date_k1.\"COL_ORBIT_G7\" = 3 THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT)",
   "title": "USERELATIONSHIP on the inactive date path",
   "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
  },
  "F13.2": {
-  "status": "FAIL",
-  "msg": "fail: ",
-  "sql": null,
+  "status": "PASS",
+  "msg": "2.0 == 2.0",
+  "sql": "COUNT(CASE WHEN tbl_alpha_s1_dispatch_date_k1.\"COL_ORBIT_G7\" = 1 THEN transactionslogv2.SKU_ID_A1 END)",
   "title": "USERELATIONSHIP with a row count",
   "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
  },
  "F13.3": {
-  "status": "FAIL",
-  "msg": "value 31.0, expected 2.0",
-  "sql": "COUNT(CASE WHEN tblalphas1.\"COL_ORBIT_G7\" = 1 THEN 1 END)",
+  "status": "PASS",
+  "msg": "2.0 == 2.0",
+  "sql": "COUNT(CASE WHEN tblalphas1.\"COL_ORBIT_G7\" = 1 THEN transactionslogv2.SKU_ID_A1 END)",
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "solution": "The alias must not change measures that do not ask for it."
  },

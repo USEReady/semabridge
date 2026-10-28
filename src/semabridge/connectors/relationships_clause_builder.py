@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
+import re
 
 from semabridge.utils.logger import get_logger
 from semabridge.core.drop_ledger import DropLedger, DropStage
@@ -76,6 +77,12 @@ class RelationshipsClauseBuilder:
 
             from_alias = dataset_aliases.get(rel.from_dataset)
             to_alias = dataset_aliases.get(rel.to_dataset)
+
+            if not getattr(rel, "is_active", True):
+                from_cols_raw = getattr(rel, "from_columns", None) or []
+                fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
+                if fk_col_raw:
+                    to_alias = re.sub(r"[^A-Za-z0-9_]+", "_", f"{rel.to_dataset} {fk_col_raw}").strip("_").upper()
 
             if not from_alias or not to_alias or not rel.from_columns:
                 logger.warning(

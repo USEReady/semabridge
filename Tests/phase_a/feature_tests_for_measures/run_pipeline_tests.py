@@ -51,6 +51,9 @@ def build_tmsl(cases):
     rels = [{"name": f"r{i}", "fromTable": ft, "fromColumn": fc, "toTable": tt, "toColumn": tc, "isActive": True,
              "fromCardinality": "many", "toCardinality": "one", "crossFilteringBehavior": "oneDirection"}
             for i, (ft, fc, tt, tc) in enumerate(RELATIONSHIPS)]
+    for i, (ft, fc, tt, tc) in enumerate(getattr(rft, "INACTIVE", ())):
+        rels.append({"name": f"rinact_{i}", "fromTable": ft, "fromColumn": fc, "toTable": tt, "toColumn": tc, "isActive": False,
+                     "fromCardinality": "many", "toCardinality": "one", "crossFilteringBehavior": "oneDirection"})
     return {"name": "feature_tests", "model": {"tables": tables, "relationships": rels}}
 
 def names(model):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple, Set, Optional
+import re
 
 from semabridge.converter.date_resolution import DateResolutionConfig
 from semabridge.connectors.fact_table_naming import is_fact_like_name
@@ -498,6 +499,43 @@ class TablesClauseBuilder:
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
             tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}')
+
+        # Emit alias tables for inactive relationships
+        for rel in relationships:
+            if not getattr(rel, "is_active", True):
+                dim_ds_name = getattr(rel, "to_dataset", None)
+                dim_dataset = dataset_by_name.get(dim_ds_name)
+                from_cols = getattr(rel, "from_columns", None) or []
+                fk_col = from_cols[0] if from_cols else ""
+                if dim_dataset and fk_col:
+                    inact_alias = re.sub(r"[^A-Za-z0-9_]+", "_", f"{dim_ds_name} {fk_col}").strip("_").upper()
+                    modeled_cols_list = [c.unique_name for c in getattr(dim_dataset, "columns", []) or []]
+                    source_table = resolve_dataset_to_physical_table(
+                        dim_dataset.unique_name,
+                        modeled_cols_list,
+                        self.live_schema_metadata,
+                        explicit_mapping=source_table_mapping,
+                        model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
+                    )
+                    _unq = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
+                    safe_dim_table = self.identifier_sanitizer.sanitize_table_name(_unq)
+                    dim_full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
+
+                    dim_alias = self._get_unique_alias(dim_dataset.unique_name, registry)
+                    dim_pks = declared_pk_by_alias.get(dim_alias, [])
+                    pk_cols_str = ", ".join(f'"{c}"' for c in dim_pks)
+                    dim_pk_suffix = f" PRIMARY KEY ({pk_cols_str})" if dim_pks else ""
+
+                    line = f'  {inact_alias} AS {dim_full_table}{dim_pk_suffix}'
+                    if line not in tables_lines:
+                        tables_lines.append(line)
+                        declared_pk_by_alias[inact_alias] = dim_pks
+                        registry.register_dataset_alias(inact_alias, inact_alias)
+                        registry.register_dataset_alias(inact_alias.lower(), inact_alias)
+                        registry.used_table_aliases.add(inact_alias)
+                        dim_cols = dataset_col_lookup.get(dim_dataset.unique_name, set())
+                        dataset_col_lookup[inact_alias] = set(dim_cols)
+                        dataset_col_lookup[inact_alias.lower()] = set(dim_cols)
 
         return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
 

@@ -37,11 +37,57 @@ def _get():
 
 def _call(dax, home, name, ctx):
     t = _get()
-    kw = dict(metric_name=name, skip_tier5=not ALLOW_TIER5)
+    current_tables, current_rels, current_inactive = None, None, None
+    try:
+        import sys
+        mod = sys.modules.get("__main__")
+        if mod and hasattr(mod, "TABLES"):
+            current_tables = getattr(mod, "TABLES", None)
+            current_rels = getattr(mod, "RELATIONSHIPS", None)
+            current_inactive = getattr(mod, "INACTIVE", None)
+        else:
+            import run_feature_tests as rft
+            current_tables = getattr(rft, "TABLES", None)
+            current_rels = getattr(rft, "RELATIONSHIPS", None)
+            current_inactive = getattr(rft, "INACTIVE", None)
+    except Exception:
+        pass
+
+    if current_tables is None:
+        from fixture import TABLES, RELATIONSHIPS
+        try:
+            from fixture import INACTIVE
+        except ImportError:
+            INACTIVE = []
+        current_tables, current_rels, current_inactive = TABLES, RELATIONSHIPS, INACTIVE
+
+    table_key_map = {}
+    for t_name, df in (current_tables or {}).items():
+        key_col = next((c for c in df.columns if re.search(r"(?:^|_)id$", c, re.I) or re.search(r"(?:^|_)key$", c, re.I)), None)
+        if not key_col:
+            key_col = next((c for c in df.columns if re.search(r"(id|key)", c, re.I)), df.columns[0] if len(df.columns) > 0 else "ID")
+        table_key_map[t_name.casefold()] = key_col
+        table_key_map[alias(t_name).casefold()] = key_col
+
+    rels = [
+        SimpleNamespace(from_dataset=ft, from_columns=[fc], to_dataset=tt, to_columns=[tc], is_active=True)
+        for ft, fc, tt, tc in (current_rels or ())
+    ] + [
+        SimpleNamespace(from_dataset=ft, from_columns=[fc], to_dataset=tt, to_columns=[tc], is_active=False)
+        for ft, fc, tt, tc in (current_inactive or ())
+    ]
+
+    kw = dict(
+        metric_name=name,
+        skip_tier5=not ALLOW_TIER5,
+        relationships=rels,
+        table_key_map=table_key_map,
+    )
     try:
         return t.translate(dax, alias(home), home, metrics_context=ctx, **kw)
     except TypeError:
-        return t.translate(dax, alias(home), home, **kw)
+        kw.pop("table_key_map", None)
+        return t.translate(dax, alias(home), home, metrics_context=ctx, **kw)
 
 
 def translate(dax, home_table, name, context=None):

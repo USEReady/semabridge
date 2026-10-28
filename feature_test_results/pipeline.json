@@ -586,5 +586,41 @@
   },
   "title": "filter on a date-dimension attribute (active relationship)",
   "ddl_sql": "SUM(CASE WHEN CALENDAR.MONTH_NO = 3 THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)"
+ },
+ "F13.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "USERELATIONSHIP on the inactive date path",
+  "ddl_sql": "SUM(CASE WHEN CALENDAR_SHIP_DATE.MONTH_NO = 3 THEN ORDERS.AMOUNT END::FLOAT)"
+ },
+ "F13.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "USERELATIONSHIP with a row count",
+  "ddl_sql": "COUNT(CASE WHEN CALENDAR_SHIP_DATE.MONTH_NO = 1 THEN ORDERS.ORDERID END)"
+ },
+ "F13.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "without USERELATIONSHIP the ACTIVE path is used",
+  "ddl_sql": "COUNT(CASE WHEN CALENDAR.MONTH_NO = 1 THEN ORDERS.ORDERID END)"
  }
 }
