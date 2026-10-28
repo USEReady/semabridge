@@ -105,7 +105,7 @@
    "DDL": "REAL"
   },
   "title": "trailing -1 after a function",
-  "ddl_sql": "ROUND(AVG(ORDERS.QTY::FLOAT) / 2, 1) - 1"
+  "ddl_sql": "ROUND(AVG(ORDERS.QTY::FLOAT) / NULLIF(2, 0), 1) - 1"
  },
  "F1.6": {
   "status": "PASS",
@@ -117,7 +117,7 @@
    "DDL": "REAL"
   },
   "title": "DIVIDE(...)-1 (variance %)",
-  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, (SUM(ORDERS.AMOUNT::FLOAT)) / (SUM(ORDERS.QTY::FLOAT))) - 1"
+  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, SUM(ORDERS.AMOUNT::FLOAT) / SUM(ORDERS.QTY::FLOAT)) - 1"
  },
  "F1.7": {
   "status": "PASS",
@@ -261,7 +261,7 @@
    "DDL": "REAL"
   },
   "title": "two variables, DIVIDE in RETURN",
-  "ddl_sql": "((SUM(ORDERS.AMOUNT::FLOAT))) / NULLIF((SUM(ORDERS.QTY::FLOAT)), 0)"
+  "ddl_sql": "(SUM(ORDERS.AMOUNT::FLOAT)) / NULLIF((SUM(ORDERS.QTY::FLOAT)), 0)"
  },
  "F4.2": {
   "status": "PASS",
@@ -321,7 +321,7 @@
    "DDL": "REAL"
   },
   "title": "DIVIDE with alternate result on zero",
-  "ddl_sql": "IFF(COALESCE(SUM(CASE WHEN ORDERS.STATUS = 'Missing' THEN ORDERS.QTY END::FLOAT), 0) = 0, 0, (SUM(ORDERS.AMOUNT::FLOAT)) / (SUM(CASE WHEN ORDERS.STATUS = 'Missing' THEN ORDERS.QTY END::FLOAT)))"
+  "ddl_sql": "IFF(COALESCE(SUM(CASE WHEN ORDERS.STATUS = 'Missing' THEN ORDERS.QTY END::FLOAT), 0) = 0, 0, SUM(ORDERS.AMOUNT::FLOAT) / SUM(CASE WHEN ORDERS.STATUS = 'Missing' THEN ORDERS.QTY END::FLOAT))"
  },
  "F6.1": {
   "status": "PASS",
@@ -405,7 +405,7 @@
    "DDL": "REAL"
   },
   "title": "ratio over a base measure that lives on the measure table",
-  "ddl_sql": "COALESCE((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)) / NULLIF((SUM(ORDERS.AMOUNT::FLOAT)), 0), 0)"
+  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.AMOUNT::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT) / SUM(ORDERS.AMOUNT::FLOAT))"
  },
  "F1.9": {
   "status": "PASS",
@@ -489,7 +489,7 @@
    "DDL": "REAL"
   },
   "title": "what-if measure used in another measure -> default constant",
-  "ddl_sql": "SUM(ORDERS.QTY::FLOAT) * (1 + (0) / 100)"
+  "ddl_sql": "SUM(ORDERS.QTY::FLOAT) * (1 + (0) / NULLIF(100, 0))"
  },
  "F10.5": {
   "status": "PASS",
@@ -501,7 +501,7 @@
    "DDL": "REAL"
   },
   "title": "same, measure referenced without table prefix",
-  "ddl_sql": "(SUM(ORDERS.AMOUNT::FLOAT)) + (SUM(ORDERS.AMOUNT::FLOAT)) * (0) / 100"
+  "ddl_sql": "(SUM(ORDERS.AMOUNT::FLOAT)) + (SUM(ORDERS.AMOUNT::FLOAT)) * (0) / NULLIF(100, 0)"
  },
  "F11.1": {
   "status": "PASS",
@@ -525,7 +525,7 @@
    "DDL": "REAL"
   },
   "title": "declared on a dimension, built from fact measures",
-  "ddl_sql": "COALESCE((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)) / NULLIF((SUM(ORDERS.AMOUNT::FLOAT)), 0), 0)"
+  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.AMOUNT::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT) / SUM(ORDERS.AMOUNT::FLOAT))"
  },
  "F11.3": {
   "status": "PASS",
@@ -718,5 +718,41 @@
   },
   "title": "IF over a disconnected selector",
   "ddl_sql": "CAST(NULL AS DOUBLE)"
+ },
+ "F17.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DAX '/' with zero denominator -> BLANK, not an error",
+  "ddl_sql": "COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.ORDERID END) / NULLIF(COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.ORDERID END) + COUNT(CASE WHEN ORDERS.STATUS = 'Y' THEN ORDERS.ORDERID END), 0)"
+ },
+ "F17.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DIVIDE without alternate -> NULL",
+  "ddl_sql": "SUM(ORDERS.AMOUNT::FLOAT) / NULLIF(SUM(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.QTY END::FLOAT), 0)"
+ },
+ "F17.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "blank numerator keeps BLANK (not the alternate)",
+  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.AMOUNT END::FLOAT) / SUM(ORDERS.QTY::FLOAT))"
  }
 }

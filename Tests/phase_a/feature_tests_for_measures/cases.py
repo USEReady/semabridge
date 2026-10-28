@@ -177,6 +177,22 @@ CASES = [
       dax="DIVIDE([Sold Amount], [Total Amount], 0)", home="Measures", expect=("value", lambda: sold.Amount.sum() / O.Amount.sum()),
       context={k: BASE[k] for k in ("Sold Amount", "Total Amount")},
       expected_sql="IFF(COALESCE(SUM(orders.AMOUNT), 0) = 0, 0, SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.AMOUNT END) / SUM(orders.AMOUNT))"),
+ # ---------------------------------------------------------------- F17 division safety
+ dict(id="F17.1", feature="F17 Division safety", title="DAX '/' with zero denominator -> BLANK, not an error",
+      dax='CALCULATE(COUNT(Orders[OrderID]), Orders[Status] = "X") / (CALCULATE(COUNT(Orders[OrderID]), Orders[Status] = "X") + CALCULATE(COUNT(Orders[OrderID]), Orders[Status] = "Y"))',
+      home="Orders", expect=("value", lambda: None),
+      expected_sql="COUNT(CASE WHEN orders.STATUS = 'X' THEN orders.ORDERID END) / NULLIF(COUNT(CASE WHEN orders.STATUS = 'X' THEN orders.ORDERID END) + COUNT(CASE WHEN orders.STATUS = 'Y' THEN orders.ORDERID END), 0)",
+      solution="DAX a / b -> a / NULLIF(b, 0): Snowflake raises 'Division by zero', DAX returns BLANK."),
+ dict(id="F17.2", feature="F17 Division safety", title="DIVIDE without alternate -> NULL",
+      dax='DIVIDE(SUM(Orders[Amount]), CALCULATE(SUM(Orders[Qty]), Orders[Status] = "X"))',
+      home="Orders", expect=("value", lambda: None),
+      expected_sql="SUM(orders.AMOUNT) / NULLIF(SUM(CASE WHEN orders.STATUS = 'X' THEN orders.QTY END), 0)"),
+ dict(id="F17.3", feature="F17 Division safety", title="blank numerator keeps BLANK (not the alternate)",
+      dax='DIVIDE(CALCULATE(SUM(Orders[Amount]), Orders[Status] = "X"), SUM(Orders[Qty]), 0)',
+      home="Orders", expect=("value", lambda: None),
+      expected_sql="IFF(COALESCE(SUM(orders.QTY), 0) = 0, 0, SUM(CASE WHEN orders.STATUS = 'X' THEN orders.AMOUNT END) / SUM(orders.QTY))",
+      solution="DIVIDE(a, b, alt) -> IFF(COALESCE(b,0)=0, alt, a/b) - not COALESCE(a/b, alt)."),
+
 ]
 
 from cases_cross_table import build as _build_cross_table

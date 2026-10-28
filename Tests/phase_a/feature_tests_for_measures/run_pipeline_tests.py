@@ -114,7 +114,7 @@ def main():
             status, msg = ("FAIL", f"lost at {lost}") if lost else ("PASS", "")
             if status == "PASS" and st["DDL"] == "REAL":
                 try:
-                    got, used = evaluate(con, d["expr"], c.get("last_period")); exp = float(c["expect"][1]())
+                    got, used = evaluate(con, d["expr"], c.get("last_period")); exp_raw = c["expect"][1](); exp = float(exp_raw) if exp_raw is not None else None
                     want_anchor = adapter.alias(c["anchor"]).upper() if c.get("anchor") else None
                     line = next((l for l in ddl.splitlines() if re.search(rf'\.\s*"?{re.escape(d["name"])}"?\s', l, re.I)), "")
                     if measure_table in used: status, msg = "FAIL", "DDL references the empty measure table"

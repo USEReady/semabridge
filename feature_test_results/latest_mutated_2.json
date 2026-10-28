@@ -30,14 +30,14 @@
  "F1.5": {
   "status": "PASS",
   "msg": "0.5 == 0.5",
-  "sql": "ROUND(AVG(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) / 2, 1) - 1",
+  "sql": "ROUND(AVG(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) / NULLIF(2, 0), 1) - 1",
   "title": "trailing -1 after a function",
   "solution": ""
  },
  "F1.6": {
   "status": "PASS",
   "msg": "12.810344827586206 == 12.810344827586206",
-  "sql": "IFF(COALESCE(SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) / (SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT))) - 1",
+  "sql": "IFF(COALESCE(SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT) / SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT)) - 1",
   "title": "DIVIDE(...)-1 (variance %)",
   "solution": ""
  },
@@ -149,7 +149,7 @@
  "F4.1": {
   "status": "PASS",
   "msg": "13.810344827586206 == 13.810344827586206",
-  "sql": "((SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT))) / NULLIF((SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT)), 0)",
+  "sql": "(SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) / NULLIF((SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT)), 0)",
   "title": "two variables, DIVIDE in RETURN",
   "solution": ""
  },
@@ -184,7 +184,7 @@
  "F5.4": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COALESCE(SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Missing' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT), 0) = 0, 0, (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) / (SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Missing' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT)))",
+  "sql": "IFF(COALESCE(SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Missing' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT), 0) = 0, 0, SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT) / SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Missing' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT))",
   "title": "DIVIDE with alternate result on zero",
   "solution": ""
  },
@@ -247,14 +247,14 @@
  "F10.4": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) * (1 + (0) / 100)",
+  "sql": "SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
   "title": "what-if measure used in another measure -> default constant",
   "solution": ""
  },
  "F10.5": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "(SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) + (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) * (0) / 100",
+  "sql": "(SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) + (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) * (0) / NULLIF(100, 0)",
   "title": "same, measure referenced without table prefix",
   "solution": ""
  },
@@ -268,7 +268,7 @@
  "F7.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "COALESCE((SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)) / NULLIF((SUM(fctsalesc2.\"NET_AMT_DOL_H1\")), 0), 0)",
+  "sql": "IFF(COALESCE(SUM(fctsalesc2.\"NET_AMT_DOL_H1\"), 0) = 0, 0, SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END) / SUM(fctsalesc2.\"NET_AMT_DOL_H1\"))",
   "title": "ratio over a base measure that lives on the measure table",
   "solution": ""
  },
@@ -282,7 +282,7 @@
  "F11.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "COALESCE((SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)) / NULLIF((SUM(fctsalesc2.\"NET_AMT_DOL_H1\")), 0), 0)",
+  "sql": "IFF(COALESCE(SUM(fctsalesc2.\"NET_AMT_DOL_H1\"), 0) = 0, 0, SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END) / SUM(fctsalesc2.\"NET_AMT_DOL_H1\"))",
   "title": "declared on a dimension, built from fact measures",
   "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
  },
@@ -397,5 +397,26 @@
   "sql": null,
   "title": "IF over a disconnected selector",
   "solution": "Selector over a table with no relationships -> original not applicable; numeric branches become their own metrics (opt-in)."
+ },
+ "F17.1": {
+  "status": "PASS",
+  "msg": "None == None",
+  "sql": "COUNT(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'X' THEN fctsalesc2.\"TXN_ID_R9\" END) / NULLIF(COUNT(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'X' THEN fctsalesc2.\"TXN_ID_R9\" END) + COUNT(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Y' THEN fctsalesc2.\"TXN_ID_R9\" END), 0)",
+  "title": "DAX '/' with zero denominator -> BLANK, not an error",
+  "solution": "DAX a / b -> a / NULLIF(b, 0): Snowflake raises 'Division by zero', DAX returns BLANK."
+ },
+ "F17.2": {
+  "status": "PASS",
+  "msg": "None == None",
+  "sql": "SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT) / NULLIF(SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'X' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT), 0)",
+  "title": "DIVIDE without alternate -> NULL",
+  "solution": ""
+ },
+ "F17.3": {
+  "status": "PASS",
+  "msg": "None == None",
+  "sql": "IFF(COALESCE(SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'X' THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT) / SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT))",
+  "title": "blank numerator keeps BLANK (not the alternate)",
+  "solution": "DIVIDE(a, b, alt) -> IFF(COALESCE(b,0)=0, alt, a/b) - not COALESCE(a/b, alt)."
  }
 }

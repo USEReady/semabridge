@@ -79,7 +79,8 @@ def run_case(con, c, selftest):
             got, used = evaluate(con, sql, c.get("last_period"))
         except Exception as exc:
             return "FAIL", f"SQL does not run: {str(exc).splitlines()[0][:160]}", sql
-        exp = float(c["expect"][1]())
+        exp_val = c["expect"][1]()
+        exp = float(exp_val) if exp_val is not None else None
         if MEASURE_TABLE in used:
             return "FAIL", "references the empty measure table instead of the table in the DAX", sql
         if c.get("anchor") and c["home"] != c["anchor"] and c["home"] in used and c["home"] != MEASURE_TABLE:

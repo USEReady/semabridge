@@ -1545,11 +1545,11 @@ class DAXTranslator:
 
                         if alt.upper() in ("BLANK()", "NULL", "NONE"):
 
-                            return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
+                            return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
 
-                        return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+                        return f"IFF(COALESCE({denominator_sql}, 0) = 0, {alt}, {numerator_sql} / {denominator_sql})"
 
-                    return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
+                    return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
 
 
 
@@ -1581,7 +1581,7 @@ class DAXTranslator:
 
         if refs:
 
-            replaced = clean_dax
+            measure_map = {}
 
             for ref in refs:
 
@@ -1591,7 +1591,33 @@ class DAXTranslator:
 
                     return None
 
-                replaced = re.sub(rf"\[{re.escape(ref)}\]", f"({dep_sql})", replaced, flags=re.IGNORECASE)
+                measure_map[ref] = dep_sql
+
+            from semabridge.converter.dax_ast_parser import try_ast_translate
+
+            ast_res = try_ast_translate(
+
+                clean_dax,
+
+                table_alias=table_alias,
+
+                date_alias=self._get_date_alias(),
+
+                measure_sql_map=measure_map,
+
+                known_measure_names=set(measure_map.keys()),
+
+            )
+
+            if ast_res:
+
+                return ast_res
+
+            replaced = clean_dax
+
+            for ref in refs:
+
+                replaced = re.sub(rf"\[{re.escape(ref)}\]", f"({measure_map[ref]})", replaced, flags=re.IGNORECASE)
 
 
 
@@ -3024,11 +3050,11 @@ class DAXTranslator:
 
                         if alt.upper() in ("BLANK()", "NULL", "NONE"):
 
-                            return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
+                            return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
 
-                        return f"COALESCE(({numerator_sql}) / NULLIF(({denominator_sql}), 0), {alt})"
+                        return f"IFF(COALESCE({denominator_sql}, 0) = 0, {alt}, {numerator_sql} / {denominator_sql})"
 
-                    return f"({numerator_sql}) / NULLIF(({denominator_sql}), 0)"
+                    return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
 
 
 
@@ -3071,6 +3097,42 @@ class DAXTranslator:
                 return None
 
 
+
+            refs = extract_measure_refs(clean_expr)
+
+            if refs:
+
+                measure_map = {}
+
+                for ref in refs:
+
+                    dep_sql = resolve_measure_sql(ref, visiting)
+
+                    if not dep_sql:
+
+                        return None
+
+                    measure_map[ref] = dep_sql
+
+                from semabridge.converter.dax_ast_parser import try_ast_translate
+
+                ast_res = try_ast_translate(
+
+                    clean_expr,
+
+                    table_alias=table_alias,
+
+                    date_alias=self._get_date_alias(),
+
+                    measure_sql_map=measure_map,
+
+                    known_measure_names=set(measure_map.keys()),
+
+                )
+
+                if ast_res:
+
+                    return ast_res
 
             replaced = replace_measure_refs(clean_expr, visiting)
 

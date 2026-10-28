@@ -2367,6 +2367,22 @@ class DaxSqlRenderer:
 
             return f"({left}) {sql_op} ({right})"
 
+        if sql_op == "/":
+            right_expr = right
+            if right_expr.startswith("(") and right_expr.endswith(")"):
+                depth = 0
+                balanced = True
+                for ch in right_expr[:-1]:
+                    if ch == "(": depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            balanced = False
+                            break
+                if balanced:
+                    right_expr = right_expr[1:-1]
+            return f"{left} / NULLIF({right_expr}, 0)"
+
         return f"{left} {sql_op} {right}"
 
 
@@ -2854,38 +2870,21 @@ class DaxSqlRenderer:
 
 
     def _render_divide(self, args: List[DaxNode]) -> str:
-
         if len(args) < 2:
-
             raise self.DaxRenderError("DIVIDE requires at least 2 arguments")
-
         num = self._render_node(args[0])
-
         den = self._render_node(args[1])
-
+        num_expr = f"({num})" if isinstance(args[0], BinaryOpNode) and args[0].op in ("+", "-") else num
+        den_expr = f"({den})" if isinstance(args[1], BinaryOpNode) and args[1].op in ("+", "-") else den
         if len(args) > 2:
-
             alt_node = args[2]
-
             if isinstance(alt_node, FunctionCallNode) and alt_node.func.upper() == "BLANK":
-
-                return f"({num}) / NULLIF({den}, 0)"
-
+                return f"{num_expr} / NULLIF({den_expr}, 0)"
             alt = self._render_node(alt_node)
-
             if alt.upper() in ("NULL", "NONE", "", "BLANK()"):
-
-                return f"({num}) / NULLIF({den}, 0)"
-
-            return f"IFF(COALESCE({den}, 0) = 0, {alt}, ({num}) / ({den}))"
-
-        return f"({num}) / NULLIF({den}, 0)"
-
-
-
-
-
-
+                return f"{num_expr} / NULLIF({den_expr}, 0)"
+            return f"IFF(COALESCE({den}, 0) = 0, {alt}, {num} / {den})"
+        return f"{num_expr} / NULLIF({den_expr}, 0)"
 
     def _render_if(self, args: List[DaxNode]) -> str:
 

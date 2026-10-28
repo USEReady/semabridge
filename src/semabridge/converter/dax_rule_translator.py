@@ -444,9 +444,9 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
         return None
 
     if alternate_result is not None:
-        result = f"COALESCE(({numerator_sql}) / NULLIF({denominator_sql}, 0), {alternate_result})"
+        result = f"IFF(COALESCE({denominator_sql}, 0) = 0, {alternate_result}, {numerator_sql} / {denominator_sql})"
     else:
-        result = f"({numerator_sql}) / NULLIF({denominator_sql}, 0)"
+        result = f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
     logger.debug(f"Translated DIVIDE expression to: {result}")
     return result
 

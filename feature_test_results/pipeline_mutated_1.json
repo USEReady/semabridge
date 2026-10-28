@@ -45,7 +45,7 @@
    "DDL": "REAL"
   },
   "title": "what-if measure used in another measure -> default constant",
-  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) * (1 + (0) / 100)"
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) * (1 + (0) / NULLIF(100, 0))"
  },
  "F10.5": {
   "status": "PASS",
@@ -57,7 +57,7 @@
    "DDL": "REAL"
   },
   "title": "same, measure referenced without table prefix",
-  "ddl_sql": "(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) + (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) * (0) / 100"
+  "ddl_sql": "(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) + (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) * (0) / NULLIF(100, 0)"
  },
  "F11.1": {
   "status": "PASS",
@@ -81,7 +81,7 @@
    "DDL": "REAL"
   },
   "title": "declared on a dimension, built from fact measures",
-  "ddl_sql": "COALESCE((SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)), 0), 0)"
+  "ddl_sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT) / SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT))"
  },
  "F11.3": {
   "status": "PASS",
@@ -321,7 +321,7 @@
    "DDL": "REAL"
   },
   "title": "trailing -1 after a function",
-  "ddl_sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) / 2, 1) - 1"
+  "ddl_sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) / NULLIF(2, 0), 1) - 1"
  },
  "F1.6": {
   "status": "PASS",
@@ -333,7 +333,7 @@
    "DDL": "REAL"
   },
   "title": "DIVIDE(...)-1 (variance %)",
-  "ddl_sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT), 0) = 0, 0, (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) / (SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT))) - 1"
+  "ddl_sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT), 0) = 0, 0, SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT) / SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT)) - 1"
  },
  "F1.7": {
   "status": "PASS",
@@ -525,7 +525,7 @@
    "DDL": "REAL"
   },
   "title": "two variables, DIVIDE in RETURN",
-  "ddl_sql": "((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT))) / NULLIF((SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT)), 0)"
+  "ddl_sql": "(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT)), 0)"
  },
  "F4.2": {
   "status": "PASS",
@@ -585,7 +585,7 @@
    "DDL": "REAL"
   },
   "title": "DIVIDE with alternate result on zero",
-  "ddl_sql": "IFF(COALESCE(SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Missing' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT), 0) = 0, 0, (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) / (SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Missing' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT)))"
+  "ddl_sql": "IFF(COALESCE(SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Missing' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT), 0) = 0, 0, SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT) / SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Missing' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT))"
  },
  "F6.1": {
   "status": "PASS",
@@ -681,6 +681,42 @@
    "DDL": "REAL"
   },
   "title": "ratio over a base measure that lives on the measure table",
-  "ddl_sql": "COALESCE((SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)), 0), 0)"
+  "ddl_sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT) / SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT))"
+ },
+ "F17.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DAX '/' with zero denominator -> BLANK, not an error",
+  "ddl_sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'X' THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END) / NULLIF(COUNT(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'X' THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END) + COUNT(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Y' THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 "
+ },
+ "F17.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DIVIDE without alternate -> NULL",
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT) / NULLIF(SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'X' THEN TRANSACTIONS_LOG_V2.UNITS_P4 END::FLOAT), 0)"
+ },
+ "F17.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "blank numerator keeps BLANK (not the alternate)",
+  "ddl_sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'X' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT) / SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT))"
  }
 }
