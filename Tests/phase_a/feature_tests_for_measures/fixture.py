@@ -4,7 +4,9 @@ column names. Names include spaces / special characters so naming rules are exer
 
   Orders  (fact)  -> Product (dimension) on ProductID
   Measures        empty measure-only table (only an ID column) - where many PBIX measures live
-  Param           one-column what-if parameter table
+  Param           one-column what-if parameter table (several values, no relationships)
+  Scenario        one-row parameter table (exactly one value)
+  Nullable        one number + a blank (DAX counts the blank as a second value)
 """
 import datetime as dt
 import pandas as pd
@@ -30,7 +32,14 @@ PRODUCT = pd.DataFrame({"ProductID": [1, 2, 3], "Name": ["Alpha", "Beta", "Gamma
                         "Category": ["Hardware", "Software", "Software"]})
 MEASURES = pd.DataFrame({"ID": [1]})
 PARAM = pd.DataFrame({"Value": [0, 10, 20, 30]})
+SCENARIO = pd.DataFrame({"Value": [5]})                    # exactly one value
+NULLABLE = pd.DataFrame({"Value": [3.0, None]})            # one number + a blank = two values in DAX
 
-TABLES = {"Orders": ORDERS, "Product": PRODUCT, "Measures": MEASURES, "Param": PARAM}
+TABLES = {"Orders": ORDERS, "Product": PRODUCT, "Measures": MEASURES, "Param": PARAM,
+          "Scenario": SCENARIO, "Nullable": NULLABLE}
 FACT = "Orders"
 RELATIONSHIPS = [("Orders", "ProductID", "Product", "ProductID")]   # many-to-one, active
+
+INACTIVE = []
+from fixture_cross_table import extend as _extend_cross_table
+_extend_cross_table(TABLES, RELATIONSHIPS, INACTIVE)

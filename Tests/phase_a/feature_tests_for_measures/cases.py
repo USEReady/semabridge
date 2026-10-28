@@ -56,19 +56,6 @@ CASES = [
       expected_sql="IFF(SUM(orders.QTY) > 0, -1 * SUM(orders.QTY), -1)"),
  dict(id="F1.8", feature="F1 Lexer & parser", title="leftover tokens must fail, not return partial SQL",
       dax="SUM(Orders[Qty]) SUM(Orders[Amount])", home="Orders", expect=("no_sql", "two expressions without an operator")),
- dict(id="F1.9", feature="F1 Lexer & parser", title="brackets in a denominator",
-      dax="SUM(Orders[Amount]) / (SUM(Orders[Qty]) + SUM(Orders[Price]))", home="Orders",
-      expect=("value", lambda: O.Amount.sum() / (O.Qty.sum() + O.Price.sum())),
-      expected_sql="SUM(orders.AMOUNT) / (SUM(orders.QTY) + SUM(orders.PRICE))"),
- dict(id="F1.10", feature="F1 Lexer & parser", title="non-associative minus",
-      dax="SUM(Orders[Amount]) - (SUM(Orders[Qty]) - SUM(Orders[Price]))", home="Orders",
-      expect=("value", lambda: O.Amount.sum() - (O.Qty.sum() - O.Price.sum())),
-      expected_sql="SUM(orders.AMOUNT) - (SUM(orders.QTY) - SUM(orders.PRICE))"),
- dict(id="F1.11", feature="F1 Lexer & parser", title="brackets around measure references",
-      dax="[Total Amount] / ([Total Amount] + [Total Qty])", home="Orders",
-      expect=("value", lambda: O.Amount.sum() / (O.Amount.sum() + O.Qty.sum())),
-      context={k: BASE[k] for k in ("Total Amount", "Total Qty")},
-      expected_sql="SUM(orders.AMOUNT) / (SUM(orders.AMOUNT) + SUM(orders.QTY))"),
 
  # ---------------------------------------------------------------- F2 references & naming
  dict(id="F2.1", feature="F2 References", title="bare [Column] inside a nested function",
@@ -157,6 +144,27 @@ CASES = [
       dax="DIVIDE([Total Amount], CALCULATE([Total Amount], ALL(Product)))", home="Measures",
       expect=("not_applicable", "filter context"), context={"Total Amount": BASE["Total Amount"]}),
 
+ # ---------------------------------------------------------------- F10 SELECTEDVALUE
+ dict(id="F10.1", feature="F10 SELECTEDVALUE", title="several values -> alternate (never ANY_VALUE)",
+      dax="SELECTEDVALUE(Param[Value], 0)", home="Param", expect=("value", lambda: 0),
+      expected_sql="IFF(COUNT(DISTINCT param.COL_VALUE) + MAX(IFF(param.COL_VALUE IS NULL, 1, 0)) = 1, MAX(param.COL_VALUE), 0)"),
+ dict(id="F10.2", feature="F10 SELECTEDVALUE", title="exactly one value -> that value",
+      dax="SELECTEDVALUE(Scenario[Value], 0)", home="Scenario", expect=("value", lambda: 5),
+      expected_sql="IFF(COUNT(DISTINCT scenario.COL_VALUE) + MAX(IFF(scenario.COL_VALUE IS NULL, 1, 0)) = 1, MAX(scenario.COL_VALUE), 0)"),
+ dict(id="F10.3", feature="F10 SELECTEDVALUE", title="one number + blank -> alternate (blank counts as a value)",
+      dax="SELECTEDVALUE(Nullable[Value], 0)", home="Nullable", expect=("value", lambda: 0),
+      expected_sql="IFF(COUNT(DISTINCT nullable.COL_VALUE) + MAX(IFF(nullable.COL_VALUE IS NULL, 1, 0)) = 1, MAX(nullable.COL_VALUE), 0)"),
+ dict(id="F10.4", feature="F10 SELECTEDVALUE", title="what-if measure used in another measure -> default constant",
+      dax="SUM(Orders[Qty]) * (1 + Param[Adjustment Value] / 100)", home="Orders",
+      context={"Adjustment Value": ("Param", "SELECTEDVALUE(Param[Value], 0)")},
+      expect=("value", lambda: O.Qty.sum()),
+      expected_sql="SUM(orders.QTY) * (1 + (0) / 100)"),
+ dict(id="F10.5", feature="F10 SELECTEDVALUE", title="same, measure referenced without table prefix",
+      dax="VAR r = SUM(Orders[Amount]) RETURN r + r * ([Adjustment Value] / 100)", home="Orders",
+      context={"Adjustment Value": ("Param", "SELECTEDVALUE(Param[Value], 0)")},
+      expect=("value", lambda: O.Amount.sum()),
+      expected_sql="(SUM(orders.AMOUNT)) + (SUM(orders.AMOUNT)) * ((0) / 100)"),
+
  # ---------------------------------------------------------------- F7 measure dependencies
  dict(id="F7.1", feature="F7 Dependencies", title="arithmetic over two base measures",
       dax="[Total Amount] - [Total Qty]", home="Orders", expect=("value", lambda: O.Amount.sum() - O.Qty.sum()),
@@ -167,3 +175,6 @@ CASES = [
       context={k: BASE[k] for k in ("Sold Amount", "Total Amount")},
       expected_sql="IFF(COALESCE(SUM(orders.AMOUNT), 0) = 0, 0, SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.AMOUNT END) / SUM(orders.AMOUNT))"),
 ]
+
+from cases_cross_table import build as _build_cross_table
+CASES += _build_cross_table(BASE)

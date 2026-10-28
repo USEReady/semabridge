@@ -19,55 +19,51 @@ sys.path[:0] = [HERE, os.path.dirname(HERE)]
 
 import duckdb, sqlglot
 from fixture import TABLES, FACT, RELATIONSHIPS
-from cases import CASES
+try:
+    from fixture import INACTIVE
+except ImportError:
+    INACTIVE = []
+import cross_table
+EDGES = []
+from cases import CASES, BASE
+import mutate
+MEASURE_TABLE = "Measures"
 from relationship_inventory import sb_column          # SemaBridge naming rules (uppercase, specials -> _, reserved -> COL_)
 import adapter
 
-def build_db(tables=TABLES):
+def build_db():
+    global EDGES
     con = duckdb.connect()
-    for t, df in tables.items():
-        d = df.copy(); d.columns = [sb_column(c) for c in d.columns]
-        con.register("_tmp", d)
-        a = adapter.alias(t)
-        con.execute(f'CREATE TABLE "{a}" AS SELECT * FROM _tmp')
-        san = sb_column(t).upper()
-        if san.casefold() != a.casefold():
-            con.execute(f'CREATE VIEW "{san}" AS SELECT * FROM "{a}"')
-        con.unregister("_tmp")
+    EDGES = cross_table.build(con, TABLES, RELATIONSHIPS, INACTIVE, adapter.alias, sb_column)
     return con
 
-def from_clause(sql, tables=TABLES, fact=FACT, rels=RELATIONSHIPS):
-    def _in_sql(t):
-        a1, a2 = re.escape(adapter.alias(t)), re.escape(sb_column(t).upper())
-        return bool(re.search(rf'(?<![\w"])(?:{a1}|{a2})"?\s*\.', sql, re.I))
+def _aliases():
+    return [adapter.alias(t) for t in TABLES] + [e[2] for e in EDGES if e[2] not in {adapter.alias(t) for t in TABLES}]
 
-    used = [t for t in tables if _in_sql(t)]
-    use_upper = any(re.search(rf'(?<![\w"]){re.escape(sb_column(t).upper())}"?\s*\.', sql) for t in tables)
-    def _name(t):
-        return f'"{sb_column(t).upper()}"' if use_upper else f'"{adapter.alias(t)}"'
-
-    if not used:
-        return _name(fact), used
-    if len(used) == 1:
-        return _name(used[0]), used
-    sql_from = _name(fact)
-    for ft, fc, tt, tc in rels:
-        if tt in used and tt != fact:
-            sql_from += f' LEFT JOIN {_name(tt)} ON {_name(ft)}.{sb_column(fc)} = {_name(tt)}.{sb_column(tc)}'
-    return sql_from, used
-
-def evaluate(con, sql, tables=TABLES, fact=FACT, rels=RELATIONSHIPS):
-    frm, used = from_clause(sql, tables, fact, rels)
-    q = sqlglot.transpile(f"SELECT {sql} FROM {frm}", read="snowflake", write="duckdb")[0]
+def evaluate(con, sql, last_period=None):
+    """Run a metric expression on the synthetic data. last_period=(table, column) simulates a
+    NON ADDITIVE BY (column) metric: the value is taken at the last value of that column."""
+    force, where = (), ""
+    if last_period:
+        pa, pc = adapter.alias(last_period[0]), sb_column(last_period[1])
+        force, where = (pa,), f' WHERE "{pa}"."{pc}" = (SELECT MAX("{pc}") FROM "{pa}")'
+    for t in TABLES:
+        phys = sb_column(t).upper()
+        ali = adapter.alias(t)
+        if phys != ali:
+            sql = re.sub(rf'(?<![\w\"])"?{re.escape(phys)}"?\.', f'{ali}.', sql)
+    frm, used = cross_table.from_clause(sql, _aliases(), EDGES, adapter.alias(FACT), force)
+    q = sqlglot.transpile(f"SELECT {sql} FROM {frm}{where}", read="snowflake", write="duckdb")[0]
     v = con.execute(q).fetchone()[0]
-    return (float(v) if v is not None else None), used
+    names = {adapter.alias(t): t for t in TABLES}
+    return (float(v) if v is not None else None), [names.get(u, u) for u in used]
 
 def close(a, b):
     if a is None or b is None:
         return a is None and b is None
     return math.isclose(a, float(b), rel_tol=1e-6, abs_tol=1e-9)
 
-def run_case(con, c, selftest, tables=TABLES, fact=FACT, rels=RELATIONSHIPS, measures_tbl="Measures"):
+def run_case(con, c, selftest):
     kind = c["expect"][0]
     if selftest:
         if kind != "value":
@@ -80,12 +76,14 @@ def run_case(con, c, selftest, tables=TABLES, fact=FACT, rels=RELATIONSHIPS, mea
         if res["status"] != "ok":
             return "FAIL", f"{res['status']}: {res['reason'][:160]}", sql
         try:
-            got, used = evaluate(con, sql, tables, fact, rels)
+            got, used = evaluate(con, sql, c.get("last_period"))
         except Exception as exc:
             return "FAIL", f"SQL does not run: {str(exc).splitlines()[0][:160]}", sql
         exp = float(c["expect"][1]())
-        if measures_tbl in used:
+        if MEASURE_TABLE in used:
             return "FAIL", "references the empty measure table instead of the table in the DAX", sql
+        if c.get("anchor") and c["home"] != c["anchor"] and c["home"] in used and c["home"] != MEASURE_TABLE:
+            return "FAIL", f"uses its DAX home table {c['home']} instead of the data table {c['anchor']}", sql
         return ("PASS", f"{got} == {exp}", sql) if close(got, exp) else ("FAIL", f"value {got}, expected {exp}", sql)
     if kind == "no_sql":
         return ("PASS", "rejected", sql) if res["status"] != "ok" else ("FAIL", "returned SQL for malformed input", sql)
@@ -101,21 +99,24 @@ def main():
     ap.add_argument("--feature", help="run one feature, e.g. F3")
     ap.add_argument("--selftest", action="store_true", help="evaluate the reference SQL instead of SemaBridge")
     ap.add_argument("--results", default=os.path.join("feature_test_results", "latest.json"))
-    ap.add_argument("--mutate", type=int, help="seed for mutate.py table/column renaming")
+    ap.add_argument("--mutate", type=int, metavar="SEED", help="rename every table/column (no-hardcoding check)")
     args = ap.parse_args()
-
-    tables, fact, rels, cases_list, base, measures_tbl = TABLES, FACT, RELATIONSHIPS, CASES, None, "Measures"
+    global TABLES, FACT, RELATIONSHIPS, CASES, MEASURE_TABLE, INACTIVE
     if args.mutate is not None:
-        import mutate
-        from cases import BASE
-        tables, fact, rels, cases_list, base, measures_tbl, _ = mutate.apply(args.mutate, TABLES, FACT, RELATIONSHIPS, CASES, BASE)
+        TABLES, FACT, RELATIONSHIPS, CASES, _, MEASURE_TABLE, names = mutate.apply(
+            args.mutate, TABLES, FACT, RELATIONSHIPS, CASES, BASE, INACTIVE)
+        INACTIVE = mutate.MUTATED_INACTIVE
+        print("Renamed (seed %d): %s" % (args.mutate, ", ".join(f"{k} -> {v}" for k, v in names.items())))
+        if args.results.endswith("latest.json"):
+            args.results = args.results.replace("latest.json", f"latest_mutated_{args.mutate}.json")
 
-    con = build_db(tables)
-    cases = [c for c in cases_list if not args.feature or c["id"].split(".")[0] == args.feature.upper()]
+    con = build_db()
+    cases = [c for c in CASES if not args.feature or c["id"].split(".")[0] == args.feature.upper()]
     results, board = {}, OrderedDict()
     for c in cases:
-        status, msg, sql = run_case(con, c, args.selftest, tables, fact, rels, measures_tbl)
-        results[c["id"]] = {"status": status, "msg": msg, "sql": sql, "title": c["title"]}
+        status, msg, sql = run_case(con, c, args.selftest)
+        results[c["id"]] = {"status": status, "msg": msg, "sql": sql, "title": c["title"],
+                            "solution": c.get("solution", "")}
         b = board.setdefault(c["feature"], [0, 0, 0]); b[0] += status == "PASS"; b[1] += 1; b[2] += status == "WARN"
 
     print(f"\n{'FEATURE':28} PASS / TOTAL")
@@ -124,6 +125,8 @@ def main():
     for cid, r in results.items():
         if r["status"] != "PASS":
             print(f"\n{r['status']:4} {cid} {r['title']}\n     {r['msg']}" + (f"\n     sql: {r['sql'][:200]}" if r["sql"] else ""))
+            if r.get("solution"):
+                print(f"     expected solution: {r['solution']}")
 
     if args.selftest:
         bad = [k for k, r in results.items() if r["status"] == "FAIL"]

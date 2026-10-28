@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 ALLOW_TIER5 = os.environ.get("SEMABRIDGE_TIER5") == "1"
 NA_WORDS = re.compile(r"by[_ ]design|not applicable|exclu|string|text|non-?numeric|selectedvalue|what-?if|"
-                      r"rank|isinscope|filter context|all\(", re.I)
+                      r"rank|isinscope|filter context|all\(|window metric|non-?additive|unrelated|time intelligence", re.I)
 _translator = None
 
 

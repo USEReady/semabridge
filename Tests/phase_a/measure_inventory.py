@@ -172,7 +172,7 @@ def ddl_metrics(text):
     for item in _split_top(_clause(text, "metrics")):
         item = re.sub(r"\s+comment\s*=\s*'(?:[^']|'')*'\s*$", "", item, flags=re.I | re.S)
         item = re.sub(r"\s+with\s+synonyms\s*=\s*\(.*\)\s*$", "", item, flags=re.I | re.S)
-        m = re.match(r'^\s*("?[^".\s]+"?)\s*\.\s*("(?:[^"]|"")+"|[^\s]+)\s+as\s+(.*)$', item, re.I | re.S)
+        m = re.match(r'^\s*("?[^".\s]+"?)\s*\.\s*("(?:[^"]|"")+"|[^\s]+)(?:\s+non\s+additive\s+by\s*\(.*?\))?\s+as\s+(.*)$', item, re.I | re.S)
         if not m:
             continue
         name = m.group(2).strip('"')

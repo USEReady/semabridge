@@ -13,6 +13,8 @@ TABLE_POOL = {
     "Product":  ["Dim Item", "Catalogue", "SKU Master", "Item-List"],
     "Measures": ["Calc Measures", "_Metrics", "KPI Box", "Key Figures"],
     "Param":    ["What If Pct", "Slider Values", "Scenario %", "Adj Param"],
+    "Scenario": ["Single Pick", "One Value Tbl", "Chosen Set"],
+    "Nullable": ["Gappy Values", "Sparse Param", "Holes & Nums"],
 }
 COLUMN_POOL = {
     "OrderID": ["Order Key", "Line No", "Txn Id"], "ProductID": ["Item Key", "SKU Id", "Prod No"],
@@ -26,12 +28,22 @@ COLUMN_POOL = {
 }
 
 
-def plan(seed):
+GENERIC_WORDS = ["Alpha", "Bravo", "Delta", "Kappa", "Omega", "Sigma", "Zeta", "Nova", "Orbit", "Prism"]
+
+
+def plan(seed, table_names=(), column_names=()):
     rnd = random.Random(seed)
     suffix = lambda: f" {rnd.choice('ABCDEFGHJKMNPQRSTUVWXYZ')}{rnd.randint(1, 9)}"
     tables = {k: rnd.choice(v) + suffix() for k, v in TABLE_POOL.items()}
     cols = {k: rnd.choice(v) + suffix() for k, v in COLUMN_POOL.items()}
+    for t in table_names:                 # any table without a pool entry still gets a new name
+        tables.setdefault(t, f"Tbl {rnd.choice(GENERIC_WORDS)}{suffix()}")
+    for c in column_names:
+        cols.setdefault(c, f"Col {rnd.choice(GENERIC_WORDS)}{suffix()}")
     return tables, cols
+
+
+MUTATED_INACTIVE = []
 
 
 def _quote(name):
@@ -49,8 +61,10 @@ def rewrite_dax(dax, tables, cols, measure_names):
     return re.sub(r"\[([^\]]+)\]", col, out)
 
 
-def apply(seed, TABLES, FACT, RELATIONSHIPS, CASES, BASE):
-    tables, cols = plan(seed)
+def apply(seed, TABLES, FACT, RELATIONSHIPS, CASES, BASE, INACTIVE=()):
+    global MUTATED_INACTIVE
+    tables, cols = plan(seed, list(TABLES), sorted({c for df in TABLES.values() for c in df.columns}))
+    MUTATED_INACTIVE = [(tables[a], cols.get(b, b), tables[c], cols.get(d, d)) for a, b, c, d in INACTIVE]
     new_tables = {tables[t]: df.rename(columns=cols) for t, df in TABLES.items()}
     new_rel = [(tables[a], cols.get(b, b), tables[c], cols.get(d, d)) for a, b, c, d in RELATIONSHIPS]
     measure_names = set(BASE) | {n for c in CASES for n in (c.get("context") or {})}
@@ -59,6 +73,10 @@ def apply(seed, TABLES, FACT, RELATIONSHIPS, CASES, BASE):
         n = dict(c)
         n["dax"] = rewrite_dax(c["dax"], tables, cols, measure_names)
         n["home"] = tables[c["home"]]
+        if c.get("anchor"):
+            n["anchor"] = tables[c["anchor"]]
+        if c.get("last_period"):
+            n["last_period"] = (tables[c["last_period"][0]], cols.get(c["last_period"][1], c["last_period"][1]))
         if c.get("context"):
             n["context"] = {k: (tables[h], rewrite_dax(d, tables, cols, measure_names)) for k, (h, d) in c["context"].items()}
         n.pop("expected_sql", None)

@@ -1,346 +1,167 @@
-project_name: Life Expectancy
+project_name: Human Resource
 source:
   type: pbix
-  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-life-expectancy/76d5a5b6fbda4fcebe011f68b5801e18_Life
-    expectancy v202009.pbix
-  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-life-expectancy/76d5a5b6fbda4fcebe011f68b5801e18_Life
-    expectancy v202009.pbix
+  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-human-resource/c5d2764b101f4c8fa38d7637277b77a5_Human
+    Resources Sample PBIX.pbix
+  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-human-resource/c5d2764b101f4c8fa38d7637277b77a5_Human
+    Resources Sample PBIX.pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
-  schema: LIFE_EXPECTANCY
+  schema: HUMAN_RESOURCES
   warehouse: DI_OTH_POC_WH
   identity_id: 766ac499-4d9b-4f9f-adc9-5206789f1d57
 mappings_overrides:
-- source_path: datasets.Buckets.columns.Bucket
-  target_name: BUCKET
-- source_path: datasets.Buckets.columns.Category
-  target_name: CATEGORY
-- source_path: datasets.Buckets.columns.Bucket Sort
-  target_name: BUCKET_SORT
-- source_path: datasets.Buckets.columns.Bucket_2
-  target_name: BUCKET_2
-- source_path: datasets.Country.columns.Country
-  target_name: COL_COUNTRY
-- source_path: datasets.Country.columns.Country Code
-  target_name: COUNTRY_COUNTRY_CODE
-- source_path: datasets.Country.columns.Region
-  target_name: COUNTRY_REGION
-- source_path: datasets.Country.columns.Continent
-  target_name: CONTINENT
-- source_path: datasets.Country.columns.World
-  target_name: WORLD
-- source_path: datasets.Extra Year.columns.Extra year
-  target_name: EXTRA_YEAR
-- source_path: datasets.Flags.columns.Country Code
-  target_name: FLAGS_COUNTRY_CODE
-- source_path: datasets.Flags.columns.Country
-  target_name: FLAGS_COUNTRY
-- source_path: datasets.Flags.columns.Images File Name
-  target_name: IMAGES_FILE_NAME
-- source_path: datasets.Flags.columns.ImageURL
-  target_name: IMAGEURL
-- source_path: datasets.Indicators.columns.Year
-  target_name: INDICATORS_YEAR
-- source_path: datasets.Indicators.columns.Region
-  target_name: INDICATORS_REGION
-- source_path: datasets.Indicators.columns.Country Code
-  target_name: INDICATORS_COUNTRY_CODE
-- source_path: datasets.Indicators.columns.Country
-  target_name: INDICATORS_COUNTRY
-- source_path: datasets.Indicators.columns.Sex
-  target_name: INDICATORS_SEX
-- source_path: datasets.Indicators.columns.Cholera case fatality rate
-  target_name: CHOLERA_CASE_FATALITY_RATE
-- source_path: datasets.Indicators.columns.Number of neonatal deaths (thousands)
-  target_name: NUMBER_OF_NEONATAL_DEATHS_THOUSANDS
-- source_path: datasets.Indicators.columns.Malaria - number of reported deaths
-  target_name: MALARIA_NUMBER_OF_REPORTED_DEATHS
-- source_path: datasets.Indicators.columns.Estimated number of malaria deaths
-  target_name: ESTIMATED_NUMBER_OF_MALARIA_DEATHS
-- source_path: datasets.Indicators.columns.Under-five mortality rate (probability
-    of dying by age 5 per 1000 live births)
-  target_name: UNDER_FIVE_MORTALITY_RATE_PROBABILITY_OF_DYING_BY_AGE_5_PER_1000_LIVE_BIRTHS
-- source_path: datasets.Indicators.columns.Children aged <5 years sleeping under insecticide-treated
-    nets (%)
-  target_name: CHILDREN_AGED_LT5_YEARS_SLEEPING_UNDER_INSECTICIDE_TREATED_NETS_PCT
-- source_path: datasets.Indicators.columns.Incidence of tuberculosis (per 100 000
-    population per year)
-  target_name: INCIDENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION_PER_YEAR
-- source_path: datasets.Indicators.columns.Prevalence of tuberculosis (per 100 000
-    population)
-  target_name: PREVALENCE_OF_TUBERCULOSIS_PER_100_000_POPULATION
-- source_path: datasets.Indicators.columns.Births attended by skilled health personnel,
-    among girls aged 15-19 (%)
-  target_name: BIRTHS_ATTENDED_BY_SKILLED_HEALTH_PERSONNEL_AMONG_GIRLS_AGED_15_19_PCT
-- source_path: datasets.Indicators.columns.Maternal mortality ratio (per 100 000 live
-    births)
-  target_name: MATERNAL_MORTALITY_RATIO_PER_100_000_LIVE_BIRTHS
-- source_path: datasets.Indicators.columns.Life expectancy at birth (years)
-  target_name: LIFE_EXPECTANCY_AT_BIRTH_YEARS
-- source_path: datasets.Indicators.columns.Neonatal mortality rate (per 1000 live
-    births)
-  target_name: NEONATAL_MORTALITY_RATE_PER_1000_LIVE_BIRTHS
-- source_path: datasets.Indicators.columns.Life expectancy at age 60 (years)
-  target_name: LIFE_EXPECTANCY_AT_AGE_60_YEARS
-- source_path: datasets.Indicators.columns.Hepatitis B (HepB3) immunization coverage
-    among 1-year-olds (%)
-  target_name: HEPATITIS_B_HEPB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
-- source_path: datasets.Indicators.columns.Hib (Hib3) immunization coverage among
-    1-year-olds (%)
-  target_name: HIB_HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
-- source_path: datasets.Indicators.columns.Hospital beds (per 10 000 population)
-  target_name: HOSPITAL_BEDS_PER_10_000_POPULATION
-- source_path: datasets.Indicators.columns.General government expenditure on health
-    as a percentage of total government expenditure
-  target_name: GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_GOVERNMENT_EXPENDITURE
-- source_path: datasets.Indicators.columns.General government expenditure on health
-    as a percentage of total expenditure on health
-  target_name: GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH
-- source_path: datasets.Indicators.columns.Measles-containing-vaccine first-dose (MCV1)
-    immunization coverage among 1-year-olds (%)
-  target_name: MEASLES_CONTAINING_VACCINE_FIRST_DOSE_MCV1_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
-- source_path: datasets.Indicators.columns.Gross national income per capita (PPP int.
-    $)
-  target_name: GROSS_NATIONAL_INCOME_PER_CAPITA_PPP_INT_DOL
-- source_path: datasets.Indicators.columns.Number of community health workers
-  target_name: NUMBER_OF_COMMUNITY_HEALTH_WORKERS
-- source_path: datasets.Indicators.columns.Community health workers density (per 10
-    000 population)
-  target_name: COMMUNITY_HEALTH_WORKERS_DENSITY_PER_10_000_POPULATION
-- source_path: datasets.Indicators.columns.Children aged <5 years with ARI symptoms
-    who took antibiotic treatment (%)
-  target_name: CHILDREN_AGED_LT5_YEARS_WITH_ARI_SYMPTOMS_WHO_TOOK_ANTIBIOTIC_TREATMENT_PCT
-- source_path: datasets.Indicators.columns.Income share held by lowest 20%
-  target_name: INCOME_SHARE_HELD_BY_LOWEST_20PCT
-- source_path: datasets.Indicators.columns.% of population living on less than $1.90
-    per day
-  target_name: PCT_OF_POPULATION_LIVING_ON_LESS_THAN_DOL1_90_PER_DAY
-- source_path: datasets.Indicators.columns.Net national income per capita
-  target_name: NET_NATIONAL_INCOME_PER_CAPITA
-- source_path: datasets.Indicators.columns.GDP per capita (current US$)
-  target_name: GDP_PER_CAPITA_CURRENT_USDOL
-- source_path: datasets.Indicators.columns.Percentage of female population with no
-    education
-  target_name: PERCENTAGE_OF_FEMALE_POPULATION_WITH_NO_EDUCATION
-- source_path: datasets.Indicators.columns.Female pupils below minimum reading proficiency
-    at end of primary (%)
-  target_name: FEMALE_PUPILS_BELOW_MINIMUM_READING_PROFICIENCY_AT_END_OF_PRIMARY_PCT
-- source_path: datasets.Indicators.columns.Life expectancy (yrs)
-  target_name: LIFE_EXPECTANCY_YRS
-- source_path: datasets.Indicators.columns.GDP per capita (US $)
-  target_name: GDP_PER_CAPITA_US_DOL
-- source_path: datasets.Indicators.columns.Income share held by lowest 20% (bins)
-  target_name: INCOME_SHARE_HELD_BY_LOWEST_20PCT_BINS
-- source_path: datasets.Indicators.columns.General government expenditure on health
-    as a percentage of total expenditure on health (bins)
-  target_name: GENERAL_GOVERNMENT_EXPENDITURE_ON_HEALTH_AS_A_PERCENTAGE_OF_TOTAL_EXPENDITURE_ON_HEALTH_BINS
-- source_path: datasets.Indicators.columns.High/Low
-  target_name: HIGH_LOW
-- source_path: datasets.Indicators.columns.GDP per capita (current US $) (bins)
-  target_name: GDP_PER_CAPITA_CURRENT_US_DOL_BINS
-- source_path: datasets.Indicators.columns.People using at least basic drinking water
-    services (% of population)
-  target_name: PEOPLE_USING_AT_LEAST_BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
-- source_path: datasets.Indicators.columns.People using safely managed drinking water
-    services (% of population)
-  target_name: PEOPLE_USING_SAFELY_MANAGED_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
-- source_path: datasets.Indicators.columns.% of income held by poorest 20%
-  target_name: PCT_OF_INCOME_HELD_BY_POOREST_20PCT
-- source_path: datasets.Indicators.columns.Basic drinking water services (% of population)
-  target_name: BASIC_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
-- source_path: datasets.Indicators.columns.Safe drinking water services (% of population)
-  target_name: SAFE_DRINKING_WATER_SERVICES_PCT_OF_POPULATION
-- source_path: datasets.Indicators.columns.Hospital beds per 10,000 people
-  target_name: HOSPITAL_BEDS_PER_10_000_PEOPLE
-- source_path: datasets.Indicators.columns.Hib3 immunization coverage among 1 year
-    olds (%)
-  target_name: HIB3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
-- source_path: datasets.Indicators.columns.Life Exp Buckets
-  target_name: LIFE_EXP_BUCKETS
-- source_path: datasets.Indicators.columns.All Cells
-  target_name: ALL_CELLS
-- source_path: datasets.Indicators.columns.Measles - number of reported cases
-  target_name: MEASLES_NUMBER_OF_REPORTED_CASES
-- source_path: datasets.Indicators.columns.Diphtheria tetanus toxoid and pertussis
-    (DTP3) immunization coverage among 1-year-olds (%)
-  target_name: DIPHTHERIA_TETANUS_TOXOID_AND_PERTUSSIS_DTP3_IMMUNIZATION_COVERAGE_AMONG_1_YEAR_OLDS_PCT
-- source_path: datasets.Legend.columns.Metric
-  target_name: METRIC
-- source_path: datasets.Legend.columns.Bubble01
-  target_name: BUBBLE01
-- source_path: datasets.Legend.columns.Bubble02
-  target_name: BUBBLE02
-- source_path: datasets.Legend.columns.Bubble03
-  target_name: BUBBLE03
-- source_path: datasets.Legend.columns.Bubble04
-  target_name: BUBBLE04
-- source_path: datasets.Legend.columns.Bubble05
-  target_name: BUBBLE05
-- source_path: datasets.Metrics.columns.Column1
-  target_name: COLUMN1
-- source_path: datasets.Population.columns.Entity
-  target_name: ENTITY
-- source_path: datasets.Population.columns.Code
-  target_name: CODE
-- source_path: datasets.Population.columns.Year
-  target_name: POPULATION_YEAR
-- source_path: datasets.Population.columns.Population
-  target_name: POPULATION
-- source_path: datasets.Sex.columns.Sex
-  target_name: COL_SEX
-- source_path: datasets.Variance Analysis.columns.Maternal Mortality Change
-  target_name: MATERNAL_MORTALITY_CHANGE
-- source_path: datasets.Variance Analysis.columns.Maternal Mortality
-  target_name: MATERNAL_MORTALITY
-- source_path: datasets.Variance Analysis.columns.Malaria Cases Change
-  target_name: MALARIA_CASES_CHANGE
-- source_path: datasets.Variance Analysis.columns.Malaria Cases
-  target_name: MALARIA_CASES
-- source_path: datasets.Variance Analysis.columns.Neonatal Mortality Change
-  target_name: NEONATAL_MORTALITY_CHANGE
-- source_path: datasets.Variance Analysis.columns.Neonatal Mortality
-  target_name: NEONATAL_MORTALITY
-- source_path: datasets.Variance Analysis.columns.GDP Change
-  target_name: GDP_CHANGE
-- source_path: datasets.Variance Analysis.columns.GDP per capita
-  target_name: GDP_PER_CAPITA
-- source_path: datasets.Variance Analysis.columns.Pupil Teacher Ratio
-  target_name: PUPIL_TEACHER_RATIO
-- source_path: datasets.Variance Analysis.columns.Pupil Teacher Ratio Change
-  target_name: PUPIL_TEACHER_RATIO_CHANGE
-- source_path: datasets.Variance Analysis.columns.Tuberculosis Incidents Change
-  target_name: TUBERCULOSIS_INCIDENTS_CHANGE
-- source_path: datasets.Variance Analysis.columns.Tuberculosis Incidents
-  target_name: TUBERCULOSIS_INCIDENTS
-- source_path: datasets.Variance Analysis.columns.Country
-  target_name: VARIANCE_ANALYSIS_COUNTRY
-- source_path: datasets.Variance Analysis.columns.Measles Vaccine
-  target_name: MEASLES_VACCINE
-- source_path: datasets.Variance Analysis.columns.Measles Vaccines
-  target_name: MEASLES_VACCINES
-- source_path: datasets.Variance Analysis.columns.Hib3 Immunizations %
-  target_name: HIB3_IMMUNIZATIONS_PCT
-- source_path: datasets.Variance Analysis.columns.Hib3 Immunizations
-  target_name: HIB3_IMMUNIZATIONS
-- source_path: datasets.Variance Analysis.columns.Water Services
-  target_name: WATER_SERVICES
-- source_path: datasets.Variance Analysis.columns.Water Services Access
-  target_name: WATER_SERVICES_ACCESS
-- source_path: datasets.Year.columns.Year
-  target_name: COL_YEAR
-- source_path: datasets.Year.columns.Date
-  target_name: YEAR_DATE
-- source_path: datasets.Years.columns.Years
-  target_name: YEARS
-- source_path: datasets.Years.columns.All
-  target_name: COL_ALL
+- source_path: datasets.AgeGroup.columns.AgeGroupID
+  target_name: AGEGROUP_AGEGROUPID
+- source_path: datasets.AgeGroup.columns.AgeGroup
+  target_name: AGEGROUP
+- source_path: datasets.BU.columns.BU
+  target_name: COL_BU
+- source_path: datasets.BU.columns.RegionSeq
+  target_name: REGIONSEQ
+- source_path: datasets.BU.columns.VP
+  target_name: VP
+- source_path: datasets.BU.columns.Region
+  target_name: REGION
 - source_path: datasets.Date.columns.Date
   target_name: DATE_DATE
-- source_path: datasets.Date.columns.Year
-  target_name: DATE_YEAR
-- source_path: datasets.Date.columns.Quarter
-  target_name: QUARTER
 - source_path: datasets.Date.columns.Month
   target_name: MONTH
-- source_path: datasets.Date.columns.MonthName
-  target_name: MONTHNAME
-- source_path: datasets.Date.columns.DayOfWeek
-  target_name: DAYOFWEEK
-- source_path: datasets.Date.columns.DayName
-  target_name: DAYNAME
-- source_path: metrics.Extra year Value
-  target_name: EXTRA_YEAR_VALUE
-- source_path: metrics.Health Expenditure Government Change
-  target_name: HEALTH_EXPENDITURE_GOVERNMENT_CHANGE
-- source_path: metrics.Measure
-  target_name: MEASURE
-- source_path: metrics.Measure 2
-  target_name: MEASURE_2
-- source_path: metrics.Life expectancy
-  target_name: LIFE_EXPECTANCY
-- source_path: metrics.Life Expectancy 2
-  target_name: LIFE_EXPECTANCY_2
-- source_path: metrics.Life Expectancy YoY% 2
-  target_name: LIFE_EXPECTANCY_YOYPCT_2
-- source_path: metrics.Malaria Cases Change
-  target_name: MALARIA_CASES_CHANGE
-- source_path: metrics.GDP Change
-  target_name: GDP_CHANGE
-- source_path: metrics.Income Change
-  target_name: INCOME_CHANGE
-- source_path: metrics.GDP Old
-  target_name: GDP_OLD
-- source_path: metrics.Neonatal mortality
-  target_name: NEONATAL_MORTALITY
-- source_path: metrics.Maternal Mortality Change
-  target_name: MATERNAL_MORTALITY_CHANGE
-- source_path: metrics.Pupil Teacher Ratio Change
-  target_name: PUPIL_TEACHER_RATIO_CHANGE
-- source_path: metrics.Tuberculosis Incidents
-  target_name: TUBERCULOSIS_INCIDENTS
-- source_path: metrics.Immunizations
-  target_name: IMMUNIZATIONS
-- source_path: metrics.Cholera Fatality Rate (%)
-  target_name: CHOLERA_FATALITY_RATE_PCT
-- source_path: metrics.Goverment Expenditure on Health (%)
-  target_name: GOVERMENT_EXPENDITURE_ON_HEALTH_PCT
-- source_path: metrics.GDP Per Capita (USD)
-  target_name: GDP_PER_CAPITA_USD
-- source_path: metrics.GDP Black
-  target_name: GDP_BLACK
-- source_path: metrics.GDP Goal
-  target_name: GDP_GOAL
-- source_path: metrics.last year
-  target_name: LAST_YEAR
-- source_path: metrics.GEH Black
-  target_name: GEH_BLACK
-- source_path: metrics.GEH Goal
-  target_name: GEH_GOAL
-- source_path: metrics.IMM Black
-  target_name: IMM_BLACK
-- source_path: metrics.IMM Red
-  target_name: IMM_RED
-- source_path: metrics.CFR Red
-  target_name: CFR_RED
-- source_path: metrics.CFR Black
-  target_name: CFR_BLACK
-- source_path: metrics.Child Mortality Rate
-  target_name: CHILD_MORTALITY_RATE
-- source_path: metrics.GDPT
-  target_name: GDPT
-- source_path: metrics.GEHT
-  target_name: GEHT
-- source_path: metrics.IMMT
-  target_name: IMMT
-- source_path: metrics.CFRT
-  target_name: CFRT
-- source_path: metrics.LEXT
-  target_name: LEXT
-- source_path: metrics.CLE
-  target_name: CLE
-- source_path: metrics.LE-100
-  target_name: LE_100
-- source_path: metrics.Health
-  target_name: HEALTH
-- source_path: metrics.Health Expenditure
-  target_name: HEALTH_EXPENDITURE
-- source_path: metrics.LE-Goal
-  target_name: LE_GOAL
-- source_path: metrics.Life Expectancy For Chart
-  target_name: LIFE_EXPECTANCY_FOR_CHART
-- source_path: metrics.Life Expectancy Colour Coding For Chart
-  target_name: LIFE_EXPECTANCY_COLOUR_CODING_FOR_CHART
-- source_path: metrics.Life Expectancy label
-  target_name: LIFE_EXPECTANCY_LABEL
-- source_path: metrics.Water Services Access
-  target_name: WATER_SERVICES_ACCESS
-- source_path: metrics.Measles Vaccine
-  target_name: MEASLES_VACCINE
-- source_path: metrics.Hib3 Immunizations
-  target_name: HIB3_IMMUNIZATIONS
-- source_path: metrics.Years Value
-  target_name: YEARS_VALUE
+- source_path: datasets.Date.columns.MonthNumber
+  target_name: MONTHNUMBER
+- source_path: datasets.Date.columns.Period
+  target_name: PERIOD
+- source_path: datasets.Date.columns.PeriodNumber
+  target_name: PERIODNUMBER
+- source_path: datasets.Date.columns.Qtr
+  target_name: QTR
+- source_path: datasets.Date.columns.QtrNumber
+  target_name: QTRNUMBER
+- source_path: datasets.Date.columns.Year
+  target_name: YEAR
+- source_path: datasets.Date.columns.Day
+  target_name: DAY
+- source_path: datasets.Date.columns.MonthStartDate
+  target_name: MONTHSTARTDATE
+- source_path: datasets.Date.columns.MonthEndDate
+  target_name: MONTHENDDATE
+- source_path: datasets.Date.columns.MonthIncrementNumber
+  target_name: MONTHINCREMENTNUMBER
+- source_path: datasets.Employee.columns.date
+  target_name: EMPLOYEE_DATE
+- source_path: datasets.Employee.columns.EmplID
+  target_name: EMPLID
+- source_path: datasets.Employee.columns.Gender
+  target_name: EMPLOYEE_GENDER
+- source_path: datasets.Employee.columns.Age
+  target_name: AGE
+- source_path: datasets.Employee.columns.EthnicGroup
+  target_name: ETHNICGROUP
+- source_path: datasets.Employee.columns.FP
+  target_name: EMPLOYEE_FP
+- source_path: datasets.Employee.columns.TermDate
+  target_name: TERMDATE
+- source_path: datasets.Employee.columns.isNewHire
+  target_name: ISNEWHIRE
+- source_path: datasets.Employee.columns.BU
+  target_name: EMPLOYEE_BU
+- source_path: datasets.Employee.columns.HireDate
+  target_name: HIREDATE
+- source_path: datasets.Employee.columns.PayTypeID
+  target_name: EMPLOYEE_PAYTYPEID
+- source_path: datasets.Employee.columns.TermReason
+  target_name: TERMREASON
+- source_path: datasets.Employee.columns.AgeGroupID
+  target_name: EMPLOYEE_AGEGROUPID
+- source_path: datasets.Employee.columns.TenureDays
+  target_name: TENUREDAYS
+- source_path: datasets.Employee.columns.TenureMonths
+  target_name: TENUREMONTHS
+- source_path: datasets.Employee.columns.BadHires
+  target_name: BADHIRES
+- source_path: datasets.Ethnicity.columns.Ethnic Group
+  target_name: ETHNIC_GROUP
+- source_path: datasets.Ethnicity.columns.Ethnicity
+  target_name: ETHNICITY
+- source_path: datasets.FP.columns.FP
+  target_name: COL_FP
+- source_path: datasets.FP.columns.FPDesc
+  target_name: FPDESC
+- source_path: datasets.Gender.columns.ID
+  target_name: ID
+- source_path: datasets.Gender.columns.Gender
+  target_name: COL_GENDER
+- source_path: datasets.Gender.columns.Sort
+  target_name: SORT
+- source_path: datasets.PayType.columns.PayTypeID
+  target_name: PAYTYPE_PAYTYPEID
+- source_path: datasets.PayType.columns.PayType
+  target_name: PAYTYPE
+- source_path: datasets.SeparationReason.columns.SeparationTypeID
+  target_name: SEPARATIONTYPEID
+- source_path: datasets.SeparationReason.columns.SeparationReason
+  target_name: SEPARATIONREASON
+- source_path: metrics.Count of BU
+  target_name: COUNT_OF_BU
+- source_path: metrics.Count of Date
+  target_name: COUNT_OF_DATE
+- source_path: metrics.EmpCount
+  target_name: EMPCOUNT
+- source_path: metrics.Seps
+  target_name: SEPS
+- source_path: metrics.Actives
+  target_name: ACTIVES
+- source_path: metrics.New Hires
+  target_name: NEW_HIRES
+- source_path: metrics.AVG Tenure Days
+  target_name: AVG_TENURE_DAYS
+- source_path: metrics.AVG Tenure Months
+  target_name: AVG_TENURE_MONTHS
+- source_path: metrics.AVG Age
+  target_name: AVG_AGE
+- source_path: metrics.Sum of BadHires
+  target_name: SUM_OF_BADHIRES
+- source_path: metrics.New Hires SPLY
+  target_name: NEW_HIRES_SPLY
+- source_path: metrics.Actives SPLY
+  target_name: ACTIVES_SPLY
+- source_path: metrics.Seps SPLY
+  target_name: SEPS_SPLY
+- source_path: metrics.EmpCount SPLY
+  target_name: EMPCOUNT_SPLY
+- source_path: metrics.Seps YoY Var
+  target_name: SEPS_YOY_VAR
+- source_path: metrics.Actives YoY Var
+  target_name: ACTIVES_YOY_VAR
+- source_path: metrics.New Hires YoY Var
+  target_name: NEW_HIRES_YOY_VAR
+- source_path: metrics.Seps YoY % Change
+  target_name: SEPS_YOY_PCT_CHANGE
+- source_path: metrics.Actives YoY % Change
+  target_name: ACTIVES_YOY_PCT_CHANGE
+- source_path: metrics.New Hires YoY % Change
+  target_name: NEW_HIRES_YOY_PCT_CHANGE
+- source_path: metrics.Bad Hires SPLY
+  target_name: BAD_HIRES_SPLY
+- source_path: metrics.Bad Hires YoY Var
+  target_name: BAD_HIRES_YOY_VAR
+- source_path: metrics.Bad Hires YoY % Change
+  target_name: BAD_HIRES_YOY_PCT_CHANGE
+- source_path: metrics.TO %
+  target_name: TO_PCT
+- source_path: metrics.TO % Norm
+  target_name: TO_PCT_NORM
+- source_path: metrics.TO % Var
+  target_name: TO_PCT_VAR
+- source_path: metrics.Sep%ofActive
+  target_name: SEPPCTOFACTIVE
+- source_path: metrics.Sep%ofSMLYActives
+  target_name: SEPPCTOFSMLYACTIVES
+- source_path: metrics.BadHire%ofActives
+  target_name: BADHIREPCTOFACTIVES
+- source_path: metrics.BadHire%ofActiveSPLY
+  target_name: BADHIREPCTOFACTIVESPLY
 ui:
   intermediate_format: osi
   editor_mode: form
@@ -348,5 +169,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-life-expectancy
-display_name: Life Expectancy
+project_id: proj-human-resource
+display_name: Human Resource

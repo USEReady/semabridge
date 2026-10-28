@@ -17,8 +17,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [HERE, os.path.dirname(HERE)]
 import pandas as pd
 import pipeline_adapter as pa
-from fixture import TABLES, RELATIONSHIPS, FACT
+from fixture import TABLES, RELATIONSHIPS
 from cases import CASES, BASE
+import mutate
+import run_feature_tests as rft
+import adapter
 from relationship_inventory import sb_column
 from measure_inventory import ddl_metrics
 from run_feature_tests import build_db, evaluate, close
@@ -28,9 +31,9 @@ DT = {"int64": "int64", "float64": "double", "bool": "boolean", "object": "strin
 def mname(cid):
     return "Case " + cid.replace(".", "_")
 
-def build_tmsl(cases, tables_dict=TABLES, rels_list=RELATIONSHIPS, base_dict=BASE):
+def build_tmsl(cases):
     tables = []
-    for t, df in tables_dict.items():
+    for t, df in TABLES.items():
         cols = []
         for c in df.columns:
             kind = str(df[c].dtype)
@@ -41,13 +44,13 @@ def build_tmsl(cases, tables_dict=TABLES, rels_list=RELATIONSHIPS, base_dict=BAS
     by = {t["name"]: t for t in tables}
     defined = set()
     for c in cases:
-        for n, (home, dax) in {**(c.get("context") or {}), **base_dict}.items():
+        for n, (home, dax) in {**(c.get("context") or {}), **BASE}.items():
             if n not in defined and (n in (c.get("context") or {})):
                 by[home]["measures"].append({"name": n, "expression": dax}); defined.add(n)
         by[c["home"]]["measures"].append({"name": mname(c["id"]), "expression": c["dax"]})
     rels = [{"name": f"r{i}", "fromTable": ft, "fromColumn": fc, "toTable": tt, "toColumn": tc, "isActive": True,
              "fromCardinality": "many", "toCardinality": "one", "crossFilteringBehavior": "oneDirection"}
-            for i, (ft, fc, tt, tc) in enumerate(rels_list)]
+            for i, (ft, fc, tt, tc) in enumerate(RELATIONSHIPS)]
     return {"name": "feature_tests", "model": {"tables": tables, "relationships": rels}}
 
 def names(model):
@@ -62,19 +65,21 @@ def key(n):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--feature")
-    ap.add_argument("--results", default=os.path.join("feature_test_results", "pipeline.json"))
-    ap.add_argument("--mutate", type=int, help="seed for mutate.py table/column renaming")
+    ap.add_argument("--feature"); ap.add_argument("--results", default=os.path.join("feature_test_results", "pipeline.json"))
+    ap.add_argument("--mutate", type=int, metavar="SEED", help="rename every table/column (no-hardcoding check)")
     args = ap.parse_args()
-
-    tables, fact, rels, cases_list, base, measures_tbl = TABLES, FACT, RELATIONSHIPS, CASES, BASE, "Measures"
+    global TABLES, RELATIONSHIPS, CASES, BASE
+    measure_table = "Measures"
     if args.mutate is not None:
-        import mutate
-        tables, fact, rels, cases_list, base, measures_tbl, _ = mutate.apply(args.mutate, TABLES, FACT, RELATIONSHIPS, CASES, BASE)
-
-    cases = [c for c in cases_list if not args.feature or c["id"].split(".")[0] == args.feature.upper()]
-    tmsl = build_tmsl(cases, tables, rels, base)
-    live = {sb_column(t).upper(): {sb_column(c) for c in df.columns} for t, df in tables.items()}
+        TABLES, fact, RELATIONSHIPS, CASES, BASE, measure_table, nm = mutate.apply(
+            args.mutate, TABLES, rft.FACT, RELATIONSHIPS, CASES, BASE, rft.INACTIVE)
+        rft.TABLES, rft.FACT, rft.RELATIONSHIPS, rft.MEASURE_TABLE = TABLES, fact, RELATIONSHIPS, measure_table
+        rft.INACTIVE = mutate.MUTATED_INACTIVE
+        print("Renamed (seed %d): %s" % (args.mutate, ", ".join(f"{k} -> {v}" for k, v in nm.items())))
+        args.results = args.results.replace("pipeline.json", f"pipeline_mutated_{args.mutate}.json")
+    cases = [c for c in CASES if not args.feature or c["id"].split(".")[0] == args.feature.upper()]
+    tmsl = build_tmsl(cases)
+    live = {sb_column(t).upper(): {sb_column(c) for c in df.columns} for t, df in TABLES.items()}
 
     stage_err = {}
     try: osi = pa.to_osi(tmsl, "feature_tests")
@@ -89,7 +94,7 @@ def main():
 
     o_names, s_names = names(osi) if osi else {}, names(sml) if sml else {}
     d_mets = {key(v["name"]): v for v in ddl_metrics(ddl).values()} if ddl else {}
-    con = build_db(tables)
+    con = build_db()
     rows, board = OrderedDict(), OrderedDict()
     for c in cases:
         k = key(mname(c["id"])); kind = c["expect"][0]
@@ -106,8 +111,14 @@ def main():
             status, msg = ("FAIL", f"lost at {lost}") if lost else ("PASS", "")
             if status == "PASS" and st["DDL"] == "REAL":
                 try:
-                    got, used = evaluate(con, d["expr"], tables, fact, rels); exp = float(c["expect"][1]())
-                    if measures_tbl in used: status, msg = "FAIL", "DDL references the empty measure table"
+                    got, used = evaluate(con, d["expr"], c.get("last_period")); exp = float(c["expect"][1]())
+                    want_anchor = adapter.alias(c["anchor"]).upper() if c.get("anchor") else None
+                    line = next((l for l in ddl.splitlines() if re.search(rf'\.\s*"?{re.escape(d["name"])}"?\s', l, re.I)), "")
+                    if measure_table in used: status, msg = "FAIL", "DDL references the empty measure table"
+                    elif want_anchor and d["table"].upper().strip('"') != want_anchor:
+                        status, msg = "FAIL", f"anchored on {d['table']}, expected {want_anchor} (table of its columns)"
+                    elif c.get("ddl_contains") and c["ddl_contains"].upper() not in " ".join(line.upper().split()):
+                        status, msg = "FAIL", f"DDL line lacks '{c['ddl_contains']}': {line.strip()[:120]}"
                     elif not close(got, exp): status, msg = "FAIL", f"DDL value {got}, expected {exp}"
                 except Exception as e:
                     status, msg = "FAIL", f"DDL SQL does not run: {str(e).splitlines()[0][:150]}"

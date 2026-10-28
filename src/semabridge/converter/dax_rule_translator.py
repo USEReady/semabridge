@@ -867,87 +867,14 @@ def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
     return None
 
 
+
+
+
+
+
+
 def translate_calculate_with_filters(dax: str, table_alias: str) -> Optional[str]:
-    """Translate CALCULATE with direct or FILTER equality/comparison predicates.
-
-    Fails closed (returns None) rather than a partial result the moment any
-    one AND-ed condition can't be fully parsed, or a filter argument
-    contains a nested iterator/CALCULATE/FILTER call this can't reduce to a
-    per-row comparison -- the same contract _parse_simple_predicate_
-    conditions() (this module's sibling for the SUMX(FILTER(...), ...)
-    shape) already enforces. This used to silently `continue` past an
-    unparseable condition instead, which could accept a CALCULATE(agg,
-    FILTER(...)) with a mix of simple and complex conditions and emit a
-    CASE WHEN missing part of the original filter -- correct-looking but
-    silently wrong SQL, and (for a filter argument that isn't a FILTER(...)
-    call at all) potentially just re-testing raw DAX syntax against the
-    comparison regex with a `continue` masking every failed match.
-    """
-    if not re.match(r"\s*CALCULATE\s*\(", dax or "", re.IGNORECASE):
-        return None
-
-    inner = re.sub(r"^\s*CALCULATE\s*\(", "", dax.strip(), flags=re.IGNORECASE)
-    if inner.endswith(")"):
-        inner = inner[:-1]
-    parts = _split_top_level(inner)
-    if len(parts) < 2:
-        return None
-
-    agg = _parse_aggregation(parts[0])
-    if not agg:
-        return None
-    func, measure_table, measure_col, _ = agg
-    if func == "DISTINCTCOUNT":
-        measure_expr = f"COUNT(DISTINCT {_column_ref(measure_table, measure_col, table_alias)})"
-    else:
-        measure_expr = f"{func}({_column_ref(measure_table, measure_col, table_alias)})"
-
-    conditions: List[str] = []
-    for raw_filter in parts[1:]:
-        filter_expr = raw_filter.strip()
-        filter_match = re.match(r"FILTER\s*\(\s*[^,]+,\s*(.+)\s*\)\s*$", filter_expr, re.IGNORECASE | re.DOTALL)
-        if filter_match:
-            filter_expr = filter_match.group(1).strip()
-        filter_expr = filter_expr.replace("&&", " AND ")
-
-        if re.search(r"\bOR\b", filter_expr, re.IGNORECASE):
-            return None
-        if re.search(
-            r"\b(CALCULATE|FILTER|TOPN|RANKX|ALLEXCEPT|ALL|SELECTEDVALUE|SUMX|AVERAGEX|MINX|MAXX|COUNTX|EARLIER)\s*\(",
-            filter_expr,
-            re.IGNORECASE,
-        ):
-            return None
-
-        for predicate in re.split(r"\s+\bAND\b\s+", filter_expr, flags=re.IGNORECASE):
-            predicate = predicate.strip()
-            pred_match = re.match(
-                r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]\s*(<=|>=|<>|=|<|>)\s*(\"[^\"]*\"|'[^']*'|[-+]?\d+(?:\.\d+)?)\s*$",
-                predicate,
-                re.IGNORECASE,
-            )
-            if not pred_match:
-                # Fail closed, not `continue`: silently dropping one
-                # unparseable condition out of an AND-list would emit a
-                # CASE WHEN that computes something other than what the
-                # original DAX filter actually specified, with no
-                # indication that happened.
-                return None
-            table = (pred_match.group(1) or pred_match.group(2) or table_alias).strip()
-            column = pred_match.group(3).strip()
-            op = pred_match.group(4)
-            value = pred_match.group(5).strip()
-            if value.startswith('"') and value.endswith('"'):
-                value = "'" + value[1:-1].replace("'", "''") + "'"
-            conditions.append(f"{_column_ref(table, column, table_alias)} {op} {value}")
-
-    if not conditions:
-        return None
-
-    # Rebuild CASE around the aggregate argument to avoid nested aggregates.
-    measure_col_ref = _column_ref(measure_table, measure_col, table_alias)
-    return f"SUM(CASE WHEN {' AND '.join(conditions)} THEN {measure_col_ref} ELSE 0 END)"
-
+    return None
 
 def _parse_simple_predicate_conditions(filter_expr: str, table_alias: str) -> Optional[List[str]]:
     """Parse a DAX filter predicate into ANDed SQL comparison conditions —

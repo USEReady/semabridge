@@ -74,3 +74,41 @@ stage where they were lost.
 version: call whatever produces the CREATE SEMANTIC VIEW text in a dry run, with the live columns it is given.
 Alternatively pass `--ddl-file` to `run_snowflake_tests.py` with a DDL SemaBridge generated for the
 SB_FEATURE_TESTS schema.
+
+## No hardcoding, generic for every model
+
+Two checks, run after every feature (both must pass before the commit):
+
+**1. Rename test** - the same cases with every table and column renamed (spaces, digits, %, $, &, ?), same data,
+same expected values. Generic code scores exactly the same; code tied to names fails.
+
+    uv run python phase_a\feature_tests\run_feature_tests.py --mutate 1
+    uv run python phase_a\feature_tests\run_feature_tests.py --mutate 2
+    uv run python phase_a\feature_tests\run_pipeline_tests.py --mutate 1
+
+PASS / TOTAL per feature must equal the normal run. Each seed keeps its own results file and regression check.
+
+**2. Code audit** - scans every line added under src/ since F1 for names from your real models (all tables,
+columns, measures in the .pbix folder and the measures report) and from the test fixture.
+
+    uv run python phase_a\feature_tests\audit_hardcoding.py --pbix-dir "C:\Users\manoj.s\Downloads\PBIX Files" --report <measures report.xlsx>
+
+HARD = a real name in a string literal (fails); REVIEW = name-like code to look at (== "Name",
+startswith("Name"), lists of names, a model name in Snowflake form like "SALES."); INFO = names only in comments.
+
+## Cross-table features (F11-F15) - implement one, then run its tests
+
+| Feature | What the implementation must do (generic) | Command |
+|---|---|---|
+| F10 SELECTEDVALUE | `IFF(COUNT(DISTINCT c) + MAX(IFF(c IS NULL,1,0)) = 1, MAX(c), alt)`; parameter table (no relationships) used in another measure -> its default constant; `'Table'[Measure]` = measure | `run_feature_tests.py --feature F10` |
+| F11 Anchor by lineage | Anchor = table the columns come from (after inlining), not the DAX home table; in translation AND at DDL emission | `--feature F11` + `run_pipeline_tests.py --feature F11` (checks the DDL table) |
+| F12 Dimension filters | Filter on the dim KEY -> fact foreign key; filter on a dim attribute -> enriched copy `<DIM>_<COL>` or join; unreachable -> NULL + reason | `--feature F12` |
+| F13 Inactive relationships | Each inactive relationship -> alias of the dimension named `<Dim> <FK column>` (e.g. calendar_ship_date) joined on that FK; `USERELATIONSHIP` uses it; other measures unchanged | `--feature F13` |
+| F14 Share of total (ALL) | Until window metrics exist: `CAST(NULL)` + reason "needs window metric"; never a constant, never dropped | `--feature F14` |
+| F15 Non-additive | Closing balance -> plain aggregate + `NON ADDITIVE BY`; ratios/arithmetic over a non-additive metric must not inline it -> NULL + reason (or metric reference if supported) | `--feature F15` + pipeline (checks `NON ADDITIVE BY` in the DDL) |
+
+Each failing case prints its **expected solution**. Values are computed from the synthetic data; the
+runner simulates joins, enriched copies, inactive-relationship aliases and "value at the last period".
+
+Loop per feature: `--selftest` (once) -> `--feature Fx` -> full run (0 REGRESSED) -> `--mutate 1` and `--mutate 2`
+-> `run_pipeline_tests.py --feature Fx` -> `audit_hardcoding.py` -> regenerate DDLs + measure_inventory.
