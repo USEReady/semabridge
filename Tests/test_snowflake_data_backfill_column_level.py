@@ -140,22 +140,25 @@ def _install_fake_write_pandas(monkeypatch, captured: dict, success=True):
 # ---------------------------------------------------------------------------
 
 def test_ensure_source_tables_exist_records_newly_added_columns():
-    sm = _build_schema_manager(connection_manager=_RecordingConnectionManager())
+    rec = _RecordingConnectionManager()
+    sm = _build_schema_manager(connection_manager=rec)
     dataset = _product_dataset()
 
     cursor = MagicMock()
     # 1) SHOW TABLES -> PRODUCT already exists.
     # 2) SHOW VIEWS -> none.
-    # 3) DESC TABLE (via _verify_table_columns) -> missing ISVANARSDEL.
+    # 3) _fetch_schema_metadata -> columns of PRODUCT.
     cursor.fetchall.side_effect = [
         [(None, "PRODUCT")],
         [],
-        [("PRODUCTID",), ("PRODUCT",), ("SEGMENT",)],
+        [("PRODUCT", "PRODUCTID"), ("PRODUCT", "PRODUCT"), ("PRODUCT", "SEGMENT")],
     ]
 
     sm._ensure_source_tables_exist(cursor, types_namespace(datasets=[dataset]))
 
-    assert sm._newly_added_columns.get("PRODUCT") == {"ISVANARSDEL"}
+    # Existing tables are never altered; bound table is left untouched
+    assert not any("ALTER TABLE" in q for q in rec.executed)
+    assert sm._newly_added_columns.get("PRODUCT") is None
 
 
 def types_namespace(**kwargs):

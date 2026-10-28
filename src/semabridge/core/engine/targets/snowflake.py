@@ -90,7 +90,9 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
         "snowflake",
     )
 
-    ddls = emitter.generate_ddls_live(context.sml_model)
+    gen_fn = getattr(emitter, "generate_ddls_live", getattr(emitter, "generate_ddls", None))
+    ddls = gen_fn(context.sml_model) if gen_fn else []
+    context.generated_ddl = ddls[0] if ddls else ""
     # Surface DDL-emission-time drops (DAX translation failures, unresolved
     # references, dropped relationships) on the shared context ledger so
     # they reach RunSummary.dropped_entities even when Stage 9 (deploy) is

@@ -187,8 +187,12 @@ def test_dimensions_clause_includes_synthetic_enriched_view_columns():
     )
     clause = "\n".join(dims_lines)
 
-    assert 'SALESFACT."IS_YTD"' in clause
-    assert 'SALESFACT."IS_SPLY_YEAR"' in clause
+    # Helper columns (IS_YTD, IS_SPLY_YEAR) are internal flags and are excluded from public dimensions
+    assert 'SALESFACT."IS_YTD"' not in clause
+    assert 'SALESFACT."IS_SPLY_YEAR"' not in clause
+    assert 'SALESFACT."COL_DATE" AS SALESFACT."COL_DATE"' in clause
+    assert 'SALESFACT."PRODUCTID" AS SALESFACT."PRODUCTID"' in clause
+    assert 'SALESFACT."UNITS" AS SALESFACT."UNITS"' in clause
 
 
 def test_dimension_alias_collision_scoping_per_dataset():
@@ -209,14 +213,14 @@ def test_dimension_alias_collision_scoping_per_dataset():
                 unique_name="Product",
                 source_table="Product",
                 columns=[
-                    SMLColumn(unique_name="IsYTD", label="IS_YTD", data_type="string"),
+                    SMLColumn(unique_name="Status", label="STATUS", data_type="string"),
                 ],
             ),
             SMLDataset(
                 unique_name="SalesFact",
                 source_table="SalesFact",
                 columns=[
-                    SMLColumn(unique_name="IsYTD", label="IS_YTD", data_type="string"),
+                    SMLColumn(unique_name="Status", label="STATUS", data_type="string"),
                     SMLColumn(unique_name="Zip", label="ZIP", data_type="string"),
                     SMLColumn(unique_name="ZipCode", label="ZIP", data_type="string"),
                 ],
@@ -237,8 +241,8 @@ def test_dimension_alias_collision_scoping_per_dataset():
     dataset_aliases = {"Product": "PRODUCT", "SalesFact": "SALESFACT"}
     dataset_by_name = {"Product": model.datasets[0], "SalesFact": model.datasets[1]}
     dataset_col_lookup = {
-        "Product": {"IS_YTD"},
-        "SalesFact": {"IS_YTD", "ZIP", "ZIPCODE"},
+        "Product": {"STATUS"},
+        "SalesFact": {"STATUS", "ZIP", "ZIPCODE"},
     }
 
     dims_lines, _ = builder.build_for_sml(
@@ -250,10 +254,10 @@ def test_dimension_alias_collision_scoping_per_dataset():
     )
     clause = "\n".join(dims_lines)
 
-    # 1. Both Product and SalesFact retain their own unqualified "IS_YTD" dimension name (no _2 across tables)
-    assert 'PRODUCT."IS_YTD" AS PRODUCT."IS_YTD"' in clause
-    assert 'SALESFACT."IS_YTD" AS SALESFACT."IS_YTD"' in clause
-    assert 'SALESFACT."IS_YTD_2"' not in clause
+    # 1. Both Product and SalesFact retain their own unqualified "STATUS" dimension name (no _2 across tables)
+    assert 'PRODUCT."STATUS" AS PRODUCT."STATUS"' in clause
+    assert 'SALESFACT."STATUS" AS SALESFACT."STATUS"' in clause
+    assert 'SALESFACT."STATUS_2"' not in clause
 
     # 2. Intra-table collision within SalesFact still gets _2 suffix
     assert 'SALESFACT."ZIP" AS SALESFACT."ZIP"' in clause

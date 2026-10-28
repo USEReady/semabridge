@@ -387,6 +387,8 @@ class ExecutionEngine:
                 from semabridge.core.engine.deployment.snowflake import preview_table_bindings
 
                 context.table_binding_plan = preview_table_bindings(context)
+                if isinstance(context.table_binding_plan, dict):
+                    context.blockers.extend(context.table_binding_plan.get("blockers") or [])
 
             # Step 8: Convert to Target Format (Optional). A Snowflake dry
             # run builds the DDL too (read-only, against the live schema) so
@@ -398,6 +400,13 @@ class ExecutionEngine:
             
             # Step 9: Deploy to Target (Optional)
             if deploy and target and not dry_run:
+                if getattr(context, "blockers", None):
+                    from semabridge.core.exceptions import ConnectorError
+                    blocker_msgs = [b.get("message", "Blocker open") for b in context.blockers]
+                    raise ConnectorError(
+                        f"Deployment blocked: cannot sync while blockers are open:\n"
+                        + "\n".join(f"  - {m}" for m in blocker_msgs)
+                    )
                 upsert_delta = context.upsert_delta
                 if upsert_delta is not None and not upsert_delta.get("has_changes"):
                     self._record_step(

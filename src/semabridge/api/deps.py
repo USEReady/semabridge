@@ -7,8 +7,12 @@ Responsibilities:
 """
 
 from __future__ import annotations
-from typing import Generator
+from typing import Generator, TYPE_CHECKING
 from fastapi import Request, HTTPException, Header, Depends
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+    from semabridge.repository.orm.models import User
 
 # Dependency to extract Fabric Workspace Context from header
 def get_fabric_context(request: Request):

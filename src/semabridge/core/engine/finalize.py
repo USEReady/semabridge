@@ -348,6 +348,8 @@ def _step10_finalize(
         self._summary.upsert_delta = _annotated_upsert_delta(self._summary, context)
     if context.table_binding_plan is not None:
         self._summary.table_binding_plan = context.table_binding_plan
+    if getattr(context, "blockers", None):
+        self._summary.blockers = list(context.blockers)
 
     if status == RunStatus.FAILED and self._summary.sml_snapshot_id:
         failure_message = self._summary.errors[-1].message if self._summary.errors else None

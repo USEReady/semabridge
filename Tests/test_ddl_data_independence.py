@@ -101,8 +101,11 @@ def test_precompute_skips_measure_references():
             SimpleNamespace(unique_name="Dim", columns=[SimpleNamespace(unique_name="Flag")]),
         ],
         metrics=[
-            SimpleNamespace(unique_name="Ratio", dataset="Fact", expression="DIVIDE(Dim[Score], 'Dim'[Flag])"),
+            SimpleNamespace(unique_name="Ratio", dataset="Fact", expression="DIVIDE(Fact[Units] + Dim[Score], 'Dim'[Flag])"),
             SimpleNamespace(unique_name="Score", dataset="Dim", expression="SUM(Dim[Flag])"),
+        ],
+        relationships=[
+            SimpleNamespace(unique_name="rel_fact_dim", from_dataset="Fact", to_dataset="Dim", from_columns=["DimID"], to_columns=["DimID"]),
         ],
     )
     suggestions = builder._precompute_suggestions(model)

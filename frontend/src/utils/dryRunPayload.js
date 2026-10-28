@@ -6,6 +6,7 @@ export function buildDryRunPayload({
   snowflakeAccountId,
   snowflakeDatabase,
   targetDatabase,
+  targetSchema,
   selectedModelNames,
   pbixPath,
 }) {
@@ -32,6 +33,7 @@ export function buildDryRunPayload({
 
   if (targetConfig.type === 'snowflake') {
     if (targetDatabase) targetConfig.database = targetDatabase;
+    if (targetSchema) targetConfig.schema = targetSchema;
     // The dry run checks target tables live; it needs the chosen account.
     if (snowflakeAccountId) targetConfig.identity_id = snowflakeAccountId;
   }

@@ -1565,10 +1565,16 @@ class MetricExpressionTranslator:
                     return col
 
         if candidate.upper() in ("COL_DATE", "DATE"):
-            for target in ("DATE_DATE", "CAL_DT", "DATE", "COL_DATE", "DATE_DIM_CK", "DATE_DIM"):
-                for col in known_columns:
-                    if col.upper() == target:
+            type_lookup = getattr(self, "column_data_types", None) or {}
+            for col in known_columns:
+                col_upper = col.upper()
+                for k, v in type_lookup.items():
+                    k_str = str(k[1] if isinstance(k, tuple) else k).upper()
+                    if k_str == col_upper and any(dt in str(v).lower() for dt in ("date", "time", "timestamp")):
                         return col
+            for col in known_columns:
+                if "date" in col.lower():
+                    return col
 
         if candidate.upper().startswith("COL_"):
             unprefixed = candidate[4:].lower()
@@ -1656,9 +1662,9 @@ class MetricExpressionTranslator:
         normalized = metric_sql
         pattern = r'(?P<id>[A-Z_][A-Z0-9_\.]+)\s*<=\s*MAX\(\s*(?P=id)\s*\)\s*AND\s*(?P=id)\s*>\s*MAX\(\s*(?P=id)\s*\)\s*-\s*12'
         def _replace(match: re.Match) -> str:
-            month_index_id = match.group('id')
-            return f"{month_index_id} <= _CURRENT_FISCAL_PERIOD AND {month_index_id} > _CURRENT_FISCAL_PERIOD - 12"
+            return '"IS_R12M"'
         return re.sub(pattern, _replace, normalized, flags=re.IGNORECASE)
+
 
     def _qualify_bare_partition_identifiers(self, metric_sql: str, dataset_col_lookup: Dict[str, set[str]], dataset_aliases: Dict[str, str], preferred_table_alias: Optional[str] = None) -> str:
         if not metric_sql: return metric_sql

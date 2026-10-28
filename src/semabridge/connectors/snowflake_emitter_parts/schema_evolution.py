@@ -376,16 +376,27 @@ def infer_columns_from_table_samples(
     for col in inferred:
         logger.info("- %s -> %s", col["name"], col["type"])
 
+    declared_types_map = {
+        c["name"].upper(): str(c.get("type", "")).upper()
+        for c in columns if c.get("type")
+    }
+
     if all(c["type"] == "VARCHAR" for c in inferred):
         logger.warning(
-            "All sampled columns resolved to VARCHAR for %s. Applying fallback name-pattern inference.",
+            "All sampled columns resolved to VARCHAR for %s. Applying metadata-first fallback inference.",
             safe_table_name,
         )
         for c in inferred:
-            fb = fallback_type_from_name(c["name"])
-            if fb != "VARCHAR":
-                fallback_logs.append(f"{c['name']}: VARCHAR -> {fb} (name-pattern fallback)")
-                c["type"] = fb
+            c_upper = c["name"].upper()
+            pbix_type = declared_types_map.get(c_upper)
+            if pbix_type and pbix_type not in varchar_types:
+                fallback_logs.append(f"{c['name']}: VARCHAR -> {pbix_type} (PBIX metadata type)")
+                c["type"] = pbix_type
+            else:
+                fb = fallback_type_from_name(c["name"])
+                if fb != "VARCHAR":
+                    fallback_logs.append(f"{c['name']}: VARCHAR -> {fb} (name-pattern fallback)")
+                    c["type"] = fb
 
     for entry in fallback_logs:
         logger.info("Fallback decision: %s", entry)

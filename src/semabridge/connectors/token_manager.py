@@ -21,7 +21,11 @@ import os
 import secrets
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from semabridge.core.settings import SnowflakeConfig
+    from sqlalchemy.orm import sessionmaker
 
 import requests
 from cryptography.fernet import Fernet, InvalidToken

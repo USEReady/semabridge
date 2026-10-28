@@ -15,7 +15,10 @@ Commands:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from semabridge.sync.models import SyncJob
 
 import typer
 from rich.console import Console

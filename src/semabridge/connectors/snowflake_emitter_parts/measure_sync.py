@@ -1,7 +1,10 @@
 """Measure sync and materialization utilities for Snowflake."""
 
 import json
-from typing import Optional, Dict, Any, Set
+from typing import Optional, Dict, Any, Set, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from semabridge.converter.measure_triage import TriageResult
 
 from semabridge.utils.logger import get_logger
 from semabridge.core.exceptions import ConnectorError

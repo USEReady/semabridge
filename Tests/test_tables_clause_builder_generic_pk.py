@@ -51,9 +51,9 @@ def test_disconnected_table_takes_the_pk_declared_in_snowflake():
     mock_schema_manager.warn_if_key_not_unique.assert_called_with("INDICATORS", ["STATUS"], cursor=None)
 
 
-def test_table_without_any_key_falls_back_to_first_column_without_data():
-    """A table with no relationship, PBIX key or declared key gets PRIMARY
-    KEY on its first column, whatever its data holds."""
+def test_table_without_any_key_has_no_primary_key():
+    """A table with no relationship, PBIX key or declared key does NOT get
+    a fallback PRIMARY KEY."""
     range_ds = _dataset("Range", "RANGE", ["WWW_OBVIENCE_COM"], key_col=None)
     model = SimpleNamespace(datasets=[range_ds], relationships=[])
 
@@ -72,4 +72,4 @@ def test_table_without_any_key_falls_back_to_first_column_without_data():
         model, registry=AliasRegistry(), metric_counts_by_dataset={}, related_datasets=set(),
     )
 
-    assert any('PRIMARY KEY ("WWW_OBVIENCE_COM")' in line for line in tables_sql)
+    assert not any('PRIMARY KEY' in line for line in tables_sql)

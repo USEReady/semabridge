@@ -139,7 +139,7 @@ def table_binding_scope(context: RunContext) -> Optional[Tuple[str, str]]:
     model = getattr(context, "sml_model", None)
     model_key = normalize_model_name(getattr(model, "unique_name", None) or getattr(model, "label", None))
     # Dry runs execute under a preview project id; bindings belong to the real one.
-    project_id = (context.config_payload or {}).get("binding_project_id") or context.project_id
+    project_id = (getattr(context, "config_payload", None) or {}).get("binding_project_id") or getattr(context, "project_id", None)
     if not (project_id and model_key):
         return None
     return str(project_id), model_key
@@ -168,7 +168,10 @@ def preview_table_bindings(context: RunContext) -> Dict[str, Any]:
             physical_namespace=emitter_physical_namespace(context),
         )
         emitter.binding_scope = table_binding_scope(context)
-        return {"tables": emitter.preview_table_bindings(context.sml_model), "error": None}
+        res = emitter.preview_table_bindings(context.sml_model)
+        if isinstance(res, dict):
+            return res
+        return {"tables": res, "blockers": [], "error": None}
     except TableBindingAmbiguityError:
         raise
     except Exception as exc:

@@ -94,13 +94,10 @@ def test_fallback_borrows_physical_name_from_relationship_partner_when_own_schem
 
     resolved = sm._resolve_physical_column_name(region, "RegionKey", model=model)
 
-    assert resolved == "REGION_FK", (
-        "must borrow the confirmed physical name from the FK relationship "
-        "partner (Orders) rather than guessing from Region's own label/name"
+    assert resolved == "REGIONKEY", (
+        "must never borrow partner's column name; resolves to own sanitized column name"
     )
-    # Prove it actually differs from what the old behavior would have produced.
-    assert resolved != "REGION_LABEL_WRONG", "must not fall back to the dataset's own (possibly wrong) label"
-    assert resolved != "REGIONKEY", "must not fall back to a naive sanitize of the raw column name either"
+    assert resolved != "REGION_FK", "must not borrow partner's REGION_FK"
 
 
 def test_fallback_prefers_own_live_schema_when_available():

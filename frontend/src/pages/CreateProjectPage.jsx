@@ -1571,6 +1571,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         snowflakeAccountId,
         snowflakeDatabase,
         targetDatabase,
+        targetSchema,
         selectedModelNames,
         pbixPath: effectivePbixPath,
       });
@@ -1650,6 +1651,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       snowflakeAccountId,
       snowflakeDatabase,
       targetDatabase,
+      targetSchema,
       selectedModelNames,
       pbixPath: isMulti ? '' : effectiveSources.singlePbixPath,
     });

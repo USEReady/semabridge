@@ -105,21 +105,24 @@ class SmlInferenceEngine:
 
     def _calculate_scores(self):
         """Calculate confidence scores."""
+        has_relationships = bool(self.relationships) or any(
+            s.outgoing_fks > 0 or s.incoming_fks > 0 for s in self.scores.values()
+        )
+
         for name, score in self.scores.items():
-            # Factor 1: Naming Convention
-            name_upper = name.upper()
-            if name_upper.startswith("FACT_") or name_upper.startswith("F_"):
-                score.fact_confidence += 0.4
-            if name_upper.startswith("DIM_") or name_upper.startswith("D_"):
-                score.dim_confidence += 0.4
-            
-            # Factor 2: Relationships
-            # Facts typically point to many dimensions (High Outgoing)
-            if score.outgoing_fks >= 2:
-                score.fact_confidence += 0.3
-            # Dimensions are typically pointed TO (High Incoming)
-            if score.incoming_fks >= 1:
-                score.dim_confidence += 0.3
+            # Factor 1: Relationships (many side = fact)
+            if has_relationships:
+                if score.outgoing_fks > 0:
+                    score.fact_confidence += 0.5 + 0.1 * min(score.outgoing_fks, 3)
+                if score.incoming_fks > 0 and score.outgoing_fks == 0:
+                    score.dim_confidence += 0.5 + 0.1 * min(score.incoming_fks, 3)
+            else:
+                # Factor 1b: Naming Convention — fallback ONLY when model has no relationships
+                name_upper = name.upper()
+                if name_upper.startswith("FACT_") or name_upper.startswith("F_"):
+                    score.fact_confidence += 0.4
+                if name_upper.startswith("DIM_") or name_upper.startswith("D_"):
+                    score.dim_confidence += 0.4
                 
             # Factor 3: Content (Measures)
             # Facts have measures

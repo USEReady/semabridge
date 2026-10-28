@@ -8,6 +8,7 @@ from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.connectors.helper_columns import is_helper_column, collect_helper_columns_for_model
 
 logger = get_logger(__name__)
 
@@ -23,6 +24,7 @@ class DimensionsClauseBuilder:
         translator: Any,
         behavior: Any,
         drop_ledger: Optional[DropLedger] = None,
+        enriched_view_mapping: Optional[Dict[str, str]] = None,
     ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -30,6 +32,10 @@ class DimensionsClauseBuilder:
         self.translator = translator
         self.behavior = behavior
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.enriched_view_mapping: Dict[str, str] = (
+            enriched_view_mapping if enriched_view_mapping is not None else {}
+        )
+        self.precompute_details: List[Dict[str, str]] = []
 
     def build_for_sml(
         self,
@@ -39,6 +45,7 @@ class DimensionsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         measure_columns: Set[Tuple[str, str]],
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+        role_tables: Optional[List[Any]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         """Build DIMENSIONS clause for SML model.
 
@@ -51,6 +58,7 @@ class DimensionsClauseBuilder:
             sml.dimensions, sml.datasets, dataset_aliases, dataset_by_name,
             dataset_col_lookup, measure_columns, sml.unique_name or sml.label,
             is_osi=False, live_col_lookup=live_col_lookup or {},
+            role_tables=role_tables,
         )
 
     def build_for_osi(
@@ -61,6 +69,7 @@ class DimensionsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         measure_columns: Set[Tuple[str, str]],
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+        role_tables: Optional[List[Any]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         """Build DIMENSIONS clause for OSI model.
 
@@ -70,6 +79,7 @@ class DimensionsClauseBuilder:
             osi.dimensions, osi.datasets, dataset_aliases, dataset_by_name,
             dataset_col_lookup, measure_columns, osi.unique_name or osi.label,
             is_osi=True, live_col_lookup=live_col_lookup or {},
+            role_tables=role_tables,
         )
 
     def _build_dimensions(
@@ -83,6 +93,7 @@ class DimensionsClauseBuilder:
         model_name: str,
         is_osi: bool,
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+        role_tables: Optional[List[Any]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         dims_lines: List[str] = []
         # Tracks columns present in the source model but skipped because they
@@ -93,6 +104,17 @@ class DimensionsClauseBuilder:
         added_physical_dimensions = set()
         used_dimension_aliases_by_dataset: Dict[str, Set[str]] = {}
         alias_to_phys_col: Dict[Tuple[str, str], str] = {}
+
+        enriched_datasets = set((self.enriched_view_mapping or {}).keys())
+        known_helpers = collect_helper_columns_for_model(
+            None,
+            precompute_details=getattr(self, "precompute_details", None),
+            anchor_flag_map=getattr(self.translator, "anchor_flag_map", None) if self.translator else None,
+            enriched_datasets=enriched_datasets,
+            dataset_col_lookup=dataset_col_lookup,
+            live_col_lookup=live_col_lookup,
+        )
+
 
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
@@ -141,6 +163,8 @@ class DimensionsClauseBuilder:
                 
                 if self._is_measure_column(attr, phys_col, measure_columns, is_osi):
                     continue
+                if is_helper_column(phys_col, attr.dataset, enriched_datasets, known_helpers) or is_helper_column(semantic_name, attr.dataset, enriched_datasets, known_helpers):
+                    continue
                 
                 if dim_key not in added_dimensions and physical_dim_key not in added_physical_dimensions:
                     ds_used = used_dimension_aliases_by_dataset.setdefault(alias, set())
@@ -188,9 +212,13 @@ class DimensionsClauseBuilder:
             _has_live = dataset.unique_name in (live_col_lookup or {})
 
             for col in dataset.columns:
+                if getattr(col, "is_hidden", False) and str(getattr(col, "label", None) or col.unique_name) == str(col.unique_name):
+                    continue
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
                     continue
                 if col.unique_name.upper() in _SYNTHETIC_COLS:
+                    continue
+                if is_helper_column(col.unique_name, dataset.unique_name, enriched_datasets, known_helpers):
                     continue
 
                 col_key = (alias, col.unique_name.strip().upper())
@@ -201,17 +229,23 @@ class DimensionsClauseBuilder:
                 semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
                 semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
 
-                # Duplicate (_2) dimensions must point to the same physical column as the dimension they duplicate.
-                # No expression may reference another dimension's logical name.
-                dup_phys = (
-                    alias_to_phys_col.get((alias, col.unique_name.strip().upper()))
-                    or alias_to_phys_col.get((alias, semantic_name.strip().upper()))
-                    or alias_to_phys_col.get((alias, semantic_source_name.strip().upper()))
+                raw_phys = (
+                    self.identifier_sanitizer.sanitize_column(col.unique_name)
+                    if is_osi else self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
                 )
-                if dup_phys:
-                    phys_col = dup_phys
+                known_for_ds = (live_col_lookup or {}).get(dataset.unique_name) or dataset_col_lookup.get(dataset.unique_name, set())
+                if known_for_ds and raw_phys not in known_for_ds:
+                    dup_phys = (
+                        alias_to_phys_col.get((alias, col.unique_name.strip().upper()))
+                        or alias_to_phys_col.get((alias, semantic_name.strip().upper()))
+                        or alias_to_phys_col.get((alias, semantic_source_name.strip().upper()))
+                    )
+                    phys_col = dup_phys if dup_phys else raw_phys
                 else:
-                    phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
+                    phys_col = raw_phys
+
+                if is_helper_column(phys_col, dataset.unique_name, enriched_datasets, known_helpers):
+                    continue
 
                 if not _has_live and col.unique_name.upper() in _LIVE_ONLY_COLS:
                     missing_dims.setdefault(dataset.unique_name, [])
@@ -301,8 +335,22 @@ class DimensionsClauseBuilder:
                     if isinstance(flag_val, str) and flag_val:
                         candidate_cols.add(flag_val)
 
+            sync_all = self.behavior.semantic_model.sync_all_attributes
+            measure_cand_cols = {
+                (getattr(c, "unique_name", None) or "").strip().upper()
+                for c in getattr(dataset, "columns", [])
+                if getattr(c, "is_measure_candidate", False)
+            }
+
             for phys_col in sorted(candidate_cols):
                 if not phys_col or phys_col.startswith("RowNumber") or phys_col.startswith("_"):
+                    continue
+                if is_helper_column(phys_col, dataset.unique_name, enriched_datasets, known_helpers):
+                    continue
+                if not sync_all and (
+                    phys_col.upper() in measure_cand_cols
+                    or self._measure_key(dataset.unique_name, phys_col) in measure_columns
+                ):
                     continue
 
                 physical_dim_key = (alias, phys_col)
@@ -324,6 +372,42 @@ class DimensionsClauseBuilder:
                 )
                 added_dimensions.add(dim_key)
                 added_physical_dimensions.add(physical_dim_key)
+
+        # Role-playing dimensions: exposed per role, keeping the PBIX names as synonyms
+        for role_table in (role_tables or []):
+            base_ds = dataset_by_name.get(role_table.base_dataset)
+            if not base_ds:
+                continue
+
+            role_alias = role_table.role_alias
+            role_used = used_dimension_aliases_by_dataset.setdefault(role_alias, set())
+
+            for col in getattr(base_ds, "columns", []) or []:
+                if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
+                    continue
+                phys_col = (
+                    self.identifier_sanitizer.sanitize_column(col.unique_name)
+                    if is_osi else self.schema_manager._resolve_physical_column_name(base_ds, col.unique_name)
+                )
+                if not phys_col or phys_col.startswith("RowNumber") or phys_col.startswith("_"):
+                    continue
+
+                semantic_source_name = str(getattr(col, "label", None) or col.unique_name)
+                semantic_name = self.sanitizer.sanitize_semantic_name(semantic_source_name)
+                emitted_name = self._resolve_unique_dimension_alias(semantic_name, role_used, semantic_source_name)
+
+                col_syns = list(getattr(col, "synonyms", []) or [])
+                if semantic_source_name and semantic_source_name not in col_syns:
+                    col_syns.append(semantic_source_name)
+
+                # Add role-specific synonyms if available (e.g. "Closed Date")
+                if role_table.fact_column and col.unique_name.casefold() in (role_table.pk_columns[0].casefold(), "date", "id"):
+                    if role_table.fact_column not in col_syns:
+                        col_syns.append(role_table.fact_column)
+
+                dim_expr = self.sanitizer.format_physical_column_ref(role_alias, phys_col, model_name=model_name)
+                syn_str = synonyms_clause(col_syns)
+                dims_lines.append(f'  {role_alias}."{emitted_name}" AS {dim_expr}{syn_str}')
 
         # Fallback
         if not dims_lines and datasets:

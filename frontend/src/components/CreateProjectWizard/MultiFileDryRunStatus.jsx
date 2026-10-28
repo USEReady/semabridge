@@ -197,10 +197,29 @@ export default function MultiFileDryRunStatus({
                     {errorText}
                   </div>
                 )}
+                {failed && (section.result?.blockers?.length > 0 || section.result?.table_binding_plan?.blockers?.length > 0) && (
+                  <div style={{ paddingBottom: 12 }}>
+                    <TableBindingPlan
+                      plan={section.result?.table_binding_plan}
+                      blockers={section.result?.blockers || section.result?.table_binding_plan?.blockers}
+                      projectId={section.previewProjectId || section.result?.project_id || projectId}
+                      modelName={section.result?.model_name || section.label}
+                      onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
+                      style={{ marginTop: 0, marginBottom: 12 }}
+                    />
+                  </div>
+                )}
                 {section.loaded && (
                   <div style={{ paddingTop: 12 }}>
                     <PanelBoundary name="Target tables">
-                      <TableBindingPlan plan={section.result?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+                      <TableBindingPlan
+                        plan={section.result?.table_binding_plan}
+                        blockers={section.result?.blockers || section.result?.table_binding_plan?.blockers}
+                        projectId={section.previewProjectId || section.result?.project_id || projectId}
+                        modelName={section.result?.model_name || section.label}
+                        onReSync={onRetryFile ? () => onRetryFile(section.fileId) : undefined}
+                        style={{ marginTop: 0, marginBottom: 12 }}
+                      />
                     </PanelBoundary>
                     <UpsertChangesView delta={section.result?.upsert_delta} modelLabel={section.result?.model_name || section.label} isDryRun>
                       <DryRunMappingTable

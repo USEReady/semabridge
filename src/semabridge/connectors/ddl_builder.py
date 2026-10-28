@@ -30,6 +30,7 @@ from semabridge.connectors.metrics_clause_builder import MetricsClauseBuilder
 from semabridge.connectors.ddl_validator import validate_semantic_ddl
 from semabridge.utils.null_sentinel import is_null_cast_sql
 from semabridge.core.exceptions import ConnectorError
+from semabridge.connectors.helper_columns import is_helper_column, collect_helper_columns_for_model
 
 logger = get_logger(__name__)
 
@@ -116,6 +117,10 @@ class SemanticViewBuilder:
         This runs automatically and tells you what columns to add to fact table.
         NO HARDCODING!
         """
+        # Always ensure metrics are re-anchored to the correct fact tables before computing precompute suggestions
+        if hasattr(self, "_reanchor_disconnected_fact_metrics"):
+            self._reanchor_disconnected_fact_metrics(model)
+
         suggestions: dict[str, list[str]] = {}
         details: list[dict[str, str]] = []
         dataset_names = {
@@ -176,23 +181,75 @@ class SemanticViewBuilder:
                     }
                 )
 
-        for metric in model.metrics:
-            if getattr(metric, "is_placeholder", False) or is_null_cast_sql(getattr(metric, "sql_expression", None)):
-                continue
-            dax = getattr(metric, 'expression', '') or ''
-            metric_dataset = getattr(metric, "dataset", "") or ""
+        # Build metric dependency graph to propagate lookup column requirements transitively.
+        metric_by_norm: dict[str, Any] = {}
+        for m in getattr(model, "metrics", []) or []:
+            name = getattr(m, "unique_name", "") or ""
+            if name:
+                metric_by_norm[name.casefold()] = m
+                clean_name = re.sub(r'[^a-zA-Z0-9]', '', name).casefold()
+                metric_by_norm[clean_name] = m
+
+        metric_direct_lookups: dict[str, set[tuple[str, str]]] = {}
+        metric_dependencies: dict[str, set[str]] = {}
+
+        for m in getattr(model, "metrics", []) or []:
+            m_key = getattr(m, "unique_name", "")
+            dax = getattr(m, 'expression', '') or ''
+            lookups: set[tuple[str, str]] = set()
+            deps: set[str] = set()
 
             # Detect RELATED('Table'[Column]) and RELATED(Table[Column]) patterns.
             related_pattern = r'RELATED\(\s*[\'"]?([^\'"\[\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
             for table, column in re.findall(related_pattern, dax, re.IGNORECASE):
-                add_suggestion(metric_dataset, table, column)
+                lookups.add((table.strip(), column.strip()))
 
             # Detect direct 'Table'[Column] references (cross-table).
             direct_pattern = r'[\'"]?([^\'"\[\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
             for table, column in re.findall(direct_pattern, dax, re.IGNORECASE):
-                table = str(table or "").strip()
-                if not table:
+                t_clean = table.strip()
+                c_clean = column.strip()
+                if not t_clean or not c_clean:
                     continue
+                if c_clean.casefold() in metric_by_norm or re.sub(r'[^a-zA-Z0-9]', '', c_clean).casefold() in metric_by_norm:
+                    dep_m = metric_by_norm.get(c_clean.casefold()) or metric_by_norm.get(re.sub(r'[^a-zA-Z0-9]', '', c_clean).casefold())
+                    if dep_m and getattr(dep_m, "unique_name", "") != m_key:
+                        deps.add(getattr(dep_m, "unique_name", ""))
+                else:
+                    lookups.add((t_clean, c_clean))
+
+            # Detect bare [Identifier] references
+            for m_bare in re.findall(r'\[([^\]]+)\]', dax):
+                b_clean = m_bare.strip()
+                if b_clean.casefold() in metric_by_norm or re.sub(r'[^a-zA-Z0-9]', '', b_clean).casefold() in metric_by_norm:
+                    dep_m = metric_by_norm.get(b_clean.casefold()) or metric_by_norm.get(re.sub(r'[^a-zA-Z0-9]', '', b_clean).casefold())
+                    if dep_m and getattr(dep_m, "unique_name", "") != m_key:
+                        deps.add(getattr(dep_m, "unique_name", ""))
+
+            metric_direct_lookups[m_key] = lookups
+            metric_dependencies[m_key] = deps
+
+        # Transitive propagation: if metric M depends on metric M', M also needs M''s lookup columns
+        all_metric_lookups = {k: set(v) for k, v in metric_direct_lookups.items()}
+        changed = True
+        while changed:
+            changed = False
+            for m_key, deps in metric_dependencies.items():
+                cur_len = len(all_metric_lookups[m_key])
+                for dep in deps:
+                    all_metric_lookups[m_key].update(all_metric_lookups.get(dep, set()))
+                if len(all_metric_lookups[m_key]) > cur_len:
+                    changed = True
+
+        # Project lookup column into enriched view of every fact whose metrics use it
+        for metric in getattr(model, "metrics", []) or []:
+            if getattr(metric, "is_placeholder", False) or is_null_cast_sql(getattr(metric, "sql_expression", None)):
+                continue
+            m_key = getattr(metric, "unique_name", "")
+            metric_dataset = getattr(metric, "dataset", "") or ""
+            if not metric_dataset:
+                continue
+            for table, column in all_metric_lookups.get(m_key, set()):
                 add_suggestion(metric_dataset, table, column)
 
         self._precompute_details = details
@@ -227,8 +284,14 @@ class SemanticViewBuilder:
         # 1. Build reachability graph (many-to-one transitive closure)
         reach: dict[str, set[str]] = {ds_name: {ds_name} for ds_name in datasets}
         for rel in getattr(model, "relationships", []):
+            c_val = getattr(getattr(rel, "cardinality", ""), "value", getattr(rel, "cardinality", ""))
+            c_clean = str(c_val or "").lower().split(".")[-1].replace("_", "-")
+            if c_clean in ("many-to-many", "m:m", "manytomany"):
+                continue  # Many-to-many cannot provide reachability in semantic view
             f = getattr(rel, "from_dataset", None)
             t = getattr(rel, "to_dataset", None)
+            if c_clean in ("one-to-many", "1:m", "onetomany", "1m"):
+                f, t = t, f
             if f in reach and t in datasets:
                 reach[f].add(t)
 
@@ -331,11 +394,12 @@ class SemanticViewBuilder:
                     if best_cand != curr_ds:
                         logger.info("Re-anchoring metric '%s' from '%s' to '%s' (referenced tables: %s)", m_name, curr_ds, best_cand, sorted(ref_tables))
                         m.dataset = best_cand
-                        if curr_ds and m.sql_expression:
+                        sql_expr = getattr(m, "sql_expression", None)
+                        if curr_ds and sql_expr:
                             m.sql_expression = re.sub(
                                 rf'\b{re.escape(curr_ds.lower())}\b',
                                 best_cand.lower(),
-                                m.sql_expression,
+                                sql_expr,
                                 flags=re.IGNORECASE
                             )
 
@@ -393,10 +457,21 @@ class SemanticViewBuilder:
                     elif hasattr(dropped_metrics, "append"):
                         dropped_metrics.append({"name": m_name, "reason": reason})
                 else:
-                    reason = "placeholder: not computable"
+                    is_m2m_cause = False
+                    for rel in getattr(model, "relationships", []):
+                        c_str = str(getattr(rel, "cardinality", "") or "").lower()
+                        if c_str in ("many_to_many", "many-to-many", "m:m"):
+                            if {rel.from_dataset, rel.to_dataset}.intersection(ref_tables):
+                                is_m2m_cause = True
+                                break
+                    if is_m2m_cause:
+                        reason = "many-to-many not supported in Snowflake semantic views; use a bridge table"
+                    else:
+                        reason = "placeholder: not computable"
                     logger.info("Emitting unreachable metric '%s' on '%s' as NULL placeholder: %s", m_name, curr_ds, reason)
                     m.sql_expression = "CAST(NULL AS DOUBLE)"
                     m.is_placeholder = True
+                    m.sync_failure_reason = reason
                     surviving_metrics.append(m)
                     if getattr(self, "drop_ledger", None):
                         self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
@@ -523,30 +598,75 @@ class SemanticViewBuilder:
             self.identifier_sanitizer, self.schema_manager, self.config, self.behavior,
             self.live_schema_metadata, cursor=self.cursor,
             enriched_view_mapping=self.enriched_view_mapping,
-            failed_enrichment_datasets=self.failed_enrichment_datasets
+            failed_enrichment_datasets=self.failed_enrichment_datasets,
+            drop_ledger=self.drop_ledger,
         )
         tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_sml(sml, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
+        emission_plan = tbuilder.emission_plan
+        norm_rels = emission_plan[0] if emission_plan else []
+        role_tables = emission_plan[1] if emission_plan else []
+        userel_measure_map = emission_plan[3] if emission_plan else {}
+
         # RELATIONSHIPS
-        rel_lines = self.relationships_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, declared_pk, rel_pk_map)
+        rel_lines = self.relationships_builder.build_for_sml(
+            sml, registry.dataset_aliases, ds_by_name, ds_lookup, declared_pk, rel_pk_map,
+            emission_plan=emission_plan
+        )
         if rel_lines: definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
 
         # PRE-EMIT INTEGRITY CHECK
-        self._validate_pre_emit_integrity(declared_pk, rel_lines, sml.relationships, registry.dataset_aliases, ds_by_name)
+        self._validate_pre_emit_integrity(declared_pk, rel_lines, norm_rels or sml.relationships, registry.dataset_aliases, ds_by_name)
 
         # DIMENSIONS
+        self.dimensions_builder.enriched_view_mapping = self.enriched_view_mapping
+        self.dimensions_builder.precompute_details = self.get_precompute_details()
         measure_cols = self._collect_measure_columns(sml, ds_lookup)
-        dims_lines, _missing = self.dimensions_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, live_col_lookup=live_ds_lookup)
+        dims_lines, _missing = self.dimensions_builder.build_for_sml(
+            sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols,
+            live_col_lookup=live_ds_lookup, role_tables=role_tables
+        )
         for _ds, _cols in _missing.items():
             self.missing_dims.setdefault(_ds, [])
             for _c in _cols:
                 if _c not in self.missing_dims[_ds]:
                     self.missing_dims[_ds].append(_c)
+
+        # FACTS (Private helper columns and metric-referenced numeric columns not declared as dimensions)
+        facts_lines = self._build_private_facts(
+            sml, registry.dataset_aliases, ds_lookup, live_ds_lookup, safe_view_name,
+            declared_dims=dims_lines,
+        )
+        facts_block_idx = None
+        if facts_lines:
+            facts_block_idx = len(definitions)
+            definitions.append("FACTS (\n" + ",\n".join(facts_lines) + "\n)")
+
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
             definitions.append("DIMENSIONS (\n" + ",\n".join(dims_lines) + "\n)")
+
+        # METRICS
+        if userel_measure_map:
+            for m in sml.metrics:
+                m_key = getattr(m, "unique_name", None) or getattr(m, "name", None)
+                role_alias = userel_measure_map.get(m_key)
+                if role_alias:
+                    for rt in role_tables:
+                        if rt.role_alias == role_alias:
+                            base_alias = registry.get_alias(rt.base_dataset) or rt.base_dataset
+                            patterns = {
+                                base_alias,
+                                rt.base_dataset,
+                                base_alias.replace("_", ""),
+                                rt.base_dataset.replace("_", ""),
+                            }
+                            if getattr(m, "sql_expression", None):
+                                for pat in sorted(patterns, key=len, reverse=True):
+                                    m.sql_expression = re.sub(rf'\b{re.escape(pat)}\b', role_alias, m.sql_expression, flags=re.IGNORECASE)
+                            break
 
         # METRICS
         from semabridge.utils.identifier_normalizer import IdentifierNormalizer
@@ -560,13 +680,17 @@ class SemanticViewBuilder:
         self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
 
         metrics_lines = self.metrics_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
+        self._ensure_metric_referenced_facts(metrics_lines, dims_lines, facts_lines, definitions, facts_block_idx)
 
         # CROSS-CLAUSE DEDUPLICATION
         if dims_lines and metrics_lines and dimensions_block_idx is not None:
             metrics_lines, definitions[dimensions_block_idx] = self._deduplicate_cross_clause(metrics_lines, dims_lines, definitions[dimensions_block_idx])
+            if not definitions[dimensions_block_idx].strip():
+                definitions[dimensions_block_idx] = ""
 
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
+        definitions = [d for d in definitions if d.strip()]
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
         return fix_global_sums(final_ddl, self.translator)
 
@@ -594,27 +718,69 @@ class SemanticViewBuilder:
             self.identifier_sanitizer, self.schema_manager, self.config, self.behavior,
             self.live_schema_metadata, cursor=self.cursor,
             enriched_view_mapping=self.enriched_view_mapping,
-            failed_enrichment_datasets=self.failed_enrichment_datasets
+            failed_enrichment_datasets=self.failed_enrichment_datasets,
+            drop_ledger=self.drop_ledger,
         )
         tables_lines, declared_pk, rel_pk_map, ds_lookup, ds_by_name, live_ds_lookup = tbuilder.build_for_osi(osi, registry, metric_counts, related_ds)
         if tables_lines: definitions.append("TABLES (\n" + ",\n".join(tables_lines) + "\n)")
 
+        emission_plan = tbuilder.emission_plan
+        norm_rels = emission_plan[0] if emission_plan else []
+        role_tables = emission_plan[1] if emission_plan else []
+        userel_measure_map = emission_plan[3] if emission_plan else {}
+
         # RELATIONSHIPS
-        rel_lines = self.relationships_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, declared_pk, rel_pk_map)
+        rel_lines = self.relationships_builder.build_for_osi(
+            osi, registry.dataset_aliases, ds_by_name, ds_lookup, declared_pk, rel_pk_map,
+            emission_plan=emission_plan
+        )
         if rel_lines: definitions.append("RELATIONSHIPS (\n" + ",\n".join(rel_lines) + "\n)")
 
+        # PRE-EMIT INTEGRITY CHECK
+        self._validate_pre_emit_integrity(declared_pk, rel_lines, norm_rels or osi.relationships, registry.dataset_aliases, ds_by_name)
+
+        # FACTS (Private helper columns)
+        self.dimensions_builder.enriched_view_mapping = self.enriched_view_mapping
+        self.dimensions_builder.precompute_details = self.get_precompute_details()
         # DIMENSIONS
         measure_cols = self._collect_measure_columns(osi, ds_lookup)
-        dims_lines, _missing = self.dimensions_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, live_col_lookup=live_ds_lookup)
+        dims_lines, _missing = self.dimensions_builder.build_for_osi(
+            osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols,
+            live_col_lookup=live_ds_lookup, role_tables=role_tables
+        )
         for _ds, _cols in _missing.items():
             self.missing_dims.setdefault(_ds, [])
             for _c in _cols:
                 if _c not in self.missing_dims[_ds]:
                     self.missing_dims[_ds].append(_c)
+
+        # FACTS (Private helper columns and metric-referenced numeric columns not declared as dimensions)
+        facts_lines = self._build_private_facts(
+            osi, registry.dataset_aliases, ds_lookup, live_ds_lookup, safe_view_name,
+            declared_dims=dims_lines,
+        )
+        facts_block_idx = None
+        if facts_lines:
+            facts_block_idx = len(definitions)
+            definitions.append("FACTS (\n" + ",\n".join(facts_lines) + "\n)")
+
         dimensions_block_idx = None
         if dims_lines:
             dimensions_block_idx = len(definitions)
             definitions.append("DIMENSIONS (\n" + ",\n".join(dims_lines) + "\n)")
+
+        # METRICS
+        if userel_measure_map:
+            for m in osi.metrics:
+                if m.unique_name in userel_measure_map:
+                    role_alias = userel_measure_map[m.unique_name]
+                    for rt in role_tables:
+                        if rt.role_alias == role_alias:
+                            base_alias = registry.get_alias(rt.base_dataset) or rt.base_dataset
+                            if getattr(m, "sql_expression", None):
+                                m.sql_expression = re.sub(rf'\b{re.escape(base_alias)}\b', role_alias, m.sql_expression, flags=re.IGNORECASE)
+                                m.sql_expression = re.sub(rf'\b{re.escape(rt.base_dataset)}\b', role_alias, m.sql_expression, flags=re.IGNORECASE)
+                            break
 
         # METRICS
         from semabridge.utils.identifier_normalizer import IdentifierNormalizer
@@ -628,12 +794,16 @@ class SemanticViewBuilder:
         self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
 
         metrics_lines = self.metrics_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
+        self._ensure_metric_referenced_facts(metrics_lines, dims_lines, facts_lines, definitions, facts_block_idx)
         
         if dims_lines and metrics_lines and dimensions_block_idx is not None:
             metrics_lines, definitions[dimensions_block_idx] = self._deduplicate_cross_clause(metrics_lines, dims_lines, definitions[dimensions_block_idx])
+            if not definitions[dimensions_block_idx].strip():
+                definitions[dimensions_block_idx] = ""
 
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
+        definitions = [d for d in definitions if d.strip()]
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
         return fix_global_sums(final_ddl, self.translator)
 
@@ -660,7 +830,340 @@ class SemanticViewBuilder:
                         measure_columns.add((ds_name.strip().casefold(), col_norm))
         return measure_columns
 
-    def _deduplicate_cross_clause(self, metrics_lines: List[str], dims_lines: List[str], dims_block: str) -> Tuple[List[str], str]:
+    def _collect_columns_referenced_by_metrics(
+        self,
+        model: Any,
+        dataset_aliases: Dict[str, str],
+    ) -> List[Tuple[Any, Any]]:
+        """Collect all (dataset, column_obj) referenced by any metric in the model."""
+        alias_to_dataset: Dict[str, Any] = {}
+        for ds in getattr(model, "datasets", []) or []:
+            alias_to_dataset[ds.unique_name.casefold()] = ds
+            a = dataset_aliases.get(ds.unique_name)
+            if a:
+                alias_to_dataset[a.casefold()] = ds
+
+        metric_names = {
+            str(getattr(m, "unique_name", "") or "").casefold()
+            for m in (getattr(model, "metrics", []) or [])
+            if getattr(m, "unique_name", None)
+        }
+
+        referenced: List[Tuple[Any, Any]] = []
+        seen: Set[Tuple[str, str]] = set()
+
+        def _record_ref(ds_obj: Any, col_obj: Any) -> None:
+            key = (ds_obj.unique_name.casefold(), col_obj.unique_name.casefold())
+            if key not in seen:
+                seen.add(key)
+                referenced.append((ds_obj, col_obj))
+
+        for m in getattr(model, "metrics", []) or []:
+            m_ds_name = str(getattr(m, "dataset", "") or "")
+            m_ds = alias_to_dataset.get(m_ds_name.casefold())
+
+            # 1. source_column
+            src_col = getattr(m, "source_column", None)
+            if src_col:
+                found_col = False
+                if m_ds:
+                    for c in getattr(m_ds, "columns", []) or []:
+                        if (c.unique_name.casefold() == str(src_col).casefold() or
+                            str(getattr(c, "source_column", "") or "").casefold() == str(src_col).casefold()):
+                            _record_ref(m_ds, c)
+                            found_col = True
+                            break
+                if not found_col:
+                    for ds in getattr(model, "datasets", []) or []:
+                        for c in getattr(ds, "columns", []) or []:
+                            if (c.unique_name.casefold() == str(src_col).casefold() or
+                                str(getattr(c, "source_column", "") or "").casefold() == str(src_col).casefold()):
+                                _record_ref(ds, c)
+                                found_col = True
+                                break
+                        if found_col:
+                            break
+
+            # 2. expressions (sql_expression and expression)
+            for expr in (getattr(m, "sql_expression", None), getattr(m, "expression", None)):
+                if not expr or not isinstance(expr, str):
+                    continue
+                clean = re.sub(r'(?i)\bWITH\s+SYNONYMS\s*=\s*\(.*?\)', '', expr)
+                clean = re.sub(r'(?i)\bWITH\s+SYNONYMS\b.*', '', clean)
+
+                # Match SQL: TBL."COL", TBL.COL, "TBL"."COL", "TBL".COL
+                for match in re.finditer(r'(?:"?([A-Za-z0-9_]+)"?)\.(?:"([^"]+)"|([A-Za-z0-9_]+))', clean):
+                    tbl_ref = match.group(1)
+                    col_ref = match.group(2) or match.group(3)
+                    if not col_ref:
+                        continue
+                    ds = alias_to_dataset.get(tbl_ref.casefold())
+                    if not ds:
+                        continue
+                    found_col = False
+                    for c in getattr(ds, "columns", []) or []:
+                        c_phys = (
+                            self.schema_manager._resolve_physical_column_name(ds, c.unique_name)
+                            if hasattr(self, "schema_manager") and hasattr(self.schema_manager, "_resolve_physical_column_name")
+                            else c.unique_name
+                        )
+                        if (c.unique_name.casefold() == col_ref.casefold() or
+                            str(getattr(c, "source_column", "") or "").casefold() == col_ref.casefold() or
+                            str(c_phys).casefold() == col_ref.casefold()):
+                            _record_ref(ds, c)
+                            found_col = True
+                            break
+                    if not found_col and col_ref.casefold() in metric_names:
+                        continue
+
+                # Match DAX: Table[Col] or 'Table'[Col]
+                for match in re.finditer(r"'?([A-Za-z0-9_ ]+)'?\[([^\]]+)\]", clean):
+                    tbl_ref = match.group(1).strip()
+                    col_ref = match.group(2).strip()
+                    if not col_ref:
+                        continue
+                    ds = alias_to_dataset.get(tbl_ref.casefold())
+                    if not ds:
+                        continue
+                    found_col = False
+                    for c in getattr(ds, "columns", []) or []:
+                        if (c.unique_name.casefold() == col_ref.casefold() or
+                            str(getattr(c, "source_column", "") or "").casefold() == col_ref.casefold()):
+                            _record_ref(ds, c)
+                            found_col = True
+                            break
+                    if not found_col and col_ref.casefold() in metric_names:
+                        continue
+
+                # Match unqualified DAX: [Col]
+                for match in re.finditer(r'(?<![A-Za-z0-9_\]])\[([^\]]+)\]', clean):
+                    col_ref = match.group(1).strip()
+                    if not col_ref:
+                        continue
+                    found_col = False
+                    if m_ds:
+                        for c in getattr(m_ds, "columns", []) or []:
+                            if (c.unique_name.casefold() == col_ref.casefold() or
+                                str(getattr(c, "source_column", "") or "").casefold() == col_ref.casefold()):
+                                _record_ref(m_ds, c)
+                                found_col = True
+                                break
+                    if not found_col:
+                        for ds in getattr(model, "datasets", []) or []:
+                            for c in getattr(ds, "columns", []) or []:
+                                if (c.unique_name.casefold() == col_ref.casefold() or
+                                    str(getattr(c, "source_column", "") or "").casefold() == col_ref.casefold()):
+                                    _record_ref(ds, c)
+                                    found_col = True
+                                    break
+                            if found_col:
+                                break
+                    if not found_col and col_ref.casefold() in metric_names:
+                        continue
+
+        return referenced
+
+    def _build_private_facts(
+        self,
+        model: Any,
+        dataset_aliases: Dict[str, str],
+        dataset_col_lookup: Dict[str, Set[str]],
+        live_col_lookup: Optional[Dict[str, Set[str]]],
+        model_name: str,
+        declared_dims: Optional[List[str]] = None,
+    ) -> List[str]:
+        facts_lines: List[str] = []
+        seen_facts: Set[Tuple[str, str]] = set()
+
+        def _is_numeric_type(dtype: Any) -> bool:
+            if dtype is None:
+                return False
+            val = getattr(dtype, "value", str(dtype)).lower()
+            return val in {
+                "integer", "int", "int64", "bigint", "smallint", "tinyint",
+                "decimal", "numeric", "number", "float", "double", "real",
+                "fixed", "float4", "float8", "int2", "int4", "int8",
+            }
+
+        ref_cols = self._collect_columns_referenced_by_metrics(model, dataset_aliases)
+
+        # Declared dimension keys (to avoid duplicate expression names across FACTS and DIMENSIONS)
+        declared_dim_keys: Set[str] = set()
+        if declared_dims:
+            for d_line in declared_dims:
+                key = extract_expr_key(d_line)
+                if key:
+                    declared_dim_keys.add(key.upper())
+                target_m = re.search(r'\bAS\s+(\w+)\."([^\"]+)"', d_line, re.IGNORECASE)
+                if target_m:
+                    declared_dim_keys.add(f"{target_m.group(1).upper()}.{target_m.group(2).upper()}")
+
+        # 1. Helper columns
+        enriched_datasets = set((self.enriched_view_mapping or {}).keys())
+        known_helpers = collect_helper_columns_for_model(
+            model,
+            precompute_details=self.get_precompute_details(),
+            anchor_flag_map=getattr(self.translator, "anchor_flag_map", None) if self.translator else None,
+            enriched_datasets=enriched_datasets,
+            dataset_col_lookup=dataset_col_lookup,
+            live_col_lookup=live_col_lookup,
+        )
+
+        for dataset in getattr(model, "datasets", []) or []:
+            ds_name = dataset.unique_name
+            alias = dataset_aliases.get(ds_name)
+            if not alias:
+                continue
+
+            candidate_cols: Set[str] = set()
+            if live_col_lookup and ds_name in live_col_lookup:
+                candidate_cols.update(live_col_lookup[ds_name])
+            elif dataset_col_lookup and ds_name in dataset_col_lookup:
+                candidate_cols.update(dataset_col_lookup[ds_name])
+
+            is_enriched = (
+                ds_name in (self.enriched_view_mapping or {})
+                or str(ds_name).casefold() in {k.casefold() for k in (self.enriched_view_mapping or {})}
+            )
+            if is_enriched:
+                for d in self.get_precompute_details():
+                    if str(d.get("target_dataset", "")).casefold() == str(ds_name).casefold():
+                        candidate_cols.add(d["precomputed_column"])
+                if self.translator and getattr(self.translator, "anchor_flag_map", None):
+                    ds_flags = self.translator.anchor_flag_map.get(str(ds_name).casefold()) or {}
+                    for flag_val in ds_flags.values():
+                        if isinstance(flag_val, str) and flag_val:
+                            candidate_cols.add(flag_val)
+
+            if live_col_lookup and ds_name in live_col_lookup:
+                live_upper = {x.upper() for x in live_col_lookup[ds_name]}
+                candidate_cols = {c for c in candidate_cols if c.upper() in live_upper}
+
+            for col in sorted(candidate_cols):
+                if not col:
+                    continue
+                if is_helper_column(col, ds_name, enriched_datasets, known_helpers):
+                    fact_key = (alias.upper(), col.upper())
+                    if fact_key in seen_facts:
+                        continue
+                    expr_key = f"{alias.upper()}.{col.upper()}"
+                    sanitized_name = self.sanitizer.sanitize_semantic_name(col).upper()
+                    alt_expr_key = f"{alias.upper()}.{sanitized_name}"
+                    if expr_key in declared_dim_keys or alt_expr_key in declared_dim_keys:
+                        continue  # Already declared as a dimension; do not duplicate in FACTS!
+                    seen_facts.add(fact_key)
+                    phys_ref = self.sanitizer.format_physical_column_ref(alias, col, model_name=model_name)
+                    facts_lines.append(f'  PRIVATE {alias}."{col}" AS {phys_ref}')
+
+        # 2. Numeric columns referenced by metrics (public if visible, private if hidden)
+
+        for ds, col_obj in ref_cols:
+            if not _is_numeric_type(col_obj.data_type):
+                continue
+            alias = dataset_aliases.get(ds.unique_name)
+            if not alias:
+                continue
+            col_name = col_obj.unique_name
+            fact_key = (alias.upper(), col_name.upper())
+            if fact_key in seen_facts:
+                continue
+
+            expr_key = f"{alias.upper()}.{col_name.upper()}"
+            sanitized_name = self.sanitizer.sanitize_semantic_name(col_name).upper()
+            alt_expr_key = f"{alias.upper()}.{sanitized_name}"
+            if expr_key in declared_dim_keys or alt_expr_key in declared_dim_keys:
+                continue  # Already declared as a dimension; do not move to FACTS!
+
+            seen_facts.add(fact_key)
+
+            phys_col = (
+                self.schema_manager._resolve_physical_column_name(ds, col_name)
+                if hasattr(self, "schema_manager") and hasattr(self.schema_manager, "_resolve_physical_column_name")
+                else col_name
+            )
+            phys_ref = self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)
+            visibility = "PRIVATE" if bool(getattr(col_obj, "is_hidden", False)) else "PUBLIC"
+            facts_lines.append(f'  {visibility} {alias}."{col_name}" AS {phys_ref}')
+
+        return facts_lines
+
+    def _ensure_metric_referenced_facts(
+        self,
+        metrics_lines: List[str],
+        dims_lines: Optional[List[str]],
+        facts_lines: List[str],
+        definitions: List[str],
+        facts_block_idx: Optional[int],
+    ) -> None:
+        """Ensure all columns referenced in METRICS expressions are declared under FACTS or DIMENSIONS."""
+        declared_col_keys: Set[Tuple[str, str]] = set()
+        for d_line in (dims_lines or []):
+            m = re.search(r'(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\.("[^"]+"|\[[^\]]+\]|[A-Za-z0-9_]+)', d_line, re.IGNORECASE)
+            if m:
+                tbl = m.group(1).upper()
+                col = m.group(2).strip('"\\[\\]').upper()
+                declared_col_keys.add((tbl, col))
+                clean_c = re.sub(r'[^A-Za-z0-9]', '', col)
+                if clean_c:
+                    declared_col_keys.add((tbl, clean_c))
+        for f_line in (facts_lines or []):
+            m = re.search(r'(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\.("[^"]+"|\[[^\]]+\]|[A-Za-z0-9_]+)', f_line, re.IGNORECASE)
+            if m:
+                tbl = m.group(1).upper()
+                col = m.group(2).strip('"\\[\\]').upper()
+                declared_col_keys.add((tbl, col))
+                clean_c = re.sub(r'[^A-Za-z0-9]', '', col)
+                if clean_c:
+                    declared_col_keys.add((tbl, clean_c))
+
+        declared_metric_keys: Set[Tuple[str, str]] = set()
+        for m_line in (metrics_lines or []):
+            m = re.match(r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\.("[^"]+"|\[[^\]]+\]|[A-Za-z0-9_]+)\s+AS\s+', m_line, re.IGNORECASE)
+            if m:
+                tbl = m.group(1).upper()
+                met = m.group(2).strip('"\\[\\]').upper()
+                declared_metric_keys.add((tbl, met))
+                clean_m = re.sub(r'[^A-Za-z0-9]', '', met)
+                if clean_m:
+                    declared_metric_keys.add((tbl, clean_m))
+
+        extra_facts: List[str] = []
+        seen_extra: Set[Tuple[str, str]] = set()
+        for m_line in (metrics_lines or []):
+            parts = m_line.split(" AS ", 1)
+            if len(parts) < 2:
+                continue
+            expr = parts[1]
+            clean_expr = re.sub(r'(?i)\bWITH\s+SYNONYMS\s*=\s*\(.*?\)', '', expr)
+            clean_expr = re.sub(r'(?i)\bWITH\s+SYNONYMS\b.*', '', clean_expr)
+            for m in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*|"[^"]+")', clean_expr):
+                ref_tbl = m.group(1).upper()
+                ref_col = m.group(2).strip('"')
+                col_upper = ref_col.upper()
+                col_clean = re.sub(r'[^A-Za-z0-9]', '', col_upper)
+                if (ref_tbl, col_upper) in declared_col_keys or (ref_tbl, col_clean) in declared_col_keys:
+                    continue
+                if (ref_tbl, col_upper) in declared_metric_keys or (ref_tbl, col_clean) in declared_metric_keys:
+                    continue
+                if (ref_tbl, col_upper) in seen_extra:
+                    continue
+                seen_extra.add((ref_tbl, col_upper))
+                extra_facts.append(f'  PUBLIC {ref_tbl}."{ref_col}" AS {ref_tbl}."{ref_col}"')
+
+        if extra_facts:
+            facts_lines.extend(extra_facts)
+            facts_block = "FACTS (\n" + ",\n".join(facts_lines) + "\n)"
+            if facts_block_idx is not None:
+                definitions[facts_block_idx] = facts_block
+            else:
+                definitions.insert(0, facts_block)
+
+    def _deduplicate_cross_clause(
+        self,
+        metrics_lines: List[str],
+        dims_lines: List[str],
+        dims_block: str,
+    ) -> Tuple[List[str], str]:
         metric_keys = {extract_expr_key(line) for line in metrics_lines if extract_expr_key(line)}
         filtered_dims = [line for line in dims_lines if extract_expr_key(line) not in metric_keys]
         if len(filtered_dims) < len(dims_lines):
@@ -931,8 +1434,12 @@ class SemanticViewBuilder:
         """Detect and block relationship loss between model and emitted DDL."""
         active_relationships = 0
         for rel in relationships or []:
-            if not getattr(rel, "is_active", True):
+            if not getattr(rel, "is_active", True) or getattr(rel, "is_skipped", False):
                 continue
+            card_val = getattr(getattr(rel, "cardinality", ""), "value", getattr(rel, "cardinality", ""))
+            card_str = str(card_val or "").lower().split(".")[-1].replace("_", "-")
+            if card_str in ("many-to-many", "m:m", "manytomany"):
+                continue  # Many-to-many relationships are skipped by design
             if (
                 getattr(rel, "from_dataset", None)
                 and getattr(rel, "to_dataset", None)
@@ -983,10 +1490,38 @@ class SemanticViewBuilder:
         Both from the model only; whether a key is unique in the data is a
         warning (schema_manager.warn_if_key_not_unique), never a failure.
         """
-        # Fact detection from the model: a fact is on the many side of the
-        # relationships and never on the one side.
-        many_side = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
-        one_side = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
+        from semabridge.connectors.relationship_emission_helper import EmissionRelationship
+
+        many_side: set[str] = set()
+        one_side: set[str] = set()
+        for rel in relationships or []:
+            if isinstance(rel, EmissionRelationship):
+                if rel.is_skipped:
+                    continue
+                if rel.cardinality == "one-to-one":
+                    one_side.add(rel.from_dataset)
+                    one_side.add(rel.to_dataset)
+                    continue
+                many_side.add(rel.from_dataset)
+                target = rel.role_alias if rel.is_role_playing and rel.role_alias else rel.to_dataset
+                one_side.add(target)
+                one_side.add(rel.to_dataset)
+            else:
+                c_val = getattr(getattr(rel, "cardinality", ""), "value", getattr(rel, "cardinality", ""))
+                c_clean = str(c_val or "").lower().split(".")[-1].replace("_", "-")
+                if c_clean in ("many-to-many", "m:m", "manytomany"):
+                    continue
+                f = getattr(rel, "from_dataset", None)
+                t = getattr(rel, "to_dataset", None)
+                if c_clean in ("one-to-one", "1:1", "onetoone", "11"):
+                    if f: one_side.add(f)
+                    if t: one_side.add(t)
+                    continue
+                if c_clean in ("one-to-many", "1:m", "onetomany", "1m"):
+                    f, t = t, f
+                if f: many_side.add(f)
+                if t: one_side.add(t)
+
         fact_datasets = {ds for ds in many_side if ds not in one_side}
         fact_aliases = {dataset_aliases.get(ds, ds).upper() for ds in fact_datasets}
 
@@ -997,14 +1532,20 @@ class SemanticViewBuilder:
                     f"but fact tables must have no primary key."
                 )
 
-
         # 2. Validate relationships match model's bound columns
-        active_rels = [r for r in relationships if getattr(r, "is_active", True)]
+        active_rels = [
+            r for r in relationships
+            if getattr(r, "is_active", True) and not getattr(r, "is_skipped", False)
+        ]
         for rel in active_rels:
             from_ds = getattr(rel, "from_dataset", "")
             to_ds = getattr(rel, "to_dataset", "")
+            role_alias = getattr(rel, "role_alias", None)
+            is_role_playing = getattr(rel, "is_role_playing", False)
+
             from_alias = dataset_aliases.get(from_ds, from_ds)
-            to_alias = dataset_aliases.get(to_ds, to_ds)
+            to_alias = role_alias if (is_role_playing and role_alias) else dataset_aliases.get(to_ds, to_ds)
+
             from_cols = [
                 self.schema_manager._resolve_physical_column_name(ds_by_name.get(from_ds), c)
                 if ds_by_name.get(from_ds) else self.identifier_sanitizer.sanitize_column(c)

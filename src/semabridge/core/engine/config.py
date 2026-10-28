@@ -85,10 +85,48 @@ def _apply_mapping_overrides_from_config(
     target_type = str(target_cfg.get("type") or "").strip().lower()
     snowflake_sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 
+    model_name = getattr(sml_model, "unique_name", "") or getattr(sml_model, "label", "") or ""
+    model_source_file = None
+    for ds in getattr(sml_model, "datasets", []) or []:
+        for col in getattr(ds, "columns", []) or []:
+            if getattr(col, "source_file", None):
+                model_source_file = col.source_file
+                break
+        if model_source_file:
+            break
+    if not model_source_file:
+        for met in getattr(sml_model, "metrics", []) or []:
+            if getattr(met, "source_file", None):
+                model_source_file = met.source_file
+                break
+
+    model_views = parsed.get("source", {}).get("model_views", {}) or {}
+
+    norm_model_views = {" ".join(str(k).split()): v for k, v in model_views.items()}
+
     overrides: Dict[str, str] = {}
     for row in raw_overrides:
         if not isinstance(row, dict):
             continue
+        row_model = " ".join(str(row.get("model") or "").split())
+        if row_model:
+            target_view = norm_model_views.get(row_model)
+            matches = False
+            if target_view and str(target_view).strip().upper() == model_name.upper():
+                matches = True
+            elif row_model.upper() in (model_name.upper(), str(getattr(sml_model, "label", "")).upper()):
+                matches = True
+            elif model_source_file:
+                from pathlib import Path
+                try:
+                    norm_src = " ".join(str(model_source_file).split())
+                    if Path(row_model).name.lower() == Path(norm_src).name.lower():
+                        matches = True
+                except Exception:
+                    pass
+            if not matches:
+                continue
+
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
         if target_type == "snowflake" and target_name:

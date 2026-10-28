@@ -355,7 +355,7 @@ class QueryValidator:
 class QueryBuilder:
     """Builds complete SQL queries from metrics."""
     
-    def __init__(self, base_table: str = "SalesFact", base_alias: str = "fact"):
+    def __init__(self, base_table: str = "fact", base_alias: str = "fact"):
         """
         Initialize query builder.
         
@@ -513,7 +513,7 @@ class QueryBuilder:
 class QueryAssembler:
     """High-level interface for query assembly."""
     
-    def __init__(self, base_table: str = "SalesFact", base_alias: str = "fact"):
+    def __init__(self, base_table: str = "fact", base_alias: str = "fact"):
         """Initialize query assembler."""
         self.builder = QueryBuilder(base_table, base_alias)
         self.validator = QueryValidator()

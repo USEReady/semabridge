@@ -10,10 +10,13 @@ Do NOT import config_loader here — that module handles YAML files.
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,6 +59,11 @@ class SnowflakeConfig(BaseSettings):
     warehouse: Optional[str] = Field(default=None, description="Snowflake warehouse name")
     database: Optional[str] = Field(default=None, description="Snowflake database name")
     schema_name: str = Field(default="PUBLIC", validation_alias="SNOWFLAKE_SCHEMA", description="Snowflake schema name")
+    source_data_schema: Optional[str] = Field(
+        default=None,
+        validation_alias="SNOWFLAKE_SOURCE_DATA_SCHEMA",
+        description="Optional separate schema for model's source tables (when different from target view schema)",
+    )
     role: Optional[str] = Field(default=None, description="Snowflake role (optional)")
 
     # Cortex Analyst integration

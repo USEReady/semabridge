@@ -84,6 +84,7 @@ def test_dry_run_trial_pass_predicts_and_rerenders_valid_ytd():
     emitter = SnowflakeEmitter(config=cfg, behavior=behavior)
     predicted_map = emitter.predict_anchor_flag_map(model)
     assert predicted_map == {"salesfact": {("YTD",): "IS_YTD"}}
+    emitter.translator.anchor_flag_map.update(predicted_map)
 
     for ft in predicted_map:
         emitter._enriched_view_mapping[ft] = f"{ft.upper()}_ENRICHED"

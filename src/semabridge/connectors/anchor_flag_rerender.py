@@ -108,53 +108,61 @@ def rerender_anchor_dependent_metrics(
 
     metric_by_name = {str(getattr(m, "unique_name", "") or ""): m for m in metrics}
     translator = DAXTranslator()
-    rerendered = 0
+    total_rerendered = 0
     tag = f"[{label}] " if label else ""
 
-    for name in shaped:
-        metric = metric_by_name.get(name)
-        if metric is None:
-            continue
-        dax_expr = getattr(metric, "expression", None)
-        if not dax_expr or not str(dax_expr).strip():
-            continue
+    max_passes = 4
+    for _ in range(max_passes):
+        pass_rerendered = 0
+        for name in shaped:
+            metric = metric_by_name.get(name)
+            if metric is None:
+                continue
+            dax_expr = getattr(metric, "expression", None)
+            if not dax_expr or not str(dax_expr).strip():
+                continue
 
-        dataset_name = getattr(metric, "dataset", None)
-        flag_map_for_dataset = anchor_flag_map.get(str(dataset_name or "").casefold(), {})
-        if not flag_map_for_dataset and anchor_flag_map:
-            if len(anchor_flag_map) == 1:
-                flag_map_for_dataset = list(anchor_flag_map.values())[0]
-            else:
-                for k, v in anchor_flag_map.items():
-                    if v:
-                        flag_map_for_dataset = v
-                        break
+            dataset_name = getattr(metric, "dataset", None)
+            flag_map_for_dataset = anchor_flag_map.get(str(dataset_name or "").casefold(), {})
+            if not flag_map_for_dataset and anchor_flag_map:
+                if len(anchor_flag_map) == 1:
+                    flag_map_for_dataset = list(anchor_flag_map.values())[0]
+                else:
+                    for k, v in anchor_flag_map.items():
+                        if v:
+                            flag_map_for_dataset = v
+                            break
 
-        table_alias = dataset_aliases.get(dataset_name, dataset_name)
-        translation = translator.translate(
-            dax_expr,
-            table_alias,
-            dataset_name,
-            dataset_col_lookup=dataset_col_lookup,
-            dataset_aliases=dataset_aliases,
-            metric_name=name,
-            anchor_flag_map=flag_map_for_dataset,
-            skip_tier5=True,
-            metrics_context=metrics,
-        )
-        if not translation or not translation.is_success or not translation.sql:
-            continue
-        if translation.sql == getattr(metric, "sql_expression", None):
-            continue
+            table_alias = dataset_aliases.get(dataset_name, dataset_name)
+            translation = translator.translate(
+                dax_expr,
+                table_alias,
+                dataset_name,
+                dataset_col_lookup=dataset_col_lookup,
+                dataset_aliases=dataset_aliases,
+                metric_name=name,
+                anchor_flag_map=flag_map_for_dataset,
+                skip_tier5=True,
+                metrics_context=metrics,
+            )
+            if not translation or not translation.is_success or not translation.sql:
+                continue
+            if translation.sql == getattr(metric, "sql_expression", None):
+                continue
 
-        logger.info(
-            "%sRe-rendered anchor-dependent metric '%s' using %s anchor_flag_map: %s",
-            tag,
-            name,
-            label or "supplied",
-            translation.sql[:160],
-        )
-        metric.sql_expression = translation.sql
-        rerendered += 1
+            logger.info(
+                "%sRe-rendered anchor-dependent metric '%s' using %s anchor_flag_map: %s",
+                tag,
+                name,
+                label or "supplied",
+                translation.sql[:160],
+            )
+            metric.sql_expression = translation.sql
+            pass_rerendered += 1
 
-    return rerendered
+        total_rerendered += pass_rerendered
+        if pass_rerendered == 0:
+            break
+
+    return total_rerendered
+

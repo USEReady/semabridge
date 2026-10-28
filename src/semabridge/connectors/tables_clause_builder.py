@@ -8,6 +8,10 @@ from semabridge.converter.date_resolution import DateResolutionConfig
 from semabridge.connectors.fact_table_naming import is_fact_like_name
 from semabridge.connectors.sql_guard import validate_safe_sql
 from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+from semabridge.connectors.relationship_emission_helper import (
+    RelationshipEmissionPlanner, RolePlayingTable, EmissionRelationship
+)
+from semabridge.core.drop_ledger import DropLedger
 
 
 def resolve_source_table_mapping(
@@ -86,6 +90,7 @@ class TablesClauseBuilder:
         cursor: Any = None,
         enriched_view_mapping: Optional[Dict[str, str]] = None,
         failed_enrichment_datasets: Optional[Set[str]] = None,
+        drop_ledger: Optional[DropLedger] = None,
     ) -> None:
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -99,7 +104,16 @@ class TablesClauseBuilder:
         self.failed_enrichment_datasets: Set[str] = (
             failed_enrichment_datasets if failed_enrichment_datasets is not None else set()
         )
+        self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
         self._anchor_literal_cache: dict[tuple, Optional[str]] = {}
+        self.emission_plan: Optional[Tuple[Any, Any, Any, Any]] = None
+
+    def _resolve_physical_col(self, dataset: Any, col_name: str) -> str:
+        if self.schema_manager and hasattr(self.schema_manager, "_resolve_physical_column_name"):
+            return self.schema_manager._resolve_physical_column_name(
+                dataset, col_name, model=getattr(self, "_current_model", None)
+            )
+        return self.identifier_sanitizer.sanitize_column(col_name) if self.identifier_sanitizer else col_name
 
     def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
         """
@@ -137,15 +151,16 @@ class TablesClauseBuilder:
         )
 
         if date_dataset:
+            date_display = getattr(date_dataset, "label", None) or date_dataset.unique_name
             resolved_source_table = source_table_mapping.get(
                 date_dataset.unique_name,
-                date_dataset.source_table or date_dataset.unique_name,
+                date_display,
             )
             _unq = resolved_source_table.rsplit(".", 1)[-1] if "." in resolved_source_table else resolved_source_table
             safe_table = self.identifier_sanitizer.sanitize_table_name(_unq)
             date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
-            resolved_date_col = self.schema_manager._resolve_physical_column_name(date_dataset, date_col, model=model)
-            resolved_fiscal_col = self.schema_manager._resolve_physical_column_name(date_dataset, fiscal_col, model=model)
+            resolved_date_col = self._resolve_physical_col(date_dataset, date_col)
+            resolved_fiscal_col = self._resolve_physical_col(date_dataset, fiscal_col)
         else:
             _unq_dt = date_table.rsplit(".", 1)[-1] if "." in date_table else date_table
             safe_table = self.identifier_sanitizer.sanitize_table_name(_unq_dt)
@@ -228,17 +243,27 @@ class TablesClauseBuilder:
             )
         ]
 
-        many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
-        one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
+        planner = RelationshipEmissionPlanner(self.identifier_sanitizer, drop_ledger=self.drop_ledger)
+        norm_rels, role_tables, relationship_pk_map, userel_measure_map = planner.plan(
+            datasets, relationships, metrics=getattr(self._current_model, "metrics", [])
+        )
+        self.emission_plan = (norm_rels, role_tables, relationship_pk_map, userel_measure_map)
 
-        relationship_pk_map = {}
-        for rel in relationships:
-            if rel.is_active and rel.to_dataset and rel.to_columns:
-                if rel.to_dataset not in relationship_pk_map:
-                    relationship_pk_map[rel.to_dataset] = []
-                for col in rel.to_columns:
-                    if col not in relationship_pk_map[rel.to_dataset]:
-                        relationship_pk_map[rel.to_dataset].append(col)
+        many_side_datasets = {rel.from_dataset for rel in norm_rels if not rel.is_skipped and rel.cardinality != "one-to-one" and rel.from_dataset}
+        one_side_datasets = {rel.to_dataset for rel in norm_rels if not rel.is_skipped and rel.to_dataset} | {rel.from_dataset for rel in norm_rels if not rel.is_skipped and rel.cardinality == "one-to-one"}
+        m2m_datasets = getattr(planner, "m2m_datasets", set())
+
+        target_keys_by_dataset: dict[str, list[list[str]]] = {}
+        for r in norm_rels:
+            if r.is_skipped or not r.to_columns:
+                continue
+            target_name = r.role_alias if r.is_role_playing and r.role_alias else r.to_dataset
+            if not target_name:
+                continue
+            cols = list(r.to_columns)
+            target_keys_by_dataset.setdefault(target_name, [])
+            if cols not in target_keys_by_dataset[target_name]:
+                target_keys_by_dataset[target_name].append(cols)
 
         dataset_col_lookup: dict[str, set[str]] = {}
         # live_col_lookup contains ONLY confirmed-live columns from Snowflake schema
@@ -293,31 +318,28 @@ class TablesClauseBuilder:
             )
             unqualified_table = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
             safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
-            full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            data_schema = getattr(self.config, "source_data_schema", None) or self.config.schema_name
+            full_table = f'"{self.config.database}"."{data_schema}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
 
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
+            known_phys_upper = {c.upper(): c for c in known_phys}
             relationship_pk_cols: list[str] = []
             if dataset.unique_name in relationship_pk_map:
                 for rel_col in relationship_pk_map[dataset.unique_name]:
-                    resolved = self.schema_manager._resolve_physical_column_name(dataset, rel_col, model=self._current_model)
-                    if not known_phys or resolved in known_phys:
-                        if resolved not in relationship_pk_cols:
-                            relationship_pk_cols.append(resolved)
+                    resolved = self._resolve_physical_col(dataset, rel_col)
+                    actual_col = known_phys_upper.get(resolved.upper(), resolved)
+                    if not known_phys or actual_col in known_phys or resolved.upper() in known_phys_upper:
+                        if actual_col not in relationship_pk_cols:
+                            relationship_pk_cols.append(actual_col)
 
             is_measure_only = (
                 metric_counts_by_dataset.get(dataset.unique_name, 0) > 0
                 and dataset.unique_name not in related_datasets
                 and not any(getattr(c, "is_key", False) for c in dataset.columns)
-                and dataset.unique_name.upper() != "KPI"
             )
 
-            # Facts and keys come from the PBIX model and the Snowflake schema
-            # only, never from table data: a fact is on the many side of the
-            # model's relationships (or flagged/named as one). A key is the
-            # one-side column of a relationship, else the PBIX key column,
-            # else a primary key declared in Snowflake, else the first column.
             is_on_many_side = (dataset.unique_name in many_side_datasets and dataset.unique_name not in one_side_datasets)
 
             is_fact_table = (
@@ -328,12 +350,29 @@ class TablesClauseBuilder:
             )
 
             def _physical(col_name: str) -> str:
-                return self.schema_manager._resolve_physical_column_name(dataset, col_name, model=self._current_model)
+                return self._resolve_physical_col(dataset, col_name)
 
-            if is_measure_only or is_fact_table:
+            # Resolve target keys for this dataset to physical column names (preserving composite keys)
+            raw_target_keys = target_keys_by_dataset.get(dataset.unique_name, [])
+            resolved_target_keys: list[list[str]] = []
+            for raw_key in raw_target_keys:
+                resolved_cols = []
+                for c in raw_key:
+                    resolved = self._resolve_physical_col(dataset, c)
+                    actual_col = known_phys_upper.get(resolved.upper(), resolved)
+                    resolved_cols.append(actual_col)
+                if not known_phys or all(c in known_phys or c.upper() in known_phys_upper for c in resolved_cols):
+                    if resolved_cols not in resolved_target_keys:
+                        resolved_target_keys.append(resolved_cols)
+
+            if is_measure_only:
                 pk_cols = []
+            elif resolved_target_keys:
+                pk_cols = [f'"{c}"' for c in resolved_target_keys[0]]
             elif relationship_pk_cols:
                 pk_cols = [f'"{relationship_pk_cols[0]}"']
+            elif is_fact_table or dataset.unique_name in m2m_datasets:
+                pk_cols = []
             else:
                 key_cols = [c for c in dataset.columns if c.is_key]
                 declared = []
@@ -345,36 +384,94 @@ class TablesClauseBuilder:
                     pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
                 elif declared:
                     pk_cols = [f'"{c}"' for c in declared]
-                elif dataset.columns:
-                    pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
                 else:
                     pk_cols = []
 
-            # Verification: only retain columns that actually exist in the physical table
-            verified_pk = [p for p in pk_cols if p.strip('"') in known_phys]
-
+            # Verification: only retain columns that actually exist in the physical table, matching exact casing
+            verified_pk = []
+            for p in pk_cols:
+                col_name = p.strip('"')
+                if col_name in known_phys:
+                    verified_pk.append(f'"{col_name}"')
+                elif col_name.upper() in known_phys_upper:
+                    verified_pk.append(f'"{known_phys_upper[col_name.upper()]}"')
+                elif not known_phys:
+                    verified_pk.append(p)
 
             if verified_pk:
                 declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
-                relationship_target_alias[(dataset.unique_name, verified_pk[0].strip('"').upper())] = alias
+                for c in verified_pk:
+                    relationship_target_alias[(dataset.unique_name, c.strip('"').upper())] = alias
                 if hasattr(self.schema_manager, "warn_if_key_not_unique"):
                     self.schema_manager.warn_if_key_not_unique(
                         unqualified_table, [c.strip('"') for c in verified_pk], cursor=self.cursor
                     )
 
-            pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
-            
+            verified_unique: list[list[str]] = []
+            verified_pk_upper = [p.strip('"').upper() for p in verified_pk]
+            for tkey in resolved_target_keys[1:]:
+                tkey_upper = [c.upper() for c in tkey]
+                if tkey_upper == verified_pk_upper:
+                    continue
+                if any(tkey_upper == [c.upper() for c in u] for u in verified_unique):
+                    continue
+                verified_unique.append(tkey)
+                for c in tkey:
+                    relationship_target_alias[(dataset.unique_name, c.upper())] = alias
+
+            constraints: list[str] = []
+            if verified_pk:
+                constraints.append(f"PRIMARY KEY ({', '.join(verified_pk)})")
+            for u in verified_unique:
+                u_str = ", ".join(f'"{c}"' for c in u)
+                constraints.append(f"UNIQUE ({u_str})")
+
             if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or is_fact_like_name(dataset.unique_name)):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
-            pk_suffix = f" {pk_clause}" if pk_clause else ""
-            tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}')
+            constraints_suffix = f" {' '.join(constraints)}" if constraints else ""
+            tables_lines.append(f'  {alias} AS {full_table}{constraints_suffix}')
 
-            for rel_pk in relationship_pk_cols[1:]:
-                rel_alias = self._get_unique_alias(f"{dataset.unique_name}__BY_{rel_pk}", registry)
-                tables_lines.append(f'  {rel_alias} AS {full_table} PRIMARY KEY ("{rel_pk}")')
-                declared_pk_by_alias[rel_alias] = [rel_pk]
-                relationship_target_alias[(dataset.unique_name, rel_pk.upper())] = rel_alias
+        # Role-playing tables: emit dedicated logical table alias per role
+        for role_table in role_tables:
+            base_ds = dataset_by_name.get(role_table.base_dataset)
+            if not base_ds:
+                continue
+
+            modeled_cols_list = [c.unique_name for c in getattr(base_ds, "columns", []) or []]
+            source_table = resolve_dataset_to_physical_table(
+                base_ds.unique_name,
+                modeled_cols_list,
+                self.live_schema_metadata,
+                explicit_mapping=source_table_mapping,
+                model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
+            )
+            unqualified_table = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
+            safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
+            full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+
+            role_alias = self._get_unique_alias(role_table.role_alias, registry)
+
+            known_phys = dataset_col_lookup.get(base_ds.unique_name, set())
+            known_phys_upper = {c.upper(): c for c in known_phys}
+            role_pk_cols: list[str] = []
+            for rel_col in role_table.pk_columns:
+                resolved = self._resolve_physical_col(base_ds, rel_col)
+                actual_col = known_phys_upper.get(resolved.upper(), resolved)
+                if actual_col not in role_pk_cols:
+                    role_pk_cols.append(actual_col)
+
+            role_pk_clause = f' PRIMARY KEY ("{role_pk_cols[0]}")' if role_pk_cols else ""
+            tables_lines.append(f'  {role_alias} AS {full_table}{role_pk_clause}')
+
+            if role_pk_cols:
+                declared_pk_by_alias[role_alias] = [role_pk_cols[0]]
+                relationship_target_alias[(role_alias, role_pk_cols[0].upper())] = role_alias
+                relationship_target_alias[(role_table.base_dataset, role_alias.upper())] = role_alias
+
+            dataset_col_lookup[role_alias] = set(known_phys)
+            if base_ds.unique_name in live_col_lookup:
+                live_col_lookup[role_alias] = set(live_col_lookup[base_ds.unique_name])
 
         return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
 

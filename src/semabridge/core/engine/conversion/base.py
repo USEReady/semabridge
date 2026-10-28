@@ -132,7 +132,7 @@ def _step6a_apply_upsert_delta(self, context: RunContext) -> None:
     from semabridge.utils.name_translator import get_target_deployment_name
 
     model = context.sml_model
-    payload = context.config_payload or {}
+    payload = getattr(context, "config_payload", None) or {}
     baseline_project_id = str(payload.get("delta_baseline_project_id") or context.project_id)
     preview_overrides = payload.get("delta_preview_overrides")
     model_names = [model.unique_name, model.label]
@@ -214,7 +214,7 @@ def _upsert_delta_preview_model(self, context: RunContext, preview_overrides: Di
     shadow = copy.copy(context)
     shadow.drop_ledger = DropLedger()
     shadow.config_payload = {
-        **(context.config_payload or {}),
+        **(getattr(context, "config_payload", None) or {}),
         "mappings_overrides": list(preview_overrides.get("mappings_overrides") or []),
         "targets": list(preview_overrides.get("targets") or []),
     }
@@ -301,35 +301,48 @@ def _normalize_relationships_for_target(self, model: SMLModel) -> None:
         else:
             candidate_rels.append(rel_group[0])
 
-    # Third pass: detect and break cycles/transitive ambiguities
-    # Build a graph to detect if keeping A->B creates redundant paths
+    # Third pass: detect and break genuine directed cycles and self-references
+    # Active and explicit relationships enter the DAG first
+    candidate_rels_sorted = sorted(
+        candidate_rels,
+        key=lambda r: (
+            1 if getattr(r, "is_active", True) else 0,
+            1 if getattr(r, "is_explicit_fk", False) else 0,
+        ),
+        reverse=True,
+    )
+
+    final_rels: list[SMLRelationship] = []
     graph: dict[str, set[str]] = {}
-    for rel in candidate_rels:
+    for rel in candidate_rels_sorted:
         from_table = rel.from_dataset.upper()
         to_table = rel.to_dataset.upper()
+
+        # Check for self-referencing relationship
+        if from_table == to_table:
+            logger.warning(
+                "Self-referencing relationship detected on %s: removing %s to prevent cycle",
+                from_table,
+                rel.unique_name,
+            )
+            deduped_count += 1
+            continue
+
+        # Check if an actual directed cycle would be created (path exists from to_table to from_table)
+        if self._has_path(to_table, from_table, graph):
+            logger.warning(
+                "Directed cycle detected between %s and %s: removing edge %s to break circular dependency",
+                from_table,
+                to_table,
+                rel.unique_name,
+            )
+            deduped_count += 1
+            continue
+
         if from_table not in graph:
             graph[from_table] = set()
         graph[from_table].add(to_table)
-
-    # Check each relationship to see if removing it eliminates cycles
-    final_rels: list[SMLRelationship] = []
-    for rel in candidate_rels:
-        from_table = rel.from_dataset.upper()
-        to_table = rel.to_dataset.upper()
-
-        # Check if there's an alternate path (excluding this direct edge)
-        has_alternate_path = self._has_path(from_table, to_table, graph, exclude_edge=(from_table, to_table))
-
-        if has_alternate_path:
-            logger.info(
-                "Cycle detected for %s -> %s: removing direct edge (alternate path exists via other tables)",
-                from_table,
-                to_table,
-            )
-            deduped_count += 1
-            # Skip this relationship - the alternate path will handle connectivity
-        else:
-            final_rels.append(rel)
+        final_rels.append(rel)
 
     # Fourth pass: canonicalize names
     for rel in final_rels:
@@ -414,6 +427,10 @@ def _select_strongest_relationship(self, candidates: list[SMLRelationship]) -> S
         score = 0
         from_col = rel.from_columns[0] if rel.from_columns else ""
         to_dataset = rel.to_dataset.upper()
+
+        # Preference 0: Active relationship over inactive relationship
+        if getattr(rel, "is_active", True):
+            score += 200
 
         # Preference 1: Explicit foreign key (marked in metadata)
         if getattr(rel, "is_explicit_fk", False):

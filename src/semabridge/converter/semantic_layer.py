@@ -164,15 +164,16 @@ class SemanticResolver:
                 column_name=column_name.upper()
             )
         
-        # Pattern: [ColumnName] without table → assume SalesFact
+        # Pattern: [ColumnName] without table → search known tables
         match = re.match(r"\[(\w+)\]", reference)
         if match:
-            column_name = match.group(1)
-            if column_name.upper() in TABLE_SCHEMAS["SalesFact"]:
-                return ColumnReference(
-                    table_name="SalesFact",
-                    column_name=column_name.upper()
-                )
+            column_name = match.group(1).upper()
+            for tbl, cols in TABLE_SCHEMAS.items():
+                if column_name in cols:
+                    return ColumnReference(
+                        table_name=tbl,
+                        column_name=column_name
+                    )
         
         return None
     
@@ -309,7 +310,7 @@ class SemanticTranslator:
       - Maintains deterministic guarantees
     """
     
-    def __init__(self, base_table: str = "SalesFact", base_alias: str = "fact"):
+    def __init__(self, base_table: str = "fact", base_alias: str = "fact"):
         """
         Initialize semantic translator.
         
@@ -449,7 +450,7 @@ _semantic_translator = None
 
 
 def get_semantic_translator(
-    base_table: str = "SalesFact",
+    base_table: str = "fact",
     base_alias: str = "fact"
 ) -> SemanticTranslator:
     """Get or create semantic translator."""

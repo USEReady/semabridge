@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -40,6 +41,13 @@ from semabridge.utils.synonyms import (
 )
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.connectors.business_field_type_hints import infer_business_field_type
+from semabridge.converter.relationship_normalizer import (
+    normalize_cardinality,
+    normalize_cross_filter,
+    normalize_is_active,
+    normalize_join_on_date_behavior,
+    normalize_rely_on_referential_integrity,
+)
 
 logger = get_logger(__name__)
 
@@ -54,11 +62,12 @@ class TMSLToOSIConverter(BaseConverter):
         "DateTableTemplate_",
     )
 
-    def __init__(self, drop_ledger: Optional[DropLedger] = None) -> None:
+    def __init__(self, drop_ledger: Optional[DropLedger] = None, infer_relationships: bool = False) -> None:
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
         self._field_alias_lookup: Optional[Dict[Tuple[str, str, Optional[str]], List[str]]] = None
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.infer_relationships: bool = infer_relationships
         # Full path to the source .pbix file this conversion run is processing,
         # stamped onto every OSIColumn/OSIMetric produced (see to_osi()). None
         # for Fabric sources, which have no local file. A fresh converter
@@ -170,6 +179,18 @@ class TMSLToOSIConverter(BaseConverter):
                 }
             )
 
+            # Collect relationship key column endpoints from model relationships
+            rel_key_cols: set[tuple[str, str]] = set()
+            for rel_def in model_obj.get("relationships", []) or []:
+                from_t = str(rel_def.get("fromTable") or rel_def.get("from_table") or rel_def.get("sourceTable") or "").strip().casefold()
+                from_c = str(rel_def.get("fromColumn") or rel_def.get("from_column") or rel_def.get("sourceColumn") or "").strip().casefold()
+                to_t = str(rel_def.get("toTable") or rel_def.get("to_table") or rel_def.get("targetTable") or "").strip().casefold()
+                to_c = str(rel_def.get("toColumn") or rel_def.get("to_column") or rel_def.get("targetColumn") or "").strip().casefold()
+                if from_t and from_c:
+                    rel_key_cols.add((from_t, from_c))
+                if to_t and to_c:
+                    rel_key_cols.add((to_t, to_c))
+
             # Process Datasets (Tables)
             if "tables" in model_obj:
                 for table in model_obj["tables"]:
@@ -187,7 +208,7 @@ class TMSLToOSIConverter(BaseConverter):
                             by_design=True,
                         )
                         continue
-                    dataset = self._parse_dataset(table)
+                    dataset = self._parse_dataset(table, rel_key_cols=rel_key_cols)
                     osi_model.datasets.append(dataset)
 
                     for metric in self._create_metrics_from_aggregation_columns(dataset):
@@ -230,8 +251,13 @@ class TMSLToOSIConverter(BaseConverter):
                                 f"({osi_rel.from_dataset} -> {osi_rel.to_dataset})"
                             )
 
-            # Fallback: infer relationships when source metadata exposes none.
-            if not osi_model.relationships and osi_model.datasets:
+            # Fallback: relationship inference from column names (off by default)
+            infer_relationships = bool(
+                source_data.get("infer_relationships", False)
+                or getattr(self, "infer_relationships", False)
+                or os.getenv("SEMABRIDGE_INFER_RELATIONSHIPS", "").lower() in ("1", "true")
+            )
+            if infer_relationships and not osi_model.relationships and osi_model.datasets:
                 try:
                     from semabridge.connectors.relationship_detector import RelationshipDetector
 
@@ -251,7 +277,10 @@ class TMSLToOSIConverter(BaseConverter):
                         for ds in osi_model.datasets
                     }
                     pks_meta: Dict[str, List[str]] = {
-                        ds.unique_name: [c.unique_name for c in ds.columns if c.is_key]
+                        ds.unique_name: [
+                            c.unique_name for c in ds.columns
+                            if c.unique_name.upper() in {"ID", "KEY", f"{ds.unique_name.upper()}_ID", f"{ds.unique_name.upper()}ID"}
+                        ]
                         for ds in osi_model.datasets
                     }
 
@@ -355,9 +384,11 @@ class TMSLToOSIConverter(BaseConverter):
         metrics: List[OSIMetric] = []
         seen: set[str] = set()
         for col in dataset.columns:
-            if col.is_hidden or not getattr(col, "is_measure_candidate", False):
+            if col.is_hidden or not getattr(col, "is_measure_candidate", False) or getattr(col, "is_key", False):
                 continue
-            aggregation = getattr(col, "default_aggregation", None) or OSIAggregationType.SUM
+            aggregation = getattr(col, "default_aggregation", None)
+            if not aggregation or aggregation == OSIAggregationType.NONE:
+                continue
             metric_name = col.unique_name
             metric_key = metric_name.casefold()
             if metric_key in seen:
@@ -381,24 +412,32 @@ class TMSLToOSIConverter(BaseConverter):
             )
         return metrics
 
-    def _parse_dataset(self, table_def: Dict[str, Any]) -> OSIDataset:
+    def _parse_dataset(self, table_def: Dict[str, Any], rel_key_cols: Optional[set[tuple[str, str]]] = None) -> OSIDataset:
         """Parse a TMSL table into OSIDataset."""
         name = table_def["name"]
         
         columns = []
         if "columns" in table_def:
             for col in table_def["columns"]:
-                columns.append(self._parse_column(col, name))
+                columns.append(self._parse_column(col, name, rel_key_cols=rel_key_cols))
         
         source_table = name
 
+        data_cat = table_def.get("dataCategory")
+        is_date_table = bool(
+            data_cat in ("Time", "Date")
+            or table_def.get("isDateTable", False)
+            or any(a.get("name") == "__PBI_LocalDateTable" for a in (table_def.get("annotations", []) or []) if isinstance(a, dict))
+        )
         return OSIDataset(
             unique_name=name,
             label=name,
             description=table_def.get("description"),
             is_hidden=table_def.get("isHidden", False),
             columns=columns,
-            source_table=source_table
+            source_table=source_table,
+            is_date_table=is_date_table,
+            data_category=data_cat,
         )
 
     @classmethod
@@ -408,7 +447,12 @@ class TMSLToOSIConverter(BaseConverter):
             for prefix in cls.AUTO_HIDDEN_TABLE_PREFIXES
         )
 
-    def _parse_column(self, col_def: Dict[str, Any], table_name: str) -> OSIColumn:
+    def _parse_column(
+        self,
+        col_def: Dict[str, Any],
+        table_name: str,
+        rel_key_cols: Optional[Set[Tuple[str, str]]] = None,
+    ) -> OSIColumn:
         """Parse a TMSL column into OSIColumn with Cortex AI metadata."""
         tmsl_type = col_def.get("dataType", "string")
         col_name = col_def.get("name", "")
@@ -463,10 +507,17 @@ class TMSLToOSIConverter(BaseConverter):
                 mapped_type = self._infer_string_column_type(col_name, format_string)
 
 
-        # Determine if key (heuristic on name pattern)
+        # Determine if key (heuristic on name pattern or relationship endpoints)
         is_key = False
         upper_name = col_name.upper()
         if upper_name.endswith("ID") or upper_name.endswith("KEY") or upper_name.startswith("PK_") or upper_name.startswith("FK_"):
+            is_key = True
+
+        is_rel_key = bool(
+            (rel_key_cols is not None and (table_name.strip().casefold(), col_name.strip().casefold()) in rel_key_cols)
+            or col_def.get("isKey", False)
+        )
+        if is_rel_key:
             is_key = True
 
         # ── Cortex AI metadata ──────────────────────────────────────────────
@@ -503,8 +554,14 @@ class TMSLToOSIConverter(BaseConverter):
             or mapped_type == OSIDataType.BOOLEAN
         )
 
+        is_numeric = mapped_type in (OSIDataType.INTEGER, OSIDataType.DECIMAL, OSIDataType.FLOAT)
+
         summarize_by = str(col_def.get("summarizeBy") or "").strip().lower()
-        default_aggregation = self._map_summarize_by(summarize_by)
+        default_aggregation = self._map_summarize_by(
+            summarize_by,
+            is_numeric=is_numeric,
+            is_relationship_key=is_rel_key,
+        )
         is_measure_candidate = default_aggregation is not None
 
         # Fabric may emit calculated column expressions as a list of lines.
@@ -617,8 +674,14 @@ class TMSLToOSIConverter(BaseConverter):
         return merged, bool(report_aliases), matched_aliases
 
     @staticmethod
-    def _map_summarize_by(summarize_by: str) -> Optional[OSIAggregationType]:
+    def _map_summarize_by(
+        summarize_by: str,
+        is_numeric: bool = True,
+        is_relationship_key: bool = False,
+    ) -> Optional[OSIAggregationType]:
         """Map Fabric summarizeBy to OSI aggregation; none/blank means dimension."""
+        if is_relationship_key:
+            return None
         normalized = str(summarize_by or "").strip().lower()
         if not normalized or normalized == "none":
             return None
@@ -634,7 +697,7 @@ class TMSLToOSIConverter(BaseConverter):
             "max": OSIAggregationType.MAX,
             "maximum": OSIAggregationType.MAX,
         }
-        return mapping.get(normalized, OSIAggregationType.SUM)
+        return mapping.get(normalized)
 
     _BUSINESS_FIELD_TYPE_TO_OSI = {
         "BOOLEAN": OSIDataType.BOOLEAN,
@@ -665,8 +728,6 @@ class TMSLToOSIConverter(BaseConverter):
 
         # Keep identifier-like business keys as strings even when they contain "number".
         if "id" in tokens or n.endswith("_id"):
-            return OSIDataType.STRING
-        if "number" in tokens and any(t in tokens for t in ("job", "model", "ticket", "project", "opportunity", "record")):
             return OSIDataType.STRING
 
         # Descriptive text columns (names, groups, descriptions, categories) must remain STRING
@@ -979,64 +1040,57 @@ class TMSLToOSIConverter(BaseConverter):
 
     def _parse_relationship(self, rel_def: Dict[str, Any]) -> Optional[OSIRelationship]:
         """Parse TMSL relationship."""
-        try:
-             def _normalize_rel_identifier(value: str) -> str:
-                 text = str(value or "").strip()
-                 if (text.startswith("[") and text.endswith("]")) and len(text) >= 2:
-                     text = text[1:-1].strip()
-                 if (text.startswith("'") and text.endswith("'")) and len(text) >= 2:
-                     text = text[1:-1].strip()
-                 if (text.startswith('"') and text.endswith('"')) and len(text) >= 2:
-                     text = text[1:-1].strip()
-                 return text
+        def _normalize_rel_identifier(value: str) -> str:
+            text = str(value or "").strip()
+            if (text.startswith("[") and text.endswith("]")) and len(text) >= 2:
+                text = text[1:-1].strip()
+            if (text.startswith("'") and text.endswith("'")) and len(text) >= 2:
+                text = text[1:-1].strip()
+            if (text.startswith('"') and text.endswith('"')) and len(text) >= 2:
+                text = text[1:-1].strip()
+            return text
 
-             def _get_rel_field(*names: str) -> Optional[str]:
-                 for key in names:
-                     for actual_key, value in rel_def.items():
-                         if actual_key.lower() == key.lower() and value not in (None, ""):
-                             return _normalize_rel_identifier(str(value))
-                 return None
-
-             from_table = _get_rel_field("fromTable", "from_table", "sourceTable")
-             from_column = _get_rel_field("fromColumn", "from_column", "sourceColumn")
-             to_table = _get_rel_field("toTable", "to_table", "targetTable")
-             to_column = _get_rel_field("toColumn", "to_column", "targetColumn")
-             if not (from_table and from_column and to_table and to_column):
-                 raise ValueError("Relationship endpoints missing required fields")
-
-             # Always derive canonical names from endpoints because Fabric can
-             # emit GUID/system relationship names that violate OSI naming rules.
-             name = generate_relationship_name(
-                 from_table,
-                 from_column,
-                 to_table,
-                 to_column,
-             )
-             
-             card_map = {
-                 "manytoone": OSICardinality.MANY_TO_ONE,
-                 "onetoone": OSICardinality.ONE_TO_ONE,
-                 "onetomany": OSICardinality.ONE_TO_MANY,
-                 "manytomany": OSICardinality.MANY_TO_MANY
-             }
-             raw_card = rel_def.get("cardinality", "ManyToOne").lower()
-             
-             cf_map = {
-                 "single": OSICrossFilterDirection.SINGLE,
-                 "both": OSICrossFilterDirection.BOTH
-             }
-             raw_cf = rel_def.get("crossFilteringBehavior", "Single").lower()
-
-             return OSIRelationship(
-                 unique_name=name,
-                 from_dataset=from_table,
-                 from_columns=[from_column],
-                 to_dataset=to_table,
-                 to_columns=[to_column],
-                 cardinality=card_map.get(raw_card, OSICardinality.MANY_TO_ONE),
-                 cross_filter_direction=cf_map.get(raw_cf, OSICrossFilterDirection.SINGLE),
-                 is_active=rel_def.get("isActive", True)
-             )
-        except Exception as e:
-            logger.warning(f"Failed to parse relationship '{rel_def.get('name')}': {e}")
+        def _get_rel_field(*names: str) -> Optional[str]:
+            for key in names:
+                for actual_key, value in rel_def.items():
+                    if actual_key.lower() == key.lower() and value not in (None, ""):
+                        return _normalize_rel_identifier(str(value))
             return None
+
+        from_table = _get_rel_field("fromTable", "from_table", "sourceTable")
+        from_column = _get_rel_field("fromColumn", "from_column", "sourceColumn")
+        to_table = _get_rel_field("toTable", "to_table", "targetTable")
+        to_column = _get_rel_field("toColumn", "to_column", "targetColumn")
+        if not (from_table and from_column and to_table and to_column):
+            raise ValueError(
+                f"Relationship '{rel_def.get('name', '')}' endpoints missing required fields: "
+                f"from={from_table}.{from_column}, to={to_table}.{to_column}"
+            )
+
+        # Always derive canonical names from endpoints because Fabric can
+        # emit GUID/system relationship names that violate OSI naming rules.
+        name = generate_relationship_name(
+            from_table,
+            from_column,
+            to_table,
+            to_column,
+        )
+
+        cardinality = normalize_cardinality(rel_def, rel_name=name)
+        cross_filter_direction = normalize_cross_filter(rel_def, rel_name=name)
+        is_active = normalize_is_active(rel_def, default=True)
+        join_on_date_behavior = normalize_join_on_date_behavior(rel_def)
+        rely_on_referential_integrity = normalize_rely_on_referential_integrity(rel_def)
+
+        return OSIRelationship(
+            unique_name=name,
+            from_dataset=from_table,
+            from_columns=[from_column],
+            to_dataset=to_table,
+            to_columns=[to_column],
+            cardinality=cardinality,
+            cross_filter_direction=cross_filter_direction,
+            is_active=is_active,
+            join_on_date_behavior=join_on_date_behavior,
+            rely_on_referential_integrity=rely_on_referential_integrity,
+        )

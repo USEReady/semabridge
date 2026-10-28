@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sys
 import types
+import pytest
 
 os.environ.setdefault("SEMABRIDGE_DATABASE_URL", "sqlite:///./test_run_report_summary_json.sqlite")
 os.environ.setdefault("AUTH_ENABLED", "false")
@@ -168,3 +169,202 @@ def test_build_run_report_data_whole_run_matches_generate_run_report_markdown_co
 
     assert "Broken Measure" in markdown
     assert "DateTableTemplate_x" in markdown
+
+
+def test_build_run_report_data_cortex_validation_present():
+    """(a) Run with Cortex validation results builds cleanly and returns valid cortex_validation list."""
+    run = {
+        "project_id": "proj_cortex",
+        "project_name": "Cortex Project",
+        "run_id": "run-cortex-001",
+        "status": "success",
+        "results": [
+            {
+                "model": "SalesModel",
+                "summary": {},
+                "dropped_entities": [],
+                "cortex_validation_results": [
+                    {
+                        "view_name": "SALES_SEMANTIC_VIEW",
+                        "yaml_verified": True,
+                        "dimensions_checked": 10,
+                        "dimensions_passed": 10,
+                        "metrics_checked": 5,
+                        "metrics_passed": 5,
+                        "remediated_metrics": [],
+                    }
+                ],
+            }
+        ],
+    }
+    data = build_run_report_data(run, "")
+    assert data["crashed"] is False
+    assert len(data["cortex_validation"]) == 1
+    cv = data["cortex_validation"][0]
+    assert cv["view_name"] == "SALES_SEMANTIC_VIEW"
+    assert cv["model"] == "SalesModel"
+    assert cv["yaml_verified"] is True
+    assert cv["dimensions_passed"] == 10
+
+
+def test_build_run_report_data_old_run_absent_cortex_validation():
+    """(b) Old run without Cortex validation results defaults cortex_validation to []."""
+    run = {
+        "project_id": "proj_old",
+        "project_name": "Old Project",
+        "run_id": "run-old-001",
+        "status": "success",
+        "results": [
+            {
+                "model": "LegacyModel",
+                "summary": {},
+                "dropped_entities": [],
+            }
+        ],
+    }
+    data = build_run_report_data(run, "")
+    assert data["crashed"] is False
+    assert data["cortex_validation"] == []
+    assert data["counts"]["tables"] == 0
+    assert data["counts"]["converted_total"] == 0
+
+
+def test_build_run_report_data_upsert_no_changes():
+    """(c) Upsert 'no changes' run builds cleanly with empty cortex_validation and valid upsert_deltas."""
+    run = {
+        "project_id": "proj_upsert",
+        "project_name": "Upsert Project",
+        "run_id": "run-upsert-001",
+        "status": "success",
+        "results": [
+            {
+                "model": "UnchangedModel",
+                "summary": {
+                    "upsert_delta": {
+                        "has_changes": False,
+                        "first_deployment": False,
+                        "summary_text": "No changes detected vs deployed view.",
+                        "kinds": {},
+                    }
+                },
+                "dropped_entities": [],
+            }
+        ],
+    }
+    data = build_run_report_data(run, "")
+    assert data["crashed"] is False
+    assert data["cortex_validation"] == []
+    assert len(data["upsert_deltas"]) == 1
+    delta_entry = data["upsert_deltas"][0]
+    assert delta_entry["model"] == "UnchangedModel"
+    assert delta_entry["delta"]["has_changes"] is False
+
+
+@pytest.mark.asyncio
+async def test_report_summary_endpoint_all_three_run_types(tmp_path, monkeypatch):
+    """Test the /report-summary endpoint returns 200 with valid summary for:
+    (a) run with Cortex validation, (b) old run without, (c) upsert no changes run.
+    """
+    import pytest
+    from httpx import ASGITransport, AsyncClient
+    from semabridge.api.main import app
+    from semabridge.api.services import project_shared, run_service
+    from semabridge.api.services.run_model_results import persist_run_model_results
+
+    monkeypatch.setattr("semabridge.api.services.run_report_service.REPORTS_ROOT", tmp_path / "reports")
+    monkeypatch.setattr("semabridge.core.run_model_logs.RUN_LOGS_ROOT", tmp_path / "runs")
+
+    project_shared._compat_ensure_loaded()
+
+    runs_to_test = [
+        (
+            "proj_test_cortex",
+            "run-endpoint-cortex",
+            {
+                "id": "run-endpoint-cortex",
+                "run_id": "run-endpoint-cortex",
+                "project_id": "proj_test_cortex",
+                "project_name": "Cortex Endpoint Proj",
+                "status": "success",
+                "results": [
+                    {
+                        "model": "ModelA",
+                        "status": "success",
+                        "summary": {
+                            "cortex_validation_results": [
+                                {
+                                    "view_name": "VIEW_A",
+                                    "yaml_verified": True,
+                                    "dimensions_checked": 5,
+                                    "dimensions_passed": 5,
+                                }
+                            ]
+                        },
+                        "dropped_entities": [],
+                    }
+                ],
+            },
+        ),
+        (
+            "proj_test_old",
+            "run-endpoint-old",
+            {
+                "id": "run-endpoint-old",
+                "run_id": "run-endpoint-old",
+                "project_id": "proj_test_old",
+                "project_name": "Old Endpoint Proj",
+                "status": "success",
+                "results": [
+                    {
+                        "model": "ModelOld",
+                        "status": "success",
+                        "summary": {},
+                        "dropped_entities": [],
+                    }
+                ],
+            },
+        ),
+        (
+            "proj_test_upsert",
+            "run-endpoint-upsert",
+            {
+                "id": "run-endpoint-upsert",
+                "run_id": "run-endpoint-upsert",
+                "project_id": "proj_test_upsert",
+                "project_name": "Upsert Endpoint Proj",
+                "status": "success",
+                "results": [
+                    {
+                        "model": "ModelUpsert",
+                        "status": "success",
+                        "summary": {
+                            "upsert_delta": {
+                                "has_changes": False,
+                                "first_deployment": False,
+                                "summary_text": "No changes.",
+                            }
+                        },
+                        "dropped_entities": [],
+                    }
+                ],
+            },
+        ),
+    ]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for pid, rid, run_dict in runs_to_test:
+            # Register in project_shared and run_service
+            project_shared._compat_projects[pid] = {"id": pid, "name": run_dict["project_name"]}
+            run_service._compat_project_runs[pid] = [run_dict]
+            # Write per-model results to satisfy run_belongs_to_project
+            persist_run_model_results(run_dict, "")
+
+            res = await client.get(f"/api/projects/{pid}/runs/{rid}/report-summary")
+            assert res.status_code == 200, f"Expected 200 for {pid}/{rid}, got {res.status_code}: {res.text}"
+            data = res.json()
+            assert data["run_id"] == rid
+            assert data["crashed"] is False
+            assert "counts" in data
+            assert "sections" in data
+            assert isinstance(data["cortex_validation"], list)
+

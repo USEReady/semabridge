@@ -8,7 +8,7 @@ intermediate representation, applying semantic enrichment like DAX translation.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
@@ -187,6 +187,8 @@ class OSIToSMLConverter(BaseConverter):
                     and not is_by_design_excluded(sml_metric.sync_failure_reason)
                 ):
                     dax = sml_metric.expression.strip()
+                    if re.search(r"\b(SUMX|AVERAGEX|COUNTX|MINX|MAXX)\b[^(]*\([^)]*\bDATEDIFF\b", dax, re.IGNORECASE | re.DOTALL):
+                        continue
                     table_alias = to_alias(sml_metric.dataset)
                     tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
 
@@ -294,14 +296,6 @@ class OSIToSMLConverter(BaseConverter):
             # run after 4a and after Step 3 for the same reasons.
             self._flag_reachable_dimension_filters_pending_enrichment(sml)
 
-            # 4b. Fabric/PBIX extractions can legitimately surface 0 explicit
-            # measures in TMSL. Reuse the older heuristic detector so downstream
-            # publishers still have simple metrics to materialize.
-            self._auto_detect_metrics(sml, row_counts=row_counts)
-
-            # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
-            self._inject_calendar_dimension(sml)
-
             return sml
 
         except Exception as e:
@@ -325,6 +319,8 @@ class OSIToSMLConverter(BaseConverter):
             columns=columns,
             is_hidden=osi_ds.is_hidden,
             is_fact=osi_ds.is_fact,
+            is_date_table=getattr(osi_ds, "is_date_table", False),
+            data_category=getattr(osi_ds, "data_category", None),
         )
 
     def _convert_column(self, osi_col: OSIColumn) -> SMLColumn:
@@ -418,6 +414,18 @@ class OSIToSMLConverter(BaseConverter):
 
         # DAX Translation Logic
         expression = osi_metric.expression or ""
+        if not expression and osi_metric.source_column:
+            agg_name = osi_metric.aggregation.name if hasattr(osi_metric.aggregation, "name") else str(osi_metric.aggregation).upper()
+            dax_funcs = {
+                "SUM": "SUM",
+                "COUNT": "COUNT",
+                "COUNT_DISTINCT": "DISTINCTCOUNT",
+                "AVG": "AVERAGE",
+                "MIN": "MIN",
+                "MAX": "MAX",
+            }
+            func = dax_funcs.get(agg_name, "SUM")
+            expression = f"{func}([{osi_metric.source_column}])"
 
         # Constant expressions and string-producing root expressions are a
         # modeling-classification mismatch, not a DAX translation gap — a
@@ -475,6 +483,7 @@ class OSIToSMLConverter(BaseConverter):
             label=osi_metric.label,
             description=osi_metric.description or "",
             dataset=osi_metric.dataset,
+            source_column=osi_metric.source_column,
             expression=expression,
             aggregation=sml_agg,
             format_string=osi_metric.format_string,
@@ -625,6 +634,7 @@ class OSIToSMLConverter(BaseConverter):
         ]
         if unresolved:
             metric_map = {str(m.unique_name).casefold(): m for m in sml.metrics if m.unique_name}
+            logged_cycles: Set[str] = set()
             for m in unresolved:
                 visited_path: List[str] = []
                 visited_set: Set[str] = set()
@@ -641,7 +651,11 @@ class OSIToSMLConverter(BaseConverter):
                     if target_m and not target_m.sql_expression and target_m.expression:
                         deps = extract_measure_references_from_ast(target_m.expression)
                         for dep in deps:
-                            if dep.casefold() in metric_map:
+                            dep_cf = dep.casefold()
+                            if dep_cf == curr_cf:
+                                # An unqualified [Name] equal to the measure's own name resolves to a column
+                                continue
+                            if dep_cf in metric_map:
                                 cycle = find_cycle(dep)
                                 if cycle:
                                     return cycle
@@ -654,11 +668,13 @@ class OSIToSMLConverter(BaseConverter):
                     cycle_names = " -> ".join(cycle)
                     m.sync_enabled = False
                     m.sync_failure_reason = f"Circular measure dependency cycle detected: {cycle_names}"
-                    logger.warning(
-                        "Circular measure dependency cycle detected for '%s': %s",
-                        m.unique_name,
-                        cycle_names,
-                    )
+                    if cycle_names not in logged_cycles:
+                        logged_cycles.add(cycle_names)
+                        logger.warning(
+                            "Circular measure dependency cycle detected for '%s': %s",
+                            m.unique_name,
+                            cycle_names,
+                        )
 
     # Real incident: a placeholder reason set BEFORE the Tier-5 batch call
     # even runs ("DAX translation deferred to Tier-5 batch (Tier N)", see
@@ -1028,124 +1044,12 @@ class OSIToSMLConverter(BaseConverter):
                  to_columns=osi_rel.to_columns,
                  cardinality=sml_card,
                  cross_filter=sml_cf,
-                 is_active=osi_rel.is_active
+                 is_active=osi_rel.is_active,
+                 join_on_date_behavior=getattr(osi_rel, "join_on_date_behavior", None),
+                 rely_on_referential_integrity=getattr(osi_rel, "rely_on_referential_integrity", None),
              )
         except Exception as e:
             logger.warning(f"Failed to convert relationship {osi_rel.unique_name}: {e}")
             return None
 
-    def _inject_calendar_dimension(self, sml: SMLModel) -> None:
-        # Same logic as TMSLTransformer
-        if any(is_calendar_like_name(ds.unique_name) for ds in sml.datasets):
-            return
-            
-        # Create standard Date column definitions
-        cols = [
-            SMLColumn(unique_name="Date", data_type=SMLDataType.DATE, is_key=True),
-            SMLColumn(unique_name="Year", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="Quarter", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="Month", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="MonthName", data_type=SMLDataType.STRING),
-            SMLColumn(unique_name="DayOfWeek", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="DayName", data_type=SMLDataType.STRING),
-        ]
-        
-        date_ds = SMLDataset(
-            unique_name="Date",
-            label="Date",
-            description="Auto-generated Calendar Dimension",
-            source_table="DIM_DATE",
-            columns=cols,
-            is_fact=False
-        )
-        sml.datasets.append(date_ds)
 
-    def _auto_detect_metrics(
-        self,
-        sml: SMLModel,
-        row_counts: Optional[Dict[str, int]] = None,
-    ) -> None:
-        """Backfill simple metrics when the source provided none explicitly."""
-        if sml.metrics:
-            return
-
-        tables_meta = {
-            ds.unique_name: {"row_count": (row_counts or {}).get(ds.unique_name, 0)}
-            for ds in sml.datasets
-        }
-        columns_meta = {
-            ds.unique_name: [
-                {"name": col.unique_name, "data_type": col.data_type.value}
-                for col in ds.columns
-            ]
-            for ds in sml.datasets
-        }
-        relationships_meta = [
-            {
-                "from_table": rel.from_dataset,
-                "from_column": rel.from_columns[0] if rel.from_columns else "",
-                "to_table": rel.to_dataset,
-                "to_column": rel.to_columns[0] if rel.to_columns else "",
-            }
-            for rel in sml.relationships
-            if rel.from_columns and rel.to_columns
-        ]
-
-        classifier = SmlInferenceEngine(
-            tables=tables_meta,
-            columns=columns_meta,
-            relationships=relationships_meta,
-            primary_keys={},
-        )
-        scores = classifier.classify()
-
-        classification_map: Dict[str, str] = {}
-        for ds in sml.datasets:
-            score = scores.get(ds.unique_name)
-            if score:
-                ds.is_fact = score.classification == "FACT"
-                classification_map[ds.unique_name] = score.classification
-            else:
-                classification_map[ds.unique_name] = "FACT" if ds.is_fact else "DIMENSION"
-
-        detector = MeasureDetector(
-            tables=tables_meta,
-            columns=columns_meta,
-            relationships=relationships_meta,
-        )
-        detected = detector.detect_all_measures(classification=classification_map)
-        existing_metrics = {metric.unique_name.upper() for metric in sml.metrics}
-
-        added = 0
-        for table_name, measures in detected.items():
-            for measure in measures:
-                measure_name = str(measure.get("name", "")).strip()
-                column_name = str(measure.get("column", "")).strip()
-                if not measure_name or not column_name:
-                    continue
-                if measure_name.upper() in existing_metrics:
-                    continue
-
-                agg = SMLAggregationType(measure["aggregation"])
-                aggregation_sql = agg.value.upper()
-                table_alias = to_alias(table_name)
-
-                sml.metrics.append(
-                    SMLMetric(
-                        unique_name=measure_name,
-                        label=measure_name,
-                        dataset=table_name,
-                        source_column=column_name,
-                        expression=f"{aggregation_sql}([{column_name}])",
-                        sql_expression=f'{aggregation_sql}({table_alias}."{column_name}")',
-                        aggregation=agg,
-                        confidence=float(measure.get("confidence", 0.7)),
-                        sync_enabled=True,
-                        complexity_tier=1,
-                    )
-                )
-                existing_metrics.add(measure_name.upper())
-                added += 1
-
-        if added:
-            logger.info("Auto-detected %d simple metrics because OSI contained no explicit measures", added)

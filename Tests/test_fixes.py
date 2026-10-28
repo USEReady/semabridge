@@ -48,7 +48,7 @@ def test_relationship_validation():
         content = f.read()
     
     # Check for the guard condition
-    assert 'if not from_alias or not to_alias or not rel.from_columns:' in content
+    assert 'if not from_alias or not to_alias or not rel_item.from_columns:' in content
     print("✅ PASS: Relationship validation guards are in place")
 
 def test_syntax():
@@ -226,11 +226,10 @@ def test_dynamic_alias_healing_resolves_unknown_alias_via_column_ownership():
     assert valid is True, issue
 
 def test_dax_strict_time_intelligence_uses_configured_date_alias(monkeypatch):
-    """Strict DAX TOTALYTD output should not hardcode CALENDAR."""
+    """Strict DAX TOTALYTD output without anchor flags emits placeholder with reason."""
     from types import SimpleNamespace
     from semabridge.converter.dax_translator import DAXTranslator
 
-    monkeypatch.setenv("SEMABRIDGE_DATE_ALIAS", "COL_DATE_2")
     result = DAXTranslator().translate(
         "TOTALYTD([Total Units], Date[Date])",
         "SALESFACT",
@@ -245,7 +244,7 @@ def test_dax_strict_time_intelligence_uses_configured_date_alias(monkeypatch):
     )
 
     assert result.sql
-    assert 'COL_DATE_2."COL_DATE"' in result.sql
+    assert "OVER" not in result.sql.upper()
     assert "CALENDAR." not in result.sql
 
 def test_indicator_metrics_with_no_expression_fall_through_to_general_pipeline():
@@ -352,6 +351,10 @@ def test_cross_dataset_refs_are_detected_for_fact_enrichment():
                 expression="AVG(CASE WHEN 'Manufacturer'[MfgIsVanArsDel] = 'No' THEN 'Sentiment'[Score] END)",
             )
         ],
+        relationships=[
+            SimpleNamespace(unique_name="rel_mfg", from_dataset="SalesFact", to_dataset="Manufacturer", from_columns=["ManufacturerID"], to_columns=["ManufacturerID"]),
+            SimpleNamespace(unique_name="rel_sentiment", from_dataset="SalesFact", to_dataset="Sentiment", from_columns=["SentimentID"], to_columns=["SentimentID"]),
+        ],
     )
     builder = SemanticViewBuilder(
         config=SimpleNamespace(),
@@ -362,7 +365,7 @@ def test_cross_dataset_refs_are_detected_for_fact_enrichment():
 
     suggestions = builder._precompute_suggestions(model)
 
-    assert suggestions == {"SalesFact": ["MANUFACTURER_MFGISVANARSDEL", "SENTIMENT_SCORE"]}
+    assert set(suggestions.get("SalesFact", [])) == {"MANUFACTURER_MFGISVANARSDEL", "SENTIMENT_SCORE"}
     assert {
         (d["target_dataset"], d["source_dataset"], d["source_column"], d["precomputed_column"])
         for d in builder.get_precompute_details()

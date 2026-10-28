@@ -69,7 +69,7 @@ class DAXTranslator:
     # Regex patterns for Tier 1
     # Matches: FUNC('Table'[Column]) or FUNC([Column])
     _TIER1_PATTERN = re.compile(
-        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)\s*$",
         re.IGNORECASE
     )
     
@@ -80,13 +80,13 @@ class DAXTranslator:
     # Matches: [Measure1] / [Measure2]
     # Very basic parser - assumes simple structure
     _ARITHMETIC_PATTERN = re.compile(
-        r"^\s*(\[.+?\])\s*([\+\-\*\/])\s*(\[.+?\])\s*$",
+        r"^\s*(\[[^\]]+\])\s*([\+\-\*\/])\s*(\[[^\]]+\])\s*$",
         re.IGNORECASE
     )
     
     # DIVIDE functionality
     _DIVIDE_PATTERN = re.compile(
-        r"^\s*DIVIDE\s*\(\s*(\[.+?\])\s*,\s*(\[.+?\])\s*(?:,.+?)?\)\s*$",
+        r"^\s*DIVIDE\s*\(\s*(\[[^\]]+\])\s*,\s*(\[[^\]]+\])\s*(?:,[^)]+)?\)\s*$",
         re.IGNORECASE
     )
 
@@ -99,8 +99,9 @@ class DAXTranslator:
         "period_col": "PERIOD",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, model: Optional[Any] = None) -> None:
         self._tier5_service = None
+        self._model = model
 
     def _get_tier5_service(self):
         if self._tier5_service is None:
@@ -113,22 +114,30 @@ class DAXTranslator:
             self._tier5_service = Tier5Service(cache=default_persistent_cache())
         return self._tier5_service
 
-    def _get_date_alias(self) -> str:
-        return os.getenv("SEMABRIDGE_DATE_ALIAS", "COL_DATE")
+    def _get_date_alias(self) -> Optional[str]:
+        # Use the model's date table, as already done in dax_rule_translator.py; no "COL_DATE" default.
+        from semabridge.converter.dax_rule_translator import _date_alias
+        alias = _date_alias(getattr(self, "_model", None))
+        if alias:
+            return alias
+        env = os.getenv("SEMABRIDGE_DATE_ALIAS")
+        if env:
+            return env
+        return None
     
     # Time Intelligence patterns that CAN be translated to Snowflake window functions
     TIME_INTEL_PATTERNS = {
         # TOTALYTD(SUM('Table'[Column]), 'Date'[Date])
         "YTD": re.compile(
-            r"TOTALYTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]",
+            r"TOTALYTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)\s*,\s*'?([^'\[\]]+)'?\[([^\]]+)\]",
             re.IGNORECASE
         ),
         "MTD": re.compile(
-            r"TOTALMTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]",
+            r"TOTALMTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)\s*,\s*'?([^'\[\]]+)'?\[([^\]]+)\]",
             re.IGNORECASE
         ),
         "QTD": re.compile(
-            r"TOTALQTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*,\s*'?(\w+)'?\[(\w+)\]",
+            r"TOTALQTD\s*\(\s*(SUM|AVERAGE|COUNT|MIN|MAX)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)\s*,\s*'?([^'\[\]]+)'?\[([^\]]+)\]",
             re.IGNORECASE
         ),
     }
@@ -430,7 +439,7 @@ class DAXTranslator:
         # so this can only recover cases that would otherwise reach Tier 5.
         from semabridge.converter.dax_ast_parser import try_ast_translate
         resolved_measures = self._build_resolved_measures_map(table_alias, metrics_context)
-        if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures):
+        if not self._has_unresolved_bracket_reference(clean_dax, resolved_measures, current_measure_name=metric_name):
             general_ast_sql = try_ast_translate(
                 clean_dax,
                 table_alias=table_alias,
@@ -441,9 +450,22 @@ class DAXTranslator:
                 primary_table_name=dataset_name,
                 table_aliases=dataset_aliases,
                 relationships=relationships,
+                current_measure_name=metric_name,
             )
             if general_ast_sql:
                 return _wrap_res(DAXTranslationResult(general_ast_sql, 4, clean_dax))
+
+        # Tier 4.5: Deterministic rule-based translation (rolling months, direct agg, simple calculate, etc.)
+        from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
+        if is_simple_metric(clean_dax):
+            rule_sql = rule_based_translation(
+                clean_dax,
+                table_alias,
+                metric_name=metric_name or "",
+                anchor_flag_map=anchor_flag_map,
+            )
+            if rule_sql:
+                return _wrap_res(DAXTranslationResult(rule_sql, 4, clean_dax))
 
         if skip_tier5:
             # Tiers 1-4 above already declined. Return the identical shape
@@ -451,6 +473,7 @@ class DAXTranslator:
             # metric's one Tier-5 attempt right now -- the caller collects
             # it for a single batched call instead (see docstring above).
             return DAXTranslationResult(None, 4, clean_dax)
+
 
         from semabridge.converter.dax_ast_parser import (
             dax_context_transition_failure_reason,
@@ -603,7 +626,7 @@ class DAXTranslator:
         return resolved_measures, all_measure_names
 
     def _has_unresolved_bracket_reference(
-        self, dax: str, resolved_measures: Dict[str, str]
+        self, dax: str, resolved_measures: Dict[str, str], current_measure_name: Optional[str] = None
     ) -> bool:
         """
         True if `dax` contains any bare [MeasureName] reference that is not
@@ -613,8 +636,13 @@ class DAXTranslator:
         if not dax:
             return False
         resolved_lower = {str(k).casefold() for k in (resolved_measures or {}).keys()}
+        curr_cf = current_measure_name.casefold() if current_measure_name else None
         for ref in extract_measure_references_from_ast(dax):
-            if ref.casefold() not in resolved_lower:
+            ref_cf = ref.casefold()
+            if curr_cf and ref_cf == curr_cf:
+                # An unqualified [Name] equal to the measure's own name resolves to a column
+                continue
+            if ref_cf not in resolved_lower:
                 return True
         return False
 
@@ -643,7 +671,13 @@ class DAXTranslator:
             if not key:
                 return None
             if key in visiting:
-                logger.warning(f"Circular measure dependency detected for '{name}'")
+                logged = getattr(self, "_logged_cycles", None)
+                if logged is None:
+                    logged = self._logged_cycles = set()
+                cycle_key = f"{dataset_name}:{key}"
+                if cycle_key not in logged:
+                    logged.add(cycle_key)
+                    logger.warning(f"Circular measure dependency detected for '{name}'")
                 return None
 
             metric = metric_index.get(key)
@@ -883,7 +917,14 @@ class DAXTranslator:
                 translated = self._try_branching(metric_expr, metrics_context)
                 if translated:
                     return self._strip_outer_parens(translated)
+
+                from semabridge.converter.dax_rule_translator import is_simple_metric, rule_based_translation
+                if is_simple_metric(metric_expr):
+                    rule_sql = rule_based_translation(metric_expr, table_alias)
+                    if rule_sql:
+                        return self._strip_outer_parens(rule_sql)
             return None
+
 
         return None
 
@@ -1273,8 +1314,8 @@ class DAXTranslator:
             return None
         
         func = match.group(1).upper()
-        # Group 2 has Table[Column] format col name, Group 3 has [Column] format
-        col_name = match.group(2) or match.group(3)
+        # Group 2 or 3 has Table name, Group 4 has [Column] format
+        col_name = match.group(4) if match.lastindex and match.lastindex >= 4 else (match.group(2) or match.group(3))
         
         # Map DAX function to SQL function
         func_map = {

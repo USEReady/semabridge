@@ -36,6 +36,7 @@ test('buildDryRunPayload keeps snowflake fields unchanged', () => {
     fabricWorkspaceId: '',
     snowflakeDatabase: 'ANALYTICS',
     targetDatabase: 'REPORTING',
+    targetSchema: 'REPORTING_SCHEMA',
     selectedModelNames: ['orders', 'customers'],
   });
 
@@ -48,6 +49,7 @@ test('buildDryRunPayload keeps snowflake fields unchanged', () => {
   assert.deepEqual(payload.targetConfig, {
     type: 'snowflake',
     database: 'REPORTING',
+    schema: 'REPORTING_SCHEMA',
   });
 });
 

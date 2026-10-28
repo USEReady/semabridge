@@ -11,6 +11,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Set, Dict, Any
+import uuid
 from uuid import UUID
 
 from sqlalchemy import select, update

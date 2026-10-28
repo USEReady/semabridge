@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sync Orchestrator.
 
 Provides a robust, dependency-aware multi-model sync pipeline
@@ -162,26 +162,38 @@ class SyncReport:
 # =========================================================================
 
 
-def _classify_dataset(ds: Any) -> str:
+def _classify_dataset(ds: Any, model: Optional[Any] = None) -> str:
     """Classify a dataset as dimension, fact, or derived.
 
-    Args:
-        ds: An SML or OSI dataset object.
-
-    Returns:
-        Classification string: "dimension", "fact", or "derived".
+    Uses relationships first (many side = fact), prefixes only as fallback when no relationships exist.
     """
-    name_upper = (ds.unique_name or "").upper()
-    is_fact = getattr(ds, "is_fact", False)
+    if getattr(ds, "is_fact", False):
+        return "fact"
 
-    if is_fact:
+    name_upper = (getattr(ds, "unique_name", None) or getattr(ds, "name", "") or "").upper()
+    relationships = getattr(model, "relationships", []) or []
+    if relationships:
+        is_many_side = any(
+            str(getattr(rel, "from_dataset", "")).upper() == name_upper
+            for rel in relationships
+        )
+        if is_many_side:
+            return "fact"
+        is_one_side = any(
+            str(getattr(rel, "to_dataset", "")).upper() == name_upper
+            for rel in relationships
+        )
+        if is_one_side:
+            return "dimension"
+
+    # Fallback to prefixes only when model has no relationships
+    if name_upper.startswith("FACT_") or name_upper.startswith("F_"):
         return "fact"
     if name_upper.startswith("DIM_") or name_upper.startswith("D_"):
         return "dimension"
-    # Check if it's a derived/bridge table
     if name_upper.startswith("BRIDGE_") or name_upper.startswith("AGG_"):
         return "derived"
-    return "dimension"  # Default to dimension for non-fact tables
+    return "dimension"
 
 
 def _classify_model(model: Any) -> str:
@@ -190,17 +202,11 @@ def _classify_model(model: Any) -> str:
     A model containing only dimension tables → "dimension"
     A model containing at least one fact table → "fact"
     Otherwise, default to "fact" (safest ordering).
-
-    Args:
-        model: An SML or OSI model.
-
-    Returns:
-        Classification string.
     """
     datasets = getattr(model, "datasets", [])
     if not datasets:
         return "unknown"
-    has_fact = any(getattr(ds, "is_fact", False) for ds in datasets)
+    has_fact = any(_classify_dataset(ds, model) == "fact" for ds in datasets)
     if has_fact:
         return "fact"
     return "dimension"

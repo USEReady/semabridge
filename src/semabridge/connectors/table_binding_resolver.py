@@ -57,12 +57,18 @@ class LiveSchemaMetadata(dict):
         self.row_counts: Dict[str, int] = {}
         # clean_ident(dataset) -> {dataset, table, matched_by, tie}
         self.binding_log: Dict[str, Dict[str, Any]] = {}
+        # Uppercase table names identified as SemaBridge placeholders
+        self.placeholder_tables: Set[str] = set()
+        # Normalized identifier -> list of duplicate placeholder table names in schema
+        self.duplicate_placeholder_tables: Dict[str, List[str]] = {}
 
     def clear(self) -> None:
         super().clear()
         self.pinned_bindings.clear()
         self.row_counts.clear()
         self.binding_log.clear()
+        self.placeholder_tables.clear()
+        self.duplicate_placeholder_tables.clear()
 
 
 def clean_ident(name: str) -> str:
@@ -71,13 +77,11 @@ def clean_ident(name: str) -> str:
 
 
 def normalize_col_name(name: str) -> str:
-    """Normalize column name with standard reserved word aliases."""
-    c = clean_ident(name)
-    if c in ("COLDATE", "DATE", "DATEDATE"):
-        return "DATE"
-    if c in ("COLVALUE", "VALUE"):
-        return "VALUE"
-    return c
+    """Normalize column name by stripping a COL_ prefix used for reserved words."""
+    raw = str(name or '').strip()
+    if raw.upper().startswith("COL_"):
+        raw = raw[4:]
+    return clean_ident(raw)
 
 
 def is_column_contained(
@@ -85,6 +89,7 @@ def is_column_contained(
     live_upper: Set[str],
     live_clean: Set[str],
     live_norm: Set[str],
+    allow_id_suffix: bool = True,
 ) -> bool:
     """Check if model column exists in the live table's columns."""
     if model_col.upper() in live_upper:
@@ -92,17 +97,19 @@ def is_column_contained(
     c = clean_ident(model_col)
     if c in live_clean:
         return True
-    if normalize_col_name(model_col) in live_norm:
+    norm = normalize_col_name(model_col)
+    if norm and norm in live_norm:
         return True
     # Table ID match: e.g. model col 'DEPARTMENT' matches live 'DEPARTMENT_ID' / 'DEPARTMENTID', or 'DEPARTMENT_ID' matches 'DEPARTMENT'
-    if (c + "ID") in live_clean or (c.endswith("ID") and c[:-2] in live_clean):
+    if allow_id_suffix and ((c + "ID") in live_clean or (c.endswith("ID") and c[:-2] in live_clean)):
         return True
     return False
 
 
 def compute_column_compatibility(
     model_col_names: List[str],
-    live_cols: Set[str]
+    live_cols: Set[str],
+    allow_id_suffix: bool = True,
 ) -> float:
     """Compute fraction [0.0 - 1.0] of model columns contained in the live table."""
     if not model_col_names or not live_cols:
@@ -110,43 +117,29 @@ def compute_column_compatibility(
 
     live_upper = {c.upper() for c in live_cols}
     live_clean = {clean_ident(c) for c in live_cols}
-    live_norm = {normalize_col_name(c) for c in live_cols}
+    live_norm = {normalize_col_name(c) for c in live_cols if c}
 
-    matched = sum(1 for mc in model_col_names if is_column_contained(mc, live_upper, live_clean, live_norm))
+    matched = sum(1 for mc in model_col_names if is_column_contained(mc, live_upper, live_clean, live_norm, allow_id_suffix=allow_id_suffix))
     return matched / len(model_col_names)
 
 
-def rank_table_candidates(
+def _evaluate_candidates(
     dataset_name: str,
     dataset_columns: List[str],
-    live_schema_metadata: Dict[str, Set[str]],
+    viable_tables: Dict[str, Set[str]],
+    allow_id_suffix: bool,
+    placeholder_tables: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match.
-    
-    A table is a candidate when column compatibility >= 0.8 or its normalized
-    name equals the dataset's; column compatibility ranks first, so a
-    name-only match never beats a column match.
-    """
     norm_ds = clean_ident(dataset_name)
-
-    # Filter out auto-generated temp tables and enriched views
-    viable_tables = {
-        tbl: cols for tbl, cols in live_schema_metadata.items()
-        if not tbl.startswith(("__FIXED", "DATETABLETEMPLATE_", "LOCALDATETABLE_"))
-        and not tbl.endswith("_ENRICHED")
-    }
-
     candidates = []
+    placeholders = placeholder_tables or set()
     for tbl_name, live_cols in viable_tables.items():
-        col_compat = compute_column_compatibility(dataset_columns, live_cols)
+        col_compat = compute_column_compatibility(dataset_columns, live_cols, allow_id_suffix=allow_id_suffix)
         tbl_norm = clean_ident(tbl_name)
 
-        # A candidate needs matching columns (>= 0.8) or the same normalized
-        # name; columns rank first, so a name-only match never beats them.
         if col_compat < 0.8 and tbl_norm != norm_ds:
             continue
 
-        # Name matching score [0 - 100]
         name_score = 0
         if norm_ds == tbl_norm:
             name_score = 100
@@ -157,22 +150,68 @@ def rank_table_candidates(
         elif norm_ds in tbl_norm or tbl_norm in norm_ds:
             name_score = 45
 
+        is_placeholder = 1 if (tbl_name.upper() in placeholders or clean_ident(tbl_name) in placeholders) else 0
+
         candidates.append({
             "table_name": tbl_name,
             "table": tbl_name,
             "score": (col_compat * 100) + (name_score * 0.5),
             "name_score": name_score,
             "col_compat": col_compat,
+            "is_placeholder": is_placeholder,
         })
 
-    # Rank by column compatibility, then name match; table name only orders
-    # the list (an equal top rank is an ambiguity, see resolve below).
-    candidates.sort(key=lambda x: (-x["col_compat"], -x["name_score"], x["table"]))
+    # A real table beats a placeholder (is_placeholder=0 before 1)
+    candidates.sort(key=lambda x: (x.get("is_placeholder", 0), -x["col_compat"], -x["name_score"], x["table"]))
     return candidates
 
 
+def rank_table_candidates(
+    dataset_name: str,
+    dataset_columns: List[str],
+    live_schema_metadata: Dict[str, Set[str]],
+    allow_id_suffix: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+    """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match.
+    
+    A table is a candidate when column compatibility >= 0.8 or its normalized
+    name equals the dataset's; column compatibility ranks first, so a
+    name-only match never beats a column match. Real tables beat placeholders.
+    
+    The ID-suffix match is used only when it results in a single candidate.
+    """
+    # Filter out auto-generated temp tables and enriched views
+    viable_tables = {
+        tbl: cols for tbl, cols in live_schema_metadata.items()
+        if not tbl.startswith(("__FIXED", "DATETABLETEMPLATE_", "LOCALDATETABLE_"))
+        and not tbl.endswith("_ENRICHED")
+    }
+
+    placeholder_tables = getattr(live_schema_metadata, "placeholder_tables", set()) or set()
+
+    if allow_id_suffix is not None:
+        return _evaluate_candidates(dataset_name, dataset_columns, viable_tables, allow_id_suffix, placeholder_tables)
+
+    # First, evaluate without ID-suffix matching
+    cands_no_id = _evaluate_candidates(dataset_name, dataset_columns, viable_tables, allow_id_suffix=False, placeholder_tables=placeholder_tables)
+    has_viable_no_id = any(c["col_compat"] >= 0.8 for c in cands_no_id)
+
+    if has_viable_no_id:
+        return cands_no_id
+
+    # If no candidate reached 0.8 compatibility without ID suffix, try with ID suffix
+    cands_with_id = _evaluate_candidates(dataset_name, dataset_columns, viable_tables, allow_id_suffix=True, placeholder_tables=placeholder_tables)
+    viable_with_id = [c for c in cands_with_id if c["col_compat"] >= 0.8]
+
+    # Use the ID-suffix match ONLY when it is the single candidate
+    if len(viable_with_id) == 1:
+        return cands_with_id
+
+    return cands_no_id
+
+
 def _is_viable(candidate: Dict[str, Any]) -> bool:
-    return candidate["col_compat"] >= 0.8 or candidate["name_score"] == 100
+    return candidate["col_compat"] >= 0.8
 
 
 def _log_binding(live_schema_metadata: Any, dataset_name: str, table: str, matched_by: str,
@@ -200,8 +239,9 @@ def resolve_dataset_to_physical_table(
     Order: explicit mapping, then the binding saved by an earlier sync of
     this project/model (if that table still exists), then the table named
     exactly like the dataset (if its columns match), then the best existing
-    table by columns (>= 0.8) or normalized name. Otherwise the table counts
-    as missing. Raises TableBindingAmbiguityError when the best match is tied.
+    table by columns (>= 0.8) or normalized name. Real tables beat placeholders.
+    A tie between duplicate placeholders resolves to saved binding, else canonical name.
+    Raises TableBindingAmbiguityError when remaining candidates are tied.
     """
     if explicit_mapping and dataset_name in explicit_mapping:
         return explicit_mapping[dataset_name]
@@ -231,11 +271,28 @@ def resolve_dataset_to_physical_table(
     if candidates and _is_viable(candidates[0]):
         best = candidates[0]
         tied = [
-            c["table"] for c in candidates
-            if c["col_compat"] == best["col_compat"] and c["name_score"] == best["name_score"]
+            c for c in candidates
+            if c.get("is_placeholder", 0) == best.get("is_placeholder", 0)
+            and c["col_compat"] == best["col_compat"]
+            and c["name_score"] == best["name_score"]
         ]
         if len(tied) > 1:
-            raise TableBindingAmbiguityError(dataset_name, tied)
+            # A tie between duplicate placeholders -> saved binding, else canonical name
+            if all(c.get("is_placeholder", 0) == 1 for c in tied):
+                pinned = (getattr(live_schema_metadata, "pinned_bindings", None) or {}).get(clean_ident(dataset_name))
+                if pinned:
+                    for c in tied:
+                        if clean_ident(c["table"]) == clean_ident(pinned) or c["table"].upper() == str(pinned).upper():
+                            _log_binding(live_schema_metadata, dataset_name, c["table"], "saved")
+                            return c["table"]
+                from semabridge.utils.identifiers import IdentifierSanitizer
+                canon = IdentifierSanitizer().sanitize_table_name(dataset_name).upper()
+                for c in tied:
+                    if c["table"].upper() == canon:
+                        _log_binding(live_schema_metadata, dataset_name, c["table"], "canonical name")
+                        return c["table"]
+            tied_names = [c["table"] for c in tied]
+            raise TableBindingAmbiguityError(dataset_name, tied_names)
         logger.debug(
             "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d)",
             dataset_name, best["table"], best["col_compat"], best["name_score"],
@@ -270,16 +327,44 @@ def check_table_name_collision_blocker(
         clean_tbl = clean_ident(tbl_name)
         if clean_ds == clean_tbl:
             compat = compute_column_compatibility(dataset_columns, live_cols)
-            if compat < 0.8:
+            live_compat = compute_column_compatibility(list(live_cols), set(dataset_columns))
+            if compat < 0.8 and not (live_compat >= 0.8 and compat >= 0.5):
+                compatible_candidates = [
+                    c["table"]
+                    for c in rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata)
+                    if c["col_compat"] >= 0.8 and clean_ident(c["table"]) != clean_tbl
+                ]
+                resolutions = [
+                    {
+                        "type": "map_table",
+                        "description": (
+                            "Map to another existing table (choose from compatible candidates); "
+                            "the choice is saved as the project's binding."
+                        ),
+                        "candidates": compatible_candidates,
+                    },
+                    {
+                        "type": "use_schema",
+                        "description": (
+                            "Use a different schema for this model's data (the project's source-data schema setting). "
+                            "The schema must already exist; SemaBridge never creates schemas."
+                        ),
+                    },
+                ]
                 return {
+                    "type": "table_column_mismatch",
                     "dataset_name": dataset_name,
                     "table_name": tbl_name,
                     "col_compat": compat,
                     "message": (
+                        f"{tbl_name} already exists with different columns. "
                         f"Target table '{tbl_name}' already exists in Snowflake but its columns do not match "
                         f"PBIX table '{dataset_name}' (compatibility {compat:.1%} < 80%). "
                         f"Cannot bind or create without overwriting."
                     ),
+                    "headline": f"{tbl_name} already exists with different columns.",
+                    "candidates": compatible_candidates,
+                    "resolutions": resolutions,
                 }
     return None
 

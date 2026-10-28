@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from semabridge.repository.orm.account_models import Account, Post
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func, true, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship

@@ -84,10 +84,14 @@ def test_saved_binding_wins_while_its_table_exists():
     assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, gone) == "SALES_FACT"
 
 
-def test_name_only_match_binds_instead_of_blocking():
+def test_name_match_with_incompatible_columns_blocks_instead_of_reusing():
+    from semabridge.connectors.table_binding_resolver import check_table_name_collision_blocker
     meta = LiveSchemaMetadata({"SALES": {"RANDOM_A", "RANDOM_B"}})
-    assert resolve_dataset_to_physical_table("Sales", ["Opportunity ID", "Sales Date"], meta) == "SALES"
-    assert meta.binding_log["SALES"]["matched_by"] == "name"
+    # Incompatible table is never reused
+    assert resolve_dataset_to_physical_table("Sales", ["Opportunity ID", "Sales Date"], meta) == "Sales"
+    blocker = check_table_name_collision_blocker("Sales", ["Opportunity ID", "Sales Date"], meta)
+    assert blocker is not None
+    assert "already exists with different columns" in blocker["message"]
 
 
 class _Cursor:

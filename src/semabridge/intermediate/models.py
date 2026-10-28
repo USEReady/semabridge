@@ -99,6 +99,7 @@ class OSICrossFilterDirection(str, Enum):
 
     SINGLE = "single"
     BOTH = "both"
+    AUTOMATIC = "automatic"
 
 
 # =============================================================================
@@ -230,6 +231,8 @@ class OSIDataset(OSIBaseModel):
         default_factory=list, description="Column definitions"
     )
     is_fact: bool = Field(default=False, description="Fact table indicator")
+    is_date_table: bool = Field(default=False, description="Date table indicator")
+    data_category: Optional[str] = Field(default=None, description="Data category (e.g. Time)")
     is_hidden: bool = Field(default=False, description="Hidden from end users")
     source_database: Optional[str] = None         # Database name (Snowflake-specific)
     row_count: Optional[int] = None               # Approx row count for fact/dim hinting
@@ -404,6 +407,14 @@ class OSIRelationship(OSIBaseModel):
         default=OSICrossFilterDirection.SINGLE, description="Cross-filter direction"
     )
     is_active: bool = Field(default=True, description="Active relationship indicator")
+    join_on_date_behavior: Optional[str] = Field(
+        default=None,
+        description="Join on date behavior (e.g. dateAndTime, dateOnly)",
+    )
+    rely_on_referential_integrity: Optional[bool] = Field(
+        default=None,
+        description="Whether relationship relies on referential integrity",
+    )
 
     @field_validator("unique_name")
     @classmethod

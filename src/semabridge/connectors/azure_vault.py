@@ -18,7 +18,10 @@ Security:
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from azure.core.credentials import AccessToken
 
 from semabridge.core.exceptions import ConnectorError
 from semabridge.utils.logger import get_logger

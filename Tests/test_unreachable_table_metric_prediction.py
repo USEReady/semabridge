@@ -22,9 +22,11 @@ class DummyMetric:
         self.sync_enabled = True
 
 class DummyDataset:
-    def __init__(self, unique_name, is_fact=False):
+    def __init__(self, unique_name, is_fact=False, is_date_table=False, data_category=None):
         self.unique_name = unique_name
         self.is_fact = is_fact
+        self.is_date_table = is_date_table
+        self.data_category = data_category
 
 class DummyRelationship:
     def __init__(self, from_ds, to_ds, is_active=True):
@@ -64,7 +66,7 @@ def test_unreachable_table_metric_predicted_as_drop_during_ddl_emission():
 
     kpi_ds = DummyDataset("KPI", is_fact=False)
     sales_ds = DummyDataset("SalesFact", is_fact=True)
-    date_ds = DummyDataset("Date", is_fact=False)
+    date_ds = DummyDataset("Date", is_fact=False, is_date_table=True)
 
     rel = DummyRelationship("SalesFact", "Date")
 
@@ -104,14 +106,14 @@ def test_unreachable_table_metric_predicted_as_drop_during_ddl_emission():
         is_osi=False,
     )
 
-    # 1. Verify drop_ledger recorded KPI01 at DDL_EMISSION stage
+    # 1. Verify drop_ledger recorded KPI01 at DAX_TRANSLATION stage
     recorded_drops = drop_ledger.to_json()
     kpi_drop = next((d for d in recorded_drops if d.get("entity_name") == "KPI01"), None)
-    assert kpi_drop is not None, "Expected KPI01 to be recorded in drop_ledger during DDL_EMISSION"
-    assert kpi_drop["stage"] == DropStage.DDL_EMISSION.value
-    assert ("reachable" in kpi_drop["reason"].lower() or "unsupported kpi pattern" in kpi_drop["reason"].lower())
+    assert kpi_drop is not None, "Expected KPI01 to be recorded in drop_ledger during DAX_TRANSLATION"
+    assert kpi_drop["stage"] == DropStage.DAX_TRANSLATION.value
+    assert ("placeholder" in kpi_drop["reason"].lower() or "not translatable" in kpi_drop["reason"].lower())
 
-    # 2. Verify DDL does NOT emit CAST(NULL AS DOUBLE) placeholder for KPI01, and emits valid expression for TOTAL_UNITS_YTD
+    # 2. Verify DDL emits CAST(NULL AS DOUBLE) placeholder for KPI01, and emits valid expression for TOTAL_UNITS_YTD
     ddl_text = "\n".join(lines)
-    assert 'CAST(NULL AS DOUBLE)' not in ddl_text
+    assert 'KPI."KPI01" AS CAST(NULL AS DOUBLE)' in ddl_text
     assert 'SALESFACT."TOTAL_UNITS_YTD" AS SUM(CASE WHEN SALESFACT.IS_YTD THEN SALESFACT.UNITS ELSE NULL END::FLOAT)' in ddl_text

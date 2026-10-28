@@ -163,6 +163,18 @@ class TMSLTransformer:
             if "tables" not in model_obj:
                 return sml
 
+            # Extract relationship key column endpoints so they never produce implicit metrics
+            rel_key_cols: Set[Tuple[str, str]] = set()
+            for rel in model_obj.get("relationships", []):
+                from_tbl = rel.get("fromTable", "")
+                from_col = rel.get("fromColumn", "")
+                to_tbl = rel.get("toTable", "")
+                to_col = rel.get("toColumn", "")
+                if from_tbl and from_col:
+                    rel_key_cols.add((from_tbl.strip().casefold(), from_col.strip().casefold()))
+                if to_tbl and to_col:
+                    rel_key_cols.add((to_tbl.strip().casefold(), to_col.strip().casefold()))
+
             # Pass 1: Collect datasets first.
             tables_to_process: List[tuple] = []
             for table in model_obj["tables"]:
@@ -215,7 +227,7 @@ class TMSLTransformer:
                         table_name or "<unnamed>",
                     )
 
-                ds = self._parse_table(table)
+                ds = self._parse_table(table, rel_key_cols=rel_key_cols)
                 sml.datasets.append(ds)
                 tables_to_process.append((table, ds))
 
@@ -544,8 +556,9 @@ class TMSLTransformer:
         Ensure a Calendar/Date dimension exists.
         If missing, inject a standard one.
         """
-        # Check if any date dimension exists
-        if any(is_calendar_like_name(ds.unique_name) for ds in sml.datasets):
+        # Check if any date dimension exists (metadata first, then name fallback)
+        from semabridge.connectors.dataset_classification_keywords import is_date_dataset
+        if any(is_date_dataset(ds, sml) for ds in sml.datasets):
             return
             
         logger.info("Injecting missing Calendar/Date dimension")
@@ -572,7 +585,11 @@ class TMSLTransformer:
         
         sml.datasets.append(date_ds)
     
-    def _parse_table(self, table_def: Dict[str, Any]) -> SMLDataset:
+    def _parse_table(
+        self,
+        table_def: Dict[str, Any],
+        rel_key_cols: Optional[Set[Tuple[str, str]]] = None,
+    ) -> SMLDataset:
         """Parse a TMSL table into SMLDataset."""
         name = table_def["name"]
         
@@ -580,7 +597,7 @@ class TMSLTransformer:
         if "columns" in table_def:
             for col in table_def["columns"]:
                 self._current_table_name = name
-                columns.append(self._parse_column(col))
+                columns.append(self._parse_column(col, rel_key_cols=rel_key_cols))
                 
         source_table = name
 
@@ -600,7 +617,11 @@ class TMSLTransformer:
             for prefix in cls.AUTO_HIDDEN_TABLE_PREFIXES
         )
     
-    def _parse_column(self, col_def: Dict[str, Any]) -> SMLColumn:
+    def _parse_column(
+        self,
+        col_def: Dict[str, Any],
+        rel_key_cols: Optional[Set[Tuple[str, str]]] = None,
+    ) -> SMLColumn:
         """Parse a TMSL column into SMLColumn."""
         import re
         
@@ -697,12 +718,26 @@ class TMSLTransformer:
         
         is_measure_candidate = False
         
+        table_name = getattr(self, "_current_table_name", "") or ""
+        is_rel_key = bool(
+            (rel_key_cols is not None and (table_name.strip().casefold(), col_name.strip().casefold()) in rel_key_cols)
+            or col_def.get("isKey", False)
+        )
+
         # 1. Explicit TMSL Override: Check summarizeBy property
-        #    summarizeBy = "sum" | "avg" | "count" | "max" | "min" | "none"
-        summarize_by = col_def.get("summarizeBy", "").lower()
-        if summarize_by and summarize_by != "none":
-            is_measure_candidate = True
-            logger.debug(f"Column '{col_name}' marked as measure via summarizeBy={summarize_by}")
+        summarize_by = col_def.get("summarizeBy", "").strip().lower()
+        is_numeric = mapped_type in (DataType.INTEGER, DataType.FLOAT, DataType.DECIMAL)
+        if is_rel_key:
+            is_measure_candidate = False
+        elif summarize_by:
+            if summarize_by in ("sum", "avg", "average", "count", "max", "min", "distinctcount", "countdistinct"):
+                is_measure_candidate = True
+            elif summarize_by == "default":
+                is_measure_candidate = is_numeric
+            elif summarize_by == "none":
+                is_measure_candidate = False
+            if is_measure_candidate:
+                logger.debug(f"Column '{col_name}' marked as measure via summarizeBy={summarize_by}")
         
         # 2. Format String Detection (currency/percent = measure)
         format_string = col_def.get("formatString", "")
@@ -742,6 +777,9 @@ class TMSLTransformer:
             # 3. Integers (Counts, Years, etc.)
             elif name_upper in ["YEAR", "MONTH", "QUARTER", "DAY", "ROWNUMBER"]:
                 mapped_type = DataType.INTEGER
+
+        if is_rel_key:
+            is_measure_candidate = False
                 
         # DEBUG: Log if we see unexpected types or fallback to string
         if mapped_type == DataType.STRING and normalized_type != "string":

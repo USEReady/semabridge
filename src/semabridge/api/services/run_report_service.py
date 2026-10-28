@@ -650,49 +650,68 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
             d for d in (result.get("dropped_entities") or summary.get("dropped_entities") or [])
             if isinstance(d, dict)
         ]
-        for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
-            if isinstance(backfill_entry, dict):
-                data_backfill_results.append({**backfill_entry, "model": model_label})
-        for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
-            if isinstance(cortex_entry, dict):
-                cortex_validation_results.append({**cortex_entry, "model": model_label})
+        try:
+            for backfill_entry in (result.get("data_backfill_results") or summary.get("data_backfill_results") or []):
+                if isinstance(backfill_entry, dict):
+                    data_backfill_results.append({**backfill_entry, "model": model_label})
+        except Exception as exc:
+            logger.warning("Could not gather data_backfill_results for model %s: %s", model_label, exc)
 
-        snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
-        if snap_data:
-            extraction_table_drops = sum(
-                1 for d in model_dropped
-                if d.get("stage") == "extraction" and d.get("entity_kind") == "table"
-            )
-            schema_column_drops = sum(
-                1 for d in model_dropped
-                if d.get("stage") == "schema_validation" and d.get("entity_kind") == "column"
-            )
-            emission_relationship_drops = sum(
-                1 for d in model_dropped
-                if d.get("stage") == "ddl_emission" and d.get("entity_kind") == "relationship"
-            )
-            dataset_count += snap_data["dataset_count"] + extraction_table_drops
-            column_count += snap_data["column_count"] + schema_column_drops
-            relationship_count += snap_data["relationship_count"] + emission_relationship_drops
-            metric_count += len(snap_data["metrics"])
+        try:
+            for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
+                if isinstance(cortex_entry, dict):
+                    cortex_validation_results.append({**cortex_entry, "model": model_label})
+        except Exception as exc:
+            logger.warning("Could not gather cortex_validation_results for model %s: %s", model_label, exc)
 
-            dropped_metric_names = {
-                d.get("entity_name") for d in model_dropped
-                if d.get("entity_kind") == "metric" and d.get("entity_name")
-            }
-            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
-            prefix = f"{model_label}: " if multi_model and model_label else ""
-            for entry in classified["standard"]:
-                standard.append({**entry, "name": f"{prefix}{entry['name']}"})
-            for entry in classified["ai_assisted"]:
-                ai_assisted.append({**entry, "name": f"{prefix}{entry['name']}"})
-            for entry in classified["needs_review"]:
-                needs_review.append({**entry, "name": f"{prefix}{entry['name']}"})
+        try:
+            snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
+            if snap_data:
+                extraction_table_drops = sum(
+                    1 for d in model_dropped
+                    if d.get("stage") == "extraction" and d.get("entity_kind") == "table"
+                )
+                schema_column_drops = sum(
+                    1 for d in model_dropped
+                    if d.get("stage") == "schema_validation" and d.get("entity_kind") == "column"
+                )
+                emission_relationship_drops = sum(
+                    1 for d in model_dropped
+                    if d.get("stage") == "ddl_emission" and d.get("entity_kind") == "relationship"
+                )
+                dataset_count += snap_data["dataset_count"] + extraction_table_drops
+                column_count += snap_data["column_count"] + schema_column_drops
+                relationship_count += snap_data["relationship_count"] + emission_relationship_drops
+                metric_count += len(snap_data["metrics"])
 
-        for record in model_dropped:
-            stage = str(record.get("stage") or "unknown")
-            target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
-            target_group.setdefault(stage, []).append(record)
+                dropped_metric_names = {
+                    d.get("entity_name") for d in model_dropped
+                    if d.get("entity_kind") == "metric" and d.get("entity_name")
+                }
+                classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
+                prefix = f"{model_label}: " if multi_model and model_label else ""
+                for entry in classified["standard"]:
+                    standard.append({**entry, "name": f"{prefix}{entry['name']}"})
+                for entry in classified["ai_assisted"]:
+                    ai_assisted.append({**entry, "name": f"{prefix}{entry['name']}"})
+                for entry in classified["needs_review"]:
+                    needs_review.append({**entry, "name": f"{prefix}{entry['name']}"})
+        except Exception as exc:
+            logger.warning("Could not gather snapshot metrics for model %s: %s", model_label, exc)
+
+        try:
+            for record in model_dropped:
+                stage = str(record.get("stage") or "unknown")
+                target_group = excluded_by_design_by_stage if record.get("by_design") else dropped_by_stage
+                target_group.setdefault(stage, []).append(record)
+        except Exception as exc:
+            logger.warning("Could not group dropped entities for model %s: %s", model_label, exc)
+
+    upsert_deltas = []
+    try:
+        upsert_deltas = _collect_upsert_deltas(model_results)
+    except Exception as exc:
+        logger.warning("Could not collect upsert deltas: %s", exc)
 
     return {
         "crashed": False,
@@ -709,7 +728,8 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "dropped_by_stage": dropped_by_stage,
         "excluded_by_design_by_stage": excluded_by_design_by_stage,
         "data_backfill_results": data_backfill_results,
-        "upsert_deltas": _collect_upsert_deltas(model_results),
+        "cortex_validation_results": cortex_validation_results,
+        "upsert_deltas": upsert_deltas,
     }
 
 
@@ -743,53 +763,158 @@ def build_run_report_data(
         "duration_label": _format_duration(run.get("duration_ms")),
     }
 
-    data = _gather_run_report_data(run)
-    if data["crashed"]:
-        return {**header, "crashed": True, "unavailable": data.get("unavailable", False), "error": data["error"]}
+    try:
+        data = _gather_run_report_data(run)
+    except Exception as exc:
+        logger.exception("Failed gathering report data for run %s: %s", run_id, exc)
+        return {**header, "crashed": True, "unavailable": False, "error": str(exc)}
 
-    counts = data["counts"]
-    standard, ai_assisted, needs_review = data["standard"], data["ai_assisted"], data["needs_review"]
-    dropped_by_stage, target_type = data["dropped_by_stage"], data["target_type"]
-    excluded_by_design_by_stage = data["excluded_by_design_by_stage"]
+    if data.get("crashed"):
+        return {**header, "crashed": True, "unavailable": data.get("unavailable", False), "error": data.get("error", "Unknown error")}
+
+    counts = data.get("counts") or {}
+    standard = data.get("standard") or []
+    ai_assisted = data.get("ai_assisted") or []
+    needs_review = data.get("needs_review") or []
+    dropped_by_stage = data.get("dropped_by_stage") or {}
+    target_type = data.get("target_type") or ""
+    excluded_by_design_by_stage = data.get("excluded_by_design_by_stage") or {}
     target_label = target_type.title() if target_type else "the destination"
 
     def _stage_sections(by_stage: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         ordered_stages = _STAGE_ORDER + [s for s in by_stage if s not in _STAGE_ORDER]
         sections = []
         for stage in ordered_stages:
-            records = by_stage.get(stage)
-            if not records:
-                continue
-            sections.append({
-                "stage": stage,
-                "label": stage_group_label(stage, target_label),
-                "items": [
-                    {
-                        "name": record.get("entity_name") or "(unnamed)",
-                        "entity_kind": record.get("entity_kind"),
-                        "reason": humanize_drop_reason(record),
-                    }
-                    for record in records
-                ],
-            })
+            try:
+                records = by_stage.get(stage)
+                if not records:
+                    continue
+                sections.append({
+                    "stage": stage,
+                    "label": stage_group_label(stage, target_label),
+                    "items": [
+                        {
+                            "name": record.get("entity_name") or "(unnamed)",
+                            "entity_kind": record.get("entity_kind"),
+                            "reason": humanize_drop_reason(record),
+                        }
+                        for record in records
+                        if isinstance(record, dict)
+                    ],
+                })
+            except Exception as exc:
+                logger.warning("Could not format stage section %s for run %s: %s", stage, run_id, exc)
         return sections
 
-    dropped_count = sum(len(records) for records in dropped_by_stage.values())
-    excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
-    data_backfill_results = data.get("data_backfill_results") or []
-    backfill_loaded = sum(1 for e in data_backfill_results if e.get("status") == "loaded")
-    backfill_skipped = sum(1 for e in data_backfill_results if e.get("status") == "skipped")
-    backfill_failed = sum(1 for e in data_backfill_results if e.get("status") == "failed")
-    backfill_ambiguous = sum(1 for e in data_backfill_results if e.get("status") == "ambiguous_needs_review")
+    section_errors = {}
+
+    dropped_count = 0
+    try:
+        dropped_count = sum(len(records) for records in dropped_by_stage.values())
+    except Exception as exc:
+        logger.warning("Could not calculate dropped_count for run %s: %s", run_id, exc)
+
+    excluded_by_design_count = 0
+    try:
+        excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
+    except Exception as exc:
+        logger.warning("Could not calculate excluded_by_design_count for run %s: %s", run_id, exc)
+
+    data_backfill_results: List[Dict[str, Any]] = []
+    backfill_loaded = backfill_skipped = backfill_failed = backfill_ambiguous = 0
+    try:
+        data_backfill_results = data.get("data_backfill_results") or []
+        backfill_loaded = sum(1 for e in data_backfill_results if e.get("status") == "loaded")
+        backfill_skipped = sum(1 for e in data_backfill_results if e.get("status") == "skipped")
+        backfill_failed = sum(1 for e in data_backfill_results if e.get("status") == "failed")
+        backfill_ambiguous = sum(1 for e in data_backfill_results if e.get("status") == "ambiguous_needs_review")
+    except Exception as exc:
+        logger.warning("Could not calculate backfill counts for run %s: %s", run_id, exc)
+        section_errors["data_backfill"] = str(exc)
+        data_backfill_results = [{
+            "table": "(Error)",
+            "status": "failed",
+            "reason": f"Failed to build backfill section: {exc}",
+            "failed": True,
+            "error": str(exc),
+        }]
+
+    cortex_validation_results: List[Dict[str, Any]] = []
+    try:
+        cortex_validation_results = data.get("cortex_validation_results") or []
+        if not cortex_validation_results and isinstance(run.get("results"), list):
+            for result in run.get("results") or []:
+                if isinstance(result, dict):
+                    model_label = str(result.get("model") or "")
+                    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+                    for cortex_entry in (result.get("cortex_validation_results") or summary.get("cortex_validation_results") or []):
+                        if isinstance(cortex_entry, dict):
+                            cortex_validation_results.append({**cortex_entry, "model": model_label})
+    except Exception as exc:
+        logger.warning("Could not build cortex_validation section for run %s: %s", run_id, exc)
+        section_errors["cortex_validation"] = str(exc)
+        cortex_validation_results = [{
+            "view_name": "(Error)",
+            "yaml_verified": False,
+            "status": f"Failed to build Cortex validation section: {exc}",
+            "failed": True,
+            "error": str(exc),
+        }]
+
+    dropped_sections = []
+    try:
+        dropped_sections = _stage_sections(dropped_by_stage)
+    except Exception as exc:
+        logger.warning("Could not build dropped sections for run %s: %s", run_id, exc)
+        section_errors["dropped"] = str(exc)
+        dropped_sections = [{
+            "stage": "failed",
+            "label": "Failed to load dropped section",
+            "items": [{"name": "(Error)", "entity_kind": "error", "reason": f"Failed to build section: {exc}"}],
+            "failed": True,
+            "error": str(exc),
+        }]
+
+    excluded_by_design_sections = []
+    try:
+        excluded_by_design_sections = _stage_sections(excluded_by_design_by_stage)
+    except Exception as exc:
+        logger.warning("Could not build excluded_by_design sections for run %s: %s", run_id, exc)
+        section_errors["excluded_by_design"] = str(exc)
+        excluded_by_design_sections = [{
+            "stage": "failed",
+            "label": "Failed to load excluded section",
+            "items": [{"name": "(Error)", "entity_kind": "error", "reason": f"Failed to build section: {exc}"}],
+            "failed": True,
+            "error": str(exc),
+        }]
+
+    upsert_deltas = []
+    try:
+        upsert_deltas = data.get("upsert_deltas") or []
+    except Exception as exc:
+        logger.warning("Could not get upsert_deltas for run %s: %s", run_id, exc)
+        section_errors["upsert_deltas"] = str(exc)
+        upsert_deltas = [{
+            "model": "(Error)",
+            "delta": {
+                "has_changes": False,
+                "first_deployment": False,
+                "summary_text": f"Failed to build upsert delta section: {exc}",
+                "kinds": {},
+                "failed": True,
+                "error": str(exc),
+            },
+        }]
 
     return {
         **header,
         "crashed": False,
         "counts": {
-            "tables": counts["datasets"],
-            "columns": counts["columns"],
-            "calculations": counts["metrics"],
-            "relationships": counts["relationships"],
+            "tables": counts.get("datasets", 0),
+            "columns": counts.get("columns", 0),
+            "calculations": counts.get("metrics", 0),
+            "relationships": counts.get("relationships", 0),
             "converted_total": len(standard) + len(ai_assisted) + len(needs_review),
             "standard": len(standard),
             "ai_assisted": len(ai_assisted),
@@ -805,8 +930,8 @@ def build_run_report_data(
             "standard": standard,
             "ai_assisted": ai_assisted,
             "needs_review": needs_review,
-            "dropped": _stage_sections(dropped_by_stage),
-            "excluded_by_design": _stage_sections(excluded_by_design_by_stage),
+            "dropped": dropped_sections,
+            "excluded_by_design": excluded_by_design_sections,
         },
         # Only populated for a run where options.load_source_data was
         # enabled -- empty list (and all three counts 0 above) for every
@@ -814,7 +939,8 @@ def build_run_report_data(
         "data_backfill": data_backfill_results,
         "cortex_validation": cortex_validation_results,
         # UPSERT runs only: per-model delta vs the last deployed snapshot.
-        "upsert_deltas": data.get("upsert_deltas") or [],
+        "upsert_deltas": upsert_deltas,
+        "section_errors": section_errors,
     }
 
 
@@ -1049,133 +1175,161 @@ def generate_run_report_markdown(
         lines.append("")
 
     # --- Not included, and why ------------------------------------------
-    lines.append("## Not Included, and Why")
-    lines.append("")
-    if not dropped_by_stage:
-        lines.append("Everything found in your source file was successfully converted and deployed.")
+    try:
+        lines.append("## Not Included, and Why")
         lines.append("")
-    else:
-        target_label = target_type.title() if target_type else "the destination"
-        ordered_stages = _STAGE_ORDER + [s for s in dropped_by_stage if s not in _STAGE_ORDER]
-        for stage in ordered_stages:
-            records = dropped_by_stage.get(stage)
-            if not records:
-                continue
-            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
+        if not dropped_by_stage:
+            lines.append("Everything found in your source file was successfully converted and deployed.")
             lines.append("")
-            lines.append("| Why | Items |")
-            lines.append("|---|---|")
-            # Grouped by (reason, by_design) so the same explanation is
-            # never repeated once per item -- a real report showed the
-            # identical sentence 33 times in a row before this change.
-            for (reason, by_design), recs in _group_by_first_seen(
-                records, lambda r: (humanize_drop_reason(r), bool(r.get("by_design")))
-            ):
-                label = f"{reason} _(expected)_" if by_design else reason
-                names = [r.get("entity_name") or "(unnamed)" for r in recs]
-                lines.append(f"| {label} | {_names_cell(names)} |")
-            lines.append("")
+        else:
+            target_label = target_type.title() if target_type else "the destination"
+            ordered_stages = _STAGE_ORDER + [s for s in dropped_by_stage if s not in _STAGE_ORDER]
+            for stage in ordered_stages:
+                records = dropped_by_stage.get(stage)
+                if not records:
+                    continue
+                lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
+                lines.append("")
+                lines.append("| Why | Items |")
+                lines.append("|---|---|")
+                # Grouped by (reason, by_design) so the same explanation is
+                # never repeated once per item -- a real report showed the
+                # identical sentence 33 times in a row before this change.
+                for (reason, by_design), recs in _group_by_first_seen(
+                    records, lambda r: (humanize_drop_reason(r), bool(r.get("by_design")))
+                ):
+                    label = f"{reason} _(expected)_" if by_design else reason
+                    names = [r.get("entity_name") or "(unnamed)" for r in recs]
+                    lines.append(f"| {label} | {_names_cell(names)} |")
+                lines.append("")
+    except Exception as exc:
+        logger.warning("Failed rendering dropped section for run %s: %s", run_id, exc)
+        lines.append(f"⚠️ Failed to render dropped items section: {exc}")
+        lines.append("")
 
     # --- Excluded on purpose ----------------------------------------------
     # Things deliberately left out (e.g. auto-generated date tables) --
     # mixing them into "not included" reads as more problems than exist.
-    if excluded_by_design_by_stage:
-        target_label = target_type.title() if target_type else "the destination"
+    try:
+        if excluded_by_design_by_stage:
+            target_label = target_type.title() if target_type else "the destination"
+            lines.append("## No action needed")
+            lines.append("")
+            lines.append(
+                "These weren't included on purpose — they're not part of your "
+                "real business data, so there's nothing to review here."
+            )
+            lines.append("")
+            ordered_stages = _STAGE_ORDER + [s for s in excluded_by_design_by_stage if s not in _STAGE_ORDER]
+            for stage in ordered_stages:
+                records = excluded_by_design_by_stage.get(stage)
+                if not records:
+                    continue
+                lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
+                lines.append("")
+                for record in records:
+                    name = record.get("entity_name") or "(unnamed)"
+                    lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
+                lines.append("")
+    except Exception as exc:
+        logger.warning("Failed rendering excluded_by_design section for run %s: %s", run_id, exc)
         lines.append("## No action needed")
         lines.append("")
-        lines.append(
-            "These weren't included on purpose — they're not part of your "
-            "real business data, so there's nothing to review here."
-        )
+        lines.append(f"⚠️ Failed to render excluded items section: {exc}")
         lines.append("")
-        ordered_stages = _STAGE_ORDER + [s for s in excluded_by_design_by_stage if s not in _STAGE_ORDER]
-        for stage in ordered_stages:
-            records = excluded_by_design_by_stage.get(stage)
-            if not records:
-                continue
-            lines.append(f"### {stage_group_label(stage, target_label)} ({len(records)})")
-            lines.append("")
-            for record in records:
-                name = record.get("entity_name") or "(unnamed)"
-                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
-            lines.append("")
 
-    upsert_deltas = _collect_upsert_deltas(model_results)
-    if upsert_deltas:
-        lines.extend(_upsert_delta_markdown(upsert_deltas))
+    try:
+        upsert_deltas = _collect_upsert_deltas(model_results)
+        if upsert_deltas:
+            lines.extend(_upsert_delta_markdown(upsert_deltas))
+    except Exception as exc:
+        logger.warning("Failed rendering upsert deltas for run %s: %s", run_id, exc)
+        lines.append("## UPSERT Delta")
+        lines.append("")
+        lines.append(f"⚠️ Failed to render upsert delta section: {exc}")
+        lines.append("")
 
     # --- Data backfill (only present when options.load_source_data was
     # enabled for this run — omitted entirely otherwise) -------------------
-    if data_backfill_results:
+    try:
+        if data_backfill_results:
+            lines.append("## Data Backfill")
+            lines.append("")
+            triggers_present = {e.get("trigger") for e in data_backfill_results}
+            if triggers_present == {"first_sync_default"}:
+                lines.append(
+                    "Real-data backfill ran automatically for this project's first "
+                    "sync (no `options.load_source_data` was configured — every "
+                    "later sync goes back to opt-in-only). Per table:"
+                )
+            elif triggers_present == {"explicit"}:
+                lines.append(
+                    "This run had real-data backfill explicitly enabled "
+                    "(`options.load_source_data: true`). Per table:"
+                )
+            else:
+                lines.append(
+                    "This run had real-data backfill enabled. Per table "
+                    "(see Trigger for why each one ran):"
+                )
+            lines.append("")
+            lines.append("| Table | Status | Rows | Columns | Trigger | Reason |")
+            lines.append("|---|---|---:|---|---|---|")
+            _TRIGGER_LABELS = {
+                "first_sync_default": "Automatic (first sync)",
+                "explicit": "Explicit config",
+            }
+            for entry in data_backfill_results:
+                table = entry.get("table") or "(unknown table)"
+                status = str(entry.get("status") or "unknown").replace("_", " ").title()
+                row_count = entry.get("row_count", 0)
+                columns = entry.get("columns") or []
+                columns_cell = ", ".join(columns) if columns else "—"
+                trigger = _TRIGGER_LABELS.get(entry.get("trigger"), "—")
+                reason = str(entry.get("reason") or "").replace("|", "\\|")
+                lines.append(f"| {table} | {status} | {row_count} | {columns_cell} | {trigger} | {reason} |")
+            lines.append("")
+    except Exception as exc:
+        logger.warning("Failed rendering data backfill for run %s: %s", run_id, exc)
         lines.append("## Data Backfill")
         lines.append("")
-        triggers_present = {e.get("trigger") for e in data_backfill_results}
-        if triggers_present == {"first_sync_default"}:
-            lines.append(
-                "Real-data backfill ran automatically for this project's first "
-                "sync (no `options.load_source_data` was configured — every "
-                "later sync goes back to opt-in-only). Per table:"
-            )
-        elif triggers_present == {"explicit"}:
-            lines.append(
-                "This run had real-data backfill explicitly enabled "
-                "(`options.load_source_data: true`). Per table:"
-            )
-        else:
-            lines.append(
-                "This run had real-data backfill enabled. Per table "
-                "(see Trigger for why each one ran):"
-            )
-        lines.append("")
-        lines.append("| Table | Status | Rows | Columns | Trigger | Reason |")
-        lines.append("|---|---|---:|---|---|---|")
-        _TRIGGER_LABELS = {
-            "first_sync_default": "Automatic (first sync)",
-            "explicit": "Explicit config",
-        }
-        for entry in data_backfill_results:
-            table = entry.get("table") or "(unknown table)"
-            status = str(entry.get("status") or "unknown").replace("_", " ").title()
-            row_count = entry.get("row_count", 0)
-            # Present only for the column-level backfill path (a table
-            # that already had real data, but had one or more columns
-            # ALTER-TABLE-ADDed by this same deploy and patched on the
-            # existing rows) -- distinguishes that from a whole-table
-            # fresh load, which always has an empty Columns cell here.
-            columns = entry.get("columns") or []
-            columns_cell = ", ".join(columns) if columns else "—"
-            trigger = _TRIGGER_LABELS.get(entry.get("trigger"), "—")
-            reason = str(entry.get("reason") or "").replace("|", "\\|")
-            lines.append(f"| {table} | {status} | {row_count} | {columns_cell} | {trigger} | {reason} |")
+        lines.append(f"⚠️ Failed to render data backfill section: {exc}")
         lines.append("")
 
-    if cortex_validation_results:
+    try:
+        if cortex_validation_results:
+            lines.append("## Cortex Analyst Validation")
+            lines.append("")
+            lines.append(
+                "Every deployed semantic view underwent automated Cortex Analyst safety checks "
+                "(YAML verify-only round-trip and zero-row element compilation):"
+            )
+            lines.append("")
+            lines.append("| Semantic View | YAML Validation | Dimensions Tested | Metrics Tested | Status |")
+            lines.append("|---|---|---|---|---|")
+            for cv in cortex_validation_results:
+                view = cv.get("view_name") or "(unknown)"
+                yaml_stat = "✅ Valid" if cv.get("yaml_verified") else "❌ Failed"
+                dims = f"{cv.get('dimensions_passed', 0)} / {cv.get('dimensions_checked', 0)} passed"
+                mets = f"{cv.get('metrics_passed', 0)} / {cv.get('metrics_checked', 0)} passed"
+                remediated = cv.get("remediated_metrics") or []
+                if remediated:
+                    stat = f"⚠️ {len(remediated)} metric(s) nulled"
+                else:
+                    stat = "✅ Valid"
+                lines.append(f"| `{view}` | {yaml_stat} | {dims} | {mets} | {stat} |")
+            lines.append("")
+            for cv in cortex_validation_results:
+                remediated = cv.get("remediated_metrics") or []
+                if remediated:
+                    lines.append(f"**Remediated metrics for `{cv.get('view_name')}` (replaced with NULL placeholder):** " + ", ".join(f"`{m}`" for m in remediated))
+                    lines.append("")
+    except Exception as exc:
+        logger.warning("Failed rendering Cortex Analyst Validation for run %s: %s", run_id, exc)
         lines.append("## Cortex Analyst Validation")
         lines.append("")
-        lines.append(
-            "Every deployed semantic view underwent automated Cortex Analyst safety checks "
-            "(YAML verify-only round-trip and zero-row element compilation):"
-        )
+        lines.append(f"⚠️ Failed to render Cortex Analyst Validation section: {exc}")
         lines.append("")
-        lines.append("| Semantic View | YAML Validation | Dimensions Tested | Metrics Tested | Status |")
-        lines.append("|---|---|---|---|---|")
-        for cv in cortex_validation_results:
-            view = cv.get("view_name") or "(unknown)"
-            yaml_stat = "✅ Valid" if cv.get("yaml_verified") else "❌ Failed"
-            dims = f"{cv.get('dimensions_passed', 0)} / {cv.get('dimensions_checked', 0)} passed"
-            mets = f"{cv.get('metrics_passed', 0)} / {cv.get('metrics_checked', 0)} passed"
-            remediated = cv.get("remediated_metrics") or []
-            if remediated:
-                stat = f"⚠️ {len(remediated)} metric(s) nulled"
-            else:
-                stat = "✅ Valid"
-            lines.append(f"| `{view}` | {yaml_stat} | {dims} | {mets} | {stat} |")
-        lines.append("")
-        for cv in cortex_validation_results:
-            remediated = cv.get("remediated_metrics") or []
-            if remediated:
-                lines.append(f"**Remediated metrics for `{cv.get('view_name')}` (replaced with NULL placeholder):** " + ", ".join(f"`{m}`" for m in remediated))
-                lines.append("")
 
     return "\n".join(lines)
 

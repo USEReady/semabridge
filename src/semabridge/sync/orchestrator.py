@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from semabridge.core.exceptions import ConflictError, SyncError
-from semabridge.intermediate.models import OSIModel
+from semabridge.intermediate.models import OSIDataType, OSIModel
+from semabridge.sync.artifact_exporter import ArtifactExportService
 from semabridge.sync.conflict_resolver import ConflictResolver
 from semabridge.sync.models import (
     ConflictResolution,
@@ -746,7 +747,8 @@ class SyncOrchestrator:
         from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 
-        connector = LocalPBIXConnector({"pbix_path": item.source_path})
+        drop_ledger = getattr(self, "drop_ledger", None)
+        connector = LocalPBIXConnector({"pbix_path": item.source_path}, drop_ledger=drop_ledger)
         discovered = connector.discover()
         raw_tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
         converter = TMSLToOSIConverter()

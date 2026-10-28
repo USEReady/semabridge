@@ -624,6 +624,7 @@ class ModelRepository:
     def get_table_bindings(self, project_id: str, model_key: str) -> Dict[str, str]:
         """Saved dataset_key -> physical table bindings of one project/model."""
         from semabridge.repository.orm.models import TableBinding
+        from semabridge.connectors.table_binding_resolver import clean_ident
 
         with self._session() as session:
             rows = session.execute(
@@ -631,21 +632,23 @@ class ModelRepository:
                     and_(TableBinding.project_id == project_id, TableBinding.model_key == model_key)
                 )
             ).scalars().all()
-            return {row.dataset_key: row.table_name for row in rows}
+            return {clean_ident(row.dataset_key): row.table_name for row in rows}
 
     def save_table_bindings(self, project_id: str, model_key: str, bindings: List[Dict[str, Any]]) -> int:
         """Insert or update bindings ({dataset_key, dataset, table, matched_by})."""
         from semabridge.repository.orm.models import TableBinding
+        from semabridge.connectors.table_binding_resolver import clean_ident
 
         saved = 0
         with self._session() as session:
             for entry in bindings:
+                ds_key = clean_ident(entry.get("dataset_key") or entry.get("dataset"))
                 row = session.execute(
                     select(TableBinding).where(
                         and_(
                             TableBinding.project_id == project_id,
                             TableBinding.model_key == model_key,
-                            TableBinding.dataset_key == entry["dataset_key"],
+                            TableBinding.dataset_key == ds_key,
                         )
                     )
                 ).scalars().first()
@@ -654,8 +657,8 @@ class ModelRepository:
                         binding_id=str(uuid.uuid4()),
                         project_id=project_id,
                         model_key=model_key,
-                        dataset_key=entry["dataset_key"],
-                        dataset_name=entry["dataset"],
+                        dataset_key=ds_key,
+                        dataset_name=entry.get("dataset") or ds_key,
                         table_name=entry["table"],
                         matched_by=entry.get("matched_by"),
                     ))

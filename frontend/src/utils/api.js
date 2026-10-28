@@ -2427,6 +2427,30 @@ export const api = {
         return _getDatabricksSources(connectionId);
     },
 
+    async saveTableBinding(projectId, { modelName, dataset, table }) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/table-bindings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model_name: modelName,
+                dataset,
+                table,
+            }),
+        });
+        return handleResponse(res);
+    },
+
+    async saveSourceDataSchema(projectId, sourceDataSchema) {
+        const res = await authFetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/source-data-schema`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_data_schema: sourceDataSchema,
+            }),
+        });
+        return handleResponse(res);
+    },
+
     // ── Password Reset ────────────────────────────────────────────────────
 
     /**

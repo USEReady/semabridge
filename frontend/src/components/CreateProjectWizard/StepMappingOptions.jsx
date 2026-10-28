@@ -626,11 +626,18 @@ export function StepMappingOptions({
         </div>
       )}
 
-      {/* ── New DryRunMappingTable — shown after a successful dry run ─────── */}
-      {!multiDryRunJob?.job_id && dryRunStatus === 'success' && detectedMappings.length > 0 && (
+      {/* ── New DryRunMappingTable — shown after a dry run (or when blockers exist) ─────── */}
+      {!multiDryRunJob?.job_id && (dryRunStatus === 'success' || dryRunData?.blockers?.length > 0 || dryRunData?.table_binding_plan?.blockers?.length > 0) && (
         <div ref={mappingTableRef}>
           <PanelBoundary name="Target tables">
-            <TableBindingPlan plan={dryRunData?.table_binding_plan} style={{ marginTop: 0, marginBottom: 12 }} />
+            <TableBindingPlan
+              plan={dryRunData?.table_binding_plan}
+              blockers={dryRunData?.blockers || dryRunData?.table_binding_plan?.blockers}
+              projectId={projectId}
+              modelName={dryRunData?.model_name || dryRunData?.label}
+              onReSync={onRunDryRun}
+              style={{ marginTop: 0, marginBottom: 12 }}
+            />
           </PanelBoundary>
           <UpsertChangesView delta={dryRunData?.upsert_delta} modelLabel={dryRunData?.model_name || dryRunData?.label} isDryRun>
             <DryRunMappingTable

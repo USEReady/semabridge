@@ -98,18 +98,21 @@ class MeasureDetector:
             List of likely fact table names
         """
         facts = []
-        for table, fk_count in self._fk_counts.items():
-            if fk_count >= min_fks:
-                facts.append(table)
-                logger.debug(f"Detected fact table: {table} ({fk_count} FKs)")
-        
-        # Also check for naming conventions
-        for table in self.tables:
-            table_upper = table.upper()
-            if table not in facts:
-                if table_upper.startswith(("FACT_", "F_", "FCT_")):
+        has_relationships = bool(self.relationships) or bool(self._fk_counts)
+        if has_relationships:
+            threshold = min_fks if (len(self._fk_counts) > 1 and max(self._fk_counts.values(), default=0) >= min_fks) else 1
+            for table, fk_count in self._fk_counts.items():
+                if fk_count >= threshold:
                     facts.append(table)
-                    logger.debug(f"Detected fact table by name: {table}")
+                    logger.debug(f"Detected fact table: {table} ({fk_count} FKs)")
+        else:
+            # Check naming conventions only as fallback when model has no relationships
+            for table in self.tables:
+                table_upper = table.upper()
+                if table not in facts:
+                    if table_upper.startswith(("FACT_", "F_", "FCT_")):
+                        facts.append(table)
+                        logger.debug(f"Detected fact table by name fallback: {table}")
         
         logger.info(f"Detected {len(facts)} fact tables")
         return facts

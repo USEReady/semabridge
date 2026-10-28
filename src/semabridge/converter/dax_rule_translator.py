@@ -13,7 +13,7 @@ Key functions:
 import os
 import re
 import threading
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 from semabridge.utils.logger import get_logger
 from semabridge.converter.api_usage_tracker import log_complexity_classification, log_rule_based_result
 
@@ -21,8 +21,53 @@ logger = get_logger(__name__)
 _local_state = threading.local()
 
 
-def _date_alias() -> str:
-    return getattr(_local_state, "date_alias", None) or os.getenv("SEMABRIDGE_DATE_ALIAS", "Date")
+def find_model_date_table(model: Any) -> Optional[str]:
+    """Find the model's date table: marked as date table, or the target of date relationships."""
+    if not model:
+        return None
+    from semabridge.connectors.dataset_classification_keywords import find_model_date_dataset
+    ds = find_model_date_dataset(model)
+    if ds:
+        return getattr(ds, "unique_name", None) or getattr(ds, "name", None)
+
+    try:
+        from semabridge.converter.date_resolution import DateResolutionConfig
+        res = DateResolutionConfig().resolve(model)
+        if res and res.table:
+            return res.table
+    except Exception:
+        pass
+
+    return None
+
+
+def _date_alias(model: Optional[Any] = None) -> Optional[str]:
+    """Get date table alias for the model.
+
+    Uses the model's date table (marked as date table, or the target of date relationships),
+    not a hardcoded "Date" or SEMABRIDGE_DATE_ALIAS.
+    """
+    m = model or getattr(_local_state, "model", None)
+    if m:
+        dt = find_model_date_table(m)
+        if dt:
+            return dt
+
+    explicit = getattr(_local_state, "date_table", None) or getattr(_local_state, "date_alias", None)
+    if explicit:
+        return explicit
+
+    return None
+
+
+def set_model(model: Any) -> None:
+    """Set model context on local thread state for rule-based translations."""
+    _local_state.model = model
+
+
+def set_date_table(table: str) -> None:
+    """Set date table on local thread state."""
+    _local_state.date_table = table
 
 
 # Common DAX aggregation functions
@@ -82,15 +127,15 @@ COMPLEXITY_INDICATORS = {
 SIMPLE_PATTERNS = {
     # Pattern name: (regex, translation function)
     'direct_agg': (
-        r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(SUM|AVERAGE|AVERAGEX|COUNT|COUNTA|MIN|MINX|MAX|MAXX|DISTINCTCOUNT)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)\s*$",
         'translate_direct_agg',
     ),
     'sum_simple_arithmetic': (
-        r"^\s*SUM\s*\(\s*(?:\[(.+?)\]\s*)\)\s*(?:\+|-|\*|/)\s*\d+\s*$",
+        r"^\s*SUM\s*\(\s*(?:\[([^\]]+)\]\s*)\)\s*(?:\+|-|\*|/)\s*\d+\s*$",
         'translate_simple_arithmetic',
     ),
     'count_distinct': (
-        r"^\s*(?:DISTINCTCOUNT|VALUES)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)\s*$",
+        r"^\s*(?:DISTINCTCOUNT|VALUES)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)\s*$",
         'translate_count_distinct',
     ),
 }
@@ -303,10 +348,7 @@ def rule_based_translation(
                 )
                 log_rule_based_result(True)
                 
-                # More precise alias replacement
-                result = re.sub(r'\bSALESFACT\b(?=\.)', table_alias, result, flags=re.IGNORECASE)
-                # Do not replace COL_DATE globally, it's a date dimension
-                # result = re.sub(r'\bCOL_DATE\b', table_alias, result, flags=re.IGNORECASE)
+                # Return compact result with table_alias already formatted by translators
 
                 return _compact_sql(result)
         except Exception as e:
@@ -500,7 +542,7 @@ def translate_direct_agg(dax: str, table_alias: str, match: re.Match) -> Optiona
     """
     try:
         func_name = match.group(1).upper()
-        col_name = match.group(2) or match.group(3)
+        col_name = match.group(4) if match.lastindex and match.lastindex >= 4 else (match.group(2) or match.group(3))
         
         # Map DAX functions to SQL functions
         sql_func = SIMPLE_AGGREGATIONS.get(func_name)
@@ -541,7 +583,7 @@ def translate_count_distinct(dax: str, table_alias: str, match: re.Match) -> Opt
     Handler for: DISTINCTCOUNT([Column]) or VALUES([Column])
     """
     try:
-        col_name = match.group(1) or match.group(2)
+        col_name = match.group(3) if match.lastindex and match.lastindex >= 3 else (match.group(1) or match.group(2))
         col_ref = f"{table_alias}.{_quote_identifier(col_name)}"
         return f"COUNT(DISTINCT {col_ref})"
     
@@ -831,18 +873,13 @@ def translate_rolling_12_months(
     col = (m.group(1) or m.group(2)).strip()
     months = int(m.group(3).strip())
 
-    flag_name = (anchor_flag_map or {}).get((f"R{months}M",)) or (anchor_flag_map or {}).get(("R12M",))
-    if flag_name:
-        return f"SUM(CASE WHEN {table_alias}.\"{flag_name}\" THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
-
-    date_alias = _date_alias()
-    # Generically data-independent: use the enriched view anchor _CURRENT_FISCAL_PERIOD, never CURRENT_DATE()
-    return (
-        f"SUM(CASE WHEN {table_alias}.\"_CURRENT_FISCAL_PERIOD\" IS NOT NULL "
-        f"AND {date_alias}.MONTHINDEX <= {table_alias}.\"_CURRENT_FISCAL_PERIOD\" "
-        f"AND {date_alias}.MONTHINDEX > {table_alias}.\"_CURRENT_FISCAL_PERIOD\" - {months} "
-        f"THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
+    flag_name = (
+        (anchor_flag_map or {}).get((f"R{months}M",))
+        or (anchor_flag_map or {}).get(("R12M",))
+        or f"IS_R{months}M"
     )
+    return f"SUM(CASE WHEN {table_alias}.\"{flag_name}\" THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
+
 
 
 def translate_sameperiodlastyear(dax: str, table_alias: str) -> Optional[str]:
@@ -1038,10 +1075,23 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
         iterator_table = iterator_arg.strip().strip("'\"") or table_alias
 
     def repl_col(col_match: re.Match) -> str:
-        return _column_ref(iterator_table, col_match.group(1), table_alias)
+        tbl = col_match.group(1) or col_match.group(2) or iterator_table
+        col = col_match.group(3) or col_match.group(4)
+        return _column_ref(tbl, col, table_alias)
 
-    expr_sql = re.sub(r"\[([^\]]+)\]", repl_col, expression)
-    if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|SELECTEDVALUE)\b", expr_sql, re.IGNORECASE):
+    expr_clean = re.sub(
+        r"\bRELATED\s*\(\s*([^()]+)\s*\)",
+        r"\1",
+        expression,
+        flags=re.IGNORECASE,
+    )
+
+    expr_sql = re.sub(
+        r"(?:(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))\s*\[([^\]]+)\])|(?:\[([^\]]+)\])",
+        repl_col,
+        expr_clean,
+    )
+    if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|SELECTEDVALUE|DATEDIFF)\b", expr_sql, re.IGNORECASE):
         return None
 
     if where_conditions is not None:
@@ -1060,7 +1110,7 @@ def extract_column_references(dax: str) -> List[str]:
     Returns list of column names like: ['Amount', 'Quantity', 'Date']
     """
     # Find [ColumnName] or 'Table'[ColumnName]
-    pattern = r"'?[\w\s]+'?\[([^\]]+)\]|\[([^\]]+)\]"
+    pattern = r"'?[^'\[\]]+'?\[([^\]]+)\]|\[([^\]]+)\]"
     matches = re.findall(pattern, dax)
     
     # Flatten tuple results and return unique column names
@@ -1080,12 +1130,12 @@ def extract_aggregation_function(dax: str) -> Optional[Tuple[str, str]]:
     Returns: (function_name, column_name) or None
     """
     # Try simple aggregation pattern
-    pattern = r"(SUM|AVERAGE|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(\s*(?:'?[\w\s]+'?\[(.+?)\]|\[(.+?)\])\s*\)"
+    pattern = r"(SUM|AVERAGE|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))?\[([^\]]+)\]\s*\)"
     match = re.search(pattern, dax, re.IGNORECASE)
     
     if match:
         func = match.group(1).upper()
-        col = match.group(2) or match.group(3)
+        col = match.group(4) if match.lastindex and match.lastindex >= 4 else (match.group(2) or match.group(3))
         return (func, col)
     
     return None
@@ -1130,19 +1180,36 @@ def translate_if_measure_expression(dax: str, table_alias: str) -> Optional[str]
     return None
 
 
-def translate_time_intelligence(dax: str, table_alias: str, date_alias: str = "dat") -> Optional[str]:
+def translate_time_intelligence(
+    dax: str,
+    table_alias: str,
+    date_alias: Optional[str] = None,
+    anchor_flag_map: Optional[dict] = None,
+) -> Optional[str]:
+    """Handle basic time intelligence functions without window functions.
+
+    Uses precomputed anchor flags from anchor_flag_map when available,
+    otherwise returns a safe placeholder with a documented reason.
+    Window functions (OVER) are never emitted.
     """
-    Handle basic time intelligence functions that can be translated to window functions.
-    e.g., TOTALYTD([Measure], 'Date'[Date]) -> SUM(...) OVER (PARTITION BY YEAR(...))
-    """
-    # For now, these are complex enough that we pass them through
-    # A full implementation would translate these to Snowflake window functions
-    if any(re.search(pattern, dax, re.IGNORECASE) 
-           for pattern in TIER3_TIME_INTELLIGENCE.values()):
-        logger.debug(f"Time intelligence function: {dax[:60]}")
-        # These need semantic layer + window function support
-        return dax  # Flag for special handling
-    return None
+    if not dax:
+        return None
+
+    is_ti = any(
+        re.search(pattern, dax, re.IGNORECASE)
+        for pattern in TIER3_TIME_INTELLIGENCE.values()
+    )
+    if not is_ti:
+        return None
+
+    if anchor_flag_map:
+        res = translate_time_intelligence_with_anchors(dax, table_alias, anchor_flag_map=anchor_flag_map)
+        if res and "OVER" not in res.upper() and "WINDOW" not in res.upper():
+            return res
+
+    reason = "time intelligence requires precomputed anchor flags; window functions unsupported in METRICS clause"
+    logger.debug("translate_time_intelligence placeholder for '%s': %s", dax[:60], reason)
+    return f"CAST(NULL AS DOUBLE) /* reason: {reason} */"
 
 
 # ============================================================================
@@ -1475,7 +1542,7 @@ class TranslationBatcher:
         prompt_lines = [
             f"Translate {batch['size']} Fabric DAX measures to Snowflake SQL.",
             f"Only provide SQL expressions. No explanations.",
-            f"Use table alias SALESFACT for all table references.",
+            f"Use the appropriate table alias for all table references.",
             ""
         ]
         

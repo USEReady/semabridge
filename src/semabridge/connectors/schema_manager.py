@@ -95,7 +95,9 @@ class SnowflakeSchemaManager:
         # the table-level real_data/empty/ambiguous check alone can't tell
         # the two apart.
         self._newly_added_columns: Dict[str, set[str]] = {}
-        self._live_schema_metadata: Dict[str, set[str]] = {}
+        from semabridge.connectors.table_binding_resolver import LiveSchemaMetadata
+        self._live_schema_metadata: LiveSchemaMetadata = LiveSchemaMetadata()
+        self.duplicate_placeholders: Dict[str, List[str]] = {}
         self._schema_cache_ttl_seconds = int(os.getenv("SEMABRIDGE_SCHEMA_CACHE_TTL_SECONDS", "300"))
 
     def _get_cached_schema_metadata(self) -> Optional[Dict[str, set[str]]]:
@@ -152,10 +154,13 @@ class SnowflakeSchemaManager:
         raw = str(value or "").replace('"', '""')
         return f'"{raw}"'
 
-    def _schema_fqn(self) -> str:
+    def _data_schema_name(self) -> str:
+        return getattr(self.config, "source_data_schema", None) or self.config.schema_name
+
+    def _schema_fqn(self, schema: Optional[str] = None) -> str:
         """Return fully-qualified schema name as "DB"."SCHEMA"."""
         db_name = str(self.config.database or "").strip()
-        schema_name = str(self.config.schema_name or "").strip()
+        schema_name = str(schema or self.config.schema_name or "").strip()
         # Accept accidental DB.SCHEMA input in schema_name without producing
         # malformed "DB"."DB.SCHEMA" references.
         if "." in schema_name and db_name:
@@ -255,6 +260,33 @@ class SnowflakeSchemaManager:
                 f"Create it in Snowflake (or pick an existing schema for the project) and re-run."
             )
 
+    def _ensure_source_data_schema_exists(self, cursor) -> None:
+        """Stop with a clear error when the project's source data schema doesn't exist.
+        SemaBridge never creates schemas.
+        """
+        source_data_schema = getattr(self.config, "source_data_schema", None)
+        if not source_data_schema:
+            return
+        db = str(self.config.database or "").strip()
+        schema = str(source_data_schema).strip().rsplit(".", 1)[-1]
+        like = schema.upper().replace("'", "''")
+        try:
+            self._execute_sql(
+                cursor,
+                f"SHOW SCHEMAS LIKE '{like}' IN DATABASE \"{db.replace(chr(34), chr(34) * 2)}\"",
+                context="CHECK SOURCE DATA SCHEMA EXISTS",
+            )
+            found = any(str(row[1]).upper() == schema.upper() for row in cursor.fetchall() or [])
+        except Exception as exc:
+            raise ConnectorError(
+                f"Could not check that source-data schema '{source_data_schema}' exists in database '{db}': {exc}. SemaBridge never creates schemas."
+            ) from exc
+        if not found:
+            raise ConnectorError(
+                f"Source-data schema '{source_data_schema}' does not exist in database '{db}'. "
+                f"SemaBridge never creates schemas. The schema must already exist."
+            )
+
     def _load_row_counts(self, cursor) -> None:
         """Row count of every base table in the schema, for binding tie-breaks."""
         counts = getattr(self._live_schema_metadata, "row_counts", None)
@@ -284,16 +316,23 @@ class SnowflakeSchemaManager:
         the table saved for it by an earlier sync; an empty table is planned
         for creation only when nothing matches. Read-only.
 
-        Each entry: {dataset, action: "bind"|"create", table, matched_by, tie}.
+        Each entry: {dataset, action: "bind"|"create"|"blocked", table, matched_by, tie}.
         """
         from semabridge.connectors.table_binding_resolver import (
             clean_ident,
+            compute_column_compatibility,
+            rank_table_candidates,
             resolve_dataset_to_physical_table,
+            check_table_name_collision_blocker,
+            TableBindingAmbiguityError,
         )
 
-        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="SHOW TABLES")
+        self._ensure_source_data_schema_exists(cursor)
+        target_schema = self._data_schema_name()
+
+        self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn(target_schema)}", context="SHOW TABLES")
         existing_tables = {row[1].upper() for row in cursor.fetchall()}
-        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn()}", context="SHOW VIEWS")
+        self._execute_sql(cursor, f"SHOW VIEWS IN SCHEMA {self._schema_fqn(target_schema)}", context="SHOW VIEWS")
         all_existing = existing_tables | {row[1].upper() for row in cursor.fetchall()}
 
         self.refresh_schema_cache()
@@ -304,44 +343,222 @@ class SnowflakeSchemaManager:
         model_name = getattr(sml, "unique_name", None) or getattr(sml, "name", None)
 
         plan: List[Dict[str, Any]] = []
+        blockers: List[Dict[str, Any]] = []
         for dataset in sml.datasets:
             ds_name = dataset.unique_name
             modeled_cols = [c.unique_name for c in getattr(dataset, "columns", []) or []]
-            bound_table = resolve_dataset_to_physical_table(
-                ds_name,
-                modeled_cols,
-                self._live_schema_metadata,
-                explicit_mapping=mapping_dict,
-                model_name=model_name,
-            )
+            try:
+                bound_table = resolve_dataset_to_physical_table(
+                    ds_name,
+                    modeled_cols,
+                    self._live_schema_metadata,
+                    explicit_mapping=mapping_dict,
+                    model_name=model_name,
+                )
+            except TableBindingAmbiguityError as err:
+                ambiguity_blocker = {
+                    "type": "ambiguous_table_binding",
+                    "dataset_name": ds_name,
+                    "message": str(err),
+                    "headline": f"Ambiguous table binding for '{ds_name}'.",
+                    "candidates": err.candidates,
+                    "resolutions": [
+                        {
+                            "type": "map_table",
+                            "description": (
+                                "Map to one of the candidate tables; "
+                                "the choice is saved as the project's binding."
+                            ),
+                            "candidates": err.candidates,
+                        }
+                    ],
+                }
+                blockers.append(ambiguity_blocker)
+                plan.append({
+                    "dataset": ds_name,
+                    "action": "blocked",
+                    "table": err.candidates[0] if err.candidates else ds_name,
+                    "matched_by": "ambiguity",
+                    "blocker": ambiguity_blocker,
+                    "tie": err.candidates,
+                })
+                continue
+
             logged = (binding_log or {}).get(clean_ident(ds_name)) or {}
             safe_target_name = self._safe_table_name(ds_name)
-            if bound_table.upper() in all_existing:
+
+            collision = check_table_name_collision_blocker(ds_name, modeled_cols, self._live_schema_metadata)
+            explicit_bound = False
+            if collision:
+                clean_tbl = clean_ident(collision["table_name"])
+                if mapping_dict:
+                    for k, v in mapping_dict.items():
+                        if clean_ident(k) == clean_ident(ds_name) and clean_ident(v) != clean_tbl:
+                            explicit_bound = True
+                pinned = (getattr(self._live_schema_metadata, "pinned_bindings", None) or {}).get(clean_ident(ds_name))
+                if pinned and clean_ident(pinned) != clean_tbl:
+                    explicit_bound = True
+
+            if collision and not explicit_bound:
+                blockers.append(collision)
                 plan.append({
                     "dataset": ds_name,
-                    "action": "bind",
-                    "table": bound_table,
-                    "matched_by": logged.get("matched_by") or "mapping",
-                    "tie": logged.get("tie") or [],
+                    "action": "blocked",
+                    "table": collision["table_name"],
+                    "matched_by": "collision",
+                    "blocker": collision,
+                    "tie": [],
                 })
+            elif bound_table.upper() in all_existing:
+                bound_cols = self._live_schema_metadata.get(bound_table.upper(), set())
+                compat = compute_column_compatibility(modeled_cols, bound_cols)
+                live_compat = compute_column_compatibility(list(bound_cols), set(modeled_cols))
+                if compat < 0.8 and not (live_compat >= 0.8 and compat >= 0.5) and bound_table.upper() not in [k.upper() for k in mapping_dict.values()]:
+                    collision_data = {
+                        "type": "table_column_mismatch",
+                        "dataset_name": ds_name,
+                        "table_name": bound_table,
+                        "col_compat": compat,
+                        "message": (
+                            f"{bound_table} already exists with different columns. "
+                            f"Target table '{bound_table}' already exists in Snowflake but its columns do not match "
+                            f"PBIX table '{ds_name}' (compatibility {compat:.1%} < 80%)."
+                        ),
+                        "headline": f"{bound_table} already exists with different columns.",
+                        "candidates": [
+                            c["table"]
+                            for c in rank_table_candidates(ds_name, modeled_cols, self._live_schema_metadata)
+                            if c["col_compat"] >= 0.8
+                        ],
+                        "resolutions": [
+                            {
+                                "type": "map_table",
+                                "description": (
+                                    "Map to another existing table (choose from compatible candidates); "
+                                    "the choice is saved as the project's binding."
+                                ),
+                                "candidates": [
+                                    c["table"]
+                                    for c in rank_table_candidates(ds_name, modeled_cols, self._live_schema_metadata)
+                                    if c["col_compat"] >= 0.8
+                                ],
+                            },
+                            {
+                                "type": "use_schema",
+                                "description": (
+                                    "Use a different schema for this model's data (the project's source-data schema setting). "
+                                    "The schema must already exist; SemaBridge never creates schemas."
+                                ),
+                            },
+                        ],
+                    }
+                    blockers.append(collision_data)
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "blocked",
+                        "table": bound_table,
+                        "matched_by": "collision",
+                        "blocker": collision_data,
+                        "tie": [],
+                    })
+                else:
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "bind",
+                        "table": bound_table,
+                        "matched_by": logged.get("matched_by") or "mapping",
+                        "tie": logged.get("tie") or [],
+                    })
             elif safe_target_name.upper() in all_existing:
-                # Same sanitized name already taken (e.g. by a view): never
-                # create a duplicate next to it.
-                plan.append({
-                    "dataset": ds_name,
-                    "action": "bind",
-                    "table": safe_target_name,
-                    "matched_by": "name",
-                    "tie": [],
-                })
+                target_cols = self._live_schema_metadata.get(safe_target_name.upper(), set())
+                compat = compute_column_compatibility(modeled_cols, target_cols)
+                live_compat = compute_column_compatibility(list(target_cols), set(modeled_cols))
+                if compat < 0.8 and not (live_compat >= 0.8 and compat >= 0.5):
+                    collision_data = {
+                        "type": "table_column_mismatch",
+                        "dataset_name": ds_name,
+                        "table_name": safe_target_name,
+                        "col_compat": compat,
+                        "message": (
+                            f"{safe_target_name} already exists with different columns. "
+                            f"Target table '{safe_target_name}' already exists in Snowflake but its columns do not match "
+                            f"PBIX table '{ds_name}' (compatibility {compat:.1%} < 80%)."
+                        ),
+                        "headline": f"{safe_target_name} already exists with different columns.",
+                        "candidates": [
+                            c["table"]
+                            for c in rank_table_candidates(ds_name, modeled_cols, self._live_schema_metadata)
+                            if c["col_compat"] >= 0.8
+                        ],
+                        "resolutions": [
+                            {
+                                "type": "map_table",
+                                "description": (
+                                    "Map to another existing table (choose from compatible candidates); "
+                                    "the choice is saved as the project's binding."
+                                ),
+                                "candidates": [
+                                    c["table"]
+                                    for c in rank_table_candidates(ds_name, modeled_cols, self._live_schema_metadata)
+                                    if c["col_compat"] >= 0.8
+                                ],
+                            },
+                            {
+                                "type": "use_schema",
+                                "description": (
+                                    "Use a different schema for this model's data (the project's source-data schema setting). "
+                                    "The schema must already exist; SemaBridge never creates schemas."
+                                ),
+                            },
+                        ],
+                    }
+                    blockers.append(collision_data)
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "blocked",
+                        "table": safe_target_name,
+                        "matched_by": "collision",
+                        "blocker": collision_data,
+                        "tie": [],
+                    })
+                else:
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "bind",
+                        "table": safe_target_name,
+                        "matched_by": "name",
+                        "tie": [],
+                    })
             else:
-                plan.append({
-                    "dataset": ds_name,
-                    "action": "create",
-                    "table": safe_target_name,
-                    "matched_by": None,
-                    "tie": [],
-                })
+                # Never create a placeholder if an existing table matches by normalized name or compatible columns
+                norm_ds = clean_ident(ds_name)
+                matching_norm_tbl = next((t for t in all_existing if clean_ident(t) == norm_ds), None)
+                compatible_tbl = None
+                if not matching_norm_tbl:
+                    for t in all_existing:
+                        t_cols = self._live_schema_metadata.get(t.upper(), set())
+                        if compute_column_compatibility(modeled_cols, t_cols) >= 0.8:
+                            compatible_tbl = t
+                            break
+
+                candidate_existing = matching_norm_tbl or compatible_tbl
+                if candidate_existing:
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "bind",
+                        "table": candidate_existing,
+                        "matched_by": "normalized name" if matching_norm_tbl else "columns",
+                        "tie": [],
+                    })
+                else:
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "create",
+                        "table": safe_target_name,
+                        "matched_by": None,
+                        "tie": [],
+                    })
+        self.last_blockers = blockers
         return plan
 
     def _ensure_source_tables_exist(self, cursor, sml: SMLModel) -> None:
@@ -363,7 +580,13 @@ class SnowflakeSchemaManager:
         absent_tables_to_create = []
         datasets_by_name = {d.unique_name: d for d in sml.datasets}
         for entry in self.plan_source_tables(cursor, sml):
-            if entry["action"] == "bind":
+            if entry["action"] == "blocked":
+                blocker = entry.get("blocker") or {}
+                msg = blocker.get("message") or f"Table '{entry.get('table')}' has collision blocker"
+                raise ConnectorError(
+                    f"Deployment blocked: cannot sync while blockers are open: {msg}"
+                )
+            elif entry["action"] == "bind":
                 if entry["matched_by"] == "name":
                     logger.warning(
                         "Dataset '%s' bound to existing table '%s' by name only (columns differ); not creating a duplicate.",
@@ -513,9 +736,10 @@ class SnowflakeSchemaManager:
         
         safe_table = self._safe_table_name(table_name)
         quoted_table = f'"{safe_table}"'
-        ddl = f"CREATE TABLE IF NOT EXISTS {self.config.schema_name}.{quoted_table} (\n"
+        schema_name = self._data_schema_name()
+        ddl = f"CREATE TABLE IF NOT EXISTS {schema_name}.{quoted_table} (\n"
         ddl += ",\n".join(col_defs)
-        ddl += "\n);"
+        ddl += "\n) COMMENT = 'SemaBridge placeholder';"
         
         return ddl
 
@@ -628,58 +852,9 @@ class SnowflakeSchemaManager:
         return selected
 
     def _resolve_column_via_relationship(self, model: Any, dataset: Any, raw_col_name: str) -> Optional[str]:
-        """Borrow a physical column name from an active FK relationship partner
-        whose own schema IS confirmed (live or modeled), instead of guessing
-        from this dataset's own declared label/name.
-
-        The two sides of an active join are physically the same column by
-        construction (that's what makes it joinable), so when `dataset`'s own
-        schema is unknown, its partner's confirmed resolution for the paired
-        column is a strictly more reliable answer than sanitizing `dataset`'s
-        own (possibly mapping-override-renamed) column label.
+        """Never borrow a partner's column name across relationships.
+        Primary keys and column names are resolved from the table's own schema only.
         """
-        raw_cf = str(raw_col_name).strip().casefold()
-        datasets_by_name = {d.unique_name: d for d in getattr(model, "datasets", []) or []}
-
-        for rel in getattr(model, "relationships", []) or []:
-            if not getattr(rel, "is_active", True):
-                continue
-
-            # `dataset` on the "to" (referenced) side; partner is "from" (referencing).
-            if rel.to_dataset == dataset.unique_name:
-                pairs = list(zip(rel.to_columns or [], rel.from_columns or []))
-                partner_name = rel.from_dataset
-            # `dataset` on the "from" (referencing) side; partner is "to" (referenced).
-            elif rel.from_dataset == dataset.unique_name:
-                pairs = list(zip(rel.from_columns or [], rel.to_columns or []))
-                partner_name = rel.to_dataset
-            else:
-                continue
-
-            partner = datasets_by_name.get(partner_name)
-            if partner is None:
-                continue
-
-            for own_col, partner_col in pairs:
-                if str(own_col).strip().casefold() != raw_cf:
-                    continue
-                partner_key = (partner.source_table or partner.unique_name).upper()
-                partner_cols = self._live_schema_metadata.get(partner_key, set())
-                if not partner_cols:
-                    try:
-                        partner_cols = set(self._collect_physical_source_columns(partner).keys())
-                    except Exception:
-                        partner_cols = set()
-                if not partner_cols:
-                    continue
-                partner_cols_upper = {c.upper(): c for c in partner_cols}
-                sanitized_partner_col = self._sanitize_col_name(partner_col).upper()
-                if sanitized_partner_col in partner_cols_upper:
-                    return partner_cols_upper[sanitized_partner_col]
-                raw_partner_upper = str(partner_col).upper()
-                if raw_partner_upper in partner_cols_upper:
-                    return partner_cols_upper[raw_partner_upper]
-
         return None
 
     def _resolve_source_column_name(self, dataset: SMLDataset, raw_col_name: str, model: Any = None) -> str:
@@ -749,24 +924,6 @@ class SnowflakeSchemaManager:
             except Exception:
                 live_cols = set()
 
-        # 1a. This dataset's own schema isn't confirmed live (live_cols below
-        # is the modeled-columns fallback, built by sanitizing this same
-        # raw_col_name — so exact/case-insensitive/fuzzy matching against it
-        # can only ever "succeed" by trivially re-deriving
-        # sanitize(raw_col_name), never anything more reliable). Before
-        # accepting that circular guess, prefer borrowing the physical name
-        # from an active FK relationship partner whose OWN schema IS
-        # confirmed — the two sides of a join are physically the same
-        # column by construction, so that's a strictly better answer than
-        # guessing from this dataset's own (possibly mapping-override-
-        # renamed) label. This must run before the exact/case-insensitive
-        # checks below, which would otherwise trivially match the
-        # fallback's self-derived entry first.
-        if not has_confirmed_live_schema and model is not None:
-            via_relationship = self._resolve_column_via_relationship(model, dataset, raw_col_name)
-            if via_relationship:
-                return via_relationship
-
         # 1. Exact match
         if raw_upper in live_cols:
             return raw_upper
@@ -776,30 +933,44 @@ class SnowflakeSchemaManager:
         if raw_upper in live_cols_upper:
             return live_cols_upper[raw_upper]
 
-        # 3. Date/time pattern mappings (dynamic resolution from candidates)
-        date_patterns = {
-            "DATE": ["DATE_DATE", "CAL_DT", "COL_DATE", "DATE_DIM_CK", "DATE_DIM", "CAL_DT", "DATE"],
-            "YEAR": ["CAL_YR", "COL_YEAR", "FISCAL_YR", "CAL_YR", "YEAR"],
-            "MONTH": ["CAL_MNTH", "COL_MONTH", "FISCAL_MNTH", "CAL_MNTH", "MONTH"],
-            "QUARTER": ["CAL_QTR_NUM", "COL_QUARTER", "FISCAL_QTR", "QUARTER"],
-            "MONTHNO": ["CAL_MNTH", "MONTH_NUM", "MONTHNO"],
-            "MONTHINDEX": ["CAL_MNTH", "MONTHINDEX"],
-            "MONTHNAME": ["CAL_PERIOD_NM", "MONTHNAME"],
-            "RUNNINGMONTHS": ["CAL_YR_PERIOD", "RUNNINGMONTHS"],
-            "RUNNING_MONTHS": ["CAL_YR_PERIOD", "RUNNING_MONTHS"],
-            "RUNNING_YEAR": ["CAL_YR", "RUNNING_YEAR"],
-            "ROLLING_PERIOD": ["CAL_YR_PERIOD", "ROLLING_PERIOD"],
-            "ROLLING_PERIOD_SORT": ["CAL_YR_PERIOD", "ROLLING_PERIOD_SORT"],
-            "MONTHS": ["CAL_MNTH", "MONTHS"],
-            "MONTHID": ["CAL_YR_PERIOD", "MONTHID"],
-        }
-
-        if raw_upper in date_patterns:
-            for candidate in date_patterns[raw_upper]:
-                if candidate in live_cols:
-                    return candidate
-                if candidate.upper() in live_cols_upper:
-                    return live_cols_upper[candidate.upper()]
+        # 3. Dynamic date column resolution from model metadata (no fixed name list)
+        if raw_upper in ("DATE", "COL_DATE", "DATE_DATE"):
+            date_col_candidates = []
+            for c in getattr(dataset, "columns", []) or []:
+                c_type = str(getattr(c, "data_type", "") or getattr(c, "source_type", "")).upper()
+                if any(dt in c_type for dt in ("DATE", "TIME", "TIMESTAMP")):
+                    scol = getattr(c, "source_column", None)
+                    if scol:
+                        date_col_candidates.append(scol)
+                    date_col_candidates.append(c.unique_name)
+            if model:
+                try:
+                    from semabridge.connectors.dataset_classification_keywords import find_model_date_dataset
+                    date_ds = find_model_date_dataset(model)
+                    if date_ds:
+                        if getattr(date_ds, "unique_name", None) == dataset.unique_name:
+                            for c in getattr(date_ds, "columns", []) or []:
+                                c_type = str(getattr(c, "data_type", "") or getattr(c, "source_type", "")).upper()
+                                if any(dt in c_type for dt in ("DATE", "TIME", "TIMESTAMP")):
+                                    scol = getattr(c, "source_column", None)
+                                    if scol:
+                                        date_col_candidates.append(scol)
+                                    date_col_candidates.append(c.unique_name)
+                        for rel in getattr(model, "relationships", []) or []:
+                            if getattr(rel, "from_dataset", None) == dataset.unique_name and getattr(rel, "to_dataset", None) == date_ds.unique_name:
+                                date_col_candidates.extend(getattr(rel, "from_columns", []) or [])
+                            elif getattr(rel, "to_dataset", None) == dataset.unique_name and getattr(rel, "from_dataset", None) == date_ds.unique_name:
+                                date_col_candidates.extend(getattr(rel, "to_columns", []) or [])
+                except Exception:
+                    pass
+            for candidate in date_col_candidates:
+                if not candidate:
+                    continue
+                cand_str = str(candidate)
+                if cand_str in live_cols:
+                    return cand_str
+                if cand_str.upper() in live_cols_upper:
+                    return live_cols_upper[cand_str.upper()]
 
         # 4. Normalized match ignoring case and underscores, with reserved-word & key-suffix handling
         # 4. Normalized match ignoring case and underscores, with table prefix handling
@@ -1320,16 +1491,27 @@ class SnowflakeSchemaManager:
         for col in inferred:
             logger.info("- %s -> %s", col["name"], col["type"])
 
+        declared_types_map = {
+            c["name"].upper(): str(c.get("type", "")).upper()
+            for c in columns if c.get("type")
+        }
+
         if all(c["type"] == "VARCHAR" for c in inferred):
             logger.warning(
-                "All sampled columns resolved to VARCHAR for %s. Applying fallback name-pattern inference.",
+                "All sampled columns resolved to VARCHAR for %s. Applying metadata-first fallback inference.",
                 safe_table_name,
             )
             for c in inferred:
-                fb = self._fallback_type_from_name(c["name"])
-                if fb != "VARCHAR":
-                    fallback_logs.append(f"{c['name']}: VARCHAR -> {fb} (name-pattern fallback)")
-                    c["type"] = fb
+                c_upper = c["name"].upper()
+                pbix_type = declared_types_map.get(c_upper)
+                if pbix_type and pbix_type not in varchar_types:
+                    fallback_logs.append(f"{c['name']}: VARCHAR -> {pbix_type} (PBIX metadata type)")
+                    c["type"] = pbix_type
+                else:
+                    fb = self._fallback_type_from_name(c["name"])
+                    if fb != "VARCHAR":
+                        fallback_logs.append(f"{c['name']}: VARCHAR -> {fb} (name-pattern fallback)")
+                        c["type"] = fb
 
         for entry in fallback_logs:
             logger.info("Fallback decision: %s", entry)
@@ -2357,12 +2539,13 @@ class SnowflakeSchemaManager:
         if cached:
             self._live_schema_metadata.update(cached)
             return cached
+        target_schema = self._data_schema_name().upper()
         query = (
             "SELECT table_name, column_name "
             "FROM information_schema.columns "
             "WHERE table_schema = %s"
         )
-        self._execute_sql(cursor, query, (self.config.schema_name.upper(),), context="FETCH SCHEMA METADATA")
+        self._execute_sql(cursor, query, (target_schema,), context="FETCH SCHEMA METADATA")
         
         metadata: Dict[str, set] = {}
         for row in cursor.fetchall():
@@ -2372,7 +2555,36 @@ class SnowflakeSchemaManager:
                 metadata[table] = set()
             metadata[table].add(column)
         self._live_schema_metadata.update(metadata)
-        key = _schema_cache_key(self.config.database, self.config.schema_name)
+
+        # Identify placeholder tables from table comments
+        try:
+            query_comments = (
+                "SELECT table_name, comment "
+                "FROM information_schema.tables "
+                "WHERE table_schema = %s"
+            )
+            self._execute_sql(cursor, query_comments, (target_schema,), context="FETCH TABLE COMMENTS")
+            for row in cursor.fetchall() or []:
+                tbl = str(row[0]).upper()
+                cmt = str(row[1] or "")
+                if "SemaBridge placeholder" in cmt:
+                    self._live_schema_metadata.placeholder_tables.add(tbl)
+        except Exception as exc:
+            logger.debug("Table comments unavailable in %s: %s", target_schema, exc)
+
+        # Detect and list duplicate placeholder tables without dropping them
+        from semabridge.connectors.table_binding_resolver import clean_ident
+        dup_map: Dict[str, List[str]] = {}
+        for tbl in metadata.keys():
+            dup_map.setdefault(clean_ident(tbl), []).append(tbl)
+        dup_placeholders = {
+            norm: tbls for norm, tbls in dup_map.items()
+            if len(tbls) > 1 and any(t in self._live_schema_metadata.placeholder_tables for t in tbls)
+        }
+        self._live_schema_metadata.duplicate_placeholder_tables = dup_placeholders
+        self.duplicate_placeholders = dup_placeholders
+
+        key = _schema_cache_key(self.config.database, target_schema)
         with _SCHEMA_CACHE_LOCK:
             _SCHEMA_CACHE[key] = {"loaded_at": time.time(), "metadata": metadata}
         return metadata
@@ -2396,7 +2608,7 @@ class SnowflakeSchemaManager:
             f"FROM information_schema.columns "
             f"WHERE table_schema = %s AND table_name IN ({placeholders})"
         )
-        params = (self.config.schema_name.upper(), *table_names)
+        params = (self._data_schema_name().upper(), *table_names)
         self._execute_sql(cursor, query, params, context="FETCH MODEL METADATA")
 
         metadata: Dict[str, set[str]] = {}

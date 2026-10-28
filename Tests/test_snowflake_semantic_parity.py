@@ -81,9 +81,8 @@ def test_relationship_builder_keeps_inactive_fabric_relationships():
         relationship_target_alias={},
     )
 
-    assert lines == [
-        '  SPEND_FACT_POSTING_DATE_DATE_LY_CAL_DT_INACTIVE AS SPEND_FACT ("POSTING_DATE") REFERENCES COL_DATE ("LY_CAL_DT")'
-    ]
+    # Inactive relationships are skipped in DDL emission unless role-playing or activated by USERELATIONSHIP
+    assert lines == []
 
 
 def test_openai_dax_translation_is_attempted_when_key_is_configured(monkeypatch):

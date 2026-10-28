@@ -10,7 +10,7 @@ import re
 import yaml
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.core.behavior import ConnectorBehavior
@@ -277,9 +277,9 @@ class SnowflakeEmitter(BaseEmitter):
         yield
 
     def _dataset_physical_table_key(self, model: Any, dataset_name: str) -> str:
-        """Upper-cased physical table name for a dataset (honours source_table)."""
+        """Upper-cased physical table name for a dataset (from the canonical PBIX display name)."""
         dataset = self._get_dataset_by_name(model, dataset_name)
-        raw = (getattr(dataset, "source_table", None) if dataset is not None else None) or dataset_name
+        raw = (getattr(dataset, "label", None) or getattr(dataset, "unique_name", None) if dataset is not None else None) or dataset_name
         return self._id.sanitize_table_name(str(raw)).upper()
 
     def _run_source_data_backfill(self, cursor: Any, model: Any, source_pbix_path: str) -> list:
@@ -667,6 +667,7 @@ class SnowflakeEmitter(BaseEmitter):
                             "auto_add_missing_dims is disabled: SemaBridge is strictly prohibited "
                             "from executing ALTER TABLE or modifying physical data tables."
                         )
+                        _added_any = False
                         if _added_any:
                             # Refresh live schema so the re-generated DDL picks up the new columns
                             logger.info("Refreshing live schema after adding missing dimension columns")
@@ -1733,7 +1734,7 @@ class SnowflakeEmitter(BaseEmitter):
             if entry.get("matched_by") != "saved"
         ]
 
-    def preview_table_bindings(self, model: Any) -> List[Dict[str, Any]]:
+    def preview_table_bindings(self, model: Any) -> Dict[str, Any]:
         """Read-only: per dataset, the table it would bind to or create (dry run)."""
         self._live_schema_metadata.clear()
         self._load_saved_bindings()
@@ -1741,7 +1742,13 @@ class SnowflakeEmitter(BaseEmitter):
         try:
             cur = conn.cursor()
             with self._physical_namespace_scope(model):
-                return self.schema_manager.plan_source_tables(cur, model)
+                tables = self.schema_manager.plan_source_tables(cur, model)
+                blockers = getattr(self.schema_manager, "last_blockers", [])
+                return {
+                    "tables": tables,
+                    "blockers": blockers,
+                    "error": (blockers[0]["message"] if blockers else None),
+                }
         finally:
             if owns_conn:
                 conn.close()
@@ -1837,7 +1844,9 @@ class SnowflakeEmitter(BaseEmitter):
                     _dataset_aliases,
                     label="confirmed",
                 )
-                return self.semantic_view_builder.generate_ddls(model)
+                ddls = self.semantic_view_builder.generate_ddls(model)
+                self._validate_ddl_against_information_schema(cur, ddls)
+                return ddls
         finally:
             self.semantic_view_builder.cursor = None
             if owns_conn:
@@ -2118,8 +2127,7 @@ class SnowflakeEmitter(BaseEmitter):
                     continue
                 
                 from semabridge.utils.name_translator import get_target_deployment_name
-                source_table = getattr(dataset, "source_table", None) or dataset_name
-                safe_table_name = get_target_deployment_name(source_table)
+                safe_table_name = get_target_deployment_name(dataset_name)
                 
                 # Check if table exists in INFORMATION_SCHEMA
                 query = f"""
@@ -2320,15 +2328,27 @@ class SnowflakeEmitter(BaseEmitter):
         """
         table_columns: Dict[str, Set[str]] = {}
         try:
+            schemas = [str(self.config.schema_name).upper()]
+            source_data_schema = getattr(self.config, "source_data_schema", None)
+            if source_data_schema and source_data_schema.upper() not in schemas:
+                schemas.append(source_data_schema.upper())
+            placeholders = ", ".join(["%s"] * len(schemas))
             cur.execute(
-                "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s",
-                (str(self.config.schema_name).upper(),)
+                f"SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA IN ({placeholders})",
+                tuple(schemas)
             )
             for t, c in cur.fetchall():
                 table_columns.setdefault(t.upper(), set()).add(c.upper())
         except Exception as e:
             logger.warning("Could not query INFORMATION_SCHEMA.COLUMNS for static pre-deploy check: %s", e)
             return
+
+        # Supplement with modeled columns for planned created tables (not yet in Snowflake during dry run)
+        if hasattr(self, "_model") and self._model:
+            for dataset in getattr(self._model, "datasets", []) or []:
+                ds_name = dataset.unique_name.upper()
+                if ds_name not in table_columns:
+                    table_columns[ds_name] = {c.unique_name.upper() for c in getattr(dataset, "columns", []) or []}
 
         all_errors: List[str] = []
         for ddl in ddls:
@@ -2570,6 +2590,7 @@ class SnowflakeEmitter(BaseEmitter):
         table from _identify_fact_table() only when no pre-compute suggestions
         exist at all.
         """
+        self._reanchor_disconnected_fact_metrics(model)
         self.semantic_view_builder._precompute_suggestions(model)
         seen: set = set()
         fact_tables: list[str] = []
@@ -2979,9 +3000,10 @@ class SnowflakeEmitter(BaseEmitter):
     def _dataset_source_ref(self, model: Any, dataset_name: str) -> str:
         dataset = self._get_dataset_by_name(model, dataset_name)
         source_table_mapping = self._get_source_table_mapping()
+        display_name = (getattr(dataset, "label", None) or getattr(dataset, "unique_name", None)) if dataset else dataset_name
         source_table = source_table_mapping.get(
             getattr(dataset, "unique_name", dataset_name),
-            getattr(dataset, "source_table", None) or dataset_name,
+            display_name,
         )
         safe_table = self._id.sanitize_table_name(source_table)
         return f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
@@ -3257,7 +3279,8 @@ class SnowflakeEmitter(BaseEmitter):
         source_col = self._resolve_model_column_name(model, source_dataset, source_column)
         if self._live_schema_metadata:
             src_ds_obj = self._get_dataset_by_name(model, source_dataset)
-            src_tbl = (getattr(src_ds_obj, "source_table", None) or source_dataset).rsplit(".", 1)[-1]
+            src_disp = (getattr(src_ds_obj, "label", None) or getattr(src_ds_obj, "unique_name", None)) if src_ds_obj else source_dataset
+            src_tbl = str(src_disp).rsplit(".", 1)[-1]
             src_keys = [
                 src_tbl,
                 src_tbl.upper(),
@@ -3520,9 +3543,10 @@ class SnowflakeEmitter(BaseEmitter):
             )
 
             if date_dataset:
+                date_display = getattr(date_dataset, "label", None) or date_dataset.unique_name
                 resolved_source_table = source_table_mapping.get(
                     date_dataset.unique_name,
-                    date_dataset.source_table or date_dataset.unique_name,
+                    date_display,
                 )
                 safe_table = self._id.sanitize_table_name(resolved_source_table)
                 date_table_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
@@ -3548,9 +3572,8 @@ class SnowflakeEmitter(BaseEmitter):
                     None,
                 )
 
-            date_source_key = self._id.sanitize_table_name(
-                (date_dataset.source_table or date_dataset.unique_name) if date_dataset else date_table
-            ).upper()
+            date_ds_disp = (getattr(date_dataset, "label", None) or date_dataset.unique_name) if date_dataset else date_table
+            date_source_key = self._id.sanitize_table_name(date_ds_disp).upper()
             date_cols = {
                 str(c).upper()
                 for c in self._live_schema_metadata.get(date_source_key, set())

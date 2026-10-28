@@ -636,6 +636,7 @@ def _run_single_job_impl(
                 "upsert_delta": summary_data.get("upsert_delta"),
                 "pbix_path": job.get("pbix_path"),
                 "view_name": _resolve_result_view_name(run_context, target_type),
+                "generated_ddl": getattr(run_context, "generated_ddl", None),
                 "target_artifact_path": summary_data.get("target_artifact_path")
                 or getattr(run_context, "target_artifact_path", None),
                 "physical_namespace": job.get("physical_namespace"),

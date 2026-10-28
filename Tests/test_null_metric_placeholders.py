@@ -69,7 +69,7 @@ def _wire(emitter, monkeypatch, fail_with):
     monkeypatch.setattr(emitter.semantic_view_builder, "generate_ddls", lambda model: [DDL])
     executed = []
 
-    def fake_execute_sql(cursor, sql, context=""):
+    def fake_execute_sql(cursor, sql, context="", *args, **kwargs):
         if context.startswith("DDL[0]"):
             executed.append(sql)
             error = fail_with(sql)

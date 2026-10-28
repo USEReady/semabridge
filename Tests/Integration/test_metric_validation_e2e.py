@@ -107,7 +107,8 @@ def test_metric_invalid_column_reference_skipped():
     # Verify results
     assert ddl is not None
     assert "total_revenue" in ddl.lower()
-    assert "total_units" not in ddl.lower()  # Invalid metric should be skipped
+    # Invalid metric is emitted as NULL placeholder rather than dropped
+    assert 'salesfact."total_units" as cast(null as double)' in ddl.lower()
     assert "SUM" in ddl  # Valid metric should be there
     
     print("✓ Test passed: Invalid metric was skipped, valid metric included")

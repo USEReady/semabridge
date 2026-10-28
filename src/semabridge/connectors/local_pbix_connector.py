@@ -22,12 +22,24 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.core.exceptions import ConnectorError, PBIXParsingError
 from semabridge.core.interfaces import BaseConnector
 from semabridge.utils.identifiers import clean_pbix_model_name
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+AMO_TYPE_MAP: Dict[int, str] = {
+    1: "string",
+    2: "string",
+    6: "int64",
+    8: "double",
+    9: "dateTime",
+    10: "decimal",
+    11: "boolean",
+    17: "binary",
+}
 
 
 class LocalPBIXConnector(BaseConnector):
@@ -48,11 +60,12 @@ class LocalPBIXConnector(BaseConnector):
         metadata = connector.discover()
     """
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: Dict[str, Any], drop_ledger: Optional[DropLedger] = None) -> None:
         """Initialize with path to local .pbix file.
 
         Args:
             config: Must contain 'pbix_path' pointing to a .pbix file.
+            drop_ledger: Optional DropLedger collector to record excluded entities.
 
         Raises:
             ValidationError: If pbix_path is missing from config.
@@ -63,6 +76,7 @@ class LocalPBIXConnector(BaseConnector):
         self._archive: Optional[zipfile.ZipFile] = None
         self._data_model_schema: Optional[Dict[str, Any]] = None
         self._connections: Optional[List[Dict[str, Any]]] = None
+        self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def extract(self) -> Dict[str, Any]:
         """Extract raw PBIX semantic-model metadata as Fabric-like TMSL.
@@ -398,6 +412,42 @@ class LocalPBIXConnector(BaseConnector):
             relationships_df = model.relationships.copy()
             power_query_df = model.power_query.copy()
             metadata_df = model.metadata.copy()
+
+            try:
+                from pbixray.utils import get_data_slice
+                from pbixray.meta.sqlite_handler import SQLiteHandler
+                buf = get_data_slice(model._metadata_handler._data_model, "metadata.sqlitedb")
+                h = SQLiteHandler(buf)
+                raw_rel_df = h.execute_query("""
+                    SELECT 
+                        ft.Name AS FromTableName,
+                        fc.ExplicitName AS FromColumnName,
+                        tt.Name AS ToTableName,
+                        tc.ExplicitName AS ToColumnName,
+                        rel.IsActive,
+                        rel.FromCardinality,
+                        rel.ToCardinality,
+                        CASE 
+                            WHEN rel.FromCardinality = 2 THEN 'M'
+                            ELSE '1'
+                        END || ':' || 
+                        CASE 
+                            WHEN rel.ToCardinality = 2 THEN 'M'
+                            ELSE '1'
+                        END AS Cardinality,
+                        rel.CrossFilteringBehavior,
+                        rel.JoinOnDateBehavior,
+                        rel.RelyOnReferentialIntegrity
+                    FROM Relationship rel
+                        LEFT JOIN [Table] ft ON rel.FromTableID = ft.id
+                        LEFT JOIN [Column] fc ON rel.FromColumnID = fc.id
+                        LEFT JOIN [Table] tt ON rel.ToTableID = tt.id AND tt.systemflags = 0
+                        LEFT JOIN [Column] tc ON rel.ToColumnID = tc.id
+                """)
+                if raw_rel_df is not None and not raw_rel_df.empty:
+                    relationships_df = raw_rel_df
+            except Exception as e:
+                logger.debug("Direct SQLite relationship query failed (%s), using model.relationships", e)
         except Exception as exc:
             # pbixray's own MetadataHandler._compute_statistics() unconditionally
             # does schema_df[['TableName', 'ColumnName', 'Cardinality']] with no
@@ -457,33 +507,41 @@ class LocalPBIXConnector(BaseConnector):
             )
             return None
 
-        tables_by_name: Dict[str, Dict[str, Any]] = {}
-        for _, row in schema_df.iterrows():
-            table_name = str(row.get("TableName", "") or "")
-            column_name = str(row.get("ColumnName", "") or "")
-            data_type = str(row.get("PandasDataType", "object") or "object")
-            if not table_name or not column_name:
-                continue
+        # Attempt direct metadata SQLite extraction to generically capture
+        # calculated tables, inferred column names, and relationships
+        # without pbixray's SystemFlags=0 loss.
+        tables_by_name, relationships = self._extract_raw_metadata_catalog()
 
-            table = tables_by_name.setdefault(
-                table_name,
-                {
-                    "name": table_name,
-                    "description": "",
-                    "is_hidden": False,
-                    "columns": [],
-                    "partitions": [],
-                },
-            )
-            table["columns"].append(
-                {
-                    "name": column_name,
-                    "data_type": data_type,
-                    "is_hidden": False,
-                    "source_column": column_name,
-                    "type": "data",
-                }
-            )
+        # If raw metadata extraction was not possible (or returned empty tables),
+        # fall back to pbixray's dataframes.
+        if not tables_by_name:
+            tables_by_name = {}
+            for _, row in schema_df.iterrows():
+                table_name = str(row.get("TableName", "") or "")
+                column_name = str(row.get("ColumnName", "") or "")
+                data_type = str(row.get("PandasDataType", "object") or "object")
+                if not table_name or not column_name:
+                    continue
+
+                table = tables_by_name.setdefault(
+                    table_name,
+                    {
+                        "name": table_name,
+                        "description": "",
+                        "is_hidden": False,
+                        "columns": [],
+                        "partitions": [],
+                    },
+                )
+                table["columns"].append(
+                    {
+                        "name": column_name,
+                        "data_type": data_type,
+                        "is_hidden": False,
+                        "source_column": column_name,
+                        "type": "data",
+                    }
+                )
 
         measures: List[Dict[str, Any]] = []
         for _, row in dax_measures_df.iterrows():
@@ -499,22 +557,30 @@ class LocalPBIXConnector(BaseConnector):
                 }
             )
 
-        relationships: List[Dict[str, Any]] = []
-        for _, row in relationships_df.iterrows():
-            relationships.append(
-                {
+        if relationships is None:
+            relationships = []
+            for _, row in relationships_df.iterrows():
+                rel_entry: Dict[str, Any] = {
                     "name": "",
                     "from_table": str(row.get("FromTableName", "") or ""),
                     "from_column": str(row.get("FromColumnName", "") or ""),
                     "to_table": str(row.get("ToTableName", "") or ""),
                     "to_column": str(row.get("ToColumnName", "") or ""),
-                    "cross_filtering_behavior": str(
-                        row.get("CrossFilteringBehavior", "oneDirection") or "oneDirection"
-                    ),
-                    "is_active": bool(row.get("IsActive", True)),
-                    "cardinality": str(row.get("Cardinality", "many-to-one") or "many-to-one"),
+                    "is_active": row.get("IsActive"),
                 }
-            )
+                if row.get("CrossFilteringBehavior") is not None:
+                    rel_entry["cross_filtering_behavior"] = row.get("CrossFilteringBehavior")
+                if row.get("Cardinality") is not None:
+                    rel_entry["cardinality"] = row.get("Cardinality")
+                if row.get("FromCardinality") is not None:
+                    rel_entry["from_cardinality"] = row.get("FromCardinality")
+                if row.get("ToCardinality") is not None:
+                    rel_entry["to_cardinality"] = row.get("ToCardinality")
+                if row.get("JoinOnDateBehavior") is not None:
+                    rel_entry["join_on_date_behavior"] = row.get("JoinOnDateBehavior")
+                if row.get("RelyOnReferentialIntegrity") is not None:
+                    rel_entry["rely_on_referential_integrity"] = row.get("RelyOnReferentialIntegrity")
+                relationships.append(rel_entry)
 
         m_code: List[Dict[str, Any]] = []
         for _, row in power_query_df.iterrows():
@@ -562,6 +628,285 @@ class LocalPBIXConnector(BaseConnector):
             "relationships": relationships,
             "m_code": m_code,
         }
+
+    def _extract_raw_metadata_catalog(
+        self,
+    ) -> Tuple[Optional[Dict[str, Dict[str, Any]]], Optional[List[Dict[str, Any]]]]:
+        """Query the embedded metadata.sqlitedb directly for tables, columns, and relationships.
+
+        Generic metadata-based table classification rule:
+        - SystemFlags == 1: internal engine index/hierarchy storage (exclude).
+        - Auto Date/Time & private templates: IsPrivate != 0 OR ShowAsVariationsOnly != 0
+          (exclude from semantic model & relationships, record in drop_ledger as by_design=True).
+        - Legitimate business & calculated tables: SystemFlags != 1, IsPrivate == 0, and
+          ShowAsVariationsOnly == 0 (preserve imported SystemFlags=0 and calculated SystemFlags=2).
+
+        Column resolution:
+        - InferredName fallback when ExplicitName is None/empty (COALESCE(c.ExplicitName, c.InferredName)).
+        - Exclude internal row number columns (ColumnType.RowNumber / Type == 3).
+
+        Unresolved endpoints:
+        - Logged and recorded in drop_ledger as by_design=False with endpoint IDs and diagnostic details.
+        """
+        try:
+            from pbixray.meta.sqlite_handler import SQLiteHandler  # type: ignore[import-untyped]
+            from pbixray.pbix_unpacker import PbixUnpacker  # type: ignore[import-untyped]
+            from pbixray.utils import get_data_slice  # type: ignore[import-untyped]
+
+            unpacker = PbixUnpacker(str(self._pbix_path))
+            data_model = unpacker.data_model
+            if getattr(data_model, "file_type", None) != "pbix":
+                return None, None
+
+            sqlite_buffer = get_data_slice(data_model, "metadata.sqlitedb")
+            if not sqlite_buffer:
+                return None, None
+
+            sh = SQLiteHandler(sqlite_buffer)
+        except Exception as exc:
+            logger.debug("Direct metadata.sqlitedb access unavailable: %s", exc)
+            return None, None
+
+        try:
+            # 1. Record auto date/time tables dropped by design
+            try:
+                auto_tbls_sql = """
+                SELECT ID, Name, SystemFlags,
+                       COALESCE(IsPrivate, 0) AS IsPrivate,
+                       COALESCE(ShowAsVariationsOnly, 0) AS ShowAsVariationsOnly
+                FROM [Table]
+                WHERE (COALESCE(IsPrivate, 0) != 0 OR COALESCE(ShowAsVariationsOnly, 0) != 0)
+                  AND SystemFlags != 1;
+                """
+                auto_tbls_df = sh.execute_query(auto_tbls_sql)
+                for _, row in auto_tbls_df.iterrows():
+                    tbl_name = str(row.get("Name") or "")
+                    self.drop_ledger.record(
+                        entity_kind="table",
+                        entity_name=tbl_name,
+                        stage=DropStage.EXTRACTION,
+                        reason="Auto date/time table excluded by design",
+                        dataset=self._pbix_path.stem,
+                        detail=f"table_id={row.get('ID')}, is_private={row.get('IsPrivate')}, variations={row.get('ShowAsVariationsOnly')}",
+                        by_design=True,
+                    )
+            except Exception as auto_tbl_exc:
+                logger.debug("Failed checking auto-date tables: %s", auto_tbl_exc)
+
+            # 2. Extract legitimate tables and columns
+            tables_sql = """
+            SELECT
+                t.ID AS TableID,
+                t.Name AS TableName,
+                t.IsHidden AS TableIsHidden,
+                t.Description AS TableDescription,
+                t.SystemFlags AS TableSystemFlags,
+                COALESCE(t.IsPrivate, 0) AS TableIsPrivate,
+                COALESCE(t.ShowAsVariationsOnly, 0) AS TableShowAsVariationsOnly,
+                c.ID AS ColumnID,
+                c.ExplicitName AS ColumnExplicitName,
+                c.InferredName AS ColumnInferredName,
+                COALESCE(c.ExplicitName, c.InferredName) AS ColumnName,
+                c.Type AS ColumnType,
+                c.ExplicitDataType AS ColumnDataType,
+                c.IsHidden AS ColumnIsHidden,
+                c.Description AS ColumnDescription,
+                c.SummarizeBy AS ColumnSummarizeBy
+            FROM [Table] t
+            LEFT JOIN [Column] c ON c.TableID = t.ID
+            WHERE t.SystemFlags != 1
+              AND COALESCE(t.IsPrivate, 0) = 0
+              AND COALESCE(t.ShowAsVariationsOnly, 0) = 0
+              AND (c.ID IS NULL OR c.Type != 3)
+            ORDER BY t.Name, c.ID;
+            """
+            tc_df = sh.execute_query(tables_sql)
+            tables_by_name: Dict[str, Dict[str, Any]] = {}
+            for _, row in tc_df.iterrows():
+                table_name = str(row.get("TableName", "") or "").strip()
+                if not table_name:
+                    continue
+                table_def = tables_by_name.setdefault(
+                    table_name,
+                    {
+                        "name": table_name,
+                        "description": str(row.get("TableDescription", "") or ""),
+                        "is_hidden": bool(row.get("TableIsHidden", False)),
+                        "columns": [],
+                        "partitions": [],
+                    },
+                )
+                col_name = str(row.get("ColumnName", "") or "").strip() if row.get("ColumnName") else None
+                if col_name:
+                    dtype_code = row.get("ColumnDataType")
+                    dtype = self._normalize_pbixray_data_type(dtype_code)
+                    col_dict = {
+                        "name": col_name,
+                        "data_type": dtype,
+                        "is_hidden": bool(row.get("ColumnIsHidden", False)),
+                        "source_column": col_name,
+                        "type": "data",
+                    }
+                    table_def["columns"].append(col_dict)
+
+            # 3. Extract partitions (including calculated table DAX definitions)
+            try:
+                partitions_sql = """
+                SELECT
+                    p.ID,
+                    p.TableID,
+                    p.Name AS PartitionName,
+                    p.QueryDefinition,
+                    p.Type AS PartitionType,
+                    t.Name AS TableName
+                FROM [Partition] p
+                JOIN [Table] t ON p.TableID = t.ID
+                WHERE t.SystemFlags != 1
+                  AND COALESCE(t.IsPrivate, 0) = 0
+                  AND COALESCE(t.ShowAsVariationsOnly, 0) = 0;
+                """
+                part_df = sh.execute_query(partitions_sql)
+                for _, row in part_df.iterrows():
+                    tbl_name = str(row.get("TableName", "") or "").strip()
+                    if tbl_name in tables_by_name:
+                        p_name = str(row.get("PartitionName", "") or "").strip() or f"{tbl_name}_Partition"
+                        p_type = row.get("PartitionType")
+                        source_type = "calculated" if p_type == 2 else "m"
+                        expr = str(row.get("QueryDefinition", "") or "")
+                        tables_by_name[tbl_name]["partitions"].append(
+                            {
+                                "name": p_name,
+                                "source_type": source_type,
+                                "expression": expr,
+                            }
+                        )
+            except Exception as part_exc:
+                logger.debug("Failed querying partition definitions: %s", part_exc)
+
+            # 4. Extract relationships
+            rel_sample = sh.execute_query("SELECT * FROM Relationship LIMIT 1")
+            rel_cols = set(rel_sample.columns)
+            pick = lambda a, b: a if a in rel_cols else b
+            f_c = pick("FromColumnID", "FromEndColumnID")
+            t_c = pick("ToColumnID", "ToEndColumnID")
+            fc_card = pick("FromCardinality", "FromEndCardinality")
+            tc_card = pick("ToCardinality", "ToEndCardinality")
+
+            rels_sql = f"""
+            SELECT
+                rel.ID AS RelID,
+                ft.ID AS FromTableID,
+                ft.Name AS FromTableName,
+                fc.ID AS FromColumnID,
+                COALESCE(fc.ExplicitName, fc.InferredName) AS FromColumnName,
+                tt.ID AS ToTableID,
+                tt.Name AS ToTableName,
+                tc.ID AS ToColumnID,
+                COALESCE(tc.ExplicitName, tc.InferredName) AS ToColumnName,
+                rel.IsActive,
+                rel.{fc_card} AS FromCard,
+                rel.{tc_card} AS ToCard,
+                rel.CrossFilteringBehavior,
+                COALESCE(ft.IsPrivate, 0) AS FromIsPrivate,
+                COALESCE(ft.ShowAsVariationsOnly, 0) AS FromShowAsVariationsOnly,
+                COALESCE(tt.IsPrivate, 0) AS ToIsPrivate,
+                COALESCE(tt.ShowAsVariationsOnly, 0) AS ToShowAsVariationsOnly
+            FROM Relationship rel
+            LEFT JOIN [Table] ft ON rel.FromTableID = ft.ID
+            LEFT JOIN [Column] fc ON rel.{f_c} = fc.ID
+            LEFT JOIN [Table] tt ON rel.ToTableID = tt.ID
+            LEFT JOIN [Column] tc ON rel.{t_c} = tc.ID;
+            """
+            rels_df = sh.execute_query(rels_sql)
+            relationships: List[Dict[str, Any]] = []
+
+            for _, row in rels_df.iterrows():
+                rel_id = row.get("RelID")
+                f_tbl = row.get("FromTableName")
+                f_col = row.get("FromColumnName")
+                t_tbl = row.get("ToTableName")
+                t_col = row.get("ToColumnName")
+
+                f_tbl_id = row.get("FromTableID")
+                f_col_id = row.get("FromColumnID")
+                t_tbl_id = row.get("ToTableID")
+                t_col_id = row.get("ToColumnID")
+
+                # Check auto date/time table using metadata flags
+                from_is_auto = bool(row.get("FromIsPrivate") or row.get("FromShowAsVariationsOnly"))
+                to_is_auto = bool(row.get("ToIsPrivate") or row.get("ToShowAsVariationsOnly"))
+
+                if from_is_auto or to_is_auto:
+                    self.drop_ledger.record(
+                        entity_kind="relationship",
+                        entity_name=f"{f_tbl or f_tbl_id}[{f_col or f_col_id}] -> {t_tbl or t_tbl_id}[{t_col or t_col_id}]",
+                        stage=DropStage.EXTRACTION,
+                        reason="Auto date/time relationship excluded by design",
+                        dataset=self._pbix_path.stem,
+                        detail=(
+                            f"rel_id={rel_id}, from_table_id={f_tbl_id}, from_col_id={f_col_id}, "
+                            f"to_table_id={t_tbl_id}, to_col_id={t_col_id}, "
+                            f"from_auto={from_is_auto}, to_auto={to_is_auto}"
+                        ),
+                        by_design=True,
+                    )
+                    continue
+
+                # Check unresolved endpoints
+                if not (f_tbl and f_col and t_tbl and t_col):
+                    logger.warning(
+                        "Relationship %s dropped: unresolvable endpoint (from=%s[%s], to=%s[%s])",
+                        rel_id, f_tbl, f_col, t_tbl, t_col
+                    )
+                    self.drop_ledger.record(
+                        entity_kind="relationship",
+                        entity_name=f"Relationship_{rel_id}",
+                        stage=DropStage.EXTRACTION,
+                        reason="Unresolvable relationship endpoint",
+                        dataset=self._pbix_path.stem,
+                        detail=(
+                            f"rel_id={rel_id}, from_table_id={f_tbl_id} ({f_tbl}), "
+                            f"from_col_id={f_col_id} ({f_col}), "
+                            f"to_table_id={t_tbl_id} ({t_tbl}), "
+                            f"to_col_id={t_col_id} ({t_col})"
+                        ),
+                        by_design=False,
+                    )
+                    continue
+
+                from_c_val = row.get("FromCard")
+                to_c_val = row.get("ToCard")
+                if from_c_val == 1 and to_c_val == 1:
+                    cardinality = "OneToOne"
+                elif from_c_val == 2 and to_c_val == 2:
+                    cardinality = "ManyToMany"
+                elif from_c_val == 1 and to_c_val == 2:
+                    cardinality = "OneToMany"
+                else:
+                    cardinality = "ManyToOne"
+
+                xf = row.get("CrossFilteringBehavior")
+                cross_filtering = "Both" if xf == 2 else "Single"
+
+                relationships.append(
+                    {
+                        "name": f"{f_tbl}_{f_col}_{t_tbl}_{t_col}",
+                        "from_table": str(f_tbl).strip(),
+                        "from_column": str(f_col).strip(),
+                        "to_table": str(t_tbl).strip(),
+                        "to_column": str(t_col).strip(),
+                        "cross_filtering_behavior": cross_filtering,
+                        "is_active": bool(row.get("IsActive", True)),
+                        "cardinality": cardinality,
+                        "from_cardinality": from_c_val,
+                        "to_cardinality": to_c_val,
+                    }
+                )
+
+            return tables_by_name, relationships
+        except Exception as exc:
+            logger.warning("Direct metadata.sqlitedb extraction query failed: %s", exc, exc_info=True)
+            return None, None
 
     def _is_confirmed_empty_semantic_model(self) -> bool:
         """Independently confirm a PBIX's semantic model has zero tables,
@@ -662,6 +1007,8 @@ class LocalPBIXConnector(BaseConnector):
                     col_def["isHidden"] = bool(col.get("is_hidden"))
                 if col.get("source_column"):
                     col_def["sourceColumn"] = str(col.get("source_column"))
+                if col.get("summarize_by"):
+                    col_def["summarizeBy"] = str(col.get("summarize_by"))
                 table_def["columns"].append(col_def)
 
             for partition in table.get("partitions", []) or []:
@@ -708,16 +1055,26 @@ class LocalPBIXConnector(BaseConnector):
             to_column = str(rel.get("to_column", "") or "").strip()
             if not (from_table and from_column and to_table and to_column):
                 continue
-            relationships.append(
-                {
-                    "name": str(rel.get("name", "") or ""),
-                    "fromTable": from_table,
-                    "fromColumn": from_column,
-                    "toTable": to_table,
-                    "toColumn": to_column,
-                    "isActive": bool(rel.get("is_active", True)),
-                }
-            )
+            rel_dict: Dict[str, Any] = {
+                "name": str(rel.get("name", "") or ""),
+                "fromTable": from_table,
+                "fromColumn": from_column,
+                "toTable": to_table,
+                "toColumn": to_column,
+                "isActive": bool(rel.get("is_active", True)) if rel.get("is_active") is not None else True,
+            }
+            rel_dict["cardinality"] = self._normalize_pbixray_cardinality(rel.get("cardinality"))
+            rel_dict["crossFilteringBehavior"] = self._normalize_pbixray_cross_filtering(rel.get("cross_filtering_behavior"))
+            if rel.get("from_cardinality") is not None:
+                rel_dict["fromCardinality"] = rel["from_cardinality"]
+            if rel.get("to_cardinality") is not None:
+                rel_dict["toCardinality"] = rel["to_cardinality"]
+            if rel.get("join_on_date_behavior") is not None:
+                rel_dict["joinOnDateBehavior"] = rel["join_on_date_behavior"]
+            if rel.get("rely_on_referential_integrity") is not None:
+                rel_dict["relyOnReferentialIntegrity"] = rel["rely_on_referential_integrity"]
+
+            relationships.append(rel_dict)
 
         model_payload: Dict[str, Any] = {
             "name": model_name,
@@ -739,8 +1096,70 @@ class LocalPBIXConnector(BaseConnector):
         return {"model": model_payload}
 
     @staticmethod
+    def _normalize_pbixray_cardinality(raw_card: Any) -> str:
+        """Map pbixray cardinality into TMSL-compatible cardinality string."""
+        text = str(raw_card or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+        mapping = {
+            "1:1": "OneToOne",
+            "onetoone": "OneToOne",
+            "1:m": "OneToMany",
+            "onetomany": "OneToMany",
+            "m:1": "ManyToOne",
+            "manytoone": "ManyToOne",
+            "m:m": "ManyToMany",
+            "manytomany": "ManyToMany",
+        }
+        return mapping.get(text, "ManyToOne")
+
+    @staticmethod
+    def _normalize_pbixray_cross_filtering(raw_cf: Any) -> str:
+        """Map pbixray cross filtering behavior into TMSL-compatible string."""
+        text = str(raw_cf or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+        mapping = {
+            "2": "bothDirections",
+            "both": "bothDirections",
+            "bothdirections": "bothDirections",
+            "twodirections": "bothDirections",
+            "1": "oneDirection",
+            "single": "oneDirection",
+            "onedirection": "oneDirection",
+        }
+        return mapping.get(text, "oneDirection")
+
+    @staticmethod
+    def _normalize_pbixray_summarize_by(raw_sb: Any) -> Optional[str]:
+        """Map AMO AggregateFunction integer or string into TMSL-compatible summarizeBy."""
+        if raw_sb is None:
+            return None
+        if isinstance(raw_sb, str):
+            val = raw_sb.strip().lower()
+            if val in {"default", "none", "sum", "min", "max", "count", "average", "distinctcount"}:
+                return "distinctCount" if val == "distinctcount" else val
+            if val in {"donotsummarize", "userdefined"}:
+                return "none"
+            try:
+                raw_sb = int(val)
+            except ValueError:
+                return "default"
+
+        mapping = {
+            0: "default",
+            1: "none",
+            2: "none",
+            3: "sum",
+            4: "min",
+            5: "max",
+            6: "count",
+            7: "average",
+            8: "distinctCount",
+        }
+        return mapping.get(int(raw_sb), "default")
+
+    @staticmethod
     def _normalize_pbixray_data_type(raw_type: Any) -> str:
-        """Map pbixray/Pandas dtypes into TMSL-like dataType values."""
+        """Map pbixray/Pandas/AMO dtypes into TMSL-like dataType values."""
+        if isinstance(raw_type, int) and raw_type in AMO_TYPE_MAP:
+            return AMO_TYPE_MAP[raw_type]
         text = str(raw_type or "").strip().lower()
         mapping = {
             "int64": "int64",
@@ -889,6 +1308,8 @@ class LocalPBIXConnector(BaseConnector):
                     "is_hidden": col.get("isHidden", False),
                     "source_column": col.get("sourceColumn", ""),
                     "type": col.get("type", "data"),
+                    "summarizeBy": col.get("summarizeBy", ""),
+                    "summarize_by": col.get("summarizeBy", ""),
                 })
 
             tables.append({
@@ -945,16 +1366,30 @@ class LocalPBIXConnector(BaseConnector):
         relationships: List[Dict[str, Any]] = []
 
         for rel in schema.get("relationships", []):
-            relationships.append({
+            rel_entry: Dict[str, Any] = {
                 "name": rel.get("name", ""),
                 "from_table": rel.get("fromTable", ""),
                 "from_column": rel.get("fromColumn", ""),
                 "to_table": rel.get("toTable", ""),
                 "to_column": rel.get("toColumn", ""),
-                "cross_filtering_behavior": rel.get("crossFilteringBehavior", "oneDirection"),
                 "is_active": rel.get("isActive", True),
-                "cardinality": rel.get("fromCardinality", "many") + "-to-" + rel.get("toCardinality", "one"),
-            })
+            }
+            if "crossFilteringBehavior" in rel:
+                rel_entry["cross_filtering_behavior"] = rel["crossFilteringBehavior"]
+            if "cardinality" in rel:
+                rel_entry["cardinality"] = rel["cardinality"]
+            if "fromCardinality" in rel:
+                rel_entry["from_cardinality"] = rel["fromCardinality"]
+            if "toCardinality" in rel:
+                rel_entry["to_cardinality"] = rel["toCardinality"]
+            if "cardinality" not in rel_entry and "from_cardinality" in rel_entry and "to_cardinality" in rel_entry:
+                rel_entry["cardinality"] = f"{rel_entry['from_cardinality']}-to-{rel_entry['to_cardinality']}"
+            if "joinOnDateBehavior" in rel:
+                rel_entry["join_on_date_behavior"] = rel["joinOnDateBehavior"]
+            if "relyOnReferentialIntegrity" in rel:
+                rel_entry["rely_on_referential_integrity"] = rel["relyOnReferentialIntegrity"]
+
+            relationships.append(rel_entry)
 
         return relationships
 

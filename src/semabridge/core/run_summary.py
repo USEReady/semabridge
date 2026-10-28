@@ -132,6 +132,10 @@ class RunSummary(BaseModel):
         default=None,
         description="Dry-run table binding preview ({tables, error})",
     )
+    blockers: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Dry-run blockers preventing deployment",
+    )
 
     # Error details for FAILED/PARTIAL
     errors: List[ErrorDetail] = Field(default_factory=list)

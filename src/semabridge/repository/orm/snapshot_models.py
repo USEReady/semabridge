@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from semabridge.repository.orm.project_models import Project
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship

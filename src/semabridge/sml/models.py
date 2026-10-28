@@ -41,6 +41,7 @@ class CrossFilterDirection(str, Enum):
     """Cross-filter direction for relationships."""
     SINGLE = "single"
     BOTH = "both"
+    AUTOMATIC = "automatic"
 
 
 class DataType(str, Enum):
@@ -196,6 +197,8 @@ class SMLDataset(BaseModel):
     columns: list[SMLColumn] = Field(default_factory=list, description="Column definitions")
     is_hidden: bool = Field(default=False, description="Whether dataset is hidden")
     is_fact: bool = Field(default=False, description="Whether this is a fact table")
+    is_date_table: bool = Field(default=False, description="Whether dataset is marked as a date table")
+    data_category: Optional[str] = Field(default=None, description="Data category (e.g. Time)")
     row_count: Optional[int] = Field(default=None, description="Approximate row count")
     
     def model_post_init(self, __context: Any) -> None:
@@ -445,6 +448,8 @@ class SMLRelationship(BaseModel):
     cardinality: Cardinality = Field(default=Cardinality.MANY_TO_ONE, description="Relationship cardinality")
     cross_filter: CrossFilterDirection = Field(default=CrossFilterDirection.SINGLE, description="Cross-filter direction")
     is_active: bool = Field(default=True, description="Whether relationship is active")
+    join_on_date_behavior: Optional[str] = Field(default=None, description="Join on date behavior (e.g. dateAndTime, dateOnly)")
+    rely_on_referential_integrity: Optional[bool] = Field(default=None, description="Rely on referential integrity")
     
     @property
     def from_column(self) -> str:

@@ -73,6 +73,76 @@ class MetricsClauseBuilder:
             live_schema_metadata if live_schema_metadata is not None else {}
         )
 
+    def _dataset_has_date_relationship(
+        self,
+        dataset_name: str,
+        model: Any,
+        dataset_by_name: Dict[str, Any],
+    ) -> bool:
+        """Check whether a date relationship exists for dataset_name in the model."""
+        if not dataset_name or not model:
+            return False
+
+        ds_cf = dataset_name.casefold()
+        ds = dataset_by_name.get(dataset_name) or next(
+            (d for k, d in dataset_by_name.items() if str(k).casefold() == ds_cf), None
+        )
+        if ds:
+            if getattr(ds, "is_date_table", False) or getattr(ds, "is_calendar", False):
+                return True
+            if str(getattr(ds, "data_category", "") or "").casefold() in ("time", "date"):
+                return True
+
+        relationships = getattr(model, "relationships", []) or []
+        for rel in relationships:
+            from_ds = str(getattr(rel, "from_dataset", "") or "").casefold()
+            to_ds = str(getattr(rel, "to_dataset", "") or "").casefold()
+            if ds_cf in (from_ds, to_ds):
+                other_name = to_ds if ds_cf == from_ds else from_ds
+                other_ds = dataset_by_name.get(other_name) or next(
+                    (d for k, d in dataset_by_name.items() if str(k).casefold() == other_name), None
+                )
+                if other_ds:
+                    if getattr(other_ds, "is_date_table", False) or getattr(other_ds, "is_calendar", False):
+                        return True
+                    if str(getattr(other_ds, "data_category", "") or "").casefold() in ("time", "date"):
+                        return True
+                    for c in getattr(other_ds, "columns", []) or []:
+                        dt = getattr(c, "data_type", None)
+                        dt_str = getattr(dt, "value", str(dt)).lower()
+                        if dt_str in ("date", "datetime"):
+                            return True
+
+                # Check if relationship join columns are date/datetime typed
+                from_cols = set(getattr(rel, "from_columns", []) or [])
+                to_cols = set(getattr(rel, "to_columns", []) or [])
+                for check_ds, check_cols in ((ds, from_cols if ds_cf == from_ds else to_cols),
+                                             (other_ds, to_cols if ds_cf == from_ds else from_cols)):
+                    if check_ds:
+                        for c in getattr(check_ds, "columns", []) or []:
+                            if c.unique_name in check_cols or getattr(c, "label", None) in check_cols:
+                                dt = getattr(c, "data_type", None)
+                                dt_str = getattr(dt, "value", str(dt)).lower()
+                                if dt_str in ("date", "datetime"):
+                                    return True
+
+        try:
+            from semabridge.converter.date_resolution import DateResolutionConfig
+            res = DateResolutionConfig().resolve(model)
+            if res and res.table:
+                res_tbl_cf = str(res.table).casefold()
+                if ds_cf == res_tbl_cf:
+                    return True
+                for rel in relationships:
+                    f = str(getattr(rel, "from_dataset", "") or "").casefold()
+                    t = str(getattr(rel, "to_dataset", "") or "").casefold()
+                    if (ds_cf == f and res_tbl_cf == t) or (ds_cf == t and res_tbl_cf == f):
+                        return True
+        except Exception:
+            pass
+
+        return False
+
     def build_for_sml(
         self,
         sml: Any,
@@ -285,9 +355,8 @@ class MetricsClauseBuilder:
             # never dropped, so it can't fail the sync or cascade-drop the
             # metrics that reference it. By-design exclusions stay excluded.
             failure: Optional[Tuple[str, Optional[str]]] = None
-            expr: Optional[str] = None
-            if is_ti and ds_fold in self.no_populated_date_link_datasets:
-                failure = ("no populated date link on fact table", None)
+            if is_ti and not self._dataset_has_date_relationship(metric.dataset, model, dataset_by_name):
+                failure = ("no date relationship exists on dataset", None)
             else:
                 ledger_mark = len(self.drop_ledger.records)
                 expr = self._generate_metric_expression(
@@ -970,7 +1039,7 @@ class MetricsClauseBuilder:
                 r"\b(CALCULATE|FILTER|ALL|EARLIER|VALUES|USERELATIONSHIP|ALLEXCEPT|CROSSFILTER|SUMX|AVERAGEX|COUNTX|MINX|MAXX)\b",
                 re.IGNORECASE,
             )
-            if UNTRANSLATED_DAX_PATTERN.search(sql_expr):
+            if UNTRANSLATED_DAX_PATTERN.search(sql_expr) or re.search(r"\b(SUM|AVG|MIN|MAX|COUNT)\s*\(\s*DATEDIFF\b", sql_expr, re.IGNORECASE):
                 logger.warning(
                     "Metric '%s': sql_expression contains untranslated DAX constructs (%s). "
                     "Skipping to prevent DDL compilation failure.",
@@ -1107,6 +1176,8 @@ class MetricsClauseBuilder:
         
         # If we have DAX expression, try to translate it
         if dax_expr:
+            if re.search(r"\b(SUMX|AVERAGEX|COUNTX|MINX|MAXX)\b[^(]*\([^)]*\bDATEDIFF\b", dax_expr, re.IGNORECASE | re.DOTALL):
+                return None
             active_dataset = metric.dataset
             active_alias = alias
             

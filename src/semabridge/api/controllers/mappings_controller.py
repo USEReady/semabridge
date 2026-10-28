@@ -182,6 +182,8 @@ def _build_config_yaml_from_request(
         target_section["database"] = target_config["database"]
     if target_config.get("schema"):
         target_section["schema"] = target_config["schema"]
+    if target_config.get("source_data_schema"):
+        target_section["source_data_schema"] = target_config["source_data_schema"]
     if target_config.get("account"):
         target_section["account"] = target_config["account"]
     if target_config.get("warehouse"):
@@ -202,6 +204,8 @@ def _build_config_yaml_from_request(
             "generate_descriptions": False,
         },
     }
+    if target_config.get("source_data_schema"):
+        config["options"]["source_data_schema"] = target_config["source_data_schema"]
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
 
 
@@ -217,7 +221,7 @@ def _saved_project_target(project_cfg: Dict[str, Any], requested: Dict[str, Any]
     for target in candidates:
         if str(target.get("type") or "").strip().lower() == target_type:
             saved = {"type": target_type}
-            for key in ("identity_id", "account", "database", "schema", "warehouse", "role", "workspace_id"):
+            for key in ("identity_id", "account", "database", "schema", "warehouse", "role", "workspace_id", "source_data_schema"):
                 value = target.get(key) or (target.get("schema_name") if key == "schema" else None)
                 if value:
                     saved[key] = value
@@ -405,6 +409,7 @@ async def _run_dry_run_pipeline(
     ambiguous_report_aliases: List[Dict[str, Any]] = []
     upsert_delta: Optional[Dict[str, Any]] = None
     table_binding_plan: Optional[Dict[str, Any]] = None
+    dry_run_blockers: List[Dict[str, Any]] = []
     # Step 8 of the engine dry run built the target DDL against the live
     # schema; its drops/placeholders are what the sync would report.
     target_ddl_drops: List[Dict[str, Any]] = []
@@ -427,6 +432,9 @@ async def _run_dry_run_pipeline(
         print(f"[DryRun] model={r.get('model')!r} sml_snapshot_id={summary.get('sml_snapshot_id')!r}")
         if table_binding_plan is None:
             table_binding_plan = summary.get("table_binding_plan")
+        for b in summary.get("blockers") or []:
+            if b not in dry_run_blockers:
+                dry_run_blockers.append(b)
         if sync_mode == "upsert" and upsert_delta is None:
             upsert_delta = r.get("upsert_delta") or summary.get("upsert_delta")
             if upsert_delta is None and str(r.get("status") or "").lower() != "success":
@@ -441,6 +449,10 @@ async def _run_dry_run_pipeline(
         ambiguous_report_aliases.extend(
             summary.get("ambiguous_report_aliases") or []
         )
+    if isinstance(table_binding_plan, dict):
+        for b in table_binding_plan.get("blockers") or []:
+            if b not in dry_run_blockers:
+                dry_run_blockers.append(b)
 
     # ── 4. Build entity mappings from the real SML snapshot ──────────────────
     target_connector = str(target_config.get("type") or "snowflake").strip().lower()
@@ -658,6 +670,7 @@ async def _run_dry_run_pipeline(
         "sync_mode": sync_mode,
         "upsert_delta": upsert_delta,
         "table_binding_plan": table_binding_plan,
+        "blockers": dry_run_blockers,
         "summary": {
             "total_fields": len(filtered_mappings),
             "auto_mapped": auto_count,
@@ -951,3 +964,84 @@ async def auto_map_with_user_context(request: Request, payload: AutoMapRequest):
         body["user_id"] = user_id
         validate_project_connector_accounts_belong_to_user(user_id, body)
     return await auto_map_compat(body)
+
+
+class SaveTableBindingRequest(BaseModel):
+    model_name: Optional[str] = None
+    dataset: str
+    table: str
+
+
+class SaveSourceDataSchemaRequest(BaseModel):
+    source_data_schema: str
+
+
+@router.post('/api/projects/{project_id}/table-bindings')
+async def save_project_table_binding(
+    project_id: str,
+    request: Request,
+    payload: SaveTableBindingRequest,
+):
+    from semabridge.repository.model_repository import ModelRepository
+    from semabridge.connectors.table_binding_resolver import clean_ident
+    from semabridge.core.upsert_delta import normalize_model_name
+
+    user_id = require_request_user_id(request)
+    if not _is_preview_project_id(project_id):
+        _assert_project_access(project_id, user_id)
+
+    model_key = normalize_model_name(payload.model_name or "default")
+    binding = {
+        "dataset_key": clean_ident(payload.dataset),
+        "dataset": payload.dataset,
+        "table": payload.table,
+        "matched_by": "manual",
+    }
+    saved = ModelRepository().save_table_bindings(project_id, model_key, [binding])
+    return {
+        "success": True,
+        "saved": saved,
+        "project_id": project_id,
+        "model_key": model_key,
+        "binding": binding,
+    }
+
+
+@router.post('/api/projects/{project_id}/source-data-schema')
+async def save_project_source_data_schema(
+    project_id: str,
+    request: Request,
+    payload: SaveSourceDataSchemaRequest,
+):
+    user_id = require_request_user_id(request)
+    if not _is_preview_project_id(project_id):
+        _assert_project_access(project_id, user_id)
+
+    schema_val = payload.source_data_schema.strip()
+    if not _is_preview_project_id(project_id):
+        import semabridge.api.services.project_shared as project_shared
+        project_shared._compat_ensure_loaded()
+        proj = project_shared._compat_projects.get(project_id)
+        if proj:
+            proj["source_data_schema"] = schema_val
+            if isinstance(proj.get("target"), dict):
+                proj["target"]["source_data_schema"] = schema_val
+            if isinstance(proj.get("targets"), list) and proj["targets"]:
+                for t in proj["targets"]:
+                    if isinstance(t, dict):
+                        t["source_data_schema"] = schema_val
+            cfg_text = project_shared._compat_project_configs.get(project_id)
+            if cfg_text:
+                try:
+                    cfg_dict = yaml.safe_load(cfg_text) or {}
+                    if "targets" in cfg_dict and isinstance(cfg_dict["targets"], list):
+                        for t in cfg_dict["targets"]:
+                            if isinstance(t, dict):
+                                t["source_data_schema"] = schema_val
+                    cfg_dict.setdefault("options", {})["source_data_schema"] = schema_val
+                    project_shared._compat_project_configs[project_id] = yaml.safe_dump(cfg_dict, sort_keys=False)
+                except Exception:
+                    pass
+            project_shared._compat_save_store()
+
+    return {"success": True, "project_id": project_id, "source_data_schema": schema_val}

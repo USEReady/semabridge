@@ -17,7 +17,7 @@ from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.targets.snowflake import _step6b_predict_anchor_flag_columns
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.repository.model_repository import ModelRepository
-from semabridge.sml.models import SMLColumn, SMLDataset, SMLMetric, SMLModel, DataType
+from semabridge.sml.models import SMLColumn, SMLDataset, SMLMetric, SMLModel, SMLRelationship, DataType
 
 
 def _model_with_ytd_metric() -> SMLModel:
@@ -50,6 +50,15 @@ def _model_with_ytd_metric() -> SMLModel:
                     'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
                     'AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"::FLOAT END)'
                 ),
+            )
+        ],
+        relationships=[
+            SMLRelationship(
+                unique_name="rel_sales_date",
+                from_dataset="SalesFact",
+                from_columns=["Date"],
+                to_dataset="Date",
+                to_columns=["Date"],
             )
         ],
     )

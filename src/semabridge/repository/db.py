@@ -21,7 +21,11 @@ import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Dict, Generator, List, Optional, Protocol, Sequence, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.orm import Session, sessionmaker
 
 from semabridge.utils.logger import get_logger
 

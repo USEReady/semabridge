@@ -728,25 +728,36 @@ def _compat_is_blocking_mapping(mapping: Dict[str, Any]) -> bool:
 
 def _compat_collect_dry_run_blockers(preview_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     blockers: List[Dict[str, Any]] = []
-    mappings = preview_result.get("entity_mappings") if isinstance(preview_result, dict) else []
-    if not isinstance(mappings, list):
+    if not isinstance(preview_result, dict):
         return blockers
 
-    for mapping in mappings:
-        if not isinstance(mapping, dict):
-            continue
-        if not _compat_is_blocking_mapping(mapping):
-            continue
-        blockers.append({
-            "id": str(mapping.get("id") or "").strip(),
-            "source_path": str(mapping.get("source_path") or "").strip(),
-            "source_name": str(mapping.get("source_name") or "").strip(),
-            "target_name": str(mapping.get("target_name") or "").strip(),
-            "status": str(mapping.get("status") or "").strip().lower(),
-            "validation_status": str(mapping.get("validation_status") or "").strip().lower(),
-            "validation_code": str(mapping.get("validation_code") or "").strip().upper(),
-            "validation_message": str(mapping.get("validation_message") or "").strip(),
-        })
+    for b in preview_result.get("blockers") or []:
+        if isinstance(b, dict):
+            blockers.append(b)
+
+    tbp = preview_result.get("table_binding_plan")
+    if isinstance(tbp, dict):
+        for b in tbp.get("blockers") or []:
+            if isinstance(b, dict) and b not in blockers:
+                blockers.append(b)
+
+    mappings = preview_result.get("entity_mappings")
+    if isinstance(mappings, list):
+        for mapping in mappings:
+            if not isinstance(mapping, dict):
+                continue
+            if not _compat_is_blocking_mapping(mapping):
+                continue
+            blockers.append({
+                "id": str(mapping.get("id") or "").strip(),
+                "source_path": str(mapping.get("source_path") or "").strip(),
+                "source_name": str(mapping.get("source_name") or "").strip(),
+                "target_name": str(mapping.get("target_name") or "").strip(),
+                "status": str(mapping.get("status") or "").strip().lower(),
+                "validation_status": str(mapping.get("validation_status") or "").strip().lower(),
+                "validation_code": str(mapping.get("validation_code") or "").strip().upper(),
+                "validation_message": str(mapping.get("validation_message") or "").strip(),
+            })
     return blockers
 
 

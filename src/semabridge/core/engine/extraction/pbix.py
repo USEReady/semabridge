@@ -100,7 +100,8 @@ def _extract_pbix(
         object.__setattr__(context.config, "source", source_cfg)
     source_cfg.pbix_path = pbix_path
 
-    connector = LocalPBIXConnector({"pbix_path": pbix_path})
+    drop_ledger = getattr(context, "drop_ledger", None)
+    connector = LocalPBIXConnector({"pbix_path": pbix_path}, drop_ledger=drop_ledger)
     discovered = connector.discover()
     tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
 

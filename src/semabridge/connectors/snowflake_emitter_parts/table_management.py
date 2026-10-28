@@ -7,9 +7,13 @@ Handles:
 - Physical vs calculated column detection
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 from pathlib import Path
 import re
+
+if TYPE_CHECKING:
+    from semabridge.formats.sml.models import SMLDataset
+    from semabridge.intermediate.models import OSIDataset
 
 from semabridge.utils.logger import get_logger
 from semabridge.core.exceptions import ConnectorError
@@ -51,7 +55,7 @@ def collect_physical_source_columns(
     base_seen: dict[str, int] = {}
     signature_seen: dict[str, int] = {}
     namespace_key = emitter._duplicate_namespace_key()
-    dataset_key = emitter._sanitize_alias(dataset.source_table or dataset.unique_name)
+    dataset_key = emitter._sanitize_alias(getattr(dataset, "label", None) or dataset.unique_name)
     for col in valid_columns:
         safe_base = emitter._sanitize_col_name(col.unique_name)
         next_idx = base_seen.get(safe_base, 0) + 1
@@ -87,7 +91,7 @@ def collect_physical_source_columns(
         if base_totals.get(safe_base, 0) > 1:
             logger.warning(
                 "Resolved physical column collision on table '%s': '%s' normalized to '%s'; using '%s'",
-                dataset.source_table or dataset.unique_name,
+                getattr(dataset, "label", None) or dataset.unique_name,
                 col.unique_name,
                 safe_base,
                 safe_name,
@@ -125,7 +129,7 @@ def collect_physical_source_columns_osi(
     base_seen: dict[str, int] = {}
     signature_seen: dict[str, int] = {}
     namespace_key = emitter._duplicate_namespace_key()
-    dataset_key = emitter._sanitize_alias(dataset.source_table or dataset.unique_name)
+    dataset_key = emitter._sanitize_alias(getattr(dataset, "label", None) or dataset.unique_name)
     for col in valid_columns:
         safe_base = emitter._sanitize_col_name(col.unique_name)
         next_idx = base_seen.get(safe_base, 0) + 1
@@ -229,7 +233,7 @@ def generate_create_table_ddl(
     quoted_table = f'"{safe_table}"'
     ddl = f"CREATE TABLE IF NOT EXISTS {emitter.config.schema_name}.{quoted_table} (\n"
     ddl += ",\n".join(col_defs)
-    ddl += "\n);"
+    ddl += "\n) COMMENT = 'SemaBridge placeholder';"
     
     return ddl
 
@@ -285,7 +289,7 @@ def generate_create_or_replace_table_ddl(
         col_defs.append('    "ID" VARCHAR')
 
     cols_block = ",\n".join(col_defs)
-    return f'CREATE TABLE IF NOT EXISTS {schema}."{safe_table}" (\n{cols_block}\n);'
+    return f'CREATE TABLE IF NOT EXISTS {schema}."{safe_table}" (\n{cols_block}\n) COMMENT = \'SemaBridge placeholder\';'
 
 
 def generate_sample_insert(

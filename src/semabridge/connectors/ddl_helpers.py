@@ -114,7 +114,7 @@ def extract_expr_key(def_line: str) -> Optional[str]:
     match = re.search(r'(\w+)\."([^\"]+)"\s+AS\s+', def_line)
     if not match:
         return None
-    return f"{match.group(1)}.{match.group(2)}"
+    return f"{match.group(1).upper()}.{match.group(2).upper()}"
 
 
 def extract_expr_key_osi(def_line: str) -> Optional[str]:

@@ -56,6 +56,7 @@ def _ast_cache_key(
     allow_unshifted_fallback: bool = False,
     table_aliases: Optional[Dict[str, str]] = None,
     relationships: Optional[Iterable[Any]] = None,
+    current_measure_name: Optional[str] = None,
 ) -> tuple:
     items = tuple(sorted((measure_sql_map or {}).items()))
     names = tuple(sorted(known_measure_names or ()))
@@ -83,6 +84,7 @@ def _ast_cache_key(
         allow_unshifted_fallback,
         tbl_aliases,
         rel_tuple,
+        current_measure_name or "",
     )
 from semabridge.utils.naming import sanitize_column
 
@@ -201,11 +203,22 @@ class DaxLexer:
 
     def _read_column_ref(self) -> DaxToken:
         start = self.pos
-        # Consume the table name in single quotes
+        # Consume the table name in single quotes, supporting escaped quotes ''
         self.pos += 1  # skip opening '
-        while self.pos < len(self.text) and self.text[self.pos] != "'":
+        while self.pos < len(self.text):
+            if self.text[self.pos] == "'":
+                if self.pos + 1 < len(self.text) and self.text[self.pos + 1] == "'":
+                    self.pos += 2
+                    continue
+                else:
+                    self.pos += 1  # skip closing '
+                    break
             self.pos += 1
-        self.pos += 1  # skip closing '
+
+        # Optional whitespace between table name and [ColumnName]
+        while self.pos < len(self.text) and self.text[self.pos] in " \t":
+            self.pos += 1
+
         # Now consume [ColumnName]
         col_name = ""
         if self.pos < len(self.text) and self.text[self.pos] == "[":
@@ -213,7 +226,8 @@ class DaxLexer:
             while self.pos < len(self.text) and self.text[self.pos] != "]":
                 col_name += self.text[self.pos]
                 self.pos += 1
-            self.pos += 1  # skip ]
+            if self.pos < len(self.text) and self.text[self.pos] == "]":
+                self.pos += 1  # skip ]
         raw = self.text[start : self.pos]
         return DaxToken(DaxTokenType.COLUMN_REF, raw, start)
 
@@ -574,10 +588,11 @@ class DaxAstParser:
 
         if tok.type == DaxTokenType.COLUMN_REF:
             self._advance()
-            # Parse 'Table'[Column]
-            m = re.match(r"'([^']+)'\[([^\]]+)\]", tok.value)
+            # Parse 'Table'[Column] or 'Table' [Column]
+            m = re.match(r"'((?:''|[^'])+)'\s*\[([^\]]+)\]", tok.value)
             if m:
-                return ColumnRefNode(table=m.group(1), column=m.group(2), raw=tok.value)
+                tbl = m.group(1).replace("''", "'")
+                return ColumnRefNode(table=tbl, column=m.group(2), raw=tok.value)
             return IdentifierNode(name=tok.value)
 
         if tok.type == DaxTokenType.MEASURE_REF:
@@ -824,21 +839,38 @@ class DaxSqlRenderer:
         advisory_categories: Optional[List[str]] = None,
         table_aliases: Optional[Dict[str, str]] = None,
         relationships: Optional[Iterable[Any]] = None,
+        current_measure_name: Optional[str] = None,
     ) -> None:
         # Keep alias as provided (caller passes the correct form)
         self.table_alias = table_alias
         self.date_alias = date_alias
         self.measure_sql_map = measure_sql_map or {}
-        # The DAX table name (e.g. "KPI") that table_alias physically
-        # represents for this metric, if the caller knows it. None means
-        # the caller hasn't opted into table-aware column resolution yet —
-        # _resolve_table_alias then preserves the historical
-        # single-table-assumed behavior exactly, so callers that don't pass
-        # this are unaffected.
+        self.current_measure_name = current_measure_name
         self.primary_table_name = primary_table_name
+        self.relationships = relationships
+
+        resolved_date_tables = set()
+        if date_table_names:
+            resolved_date_tables.update(date_table_names)
+        else:
+            if date_alias:
+                resolved_date_tables.add(date_alias)
+            if self.relationships:
+                for rel in self.relationships:
+                    to_cols = [str(c).upper() for c in (getattr(rel, "to_columns", []) or [])]
+                    if any("DATE" in c or "TIME" in c or "DAY" in c for c in to_cols):
+                        to_ds = getattr(rel, "to_dataset", None)
+                        if to_ds:
+                            resolved_date_tables.add(to_ds)
+            if not resolved_date_tables:
+                logger.info(
+                    "No date table metadata found in AST parser; falling back to default names: %s",
+                    self._DEFAULT_DATE_TABLE_NAMES,
+                )
+                resolved_date_tables.update(self._DEFAULT_DATE_TABLE_NAMES)
+
         self._date_table_names_cf = {
-            str(n).strip().casefold()
-            for n in (date_table_names or self._DEFAULT_DATE_TABLE_NAMES)
+            str(n).strip().casefold() for n in resolved_date_tables
         }
         self.table_aliases = table_aliases or {}
         self._table_aliases_cf = {
@@ -986,25 +1018,16 @@ class DaxSqlRenderer:
 
     def _render_measure_ref(self, node: MeasureRefNode) -> str:
         name_cf = node.name.casefold()
+        if self.current_measure_name and name_cf == self.current_measure_name.casefold():
+            # An unqualified [Name] equal to the measure's own name resolves to a column
+            col = sanitize_column(node.name)
+            return f'{self.table_alias}."{col}"'
         if name_cf in self._measure_sql_map_by_casefold:
             return f"({self._measure_sql_map_by_casefold[name_cf]})"
         if name_cf in self._known_measure_names_casefold:
-            # The caller's model tracks this as a real measure name, so
-            # rendering it as a column would reference a physical column
-            # that doesn't exist (Bug: measure-references-measure leaking
-            # as a column reference). Fail closed so the caller can defer
-            # to a later pass with fuller measure context, instead of
-            # "succeeding" with wrong SQL.
             raise self.DaxRenderError(
                 f"Unresolved measure reference [{node.name}]: known measure with no resolved SQL yet"
             )
-        # The caller has no measure-registry knowledge of this name at all —
-        # the common case is a bare [Column] used as an aggregation
-        # argument (e.g. SUM([Amount])), where the parser cannot distinguish
-        # a column from a measure at the token level. Falling back to a
-        # column reference here preserves that long-standing, widely-relied
-        # upon shape; it is only wrong for genuine unresolved measure
-        # references, which are caught by the branch above instead.
         col = sanitize_column(node.name)
         return f'{self.table_alias}."{col}"'
 
@@ -1475,10 +1498,10 @@ class DaxSqlRenderer:
             if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
                 extracted_col = arg.column
                 break
-        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
+        if str(self.date_alias).upper() == "COL_DATE" and extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
             d_col = "COL_DATE"
         else:
-            d_col = extracted_col or "DATE_DATE"
+            d_col = extracted_col or "DATE"
         date_col = f'{d}."{d_col}"'
 
         # Shape-flag mode (see converter/time_intelligence_shapes.py): if the
@@ -1588,10 +1611,10 @@ class DaxSqlRenderer:
             if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
                 extracted_col = arg.column
                 break
-        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
+        if str(self.date_alias).upper() == "COL_DATE" and extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
             d_col = "COL_DATE"
         else:
-            d_col = extracted_col or "DATE_DATE"
+            d_col = extracted_col or "DATE"
         date_col = f'{d}."{d_col}"'
         # No flag column provisioned for this shape — anchor to CURRENT_DATE()
         # rather than the enriched-view-only MAX_DATE column, matching
@@ -1785,7 +1808,7 @@ class DaxSqlRenderer:
 def try_ast_translate(
     dax: str,
     table_alias: str,
-    date_alias: str = "COL_DATE",
+    date_alias: Optional[str] = None,
     measure_sql_map: Optional[Dict[str, str]] = None,
     known_measure_names: Optional[Any] = None,
     anchor_flag_map: Optional[Dict[Tuple[str, ...], str]] = None,
@@ -1795,6 +1818,7 @@ def try_ast_translate(
     advisory_categories: Optional[List[str]] = None,
     table_aliases: Optional[Dict[str, str]] = None,
     relationships: Optional[Iterable[Any]] = None,
+    current_measure_name: Optional[str] = None,
 ) -> Optional[str]:
     """
     Attempt to translate a DAX expression to Snowflake SQL via AST parsing.
@@ -1851,6 +1875,17 @@ def try_ast_translate(
     Returns:
         SQL string on success, None on failure.
     """
+    if not date_alias:
+        from semabridge.converter.dax_rule_translator import _date_alias
+        date_alias = _date_alias()
+    if not date_alias and relationships:
+        for rel in relationships:
+            to_cols = [str(c).upper() for c in (getattr(rel, "to_columns", []) or [])]
+            if any("DATE" in c or "TIME" in c or "DAY" in c for c in to_cols):
+                to_ds = getattr(rel, "to_dataset", None)
+                if to_ds:
+                    date_alias = (table_aliases or {}).get(to_ds, to_ds)
+                    break
     cache_key = _ast_cache_key(
         dax,
         table_alias,
@@ -1863,6 +1898,7 @@ def try_ast_translate(
         allow_unshifted_fallback,
         table_aliases,
         relationships,
+        current_measure_name,
     )
     if cache_key in _AST_CACHE:
         cached_sql, cached_categories = _AST_CACHE[cache_key]
@@ -1890,6 +1926,7 @@ def try_ast_translate(
         advisory_categories=advisory_categories,
         table_aliases=table_aliases,
         relationships=relationships,
+        current_measure_name=current_measure_name,
     )
     sql = renderer.render(ast)
     if len(_AST_CACHE) >= _AST_CACHE_MAX:

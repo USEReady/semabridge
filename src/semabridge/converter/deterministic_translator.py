@@ -111,7 +111,7 @@ class DeterministicTranslator:
         
         # Initialize semantic translator for multi-table support
         self.semantic_translator = get_semantic_translator(
-            base_table="SalesFact",
+            base_table="fact",
             base_alias="fact"
         )
         
@@ -348,7 +348,7 @@ class DeterministicTranslator:
         for col in referenced_columns:
             if col not in self.schema_columns:
                 # Check if it's a forbidden derived column
-                forbidden = ['TOTAL_UNITS', 'AMOUNT', 'IS_VAN_ARSDEL', 'TOTAL_REVENUE']
+                forbidden = ['TOTAL_UNITS', 'AMOUNT', 'TOTAL_REVENUE']
                 if col in forbidden:
                     issues.append(
                         f"Column '{col}' is derived/invalid - use '{self._get_base_name(col)}' from schema"

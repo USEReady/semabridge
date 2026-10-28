@@ -94,9 +94,11 @@ def _wire_stubs(emitter, monkeypatch, call_order, table_exists_flag, fact_table=
         table_exists_flag["value"] = True
 
     monkeypatch.setattr(emitter.schema_manager, "_ensure_source_tables_exist", _fake_ensure_tables)
+    monkeypatch.setattr(emitter.schema_manager, "_ensure_schema_exists", lambda cur: None)
     monkeypatch.setattr(emitter.schema_manager, "refresh_schema_cache", lambda: None)
-    monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {})
-    monkeypatch.setattr(emitter.schema_manager, "_fetch_model_table_metadata", lambda cur, datasets: {})
+    mock_meta = {"SOMEFACTTABLE": {"SOMECOLUMN", "DATE"}}
+    monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: dict(mock_meta))
+    monkeypatch.setattr(emitter.schema_manager, "_fetch_model_table_metadata", lambda cur, datasets: dict(mock_meta))
 
     def _fake_precompute_suggestions(model, cur):
         call_order.append("auto_execute_precompute_suggestions")
@@ -246,8 +248,8 @@ def test_max_date_anchor_only_queried_against_table_that_owns_it(monkeypatch):
     result_with_date = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
     result_without_date = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithoutDate")
 
-    assert result_with_date == "FactWithDate_ENRICHED"
-    assert result_without_date == "FactWithoutDate_ENRICHED"
+    assert result_with_date == "FACTWITHDATE_ENRICHED"
+    assert result_without_date == "FACTWITHOUTDATE_ENRICHED"
 
     # The core fix: no anchor query was ever fired against the table that
     # doesn't own the column — not "fired and gracefully failed", never fired.
@@ -402,7 +404,7 @@ def test_create_enriched_view_emits_flag_columns_for_discovered_shapes(monkeypat
 
     result = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
 
-    assert result == "FactWithDate_ENRICHED"
+    assert result == "FACTWITHDATE_ENRICHED"
     create_view_sql = next(sql for sql in executed_sql if "CREATE OR REPLACE VIEW" in sql.upper())
 
     # Discovered shapes: direct YTD, and the nested YTD-then-SPLY composition

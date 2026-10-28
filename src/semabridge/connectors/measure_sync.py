@@ -3,11 +3,11 @@ import logging
 import datetime
 import json
 import re
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING, TypeAlias
+from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING, TypeAlias
 
 from semabridge.utils.logger import get_logger
 from semabridge.core.exceptions import ConnectorError
-from semabridge.formats.sml.models import SMLModel, SMLMetric, DataType
+from semabridge.formats.sml.models import SMLModel, SMLDataset, SMLMetric, DataType
 from semabridge.connectors.schema_compatibility_validator import SchemaCompatibilityValidator
 
 if TYPE_CHECKING:

@@ -30,7 +30,7 @@ def generate_cortex_yaml(emitter, sml, sample_fetcher=None):
         }
     }
     for ds in sml.datasets:
-        safe_table = emitter._safe_table_name(ds.source_table or ds.unique_name)
+        safe_table = emitter._safe_table_name(getattr(ds, "label", None) or ds.unique_name)
         table_def = {
             "name": ds.unique_name,
             "base_table": {
@@ -113,7 +113,7 @@ def generate_cortex_yaml_from_osi(emitter, osi, sample_fetcher=None):
     }
 
     for ds in osi.datasets:
-        safe_table = emitter._safe_table_name(ds.source_table or ds.unique_name)
+        safe_table = emitter._safe_table_name(getattr(ds, "label", None) or ds.unique_name)
         table_def = {
             "name": ds.unique_name,
             "base_table": {

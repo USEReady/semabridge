@@ -872,7 +872,7 @@ class TestLagPeriodOfMeasureReferenceGeneralizesToAnyCombiningStructure:
             return "".join(out)
 
         sql = _convert_dateadd(sql)
-        sql = sql.replace('calendar."COL_DATE"', "combined.col_date")
+        sql = sql.replace('calendar."COL_DATE"', "combined.col_date").replace('calendar."Date"', "combined.col_date").replace('calendar."DATE"', "combined.col_date")
         sql = sql.replace('sometable."TOTAL_UNITS"', "combined.total_units")
         sql = sql.replace('sometable."VAN_UNITS"', "combined.van_units")
 
@@ -1085,9 +1085,8 @@ class TestTimeIntelligenceAnchorsUseNativeExpressionsNotSyntheticColumns:
         )
         result = translate_rolling_12_months(dax, "sometable")
         assert result is not None
-        assert "MAX_MONTHINDEX" not in result.upper()
-        assert "EXTRACT(YEAR FROM CURRENT_DATE())" in result
-        assert "EXTRACT(MONTH FROM CURRENT_DATE())" in result
+        # Rolling 12 months now translates via data-independent IS_R12M flag column
+        assert 'sometable."IS_R12M"' in result
         assert "SOMECOLUMN" in result.upper()
 
 
@@ -1526,41 +1525,40 @@ class TestMeasureReferenceMatchingIsCaseInsensitive:
 
 
 class TestDateAliasDefaultMatchesEstablishedSnowflakeConvention:
-    """The Date/Calendar dimension's default alias must be consistent
-    everywhere it's assumed, not guessed separately per module. Before this
-    fix, dax_translator.py/dax_ast_parser.py defaulted to "CALENDAR" while
-    dax_rule_translator.py's own _date_alias() (and the Snowflake emitter's
-    "Map common DAX name -> physical name (e.g. Date -> COL_DATE)" naming
-    convention) already used "COL_DATE" — so a TOTALYTD/SAMEPERIODLASTYEAR
-    expression resolved through the AST renderer produced SQL referencing a
-    table alias ("CALENDAR") the deployed semantic view never declares,
-    silently rejected at DDL-emission time in favor of CAST(NULL AS DOUBLE).
-    """
+    """The Date/Calendar dimension alias uses the model's date table metadata first,
+    with no hardcoded COL_DATE default when unconfigured."""
 
-    def test_dax_translator_default_date_alias_is_col_date(self):
+    def test_dax_translator_no_default_col_date_without_model(self):
         translator = DAXTranslator()
-        assert translator._get_date_alias() == "COL_DATE"
+        assert translator._get_date_alias() is None
 
-    def test_try_ast_translate_default_date_alias_is_col_date(self):
+    def test_dax_translator_uses_model_date_table(self):
+        from types import SimpleNamespace
+        date_ds = SimpleNamespace(unique_name="Periods", is_date_table=True, columns=[])
+        model = SimpleNamespace(datasets=[date_ds], relationships=[])
+        translator = DAXTranslator(model=model)
+        assert translator._get_date_alias() == "Periods"
+
+    def test_try_ast_translate_with_date_alias(self):
         from semabridge.converter.dax_ast_parser import try_ast_translate
 
         dax = "TOTALYTD(SUM('SomeTable'[SomeColumn]), 'Date'[Date])"
-        sql = try_ast_translate(dax, table_alias="fact")
+        sql = try_ast_translate(dax, table_alias="fact", date_alias="Periods")
 
         assert sql is not None
-        assert 'COL_DATE."COL_DATE"' in sql, (
-            f"expected the default date alias to be COL_DATE, not CALENDAR: {sql!r}"
-        )
+        assert 'Periods.' in sql
         assert "CALENDAR" not in sql.upper()
 
-    def test_full_translator_totalytd_uses_col_date_alias_by_default(self):
-        translator = DAXTranslator()
+    def test_full_translator_totalytd_uses_model_date_alias(self):
+        from types import SimpleNamespace
+        date_ds = SimpleNamespace(unique_name="Periods", is_date_table=True, columns=[])
+        model = SimpleNamespace(datasets=[date_ds], relationships=[])
+        translator = DAXTranslator(model=model)
         dax = "TOTALYTD(SUM('SomeTable'[SomeColumn]), 'Date'[Date])"
         result = translator.translate(dax, "fact", "SomeTable")
 
         assert result.is_success, f"expected translation to succeed, got sql={result.sql!r}"
-        assert 'COL_DATE."COL_DATE"' in result.sql
-        assert "CALENDAR" not in result.sql.upper()
+        assert 'Periods.' in result.sql
 
 
 class TestTimeIntelligenceCarriesADateRangeFilter:

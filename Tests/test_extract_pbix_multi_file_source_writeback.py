@@ -18,7 +18,7 @@ class _FakeEngine:
 
 def _stub_connector(monkeypatch, tmsl):
     class _FakeConnector:
-        def __init__(self, cfg):
+        def __init__(self, cfg, *args, **kwargs):
             self.cfg = cfg
 
         def discover(self):

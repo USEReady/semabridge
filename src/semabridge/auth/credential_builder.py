@@ -63,6 +63,10 @@ _PROJECT_TARGET_FIELDS = (
     ("database", "database"),
     ("schema", "schema_name"),
     ("schema_name", "schema_name"),
+    ("source_data_schema", "source_data_schema"),
+    ("source-data-schema", "source_data_schema"),
+    ("data_schema", "source_data_schema"),
+    ("source_schema", "source_data_schema"),
     ("warehouse", "warehouse"),
     ("role", "role"),
 )
@@ -76,14 +80,29 @@ def project_snowflake_target(config: object) -> dict[str, str]:
     Only non-empty values are returned, and only for a Snowflake (or untyped)
     target. Empty dict when the project configured none of them.
     """
+    out: dict[str, str] = {}
+    options = getattr(config, "options", None)
+    if isinstance(options, dict) and "source_data_schema" in options:
+        val = str(options["source_data_schema"] or "").strip()
+        if val:
+            out["source_data_schema"] = val
+    elif hasattr(options, "source_data_schema"):
+        val = str(getattr(options, "source_data_schema", "") or "").strip()
+        if val:
+            out["source_data_schema"] = val
+
+    if hasattr(config, "source_data_schema"):
+        val = str(getattr(config, "source_data_schema", "") or "").strip()
+        if val:
+            out["source_data_schema"] = val
+
     target = getattr(config, "target", None)
     if target is None:
-        return {}
+        return out
     get = target.get if isinstance(target, dict) else (lambda key, default=None: getattr(target, key, default))
     target_type = str(get("type", "") or "").strip().lower()
     if target_type and target_type not in ("snowflake", "snowflake_semantic_view"):
-        return {}
-    out: dict[str, str] = {}
+        return out
     for yaml_key, field_name in _PROJECT_TARGET_FIELDS:
         value = str(get(yaml_key, "") or "").strip()
         if value and field_name not in out:
@@ -187,6 +206,7 @@ def build_snowflake_config(
         warehouse=project_fields.get("warehouse") or env_map.get("SNOWFLAKE_WAREHOUSE") or base_config.warehouse,
         database=project_fields.get("database") or env_map.get("SNOWFLAKE_DATABASE") or base_config.database,
         schema_name=project_fields.get("schema_name") or base_config.schema_name,
+        source_data_schema=project_fields.get("source_data_schema") or base_config.source_data_schema,
         strict_osi_validation=env_map.get("SNOWFLAKE_STRICT_OSI_VALIDATION") == "true" or base_config.strict_osi_validation,
         role=project_fields.get("role") or env_map.get("SNOWFLAKE_ROLE") or base_config.role,
         # Passthrough — always from base config
