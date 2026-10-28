@@ -1,0 +1,146 @@
+{
+ "F10.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "several values -> alternate (never ANY_VALUE)",
+  "ddl_sql": "IFF(COUNT(DISTINCT SLIDER_VALUES_D8.LEVEL_P1) + MAX(IFF(SLIDER_VALUES_D8.LEVEL_P1 IS NULL, 1, 0)) = 1, MAX(SLIDER_VALUES_D8.LEVEL_P1), 0)"
+ },
+ "F10.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "exactly one value -> that value",
+  "ddl_sql": "IFF(COUNT(DISTINCT SINGLE_PICK_P7.LEVEL_P1) + MAX(IFF(SINGLE_PICK_P7.LEVEL_P1 IS NULL, 1, 0)) = 1, MAX(SINGLE_PICK_P7.LEVEL_P1), 0)"
+ },
+ "F10.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "one number + blank -> alternate (blank counts as a value)",
+  "ddl_sql": "IFF(COUNT(DISTINCT HOLES_AND_NUMS_A8.LEVEL_P1) + MAX(IFF(HOLES_AND_NUMS_A8.LEVEL_P1 IS NULL, 1, 0)) = 1, MAX(HOLES_AND_NUMS_A8.LEVEL_P1), 0)"
+ },
+ "F10.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "what-if measure used in another measure -> default constant",
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.UNITS_P4::FLOAT) * (1 + (0) / 100)"
+ },
+ "F10.5": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "same, measure referenced without table prefix",
+  "ddl_sql": "(SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) + (SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)) * (0) / 100"
+ },
+ "F11.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "declared on a dimension, data from the fact",
+  "ddl_sql": "SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)"
+ },
+ "F11.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "declared on a dimension, built from fact measures",
+  "ddl_sql": "COALESCE((SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8::FLOAT)), 0), 0)"
+ },
+ "F11.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "measure table + filter on a related dimension",
+  "ddl_sql": "SUM(CASE WHEN SKU_MASTER_D8.SEGMENT_T4 = 'Hardware' THEN TRANSACTIONS_LOG_V2.UNITS_P4 ELSE 0 END::FLOAT)"
+ },
+ "F12.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "filter on the dimension KEY -> fact foreign key",
+  "ddl_sql": "SUM(CASE WHEN SKU_MASTER_D8.SKU_ID_A1 = 2 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)"
+ },
+ "F12.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "filter on a dimension ATTRIBUTE",
+  "ddl_sql": "SUM(CASE WHEN SKU_MASTER_D8.SEGMENT_T4 = 'Software' THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)"
+ },
+ "F12.3": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "two fixed-key filters subtracted with ISBLANK guards",
+  "ddl_sql": "CASE WHEN ((AVG(CASE WHEN SKU_MASTER_D8.SKU_ID_A1 = 1 THEN TRANSACTIONS_LOG_V2.UNIT_RATE_A9 END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN SKU_MASTER_D8.SKU_ID_A1 = 3 THEN TRANSACTIONS_LOG_V2.UNIT_RATE_A9 END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN SKU_MASTER_D8.SKU_ID_A1 = 1 THEN TRANSACTIONS_LOG_V"
+ },
+ "F12.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "filter on a date-dimension attribute (active relationship)",
+  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1.COL_ORBIT_G7 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 ELSE 0 END::FLOAT)"
+ }
+}

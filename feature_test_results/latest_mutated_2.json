@@ -1,0 +1,387 @@
+{
+ "F1.1": {
+  "status": "PASS",
+  "msg": "2.0 == 2.0",
+  "sql": "COUNT(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Open' THEN fctsalesc2.\"TXN_ID_R9\" END)",
+  "title": "-- comment inside a FILTER",
+  "solution": ""
+ },
+ "F1.2": {
+  "status": "PASS",
+  "msg": "29.0 == 29.0",
+  "sql": "SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT)",
+  "title": "// and /* */ comments",
+  "solution": ""
+ },
+ "F1.3": {
+  "status": "PASS",
+  "msg": "4.0 == 4.0",
+  "sql": "COUNT(CASE WHEN fctsalesc2.\"RUSH_FLAG_R7\" = TRUE THEN 1 END)",
+  "title": "TRUE() in a boolean filter",
+  "solution": ""
+ },
+ "F1.4": {
+  "status": "PASS",
+  "msg": "6.0 == 6.0",
+  "sql": "COUNT(CASE WHEN fctsalesc2.\"RUSH_FLAG_R7\" = FALSE THEN 1 END)",
+  "title": "FALSE() in a boolean filter",
+  "solution": ""
+ },
+ "F1.5": {
+  "status": "PASS",
+  "msg": "0.5 == 0.5",
+  "sql": "ROUND(AVG(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) / 2, 1) - 1",
+  "title": "trailing -1 after a function",
+  "solution": ""
+ },
+ "F1.6": {
+  "status": "PASS",
+  "msg": "12.810344827586206 == 12.810344827586206",
+  "sql": "IFF(COALESCE(SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) / (SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT))) - 1",
+  "title": "DIVIDE(...)-1 (variance %)",
+  "solution": ""
+ },
+ "F1.7": {
+  "status": "PASS",
+  "msg": "-29.0 == -29.0",
+  "sql": "CASE WHEN SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) > 0 THEN -1 * SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) ELSE -1 END",
+  "title": "negative literal after an operator / comma",
+  "solution": ""
+ },
+ "F1.8": {
+  "status": "PASS",
+  "msg": "rejected",
+  "sql": null,
+  "title": "leftover tokens must fail, not return partial SQL",
+  "solution": ""
+ },
+ "F2.1": {
+  "status": "PASS",
+  "msg": "14.0 == 14.0",
+  "sql": "ROUND(AVG(fctsalesc2.\"LIST_PRICE_U3\"::FLOAT), 0)",
+  "title": "bare [Column] inside a nested function",
+  "solution": ""
+ },
+ "F2.2": {
+  "status": "PASS",
+  "msg": "279.5 == 279.5",
+  "sql": "SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
+  "title": "measure on an empty measure table keeps the DAX table",
+  "solution": ""
+ },
+ "F2.3": {
+  "status": "PASS",
+  "msg": "13.7 == 13.7",
+  "sql": "AVG(fctsalesc2.\"COST_PER_UNIT_PCT_M3\")",
+  "title": "column name with spaces and special characters",
+  "solution": ""
+ },
+ "F2.4": {
+  "status": "PASS",
+  "msg": "566.5 == 566.5",
+  "sql": "SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) + SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT) + SUM(fctsalesc2.\"LIST_PRICE_U3\"::FLOAT)",
+  "title": "several SUMs of different columns added together",
+  "solution": ""
+ },
+ "F3.1": {
+  "status": "PASS",
+  "msg": "400.5 == 400.5",
+  "sql": "SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\" * fctsalesc2.\"LIST_PRICE_U3\"::FLOAT)",
+  "title": "SUMX over the own table",
+  "solution": ""
+ },
+ "F3.2": {
+  "status": "PASS",
+  "msg": "279.5 == 279.5",
+  "sql": "SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
+  "title": "CALCULATE(SUMX, FILTER(own table))",
+  "solution": ""
+ },
+ "F3.3": {
+  "status": "PASS",
+  "msg": "6.0 == 6.0",
+  "sql": "COUNT(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Sold' THEN fctsalesc2.\"TXN_ID_R9\" END)",
+  "title": "COUNTAX(FILTER(KEEPFILTERS(...)))",
+  "solution": ""
+ },
+ "F3.4": {
+  "status": "PASS",
+  "msg": "10.0 == 10.0",
+  "sql": "COUNT(*)",
+  "title": "COUNTAX(table, TRUE()) = row count",
+  "solution": ""
+ },
+ "F3.5": {
+  "status": "PASS",
+  "msg": "10.0 == 10.0",
+  "sql": "COUNT(*)",
+  "title": "COUNTROWS(table)",
+  "solution": ""
+ },
+ "F3.6": {
+  "status": "PASS",
+  "msg": "7.0 == 7.0",
+  "sql": "COUNT(CASE WHEN (fctsalesc2.\"DISPATCH_DATE_T9\" IS NOT NULL) THEN fctsalesc2.\"TXN_ID_R9\" END)",
+  "title": "CALCULATE(COUNT, FILTER(NOT(ISBLANK(...))))",
+  "solution": ""
+ },
+ "F3.7": {
+  "status": "PASS",
+  "msg": "3.0 == 3.0",
+  "sql": "COUNT(CASE WHEN (fctsalesc2.\"DISPATCH_DATE_T9\" IS NULL) THEN fctsalesc2.\"TXN_ID_R9\" END)",
+  "title": "CALCULATE(COUNT, FILTER(ISBLANK(...)))",
+  "solution": ""
+ },
+ "F3.8": {
+  "status": "PASS",
+  "msg": "4.571428571428571 == 4.571428571428571",
+  "sql": "AVG(DATEDIFF(DAY, fctsalesc2.\"PLACED_ON_T9\", fctsalesc2.\"DISPATCH_DATE_T9\")::FLOAT)",
+  "title": "AVERAGEX with DATEDIFF",
+  "solution": ""
+ },
+ "F3.9": {
+  "status": "PASS",
+  "msg": "83.0 == 83.0",
+  "sql": "MAX(fctsalesc2.\"QUANTITY_SOLD_Q9\" * fctsalesc2.\"LIST_PRICE_U3\") - MIN(fctsalesc2.\"LIST_PRICE_U3\")",
+  "title": "MAXX / MINX",
+  "solution": ""
+ },
+ "F4.1": {
+  "status": "PASS",
+  "msg": "13.810344827586206 == 13.810344827586206",
+  "sql": "((SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT))) / NULLIF((SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT)), 0)",
+  "title": "two variables, DIVIDE in RETURN",
+  "solution": ""
+ },
+ "F4.2": {
+  "status": "PASS",
+  "msg": "838.5 == 838.5",
+  "sql": "((SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)) * 2) + (SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT))",
+  "title": "variable using another variable",
+  "solution": ""
+ },
+ "F5.1": {
+  "status": "PASS",
+  "msg": "161.0 == 161.0",
+  "sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(fctsalesc2.\"FUNNEL_STEP_T6\", 1)) >= 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
+  "title": "VALUE(LEFT(...)) inside a filter",
+  "solution": ""
+ },
+ "F5.2": {
+  "status": "PASS",
+  "msg": "400.0 == 400.0",
+  "sql": "ROUND((SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) / (100)) * (100)",
+  "title": "MROUND",
+  "solution": ""
+ },
+ "F5.3": {
+  "status": "PASS",
+  "msg": "27.0 == 27.0",
+  "sql": "SIGN(AVG(fctsalesc2.\"LIST_PRICE_U3\"::FLOAT)) * CEIL(ABS(AVG(fctsalesc2.\"LIST_PRICE_U3\"::FLOAT)), 0) + SIGN(AVG(fctsalesc2.\"LIST_PRICE_U3\"::FLOAT)) * FLOOR(ABS(AVG(fctsalesc2.\"LIST_PRICE_U3\"::FLOAT)), 0)",
+  "title": "ROUNDUP / ROUNDDOWN",
+  "solution": ""
+ },
+ "F5.4": {
+  "status": "PASS",
+  "msg": "0.0 == 0.0",
+  "sql": "IFF(COALESCE(SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Missing' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT), 0) = 0, 0, (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) / (SUM(CASE WHEN fctsalesc2.\"STAGE_FLAG_R6\" = 'Missing' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" END::FLOAT)))",
+  "title": "DIVIDE with alternate result on zero",
+  "solution": ""
+ },
+ "F6.1": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "text label",
+  "solution": ""
+ },
+ "F6.2": {
+  "status": "FAIL",
+  "msg": "translated to a metric although it is text",
+  "sql": "CASE WHEN SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) > 10 THEN '#00FF00' ELSE '#FF0000' END",
+  "title": "colour string",
+  "solution": ""
+ },
+ "F6.3": {
+  "status": "FAIL",
+  "msg": "translated to a metric although it is what-if",
+  "sql": "IFF(COUNT(DISTINCT whatifpctv3.\"PCT_VALUE_S5\") + MAX(IFF(whatifpctv3.\"PCT_VALUE_S5\" IS NULL, 1, 0)) = 1, MAX(whatifpctv3.\"PCT_VALUE_S5\"), 0) / 100",
+  "title": "what-if slicer value",
+  "solution": ""
+ },
+ "F6.4": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "ranking",
+  "solution": ""
+ },
+ "F6.5": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "share of total (ALL)",
+  "solution": ""
+ },
+ "F10.1": {
+  "status": "PASS",
+  "msg": "0.0 == 0.0",
+  "sql": "IFF(COUNT(DISTINCT whatifpctv3.\"PCT_VALUE_S5\") + MAX(IFF(whatifpctv3.\"PCT_VALUE_S5\" IS NULL, 1, 0)) = 1, MAX(whatifpctv3.\"PCT_VALUE_S5\"), 0)",
+  "title": "several values -> alternate (never ANY_VALUE)",
+  "solution": ""
+ },
+ "F10.2": {
+  "status": "PASS",
+  "msg": "5.0 == 5.0",
+  "sql": "IFF(COUNT(DISTINCT onevaluetblx7.\"PCT_VALUE_S5\") + MAX(IFF(onevaluetblx7.\"PCT_VALUE_S5\" IS NULL, 1, 0)) = 1, MAX(onevaluetblx7.\"PCT_VALUE_S5\"), 0)",
+  "title": "exactly one value -> that value",
+  "solution": ""
+ },
+ "F10.3": {
+  "status": "PASS",
+  "msg": "0.0 == 0.0",
+  "sql": "IFF(COUNT(DISTINCT holesnumst6.\"PCT_VALUE_S5\") + MAX(IFF(holesnumst6.\"PCT_VALUE_S5\" IS NULL, 1, 0)) = 1, MAX(holesnumst6.\"PCT_VALUE_S5\"), 0)",
+  "title": "one number + blank -> alternate (blank counts as a value)",
+  "solution": ""
+ },
+ "F10.4": {
+  "status": "PASS",
+  "msg": "29.0 == 29.0",
+  "sql": "SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"::FLOAT) * (1 + (0) / 100)",
+  "title": "what-if measure used in another measure -> default constant",
+  "solution": ""
+ },
+ "F10.5": {
+  "status": "PASS",
+  "msg": "400.5 == 400.5",
+  "sql": "(SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) + (SUM(fctsalesc2.\"NET_AMT_DOL_H1\"::FLOAT)) * (0) / 100",
+  "title": "same, measure referenced without table prefix",
+  "solution": ""
+ },
+ "F7.1": {
+  "status": "PASS",
+  "msg": "371.5 == 371.5",
+  "sql": "(SUM(fctsalesc2.\"NET_AMT_DOL_H1\")) - (SUM(fctsalesc2.\"QUANTITY_SOLD_Q9\"))",
+  "title": "arithmetic over two base measures",
+  "solution": ""
+ },
+ "F7.2": {
+  "status": "PASS",
+  "msg": "0.6978776529338327 == 0.6978776529338327",
+  "sql": "COALESCE((SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)) / NULLIF((SUM(fctsalesc2.\"NET_AMT_DOL_H1\")), 0), 0)",
+  "title": "ratio over a base measure that lives on the measure table",
+  "solution": ""
+ },
+ "F11.1": {
+  "status": "PASS",
+  "msg": "400.5 == 400.5",
+  "sql": "SUM(fctsalesc2.\"NET_AMT_DOL_H1\")",
+  "title": "declared on a dimension, data from the fact",
+  "solution": "Anchor = the table the physical columns come from (after inlining measures), never the DAX home table. Apply in translation AND at DDL emission."
+ },
+ "F11.2": {
+  "status": "PASS",
+  "msg": "0.6978776529338327 == 0.6978776529338327",
+  "sql": "COALESCE((SUM(CASE WHEN fctsalesc2.STAGE_FLAG_R6 = 'Sold' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)) / NULLIF((SUM(fctsalesc2.\"NET_AMT_DOL_H1\")), 0), 0)",
+  "title": "declared on a dimension, built from fact measures",
+  "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
+ },
+ "F11.3": {
+  "status": "PASS",
+  "msg": "10.0 == 10.0",
+  "sql": "SUM(CASE WHEN skumasterf5.SEGMENT_F7 = 'Hardware' THEN fctsalesc2.\"QUANTITY_SOLD_Q9\" ELSE 0 END)",
+  "title": "measure table + filter on a related dimension",
+  "solution": "Anchor on the fact (Orders): it reaches Product through a many-to-one relationship, so the dimension filter is valid there (join or enriched copy)."
+ },
+ "F12.1": {
+  "status": "PASS",
+  "msg": "110.0 == 110.0",
+  "sql": "SUM(CASE WHEN skumasterf5.SKU_ID_B1 = 2 THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
+  "title": "filter on the dimension KEY -> fact foreign key",
+  "solution": "If the filtered column is the 'to' key of a relationship fact->dim, rewrite the condition onto the fact's 'from' column (same table, no join)."
+ },
+ "F12.2": {
+  "status": "PASS",
+  "msg": "279.0 == 279.0",
+  "sql": "SUM(CASE WHEN skumasterf5.SEGMENT_F7 = 'Software' THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
+  "title": "filter on a dimension ATTRIBUTE",
+  "solution": "Non-key attribute of a related dimension (reachable many-to-one): use the enriched copy <DIM>_<COLUMN> on the fact, or the dimension column through the relationship. Unreachable -> NULL + reason."
+ },
+ "F12.3": {
+  "status": "PASS",
+  "msg": "-6.291666666666668 == -6.291666666666668",
+  "sql": "CASE WHEN ((AVG(CASE WHEN skumasterf5.\"SKU_ID_B1\" = 1 THEN fctsalesc2.\"LIST_PRICE_U3\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN skumasterf5.\"SKU_ID_B1\" = 3 THEN fctsalesc2.\"LIST_PRICE_U3\" END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN skumasterf5.\"SKU_ID_B1\" = 1 THEN fctsalesc2.\"LIST_PRICE_U3\" END::FLOAT) - AVG(CASE WHEN skumasterf5.\"SKU_ID_B1\" = 3 THEN fctsalesc2.\"LIST_PRICE_U3\" END::FLOAT) ELSE NULL END",
+  "title": "two fixed-key filters subtracted with ISBLANK guards",
+  "solution": "Same key rewrite inside each CALCULATE; NOT ISBLANK(x) -> x IS NOT NULL; IF without else -> NULL."
+ },
+ "F12.4": {
+  "status": "PASS",
+  "msg": "90.0 == 90.0",
+  "sql": "SUM(CASE WHEN tblomegak9.COL_ALPHA_Q1 = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
+  "title": "filter on a date-dimension attribute (active relationship)",
+  "solution": "Date dimension attribute through the ACTIVE relationship (Order Date): enriched copy or join."
+ },
+ "F13.1": {
+  "status": "FAIL",
+  "msg": "fail: ",
+  "sql": null,
+  "title": "USERELATIONSHIP on the inactive date path",
+  "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
+ },
+ "F13.2": {
+  "status": "FAIL",
+  "msg": "fail: ",
+  "sql": null,
+  "title": "USERELATIONSHIP with a row count",
+  "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
+ },
+ "F13.3": {
+  "status": "FAIL",
+  "msg": "value 31.0, expected 2.0",
+  "sql": "COUNT(CASE WHEN tblomegak9.\"COL_ALPHA_Q1\" = 1 THEN 1 END)",
+  "title": "without USERELATIONSHIP the ACTIVE path is used",
+  "solution": "The alias must not change measures that do not ask for it."
+ },
+ "F14.1": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "ALL(dimension table) in the denominator",
+  "solution": "Until window metrics are available: CAST(NULL AS DOUBLE) + reason 'needs window metric'. Never drop silently, never emit a constant (1.0 is only right at grand total)."
+ },
+ "F14.2": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "ALL(one column) with measure references",
+  "solution": "Same as F14.1."
+ },
+ "F15.1": {
+  "status": "PASS",
+  "msg": "4.0 == 4.0",
+  "sql": "COUNT(tblprismv7.\"COL_BRAVO_B1\")",
+  "title": "closing balance (value at the last period)",
+  "solution": "FILTER(ALL(T[p]), T[p] = MAX(T[p])) -> plain aggregate + NON ADDITIVE BY (T.p, direction proven to take the LAST period)."
+ },
+ "F15.2": {
+  "status": "PASS",
+  "msg": "3.0 == 3.0",
+  "sql": "COUNT(CASE WHEN (tblprismv7.\"COL_OMEGA_V4\" IS NULL) THEN tblprismv7.\"COL_BRAVO_B1\" ELSE NULL END)",
+  "title": "filtered closing balance (actives)",
+  "solution": "A filter on top of a non-additive measure keeps its NON ADDITIVE BY."
+ },
+ "F15.3": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "ratio over a non-additive measure",
+  "solution": "Never inline a non-additive metric's SQL into another metric (loses NON ADDITIVE BY -> counts every period). Reference the metric by name if supported, else CAST(NULL) + reason."
+ },
+ "F15.4": {
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "sql": null,
+  "title": "arithmetic between two non-additive measures",
+  "solution": "Same as F15.3."
+ }
+}
