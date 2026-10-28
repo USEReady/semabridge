@@ -81,7 +81,7 @@
    "DDL": "REAL"
   },
   "title": "TRUE() in a boolean filter",
-  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = TRUE THEN 1 END)"
+  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = TRUE THEN ORDERS.ORDERID END)"
  },
  "F1.4": {
   "status": "PASS",
@@ -93,7 +93,7 @@
    "DDL": "REAL"
   },
   "title": "FALSE() in a boolean filter",
-  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = FALSE THEN 1 END)"
+  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = FALSE THEN ORDERS.ORDERID END)"
  },
  "F1.5": {
   "status": "PASS",
@@ -349,15 +349,15 @@
  },
  "F6.3": {
   "status": "FAIL",
-  "msg": "emitted as NULL metric",
+  "msg": "emitted as REAL metric",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": false,
-   "DDL": "NULL"
+   "SML_SQL": true,
+   "DDL": "REAL"
   },
   "title": "what-if slicer value",
-  "ddl_sql": "CAST(NULL AS DOUBLE)"
+  "ddl_sql": "IFF(COUNT(DISTINCT PARAM.COL_VALUE) + MAX(IFF(PARAM.COL_VALUE IS NULL, 1, 0)) = 1, MAX(PARAM.COL_VALUE), 0) / 100"
  },
  "F6.4": {
   "status": "FAIL",
@@ -372,20 +372,20 @@
   "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F6.5": {
-  "status": "PASS",
-  "msg": "not emitted",
+  "status": "FAIL",
+  "msg": "emitted as NULL metric",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": false,
-   "DDL": "MISSING"
+   "DDL": "NULL"
   },
   "title": "share of total (ALL)",
-  "ddl_sql": null
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F7.1": {
-  "status": "FAIL",
-  "msg": "DDL value 18.0, expected 371.5",
+  "status": "PASS",
+  "msg": "",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -393,11 +393,11 @@
    "DDL": "REAL"
   },
   "title": "arithmetic over two base measures",
-  "ddl_sql": "ORDERS.AMOUNT - ORDERS.QTY"
+  "ddl_sql": "(SUM(ORDERS.AMOUNT::FLOAT)) - (SUM(ORDERS.QTY::FLOAT))"
  },
  "F7.2": {
-  "status": "FAIL",
-  "msg": "DDL SQL does not run: Binder Error: column \"AMOUNT\" must appear in the GROUP BY clause or must be part of an aggregate function.",
+  "status": "PASS",
+  "msg": "",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -405,7 +405,7 @@
    "DDL": "REAL"
   },
   "title": "ratio over a base measure that lives on the measure table",
-  "ddl_sql": "IFF(COALESCE(ORDERS.AMOUNT, 0) = 0, 0, ((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT))) / (ORDERS.AMOUNT))"
+  "ddl_sql": "COALESCE((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)) / NULLIF((SUM(ORDERS.AMOUNT::FLOAT)), 0), 0)"
  },
  "F1.9": {
   "status": "PASS",
@@ -622,5 +622,77 @@
   },
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "ddl_sql": "COUNT(CASE WHEN CALENDAR.MONTH_NO = 1 THEN ORDERS.ORDERID END)"
+ },
+ "F14.1": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "MISSING"
+  },
+  "title": "ALL(dimension table) in the denominator",
+  "ddl_sql": null
+ },
+ "F14.2": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "MISSING"
+  },
+  "title": "ALL(one column) with measure references",
+  "ddl_sql": null
+ },
+ "F15.1": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "closing balance (value at the last period)",
+  "ddl_sql": "COUNT(SNAPSHOT.EMP_ID)"
+ },
+ "F15.2": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "filtered closing balance (actives)",
+  "ddl_sql": "COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NULL) THEN SNAPSHOT.EMP_ID ELSE NULL END)"
+ },
+ "F15.3": {
+  "status": "FAIL",
+  "msg": "emitted as REAL metric",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "ratio over a non-additive measure",
+  "ddl_sql": "(COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NOT NULL) THEN SNAPSHOT.EMP_ID END)) / NULLIF((COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NULL) THEN SNAPSHOT.EMP_ID ELSE NULL END)), 0)"
+ },
+ "F15.4": {
+  "status": "FAIL",
+  "msg": "emitted as REAL metric",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "arithmetic between two non-additive measures",
+  "ddl_sql": "(COUNT(SNAPSHOT.EMP_ID)) - (COUNT(CASE WHEN (SNAPSHOT.END_DATE IS NULL) THEN SNAPSHOT.EMP_ID ELSE NULL END))"
  }
 }

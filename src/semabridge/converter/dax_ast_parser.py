@@ -4679,9 +4679,9 @@ _CONTEXT_TRANSITION_REASON = (
 
     "DAX ALLEXCEPT/ALL requires re-partitioning the aggregate "
 
-    "independently of the query's own grouping (a SQL window "
+    "independently of the query's own grouping (needs window metric) — "
 
-    "function) — Snowflake's semantic-view METRICS clause does not "
+    "Snowflake's semantic-view METRICS clause does not "
 
     "support window functions, and no derived-metric/precomputed-"
 
@@ -4733,7 +4733,7 @@ def _calculate_has_direct_all_or_allexcept_modifier(node: DaxNode) -> bool:
 
             for filter_arg in node.args[1:]:
 
-                if isinstance(filter_arg, FunctionCallNode) and filter_arg.func.upper() in ("ALL", "ALLEXCEPT"):
+                if isinstance(filter_arg, FunctionCallNode) and filter_arg.func.upper() in ("ALL", "ALLEXCEPT", "ALLSELECTED"):
 
                     return True
 

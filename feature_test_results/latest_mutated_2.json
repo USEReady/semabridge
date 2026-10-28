@@ -189,8 +189,8 @@
   "solution": ""
  },
  "F6.1": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: Expression root operation produces string, not numeric aggregate",
   "sql": null,
   "title": "text label",
   "solution": ""
@@ -217,8 +217,8 @@
   "solution": ""
  },
  "F6.5": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
   "sql": null,
   "title": "share of total (ALL)",
   "solution": ""
@@ -343,15 +343,15 @@
   "solution": "The alias must not change measures that do not ask for it."
  },
  "F14.1": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
   "sql": null,
   "title": "ALL(dimension table) in the denominator",
   "solution": "Until window metrics are available: CAST(NULL AS DOUBLE) + reason 'needs window metric'. Never drop silently, never emit a constant (1.0 is only right at grand total)."
  },
  "F14.2": {
-  "status": "WARN",
-  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
+  "status": "PASS",
+  "msg": "excluded: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently of the qu",
   "sql": null,
   "title": "ALL(one column) with measure references",
   "solution": "Same as F14.1."

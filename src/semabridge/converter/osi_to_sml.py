@@ -452,6 +452,7 @@ class OSIToSMLConverter(BaseConverter):
                 BY_DESIGN_EXCLUDED_PREFIX,
                 dax_has_zero_data_dependencies,
                 dax_root_is_string_producing,
+                dax_context_transition_failure_reason,
             )
             by_design_reason = None
             if dax_has_zero_data_dependencies(expression):
@@ -466,6 +467,10 @@ class OSIToSMLConverter(BaseConverter):
                     "string value, not a numeric aggregate — Snowflake "
                     "semantic-view metrics must be aggregate expressions. This "
                     "field should be modeled as a dimension attribute instead."
+                )
+            elif dax_context_transition_failure_reason(expression):
+                by_design_reason = (
+                    f"{BY_DESIGN_EXCLUDED_PREFIX}: {dax_context_transition_failure_reason(expression)}"
                 )
             if by_design_reason:
                 sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)

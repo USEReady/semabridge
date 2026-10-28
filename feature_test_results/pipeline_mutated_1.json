@@ -178,5 +178,29 @@
   },
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1.COL_ORBIT_G7 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+ },
+ "F14.1": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "MISSING"
+  },
+  "title": "ALL(dimension table) in the denominator",
+  "ddl_sql": null
+ },
+ "F14.2": {
+  "status": "PASS",
+  "msg": "not emitted",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": false,
+   "DDL": "MISSING"
+  },
+  "title": "ALL(one column) with measure references",
+  "ddl_sql": null
  }
 }

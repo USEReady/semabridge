@@ -543,6 +543,31 @@ class DAXTranslator:
 
         clean_dax = dax.strip()
 
+        from semabridge.converter.dax_ast_parser import (
+            dax_context_transition_failure_reason,
+            dax_has_zero_data_dependencies,
+            dax_root_is_string_producing,
+        )
+        context_transition_reason = dax_context_transition_failure_reason(clean_dax)
+        if context_transition_reason:
+            return DAXTranslationResult(
+                None, 4, clean_dax,
+                failure_reason=context_transition_reason,
+                sync_enabled=False,
+            )
+        if dax_has_zero_data_dependencies(clean_dax):
+            return DAXTranslationResult(
+                None, 4, clean_dax,
+                failure_reason="Expression has no data dependencies (compile-time constant)",
+                sync_enabled=False,
+            )
+        if dax_root_is_string_producing(clean_dax):
+            return DAXTranslationResult(
+                None, 4, clean_dax,
+                failure_reason="Expression root operation produces string, not numeric aggregate",
+                sync_enabled=False,
+            )
+
 
 
         def _wrap_res(result: Optional[DAXTranslationResult]) -> DAXTranslationResult:
