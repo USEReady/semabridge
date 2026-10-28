@@ -407,5 +407,12 @@
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."
+ },
+ "F13.4": {
+  "status": "PASS",
+  "msg": "30.0 == 30.0",
+  "sql": "SUM(CASE WHEN dim_and_dates_pct_dolship_and_pct_date.\"MONTH_AND_PCT\" = 3 THEN orders.\"AMOUNT\" END::FLOAT)",
+  "title": "USERELATIONSHIP with special characters in dim and FK",
+  "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
  }
 }

@@ -1,6 +1,7 @@
 """Tables clause builder for Snowflake semantic views."""
 
 from __future__ import annotations
+from semabridge.utils.identifiers import inactive_alias
 
 from typing import Any, Dict, List, Tuple, Set, Optional
 import re
@@ -508,7 +509,7 @@ class TablesClauseBuilder:
                 from_cols = getattr(rel, "from_columns", None) or []
                 fk_col = from_cols[0] if from_cols else ""
                 if dim_dataset and fk_col:
-                    inact_alias = re.sub(r"[^A-Za-z0-9_]+", "_", f"{dim_ds_name} {fk_col}").strip("_").upper()
+                    inact_alias = inactive_alias(dim_ds_name, fk_col, uppercase=True)
                     modeled_cols_list = [c.unique_name for c in getattr(dim_dataset, "columns", []) or []]
                     source_table = resolve_dataset_to_physical_table(
                         dim_dataset.unique_name,

@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 
-from semabridge.utils.identifiers import SNOWFLAKE_RESERVED_WORDS as SNOWFLAKE_RESERVED
+from semabridge.utils.identifiers import SNOWFLAKE_RESERVED_WORDS as SNOWFLAKE_RESERVED, inactive_alias
 
 # ── Illegal identifier characters ────────────────────────────────────────────
 _ILLEGAL_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")

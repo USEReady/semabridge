@@ -153,7 +153,7 @@
    "DDL": "REAL"
   },
   "title": "USERELATIONSHIP on the inactive date path",
-  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_ORBIT_G7 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
+  "ddl_sql": "SUM(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_SIGMA_Q6 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
  },
  "F13.2": {
   "status": "PASS",
@@ -165,7 +165,7 @@
    "DDL": "REAL"
   },
   "title": "USERELATIONSHIP with a row count",
-  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_ORBIT_G7 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.COL_SIGMA_Q6 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
  },
  "F13.3": {
   "status": "PASS",
@@ -177,7 +177,7 @@
    "DDL": "REAL"
   },
   "title": "without USERELATIONSHIP the ACTIVE path is used",
-  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1.COL_ORBIT_G7 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
+  "ddl_sql": "COUNT(CASE WHEN TBL_ALPHA_S1.COL_SIGMA_Q6 = 1 THEN TRANSACTIONS_LOG_V2.LINE_NO_H2 END)"
  },
  "F14.1": {
   "status": "PASS",
@@ -250,5 +250,17 @@
   },
   "title": "arithmetic between two non-additive measures",
   "ddl_sql": null
+ },
+ "F13.4": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "USERELATIONSHIP with special characters in dim and FK",
+  "ddl_sql": "SUM(CASE WHEN TBL_KAPPA_A4_COL_ORBIT_U4.COL_ORBIT_Q8 = 3 THEN TRANSACTIONS_LOG_V2.NET_AMT_DOL_R8 END::FLOAT)"
  }
 }

@@ -150,21 +150,39 @@ class OSIToSMLConverter(BaseConverter):
             table_key_map = {}
             for d in getattr(sml, "datasets", []) or []:
                 key_col = None
+                # 1. Column metadata: is_key flag
                 for c in getattr(d, "columns", []) or []:
                     if getattr(c, "is_key", False):
                         key_col = c.unique_name
                         break
+                # 2. Dataset metadata: declared primary_key / primary_keys
+                if not key_col:
+                    pk_meta = getattr(d, "primary_key", None) or getattr(d, "primary_keys", None)
+                    if isinstance(pk_meta, (list, tuple)) and pk_meta:
+                        key_col = pk_meta[0]
+                    elif isinstance(pk_meta, str) and pk_meta:
+                        key_col = pk_meta
+                # 3. Model metadata: target dimension key in relationships
+                if not key_col and hasattr(osi_model, "relationships"):
+                    for rel in getattr(osi_model, "relationships", []) or []:
+                        if getattr(rel, "to_dataset", None) == d.unique_name and getattr(rel, "to_columns", None):
+                            key_col = rel.to_columns[0]
+                            break
+                # 4. Column naming convention heuristics (id / key suffix)
                 if not key_col:
                     for c in getattr(d, "columns", []) or []:
                         if re.search(r"(?:^|_)id$", c.unique_name, re.I) or re.search(r"(?:^|_)key$", c.unique_name, re.I):
                             key_col = c.unique_name
                             break
+                # 5. Fallback: first column
                 if not key_col and getattr(d, "columns", []):
                     key_col = d.columns[0].unique_name
                 if key_col:
                     from semabridge.utils.naming import to_alias
+                    from semabridge.utils.identifiers import IdentifierSanitizer
                     table_key_map[d.unique_name.casefold()] = key_col
                     table_key_map[to_alias(d.unique_name).casefold()] = key_col
+                    table_key_map[IdentifierSanitizer().sanitize_table_name(d.unique_name).casefold()] = key_col
 
             # 3. Convert Metrics with automated translation pipeline
             # Step 3a: Convert all metrics individually for Tier 1-4 translations

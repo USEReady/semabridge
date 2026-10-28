@@ -317,28 +317,28 @@
  "F12.4": {
   "status": "PASS",
   "msg": "90.0 == 90.0",
-  "sql": "SUM(CASE WHEN tblomegak9.COL_ALPHA_Q1 = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN tblomegak9.COL_ALPHA_B1 = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" ELSE 0 END)",
   "title": "filter on a date-dimension attribute (active relationship)",
   "solution": "Date dimension attribute through the ACTIVE relationship (Order Date): enriched copy or join."
  },
  "F13.1": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_ALPHA_Q1\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_ALPHA_B1\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
   "title": "USERELATIONSHIP on the inactive date path",
   "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
  },
  "F13.2": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_ALPHA_Q1\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
+  "sql": "COUNT(CASE WHEN tbl_omega_k9_dispatch_date_t9.\"COL_ALPHA_B1\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
   "title": "USERELATIONSHIP with a row count",
   "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
  },
  "F13.3": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN tblomegak9.\"COL_ALPHA_Q1\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
+  "sql": "COUNT(CASE WHEN tblomegak9.\"COL_ALPHA_B1\" = 1 THEN fctsalesc2.TXN_ID_R9 END)",
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "solution": "The alias must not change measures that do not ask for it."
  },
@@ -359,14 +359,14 @@
  "F15.1": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(tblprismv7.\"COL_BRAVO_B1\")",
+  "sql": "COUNT(tblprismv7.\"COL_OMEGA_H4\")",
   "title": "closing balance (value at the last period)",
   "solution": "FILTER(ALL(T[p]), T[p] = MAX(T[p])) -> plain aggregate + NON ADDITIVE BY (T.p, direction proven to take the LAST period)."
  },
  "F15.2": {
   "status": "PASS",
   "msg": "3.0 == 3.0",
-  "sql": "COUNT(CASE WHEN (tblprismv7.\"COL_OMEGA_V4\" IS NULL) THEN tblprismv7.\"COL_BRAVO_B1\" ELSE NULL END)",
+  "sql": "COUNT(CASE WHEN (tblprismv7.\"COL_ALPHA_Q1\" IS NULL) THEN tblprismv7.\"COL_OMEGA_H4\" ELSE NULL END)",
   "title": "filtered closing balance (actives)",
   "solution": "A filter on top of a non-additive measure keeps its NON ADDITIVE BY."
  },
@@ -383,5 +383,12 @@
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."
+ },
+ "F13.4": {
+  "status": "PASS",
+  "msg": "30.0 == 30.0",
+  "sql": "SUM(CASE WHEN tbl_omega_g8_col_orbit_n2.\"COL_BRAVO_D2\" = 3 THEN fctsalesc2.\"NET_AMT_DOL_H1\" END::FLOAT)",
+  "title": "USERELATIONSHIP with special characters in dim and FK",
+  "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
  }
 }

@@ -583,3 +583,18 @@ def clean_pbix_model_name(raw: str | Path | None) -> str:
     stem = raw.stem if isinstance(raw, Path) else Path(str(raw)).stem
     return re.sub(r"^[0-9a-fA-F]{32}_", "", stem)
 
+
+
+def inactive_alias(dim_table: str, fk_column: str, *, uppercase: bool = True) -> str:
+    """Generate a consistent SQL alias for a dimension table in an inactive relationship.
+
+    Distinguishes the dimension by the foreign key column on the fact table that activates it.
+    Built on IdentifierSanitizer to guarantee identifier hygiene, valid character mapping,
+    and consistency across DAX translation and DDL emission clauses.
+    """
+    dim_clean = str(dim_table or "").strip().strip("'\"")
+    fk_clean = str(fk_column or "").strip().strip("[]'\"")
+    sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=False)
+    combined = f"{dim_clean} {fk_clean}"
+    alias = sanitizer.sanitize_column(combined)
+    return alias.upper() if uppercase else alias.lower()

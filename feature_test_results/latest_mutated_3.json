@@ -1,0 +1,30 @@
+{
+ "F13.1": {
+  "status": "PASS",
+  "msg": "30.0 == 30.0",
+  "sql": "SUM(CASE WHEN tbl_zeta_e1_shipped_on_n2.\"COL_BRAVO_W9\" = 3 THEN transactionslogv9.\"NET_AMT_DOL_J8\" END::FLOAT)",
+  "title": "USERELATIONSHIP on the inactive date path",
+  "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
+ },
+ "F13.2": {
+  "status": "PASS",
+  "msg": "2.0 == 2.0",
+  "sql": "COUNT(CASE WHEN tbl_zeta_e1_shipped_on_n2.\"COL_BRAVO_W9\" = 1 THEN transactionslogv9.ITEM_KEY_X3 END)",
+  "title": "USERELATIONSHIP with a row count",
+  "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
+ },
+ "F13.3": {
+  "status": "PASS",
+  "msg": "2.0 == 2.0",
+  "sql": "COUNT(CASE WHEN tblzetae1.\"COL_BRAVO_W9\" = 1 THEN transactionslogv9.ITEM_KEY_X3 END)",
+  "title": "without USERELATIONSHIP the ACTIVE path is used",
+  "solution": "The alias must not change measures that do not ask for it."
+ },
+ "F13.4": {
+  "status": "PASS",
+  "msg": "30.0 == 30.0",
+  "sql": "SUM(CASE WHEN tbl_zeta_z6_col_orbit_j9.\"COL_ZETA_X9\" = 3 THEN transactionslogv9.\"NET_AMT_DOL_J8\" END::FLOAT)",
+  "title": "USERELATIONSHIP with special characters in dim and FK",
+  "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
+ }
+}

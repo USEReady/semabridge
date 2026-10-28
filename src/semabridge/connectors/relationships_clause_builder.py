@@ -1,6 +1,7 @@
 """Builder for Snowflake semantic-view RELATIONSHIPS clause."""
 
 from __future__ import annotations
+from semabridge.utils.identifiers import inactive_alias
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 import re
@@ -82,7 +83,7 @@ class RelationshipsClauseBuilder:
                 from_cols_raw = getattr(rel, "from_columns", None) or []
                 fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
                 if fk_col_raw:
-                    to_alias = re.sub(r"[^A-Za-z0-9_]+", "_", f"{rel.to_dataset} {fk_col_raw}").strip("_").upper()
+                    to_alias = inactive_alias(rel.to_dataset, fk_col_raw, uppercase=True)
 
             if not from_alias or not to_alias or not rel.from_columns:
                 logger.warning(

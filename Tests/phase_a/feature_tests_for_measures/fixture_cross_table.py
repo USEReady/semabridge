@@ -21,6 +21,11 @@ def extend(TABLES, RELATIONSHIPS, INACTIVE):
         "Period No": [1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
         "End Date":  [None, None, None, None, dt.date(2024, 2, 20), None, None, None, None, None, dt.date(2024, 3, 25)],
     })
+    TABLES["Dim & Dates %"] = pd.DataFrame({"Date Key": days, "Month & %": [d.month for d in days]})
+    if "Orders" in TABLES and "$Ship & % Date" not in TABLES["Orders"].columns:
+        TABLES["Orders"]["$Ship & % Date"] = TABLES["Orders"]["Ship Date"]
+
     RELATIONSHIPS.append(("Orders", "Order Date", "Calendar", "Cal Date"))
     RELATIONSHIPS.append(("Snapshot", "Period No", "Period", "Period No"))
     INACTIVE.append(("Orders", "Ship Date", "Calendar", "Cal Date"))
+    INACTIVE.append(("Orders", "$Ship & % Date", "Dim & Dates %", "Date Key"))

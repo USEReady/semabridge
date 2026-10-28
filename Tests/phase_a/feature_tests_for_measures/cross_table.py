@@ -39,7 +39,7 @@ def build(con, TABLES, RELATIONSHIPS, INACTIVE, alias, sb_column):
     edges = [(alias(ft), sb_column(fc), alias(tt), sb_column(tc)) for ft, fc, tt, tc in RELATIONSHIPS]
     for ft, fc, tt, tc in INACTIVE:
         a = inactive_alias(alias, tt, fc)
-        con.execute(f'CREATE VIEW "{a}" AS SELECT * FROM "{alias(tt)}"')
+        con.execute(f'CREATE OR REPLACE VIEW "{a}" AS SELECT * FROM "{alias(tt)}"')
         alt_a = alias(f"{tt} {fc}")
         if alt_a.casefold() != a.casefold():
             try:
@@ -51,7 +51,8 @@ def build(con, TABLES, RELATIONSHIPS, INACTIVE, alias, sb_column):
 
 
 def inactive_alias(alias, dim_table, fk_column):
-    return re.sub(r"[^A-Za-z0-9_]+", "_", f"{dim_table} {fk_column}").strip("_").lower()
+    from semabridge.utils.identifiers import inactive_alias as sb_inactive_alias
+    return sb_inactive_alias(dim_table, fk_column, uppercase=False)
 
 
 def _path(edges, start, target):

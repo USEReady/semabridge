@@ -1,6 +1,7 @@
 """Builder for Snowflake semantic-view METRICS (MEASURES) clause."""
 
 from __future__ import annotations
+from semabridge.utils.identifiers import inactive_alias
 
 import re
 from typing import Any, Dict, List, Set, Tuple, Optional
@@ -202,7 +203,7 @@ class MetricsClauseBuilder:
                 from_cols_raw = getattr(rel, "from_columns", None) or []
                 fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
                 if fk_col_raw:
-                    to_a = re.sub(r"[^A-Za-z0-9_]+", "_", f"{rel.to_dataset} {fk_col_raw}").strip("_").upper()
+                    to_a = inactive_alias(rel.to_dataset, fk_col_raw, uppercase=True)
             if from_a and to_a:
                 relationship_graph.setdefault(from_a, set()).add(to_a)
                 relationship_graph.setdefault(to_a, set()).add(from_a)

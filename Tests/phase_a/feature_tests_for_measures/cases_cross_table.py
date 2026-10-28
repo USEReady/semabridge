@@ -90,6 +90,11 @@ def build(BASE):
       expect=("value", lambda: int((month(O["Order Date"]) == 1).sum())),
       expected_sql="COUNT(CASE WHEN orders.CALENDAR_MONTH_NO = 1 THEN orders.ORDERID END)",
       solution="The alias must not change measures that do not ask for it."),
+ dict(id="F13.4", feature="F13 Inactive relationships", title="USERELATIONSHIP with special characters in dim and FK",
+      dax="CALCULATE(SUM(Orders[Amount]), USERELATIONSHIP('Orders'[$Ship & % Date], 'Dim & Dates %'[Date Key]), 'Dim & Dates %'[Month & %] = 3)",
+      home="Orders", expect=("value", lambda: O[month(O["Ship Date"]) == 3].Amount.sum()),
+      expected_sql="SUM(CASE WHEN dim_and_dates_pct_dolship_and_pct_date.MONTH_AND_PCT = 3 THEN orders.AMOUNT ELSE 0 END)",
+      solution="inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."),
 
  # ======================================================================= F14 share of total (until window metrics)
  dict(id="F14.1", feature="F14 Share of total (ALL)", title="ALL(dimension table) in the denominator",

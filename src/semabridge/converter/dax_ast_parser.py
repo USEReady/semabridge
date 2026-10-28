@@ -47,6 +47,7 @@ Usage
 
 
 from __future__ import annotations
+from semabridge.utils.identifiers import inactive_alias
 
 
 
@@ -3476,7 +3477,7 @@ class DaxSqlRenderer:
                     if not dim_tbl:
                         dim_tbl, fk_col = t2, col1
                     if dim_tbl and fk_col:
-                        inact_alias = re.sub(r"[^A-Za-z0-9_]+", "_", f"{dim_tbl} {fk_col}").strip("_").lower()
+                        inact_alias = inactive_alias(dim_tbl, fk_col, uppercase=False)
                         userel_overrides[dim_tbl.casefold()] = inact_alias
                         userel_overrides[to_alias(dim_tbl).casefold()] = inact_alias
                         userel_overrides[sanitize_column(dim_tbl).casefold()] = inact_alias
