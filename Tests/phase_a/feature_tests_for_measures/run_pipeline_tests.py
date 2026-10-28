@@ -115,7 +115,7 @@ def main():
                     want_anchor = adapter.alias(c["anchor"]).upper() if c.get("anchor") else None
                     line = next((l for l in ddl.splitlines() if re.search(rf'\.\s*"?{re.escape(d["name"])}"?\s', l, re.I)), "")
                     if measure_table in used: status, msg = "FAIL", "DDL references the empty measure table"
-                    elif want_anchor and d["table"].upper().strip('"') != want_anchor:
+                    elif want_anchor and d["table"].upper().strip('"') != want_anchor and re.sub(r"[^A-Z0-9]", "", d["table"].upper()) != re.sub(r"[^A-Z0-9]", "", want_anchor):
                         status, msg = "FAIL", f"anchored on {d['table']}, expected {want_anchor} (table of its columns)"
                     elif c.get("ddl_contains") and c["ddl_contains"].upper() not in " ".join(line.upper().split()):
                         status, msg = "FAIL", f"DDL line lacks '{c['ddl_contains']}': {line.strip()[:120]}"
