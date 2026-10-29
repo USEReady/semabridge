@@ -51,6 +51,7 @@ from semabridge.utils.identifiers import inactive_alias
 
 
 
+import os
 import re
 
 from dataclasses import dataclass, field
@@ -119,6 +120,8 @@ def _ast_cache_key(
 
     table_key_map: Optional[Dict[str, str]] = None,
 
+    allow_window_enrichment: bool = False,
+
 ) -> tuple:
 
     items = tuple(sorted((measure_sql_map or {}).items()))
@@ -186,6 +189,8 @@ def _ast_cache_key(
         non_add_items,
 
         key_items,
+
+        allow_window_enrichment,
 
     )
 
@@ -1781,7 +1786,22 @@ class DaxSqlRenderer:
 
     # than the primary table.
 
-    _DEFAULT_DATE_TABLE_NAMES = frozenset({"date"})
+    _DEFAULT_DATE_TABLE_NAMES = frozenset({"date", "calendar", "dim_date", "dimdate", "dates"})
+
+    @classmethod
+    def _is_date_table_name(cls, name: Optional[str]) -> bool:
+        """Check if a table name matches date/calendar patterns or common synonyms."""
+        if not name:
+            return False
+        clean = str(name).strip().strip("'\"").casefold()
+        if clean in cls._DEFAULT_DATE_TABLE_NAMES:
+            return True
+        norm = re.sub(r"[^a-z0-9]", "", clean)
+        if norm in {"date", "dates", "calendar", "dimdate", "dimdates", "datedim", "fiscalcalendar", "dimcalendars", "dimcalendar"}:
+            return True
+        if "calendar" in norm or norm.endswith("date") or norm.startswith("dimdate"):
+            return True
+        return False
 
 
 
@@ -1815,6 +1835,12 @@ class DaxSqlRenderer:
 
         table_key_map: Optional[Dict[str, str]] = None,
 
+        allow_window_enrichment: bool = False,
+
+        datasets: Optional[Iterable[Any]] = None,
+
+        model_metadata: Optional[Any] = None,
+
     ) -> None:
 
         # Keep alias as provided (caller passes the correct form)
@@ -1830,6 +1856,10 @@ class DaxSqlRenderer:
         self.non_additive_dimensions: List[Tuple[Optional[str], str]] = []
 
         self.table_key_map = table_key_map or {}
+
+        self.allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+
+        self.window_precompute_columns: List[Tuple[str, str, str, str]] = []
 
         self._userel_overrides: Dict[str, str] = {}
 
@@ -1854,6 +1884,7 @@ class DaxSqlRenderer:
             for n in (date_table_names or self._DEFAULT_DATE_TABLE_NAMES)
 
         }
+        self._date_table_names_cf.update(self._DEFAULT_DATE_TABLE_NAMES)
 
         self.table_aliases = table_aliases or {}
 
@@ -1862,8 +1893,40 @@ class DaxSqlRenderer:
             str(k).strip().strip("'").casefold(): v for k, v in self.table_aliases.items()
 
         }
+        for tbl_name in self.table_aliases:
+            if self._is_date_table_name(tbl_name):
+                self._date_table_names_cf.add(str(tbl_name).strip().casefold())
 
         self.relationships = relationships
+        if self.relationships is not None:
+            for rel in self.relationships:
+                f_ds = str(getattr(rel, "from_dataset", "") or "")
+                t_ds = str(getattr(rel, "to_dataset", "") or "")
+                if self._is_date_table_name(f_ds):
+                    self._date_table_names_cf.add(f_ds.strip().casefold())
+                if self._is_date_table_name(t_ds):
+                    self._date_table_names_cf.add(t_ds.strip().casefold())
+
+        # Inspect model metadata or datasets if provided to find DATE-type columns
+        all_datasets = datasets or getattr(model_metadata, "datasets", None) or []
+        for ds in all_datasets:
+            ds_name = getattr(ds, "unique_name", None) or getattr(ds, "name", None)
+            if not ds_name:
+                continue
+            ds_name_cf = str(ds_name).strip().casefold()
+            if self._is_date_table_name(ds_name):
+                self._date_table_names_cf.add(ds_name_cf)
+                continue
+            has_date_col = False
+            for col in getattr(ds, "columns", []) or []:
+                dt = getattr(col, "data_type", None) or getattr(col, "type", None)
+                dt_str = str(dt.value if hasattr(dt, "value") else dt or "").upper()
+                c_name = str(getattr(col, "unique_name", None) or getattr(col, "name", None) or "").upper()
+                if "DATE" in dt_str or "TIME" in dt_str or c_name in ("DATE", "CAL_DT", "CALENDAR_DATE", "FULL_DATE"):
+                    has_date_col = True
+                    break
+            if has_date_col and self.primary_table_name and ds_name_cf != self.primary_table_name.strip("'").casefold():
+                self._date_table_names_cf.add(ds_name_cf)
 
         # Shape tuple (see converter/time_intelligence_shapes.py, e.g.
 
@@ -2209,7 +2272,15 @@ class DaxSqlRenderer:
 
             return self.table_alias
 
-        if name_cf in self._date_table_names_cf:
+        if hasattr(self, "_table_aliases_cf") and name_cf in self._table_aliases_cf:
+
+            if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in self._advisory_categories:
+
+                self._advisory_categories.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
+
+            return self._table_aliases_cf[name_cf]
+
+        if name_cf in self._date_table_names_cf or self._is_date_table_name(name_clean):
 
             return self.date_alias
 
@@ -3422,6 +3493,34 @@ class DaxSqlRenderer:
 
 
 
+
+    def _extract_agg_column_and_func(self, node: DaxNode) -> Optional[Tuple[str, Optional[str], str]]:
+        if isinstance(node, FunctionCallNode):
+            func = node.func.upper()
+            if func == "COUNTROWS":
+                return ("COUNT", None, "*")
+            if func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
+                if node.args:
+                    arg = node.args[0]
+                    if isinstance(arg, ColumnRefNode):
+                        clean_col = (arg.column or "").strip("[]")
+                        return (func, arg.table, clean_col)
+                    elif isinstance(arg, MeasureRefNode):
+                        return self._resolve_measure_agg_info(arg.name)
+        elif isinstance(node, MeasureRefNode):
+            return self._resolve_measure_agg_info(node.name)
+        return None
+
+    def _resolve_measure_agg_info(self, measure_name: str) -> Optional[Tuple[str, Optional[str], str]]:
+        sql = self.measure_sql_map.get(measure_name) or self._measure_sql_map_by_casefold.get(measure_name.casefold())
+        if sql:
+            if re.search(r'\bCOUNT\s*\(\s*(\*|1)\s*\)', sql, re.IGNORECASE):
+                return ("COUNT", None, "*")
+            m = re.search(r'\b(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*(?:([a-zA-Z0-9_]+)\.)?\"?([a-zA-Z0-9_]+)\"?\s*\)', sql, re.IGNORECASE)
+            if m:
+                return (m.group(1).upper(), m.group(2), m.group(3))
+        return None
+
     def _render_calculate(self, args: List[DaxNode]) -> str:
 
         """
@@ -3616,6 +3715,14 @@ class DaxSqlRenderer:
                     )
 
             if is_window:
+
+                if self.allow_window_enrichment and fname == "ALL" and not filter_clauses:
+                    agg_info = self._extract_agg_column_and_func(filtered_args[0])
+                    if agg_info:
+                        agg_func, agg_tbl, agg_col = agg_info
+                        w_col = "ALL_COUNT" if agg_col in ("*", "1") else f"ALL_{sanitize_column(agg_col)}"
+                        self.window_precompute_columns.append((self.table_alias, agg_col, agg_func, w_col))
+                        return f'MAX({self.table_alias}."{w_col}")'
 
                 raise self.DaxRenderError(
 
@@ -4351,6 +4458,12 @@ def try_ast_translate(
 
     table_key_map: Optional[Dict[str, str]] = None,
 
+    allow_window_enrichment: bool = False,
+
+    datasets: Optional[Iterable[Any]] = None,
+
+    model_metadata: Optional[Any] = None,
+
 ) -> Optional[str]:
 
     """
@@ -4364,6 +4477,8 @@ def try_ast_translate(
     that cannot be handled by the fast-path regex approach.
 
     """
+
+    allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
 
     cache_key = _ast_cache_key(
 
@@ -4392,6 +4507,8 @@ def try_ast_translate(
         measure_non_additive_map,
 
         table_key_map,
+
+        allow_window_enrichment,
 
     )
 
@@ -4464,6 +4581,12 @@ def try_ast_translate(
         measure_non_additive_map=measure_non_additive_map,
 
         table_key_map=table_key_map,
+
+        allow_window_enrichment=allow_window_enrichment,
+
+        datasets=datasets,
+
+        model_metadata=model_metadata,
 
     )
 
@@ -4790,11 +4913,52 @@ def _get_measure_refs(n: DaxNode) -> Set[str]:
     return refs
 
 
+def _is_enrichable_all_measure(node: DaxNode, in_division: bool = False) -> bool:
+    if isinstance(node, FunctionCallNode):
+        func = node.func.upper()
+        if func == "DIVIDE" and len(node.args) >= 2:
+            return _is_enrichable_all_measure(node.args[1], in_division=True)
+        if func == "CALCULATE" and len(node.args) >= 2:
+            has_all = False
+            has_disqualifying_filter = False
+            for a in node.args[1:]:
+                if isinstance(a, FunctionCallNode) and a.func.upper() in ("ALL", "ALLEXCEPT"):
+                    is_col_ref = a.args and any(isinstance(arg, ColumnRefNode) for arg in a.args)
+                    if is_col_ref and not in_division:
+                        # Column-level ALL outside division (like Life Expectancy) is disqualified
+                        has_disqualifying_filter = True
+                    else:
+                        has_all = True
+                else:
+                    has_disqualifying_filter = True
+
+            if has_all and not has_disqualifying_filter:
+                base = node.args[0]
+                if isinstance(base, FunctionCallNode) and base.func.upper() in ("SUM", "AVG", "AVERAGE", "COUNT", "COUNTROWS", "MIN", "MAX"):
+                    return True
+                if isinstance(base, MeasureRefNode):
+                    return True
+            return False
+
+        return all(_is_enrichable_all_measure(a, in_division=in_division) for a in node.args if _calculate_has_direct_all_or_allexcept_modifier(a))
+    if isinstance(node, BinaryOpNode):
+        if node.op == "/":
+            return _is_enrichable_all_measure(node.right, in_division=True)
+        left_ok = _is_enrichable_all_measure(node.left, in_division=in_division) if _calculate_has_direct_all_or_allexcept_modifier(node.left) else True
+        right_ok = _is_enrichable_all_measure(node.right, in_division=in_division) if _calculate_has_direct_all_or_allexcept_modifier(node.right) else True
+        return left_ok and right_ok
+    if isinstance(node, UnaryOpNode):
+        return _is_enrichable_all_measure(node.operand, in_division=in_division)
+    if isinstance(node, VarNode):
+        return _is_enrichable_all_measure(node.body, in_division=in_division)
+    return False
+
 def classify_dax_ast_not_applicable(
     parsed_ast: DaxNode,
     relationships: Optional[Iterable[Any]] = None,
     non_additive_map: Optional[Dict[str, Any]] = None,
     metrics_context: Optional[Iterable[Any]] = None,
+    allow_window_enrichment: bool = False,
 ) -> Optional[str]:
     """Classify unrepresentable DAX patterns from AST and model metadata before SQL rendering:
     1. text result -> 'not applicable: text result'
@@ -4822,8 +4986,13 @@ def classify_dax_ast_not_applicable(
         return "not applicable: needs window metric (ranking)"
 
     # 4. Window metric
-    if _has_selectedvalue_in_filter_all(parsed_ast) or _calculate_has_direct_all_or_allexcept_modifier(parsed_ast):
+    if _has_selectedvalue_in_filter_all(parsed_ast):
         return "not applicable: needs window metric"
+    if _calculate_has_direct_all_or_allexcept_modifier(parsed_ast):
+        if (allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1") and _is_enrichable_all_measure(parsed_ast):
+            pass
+        else:
+            return "not applicable: needs window metric"
 
     # 5. Non-additive closing balance + time intelligence
     if _has_closing_balance(parsed_ast) and _has_time_intel_function(parsed_ast):

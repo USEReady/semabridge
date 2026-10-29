@@ -403,7 +403,7 @@
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "excluded: not applicable: depends on non-additive metric [Actives]",
+  "msg": "excluded: not applicable: depends on non-additive metric [Headcount]",
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."

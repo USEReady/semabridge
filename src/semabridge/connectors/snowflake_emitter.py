@@ -560,6 +560,15 @@ class SnowflakeEmitter(BaseEmitter):
                 except Exception as _rerender_exc:
                     logger.warning("Anchor-dependent metric re-render skipped: %s", _rerender_exc)
 
+                try:
+                    _w_rerendered = self._rerender_window_enriched_metrics(
+                        model, _dataset_col_lookup, _dataset_aliases
+                    )
+                    if _w_rerendered:
+                        logger.info("Re-rendered %d window-enriched metric(s) with helper view window columns", _w_rerendered)
+                except Exception as _w_exc:
+                    logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
+
                 if is_osi:
                     self.schema_manager._preflight_check_osi(cur, model)
 
@@ -1837,6 +1846,12 @@ class SnowflakeEmitter(BaseEmitter):
                     _dataset_aliases,
                     label="confirmed",
                 )
+                try:
+                    self._rerender_window_enriched_metrics(
+                        model, _dataset_col_lookup, _dataset_aliases
+                    )
+                except Exception as _w_exc:
+                    logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
                 return self.semantic_view_builder.generate_ddls(model)
         finally:
             self.semantic_view_builder.cursor = None
@@ -2578,6 +2593,21 @@ class SnowflakeEmitter(BaseEmitter):
             if target and target.casefold() not in seen:
                 seen.add(target.casefold())
                 fact_tables.append(target)
+
+        from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
+        parser = DaxAstParser()
+        for m in getattr(model, "metrics", []) or []:
+            dax = getattr(m, "expression", "") or ""
+            if "ALL(" in dax.upper() and getattr(m, "dataset", None):
+                try:
+                    ast = parser.parse(dax)
+                    if _is_enrichable_all_measure(ast):
+                        ds = getattr(m, "dataset", None)
+                        if ds and ds.casefold() not in seen:
+                            seen.add(ds.casefold())
+                            fact_tables.append(ds)
+                except Exception:
+                    pass
 
         if fact_tables:
             return fact_tables
@@ -3425,6 +3455,169 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as exc:
             logger.warning("Could not compare live enriched view %s: %s", view_name, exc)
         return False
+# Adds whole-table "ALL_<col>" totals (AGG OVER ()) to the *_ENRICHED view for CALCULATE(..., ALL(...)) share-of-total measures; approximation: ignores all other query filters.
+    def _rerender_window_enriched_metrics(
+        self,
+        model: Any,
+        dataset_col_lookup: Dict[str, set],
+        dataset_aliases: Dict[str, str],
+    ) -> int:
+        """Re-render metrics eligible for window enrichment (e.g. Share of Total)
+        using the pre-computed helper view columns (ALL_COUNT, ALL_<col>).
+        """
+        metrics = getattr(model, "metrics", []) or []
+        rerendered = 0
+        from semabridge.converter.dax_translator import DAXTranslator
+        from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
+        parser = DaxAstParser()
+        translator = DAXTranslator()
+
+        for metric in metrics:
+            dax = getattr(metric, "expression", "") or ""
+            if not dax or "ALL(" not in dax.upper():
+                continue
+            try:
+                ast = parser.parse(dax)
+                if not _is_enrichable_all_measure(ast):
+                    continue
+            except Exception:
+                continue
+
+            table_alias = dataset_aliases.get(metric.dataset) or "fact"
+            res = translator.translate(
+                dax,
+                table_alias,
+                metric.dataset,
+                metric_name=metric.unique_name,
+                dataset_col_lookup=dataset_col_lookup,
+                dataset_aliases=dataset_aliases,
+                metrics_context=metrics,
+                skip_tier5=True,
+                allow_window_enrichment=True,
+            )
+            if res.is_success and res.sql:
+                metric.sql_expression = res.sql
+                metric.complexity_tier = res.tier
+                metric.sync_enabled = True
+                metric.sync_failure_reason = None
+                rerendered += 1
+
+        return rerendered
+
+    def _build_window_precomputed_columns(
+        self,
+        model: Any,
+        fact_table: str,
+        projected_cols: Set[str],
+    ) -> List[str]:
+        """Discover and build window columns (e.g. SUM(sales) OVER () AS ALL_AMOUNT)
+        for 'Share of Total' measures that use CALCULATE(..., ALL(...)).
+        """
+        window_projections = []
+        metrics = getattr(model, "metrics", []) or []
+        fact_dataset = self._get_dataset_by_name(model, fact_table)
+        fact_cols = {
+            self._resolve_model_column_name(model, fact_table, getattr(c, "unique_name", "")).upper()
+            for c in getattr(fact_dataset, "columns", []) or []
+            if getattr(c, "unique_name", None)
+        }
+
+        measure_expr_by_name = {
+            (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "") or ""
+            for m in metrics
+        }
+
+        for metric in metrics:
+            dax = getattr(metric, "expression", "") or ""
+            if not dax or "ALL(" not in dax.upper():
+                continue
+
+            from semabridge.converter.dax_ast_parser import (
+                DaxAstParser,
+                FunctionCallNode,
+                ColumnRefNode,
+                MeasureRefNode,
+                BinaryOpNode,
+            )
+            try:
+                ast = DaxAstParser().parse(dax)
+            except Exception:
+                continue
+
+            def _find_window_targets(node, in_division=False):
+                targets = []
+                if isinstance(node, FunctionCallNode):
+                    func = node.func.upper()
+                    if func == "DIVIDE" and len(node.args) >= 2:
+                        return _find_window_targets(node.args[1], in_division=True)
+                    if func == "CALCULATE" and len(node.args) >= 2:
+                        has_all = False
+                        has_disqualifying = False
+                        for a in node.args[1:]:
+                            if isinstance(a, FunctionCallNode) and a.func.upper() in ("ALL", "ALLEXCEPT"):
+                                is_col_ref = a.args and any(isinstance(arg, ColumnRefNode) for arg in a.args)
+                                if is_col_ref and not in_division:
+                                    has_disqualifying = True
+                                else:
+                                    has_all = True
+                            else:
+                                has_disqualifying = True
+                        if has_all and not has_disqualifying:
+                            targets.append(node.args[0])
+                    for a in node.args:
+                        targets.extend(_find_window_targets(a, in_division=in_division))
+                elif isinstance(node, BinaryOpNode):
+                    if node.op == "/":
+                        return _find_window_targets(node.right, in_division=True)
+                    targets.extend(_find_window_targets(node.left, in_division=in_division))
+                    targets.extend(_find_window_targets(node.right, in_division=in_division))
+                return targets
+
+            for target in _find_window_targets(ast):
+                agg_func = None
+                target_col = None
+                if isinstance(target, FunctionCallNode):
+                    t_func = target.func.upper()
+                    if t_func == "COUNTROWS":
+                        agg_func = "COUNT"
+                        target_col = "*"
+                    elif t_func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
+                        agg_func = "AVG" if t_func == "AVERAGE" else t_func
+                        if target.args and isinstance(target.args[0], ColumnRefNode):
+                            target_col = target.args[0].column
+                elif isinstance(target, MeasureRefNode):
+                    ref_dax = measure_expr_by_name.get(target.name.casefold(), "")
+                    if ref_dax:
+                        try:
+                            ref_ast = DaxAstParser().parse(ref_dax)
+                            if isinstance(ref_ast, FunctionCallNode):
+                                r_func = ref_ast.func.upper()
+                                if r_func == "COUNTROWS":
+                                    agg_func = "COUNT"
+                                    target_col = "*"
+                                elif r_func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
+                                    agg_func = "AVG" if r_func == "AVERAGE" else r_func
+                                    if ref_ast.args and isinstance(ref_ast.args[0], ColumnRefNode):
+                                        target_col = ref_ast.args[0].column
+                        except Exception:
+                            pass
+
+                if agg_func:
+                    if target_col in ("*", "1"):
+                        w_alias = "ALL_COUNT"
+                        if w_alias.upper() not in projected_cols:
+                            window_projections.append(f'\n            , {agg_func}(*) OVER () AS "{w_alias}"')
+                            projected_cols.add(w_alias.upper())
+                    elif target_col:
+                        phys_col = self._resolve_model_column_name(model, fact_table, target_col)
+                        if phys_col.upper() in fact_cols or not fact_cols:
+                            safe_col = self._id.sanitize_column(phys_col)
+                            w_alias = f"ALL_{safe_col}"
+                            if w_alias.upper() not in projected_cols:
+                                window_projections.append(f'\n            , {agg_func}(f."{safe_col}") OVER () AS "{w_alias}"')
+                                projected_cols.add(w_alias.upper())
+
+        return window_projections
 
     def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None, dry_run: bool = False):
         """
@@ -3505,6 +3698,11 @@ class SnowflakeEmitter(BaseEmitter):
             if projection:
                 select_parts.append(projection)
                 projected_cols.add(detail["precomputed_column"].upper())
+
+        # Add window precomputed columns for Share of Total (ALL) metrics
+        for proj in self._build_window_precomputed_columns(model, fact_table, projected_cols):
+            select_parts.append(proj)
+
         # Anchors: computed inside the view by a one-row join over the data
         # (never a literal fixed at sync time), so the view's SQL depends only
         # on the model and the schema. An empty or all-NULL date column falls

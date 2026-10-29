@@ -480,16 +480,16 @@
   "ddl_sql": "IFF(COUNT(DISTINCT NULLABLE.COL_VALUE) + MAX(IFF(NULLABLE.COL_VALUE IS NULL, 1, 0)) = 1, MAX(NULLABLE.COL_VALUE), 0)"
  },
  "F10.4": {
-  "status": "PASS",
-  "msg": "",
+  "status": "FAIL",
+  "msg": "lost at SML (no SQL: translation)",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": true,
-   "DDL": "REAL"
+   "SML_SQL": false,
+   "DDL": "NULL"
   },
   "title": "what-if measure used in another measure -> default constant",
-  "ddl_sql": "SUM(ORDERS.QTY::FLOAT) * (1 + (0) / NULLIF(100, 0))"
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F10.5": {
   "status": "PASS",

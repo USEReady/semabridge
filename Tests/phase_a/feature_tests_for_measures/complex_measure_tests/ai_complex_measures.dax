@@ -1,0 +1,20 @@
+DEFINE
+    MEASURE 'Opportunities'[Revenue Won] = CALCULATE( SUMX(Opportunities, Opportunities[Value]), FILTER(Opportunities, Opportunities[Status] = "Won") )
+    MEASURE 'Opportunities'[Revenue In Pipeline] = VAR Revenue = CALCULATE ( SUMX ( Opportunities, Opportunities[Value] ), FILTER ( Opportunities, Opportunities[Status] = "Open" && VALUE(LEFT(Opportunities[PipelineStep],1)) >=2 ) )
+RETURN
+    Revenue + ( Revenue * ( 'Opportunity Forecast Adjustment'[Forecast Adjustment Value] / 100 ) )
+    MEASURE 'Opportunities'[Forecast %] = (([Revenue Won]+[Revenue In Pipeline]))/ [Rev Goal]
+    MEASURE 'Opportunities'[Forecast] = ([Revenue Won]+[Revenue In Pipeline])
+    MEASURE 'Opportunities'[Close %] = [Count of Won]/([Count of Won]+[Count of Lost])
+    MEASURE 'Opportunities'[Count of Won] = COUNTAX( FILTER( KEEPFILTERS(Opportunities),Opportunities[Status] = "Won" ), Opportunities[OpportunitySeq] )
+    MEASURE 'Opportunities'[Count of Lost] = COUNTAX( FILTER( KEEPFILTERS(Opportunities),Opportunities[Status] = "Lost" ), Opportunities[OpportunitySeq] )
+    MEASURE 'Owners'[Rev Goal] = VAR RevenueInPipeline = CALCULATE ( SUMX ( Opportunities, Opportunities[Value] ), FILTER ( Opportunities, Opportunities[Status] = "Open" && VALUE(LEFT(Opportunities[PipelineStep],1)) >=3 ) )
+VAR BaseGoal = MROUND(([Revenue Won]+ (RevenueInPipeline*.75)),100000)
+RETURN
+IF(BaseGoal > 0, BaseGoal, MROUND(([Revenue Won]+ (RevenueInPipeline*.75)),10000))
+    MEASURE 'Opportunity Forecast Adjustment'[Forecast Adjustment Value] = SELECTEDVALUE('Opportunity Forecast Adjustment'[Forecast Adjustment], 0)
+    MEASURE 'Cases'[Case Count] = COUNTROWS('Cases')
+    MEASURE 'Cases'[Cases % by Product] = DIVIDE( [Case Count], CALCULATE( [Case Count],All('Products') ) )
+    MEASURE 'Cases'[Cases MoM%] = VAR __PREV_MONTH = CALCULATE([Case Count], DATEADD('Case Calendar'[Date], -1, MONTH))
+RETURN DIVIDE([Case Count] - __PREV_MONTH, __PREV_MONTH)
+EVALUATE SUMMARIZECOLUMNS("Revenue Won", [Revenue Won])

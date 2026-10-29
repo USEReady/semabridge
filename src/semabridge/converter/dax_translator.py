@@ -479,7 +479,11 @@ class DAXTranslator:
 
                   relationships: Optional[Iterable[Any]] = None,
 
-                  table_key_map: Optional[Dict[str, str]] = None) -> DAXTranslationResult:
+                  table_key_map: Optional[Dict[str, str]] = None,
+
+                  allow_window_enrichment: bool = False,
+
+                  **kwargs: Any) -> DAXTranslationResult:
 
         """
 
@@ -542,6 +546,8 @@ class DAXTranslator:
         
 
         clean_dax = dax.strip()
+        allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+        self._allow_window_enrichment = allow_window_enrichment
         measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
         from semabridge.converter.dax_ast_parser import DaxAstParser, classify_dax_ast_not_applicable
         parsed_ast = DaxAstParser().parse(clean_dax)
@@ -551,6 +557,7 @@ class DAXTranslator:
                 relationships=relationships,
                 non_additive_map=measure_non_additive_map,
                 metrics_context=metrics_context,
+                allow_window_enrichment=allow_window_enrichment,
             )
             if na_reason:
                 return DAXTranslationResult(
@@ -809,6 +816,8 @@ class DAXTranslator:
 
                 table_key_map=table_key_map,
 
+                allow_window_enrichment=allow_window_enrichment,
+
             )
 
             if ast_sql:
@@ -942,6 +951,8 @@ class DAXTranslator:
                 non_additive_dimensions=cb_dims,
 
                 table_key_map=table_key_map,
+
+                allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
 
             )
 
@@ -1606,6 +1617,8 @@ class DAXTranslator:
                 measure_sql_map=measure_map,
 
                 known_measure_names=set(measure_map.keys()),
+
+                allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
 
             )
 
@@ -3044,6 +3057,10 @@ class DAXTranslator:
 
                         return None
 
+                    if any(kw in (numerator_sql + " " + denominator_sql).upper() for kw in ("CALCULATE(", "FILTER(", "ALL(")):
+
+                        return None
+
                     if len(args) >= 3 and args[2].strip():
 
                         alt = args[2].strip()
@@ -3127,6 +3144,8 @@ class DAXTranslator:
                     measure_sql_map=measure_map,
 
                     known_measure_names=set(measure_map.keys()),
+
+                    allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
 
                 )
 

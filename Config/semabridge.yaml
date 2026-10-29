@@ -1,173 +1,342 @@
-project_name: Human Resource
+project_name: Artificial Intelligence
 source:
   type: pbix
-  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-human-resource/c5d2764b101f4c8fa38d7637277b77a5_Human
-    Resources Sample PBIX.pbix
-  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-human-resource/c5d2764b101f4c8fa38d7637277b77a5_Human
-    Resources Sample PBIX.pbix
+  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-artificial-intelligence/577f8d4f4ed94ccfbb14ec39d9acf186_Artificial
+    Intelligence Sample.pbix
+  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-artificial-intelligence/577f8d4f4ed94ccfbb14ec39d9acf186_Artificial
+    Intelligence Sample.pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
-  schema: HUMAN_RESOURCES
+  schema: ARTIFICIAL_INTELLIGENCE
   warehouse: DI_OTH_POC_WH
   identity_id: 766ac499-4d9b-4f9f-adc9-5206789f1d57
 mappings_overrides:
-- source_path: datasets.AgeGroup.columns.AgeGroupID
-  target_name: AGEGROUP_AGEGROUPID
-- source_path: datasets.AgeGroup.columns.AgeGroup
-  target_name: AGEGROUP
-- source_path: datasets.BU.columns.BU
-  target_name: COL_BU
-- source_path: datasets.BU.columns.RegionSeq
-  target_name: REGIONSEQ
-- source_path: datasets.BU.columns.VP
-  target_name: VP
-- source_path: datasets.BU.columns.Region
-  target_name: REGION
-- source_path: datasets.Date.columns.Date
-  target_name: DATE_DATE
-- source_path: datasets.Date.columns.Month
-  target_name: MONTH
-- source_path: datasets.Date.columns.MonthNumber
-  target_name: MONTHNUMBER
-- source_path: datasets.Date.columns.Period
-  target_name: PERIOD
-- source_path: datasets.Date.columns.PeriodNumber
-  target_name: PERIODNUMBER
-- source_path: datasets.Date.columns.Qtr
-  target_name: QTR
-- source_path: datasets.Date.columns.QtrNumber
-  target_name: QTRNUMBER
-- source_path: datasets.Date.columns.Year
-  target_name: YEAR
-- source_path: datasets.Date.columns.Day
-  target_name: DAY
-- source_path: datasets.Date.columns.MonthStartDate
-  target_name: MONTHSTARTDATE
-- source_path: datasets.Date.columns.MonthEndDate
-  target_name: MONTHENDDATE
-- source_path: datasets.Date.columns.MonthIncrementNumber
-  target_name: MONTHINCREMENTNUMBER
-- source_path: datasets.Employee.columns.date
-  target_name: EMPLOYEE_DATE
-- source_path: datasets.Employee.columns.EmplID
-  target_name: EMPLID
-- source_path: datasets.Employee.columns.Gender
-  target_name: EMPLOYEE_GENDER
-- source_path: datasets.Employee.columns.Age
-  target_name: AGE
-- source_path: datasets.Employee.columns.EthnicGroup
-  target_name: ETHNICGROUP
-- source_path: datasets.Employee.columns.FP
-  target_name: EMPLOYEE_FP
-- source_path: datasets.Employee.columns.TermDate
-  target_name: TERMDATE
-- source_path: datasets.Employee.columns.isNewHire
-  target_name: ISNEWHIRE
-- source_path: datasets.Employee.columns.BU
-  target_name: EMPLOYEE_BU
-- source_path: datasets.Employee.columns.HireDate
-  target_name: HIREDATE
-- source_path: datasets.Employee.columns.PayTypeID
-  target_name: EMPLOYEE_PAYTYPEID
-- source_path: datasets.Employee.columns.TermReason
-  target_name: TERMREASON
-- source_path: datasets.Employee.columns.AgeGroupID
-  target_name: EMPLOYEE_AGEGROUPID
-- source_path: datasets.Employee.columns.TenureDays
-  target_name: TENUREDAYS
-- source_path: datasets.Employee.columns.TenureMonths
-  target_name: TENUREMONTHS
-- source_path: datasets.Employee.columns.BadHires
-  target_name: BADHIRES
-- source_path: datasets.Ethnicity.columns.Ethnic Group
-  target_name: ETHNIC_GROUP
-- source_path: datasets.Ethnicity.columns.Ethnicity
-  target_name: ETHNICITY
-- source_path: datasets.FP.columns.FP
-  target_name: COL_FP
-- source_path: datasets.FP.columns.FPDesc
-  target_name: FPDESC
-- source_path: datasets.Gender.columns.ID
-  target_name: ID
-- source_path: datasets.Gender.columns.Gender
-  target_name: COL_GENDER
-- source_path: datasets.Gender.columns.Sort
-  target_name: SORT
-- source_path: datasets.PayType.columns.PayTypeID
-  target_name: PAYTYPE_PAYTYPEID
-- source_path: datasets.PayType.columns.PayType
-  target_name: PAYTYPE
-- source_path: datasets.SeparationReason.columns.SeparationTypeID
-  target_name: SEPARATIONTYPEID
-- source_path: datasets.SeparationReason.columns.SeparationReason
-  target_name: SEPARATIONREASON
-- source_path: metrics.Count of BU
-  target_name: COUNT_OF_BU
-- source_path: metrics.Count of Date
-  target_name: COUNT_OF_DATE
-- source_path: metrics.EmpCount
-  target_name: EMPCOUNT
-- source_path: metrics.Seps
-  target_name: SEPS
-- source_path: metrics.Actives
-  target_name: ACTIVES
-- source_path: metrics.New Hires
-  target_name: NEW_HIRES
-- source_path: metrics.AVG Tenure Days
-  target_name: AVG_TENURE_DAYS
-- source_path: metrics.AVG Tenure Months
-  target_name: AVG_TENURE_MONTHS
-- source_path: metrics.AVG Age
-  target_name: AVG_AGE
-- source_path: metrics.Sum of BadHires
-  target_name: SUM_OF_BADHIRES
-- source_path: metrics.New Hires SPLY
-  target_name: NEW_HIRES_SPLY
-- source_path: metrics.Actives SPLY
-  target_name: ACTIVES_SPLY
-- source_path: metrics.Seps SPLY
-  target_name: SEPS_SPLY
-- source_path: metrics.EmpCount SPLY
-  target_name: EMPCOUNT_SPLY
-- source_path: metrics.Seps YoY Var
-  target_name: SEPS_YOY_VAR
-- source_path: metrics.Actives YoY Var
-  target_name: ACTIVES_YOY_VAR
-- source_path: metrics.New Hires YoY Var
-  target_name: NEW_HIRES_YOY_VAR
-- source_path: metrics.Seps YoY % Change
-  target_name: SEPS_YOY_PCT_CHANGE
-- source_path: metrics.Actives YoY % Change
-  target_name: ACTIVES_YOY_PCT_CHANGE
-- source_path: metrics.New Hires YoY % Change
-  target_name: NEW_HIRES_YOY_PCT_CHANGE
-- source_path: metrics.Bad Hires SPLY
-  target_name: BAD_HIRES_SPLY
-- source_path: metrics.Bad Hires YoY Var
-  target_name: BAD_HIRES_YOY_VAR
-- source_path: metrics.Bad Hires YoY % Change
-  target_name: BAD_HIRES_YOY_PCT_CHANGE
-- source_path: metrics.TO %
-  target_name: TO_PCT
-- source_path: metrics.TO % Norm
-  target_name: TO_PCT_NORM
-- source_path: metrics.TO % Var
-  target_name: TO_PCT_VAR
-- source_path: metrics.Sep%ofActive
-  target_name: SEPPCTOFACTIVE
-- source_path: metrics.Sep%ofSMLYActives
-  target_name: SEPPCTOFSMLYACTIVES
-- source_path: metrics.BadHire%ofActives
-  target_name: BADHIREPCTOFACTIVES
-- source_path: metrics.BadHire%ofActiveSPLY
-  target_name: BADHIREPCTOFACTIVESPLY
+- source_path: datasets.Accounts.columns.Account Name
+  target_name: ACCOUNT_NAME
+- source_path: datasets.Accounts.columns.Street
+  target_name: ACCOUNTS_STREET
+- source_path: datasets.Accounts.columns.City
+  target_name: ACCOUNTS_CITY
+- source_path: datasets.Accounts.columns.State or Province
+  target_name: ACCOUNTS_STATE_OR_PROVINCE
+- source_path: datasets.Accounts.columns.Postal Code
+  target_name: ACCOUNTS_POSTAL_CODE
+- source_path: datasets.Accounts.columns.Country
+  target_name: ACCOUNTS_COUNTRY
+- source_path: datasets.Accounts.columns.Latitude
+  target_name: ACCOUNTS_LATITUDE
+- source_path: datasets.Accounts.columns.Longitude
+  target_name: ACCOUNTS_LONGITUDE
+- source_path: datasets.Accounts.columns.Phone
+  target_name: ACCOUNTS_PHONE
+- source_path: datasets.Accounts.columns.Annual Revenue
+  target_name: ANNUAL_REVENUE
+- source_path: datasets.Accounts.columns.Number of Employees
+  target_name: NUMBER_OF_EMPLOYEES
+- source_path: datasets.Accounts.columns.Account Owner
+  target_name: ACCOUNT_OWNER
+- source_path: datasets.Accounts.columns.AccountID
+  target_name: ACCOUNTID
+- source_path: datasets.Accounts.columns.Industry Lookup
+  target_name: INDUSTRY_LOOKUP
+- source_path: datasets.Accounts.columns.Territory
+  target_name: ACCOUNTS_TERRITORY
+- source_path: datasets.Accounts.columns.Region
+  target_name: ACCOUNTS_REGION
+- source_path: datasets.Accounts.columns.AccountSeq
+  target_name: ACCOUNTS_ACCOUNTSEQ
+- source_path: datasets.Accounts.columns.IndustrySeq
+  target_name: ACCOUNTS_INDUSTRYSEQ
+- source_path: datasets.Accounts.columns.AccountOwnerSeq
+  target_name: ACCOUNTOWNERSEQ
+- source_path: datasets.Accounts.columns.Industry
+  target_name: ACCOUNTS_INDUSTRY
+- source_path: datasets.Accounts.columns.Account Number
+  target_name: ACCOUNT_NUMBER
+- source_path: datasets.Campaigns.columns.CampaignSeq
+  target_name: CAMPAIGNS_CAMPAIGNSEQ
+- source_path: datasets.Campaigns.columns.Type
+  target_name: TYPE
+- source_path: datasets.Campaigns.columns.Campaign Name
+  target_name: CAMPAIGNS_CAMPAIGN_NAME
+- source_path: datasets.Campaigns.columns.Factor
+  target_name: FACTOR
+- source_path: datasets.Case Calendar.columns.Date
+  target_name: CASE_CALENDAR_DATE
+- source_path: datasets.Case Calendar.columns.DAY
+  target_name: CASE_CALENDAR_DAY
+- source_path: datasets.Case Calendar.columns.DaySeq
+  target_name: CASE_CALENDAR_DAYSEQ
+- source_path: datasets.Case Calendar.columns.YEAR
+  target_name: CASE_CALENDAR_YEAR
+- source_path: datasets.Case Calendar.columns.MONTH NUMBER
+  target_name: CASE_CALENDAR_MONTH_NUMBER
+- source_path: datasets.Case Calendar.columns.MONTH
+  target_name: CASE_CALENDAR_MONTH
+- source_path: datasets.Case Calendar.columns.YEAR MONTH NUMBER
+  target_name: CASE_CALENDAR_YEAR_MONTH_NUMBER
+- source_path: datasets.Case Calendar.columns.YEAR MONTH
+  target_name: CASE_CALENDAR_YEAR_MONTH
+- source_path: datasets.Case Calendar.columns.YEAR WEEK
+  target_name: CASE_CALENDAR_YEAR_WEEK
+- source_path: datasets.Case Calendar.columns.WEEK
+  target_name: CASE_CALENDAR_WEEK
+- source_path: datasets.Case Calendar.columns.RELATIVE WEEK
+  target_name: CASE_CALENDAR_RELATIVE_WEEK
+- source_path: datasets.Case Calendar.columns.RELATIVE DAY
+  target_name: CASE_CALENDAR_RELATIVE_DAY
+- source_path: datasets.Case Calendar.columns.RELATIVE 07 DAY PERIOD
+  target_name: CASE_CALENDAR_RELATIVE_07_DAY_PERIOD
+- source_path: datasets.Case Calendar.columns.RELATIVE 30 DAY PERIOD
+  target_name: CASE_CALENDAR_RELATIVE_30_DAY_PERIOD
+- source_path: datasets.Case Calendar.columns.RELATIVE MONTH
+  target_name: CASE_CALENDAR_RELATIVE_MONTH
+- source_path: datasets.Case Calendar.columns.Weekday
+  target_name: WEEKDAY
+- source_path: datasets.Case Calendar.columns.WeekdaySeq
+  target_name: WEEKDAYSEQ
+- source_path: datasets.Cases.columns.Case Created On
+  target_name: CASE_CREATED_ON
+- source_path: datasets.Cases.columns.Status
+  target_name: CASES_STATUS
+- source_path: datasets.Cases.columns.Agent
+  target_name: AGENT
+- source_path: datasets.Cases.columns.Title
+  target_name: TITLE
+- source_path: datasets.Cases.columns.Origin
+  target_name: ORIGIN
+- source_path: datasets.Cases.columns.Is Escalated
+  target_name: IS_ESCALATED
+- source_path: datasets.Cases.columns.Subject
+  target_name: SUBJECT
+- source_path: datasets.Cases.columns.CSAT Label
+  target_name: CSAT_LABEL
+- source_path: datasets.Cases.columns.Resolution Minutes
+  target_name: RESOLUTION_MINUTES
+- source_path: datasets.Cases.columns.Severity
+  target_name: SEVERITY
+- source_path: datasets.Cases.columns.Is SLA Violation
+  target_name: IS_SLA_VIOLATION
+- source_path: datasets.Cases.columns.CSAT
+  target_name: CSAT
+- source_path: datasets.Cases.columns.SLA Compliance Goal
+  target_name: SLA_COMPLIANCE_GOAL
+- source_path: datasets.Cases.columns.Resolution Minutes Goal
+  target_name: RESOLUTION_MINUTES_GOAL
+- source_path: datasets.Cases.columns.CSAT Goal
+  target_name: CSAT_GOAL
+- source_path: datasets.Cases.columns.Escalations Goal
+  target_name: ESCALATIONS_GOAL
+- source_path: datasets.Cases.columns.Minutes to First Contact
+  target_name: MINUTES_TO_FIRST_CONTACT
+- source_path: datasets.Cases.columns.Activities
+  target_name: ACTIVITIES
+- source_path: datasets.Cases.columns.Topic
+  target_name: CASES_TOPIC
+- source_path: datasets.Cases.columns.CaseSeq
+  target_name: CASESEQ
+- source_path: datasets.Cases.columns.SystemUserSeq
+  target_name: CASES_SYSTEMUSERSEQ
+- source_path: datasets.Cases.columns.AccountSeq
+  target_name: CASES_ACCOUNTSEQ
+- source_path: datasets.Cases.columns.ProductSeq
+  target_name: CASES_PRODUCTSEQ
+- source_path: datasets.Contacts.columns.ContactID
+  target_name: CONTACTID
+- source_path: datasets.Contacts.columns.Contact
+  target_name: CONTACT
+- source_path: datasets.Contacts.columns.Job Title
+  target_name: JOB_TITLE
+- source_path: datasets.Contacts.columns.Street
+  target_name: CONTACTS_STREET
+- source_path: datasets.Contacts.columns.City
+  target_name: CONTACTS_CITY
+- source_path: datasets.Contacts.columns.State or Province
+  target_name: CONTACTS_STATE_OR_PROVINCE
+- source_path: datasets.Contacts.columns.Postal Code
+  target_name: CONTACTS_POSTAL_CODE
+- source_path: datasets.Contacts.columns.Country
+  target_name: CONTACTS_COUNTRY
+- source_path: datasets.Contacts.columns.Latitude
+  target_name: CONTACTS_LATITUDE
+- source_path: datasets.Contacts.columns.Longitude
+  target_name: CONTACTS_LONGITUDE
+- source_path: datasets.Contacts.columns.Phone
+  target_name: CONTACTS_PHONE
+- source_path: datasets.Contacts.columns.ContactSeq
+  target_name: CONTACTSEQ
+- source_path: datasets.Contacts.columns.AccountSeq
+  target_name: CONTACTS_ACCOUNTSEQ
+- source_path: datasets.Contacts.columns.FirstName
+  target_name: FIRSTNAME
+- source_path: datasets.Contacts.columns.LastName
+  target_name: LASTNAME
+- source_path: datasets.Industries.columns.Industry
+  target_name: INDUSTRIES_INDUSTRY
+- source_path: datasets.Industries.columns.IndustrySeq
+  target_name: INDUSTRIES_INDUSTRYSEQ
+- source_path: datasets.Opportunities.columns.Budget
+  target_name: BUDGET
+- source_path: datasets.Opportunities.columns.Topic
+  target_name: OPPORTUNITIES_TOPIC
+- source_path: datasets.Opportunities.columns.Purchase Process
+  target_name: PURCHASE_PROCESS
+- source_path: datasets.Opportunities.columns.Decision Maker Identified
+  target_name: DECISION_MAKER_IDENTIFIED
+- source_path: datasets.Opportunities.columns.Status
+  target_name: OPPORTUNITIES_STATUS
+- source_path: datasets.Opportunities.columns.PipelineStep
+  target_name: PIPELINESTEP
+- source_path: datasets.Opportunities.columns.Value
+  target_name: COL_VALUE
+- source_path: datasets.Opportunities.columns.CloseDate
+  target_name: CLOSEDATE
+- source_path: datasets.Opportunities.columns.Opportunity Created On
+  target_name: OPPORTUNITY_CREATED_ON
+- source_path: datasets.Opportunities.columns.Weeks Open
+  target_name: WEEKS_OPEN
+- source_path: datasets.Opportunities.columns.DaysToClose
+  target_name: DAYSTOCLOSE
+- source_path: datasets.Opportunities.columns.Discount
+  target_name: DISCOUNT
+- source_path: datasets.Opportunities.columns.Probability
+  target_name: PROBABILITY
+- source_path: datasets.Opportunities.columns.Rating
+  target_name: RATING
+- source_path: datasets.Opportunities.columns.Days Remaining In Pipeline
+  target_name: DAYS_REMAINING_IN_PIPELINE
+- source_path: datasets.Opportunities.columns.Probability (raw)
+  target_name: PROBABILITY_RAW
+- source_path: datasets.Opportunities.columns.AccountSeq
+  target_name: OPPORTUNITIES_ACCOUNTSEQ
+- source_path: datasets.Opportunities.columns.Opportunity Owner Name
+  target_name: OPPORTUNITY_OWNER_NAME
+- source_path: datasets.Opportunities.columns.OpportunitySeq
+  target_name: OPPORTUNITYSEQ
+- source_path: datasets.Opportunities.columns.ProductSeq
+  target_name: OPPORTUNITIES_PRODUCTSEQ
+- source_path: datasets.Opportunities.columns.SystemUserSeq
+  target_name: OPPORTUNITIES_SYSTEMUSERSEQ
+- source_path: datasets.Opportunities.columns.Product Name
+  target_name: PRODUCT_NAME
+- source_path: datasets.Opportunities.columns.CampaignSeq
+  target_name: OPPORTUNITIES_CAMPAIGNSEQ
+- source_path: datasets.Opportunities.columns.Campaign Name
+  target_name: OPPORTUNITIES_CAMPAIGN_NAME
+- source_path: datasets.Opportunities.columns.Blank
+  target_name: BLANK
+- source_path: datasets.Opportunity Calendar.columns.Date
+  target_name: OPPORTUNITY_CALENDAR_DATE
+- source_path: datasets.Opportunity Calendar.columns.DAY
+  target_name: OPPORTUNITY_CALENDAR_DAY
+- source_path: datasets.Opportunity Calendar.columns.DaySeq
+  target_name: OPPORTUNITY_CALENDAR_DAYSEQ
+- source_path: datasets.Opportunity Calendar.columns.YEAR
+  target_name: OPPORTUNITY_CALENDAR_YEAR
+- source_path: datasets.Opportunity Calendar.columns.MONTH NUMBER
+  target_name: OPPORTUNITY_CALENDAR_MONTH_NUMBER
+- source_path: datasets.Opportunity Calendar.columns.MONTH
+  target_name: OPPORTUNITY_CALENDAR_MONTH
+- source_path: datasets.Opportunity Calendar.columns.YEAR MONTH NUMBER
+  target_name: OPPORTUNITY_CALENDAR_YEAR_MONTH_NUMBER
+- source_path: datasets.Opportunity Calendar.columns.YEAR MONTH
+  target_name: OPPORTUNITY_CALENDAR_YEAR_MONTH
+- source_path: datasets.Opportunity Calendar.columns.YEAR WEEK
+  target_name: OPPORTUNITY_CALENDAR_YEAR_WEEK
+- source_path: datasets.Opportunity Calendar.columns.WEEK
+  target_name: OPPORTUNITY_CALENDAR_WEEK
+- source_path: datasets.Opportunity Calendar.columns.RELATIVE WEEK
+  target_name: OPPORTUNITY_CALENDAR_RELATIVE_WEEK
+- source_path: datasets.Opportunity Calendar.columns.RELATIVE DAY
+  target_name: OPPORTUNITY_CALENDAR_RELATIVE_DAY
+- source_path: datasets.Opportunity Calendar.columns.RELATIVE 07 DAY PERIOD
+  target_name: OPPORTUNITY_CALENDAR_RELATIVE_07_DAY_PERIOD
+- source_path: datasets.Opportunity Calendar.columns.RELATIVE 30 DAY PERIOD
+  target_name: OPPORTUNITY_CALENDAR_RELATIVE_30_DAY_PERIOD
+- source_path: datasets.Opportunity Calendar.columns.RELATIVE MONTH
+  target_name: OPPORTUNITY_CALENDAR_RELATIVE_MONTH
+- source_path: datasets.Opportunity Forecast Adjustment.columns.Forecast Adjustment
+  target_name: FORECAST_ADJUSTMENT
+- source_path: datasets.Owners.columns.Sales owner
+  target_name: SALES_OWNER
+- source_path: datasets.Owners.columns.Manager
+  target_name: MANAGER
+- source_path: datasets.Owners.columns.SystemUserSeq
+  target_name: OWNERS_SYSTEMUSERSEQ
+- source_path: datasets.Products.columns.Product category
+  target_name: PRODUCT_CATEGORY
+- source_path: datasets.Products.columns.Product
+  target_name: PRODUCT
+- source_path: datasets.Products.columns.MinOppValue
+  target_name: MINOPPVALUE
+- source_path: datasets.Products.columns.MaxOppValue
+  target_name: MAXOPPVALUE
+- source_path: datasets.Products.columns.ProductSeq
+  target_name: PRODUCTS_PRODUCTSEQ
+- source_path: datasets.Territories.columns.Region
+  target_name: TERRITORIES_REGION
+- source_path: datasets.Territories.columns.Territory
+  target_name: TERRITORIES_TERRITORY
+- source_path: datasets.Territories.columns.Country
+  target_name: TERRITORIES_COUNTRY
+- source_path: datasets.Territories.columns.State Or Province Abbreviation
+  target_name: STATE_OR_PROVINCE_ABBREVIATION
+- source_path: metrics.Case Count
+  target_name: CASE_COUNT
+- source_path: metrics.Escalations
+  target_name: ESCALATIONS
+- source_path: metrics.SLA Compliance
+  target_name: SLA_COMPLIANCE
+- source_path: metrics.Cases MoM%
+  target_name: CASES_MOMPCT
+- source_path: metrics.Cases % by Product
+  target_name: CASES_PCT_BY_PRODUCT
+- source_path: metrics.Cases % by Subject
+  target_name: CASES_PCT_BY_SUBJECT
+- source_path: metrics.CSAT Impact
+  target_name: CSAT_IMPACT
+- source_path: metrics.CSAT Impact - Subject
+  target_name: CSAT_IMPACT_SUBJECT
+- source_path: metrics.CSAT Impact - Products
+  target_name: CSAT_IMPACT_PRODUCTS
+- source_path: metrics.CSAT Impact - Agent
+  target_name: CSAT_IMPACT_AGENT
+- source_path: metrics.Revenue Won
+  target_name: REVENUE_WON
+- source_path: metrics.Revenue In Pipeline
+  target_name: REVENUE_IN_PIPELINE
+- source_path: metrics.Forecast %
+  target_name: FORECAST_PCT
+- source_path: metrics.Forecast
+  target_name: FORECAST
+- source_path: metrics.Opportunity Count In Pipeline
+  target_name: OPPORTUNITY_COUNT_IN_PIPELINE
+- source_path: metrics.Opportunity Count
+  target_name: OPPORTUNITY_COUNT
+- source_path: metrics.Count of Won
+  target_name: COUNT_OF_WON
+- source_path: metrics.Count of Lost
+  target_name: COUNT_OF_LOST
+- source_path: metrics.Close %
+  target_name: CLOSE_PCT
+- source_path: metrics.Revenue Open
+  target_name: REVENUE_OPEN
+- source_path: metrics.Forecast Adjustment Value
+  target_name: FORECAST_ADJUSTMENT_VALUE
+- source_path: metrics.Rev Goal
+  target_name: REV_GOAL
 ui:
   intermediate_format: osi
   editor_mode: form
+  output_format: osi
 options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-human-resource
-display_name: Human Resource
+project_id: proj-artificial-intelligence
+display_name: Artificial Intelligence
+target:
+  type: snowflake
+  database: SEMABRIDGE
+  schema: ARTIFICIAL_INTELLIGENCE
