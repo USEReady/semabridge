@@ -1559,37 +1559,6 @@ class DAXTranslator:
 
 
 
-        if clean_dax.upper().startswith("DIVIDE(") and clean_dax.endswith(")"):
-
-            args = split_args(clean_dax[7:-1])
-
-            if len(args) >= 2:
-
-                numerator_sql = self._try_dependency_translation(args[0], table_alias, dataset_name, metrics_context, visiting)
-
-                denominator_sql = self._try_dependency_translation(args[1], table_alias, dataset_name, metrics_context, visiting)
-
-                if numerator_sql and denominator_sql:
-                    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
-                    numerator_sql = _wrap_parens_for_op(numerator_sql)
-                    denominator_sql = _wrap_parens_for_op(denominator_sql)
-
-                    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
-                    numerator_sql = _wrap_parens_for_op(numerator_sql)
-                    denominator_sql = _wrap_parens_for_op(denominator_sql)
-
-                    if len(args) >= 3 and args[2].strip():
-
-                        alt = args[2].strip()
-
-                        if alt.upper() in ("BLANK()", "NULL", "NONE"):
-
-                            return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
-
-                        return f"IFF(COALESCE({denominator_sql}, 0) = 0, {alt}, {numerator_sql} / {denominator_sql})"
-
-                    return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
-
 
 
         # This substitution only replaces [Measure] tokens — it cannot
@@ -3067,43 +3036,7 @@ class DAXTranslator:
 
 
 
-            # Handle DIVIDE(A, B [, alt]) with safe division semantics.
 
-            if clean_expr.upper().startswith("DIVIDE(") and clean_expr.endswith(")"):
-
-                inner = clean_expr[7:-1]
-
-                args = split_args(inner)
-
-                if len(args) >= 2:
-
-                    numerator_sql = replace_measure_refs(args[0], visiting)
-
-                    denominator_sql = replace_measure_refs(args[1], visiting)
-
-                    if not numerator_sql or not denominator_sql:
-
-                        return None
-
-                    if any(kw in (numerator_sql + " " + denominator_sql).upper() for kw in ("CALCULATE(", "FILTER(", "ALL(")):
-
-                        return None
-
-                    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
-                    numerator_sql = _wrap_parens_for_op(numerator_sql)
-                    denominator_sql = _wrap_parens_for_op(denominator_sql)
-
-                    if len(args) >= 3 and args[2].strip():
-
-                        alt = args[2].strip()
-
-                        if alt.upper() in ("BLANK()", "NULL", "NONE"):
-
-                            return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
-
-                        return f"IFF(COALESCE({denominator_sql}, 0) = 0, {alt}, {numerator_sql} / {denominator_sql})"
-
-                    return f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
 
 
 

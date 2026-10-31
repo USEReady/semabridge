@@ -2535,6 +2535,8 @@ class DaxSqlRenderer:
                         if m_sql.strip().upper() in (rendered_left.strip().upper(), f"({rendered_left.strip().upper()})"):
                             left = f'{self.table_alias.upper()}."{sanitize_column(m_k)}"'
                             break
+            if self._is_nonzero_constant(node.right, right_expr):
+                return f"{left} / {right_expr}"
             return f"{left} / NULLIF({right_expr}, 0)"
 
         return f"{left} {sql_op} {right}"
@@ -3023,6 +3025,22 @@ class DaxSqlRenderer:
 
 
 
+    def _is_nonzero_constant(self, node: Optional[DaxNode], rendered_sql: str) -> bool:
+        if node is not None and isinstance(node, LiteralNode):
+            try:
+                val = float(str(node.value).strip())
+                return val != 0.0
+            except (ValueError, TypeError):
+                pass
+        s = (rendered_sql or "").strip()
+        while s.startswith("(") and s.endswith(")"):
+            s = s[1:-1].strip()
+        try:
+            val = float(s)
+            return val != 0.0
+        except (ValueError, TypeError):
+            return False
+
     def _render_divide(self, args: List[DaxNode]) -> str:
         if len(args) < 2:
             raise self.DaxRenderError("DIVIDE requires at least 2 arguments")
@@ -3054,6 +3072,8 @@ class DaxSqlRenderer:
             num_expr = f"({num})" if isinstance(args[0], BinaryOpNode) and args[0].op in ("+", "-") else num
         num_expr = _wrap_parens_for_op(num_expr)
         den_expr = _wrap_parens_for_op(den_expr)
+        if self._is_nonzero_constant(args[1], den_expr):
+            return f"{num_expr} / {den_expr}"
         if len(args) > 2:
             alt_node = args[2]
             if isinstance(alt_node, FunctionCallNode) and alt_node.func.upper() == "BLANK":

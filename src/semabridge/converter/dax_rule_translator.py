@@ -448,7 +448,19 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
     numerator_sql = _wrap_parens_for_op(numerator_sql)
     denominator_sql = _wrap_parens_for_op(denominator_sql)
 
-    if alternate_result is not None:
+    # If denominator is a non-zero literal constant, do not wrap in NULLIF or IFF
+    den_clean = denominator_sql.strip()
+    while den_clean.startswith("(") and den_clean.endswith(")"):
+        den_clean = den_clean[1:-1].strip()
+    is_nonzero_const = False
+    try:
+        is_nonzero_const = (float(den_clean) != 0.0)
+    except (ValueError, TypeError):
+        is_nonzero_const = False
+
+    if is_nonzero_const:
+        result = f"{numerator_sql} / {denominator_sql}"
+    elif alternate_result is not None:
         result = f"IFF(COALESCE({denominator_sql}, 0) = 0, {alternate_result}, {numerator_sql} / {denominator_sql})"
     else:
         result = f"{numerator_sql} / NULLIF({denominator_sql}, 0)"
