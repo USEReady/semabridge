@@ -1979,58 +1979,44 @@ class DAXTranslator:
 
 
 
-            # Parameter table / SELECTEDVALUE measure referenced from another table -> default constant
-
+            # Parameter table / SELECTEDVALUE measure referenced from another table -> default constant (or NULL if no default)
             is_cross_table = (
-
                 primary_table_name
-
                 and dataset
-
                 and str(dataset).strip("'\"").casefold() != str(primary_table_name).strip("'\"").casefold()
-
             )
-
             metric_expr = (getattr(metric, "expression", None) or "").strip()
-
             alt_const = None
-
-            if is_cross_table and metric_expr:
-
-                m_sv = re.match(
-
-                    r"^\s*SELECTEDVALUE\s*\(\s*(?:'?[^',]+'?\[[^\]]+\]|[^,]+)\s*(?:,\s*([^)]+))?\s*\)\s*$",
-
-                    metric_expr,
-
-                    re.IGNORECASE,
-
-                )
-
-                if m_sv:
-
-                    alt_arg = (m_sv.group(1) or "").strip()
-
-                    alt_const = alt_arg if alt_arg else "0"
-
-                elif relationships is not None:
-
+            if metric_expr:
+                m_sv_table = re.search(r"SELECTEDVALUE\s*\(\s*'?([^'\[,\)]+)'?\s*\[", metric_expr, re.IGNORECASE)
+                if m_sv_table:
+                    param_tbl = m_sv_table.group(1).strip("'\"")
+                    rel_tables = set()
+                    if relationships:
+                        for r in relationships:
+                            from_t = str(getattr(r, "from_table", None) or getattr(r, "from_dataset", None) or "").strip("'\"").casefold()
+                            to_t = str(getattr(r, "to_table", None) or getattr(r, "to_dataset", None) or "").strip("'\"").casefold()
+                            if from_t: rel_tables.add(from_t)
+                            if to_t: rel_tables.add(to_t)
+                    if not relationships or param_tbl.casefold() not in rel_tables:
+                        m_sv_call = re.search(r"SELECTEDVALUE\s*\(\s*[^,]+,\s*([^)]+)\)", metric_expr, re.IGNORECASE)
+                        if m_sv_call and m_sv_call.group(1).strip() and m_sv_call.group(1).strip().upper() not in ("BLANK()", "NULL", "NONE"):
+                            alt_const = m_sv_call.group(1).strip()
+                        else:
+                            alt_const = "NULL"
+                elif is_cross_table and relationships is not None:
                     from semabridge.utils.relationship_graph import has_relationship_path
-
                     if not has_relationship_path(relationships, primary_table_name, dataset):
-
-                        alt_const = "0"
-
-
+                        alt_const = "NULL"
 
             if alt_const is not None:
-
                 resolved[name] = alt_const
-
                 if dataset:
-
+                    clean_ds = str(dataset).strip("'\"")
+                    resolved[f"{clean_ds}[{name}]"] = alt_const
+                    resolved[f"'{clean_ds}'[{name}]"] = alt_const
+                    resolved[f'"{clean_ds}"[{name}]'] = alt_const
                     resolved[f"{dataset}[{name}]"] = alt_const
-
                 continue
 
 

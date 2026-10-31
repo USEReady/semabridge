@@ -2230,12 +2230,16 @@ class DaxSqlRenderer:
 
 
         if col_cf in self._measure_sql_map_by_casefold:
-
-            return f"({self._measure_sql_map_by_casefold[col_cf]})"
+            val = self._measure_sql_map_by_casefold[col_cf]
+            if val.strip().upper() == "NULL":
+                return "NULL"
+            return f"({val})"
 
         if qualified_cf and qualified_cf in self._measure_sql_map_by_casefold:
-
-            return f"({self._measure_sql_map_by_casefold[qualified_cf]})"
+            val = self._measure_sql_map_by_casefold[qualified_cf]
+            if val.strip().upper() == "NULL":
+                return "NULL"
+            return f"({val})"
 
         if col_cf in self._known_measure_names_casefold or (qualified_cf and qualified_cf in self._known_measure_names_casefold):
 
@@ -2388,10 +2392,11 @@ class DaxSqlRenderer:
             return var_sql
 
         name_cf = node.name.casefold()
-
         if name_cf in self._measure_sql_map_by_casefold:
-
-            return f"({self._measure_sql_map_by_casefold[name_cf]})"
+            val = self._measure_sql_map_by_casefold[name_cf]
+            if val.strip().upper() == "NULL":
+                return "NULL"
+            return f"({val})"
 
         if name_cf in self._known_measure_names_casefold:
 
@@ -2505,11 +2510,32 @@ class DaxSqlRenderer:
 
         sql_op = op_map.get(op_clean, node.op)
 
-        # Wrap operands in parens for clarity on logical operators
+        def _needs_coalesce_zero(expr_str: str) -> bool:
+            s = expr_str.strip()
+            while s.startswith("(") and s.endswith(")"):
+                s = s[1:-1].strip()
+            if s.upper() == "NULL":
+                return True
+            if re.search(r'\*\s*\(?\s*NULL\s*\)?\b', expr_str, re.IGNORECASE):
+                return True
+            return False
 
         if sql_op in ("AND", "OR"):
-
             return f"({left}) {sql_op} ({right})"
+
+        if sql_op in ("+", "-"):
+            if _needs_coalesce_zero(left):
+                left = f"COALESCE({left}, 0)"
+            if _needs_coalesce_zero(right):
+                right = f"COALESCE({right}, 0)"
+            return f"{left} {sql_op} {right}"
+
+        if sql_op in ("=", "<>", "<", "<=", ">", ">="):
+            if _needs_coalesce_zero(left):
+                left = f"COALESCE({left}, 0)"
+            if _needs_coalesce_zero(right):
+                right = f"COALESCE({right}, 0)"
+            return f"{left} {sql_op} {right}"
 
         if sql_op == "/":
             left = _wrap_parens_for_op(left)
@@ -2526,6 +2552,10 @@ class DaxSqlRenderer:
                             break
                 if balanced:
                     right_expr = right_expr[1:-1]
+            if right_expr.strip().upper() == "NULL":
+                return f"{left} / NULL"
+            if left.strip().upper() == "NULL":
+                return "NULL"
             if "PARTITION BY EXCLUDING" in right_expr:
                 if isinstance(node.left, MeasureRefNode):
                     left = f'{self.table_alias.upper()}."{sanitize_column(node.left.name)}"'
