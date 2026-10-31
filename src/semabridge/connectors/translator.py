@@ -1377,7 +1377,7 @@ class MetricExpressionTranslator:
 
         def _replace(match: re.Match) -> str:
             token = match.group(1)
-            sanitized = self._id.sanitize_alias(token)
+            sanitized = self._id.to_alias(token)
             if sanitized in metric_names and sanitized != token:
                 return f'"{sanitized}"'
             resolved = self._resolve_metric_reference_name(metric_names, sanitized, allow_fuzzy=True)
@@ -1388,7 +1388,7 @@ class MetricExpressionTranslator:
         def _replace_qualified(match: re.Match) -> str:
             alias = match.group(1)
             token = match.group(2)
-            sanitized = self._id.sanitize_alias(token)
+            sanitized = self._id.to_alias(token)
             resolved = sanitized if sanitized in metric_names else self._resolve_metric_reference_name(
                 metric_names,
                 sanitized,
@@ -1553,9 +1553,9 @@ class MetricExpressionTranslator:
             if col.lower() == candidate_lower:
                 return col
         
-        compact = candidate.replace("_", "").lower()
+        compact = re.sub(r'[^a-zA-Z0-9]', '', candidate).lower()
         for col in known_columns:
-            if col.replace("_", "").lower() == compact: return col
+            if re.sub(r'[^a-zA-Z0-9]', '', col).lower() == compact: return col
             
         if candidate.lower().startswith("total_"):
             base = candidate[len("TOTAL_"):]
@@ -1687,7 +1687,9 @@ class MetricExpressionTranslator:
         return repaired
 
     def _rewrite_window_metric_expression(self, metric_sql: str, preferred_table_alias: Optional[str] = None) -> str:
-        if not metric_sql or "OVER" not in metric_sql.upper(): return metric_sql
+        if not metric_sql or not re.search(r"\bOVER\b", metric_sql, re.IGNORECASE): return metric_sql
+        if "PARTITION BY EXCLUDING" in metric_sql.upper():
+            return metric_sql
         ratio_pattern = re.compile(r'(?is)^\s*DIV0\s*\(\s*SUM\((?P<num>[^\)]+)\)\s*,\s*SUM\((?P<den>[^\)]+)\)\s+OVER\s*\([^\)]*\)\s*\)\s*$')
         match = ratio_pattern.match(metric_sql.strip())
         if match:
@@ -1698,7 +1700,8 @@ class MetricExpressionTranslator:
         ytd_like = re.compile(r'(?is)^\s*(SUM|AVG|COUNT|MIN|MAX)\s*\([^\)]+\)\s+OVER\s*\(\s*PARTITION\s+BY\s+.+?\s+ORDER\s+BY\s+.+?\)\s*$')
         if ytd_like.match(metric_sql.strip()):
             if preferred_table_alias:
-                refs = set(a.upper() for a in re.findall(r'(?i)\b(\w+)\s*\.', metric_sql.split("OVER", 1)[1] if "OVER" in metric_sql.upper() else ""))
+                over_parts = re.split(r"\bOVER\b", metric_sql, maxsplit=1, flags=re.IGNORECASE)
+                refs = set(a.upper() for a in re.findall(r'(?i)\b(\w+)\s*\.', over_parts[1] if len(over_parts) > 1 else ""))
                 if refs and any(a != preferred_table_alias.upper() for a in refs): return "NULL"
             return metric_sql
         sply_like = re.compile(r'(?is)^\s*(LAG|LEAD)\s*\(\s*.+?\)\s+OVER\s*\(.*\)\s*$')
@@ -1800,7 +1803,7 @@ class MetricExpressionTranslator:
             result["issues"].append("CALCULATE filter not converted to CASE WHEN")
         
         # Rule 5: No window functions
-        if "OVER" in sql_upper or "PARTITION BY" in sql_upper:
+        if re.search(r"\bOVER\b", sql_upper) or "PARTITION BY" in sql_upper:
             result["issues"].append("Contains window function")
         
         # Rule 6: DIVIDE must use COALESCE + NULLIF

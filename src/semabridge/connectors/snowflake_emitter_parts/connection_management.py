@@ -185,7 +185,8 @@ def check_semantic_view_exists(emitter, cursor, view_name: str) -> bool:
     try:
         import re
         check_name = view_name.strip('"').upper()
-        safe_name = re.sub(r"[^A-Za-z0-9_]", "_", check_name).upper()
+        from semabridge.utils.naming import to_alias
+        safe_name = to_alias(check_name)
         
         patterns = [
             safe_name,

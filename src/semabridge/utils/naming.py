@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 
-from semabridge.utils.identifiers import SNOWFLAKE_RESERVED_WORDS as SNOWFLAKE_RESERVED, inactive_alias
+from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS as SNOWFLAKE_RESERVED, inactive_alias
 
 # ── Illegal identifier characters ────────────────────────────────────────────
 _ILLEGAL_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")
@@ -98,44 +98,31 @@ def to_physical_name(logical_name: str) -> str:
     return clean.upper()
 
 
-def to_alias(logical_name: str) -> str:
-    """Derive a **lowercase SQL alias** from a logical name.
+def to_alias(logical_name: str, fk_column: Optional[str] = None) -> str:
+    """Derive a SQL table alias from a logical name.
 
-    Conversion rules:
-    * Strip non-alphanumeric characters (keep only ``[a-z0-9]``)
-    * Result is always lowercase, no underscores
-    * Reserved words are prefixed with ``l_``
-
-    Examples::
-
-        >>> to_alias("SalesFact")
-        'salesfact'
-        >>> to_alias("Customer Dim")
-        'customerdim'
-        >>> to_alias("Date")
-        'l_date'
+    Single authoritative rule: delegates to IdentifierSanitizer().to_alias().
+    If fk_column is provided, derives the inactive role-playing alias.
     """
     if not logical_name:
         return logical_name
-
-    clean = "".join(c for c in logical_name if c.isalnum()).lower()
-
-    if not clean:
-        clean = "t"
-    if clean[0].isdigit():
-        clean = f"t{clean}"
-    if clean in SNOWFLAKE_RESERVED:
-        clean = f"l_{clean}"
-
-    return clean
+    if fk_column:
+        dim_clean = str(logical_name or "").strip().strip("'\"")
+        fk_clean = str(fk_column or "").strip().strip("[]'\"")
+        sanitizer = IdentifierSanitizer(force_uppercase=True, suppress_reserved=False)
+        return sanitizer.sanitize_column(f"{dim_clean} {fk_clean}")
+    return IdentifierSanitizer().to_alias(logical_name)
 
 
-def build_alias_rewrite_map(
+def build_prefix_rewrite_map(
     dataset_aliases: Dict[str, str],
     database: str = "",
     schema_name: str = "",
     extra_prefix_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
+    if not isinstance(dataset_aliases, dict):
+        return None
+
     """Build a comprehensive map of **all** invalid identifier prefixes to
     their correct lowercase alias.
 
@@ -185,6 +172,8 @@ def build_alias_rewrite_map(
             rewrite[short_prefix.upper()] = alias
 
     return rewrite
+
+build_alias_rewrite_map = build_prefix_rewrite_map
 
 
 # ── Prefix / alias inference helpers ─────────────────────────────────────────
@@ -331,7 +320,7 @@ def sanitize_sql_expression(
         return result
 
     # ── Steps 3-6: alias + column normalisation ───────────────────────────
-    rewrite_map = build_alias_rewrite_map(
+    rewrite_map = build_prefix_rewrite_map(
         dataset_aliases,
         database=database,
         schema_name=schema_name,
@@ -603,7 +592,7 @@ def validate_semantic_view_sql(
     # e.g. SALES_FACT.SCORE  (wrong — physical name, not alias)
     # Also detect via the rewrite map (catches case-insensitive variants
     # that Check 3 might miss, e.g. mixed-case ``Sales_Fact.col``)
-    rewrite_map = build_alias_rewrite_map(dataset_aliases)
+    rewrite_map = build_prefix_rewrite_map(dataset_aliases)
     for bad_prefix in rewrite_map:
         if bad_prefix in _schema_ignore or bad_prefix in _flagged_prefixes:
             continue

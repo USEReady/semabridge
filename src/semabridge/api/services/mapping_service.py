@@ -113,7 +113,7 @@ def _compat_sanitize_target_name_for_project(project_id: str, target_name: str) 
         return raw
     if _compat_project_target_type(project_id) != "snowflake":
         return raw
-    return _SNOWFLAKE_SANITIZER.sanitize_alias(raw)
+    return _SNOWFLAKE_SANITIZER.to_alias(raw)
 
 
 def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, str]]:

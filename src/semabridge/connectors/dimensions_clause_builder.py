@@ -108,6 +108,8 @@ class DimensionsClauseBuilder:
                     continue
                 raw_col = getattr(attr, "dataset_column", None) or getattr(attr, "source_column", None) or attr.unique_name
                 phys_col = self.schema_manager._resolve_physical_column_name(dataset_obj, raw_col)
+                if str(phys_col or "").upper().startswith(("ALL_", "__SB_")):
+                    continue
                 
                 # Prefer live (confirmed Snowflake) schema over modeled fallback.
                 _live = (live_col_lookup or {}).get(attr.dataset)
@@ -212,6 +214,8 @@ class DimensionsClauseBuilder:
                     phys_col = dup_phys
                 else:
                     phys_col = self.schema_manager._resolve_physical_column_name(dataset, col.unique_name)
+                if str(phys_col or "").upper().startswith(("ALL_", "__SB_")):
+                    continue
 
                 if not _has_live and col.unique_name.upper() in _LIVE_ONLY_COLS:
                     missing_dims.setdefault(dataset.unique_name, [])
@@ -302,7 +306,7 @@ class DimensionsClauseBuilder:
                         candidate_cols.add(flag_val)
 
             for phys_col in sorted(candidate_cols):
-                if not phys_col or phys_col.startswith("RowNumber") or phys_col.startswith("_"):
+                if not phys_col or phys_col.startswith("RowNumber") or phys_col.startswith("_") or phys_col.upper().startswith(("ALL_", "__SB_")):
                     continue
 
                 physical_dim_key = (alias, phys_col)

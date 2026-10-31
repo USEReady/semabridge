@@ -196,7 +196,8 @@ class SnowflakeInspector:
         self.connect()
         cursor = self._connection.cursor()
         try:
-            safe = _re.sub(r"[^A-Za-z0-9_]", "_", view_name).upper()
+            from semabridge.utils.naming import to_alias
+            safe = to_alias(view_name)
             show_sv_sql = f"SHOW SEMANTIC VIEWS LIKE '{safe}'"
             validate_safe_sql(show_sv_sql)
             cursor.execute(show_sv_sql)

@@ -58,7 +58,8 @@ TIER3_TIME_INTELLIGENCE = {
 
 # DAX patterns that indicate TIER 4+ (Complex - needs AST or LLM)
 COMPLEXITY_INDICATORS = {
-    'CALCULATE_COMPLEX': r'CALCULATE\s*\(\s*[^,]+\s*,\s*(?:FILTER|ALL|ALLEXCEPT)\s*\(',
+    'CALCULATE_COMPLEX': r'CALCULATE\s*\(\s*[^,]+\s*,\s*(?:FILTER|ALL|ALLEXCEPT|REMOVEFILTERS)\s*\(',
+    'REMOVEFILTERS': r'\bREMOVEFILTERS\s*\(',
     'FILTER': r'FILTER\s*\(',
     'SUMX': r'SUMX\s*\(',
     'AVERAGEX': r'AVERAGEX\s*\(',
@@ -200,7 +201,7 @@ def is_simple_metric(dax: str) -> bool:
     calculate_arithmetic = r"^\s*CALCULATE\s*\(\s*([^,()]*(?:\[\w\s]+[\+\-\*/]?)+[^,()]*)\s*\)\s*$"
     if re.match(calculate_arithmetic, clean_dax, re.IGNORECASE):
         # Make sure no FILTER/ALL inside
-        if not re.search(r'\b(FILTER|ALL|ALLEXCEPT)\b', clean_dax, re.IGNORECASE):
+        if not re.search(r'\b(FILTER|ALL|ALLEXCEPT|REMOVEFILTERS)\b', clean_dax, re.IGNORECASE):
             logger.debug(f"TIER 2: CALCULATE with simple arithmetic")
             log_complexity_classification(True)  # Log as simple
             return True
@@ -443,6 +444,10 @@ def translate_divide_measures(dax: str, table_alias: str) -> Optional[str]:
         logger.debug("DIVIDE operand is not a direct aggregate call — declining to a measure reference.")
         return None
 
+    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
+    numerator_sql = _wrap_parens_for_op(numerator_sql)
+    denominator_sql = _wrap_parens_for_op(denominator_sql)
+
     if alternate_result is not None:
         result = f"IFF(COALESCE({denominator_sql}, 0) = 0, {alternate_result}, {numerator_sql} / {denominator_sql})"
     else:
@@ -649,11 +654,8 @@ def _column_ref(table: str, column: str, default_alias: str = "") -> str:
     alias = table or default_alias
     quoted_col = _quote_identifier(column)
     if alias:
-        try:
-            from semabridge.utils.identifiers import IdentifierSanitizer
-            safe_alias = IdentifierSanitizer().sanitize_alias(alias)
-        except ImportError:
-            safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", alias).upper()
+        from semabridge.utils.naming import to_alias
+        safe_alias = to_alias(alias)
         return f"{safe_alias}.{quoted_col}"
     return quoted_col
 
@@ -893,7 +895,7 @@ def _parse_simple_predicate_conditions(filter_expr: str, table_alias: str) -> Op
     if re.search(r"\bOR\b", filter_expr, re.IGNORECASE):
         return None
     if re.search(
-        r"\b(CALCULATE|FILTER|TOPN|RANKX|ALLEXCEPT|ALL|SELECTEDVALUE|SUMX|AVERAGEX|MINX|MAXX|COUNTX|EARLIER)\s*\(",
+        r"\b(CALCULATE|FILTER|TOPN|RANKX|ALLEXCEPT|ALL|REMOVEFILTERS|SELECTEDVALUE|SUMX|AVERAGEX|MINX|MAXX|COUNTX|EARLIER)\s*\(",
         filter_expr,
         re.IGNORECASE,
     ):
@@ -1005,7 +1007,7 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
 
     col_pat = r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*([^\]]+)\s*\]"
     expr_sql = re.sub(col_pat, repl_col, expression)
-    if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|SELECTEDVALUE)\b", expr_sql, re.IGNORECASE):
+    if re.search(r"\b(CALCULATE|FILTER|TOPN|RANKX|ALL|ALLEXCEPT|REMOVEFILTERS|SELECTEDVALUE)\b", expr_sql, re.IGNORECASE):
         return None
 
     # Map DAX DATEDIFF(start, end, interval) to Snowflake DATEDIFF(interval, start, end)

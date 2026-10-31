@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import re
+import os
 import yaml
 from contextlib import contextmanager
 from pathlib import Path
@@ -560,14 +561,15 @@ class SnowflakeEmitter(BaseEmitter):
                 except Exception as _rerender_exc:
                     logger.warning("Anchor-dependent metric re-render skipped: %s", _rerender_exc)
 
-                try:
-                    _w_rerendered = self._rerender_window_enriched_metrics(
-                        model, _dataset_col_lookup, _dataset_aliases
-                    )
-                    if _w_rerendered:
-                        logger.info("Re-rendered %d window-enriched metric(s) with helper view window columns", _w_rerendered)
-                except Exception as _w_exc:
-                    logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
+                if os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1":
+                    try:
+                        _w_rerendered = self._rerender_window_enriched_metrics(
+                            model, _dataset_col_lookup, _dataset_aliases
+                        )
+                        if _w_rerendered:
+                            logger.info("Re-rendered %d window-enriched metric(s) with helper view window columns", _w_rerendered)
+                    except Exception as _w_exc:
+                        logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
 
                 if is_osi:
                     self.schema_manager._preflight_check_osi(cur, model)
@@ -902,10 +904,12 @@ class SnowflakeEmitter(BaseEmitter):
                                     cur, _current_sql, context=f"DDL[{idx}] pass {_pass + 1}"
                                 )
                                 _remediated = True
+                                ddls[idx] = _current_sql
                                 break
                             except Exception as _retry_exc:
                                 _current_exc = _retry_exc
                         if _remediated:
+                            ddls[idx] = _current_sql
                             _ddls_executed_count += 1
                             continue  # DDL succeeded after remediation
                         # Remediation is exhausted -- this DDL statement is
@@ -1310,6 +1314,21 @@ class SnowflakeEmitter(BaseEmitter):
             try:
                 self.connection_manager._execute_sql(cursor, check_sql, context=f"cortex_safety:metric:{metric}", expected_failure=True)
             except Exception as exc:
+                err_msg = str(exc)
+                if "010277" in err_msg or "Required dimensions" in err_msg:
+                    m = re.search(r"Required dimensions\s*\[(.*?)\]", err_msg)
+                    if m:
+                        req_dims_raw = m.group(1).strip()
+                        dims_clause = ", ".join(d.strip() for d in req_dims_raw.split(","))
+                        retry_sql = f"SELECT * FROM SEMANTIC_VIEW({fq_view} DIMENSIONS {dims_clause} METRICS {metric}) LIMIT 0"
+                        try:
+                            self.connection_manager._execute_sql(
+                                cursor, retry_sql, context=f"cortex_safety:metric_with_dims:{metric}", expected_failure=True
+                            )
+                            continue  # Window metric compiles cleanly with its required dimensions!
+                        except Exception as retry_exc:
+                            failed_metrics.append((metric, str(retry_exc)))
+                            continue
                 failed_metrics.append((metric, str(exc)))
 
         # If any metric failed, remediate by setting to NULL placeholder and redeploying
@@ -1637,7 +1656,7 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _sanitize_alias(self, name: str) -> str:
         """Sanitize alias names and ensure they do not start with a digit."""
-        sanitized = self._id.sanitize_alias(name)
+        sanitized = self._id.to_alias(name)
         if sanitized and sanitized[0].isdigit():
             sanitized = f"_{sanitized}"
         return sanitized
@@ -1846,12 +1865,7 @@ class SnowflakeEmitter(BaseEmitter):
                     _dataset_aliases,
                     label="confirmed",
                 )
-                try:
-                    self._rerender_window_enriched_metrics(
-                        model, _dataset_col_lookup, _dataset_aliases
-                    )
-                except Exception as _w_exc:
-                    logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
+                pass  # Window metrics are handled natively in B1 (no re-render needed)
                 return self.semantic_view_builder.generate_ddls(model)
         finally:
             self.semantic_view_builder.cursor = None
@@ -2334,16 +2348,40 @@ class SnowflakeEmitter(BaseEmitter):
         Any unresolved reference = fail, naming the element.
         """
         table_columns: Dict[str, Set[str]] = {}
+        target_db = str(self.config.database or "").strip().upper()
+        target_schema = str(self.config.schema_name or "").strip().upper()
         try:
-            cur.execute(
-                "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s",
-                (str(self.config.schema_name).upper(),)
-            )
-            for t, c in cur.fetchall():
+            # Query the user-selected schema for this project (supporting cross-schema if configured)
+            if target_db and target_schema:
+                cur.execute(
+                    "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE UPPER(TABLE_CATALOG) = %s AND UPPER(TABLE_SCHEMA) = %s",
+                    (target_db, target_schema)
+                )
+            elif target_schema:
+                cur.execute(
+                    "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE UPPER(TABLE_SCHEMA) = %s",
+                    (target_schema,)
+                )
+            else:
+                cur.execute(
+                    "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = CURRENT_DATABASE()"
+                )
+            for s, t, c in cur.fetchall():
                 table_columns.setdefault(t.upper(), set()).add(c.upper())
+                table_columns.setdefault(f"{s.upper()}.{t.upper()}", set()).add(c.upper())
         except Exception as e:
-            logger.warning("Could not query INFORMATION_SCHEMA.COLUMNS for static pre-deploy check: %s", e)
-            return
+            try:
+                cur.execute(
+                    "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s",
+                    (target_schema or "PUBLIC",)
+                )
+                for t, c in cur.fetchall():
+                    table_columns.setdefault(t.upper(), set()).add(c.upper())
+            except Exception as inner_e:
+                logger.warning("Could not query INFORMATION_SCHEMA.COLUMNS for static pre-deploy check: %s", inner_e)
+                return
 
         all_errors: List[str] = []
         for ddl in ddls:
@@ -2412,7 +2450,8 @@ class SnowflakeEmitter(BaseEmitter):
                             if to_valid and c not in to_valid:
                                 all_errors.append(f"Relationship '{rel_name}' (to): column '{to_alias}.{c}' does not exist in bound physical table '{to_phys}'")
 
-            # 3. Parse DIMENSIONS clause
+            # 3. Parse DIMENSIONS clause & record declared dimensions
+            declared_dims: Set[Tuple[str, str]] = set()
             dims_match = re.search(r'DIMENSIONS\s*\((.*?)\)\s*METRICS', ddl, re.DOTALL | re.IGNORECASE)
             if dims_match:
                 dims_clause = dims_match.group(1)
@@ -2420,10 +2459,11 @@ class SnowflakeEmitter(BaseEmitter):
                     line_clean = line.strip().rstrip(',')
                     if not line_clean:
                         continue
-                    m = re.search(r'([A-Za-z0-9_]+)\.(?:\"([^\"]+)\"|([A-Za-z0-9_]+))\s+AS\s+([A-Za-z0-9_]+)\.(?:\"([^\"]+)\"|([A-Za-z0-9_]+))', line_clean, re.IGNORECASE)
+                    m = re.search(r'([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))\s+AS\s+([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))', line_clean, re.IGNORECASE)
                     if m:
                         alias = m.group(1).upper()
                         dim_name = m.group(2) or m.group(3)
+                        declared_dims.add((alias, dim_name.upper()))
                         expr_alias = m.group(4).upper()
                         phys_col = (m.group(5) or m.group(6)).upper()
                         
@@ -2432,25 +2472,50 @@ class SnowflakeEmitter(BaseEmitter):
                         if valid_cols and phys_col not in valid_cols:
                             all_errors.append(f"Dimension '{alias}.{dim_name}': referenced physical column '{expr_alias}.{phys_col}' does not exist in bound physical table '{bound_tbl}'")
 
-            # 4. Parse METRICS clause
-            mets_match = re.search(r'METRICS\s*\((.*)\)\s*\Z', ddl, re.DOTALL | re.IGNORECASE)
+            # 4. Parse METRICS clause (including NON ADDITIVE BY dimension checks)
+            declared_metrics: Set[Tuple[str, str]] = set()
+            mets_match = re.search(r'METRICS\s*\((.*)\)', ddl, re.DOTALL | re.IGNORECASE)
             if mets_match:
                 mets_clause = mets_match.group(1)
+                metric_entries = []
                 for line in mets_clause.split('\n'):
                     line_clean = line.strip().rstrip(',')
                     if not line_clean:
                         continue
-                    m = re.search(r'([A-Za-z0-9_]+)\.(?:\"([^\"]+)\"|([A-Za-z0-9_]+))\s+AS\s+(.*)', line_clean, re.IGNORECASE)
+                    m = re.search(r'([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))(?:\s+NON\s+ADDITIVE\s+BY\s*\((.*?)\))?\s+AS\s+(.*)', line_clean, re.IGNORECASE)
                     if m:
                         alias = m.group(1).upper()
                         metric_name = m.group(2) or m.group(3)
-                        expr = m.group(4)
-                        for talias, phys_tbl in table_map.items():
-                            col_refs = re.findall(rf'\b{re.escape(talias)}\.\"([^\"]+)\"', expr, re.IGNORECASE)
-                            valid_cols = table_columns.get(phys_tbl, set())
-                            for cr in col_refs:
-                                if valid_cols and cr.upper() not in valid_cols:
-                                    all_errors.append(f"Metric '{alias}.{metric_name}': referenced column '{talias}.{cr}' does not exist in bound physical table '{phys_tbl}'")
+                        declared_metrics.add((alias, metric_name.upper()))
+                        metric_entries.append((alias, metric_name, m.group(4), m.group(5)))
+
+                for alias, metric_name, non_additive_part, expr in metric_entries:
+                    # Check NON ADDITIVE BY references a declared dimension
+                    if non_additive_part and declared_dims:
+                        nad_m = re.search(r'([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))', non_additive_part)
+                        if nad_m:
+                            nad_alias = nad_m.group(1).upper()
+                            nad_col = (nad_m.group(2) or nad_m.group(3)).upper()
+                            if (nad_alias, nad_col) not in declared_dims:
+                                all_errors.append(
+                                    f"Metric '{alias}.{metric_name}': NON ADDITIVE BY references '{nad_alias}.{nad_col}' which is not a declared dimension in DIMENSIONS"
+                                )
+
+                    expr = _sb_strip_semantic_refs(expr, ddl, all_errors, f"{alias}.{metric_name}")  # >>> SB_PREDEPLOY_SEMANTIC_REFS
+                    for talias, phys_tbl in table_map.items():
+                        col_refs = re.findall(rf'\b{re.escape(talias)}\."([^"]+)"', expr, re.IGNORECASE)
+                        valid_cols = table_columns.get(phys_tbl, set())
+                        for cr in col_refs:
+                            cr_u = cr.upper()
+                            # In Snowflake semantic views (e.g. B1 window metrics), a metric expression
+                            # can validly reference another declared metric of the view (e.g. CASES."CASE_COUNT")
+                            # or a declared dimension of the view (e.g. PRODUCTS."PRODUCTS_PRODUCTSEQ" in PARTITION BY EXCLUDING).
+                            if (talias.upper(), cr_u) in declared_metrics or any(m_name == cr_u for _, m_name in declared_metrics):
+                                continue
+                            if (talias.upper(), cr_u) in declared_dims or any(d_name == cr_u for _, d_name in declared_dims):
+                                continue
+                            if valid_cols and cr_u not in valid_cols:
+                                all_errors.append(f"Metric '{alias}.{metric_name}': referenced column '{talias}.{cr}' does not exist in bound physical table '{phys_tbl}'")
 
         if all_errors:
             raise ConnectorError(
@@ -3104,7 +3169,8 @@ class SnowflakeEmitter(BaseEmitter):
         return next_cols == pk_cols
 
     def _make_join_alias(self, dataset_name: str, used_aliases: set[str]) -> str:
-        base = "jl_" + re.sub(r"[^A-Za-z0-9]+", "", str(dataset_name)).lower()
+        from semabridge.utils.naming import to_alias
+        base = f"jl_{to_alias(str(dataset_name)).lower()}"
         if base == "jl_":
             base = "jl_ds"
         alias = base
@@ -3699,9 +3765,7 @@ class SnowflakeEmitter(BaseEmitter):
                 select_parts.append(projection)
                 projected_cols.add(detail["precomputed_column"].upper())
 
-        # Add window precomputed columns for Share of Total (ALL) metrics
-        for proj in self._build_window_precomputed_columns(model, fact_table, projected_cols):
-            select_parts.append(proj)
+        # Share of Total metrics are handled via B1 window metrics in semantic view (no physical view helper columns needed)
 
         # Anchors: computed inside the view by a one-row join over the data
         # (never a literal fixed at sync time), so the view's SQL depends only
@@ -4002,3 +4066,50 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _generate_semantic_view_from_osi(self, osi: Any) -> str:
         return self.semantic_view_builder._generate_semantic_view_from_osi(osi)
+
+# >>> SB_PREDEPLOY_SEMANTIC_REFS (helper)
+def _sb_declared_semantic_names(ddl):
+    """Declared DIMENSION and METRIC names of a semantic-view DDL as {'ALIAS.NAME'} (upper, unquoted)."""
+    import re as _re
+
+    def _block(word):
+        m = _re.search(r"\b" + word + r"\s*\(", ddl, _re.I)
+        if not m:
+            return ""
+        depth, i = 1, m.end()
+        while i < len(ddl) and depth:
+            depth += {"(": 1, ")": -1}.get(ddl[i], 0)
+            i += 1
+        return ddl[m.end():i - 1]
+
+    def _names(body):
+        out = set()
+        for m in _re.finditer(r'(?:^|,)\s*"?([A-Za-z0-9_$]+)"?\s*\.\s*"?([A-Za-z0-9_$]+)"?\s+(?:NON\s+ADDITIVE\s+BY\s*\([^)]*\)\s+)?AS\s',
+                              body, _re.I | _re.M):
+            out.add(f"{m.group(1).upper()}.{m.group(2).upper()}")
+        return out
+    return _names(_block("DIMENSIONS")), _names(_block("METRICS"))
+
+
+def _sb_strip_semantic_refs(expr, ddl, errors, metric_label):
+    """Validate PARTITION BY EXCLUDING names against declared dimensions and remove them, plus references to
+    declared metrics, from `expr`, so that only real column references are checked against INFORMATION_SCHEMA."""
+    import re as _re
+    dims, metrics = _sb_declared_semantic_names(ddl)
+    norm = lambda a, n: f"{a.strip().strip(chr(34)).upper()}.{n.strip().strip(chr(34)).upper()}"
+
+    def _excl(m):
+        items = [x.strip() for x in m.group(1).split(",") if x.strip()]
+        for it in items:
+            p = _re.match(r'"?([A-Za-z0-9_$]+)"?\s*\.\s*"?([A-Za-z0-9_$]+)"?$', it)
+            if not p or norm(p.group(1), p.group(2)) not in dims:
+                errors.append(f"Metric '{metric_label}': PARTITION BY EXCLUDING '{it}' is not a declared dimension")
+        return "PARTITION BY EXCLUDING __SB_CHECKED__" + (m.group(2) or "")
+
+    expr = _re.sub(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(\s+ORDER\s+BY\b|\))", _excl, expr, flags=_re.I | _re.S)
+
+    def _metric(m):
+        return "__SB_METRIC__" if norm(m.group(1), m.group(2)) in metrics else m.group(0)
+
+    return _re.sub(r'\b"?([A-Za-z0-9_$]+)"?\s*\.\s*"?([A-Za-z0-9_$]+)"?', _metric, expr)
+# <<< SB_PREDEPLOY_SEMANTIC_REFS (helper)

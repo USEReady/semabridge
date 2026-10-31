@@ -171,7 +171,7 @@ class SnowflakeSchemaManager:
         return sanitized
 
     def _sanitize_alias(self, name: str) -> str:
-        sanitized = self._id.sanitize_alias(name)
+        sanitized = self._id.to_alias(name)
         if sanitized and sanitized[0].isdigit():
             sanitized = f"_{sanitized}"
         return sanitized
@@ -194,11 +194,11 @@ class SnowflakeSchemaManager:
 
     def _duplicate_namespace_key(self, model_name: Optional[str] = None) -> str:
         parts = [
-            self._id.sanitize_alias(self.config.database or "DB"),
-            self._id.sanitize_alias(self.config.schema_name or "SCHEMA"),
+            self._id.to_alias(self.config.database or "DB"),
+            self._id.to_alias(self.config.schema_name or "SCHEMA"),
         ]
         if model_name:
-            parts.append(self._id.sanitize_alias(model_name))
+            parts.append(self._id.to_alias(model_name))
         return ".".join(parts)
 
     def _resolve_persistent_duplicate_name(

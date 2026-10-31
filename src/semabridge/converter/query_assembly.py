@@ -60,10 +60,8 @@ class TranslatedMetric:
     def select_alias(self) -> str:
         """Generate SELECT clause alias from metric name."""
         # Sanitize name: uppercase, replace spaces/hyphens with underscore, remove special chars
-        alias = re.sub(r'[^A-Za-z0-9_]', '_', self.name)
-        alias = re.sub(r'_+', '_', alias)  # Collapse multiple underscores
-        alias = alias.upper()
-        return alias.lstrip('_').rstrip('_')  # Remove leading/trailing underscores
+        from semabridge.utils.naming import to_alias
+        return to_alias(self.name)
     
     def to_select_clause(self) -> str:
         """Generate SELECT clause item."""

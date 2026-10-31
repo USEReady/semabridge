@@ -163,7 +163,7 @@ class IdentifierNormalizer:
             return alias_lookup[alias]
 
         # Try normalized version
-        normalized = self.sanitizer.sanitize_alias(alias)
+        normalized = self.sanitizer.to_alias(alias)
         return alias_lookup.get(normalized)
 
     def detect_casing_mismatch(
@@ -185,8 +185,9 @@ class IdentifierNormalizer:
             return False
 
         # Remove special chars and compare
-        decl_norm = re.sub(r"[^A-Za-z0-9]", "", declared_name).upper()
-        actual_norm = re.sub(r"[^A-Za-z0-9]", "", actual_name).upper()
+        from semabridge.utils.naming import to_alias
+        decl_norm = to_alias(declared_name)
+        actual_norm = to_alias(actual_name)
 
         return decl_norm == actual_norm and declared_name != actual_name
 

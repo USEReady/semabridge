@@ -92,7 +92,7 @@ def _apply_mapping_overrides_from_config(
         source_path = str(row.get("source_path") or "").strip()
         target_name = str(row.get("target_name") or "").strip()
         if target_type == "snowflake" and target_name:
-            target_name = snowflake_sanitizer.sanitize_alias(target_name)
+            target_name = snowflake_sanitizer.to_alias(target_name)
         if source_path and target_name:
             overrides[source_path] = target_name
 

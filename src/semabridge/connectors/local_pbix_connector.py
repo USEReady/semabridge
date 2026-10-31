@@ -610,23 +610,47 @@ class LocalPBIXConnector(BaseConnector):
         Unresolved endpoints:
         - Logged and recorded in drop_ledger as by_design=False with endpoint IDs and diagnostic details.
         """
+        sh = None
+        # 1. Try modern pbixray (>= 0.15) via PBIXRay._metadata.source._db
         try:
-            from pbixray.meta.sqlite_handler import SQLiteHandler  # type: ignore[import-untyped]
-            from pbixray.pbix_unpacker import PbixUnpacker  # type: ignore[import-untyped]
-            from pbixray.utils import get_data_slice  # type: ignore[import-untyped]
+            from pbixray.core import PBIXRay
+            model = PBIXRay(str(self._pbix_path))
+            meta = getattr(model, "_metadata", None)
+            source = getattr(meta, "source", None)
+            db = getattr(source, "_db", None)
+            if db and hasattr(db, "query"):
+                class _ModernSQLiteHandlerAdapter:
+                    def __init__(self, reader: Any, mdl: Any) -> None:
+                        self._reader = reader
+                        self._model = mdl
+                    def execute_query(self, sql: str) -> Any:
+                        return self._reader.query(sql)
+                    def close_connection(self) -> None:
+                        try:
+                            self._model.close()
+                        except Exception:
+                            pass
+                sh = _ModernSQLiteHandlerAdapter(db, model)
+        except Exception as mod_exc:
+            logger.debug("Modern pbixray SQLite access unavailable: %s", mod_exc)
 
-            unpacker = PbixUnpacker(str(self._pbix_path))
-            data_model = unpacker.data_model
-            if getattr(data_model, "file_type", None) != "pbix":
-                return None, None
+        # 2. Fall back to legacy pbixray (< 0.15) internal unpacker
+        if sh is None:
+            try:
+                from pbixray.meta.sqlite_handler import SQLiteHandler  # type: ignore[import-untyped]
+                from pbixray.pbix_unpacker import PbixUnpacker  # type: ignore[import-untyped]
+                from pbixray.utils import get_data_slice  # type: ignore[import-untyped]
 
-            sqlite_buffer = get_data_slice(data_model, "metadata.sqlitedb")
-            if not sqlite_buffer:
-                return None, None
+                unpacker = PbixUnpacker(str(self._pbix_path))
+                data_model = unpacker.data_model
+                if getattr(data_model, "file_type", None) == "pbix":
+                    sqlite_buffer = get_data_slice(data_model, "metadata.sqlitedb")
+                    if sqlite_buffer:
+                        sh = SQLiteHandler(sqlite_buffer)
+            except Exception as legacy_exc:
+                logger.debug("Legacy metadata.sqlitedb access unavailable: %s", legacy_exc)
 
-            sh = SQLiteHandler(sqlite_buffer)
-        except Exception as exc:
-            logger.debug("Direct metadata.sqlitedb access unavailable: %s", exc)
+        if sh is None:
             return None, None
 
         try:

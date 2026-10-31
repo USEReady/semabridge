@@ -710,6 +710,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "dropped_by_stage": dropped_by_stage,
         "excluded_by_design_by_stage": excluded_by_design_by_stage,
         "data_backfill_results": data_backfill_results,
+        "cortex_validation_results": cortex_validation_results,
         "upsert_deltas": _collect_upsert_deltas(model_results),
     }
 
@@ -778,6 +779,7 @@ def build_run_report_data(
     dropped_count = sum(len(records) for records in dropped_by_stage.values())
     excluded_by_design_count = sum(len(records) for records in excluded_by_design_by_stage.values())
     data_backfill_results = data.get("data_backfill_results") or []
+    cortex_validation_results = data.get("cortex_validation_results") or []
     backfill_loaded = sum(1 for e in data_backfill_results if e.get("status") == "loaded")
     backfill_skipped = sum(1 for e in data_backfill_results if e.get("status") == "skipped")
     backfill_failed = sum(1 for e in data_backfill_results if e.get("status") == "failed")

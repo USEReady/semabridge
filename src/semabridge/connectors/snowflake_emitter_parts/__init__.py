@@ -27,7 +27,7 @@ Modules:
   - sanitize_semantic_name()
   - to_snowflake_relationship_name()
   - get_safe_object_name()
-  - sanitize_alias()
+  - to_alias()
   - resolve_unique_table_alias()
   - resolve_unique_metric_alias()
   - resolve_unique_dimension_alias()

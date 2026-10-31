@@ -293,7 +293,7 @@ class MetricSqlValidator:
 
         def _replace(match: re.Match) -> str:
             token = match.group(1)
-            sanitized = self._id.sanitize_alias(token)
+            sanitized = self._id.to_alias(token)
             if sanitized in metric_names and sanitized != token:
                 return f'"{sanitized}"'
             resolved = self._resolve_metric_reference_name(metric_names, sanitized, allow_fuzzy=True)
@@ -304,7 +304,7 @@ class MetricSqlValidator:
         def _replace_qualified(match: re.Match) -> str:
             alias = match.group(1)
             token = match.group(2)
-            sanitized = self._id.sanitize_alias(token)
+            sanitized = self._id.to_alias(token)
             resolved = sanitized if sanitized in metric_names else self._resolve_metric_reference_name(
                 metric_names,
                 sanitized,

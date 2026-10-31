@@ -167,6 +167,13 @@ CASES = [
       context={"Adjustment Value": ("Param", "SELECTEDVALUE(Param[Value], 0)")},
       expect=("value", lambda: O.Amount.sum()),
       expected_sql="(SUM(orders.AMOUNT)) + (SUM(orders.AMOUNT)) * ((0) / 100)"),
+ dict(id="F10.6", feature="F10 SELECTEDVALUE", title="what-if inside VAR with CALCULATE ('Table'[Measure])",
+      dax='VAR r = CALCULATE(SUM(Orders[Amount]), Orders[Status] = "Sold") '
+          'RETURN r + r * (Param[Adjustment Value] / 100)',
+      home="Orders",
+      context={"Adjustment Value": ("Param", "SELECTEDVALUE(Param[Value], 0)")},
+      expect=("value", lambda: O[O.Status == "Sold"].Amount.sum()),
+      expected_sql="(SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.AMOUNT END)) + (SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.AMOUNT END)) * ((0) / 100)"),
 
  # ---------------------------------------------------------------- F7 measure dependencies
  dict(id="F7.1", feature="F7 Dependencies", title="arithmetic over two base measures",
@@ -192,6 +199,12 @@ CASES = [
       home="Orders", expect=("value", lambda: None),
       expected_sql="IFF(COALESCE(SUM(orders.QTY), 0) = 0, 0, SUM(CASE WHEN orders.STATUS = 'X' THEN orders.AMOUNT END) / SUM(orders.QTY))",
       solution="DIVIDE(a, b, alt) -> IFF(COALESCE(b,0)=0, alt, a/b) - not COALESCE(a/b, alt)."),
+ dict(id="F17.5", feature="F17 Division safety", title="DIVIDE([A-B], [B]) numerator precedence",
+      dax='DIVIDE([Total Amount] - [Sold Amount], [Total Amount])',
+      home="Orders", expect=("value", lambda: (O.Amount.sum() - sold.Amount.sum()) / O.Amount.sum()),
+      context={k: BASE[k] for k in ("Sold Amount", "Total Amount")},
+      expected_sql="(SUM(orders.AMOUNT) - SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.AMOUNT END)) / NULLIF(SUM(orders.AMOUNT), 0)",
+      solution="Numerator with subtraction must keep parentheses in division to avoid precedence bug."),
 
 ]
 

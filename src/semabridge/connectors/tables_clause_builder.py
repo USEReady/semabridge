@@ -1,7 +1,7 @@
 """Tables clause builder for Snowflake semantic views."""
 
 from __future__ import annotations
-from semabridge.utils.identifiers import inactive_alias
+from semabridge.utils.naming import to_alias
 
 from typing import Any, Dict, List, Tuple, Set, Optional
 import re
@@ -366,9 +366,22 @@ class TablesClauseBuilder:
                 explicit_mapping=source_table_mapping,
                 model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
             )
-            unqualified_table = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
-            safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
-            full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
+            parts = [p.strip().strip('"') for p in source_table.split(".") if p.strip()]
+            if len(parts) >= 3:
+                safe_db = self.identifier_sanitizer.sanitize_table_name(parts[0])
+                safe_schema = self.identifier_sanitizer.sanitize_table_name(parts[1])
+                safe_tbl = self.identifier_sanitizer.sanitize_table_name(parts[2])
+                full_table = f'"{safe_db}"."{safe_schema}"."{safe_tbl}"'
+                unqualified_table = parts[2]
+            elif len(parts) == 2:
+                safe_schema = self.identifier_sanitizer.sanitize_table_name(parts[0])
+                safe_tbl = self.identifier_sanitizer.sanitize_table_name(parts[1])
+                full_table = f'"{self.config.database}"."{safe_schema}"."{safe_tbl}"'
+                unqualified_table = parts[1]
+            else:
+                unqualified_table = parts[0] if parts else source_table
+                safe_table = self.identifier_sanitizer.sanitize_table_name(unqualified_table)
+                full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
@@ -509,7 +522,7 @@ class TablesClauseBuilder:
                 from_cols = getattr(rel, "from_columns", None) or []
                 fk_col = from_cols[0] if from_cols else ""
                 if dim_dataset and fk_col:
-                    inact_alias = inactive_alias(dim_ds_name, fk_col, uppercase=True)
+                    inact_alias = to_alias(dim_ds_name, fk_col)
                     modeled_cols_list = [c.unique_name for c in getattr(dim_dataset, "columns", []) or []]
                     source_table = resolve_dataset_to_physical_table(
                         dim_dataset.unique_name,
@@ -518,14 +531,32 @@ class TablesClauseBuilder:
                         explicit_mapping=source_table_mapping,
                         model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
                     )
-                    _unq = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
-                    safe_dim_table = self.identifier_sanitizer.sanitize_table_name(_unq)
-                    dim_full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
+                    parts = [p.strip().strip('"') for p in source_table.split(".") if p.strip()]
+                    if len(parts) >= 3:
+                        safe_db = self.identifier_sanitizer.sanitize_table_name(parts[0])
+                        safe_schema = self.identifier_sanitizer.sanitize_table_name(parts[1])
+                        safe_tbl = self.identifier_sanitizer.sanitize_table_name(parts[2])
+                        dim_full_table = f'"{safe_db}"."{safe_schema}"."{safe_tbl}"'
+                    elif len(parts) == 2:
+                        safe_schema = self.identifier_sanitizer.sanitize_table_name(parts[0])
+                        safe_tbl = self.identifier_sanitizer.sanitize_table_name(parts[1])
+                        dim_full_table = f'"{self.config.database}"."{safe_schema}"."{safe_tbl}"'
+                    else:
+                        _unq = parts[0] if parts else source_table
+                        safe_dim_table = self.identifier_sanitizer.sanitize_table_name(_unq)
+                        dim_full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
 
                     dim_alias = self._get_unique_alias(dim_dataset.unique_name, registry)
                     dim_pks = declared_pk_by_alias.get(dim_alias, [])
-                    pk_cols_str = ", ".join(f'"{c}"' for c in dim_pks)
-                    dim_pk_suffix = f" PRIMARY KEY ({pk_cols_str})" if dim_pks else ""
+                    to_cols_raw = getattr(rel, "to_columns", None) or []
+                    resolved_inact_pks = []
+                    for c in to_cols_raw:
+                        resolved = self.schema_manager._resolve_physical_column_name(dim_dataset, c) if dim_dataset else self.identifier_sanitizer.sanitize_column(c)
+                        if resolved:
+                            resolved_inact_pks.append(resolved)
+                    inact_pks = resolved_inact_pks if resolved_inact_pks else dim_pks
+                    pk_cols_str = ", ".join(f'"{c}"' for c in inact_pks)
+                    dim_pk_suffix = f" PRIMARY KEY ({pk_cols_str})" if inact_pks else ""
 
                     line = f'  {inact_alias} AS {dim_full_table}{dim_pk_suffix}'
                     if line not in tables_lines:
@@ -543,7 +574,7 @@ class TablesClauseBuilder:
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)
         if not alias:
-            alias = self.identifier_sanitizer.sanitize_alias(name)
+            alias = self.identifier_sanitizer.to_alias(name)
             if alias in registry.used_table_aliases:
                 idx = 2
                 while True:

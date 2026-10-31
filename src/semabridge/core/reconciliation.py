@@ -83,7 +83,7 @@ _BRANCH_SUFFIX_RE = re.compile(r'_BRANCH_\d+(?:_\d+)*$', re.IGNORECASE)
 
 
 def _normalize(name: str, sanitizer: IdentifierSanitizer) -> str:
-    return sanitizer.sanitize_alias(str(name)).upper()
+    return sanitizer.to_alias(str(name)).upper()
 
 
 def _strip_dedup_suffix(name: str) -> str:

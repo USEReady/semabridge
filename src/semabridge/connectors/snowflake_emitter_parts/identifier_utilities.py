@@ -38,9 +38,9 @@ def get_safe_object_name(emitter, name: str) -> str:
     return emitter._id.sanitize_column(name)
 
 
-def sanitize_alias(emitter, name: str) -> str:
+def to_alias(emitter, name: str) -> str:
     """Sanitize alias names and ensure they do not start with a digit."""
-    sanitized = emitter._id.sanitize_alias(name)
+    sanitized = emitter._id.to_alias(name)
     if sanitized and sanitized[0].isdigit():
         sanitized = f"_{sanitized}"
     return sanitized

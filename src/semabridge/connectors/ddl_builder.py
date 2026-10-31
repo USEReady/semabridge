@@ -38,8 +38,6 @@ from semabridge.connectors.ddl_helpers import (
 
     extract_expr_key_osi,
 
-    extract_referenced_table_aliases,
-
 )
 
 from semabridge.connectors.alias_registry import AliasRegistry
@@ -421,409 +419,227 @@ class SemanticViewBuilder:
 
 
     def _reanchor_disconnected_fact_metrics(self, model: Any) -> None:
-
         """Re-anchor metrics in multi-fact models placed on the wrong fact table.
 
-
-
         Rule: A metric is placed on a table that reaches every table its expression
-
         references via the model's many-to-one relationships. If none can, drop it with a reason.
-
         No hardcoded table or metric names!
-
         """
-
         metrics = getattr(model, "metrics", []) or []
-
         datasets = {getattr(d, "unique_name", None): d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None)}
-
         if not metrics or not datasets:
-
             return
 
-
-
         def _clean_id(s: Any) -> str:
-
             return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).upper()
 
-
-
         # 1. Build reachability graph (many-to-one transitive closure)
-
         reach: dict[str, set[str]] = {ds_name: {ds_name} for ds_name in datasets}
-
+        connected_datasets: set[str] = set()
         for rel in getattr(model, "relationships", []):
-
             f = getattr(rel, "from_dataset", None)
-
             t = getattr(rel, "to_dataset", None)
-
             if f in reach and t in datasets:
-
                 reach[f].add(t)
-
-
+            if f and f in datasets:
+                connected_datasets.add(f)
+            if t and t in datasets:
+                connected_datasets.add(t)
 
         changed = True
-
         while changed:
-
             changed = False
-
             for f, targets in reach.items():
-
                 new_targets = set(targets)
-
                 for t in list(targets):
-
                     new_targets.update(reach.get(t, set()))
-
                 if len(new_targets) > len(targets):
-
                     reach[f] = new_targets
-
                     changed = True
 
-
+        def _add_ref(ds: Any, ref_set: set[str]) -> None:
+            if ds and (not connected_datasets or ds in connected_datasets):
+                ref_set.add(ds)
 
         # 2. Map columns to datasets
-
         col_to_ds: dict[str, set[str]] = {}
-
         ds_cols: dict[str, set[str]] = {}
-
-        from semabridge.utils.naming import to_physical_name
+        from semabridge.utils.naming import to_physical_name, to_alias
 
         for ds_name, ds in datasets.items():
-
             ds_cols[ds_name] = {_clean_id(c.unique_name) for c in getattr(ds, "columns", []) or []}
-
             for c in getattr(ds, "columns", []) or []:
-
                 c_norm = _clean_id(c.unique_name)
-
                 col_to_ds.setdefault(c_norm, set()).add(ds_name)
-
                 phys_norm = _clean_id(to_physical_name(c.unique_name))
-
                 col_to_ds.setdefault(phys_norm, set()).add(ds_name)
-
                 ds_cols[ds_name].add(phys_norm)
-
 
         metric_map = {_clean_id(m.unique_name): m for m in metrics}
 
-
-
         # 3. Iteratively resolve and re-anchor metrics
-
         for _ in range(3):
-
             for m in metrics:
-
                 curr_ds = getattr(m, "dataset", None)
-
                 m_name = getattr(m, "unique_name", "") or ""
-
                 dax_expr = getattr(m, "expression", "") or ""
-
                 sql_expr = getattr(m, "sql_expression", "") or ""
-
                 ref_tables: set[str] = set()
 
-
-
                 if sql_expr and not re.match(r"^\(?\s*CAST\s*\(\s*NULL", sql_expr, re.IGNORECASE):
-
                     # Check explicit table.col in SQL
-
                     for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', sql_expr):
-
                         t_clean = _clean_id(t_match)
-
                         col_clean = _clean_id(col_match)
-
                         if col_clean in metric_map:
-
                             target_m = metric_map[col_clean]
-
                             if target_m.dataset:
-
-                                ref_tables.add(target_m.dataset)
-
+                                _add_ref(target_m.dataset, ref_tables)
                         else:
-
                             matched_ds = None
-
                             for ds_name in datasets:
-
                                 if _clean_id(ds_name) == t_clean:
-
                                     matched_ds = ds_name
-
                                     break
-
                             if matched_ds:
-
-                                ref_tables.add(matched_ds)
-
+                                _add_ref(matched_ds, ref_tables)
                             else:
-
                                 owners = col_to_ds.get(col_clean, set())
-
                                 if len(owners) == 1:
-
-                                    ref_tables.add(next(iter(owners)))
-
+                                    _add_ref(next(iter(owners)), ref_tables)
                                 elif owners:
-
-                                    ref_tables.update(owners)
-
+                                    for o in owners:
+                                        _add_ref(o, ref_tables)
                 else:
-
                     # Check explicit Table[ColOrMeasure] in DAX
-
-                    for t_match, col_match in re.findall(r"'?([a-zA-Z0-9_ ]+)'?\[([a-zA-Z0-9_ ]+)\]", dax_expr):
-
+                    for q_tbl, b_tbl, col_match in re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[([^\]]+)\]", dax_expr):
+                        t_match = q_tbl or b_tbl
                         t_clean = _clean_id(t_match)
-
                         col_clean = _clean_id(col_match)
-
                         if col_clean in metric_map:
-
                             target_m = metric_map[col_clean]
-
                             if target_m.dataset:
-
-                                ref_tables.add(target_m.dataset)
-
+                                _add_ref(target_m.dataset, ref_tables)
                         else:
-
                             for ds_name in datasets:
-
                                 if _clean_id(ds_name) == t_clean:
-
-                                    ref_tables.add(ds_name)
-
-
+                                    _add_ref(ds_name, ref_tables)
 
                     # Check bare [Identifier] in DAX
-
-                    for col_match in re.findall(r'\[([a-zA-Z0-9_ ]+)\]', dax_expr):
-
+                    for col_match in re.findall(r'\[([^\]]+)\]', dax_expr):
                         c_clean = _clean_id(col_match)
-
                         if c_clean in metric_map:
-
                             target_m = metric_map[c_clean]
-
                             if target_m.dataset:
-
-                                ref_tables.add(target_m.dataset)
-
+                                _add_ref(target_m.dataset, ref_tables)
                         elif c_clean in col_to_ds:
-
                             owners = col_to_ds[c_clean]
-
                             if len(owners) == 1:
-
-                                ref_tables.add(next(iter(owners)))
-
+                                _add_ref(next(iter(owners)), ref_tables)
                             elif curr_ds not in owners:
-
-                                ref_tables.update(owners)
-
-
+                                for o in owners:
+                                    _add_ref(o, ref_tables)
 
                 if not ref_tables:
-
                     continue
 
-
-
-                if curr_ds and ref_tables.issubset(reach.get(curr_ds, set())):
-
+                if curr_ds and (not connected_datasets or curr_ds in connected_datasets) and ref_tables.issubset(reach.get(curr_ds, set())):
                     continue
-
-
 
                 candidates = [
-
                     ds_name for ds_name in datasets
-
-                    if ref_tables.issubset(reach.get(ds_name, set()))
-
+                    if (not connected_datasets or ds_name in connected_datasets)
+                    and ref_tables.issubset(reach.get(ds_name, set()))
                 ]
 
-
-
                 if candidates:
-
                     candidates.sort(key=lambda c: len(reach[c]))
-
                     best_cand = candidates[0]
-
                     if best_cand != curr_ds:
-
                         logger.info("Re-anchoring metric '%s' from '%s' to '%s' (referenced tables: %s)", m_name, curr_ds, best_cand, sorted(ref_tables))
-
                         m.dataset = best_cand
-
                         if curr_ds and m.sql_expression:
-
+                            curr_alias = to_alias(curr_ds).upper()
+                            best_alias = to_alias(best_cand).upper()
+                            m.sql_expression = re.sub(rf'\b{re.escape(curr_alias)}\b', best_alias, m.sql_expression)
                             m.sql_expression = re.sub(
-
                                 rf'\b{re.escape(curr_ds.lower())}\b',
-
                                 best_cand.lower(),
-
                                 m.sql_expression,
-
                                 flags=re.IGNORECASE
-
                             )
 
-
-
         # 4. Final verification: drop metrics that cannot reach all referenced tables
-
         surviving_metrics = []
-
         dropped_metrics = getattr(model, "dropped_metrics", []) or []
-
         for m in metrics:
-
             curr_ds = getattr(m, "dataset", None)
-
             m_name = getattr(m, "unique_name", "") or ""
-
             dax_expr = getattr(m, "expression", "") or ""
-
             sql_expr = getattr(m, "sql_expression", "") or ""
-
             ref_tables = set()
 
-
-
             if sql_expr and not re.match(r"^\(?\s*CAST\s*\(\s*NULL", sql_expr, re.IGNORECASE):
-
                 for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', sql_expr):
-
                     t_clean = _clean_id(t_match)
-
                     col_clean = _clean_id(col_match)
-
                     if col_clean in metric_map:
-
                         if metric_map[col_clean].dataset:
-
-                            ref_tables.add(metric_map[col_clean].dataset)
-
+                            _add_ref(metric_map[col_clean].dataset, ref_tables)
                     else:
-
                         for ds_name in datasets:
-
                             if _clean_id(ds_name) == t_clean:
-
-                                ref_tables.add(ds_name)
-
+                                _add_ref(ds_name, ref_tables)
                                 break
-
             else:
-
-                for t_match, col_match in re.findall(r"'?([a-zA-Z0-9_ ]+)'?\[([a-zA-Z0-9_ ]+)\]", dax_expr):
-
+                for q_tbl, b_tbl, col_match in re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[([^\]]+)\]", dax_expr):
+                    t_match = q_tbl or b_tbl
                     col_clean = _clean_id(col_match)
-
                     if col_clean in metric_map:
-
                         if metric_map[col_clean].dataset:
-
-                            ref_tables.add(metric_map[col_clean].dataset)
-
+                            _add_ref(metric_map[col_clean].dataset, ref_tables)
                     else:
-
                         for ds_name in datasets:
-
                             if _clean_id(ds_name) == _clean_id(t_match):
+                                _add_ref(ds_name, ref_tables)
 
-                                ref_tables.add(ds_name)
-
-
-
-                for col_match in re.findall(r'\[([a-zA-Z0-9_ ]+)\]', dax_expr):
-
+                for col_match in re.findall(r'\[([^\]]+)\]', dax_expr):
                     c_clean = _clean_id(col_match)
-
                     if c_clean in metric_map:
-
                         if metric_map[c_clean].dataset:
-
-                            ref_tables.add(metric_map[c_clean].dataset)
-
+                            _add_ref(metric_map[c_clean].dataset, ref_tables)
                     elif c_clean in col_to_ds:
-
                         owners = col_to_ds[c_clean]
-
                         if len(owners) == 1:
+                            _add_ref(next(iter(owners)), ref_tables)
 
-                            ref_tables.add(next(iter(owners)))
-
-
-
-            if not ref_tables or (curr_ds and ref_tables.issubset(reach.get(curr_ds, set()))):
-
+            if not ref_tables or (curr_ds and curr_ds in connected_datasets and ref_tables.issubset(reach.get(curr_ds, set()))):
                 surviving_metrics.append(m)
-
+            elif not ref_tables and curr_ds not in connected_datasets:
+                surviving_metrics.append(m)
             else:
-
                 is_empty_string = not bool(dax_expr.strip().strip('"\'')) if dax_expr else False
-
                 if is_empty_string:
-
                     reason = f"Unsupported (empty string constant)"
-
                     logger.warning("Dropping empty string constant metric '%s': %s", m_name, reason)
-
                     if getattr(self, "drop_ledger", None):
-
                         self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
-
                     if hasattr(model, "record_dropped_metric"):
-
                         model.record_dropped_metric(m_name, reason)
-
                     elif hasattr(dropped_metrics, "append"):
-
                         dropped_metrics.append({"name": m_name, "reason": reason})
-
                 else:
-
                     reason = "placeholder: not computable"
-
                     logger.info("Emitting unreachable metric '%s' on '%s' as NULL placeholder: %s", m_name, curr_ds, reason)
-
                     m.sql_expression = "CAST(NULL AS DOUBLE)"
-
                     m.is_placeholder = True
-
                     surviving_metrics.append(m)
-
                     if getattr(self, "drop_ledger", None):
-
                         self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
-
                     if hasattr(model, "record_dropped_metric"):
-
                         model.record_dropped_metric(m_name, reason)
-
                     elif hasattr(dropped_metrics, "append"):
-
                         dropped_metrics.append({"name": m_name, "reason": reason})
-
-
 
         model.metrics = surviving_metrics
 
@@ -1119,7 +935,7 @@ class SemanticViewBuilder:
 
         all_phys = {c for cols in ds_lookup.values() for c in cols}
 
-        emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in sml.metrics if (m.source_column and m.aggregation) or m.sql_expression or getattr(m, "expression", None)}
+        emittable = {self.identifier_sanitizer.to_alias(m.unique_name) for m in sml.metrics if (m.source_column and m.aggregation) or m.sql_expression or getattr(m, "expression", None)}
 
 
 
@@ -1131,7 +947,28 @@ class SemanticViewBuilder:
 
         self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
 
-
+        # Pass emitted dimensions and physical-to-emitted mapping so NON ADDITIVE BY
+        # and PARTITION BY EXCLUDING resolve to the exact declared dimension names in DIMENSIONS
+        _emitted_dims = {}
+        _emitted_dim_by_phys = {}
+        for _dl in (dims_lines or []):
+            _dm = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS\s+([A-Za-z0-9_]+)\."([^"]+)"', _dl)
+            if _dm:
+                _t_alias = _dm.group(1).upper()
+                _emitted = _dm.group(2)
+                _phys_col = _dm.group(4)
+                _emitted_dims.setdefault(_t_alias, []).append(_emitted)
+                _emitted_dim_by_phys[(_t_alias, _phys_col.upper())] = _emitted
+                _emitted_dim_by_phys[(_t_alias, _emitted.upper())] = _emitted
+            else:
+                _dm2 = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS', _dl)
+                if _dm2:
+                    _t_alias = _dm2.group(1).upper()
+                    _emitted = _dm2.group(2)
+                    _emitted_dims.setdefault(_t_alias, []).append(_emitted)
+                    _emitted_dim_by_phys[(_t_alias, _emitted.upper())] = _emitted
+        self.metrics_builder.emitted_dimensions = _emitted_dims
+        self.metrics_builder.emitted_dim_by_phys = _emitted_dim_by_phys
 
         metrics_lines = self.metrics_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
 
@@ -1255,7 +1092,7 @@ class SemanticViewBuilder:
 
         all_phys = {c for cols in ds_lookup.values() for c in cols}
 
-        emittable = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in osi.metrics if (m.source_column and m.aggregation) or getattr(m, "expression", None) or getattr(m, "sql_expression", None)}
+        emittable = {self.identifier_sanitizer.to_alias(m.unique_name) for m in osi.metrics if (m.source_column and m.aggregation) or getattr(m, "expression", None) or getattr(m, "sql_expression", None)}
 
         
 
@@ -1267,7 +1104,28 @@ class SemanticViewBuilder:
 
         self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
 
-
+        # Pass emitted dimensions and physical-to-emitted mapping so NON ADDITIVE BY
+        # and PARTITION BY EXCLUDING resolve to the exact declared dimension names in DIMENSIONS
+        _emitted_dims = {}
+        _emitted_dim_by_phys = {}
+        for _dl in (dims_lines or []):
+            _dm = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS\s+([A-Za-z0-9_]+)\."([^"]+)"', _dl)
+            if _dm:
+                _t_alias = _dm.group(1).upper()
+                _emitted = _dm.group(2)
+                _phys_col = _dm.group(4)
+                _emitted_dims.setdefault(_t_alias, []).append(_emitted)
+                _emitted_dim_by_phys[(_t_alias, _phys_col.upper())] = _emitted
+                _emitted_dim_by_phys[(_t_alias, _emitted.upper())] = _emitted
+            else:
+                _dm2 = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS', _dl)
+                if _dm2:
+                    _t_alias = _dm2.group(1).upper()
+                    _emitted = _dm2.group(2)
+                    _emitted_dims.setdefault(_t_alias, []).append(_emitted)
+                    _emitted_dim_by_phys[(_t_alias, _emitted.upper())] = _emitted
+        self.metrics_builder.emitted_dimensions = _emitted_dims
+        self.metrics_builder.emitted_dim_by_phys = _emitted_dim_by_phys
 
         metrics_lines = self.metrics_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, alias_by_raw, all_phys, emittable)
 
@@ -1377,7 +1235,7 @@ class SemanticViewBuilder:
 
         for metric in sml.metrics:
 
-            metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
+            metric_base_alias = self.identifier_sanitizer.to_alias(metric.unique_name)
 
             metric_base_totals[metric_base_alias] = metric_base_totals.get(metric_base_alias, 0) + 1
 
@@ -1393,7 +1251,7 @@ class SemanticViewBuilder:
 
         for metric in sml.metrics:
 
-            metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
+            metric_base_alias = self.identifier_sanitizer.to_alias(metric.unique_name)
 
             if metric_base_totals.get(metric_base_alias, 0) > 1:
 
@@ -1439,7 +1297,7 @@ class SemanticViewBuilder:
 
                     namespace_key=metric_namespace,
 
-                    dataset_key=self.identifier_sanitizer.sanitize_alias(metric.dataset),
+                    dataset_key=self.identifier_sanitizer.to_alias(metric.dataset),
 
                     normalized_base=metric_base_alias,
 
@@ -1465,7 +1323,7 @@ class SemanticViewBuilder:
 
         for metric in osi.metrics:
 
-            base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
+            base_alias = self.identifier_sanitizer.to_alias(metric.unique_name)
 
             metric_base_totals[base_alias] = metric_base_totals.get(base_alias, 0) + 1
 
@@ -1479,7 +1337,7 @@ class SemanticViewBuilder:
 
         for metric in osi.metrics:
 
-            metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
+            metric_base_alias = self.identifier_sanitizer.to_alias(metric.unique_name)
 
             if metric_base_totals.get(metric_base_alias, 0) > 1:
 
@@ -1525,7 +1383,7 @@ class SemanticViewBuilder:
 
                     namespace_key=metric_namespace,
 
-                    dataset_key=self.identifier_sanitizer.sanitize_alias(metric.dataset),
+                    dataset_key=self.identifier_sanitizer.to_alias(metric.dataset),
 
                     normalized_base=metric_base_alias,
 
@@ -1571,7 +1429,7 @@ class SemanticViewBuilder:
 
         namespace_key = self._duplicate_namespace_key()
 
-        dataset_key = self.identifier_sanitizer.sanitize_alias(dataset.source_table or dataset.unique_name)
+        dataset_key = self.identifier_sanitizer.to_alias(dataset.source_table or dataset.unique_name)
 
         
 
@@ -1665,7 +1523,7 @@ class SemanticViewBuilder:
 
         namespace_key = self._duplicate_namespace_key()
 
-        dataset_key = self.identifier_sanitizer.sanitize_alias(dataset.source_table or dataset.unique_name)
+        dataset_key = self.identifier_sanitizer.to_alias(dataset.source_table or dataset.unique_name)
 
         for col in valid_columns:
 
@@ -1743,15 +1601,15 @@ class SemanticViewBuilder:
 
         parts = [
 
-            self.identifier_sanitizer.sanitize_alias(self.config.database or "DB"),
+            self.identifier_sanitizer.to_alias(self.config.database or "DB"),
 
-            self.identifier_sanitizer.sanitize_alias(self.config.schema_name or "SCHEMA"),
+            self.identifier_sanitizer.to_alias(self.config.schema_name or "SCHEMA"),
 
         ]
 
         if model_name:
 
-            parts.append(self.identifier_sanitizer.sanitize_alias(model_name))
+            parts.append(self.identifier_sanitizer.to_alias(model_name))
 
         return ".".join(parts)
 
@@ -1770,17 +1628,12 @@ class SemanticViewBuilder:
             return preferred_name
 
         try:
-
-            return self.dup_name_repo.get_or_create_assigned_name(
-
+            assigned = self.dup_name_repo.get_or_create_assigned_name(
                 scope_type=scope_type, namespace_key=namespace_key, dataset_key=dataset_key, 
-
                 normalized_base=normalized_base, source_name=source_name, source_signature=source_signature, 
-
                 preferred_name=preferred_name
-
             )
-
+            return str(assigned) if assigned else preferred_name
         except Exception as exc:
 
             logger.warning("Duplicate mapping failed for %s: %s", source_name, exc)

@@ -611,6 +611,8 @@ class DAXTranslator:
             relationships=relationships,
 
             table_key_map=table_key_map,
+            dataset_col_lookup=dataset_col_lookup,
+            datasets=kwargs.get("datasets"),
 
         )
 
@@ -885,6 +887,8 @@ class DAXTranslator:
                 non_additive_dimensions=cb_dims,
 
                 table_key_map=table_key_map,
+                datasets=kwargs.get("datasets"),
+                dataset_col_lookup=dataset_col_lookup,
 
             )
 
@@ -1065,6 +1069,8 @@ class DAXTranslator:
         relationships: Optional[Iterable[Any]] = None,
 
         table_key_map: Optional[Dict[str, str]] = None,
+        dataset_col_lookup: Optional[Dict[str, set]] = None,
+        datasets: Optional[Iterable[Any]] = None,
 
     ) -> Optional[DAXTranslationResult]:
 
@@ -1227,6 +1233,8 @@ class DAXTranslator:
                 non_additive_dimensions=cb_dims,
 
                 table_key_map=table_key_map,
+                datasets=datasets,
+                dataset_col_lookup=dataset_col_lookup,
 
             )
 
@@ -1345,6 +1353,19 @@ class DAXTranslator:
         resolved_lower = {str(k).casefold() for k in (resolved_measures or {}).keys()}
 
         known_lower = {str(k).casefold() for k in (all_measure_names or ())}
+
+        from semabridge.converter.dax_ast_parser import DaxAstParser, BinaryOpNode, MeasureRefNode
+        node = DaxAstParser().parse(dax)
+        def _has_bare_measure_op(n):
+            if isinstance(n, BinaryOpNode):
+                for child in (n.left, n.right):
+                    if isinstance(child, MeasureRefNode) and child.name.casefold() not in resolved_lower:
+                        return True
+                    if _has_bare_measure_op(child):
+                        return True
+            return False
+        if _has_bare_measure_op(node):
+            return True
 
         for ref in extract_measure_references_from_ast(dax):
 
@@ -1549,6 +1570,13 @@ class DAXTranslator:
                 denominator_sql = self._try_dependency_translation(args[1], table_alias, dataset_name, metrics_context, visiting)
 
                 if numerator_sql and denominator_sql:
+                    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
+                    numerator_sql = _wrap_parens_for_op(numerator_sql)
+                    denominator_sql = _wrap_parens_for_op(denominator_sql)
+
+                    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
+                    numerator_sql = _wrap_parens_for_op(numerator_sql)
+                    denominator_sql = _wrap_parens_for_op(denominator_sql)
 
                     if len(args) >= 3 and args[2].strip():
 
@@ -3061,6 +3089,10 @@ class DAXTranslator:
 
                         return None
 
+                    from semabridge.converter.dax_ast_parser import _wrap_parens_for_op
+                    numerator_sql = _wrap_parens_for_op(numerator_sql)
+                    denominator_sql = _wrap_parens_for_op(denominator_sql)
+
                     if len(args) >= 3 and args[2].strip():
 
                         alt = args[2].strip()
@@ -3146,6 +3178,8 @@ class DAXTranslator:
                     known_measure_names=set(measure_map.keys()),
 
                     allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
+                datasets=kwargs.get("datasets"),
+                dataset_col_lookup=dataset_col_lookup,
 
                 )
 
@@ -3265,13 +3299,23 @@ class DAXTranslator:
 
             if re.search(pattern, upper_dax, re.IGNORECASE):
 
-                result["tier"] = 4
-
-                result["sync_enabled"] = False
-
                 from semabridge.converter.dax_ast_parser import dax_context_transition_failure_reason
 
                 context_transition_reason = dax_context_transition_failure_reason(clean_dax)
+
+                if context_transition_reason is None and pattern == r"ALL\s*\([^)]*\)\s*\)":
+
+                    result["tier"] = 4
+
+                    result["sync_enabled"] = True
+
+                    result["failure_reason"] = None
+
+                    continue
+
+                result["tier"] = 4
+
+                result["sync_enabled"] = False
 
                 result["failure_reason"] = context_transition_reason or "Unsupported DAX pattern detected"
 

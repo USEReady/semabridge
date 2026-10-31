@@ -187,6 +187,7 @@ class OSIToSMLConverter(BaseConverter):
             # 3. Convert Metrics with automated translation pipeline
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
 
+            known_measure_names = {m.unique_name for m in osi_model.metrics}
             for osi_metric in osi_model.metrics:
                 sml_metric = self._convert_metric(
                     osi_metric,
@@ -194,6 +195,7 @@ class OSIToSMLConverter(BaseConverter):
                     dataset_aliases=dax_dataset_aliases,
                     relationships=osi_model.relationships,
                     table_key_map=table_key_map,
+                    known_measure_names=known_measure_names,
                 )
                 sml.metrics.append(sml_metric)
 
@@ -418,6 +420,7 @@ class OSIToSMLConverter(BaseConverter):
         dataset_aliases: Optional[Dict[str, str]] = None,
         relationships: Optional[Iterable[Any]] = None,
         table_key_map: Optional[Dict[str, str]] = None,
+        known_measure_names: Optional[Set[str]] = None,
     ) -> SMLMetric:
         # --- Snowflake-sourced metrics already have sql_expression ---
         # When the source is a Snowflake semantic view, the expression is already
@@ -460,6 +463,27 @@ class OSIToSMLConverter(BaseConverter):
 
         # DAX Translation Logic
         expression = osi_metric.expression or ""
+        if not expression or not str(expression).strip():
+            sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
+            return SMLMetric(
+                unique_name=osi_metric.unique_name,
+                label=osi_metric.label,
+                description=osi_metric.description or "",
+                dataset=osi_metric.dataset,
+                expression="",
+                sql_expression="CAST(NULL AS DOUBLE)",
+                aggregation=sml_agg,
+                format_string=osi_metric.format_string,
+                is_hidden=osi_metric.is_hidden,
+                complexity_tier=1,
+                sync_enabled=False,
+                sync_failure_reason="not applicable: no expression",
+                access_modifier=osi_metric.access_modifier,
+                synonyms=list(osi_metric.synonyms),
+                synonym_sources=dict(osi_metric.synonym_sources),
+                has_report_alias=osi_metric.has_report_alias,
+                source_file=osi_metric.source_file,
+            )
 
         # Constant expressions and string-producing root expressions are a
         # modeling-classification mismatch, not a DAX translation gap — a
@@ -541,7 +565,7 @@ class OSIToSMLConverter(BaseConverter):
         # Step 3c (_resolve_metric_dependencies) where full metrics_context is
         # available and dependencies can be properly inlined.
         from semabridge.converter.dax_ast_parser import extract_measure_references_from_ast
-        has_measure_deps = bool(extract_measure_references_from_ast(expression)) if expression else False
+        has_measure_deps = bool(extract_measure_references_from_ast(expression, known_measure_names)) if expression else False
         if expression and not has_measure_deps:
             from semabridge.utils.naming import to_alias
             safe_alias = to_alias(osi_metric.dataset)
@@ -648,6 +672,7 @@ class OSIToSMLConverter(BaseConverter):
                     skip_tier5=skip_tier5,
                     relationships=relationships,
                     table_key_map=table_key_map,
+                    datasets=sml.datasets,
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql

@@ -33,9 +33,12 @@ def validate_semantic_ddl(ddl: str) -> List[str]:
     metrics = _extract_block(ddl, "METRICS (")
     forbidden = (" SELECT ", " FROM ", " JOIN ", " WITH ", " UNION ", ";")
     for line in metrics:
-        # Strip WITH SYNONYMS to avoid matching forbidden " WITH " CTE keyword
-        clean_line = re.sub(r'(?i)\bWITH\s+SYNONYMS\s*=\s*\(.*?\)', '', line)
-        clean_line = re.sub(r'(?i)\bWITH\s+SYNONYMS\b.*', '', clean_line)
+        # Strip COMMENT and string literals to avoid matching words like 'with' in comments
+        clean_line = re.sub(r"(?i)\bCOMMENT\s*=\s*'(?:[^']|'')*'", '', line)
+        clean_line = re.sub(r"'(?:[^']|'')*'", "''", clean_line)
+        # Strip WITH SYNONYMS to avoid matching forbidden ' WITH ' CTE keyword
+        clean_line = re.sub(r"(?i)\bWITH\s+SYNONYMS\s*=\s*\(.*?\)", '', clean_line)
+        clean_line = re.sub(r"(?i)\bWITH\s+SYNONYMS\b.*", '', clean_line)
         upper = f" {clean_line.upper()} "
         if any(tok in upper for tok in forbidden):
             errors.append(f"Non-scalar SQL detected in METRICS: {line[:160]}")

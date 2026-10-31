@@ -1,0 +1,2210 @@
+{
+  "models": {
+    "Employee History and Hiring": [
+      {
+        "table": "",
+        "measure": "Model-level issue",
+        "dax": "",
+        "status": "FAILED",
+        "bucket": "Other Syntax / Complex DAX",
+        "detail": "Complex DAX structure"
+      },
+      {
+        "table": "Employee",
+        "measure": "Employees",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[Period number]), 'Date'[Period number] = MAX('Date'[Period number])))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Employee",
+        "measure": "Separations",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): EmplID, TermDate"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives",
+        "dax": "CALCULATE([Employees], FILTER(Employee, ISBLANK(Employee[TermDate])))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Employees, TermDate"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires",
+        "dax": "SUM([isNewHire])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(EMPLOYEE.\"ISNEWHIRE\")"
+      },
+      {
+        "table": "Employee",
+        "measure": "AVG Tenure Days",
+        "dax": "AVERAGE([TenureDays])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "AVG(EMPLOYEE.\"TENUREDAYS\")"
+      },
+      {
+        "table": "Employee",
+        "measure": "AVG Tenure Months",
+        "dax": "ROUND([AVG Tenure Days]/30, 1)-1",
+        "status": "FAILED",
+        "bucket": "Virtual Table Alias / Column Discard",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "table": "Employee",
+        "measure": "AVG Age",
+        "dax": "ROUND(AVERAGE([Age]), 0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Age"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires SPLY",
+        "dax": "CALCULATE([New Hires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives SPLY",
+        "dax": "CALCULATE([Actives],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives, Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps SPLY",
+        "dax": "CALCULATE([Separations],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Separations, Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Employees SPLY",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[Period number]), 'Date'[Period number] = MAX('Date'[Period number])),SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "COUNT(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(CURRENT_DATE()) - 1 AND COL_DATE.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN EMPLOYEE.\"EMPLID\" END)"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps YoY Var",
+        "dax": "[Separations]-[Seps SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Separations, Seps SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives YoY Var",
+        "dax": "[Actives]-[Actives SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires YoY Var",
+        "dax": "[New Hires]-[New Hires SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): New Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps YoY % Change",
+        "dax": "DIVIDE([Seps YoY Var], [Seps SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps YoY Var, Seps SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives YoY % Change",
+        "dax": "DIVIDE([Actives YoY Var], [Actives SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives YoY Var, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires YoY % Change",
+        "dax": "DIVIDE([New Hires YoY Var], [New Hires SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): New Hires YoY Var, New Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad Hires SPLY",
+        "dax": "CALCULATE([Bad hires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad Hires YoY Var",
+        "dax": "[Bad hires]-[Bad Hires SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad Hires YoY % Change",
+        "dax": "DIVIDE([Bad Hires YoY Var], [Bad Hires SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Bad Hires YoY Var, Bad Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Sep % of Active",
+        "dax": "DIVIDE([Separations],[Actives])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Separations, Actives"
+      },
+      {
+        "table": "Employee",
+        "measure": "Sep % of SMLY Actives",
+        "dax": "DIVIDE([Seps SPLY],[Actives SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps SPLY, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad hires % of actives",
+        "dax": "DIVIDE([Bad hires],[Actives])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad hires % of Active SPLY",
+        "dax": "DIVIDE([Bad Hires SPLY],[Actives SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad hires",
+        "dax": "SUM(Employee[BadHires])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(EMPLOYEE.\"BADHIRES\")"
+      }
+    ],
+    "Artificial Intelligence": [
+      {
+        "table": "",
+        "measure": "Model-level issue",
+        "dax": "",
+        "status": "FAILED",
+        "bucket": "Other Syntax / Complex DAX",
+        "detail": "Complex DAX structure"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Revenue Won",
+        "dax": "CALCULATE(\n    SUMX(Opportunities, Opportunities[Value]),\n    FILTER(Opportunities, Opportunities[Status] = \"Won\")\n)",
+        "status": "FAILED",
+        "bucket": "SUMX / COUNTAX / AVERAGEX Aggregation",
+        "detail": "Iterator functions not handled as conditional CASE aggregations"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Revenue In Pipeline",
+        "dax": "VAR Revenue =\n    CALCULATE (\n        SUMX ( Opportunities, Opportunities[Value] ),\n        FILTER (\n            Opportunities,\n            Opportunities[Status] = \"Open\"\n                && VALUE(LEFT(Opportunities[PipelineStep],1)) >= 2\n        )\n    )\nRETURN\n    Revenue + ( Revenue * ( 'Opportunity Forecast Adjustment'[Forecast Adjustment Value] / 100 ) )",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Forecast %",
+        "dax": "(([Revenue Won]+[Revenue In Pipeline]))/[Rev Goal]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Revenue Won, Revenue In Pipeline, Rev Goal"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Forecast",
+        "dax": "([Revenue Won]+[Revenue In Pipeline])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Revenue Won, Revenue In Pipeline"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Opportunity Count In Pipeline",
+        "dax": "CALCULATE (\n    COUNT ( Opportunities[Value] ),\n    FILTER (\n        Opportunities,\n        Opportunities[Status] = \"Open\"\n    )\n)",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "COUNT(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Open' THEN OPPORTUNITIES.\"VALUE\" END)"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Opportunity Count",
+        "dax": "COUNTAX(Opportunities,TRUE())",
+        "status": "FAILED",
+        "bucket": "TRUE() / FALSE() Lexer / Literal Error",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Count of Won",
+        "dax": "COUNTAX(\n    FILTER(\n        KEEPFILTERS(Opportunities), Opportunities[Status] = \"Won\"\n    ),\n    Opportunities[OpportunitySeq]\n)",
+        "status": "FAILED",
+        "bucket": "KEEPFILTERS() in FILTER()",
+        "detail": "KEEPFILTERS wrapper inside FILTER() not unwrapped"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Count of Lost",
+        "dax": "COUNTAX(\n    FILTER(\n        KEEPFILTERS(Opportunities), Opportunities[Status] = \"Lost\"\n    ),\n    Opportunities[OpportunitySeq]\n)",
+        "status": "FAILED",
+        "bucket": "KEEPFILTERS() in FILTER()",
+        "detail": "KEEPFILTERS wrapper inside FILTER() not unwrapped"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Close %",
+        "dax": "[Count of Won]/([Count of Won]+[Count of Lost])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Count of Won, Count of Won, Count of Lost"
+      },
+      {
+        "table": "Opportunities",
+        "measure": "Revenue Open",
+        "dax": "CALCULATE(\n    SUMX(Opportunities, Opportunities[Value]),\n    FILTER(Opportunities, Opportunities[Status] = \"Open\")\n)",
+        "status": "FAILED",
+        "bucket": "SUMX / COUNTAX / AVERAGEX Aggregation",
+        "detail": "Iterator functions not handled as conditional CASE aggregations"
+      },
+      {
+        "table": "Owners",
+        "measure": "Rev Goal",
+        "dax": "VAR RevenueInPipeline =\n    CALCULATE (\n        SUMX ( Opportunities, Opportunities[Value] ),\n        FILTER (\n            Opportunities,\n            Opportunities[Status] = \"Open\"\n                && VALUE(LEFT(Opportunities[PipelineStep],1)) >= 3\n        )\n    )\nVAR BaseGoal = MROUND(([Revenue Won] + (RevenueInPipeline * .75)), 100000)\nRETURN\n    IF(BaseGoal > 0, BaseGoal, MROUND(([Revenue Won] + (RevenueInPipeline * .75)), 10000))",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Opportunity Forecast Adjustment",
+        "measure": "Forecast Adjustment Value",
+        "dax": "SELECTEDVALUE('Opportunity Forecast Adjustment'[Forecast Adjustment], 0)",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Cases",
+        "measure": "Case Count",
+        "dax": "COUNTROWS('Cases')",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "COUNT(*)"
+      },
+      {
+        "table": "Cases",
+        "measure": "Escalations",
+        "dax": "DIVIDE(CALCULATE(COUNTROWS('Cases'), 'Cases'[Is Escalated] = TRUE()), [Case Count], 0)",
+        "status": "FAILED",
+        "bucket": "TRUE() / FALSE() Lexer / Literal Error",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "table": "Cases",
+        "measure": "SLA Compliance",
+        "dax": "DIVIDE(CALCULATE(COUNTROWS('Cases'), 'Cases'[Is SLA Violation] = FALSE()), [Case Count], 0)",
+        "status": "FAILED",
+        "bucket": "TRUE() / FALSE() Lexer / Literal Error",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "table": "Cases",
+        "measure": "Cases MoM%",
+        "dax": "VAR __PREV_MONTH = CALCULATE([Case Count], DATEADD('Case Calendar'[Date], -1, MONTH))\nRETURN\n    DIVIDE([Case Count] - __PREV_MONTH, __PREV_MONTH)",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Cases",
+        "measure": "Cases % by Product",
+        "dax": "DIVIDE(\n    [Case Count],\n    CALCULATE([Case Count], ALL('Products'))\n)",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Cases",
+        "measure": "Cases % by Subject",
+        "dax": "DIVIDE(\n    [Case Count],\n    CALCULATE([Case Count], ALL('Cases'[Subject]))\n)",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Cases",
+        "measure": "CSAT Impact",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[Topic] <> SELECTEDVALUE('Cases'[Topic]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Cases",
+        "measure": "CSAT Impact - Subject",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[Subject] <> SELECTEDVALUE('Cases'[Subject]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Cases",
+        "measure": "CSAT Impact - Products",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[ProductSeq] <> SELECTEDVALUE('Cases'[ProductSeq]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Cases",
+        "measure": "CSAT Impact - Agent",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[Agent] <> SELECTEDVALUE('Cases'[Agent]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      }
+    ],
+    "Sales and Return": [
+      {
+        "table": "Analysis DAX",
+        "measure": "Net Sales",
+        "dax": "CALCULATE(SUM(Sales[Amount]),Sales[Status]=\"Sold\")",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(CASE WHEN SALES.STATUS = 'Sold' THEN ANALYSIS DAX.\"AMOUNT\" ELSE 0 END)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Net Sales PM",
+        "dax": "CALCULATE([Net Sales],PREVIOUSMONTH('Calendar'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Last 2 Months Net Sales",
+        "dax": "[Net Sales]+[Net Sales PM]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Net Sales PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Net Sales Variance",
+        "dax": "[Net Sales]-[Net Sales PM]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Net Sales PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Net Sales Variance %",
+        "dax": "DIVIDE([Net Sales],[Net Sales PM],0)-1",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Net Sales PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Units Sold",
+        "dax": "CALCULATE(SUM(Sales[Unit]),Sales[Status]=\"Sold\")",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(CASE WHEN SALES.STATUS = 'Sold' THEN ANALYSIS DAX.\"UNIT\" ELSE 0 END)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Units Sold PM",
+        "dax": "CALCULATE([Units Sold],PREVIOUSMONTH('Calendar'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Units Sold Variance %",
+        "dax": "DIVIDE([Units Sold],[Units Sold PM],0)-1",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Units Sold PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Returns",
+        "dax": "CALCULATE(SUM(Sales[Amount]),Sales[Status]=\"Returned\")",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(CASE WHEN SALES.STATUS = 'Returned' THEN ANALYSIS DAX.\"AMOUNT\" ELSE 0 END)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Returns PM",
+        "dax": "CALCULATE([Returns],PREVIOUSMONTH('Calendar'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Last 2 Months Returns",
+        "dax": "[Returns]+[Returns PM]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Returns PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Returns Variance",
+        "dax": "[Returns]-[Returns PM]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Returns PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Returns Variance %",
+        "dax": "(DIVIDE([Returns],[Returns PM],0)-1)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Returns PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Units Returned",
+        "dax": "CALCULATE(SUM(Sales[Unit]),Sales[Status]=\"Returned\")",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(CASE WHEN SALES.STATUS = 'Returned' THEN ANALYSIS DAX.\"UNIT\" ELSE 0 END)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Units Returned PM",
+        "dax": "CALCULATE([Units Returned],PREVIOUSMONTH('Calendar'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Units Returned Variance %",
+        "dax": "DIVIDE([Units Returned],[Units Returned PM],0)-1",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Units Returned PM"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Return Rate",
+        "dax": "DIVIDE((ROUND(((DIVIDE([Returns],SUM(Sales[Amount]),0))*100),0)),100,0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Amount"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned",
+        "dax": "IF([Units Returned]-[WIF Units Returned Average]<0,0,[Units Returned]-[WIF Units Returned Average])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Units Returned Average, WIF Units Returned Average"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned Average",
+        "dax": "DIVIDE([WIF Units Returned Difference],CALCULATE(DISTINCTCOUNT('Calendar'[Date]), ALL('Calendar')),0)",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned Difference",
+        "dax": "[WIF Units Returned_1]-[WIF Units Returned_2]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Units Returned_1, WIF Units Returned_2"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned_1",
+        "dax": "CALCULATE([Units Returned], ALLSELECTED('Calendar'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned_2",
+        "dax": "CALCULATE([WIF Adjusted Units Returned], ALLSELECTED('Calendar'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Adjusted Units Returned, Date"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Adjusted Units Returned",
+        "dax": "DIVIDE((SUM(Sales[Unit])*'% Return Rate'[% Return Rate Value]),1,0)",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Adjusted Net Sales",
+        "dax": "(SUM(Sales[Unit])*[WIF Price per Unit])-DIVIDE((SUM(Sales[Unit])*'% Return Rate'[% Return Rate Value]),1,0)*[WIF Price per Unit]",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Price per Unit",
+        "dax": "DIVIDE([Net Sales],[Units Sold],0)",
+        "status": "FAILED",
+        "bucket": "Virtual Table Alias / Column Discard",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Profit",
+        "dax": "IF([WIF Same]=0,0,IF(ROUNDDOWN([WIF Adjusted Net Sales]-[Net Sales],0)<0,0,ROUNDDOWN([WIF Adjusted Net Sales]-[Net Sales],0)))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Same, WIF Adjusted Net Sales, WIF Adjusted Net Sales"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Profit Difference",
+        "dax": "DIVIDE([WIF Adjusted Sales],[Net Sales],0)-1",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Adjusted Sales"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Adjusted Sales",
+        "dax": "[WIF Units Returned_1]*[WIF Price per Unit]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Units Returned_1, WIF Price per Unit"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Sales",
+        "dax": "CALCULATE([Net Sales],ALL('Calendar'[Date].[Month]))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Same",
+        "dax": "IF([% Return Rate Value]>=CALCULATE([Return Rate],ALL(Store[Type]),ALL(Store[Store])),0,1)",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Forecast",
+        "dax": "[Net Sales]+[WIF Profit]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Profit"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Total Forecast",
+        "dax": "CALCULATE([WIF Forecast],ALL('Calendar'[Date].[Month]))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Total Profit",
+        "dax": "CALCULATE([WIF Profit],ALL('Calendar'[Date].[Month]))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "WIF Profit Difference",
+        "dax": "DIVIDE([WIF Forecast],[Net Sales],0)-1",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Forecast"
+      },
+      {
+        "table": "Analysis DAX",
+        "measure": "Total Return Rate",
+        "dax": "CALCULATE([Return Rate],ALL('Calendar'[Date].[Month]))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Product Top N",
+        "dax": "SWITCH(\n    TRUE(),\n    ISINSCOPE('Product'[Product]), RANKX(ALL('Product'[Product]),[Net Sales],,DESC),\n    ISINSCOPE('Product'[Segment]), RANKX(ALL('Product'[Segment]),[Net Sales],,DESC),\n    RANKX(ALL('Product'[Category]),[Net Sales],,DESC)\n)",
+        "status": "FAILED",
+        "bucket": "TRUE() / FALSE() Lexer / Literal Error",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Product Sales Top 3",
+        "dax": "IF([Product Top N]<4,[Net Sales],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Product Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Product Sales Other",
+        "dax": "IF([Product Top N]>3,[Net Sales],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Product Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Store Top N",
+        "dax": "RANKX(ALL('Store'[Store]),[Net Sales],,DESC)",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Store Sales Other",
+        "dax": "IF([Store Top N]>3,[Net Sales],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Store Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Store Sales Top 3",
+        "dax": "IF([Store Top N]<4,[Net Sales],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Store Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Net Sales Indicator",
+        "dax": "CONCATENATE(IF([Net Sales Variance %]<=0,\"\",\"+\"),FORMAT([Net Sales Variance %],\"0.0%\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Net Sales Variance %, Net Sales Variance %"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Units Sold Indicator",
+        "dax": "CONCATENATE(IF([Units Sold Variance %]<=0,\"\",\"+\"),FORMAT([Units Sold Variance %],\"0.0%\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Units Sold Variance %, Units Sold Variance %"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Returns Indicator",
+        "dax": "CONCATENATE(IF([Returns Variance %]<=0,\"\",\"+\"),FORMAT([Returns Variance %],\"0.0%\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Returns Variance %, Returns Variance %"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "ProductR Top N",
+        "dax": "SWITCH(\n    TRUE(),\n    ISINSCOPE('Product'[Product]), RANKX(ALL('Product'[Product]),[Returns],,DESC),\n    ISINSCOPE('Product'[Segment]), RANKX(ALL('Product'[Segment]),[Returns],,DESC),\n    RANKX(ALL('Product'[Category]),[Returns],,DESC)\n)",
+        "status": "FAILED",
+        "bucket": "TRUE() / FALSE() Lexer / Literal Error",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Product Returns Other",
+        "dax": "IF([ProductR Top N]>3,[Returns],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): ProductR Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Product Returns Top 3",
+        "dax": "IF([ProductR Top N]<4,[Returns],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): ProductR Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "StoreR Top N",
+        "dax": "RANKX(ALL('Store'[Store]),[Returns],,DESC)",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Store Returns Other",
+        "dax": "IF([StoreR Top N]>3,[Returns],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): StoreR Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Returns Sales Top 3",
+        "dax": "IF([StoreR Top N]<4,[Returns],0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): StoreR Top N"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Units Returned Indicator",
+        "dax": "CONCATENATE(IF([Returns Variance %]<=0,\"\",\"+\"),FORMAT([Returns Variance %],\"0.0%\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Returns Variance %, Returns Variance %"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Net Sales Label",
+        "dax": "CONCATENATE(\"\",FORMAT([Net Sales],\"$0,000\"))",
+        "status": "FAILED",
+        "bucket": "Virtual Table Alias / Column Discard",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Profit Indicator",
+        "dax": "CONCATENATE(IF([WIF Profit Difference]<=0,\"\",\"+\"),FORMAT([WIF Profit Difference],\"0.0%\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): WIF Profit Difference, WIF Profit Difference"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Association",
+        "dax": "VALUE(CONCATENATE([Product Top N],(SUM(Association[Importance]))))",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Design DAX",
+        "measure": "Lift Label",
+        "dax": "CONCATENATE(FORMAT(SUM(Association[Importance]),\"0.0\"),\"x\")",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Importance"
+      },
+      {
+        "table": "% Return Rate",
+        "measure": "% Return Rate Value",
+        "dax": "SELECTEDVALUE('% Return Rate'[% Return Rate])/100",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Details",
+        "measure": "Info Tooltip",
+        "dax": "\"https://imagizer.imageshack.com/img923/4052/lLHy3U.gif\"",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "'https://imagizer.imageshack.com/img923/4052/lLHy3U.gif'"
+      },
+      {
+        "table": "Details",
+        "measure": "Info Tooltip 2",
+        "dax": "\"https://imagizer.imageshack.com/img921/2483/uMs9ZQ.gif\"",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "'https://imagizer.imageshack.com/img921/2483/uMs9ZQ.gif'"
+      }
+    ],
+    "Performance Analyzer": [
+      {
+        "table": "EventEdges",
+        "measure": "MS Since Previous Edge",
+        "dax": "VAR _Root = SELECTEDVALUE(EventEdges[Root])\nVAR _Rank = MIN(EventEdges[Rank])\nVAR _TimestampMs = MIN(EventEdges[timestampMs])\nVAR _PreviousTimestampMs = CALCULATE(MAX('EventEdges'[timestampMs]), FILTER(ALL(EventEdges), ISBLANK(_Root) || [Root] = _Root && [Rank] < _Rank))\nRETURN IF(ISBLANK(_TimestampMs), BLANK(), IF(ISBLANK(_PreviousTimestampMs), 0, _TimestampMs - _PreviousTimestampMs))",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "EventEdges",
+        "measure": "MS Since First Edge",
+        "dax": "VAR _CurrentTimestamp = MIN('EventEdges'[timestampMs])\nRETURN IF(ISBLANK(_CurrentTimestamp), BLANK(), _CurrentTimestamp - CALCULATE(MIN('EventEdges'[timestampMs]), ALLSELECTED(EventEdges)))",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Metadata",
+        "measure": "Data Quality Messages",
+        "dax": "VAR _RawEventCount = SUM('Metadata'[RawEventCount])\nVAR _UniqueEventCount = SUM('Metadata'[UniqueEventCount])\nRETURN IF(_RawEventCount > _UniqueEventCount, \"Export file contains events with duplicate IDs.  Only unique events are shown in this report\", BLANK())",
+        "status": "FAILED",
+        "bucket": "VAR ... RETURN Unhandled (VarNode)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "table": "Metadata",
+        "measure": "DataStatus",
+        "dax": "IF(ISBLANK([Data Quality Messages]), 0, 1)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Data Quality Messages"
+      },
+      {
+        "table": "Metadata",
+        "measure": "User Action Count",
+        "dax": "COUNTROWS(FILTER('Events', [component] = \"Report Canvas\" && [name] = \"User Action\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): component, name"
+      },
+      {
+        "table": "Metadata",
+        "measure": "Visual Update Count",
+        "dax": "COUNTROWS(FILTER('Events', [component] = \"Report Canvas\" && [name] = \"Visual Container Lifecycle\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): component, name"
+      },
+      {
+        "table": "Metadata",
+        "measure": "Change Detection Count",
+        "dax": "COUNTROWS(FILTER('Events', [component] = \"Change Detection\" && [name] = \"Execute Change Detection\"))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): component, name"
+      }
+    ],
+    "COVID-19 US Tracking": [
+      {
+        "table": "COVID",
+        "measure": "Updated",
+        "dax": "\"Data provided by USAFacts. Because of the frequency of data upates, they may not reflect the exact numbers reported by government organizations or the news media. For more information or to download the data, please click the logo below.  Data updated through \" & FORMAT([Max date],\"mmmm dd, yyyy\") & \".\"",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "'Data provided by USAFacts. Because of the frequency of data upates, they may not reflect the exact numbers reported by government organizations or the news media. For more information or to download the data, please click the logo below.  Data updated through '"
+      },
+      {
+        "table": "COVID",
+        "measure": "Max date",
+        "dax": "CALCULATE(MAX('COVID'[Date]),ALL('COVID'))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "StateDim",
+        "measure": "Drill-through button text",
+        "dax": "IF(SELECTEDVALUE(StateDim[State],0)==0,\"Click on a State to view by County  \", \"Click here to view by County in \" & VALUES(StateDim[State code]) & \"  \")",
+        "status": "FAILED",
+        "bucket": "SELECTEDVALUE / VALUE / MROUND Missing",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "table": "Table",
+        "measure": "Methodology",
+        "dax": "\"This interactive feature aggregates data from the Centers for Disease Control and Prevention (CDC), state- and local-level public health agencies. County-level data is confirmed by referencing state and local agencies directly.\n\nSource: USAFacts\"",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "'This interactive feature aggregates data from the Centers for Disease Control and Prevention (CDC), state- and local-level public health agencies. County-level data is confirmed by referencing state and local agencies directly.\n\nSource: USAFacts'"
+      },
+      {
+        "table": "Table",
+        "measure": "Notes",
+        "dax": "\"New York* covers 5 counties (Bronx, Kings, New York, Queens, Richmond), not New York county.\n\nCity of St. Louis was renamed to St. Louis City.\n\nCity and Borough of Juneau was renamed to Juneau Borough.\n\nMunicipality of Anchorage was renamed to Anchorage.\n\nJackson County includes other portions of Kansas City.\n\n\nSource: USAFacts\"",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "'New York* covers 5 counties (Bronx, Kings, New York, Queens, Richmond), not New York county.\n\nCity of St. Louis was renamed to St. Louis City.\n\nCity and Borough of Juneau was renamed to Juneau Borough.\n\nMunicipality of Anchorage was renamed to Anchorage.\n\nJackson County includes other portions of Kansas City.\n\n\nSource: USAFacts'"
+      },
+      {
+        "table": "Table",
+        "measure": "Terms of use",
+        "dax": "\"This report and data are provided \" & \"\"\"\" & \"as is\" & \"\"\"\" & \", \" & \"\"\"\" & \"with all faults\" & \"\"\"\" & \", and without warranty of any kind. Microsoft gives no express warranties or guarantees and expressly disclaims all implied warranties, including merchantability, fitness for a particular purpose, and non-infringement.\"",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "'This report and data are provided '"
+      },
+      {
+        "table": "COVID measures",
+        "measure": "Total confirmed cases",
+        "dax": "SUM('COVID'[Daily cases])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(COVID MEASURES.\"DAILY_CASES\")"
+      },
+      {
+        "table": "COVID measures",
+        "measure": "Total deaths",
+        "dax": "SUM(COVID[Daily deaths])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(COVID MEASURES.\"DAILY_DEATHS\")"
+      },
+      {
+        "table": "COVID measures",
+        "measure": "Case fatality rate",
+        "dax": "DIVIDE([Total deaths],[Total confirmed cases])",
+        "status": "FAILED",
+        "bucket": "Virtual Table Alias / Column Discard",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "table": "COVID measures",
+        "measure": "Confirmed cases",
+        "dax": "SUM('COVID'[Cases])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(COVID MEASURES.\"CASES\")"
+      },
+      {
+        "table": "COVID measures",
+        "measure": "Deaths",
+        "dax": "SUM('COVID'[Deaths])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(COVID MEASURES.\"DEATHS\")"
+      }
+    ],
+    "Human Resource": [
+      {
+        "table": "BU",
+        "measure": "Count of BU",
+        "dax": "COUNTA('BU'[BU])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "COUNT(BU.\"BU\")"
+      },
+      {
+        "table": "Date",
+        "measure": "Count of Date",
+        "dax": "COUNTA('Date'[Date])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "COUNT(DATE.\"DATE\")"
+      },
+      {
+        "table": "Employee",
+        "measure": "EmpCount",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber] = MAX('Date'[PeriodNumber])))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): EmplID, TermDate"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives",
+        "dax": "CALCULATE([EmpCount], FILTER(Employee, ISBLANK(Employee[TermDate])))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): EmpCount, TermDate"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires",
+        "dax": "SUM([isNewHire])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(EMPLOYEE.\"ISNEWHIRE\")"
+      },
+      {
+        "table": "Employee",
+        "measure": "AVG Tenure Days",
+        "dax": "AVERAGE([TenureDays])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "AVG(EMPLOYEE.\"TENUREDAYS\")"
+      },
+      {
+        "table": "Employee",
+        "measure": "AVG Tenure Months",
+        "dax": "ROUND([AVG Tenure Days]/30, 1)-1",
+        "status": "FAILED",
+        "bucket": "Virtual Table Alias / Column Discard",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "table": "Employee",
+        "measure": "AVG Age",
+        "dax": "ROUND(AVERAGE([Age]), 0)",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Age"
+      },
+      {
+        "table": "Employee",
+        "measure": "Sum of BadHires",
+        "dax": "SUM([BadHires])",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "SUM(EMPLOYEE.\"BADHIRES\")"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires SPLY",
+        "dax": "CALCULATE([New Hires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives SPLY",
+        "dax": "CALCULATE([Actives],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives, Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps SPLY",
+        "dax": "CALCULATE([Seps],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps, Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "EmpCount SPLY",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber] = MAX('Date'[PeriodNumber])),SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "SUCCESS",
+        "bucket": "SUCCESS",
+        "detail": "COUNT(CASE WHEN YEAR(COL_DATE.\"COL_DATE\") = YEAR(CURRENT_DATE()) - 1 AND COL_DATE.\"COL_DATE\" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', CURRENT_DATE())) AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN EMPLOYEE.\"EMPLID\" END)"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps YoY Var",
+        "dax": "[Seps]-[Seps SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps, Seps SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives YoY Var",
+        "dax": "[Actives]-[Actives SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires YoY Var",
+        "dax": "[New Hires]-[New Hires SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): New Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Seps YoY % Change",
+        "dax": "DIVIDE([Seps YoY Var], [Seps SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps YoY Var, Seps SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Actives YoY % Change",
+        "dax": "DIVIDE([Actives YoY Var], [Actives SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives YoY Var, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "New Hires YoY % Change",
+        "dax": "DIVIDE([New Hires YoY Var], [New Hires SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): New Hires YoY Var, New Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad Hires SPLY",
+        "dax": "CALCULATE([Sum of BadHires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad Hires YoY Var",
+        "dax": "[Sum of BadHires]-[Bad Hires SPLY]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "Bad Hires YoY % Change",
+        "dax": "DIVIDE([Bad Hires YoY Var], [Bad Hires SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Bad Hires YoY Var, Bad Hires SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "TO %",
+        "dax": "DIVIDE([Seps], [Actives])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps, Actives"
+      },
+      {
+        "table": "Employee",
+        "measure": "TO % Norm",
+        "dax": "CALCULATE([TO %], ALL(Gender[Gender]), ALL(Ethnicity[Ethnicity]))",
+        "status": "FAILED",
+        "bucket": "ALL() Windowing / Non-Scalar In Semantic View",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "table": "Employee",
+        "measure": "TO % Var",
+        "dax": "[TO %]-[TO % Norm]",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): TO %, TO % Norm"
+      },
+      {
+        "table": "Employee",
+        "measure": "Sep%ofActive",
+        "dax": "DIVIDE([Seps],[Actives])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps, Actives"
+      },
+      {
+        "table": "Employee",
+        "measure": "Sep%ofSMLYActives",
+        "dax": "DIVIDE([Seps SPLY],[Actives SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Seps SPLY, Actives SPLY"
+      },
+      {
+        "table": "Employee",
+        "measure": "BadHire%ofActives",
+        "dax": "DIVIDE([Sum of BadHires],[Actives])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Actives"
+      },
+      {
+        "table": "Employee",
+        "measure": "BadHire%ofActiveSPLY",
+        "dax": "DIVIDE([Bad Hires SPLY],[Actives SPLY])",
+        "status": "FAILED",
+        "bucket": "Cascading Dependent Measure (Parent NULL)",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY, Actives SPLY"
+      },
+      {
+        "table": "",
+        "measure": "Adventure Works DW 2020 \u2014 0 DAX Measures (implicit measures only)",
+        "dax": "",
+        "status": "FAILED",
+        "bucket": "Other Syntax / Complex DAX",
+        "detail": "Complex DAX structure"
+      },
+      {
+        "table": "",
+        "measure": "Model-level issue",
+        "dax": "(no DAX measures: numbers come from columns aggregated by their \"Summarize by\" setting)",
+        "status": "FAILED",
+        "bucket": "Other Syntax / Complex DAX",
+        "detail": "Complex DAX structure"
+      }
+    ]
+  },
+  "buckets": {
+    "DAX Comments (-- or //)": [],
+    "VAR ... RETURN Unhandled (VarNode)": [
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Revenue In Pipeline",
+        "dax": "VAR Revenue =\n    CALCULATE (\n        SUMX ( Opportunities, Opportunities[Value] ),\n        FILTER (\n            Opportunities,\n            Opportunities[Status] = \"Open\"\n                && VALUE(LEFT(Opportunities[PipelineStep],1)) >= 2\n        )\n    )\nRETURN\n    Revenue + ( Revenue * ( 'Opportunity Forecast Adjustment'[Forecast Adjustment Value] / 100 ) )",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Owners",
+        "measure": "Rev Goal",
+        "dax": "VAR RevenueInPipeline =\n    CALCULATE (\n        SUMX ( Opportunities, Opportunities[Value] ),\n        FILTER (\n            Opportunities,\n            Opportunities[Status] = \"Open\"\n                && VALUE(LEFT(Opportunities[PipelineStep],1)) >= 3\n        )\n    )\nVAR BaseGoal = MROUND(([Revenue Won] + (RevenueInPipeline * .75)), 100000)\nRETURN\n    IF(BaseGoal > 0, BaseGoal, MROUND(([Revenue Won] + (RevenueInPipeline * .75)), 10000))",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "Cases MoM%",
+        "dax": "VAR __PREV_MONTH = CALCULATE([Case Count], DATEADD('Case Calendar'[Date], -1, MONTH))\nRETURN\n    DIVIDE([Case Count] - __PREV_MONTH, __PREV_MONTH)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "CSAT Impact",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[Topic] <> SELECTEDVALUE('Cases'[Topic]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "CSAT Impact - Subject",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[Subject] <> SELECTEDVALUE('Cases'[Subject]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "CSAT Impact - Products",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[ProductSeq] <> SELECTEDVALUE('Cases'[ProductSeq]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "CSAT Impact - Agent",
+        "dax": "VAR FactorAvg = AVERAGE('Cases'[CSAT])\nVAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))\nVAR AllAvgExcept =\n    CALCULATE(\n        AVERAGE('Cases'[CSAT]),\n        FILTER(ALL('Cases'), 'Cases'[Agent] <> SELECTEDVALUE('Cases'[Agent]))\n    )\nRETURN\n    1 - (AllAvgExcept / AllAvg)",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "EventEdges",
+        "measure": "MS Since Previous Edge",
+        "dax": "VAR _Root = SELECTEDVALUE(EventEdges[Root])\nVAR _Rank = MIN(EventEdges[Rank])\nVAR _TimestampMs = MIN(EventEdges[timestampMs])\nVAR _PreviousTimestampMs = CALCULATE(MAX('EventEdges'[timestampMs]), FILTER(ALL(EventEdges), ISBLANK(_Root) || [Root] = _Root && [Rank] < _Rank))\nRETURN IF(ISBLANK(_TimestampMs), BLANK(), IF(ISBLANK(_PreviousTimestampMs), 0, _TimestampMs - _PreviousTimestampMs))",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "EventEdges",
+        "measure": "MS Since First Edge",
+        "dax": "VAR _CurrentTimestamp = MIN('EventEdges'[timestampMs])\nRETURN IF(ISBLANK(_CurrentTimestamp), BLANK(), _CurrentTimestamp - CALCULATE(MIN('EventEdges'[timestampMs]), ALLSELECTED(EventEdges)))",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "Metadata",
+        "measure": "Data Quality Messages",
+        "dax": "VAR _RawEventCount = SUM('Metadata'[RawEventCount])\nVAR _UniqueEventCount = SUM('Metadata'[UniqueEventCount])\nRETURN IF(_RawEventCount > _UniqueEventCount, \"Export file contains events with duplicate IDs.  Only unique events are shown in this report\", BLANK())",
+        "detail": "VarNode not handled in DaxSqlRenderer._render_node"
+      }
+    ],
+    "TRUE() / FALSE() Lexer / Literal Error": [
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Opportunity Count",
+        "dax": "COUNTAX(Opportunities,TRUE())",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "Escalations",
+        "dax": "DIVIDE(CALCULATE(COUNTROWS('Cases'), 'Cases'[Is Escalated] = TRUE()), [Case Count], 0)",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "SLA Compliance",
+        "dax": "DIVIDE(CALCULATE(COUNTROWS('Cases'), 'Cases'[Is SLA Violation] = FALSE()), [Case Count], 0)",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Product Top N",
+        "dax": "SWITCH(\n    TRUE(),\n    ISINSCOPE('Product'[Product]), RANKX(ALL('Product'[Product]),[Net Sales],,DESC),\n    ISINSCOPE('Product'[Segment]), RANKX(ALL('Product'[Segment]),[Net Sales],,DESC),\n    RANKX(ALL('Product'[Category]),[Net Sales],,DESC)\n)",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "ProductR Top N",
+        "dax": "SWITCH(\n    TRUE(),\n    ISINSCOPE('Product'[Product]), RANKX(ALL('Product'[Product]),[Returns],,DESC),\n    ISINSCOPE('Product'[Segment]), RANKX(ALL('Product'[Segment]),[Returns],,DESC),\n    RANKX(ALL('Product'[Category]),[Returns],,DESC)\n)",
+        "detail": "TRUE()/FALSE() treated as number instead of boolean/function"
+      }
+    ],
+    "KEEPFILTERS() in FILTER()": [
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Count of Won",
+        "dax": "COUNTAX(\n    FILTER(\n        KEEPFILTERS(Opportunities), Opportunities[Status] = \"Won\"\n    ),\n    Opportunities[OpportunitySeq]\n)",
+        "detail": "KEEPFILTERS wrapper inside FILTER() not unwrapped"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Count of Lost",
+        "dax": "COUNTAX(\n    FILTER(\n        KEEPFILTERS(Opportunities), Opportunities[Status] = \"Lost\"\n    ),\n    Opportunities[OpportunitySeq]\n)",
+        "detail": "KEEPFILTERS wrapper inside FILTER() not unwrapped"
+      }
+    ],
+    "SUMX / COUNTAX / AVERAGEX Aggregation": [
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Revenue Won",
+        "dax": "CALCULATE(\n    SUMX(Opportunities, Opportunities[Value]),\n    FILTER(Opportunities, Opportunities[Status] = \"Won\")\n)",
+        "detail": "Iterator functions not handled as conditional CASE aggregations"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Revenue Open",
+        "dax": "CALCULATE(\n    SUMX(Opportunities, Opportunities[Value]),\n    FILTER(Opportunities, Opportunities[Status] = \"Open\")\n)",
+        "detail": "Iterator functions not handled as conditional CASE aggregations"
+      }
+    ],
+    "Virtual Table Alias / Column Discard": [
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "AVG Tenure Months",
+        "dax": "ROUND([AVG Tenure Days]/30, 1)-1",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Price per Unit",
+        "dax": "DIVIDE([Net Sales],[Units Sold],0)",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Net Sales Label",
+        "dax": "CONCATENATE(\"\",FORMAT([Net Sales],\"$0,000\"))",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "model": "COVID-19 US Tracking",
+        "table": "COVID measures",
+        "measure": "Case fatality rate",
+        "dax": "DIVIDE([Total deaths],[Total confirmed cases])",
+        "detail": "Table alias discarded or column not found on container table"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "AVG Tenure Months",
+        "dax": "ROUND([AVG Tenure Days]/30, 1)-1",
+        "detail": "Table alias discarded or column not found on container table"
+      }
+    ],
+    "SELECTEDVALUE / VALUE / MROUND Missing": [
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunity Forecast Adjustment",
+        "measure": "Forecast Adjustment Value",
+        "dax": "SELECTEDVALUE('Opportunity Forecast Adjustment'[Forecast Adjustment], 0)",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Adjusted Units Returned",
+        "dax": "DIVIDE((SUM(Sales[Unit])*'% Return Rate'[% Return Rate Value]),1,0)",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Adjusted Net Sales",
+        "dax": "(SUM(Sales[Unit])*[WIF Price per Unit])-DIVIDE((SUM(Sales[Unit])*'% Return Rate'[% Return Rate Value]),1,0)*[WIF Price per Unit]",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Same",
+        "dax": "IF([% Return Rate Value]>=CALCULATE([Return Rate],ALL(Store[Type]),ALL(Store[Store])),0,1)",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Association",
+        "dax": "VALUE(CONCATENATE([Product Top N],(SUM(Association[Importance]))))",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "% Return Rate",
+        "measure": "% Return Rate Value",
+        "dax": "SELECTEDVALUE('% Return Rate'[% Return Rate])/100",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      },
+      {
+        "model": "COVID-19 US Tracking",
+        "table": "StateDim",
+        "measure": "Drill-through button text",
+        "dax": "IF(SELECTEDVALUE(StateDim[State],0)==0,\"Click on a State to view by County  \", \"Click here to view by County in \" & VALUES(StateDim[State code]) & \"  \")",
+        "detail": "Function missing from AST renderer (SELECTEDVALUE, VALUE, MROUND)"
+      }
+    ],
+    "ALL() Windowing / Non-Scalar In Semantic View": [
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Employees",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[Period number]), 'Date'[Period number] = MAX('Date'[Period number])))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "Cases % by Product",
+        "dax": "DIVIDE(\n    [Case Count],\n    CALCULATE([Case Count], ALL('Products'))\n)",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Cases",
+        "measure": "Cases % by Subject",
+        "dax": "DIVIDE(\n    [Case Count],\n    CALCULATE([Case Count], ALL('Cases'[Subject]))\n)",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned Average",
+        "dax": "DIVIDE([WIF Units Returned Difference],CALCULATE(DISTINCTCOUNT('Calendar'[Date]), ALL('Calendar')),0)",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Sales",
+        "dax": "CALCULATE([Net Sales],ALL('Calendar'[Date].[Month]))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Total Forecast",
+        "dax": "CALCULATE([WIF Forecast],ALL('Calendar'[Date].[Month]))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Total Profit",
+        "dax": "CALCULATE([WIF Profit],ALL('Calendar'[Date].[Month]))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Total Return Rate",
+        "dax": "CALCULATE([Return Rate],ALL('Calendar'[Date].[Month]))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Store Top N",
+        "dax": "RANKX(ALL('Store'[Store]),[Net Sales],,DESC)",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "StoreR Top N",
+        "dax": "RANKX(ALL('Store'[Store]),[Returns],,DESC)",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "COVID-19 US Tracking",
+        "table": "COVID",
+        "measure": "Max date",
+        "dax": "CALCULATE(MAX('COVID'[Date]),ALL('COVID'))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "EmpCount",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber] = MAX('Date'[PeriodNumber])))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "TO % Norm",
+        "dax": "CALCULATE([TO %], ALL(Gender[Gender]), ALL(Ethnicity[Ethnicity]))",
+        "detail": "ALL() requires whole-table partition/window not allowed in METRICS clause"
+      }
+    ],
+    "Cascading Dependent Measure (Parent NULL)": [
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Separations",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))",
+        "detail": "Depends on unresolvable measure(s): EmplID, TermDate"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Actives",
+        "dax": "CALCULATE([Employees], FILTER(Employee, ISBLANK(Employee[TermDate])))",
+        "detail": "Depends on unresolvable measure(s): Employees, TermDate"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "AVG Age",
+        "dax": "ROUND(AVERAGE([Age]), 0)",
+        "detail": "Depends on unresolvable measure(s): Age"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "New Hires SPLY",
+        "dax": "CALCULATE([New Hires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Actives SPLY",
+        "dax": "CALCULATE([Actives],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Actives, Date"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Seps SPLY",
+        "dax": "CALCULATE([Separations],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Separations, Date"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Seps YoY Var",
+        "dax": "[Separations]-[Seps SPLY]",
+        "detail": "Depends on unresolvable measure(s): Separations, Seps SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Actives YoY Var",
+        "dax": "[Actives]-[Actives SPLY]",
+        "detail": "Depends on unresolvable measure(s): Actives, Actives SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "New Hires YoY Var",
+        "dax": "[New Hires]-[New Hires SPLY]",
+        "detail": "Depends on unresolvable measure(s): New Hires SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Seps YoY % Change",
+        "dax": "DIVIDE([Seps YoY Var], [Seps SPLY])",
+        "detail": "Depends on unresolvable measure(s): Seps YoY Var, Seps SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Actives YoY % Change",
+        "dax": "DIVIDE([Actives YoY Var], [Actives SPLY])",
+        "detail": "Depends on unresolvable measure(s): Actives YoY Var, Actives SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "New Hires YoY % Change",
+        "dax": "DIVIDE([New Hires YoY Var], [New Hires SPLY])",
+        "detail": "Depends on unresolvable measure(s): New Hires YoY Var, New Hires SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Bad Hires SPLY",
+        "dax": "CALCULATE([Bad hires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Bad Hires YoY Var",
+        "dax": "[Bad hires]-[Bad Hires SPLY]",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Bad Hires YoY % Change",
+        "dax": "DIVIDE([Bad Hires YoY Var], [Bad Hires SPLY])",
+        "detail": "Depends on unresolvable measure(s): Bad Hires YoY Var, Bad Hires SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Sep % of Active",
+        "dax": "DIVIDE([Separations],[Actives])",
+        "detail": "Depends on unresolvable measure(s): Separations, Actives"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Sep % of SMLY Actives",
+        "dax": "DIVIDE([Seps SPLY],[Actives SPLY])",
+        "detail": "Depends on unresolvable measure(s): Seps SPLY, Actives SPLY"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Bad hires % of actives",
+        "dax": "DIVIDE([Bad hires],[Actives])",
+        "detail": "Depends on unresolvable measure(s): Actives"
+      },
+      {
+        "model": "Employee History and Hiring",
+        "table": "Employee",
+        "measure": "Bad hires % of Active SPLY",
+        "dax": "DIVIDE([Bad Hires SPLY],[Actives SPLY])",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY, Actives SPLY"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Forecast %",
+        "dax": "(([Revenue Won]+[Revenue In Pipeline]))/[Rev Goal]",
+        "detail": "Depends on unresolvable measure(s): Revenue Won, Revenue In Pipeline, Rev Goal"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Forecast",
+        "dax": "([Revenue Won]+[Revenue In Pipeline])",
+        "detail": "Depends on unresolvable measure(s): Revenue Won, Revenue In Pipeline"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "Opportunities",
+        "measure": "Close %",
+        "dax": "[Count of Won]/([Count of Won]+[Count of Lost])",
+        "detail": "Depends on unresolvable measure(s): Count of Won, Count of Won, Count of Lost"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Net Sales PM",
+        "dax": "CALCULATE([Net Sales],PREVIOUSMONTH('Calendar'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Last 2 Months Net Sales",
+        "dax": "[Net Sales]+[Net Sales PM]",
+        "detail": "Depends on unresolvable measure(s): Net Sales PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Net Sales Variance",
+        "dax": "[Net Sales]-[Net Sales PM]",
+        "detail": "Depends on unresolvable measure(s): Net Sales PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Net Sales Variance %",
+        "dax": "DIVIDE([Net Sales],[Net Sales PM],0)-1",
+        "detail": "Depends on unresolvable measure(s): Net Sales PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Units Sold PM",
+        "dax": "CALCULATE([Units Sold],PREVIOUSMONTH('Calendar'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Units Sold Variance %",
+        "dax": "DIVIDE([Units Sold],[Units Sold PM],0)-1",
+        "detail": "Depends on unresolvable measure(s): Units Sold PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Returns PM",
+        "dax": "CALCULATE([Returns],PREVIOUSMONTH('Calendar'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Last 2 Months Returns",
+        "dax": "[Returns]+[Returns PM]",
+        "detail": "Depends on unresolvable measure(s): Returns PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Returns Variance",
+        "dax": "[Returns]-[Returns PM]",
+        "detail": "Depends on unresolvable measure(s): Returns PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Returns Variance %",
+        "dax": "(DIVIDE([Returns],[Returns PM],0)-1)",
+        "detail": "Depends on unresolvable measure(s): Returns PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Units Returned PM",
+        "dax": "CALCULATE([Units Returned],PREVIOUSMONTH('Calendar'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Units Returned Variance %",
+        "dax": "DIVIDE([Units Returned],[Units Returned PM],0)-1",
+        "detail": "Depends on unresolvable measure(s): Units Returned PM"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Return Rate",
+        "dax": "DIVIDE((ROUND(((DIVIDE([Returns],SUM(Sales[Amount]),0))*100),0)),100,0)",
+        "detail": "Depends on unresolvable measure(s): Amount"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned",
+        "dax": "IF([Units Returned]-[WIF Units Returned Average]<0,0,[Units Returned]-[WIF Units Returned Average])",
+        "detail": "Depends on unresolvable measure(s): WIF Units Returned Average, WIF Units Returned Average"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned Difference",
+        "dax": "[WIF Units Returned_1]-[WIF Units Returned_2]",
+        "detail": "Depends on unresolvable measure(s): WIF Units Returned_1, WIF Units Returned_2"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned_1",
+        "dax": "CALCULATE([Units Returned], ALLSELECTED('Calendar'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Units Returned_2",
+        "dax": "CALCULATE([WIF Adjusted Units Returned], ALLSELECTED('Calendar'[Date]))",
+        "detail": "Depends on unresolvable measure(s): WIF Adjusted Units Returned, Date"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Profit",
+        "dax": "IF([WIF Same]=0,0,IF(ROUNDDOWN([WIF Adjusted Net Sales]-[Net Sales],0)<0,0,ROUNDDOWN([WIF Adjusted Net Sales]-[Net Sales],0)))",
+        "detail": "Depends on unresolvable measure(s): WIF Same, WIF Adjusted Net Sales, WIF Adjusted Net Sales"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "Profit Difference",
+        "dax": "DIVIDE([WIF Adjusted Sales],[Net Sales],0)-1",
+        "detail": "Depends on unresolvable measure(s): WIF Adjusted Sales"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Adjusted Sales",
+        "dax": "[WIF Units Returned_1]*[WIF Price per Unit]",
+        "detail": "Depends on unresolvable measure(s): WIF Units Returned_1, WIF Price per Unit"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Forecast",
+        "dax": "[Net Sales]+[WIF Profit]",
+        "detail": "Depends on unresolvable measure(s): WIF Profit"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Analysis DAX",
+        "measure": "WIF Profit Difference",
+        "dax": "DIVIDE([WIF Forecast],[Net Sales],0)-1",
+        "detail": "Depends on unresolvable measure(s): WIF Forecast"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Product Sales Top 3",
+        "dax": "IF([Product Top N]<4,[Net Sales],0)",
+        "detail": "Depends on unresolvable measure(s): Product Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Product Sales Other",
+        "dax": "IF([Product Top N]>3,[Net Sales],0)",
+        "detail": "Depends on unresolvable measure(s): Product Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Store Sales Other",
+        "dax": "IF([Store Top N]>3,[Net Sales],0)",
+        "detail": "Depends on unresolvable measure(s): Store Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Store Sales Top 3",
+        "dax": "IF([Store Top N]<4,[Net Sales],0)",
+        "detail": "Depends on unresolvable measure(s): Store Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Net Sales Indicator",
+        "dax": "CONCATENATE(IF([Net Sales Variance %]<=0,\"\",\"+\"),FORMAT([Net Sales Variance %],\"0.0%\"))",
+        "detail": "Depends on unresolvable measure(s): Net Sales Variance %, Net Sales Variance %"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Units Sold Indicator",
+        "dax": "CONCATENATE(IF([Units Sold Variance %]<=0,\"\",\"+\"),FORMAT([Units Sold Variance %],\"0.0%\"))",
+        "detail": "Depends on unresolvable measure(s): Units Sold Variance %, Units Sold Variance %"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Returns Indicator",
+        "dax": "CONCATENATE(IF([Returns Variance %]<=0,\"\",\"+\"),FORMAT([Returns Variance %],\"0.0%\"))",
+        "detail": "Depends on unresolvable measure(s): Returns Variance %, Returns Variance %"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Product Returns Other",
+        "dax": "IF([ProductR Top N]>3,[Returns],0)",
+        "detail": "Depends on unresolvable measure(s): ProductR Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Product Returns Top 3",
+        "dax": "IF([ProductR Top N]<4,[Returns],0)",
+        "detail": "Depends on unresolvable measure(s): ProductR Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Store Returns Other",
+        "dax": "IF([StoreR Top N]>3,[Returns],0)",
+        "detail": "Depends on unresolvable measure(s): StoreR Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Returns Sales Top 3",
+        "dax": "IF([StoreR Top N]<4,[Returns],0)",
+        "detail": "Depends on unresolvable measure(s): StoreR Top N"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Units Returned Indicator",
+        "dax": "CONCATENATE(IF([Returns Variance %]<=0,\"\",\"+\"),FORMAT([Returns Variance %],\"0.0%\"))",
+        "detail": "Depends on unresolvable measure(s): Returns Variance %, Returns Variance %"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Profit Indicator",
+        "dax": "CONCATENATE(IF([WIF Profit Difference]<=0,\"\",\"+\"),FORMAT([WIF Profit Difference],\"0.0%\"))",
+        "detail": "Depends on unresolvable measure(s): WIF Profit Difference, WIF Profit Difference"
+      },
+      {
+        "model": "Sales and Return",
+        "table": "Design DAX",
+        "measure": "Lift Label",
+        "dax": "CONCATENATE(FORMAT(SUM(Association[Importance]),\"0.0\"),\"x\")",
+        "detail": "Depends on unresolvable measure(s): Importance"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "Metadata",
+        "measure": "DataStatus",
+        "dax": "IF(ISBLANK([Data Quality Messages]), 0, 1)",
+        "detail": "Depends on unresolvable measure(s): Data Quality Messages"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "Metadata",
+        "measure": "User Action Count",
+        "dax": "COUNTROWS(FILTER('Events', [component] = \"Report Canvas\" && [name] = \"User Action\"))",
+        "detail": "Depends on unresolvable measure(s): component, name"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "Metadata",
+        "measure": "Visual Update Count",
+        "dax": "COUNTROWS(FILTER('Events', [component] = \"Report Canvas\" && [name] = \"Visual Container Lifecycle\"))",
+        "detail": "Depends on unresolvable measure(s): component, name"
+      },
+      {
+        "model": "Performance Analyzer",
+        "table": "Metadata",
+        "measure": "Change Detection Count",
+        "dax": "COUNTROWS(FILTER('Events', [component] = \"Change Detection\" && [name] = \"Execute Change Detection\"))",
+        "detail": "Depends on unresolvable measure(s): component, name"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Seps",
+        "dax": "CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))",
+        "detail": "Depends on unresolvable measure(s): EmplID, TermDate"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Actives",
+        "dax": "CALCULATE([EmpCount], FILTER(Employee, ISBLANK(Employee[TermDate])))",
+        "detail": "Depends on unresolvable measure(s): EmpCount, TermDate"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "AVG Age",
+        "dax": "ROUND(AVERAGE([Age]), 0)",
+        "detail": "Depends on unresolvable measure(s): Age"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "New Hires SPLY",
+        "dax": "CALCULATE([New Hires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Actives SPLY",
+        "dax": "CALCULATE([Actives],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Actives, Date"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Seps SPLY",
+        "dax": "CALCULATE([Seps],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Seps, Date"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Seps YoY Var",
+        "dax": "[Seps]-[Seps SPLY]",
+        "detail": "Depends on unresolvable measure(s): Seps, Seps SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Actives YoY Var",
+        "dax": "[Actives]-[Actives SPLY]",
+        "detail": "Depends on unresolvable measure(s): Actives, Actives SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "New Hires YoY Var",
+        "dax": "[New Hires]-[New Hires SPLY]",
+        "detail": "Depends on unresolvable measure(s): New Hires SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Seps YoY % Change",
+        "dax": "DIVIDE([Seps YoY Var], [Seps SPLY])",
+        "detail": "Depends on unresolvable measure(s): Seps YoY Var, Seps SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Actives YoY % Change",
+        "dax": "DIVIDE([Actives YoY Var], [Actives SPLY])",
+        "detail": "Depends on unresolvable measure(s): Actives YoY Var, Actives SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "New Hires YoY % Change",
+        "dax": "DIVIDE([New Hires YoY Var], [New Hires SPLY])",
+        "detail": "Depends on unresolvable measure(s): New Hires YoY Var, New Hires SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Bad Hires SPLY",
+        "dax": "CALCULATE([Sum of BadHires],SAMEPERIODLASTYEAR('Date'[Date]))",
+        "detail": "Depends on unresolvable measure(s): Date"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Bad Hires YoY Var",
+        "dax": "[Sum of BadHires]-[Bad Hires SPLY]",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Bad Hires YoY % Change",
+        "dax": "DIVIDE([Bad Hires YoY Var], [Bad Hires SPLY])",
+        "detail": "Depends on unresolvable measure(s): Bad Hires YoY Var, Bad Hires SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "TO %",
+        "dax": "DIVIDE([Seps], [Actives])",
+        "detail": "Depends on unresolvable measure(s): Seps, Actives"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "TO % Var",
+        "dax": "[TO %]-[TO % Norm]",
+        "detail": "Depends on unresolvable measure(s): TO %, TO % Norm"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Sep%ofActive",
+        "dax": "DIVIDE([Seps],[Actives])",
+        "detail": "Depends on unresolvable measure(s): Seps, Actives"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "Sep%ofSMLYActives",
+        "dax": "DIVIDE([Seps SPLY],[Actives SPLY])",
+        "detail": "Depends on unresolvable measure(s): Seps SPLY, Actives SPLY"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "BadHire%ofActives",
+        "dax": "DIVIDE([Sum of BadHires],[Actives])",
+        "detail": "Depends on unresolvable measure(s): Actives"
+      },
+      {
+        "model": "Human Resource",
+        "table": "Employee",
+        "measure": "BadHire%ofActiveSPLY",
+        "dax": "DIVIDE([Bad Hires SPLY],[Actives SPLY])",
+        "detail": "Depends on unresolvable measure(s): Bad Hires SPLY, Actives SPLY"
+      }
+    ],
+    "Other Syntax / Complex DAX": [
+      {
+        "model": "Employee History and Hiring",
+        "table": "",
+        "measure": "Model-level issue",
+        "dax": "",
+        "detail": "Complex DAX structure"
+      },
+      {
+        "model": "Artificial Intelligence",
+        "table": "",
+        "measure": "Model-level issue",
+        "dax": "",
+        "detail": "Complex DAX structure"
+      },
+      {
+        "model": "Human Resource",
+        "table": "",
+        "measure": "Adventure Works DW 2020 \u2014 0 DAX Measures (implicit measures only)",
+        "dax": "",
+        "detail": "Complex DAX structure"
+      },
+      {
+        "model": "Human Resource",
+        "table": "",
+        "measure": "Model-level issue",
+        "dax": "(no DAX measures: numbers come from columns aggregated by their \"Summarize by\" setting)",
+        "detail": "Complex DAX structure"
+      }
+    ]
+  }
+}

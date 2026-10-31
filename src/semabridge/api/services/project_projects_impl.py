@@ -371,7 +371,8 @@ def _default_snowflake_schema_for_project(project_id: str) -> str:
     share physical tables. Deliberately still prefixed with the legacy
     shared-schema name (not a fresh convention) so existing grants scoped to
     that prefix keep working without a Snowflake-admin change."""
-    safe = re.sub(r"[^A-Za-z0-9_]+", "_", str(project_id or "").upper()).strip("_")
+    from semabridge.utils.naming import to_alias
+    safe = to_alias(str(project_id or ""))
     if not safe:
         return _LEGACY_SHARED_SNOWFLAKE_SCHEMA
     return f"{_LEGACY_SHARED_SNOWFLAKE_SCHEMA}_{safe}"
@@ -1289,14 +1290,6 @@ async def compare_graph_snapshots_compat(
         to_node_map = {_node_key(n): n for n in to_nodes}
         from_id_map = {str(n.get("id")): n for n in from_nodes}
         to_id_map = {str(n.get("id")): n for n in to_nodes}
-    except Exception as e:
-        logger.error(f"Error comparing snapshots: {str(e)}")
-        return {
-            "summary": {"added": 0, "removed": 0, "modified": 0, "unchanged": 0},
-            "changes": [],
-            "relationships": [],
-            "styled_graph": {"nodes": [], "edges": []},
-        }
 
         changes: List[Dict[str, Any]] = []
 

@@ -1,0 +1,1 @@
+model,table,measure,expression,dax_pattern,uses_measures,expected_metric,outcome,reason,stage,detail,cascaded_from,simple_but_null,reanchored,ddl_table,ddl_expression,in_sml,sml_sync_enabled,sml_sql,translator_isolated,translator_tier,translator_output

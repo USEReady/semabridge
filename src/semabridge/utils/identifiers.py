@@ -213,6 +213,10 @@ class IdentifierSanitizer:
         
         return result
 
+    def to_alias(self, name: str) -> str:
+        """Sanitize an alias name with reserved word suppression."""
+        return self.sanitize_alias(name)
+
     def sanitize_alias(self, name: str) -> str:
         """
         Sanitize an alias name with reserved word suppression.
@@ -245,34 +249,24 @@ class IdentifierSanitizer:
         Rules:
         - Replaces invalid characters (keep only [A-Za-z0-9_$]) with underscore
         - Collapses consecutive underscores
-        - If name starts with digit → prefix with underscore
+        - If name starts with digit -> prefix with underscore
         - Uppercases
-
-        Args:
-            name: Raw table name
-
-        Returns:
-            Sanitized uppercase table name
         """
         if not name:
             return name
 
         original = name
-
-        # Replace invalid characters (keep only [A-Za-z0-9_$])
         clean = re.sub(r"[^A-Za-z0-9_$]", "_", name)
-        # Collapse consecutive underscores
         clean = re.sub(r"_+", "_", clean).strip("_")
 
         if not clean:
             return name.upper() if self.force_uppercase else name
 
-        # Handle leading digit
         if clean[0].isdigit():
             clean = f"_{clean}"
 
         result = clean.upper() if self.force_uppercase else clean
-        logger.debug(f"sanitize_table_name: '{original}' → '{result}'")
+        logger.debug(f"sanitize_table_name: '{original}' -> '{result}'")
         return result
 
     def split_dot_identifier(self, identifier: str) -> tuple[Optional[str], str]:
@@ -492,7 +486,7 @@ class IdentifierRegistry:
         if name_type == "table":
             sanitized = self._sanitizer.sanitize_table_name(name)
         elif name_type == "alias":
-            sanitized = self._sanitizer.sanitize_alias(name)
+            sanitized = self._sanitizer.to_alias(name)
         else:  # column, metric, or default
             sanitized = self._sanitizer.sanitize_column(name)
 

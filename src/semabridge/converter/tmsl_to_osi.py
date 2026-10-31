@@ -734,7 +734,7 @@ class TMSLToOSIConverter(BaseConverter):
                 name,
                 dataset_name,
             )
-            dax = f"[{name}]"
+            dax = "BLANK()"
 
         # access_modifier heuristic:
         # - Names prefixed with "_" or ending with " Helper" / " Base" → private_access

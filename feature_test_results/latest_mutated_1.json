@@ -2,49 +2,49 @@
  "F1.1": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Open' THEN transactionslogv2.\"LINE_NO_H2\" END)",
+  "sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Open' THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END)",
   "title": "-- comment inside a FILTER",
   "solution": ""
  },
  "F1.2": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(transactionslogv2.\"UNITS_P4\"::FLOAT)",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT)",
   "title": "// and /* */ comments",
   "solution": ""
  },
  "F1.3": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"IS_URGENT_U2\" = TRUE THEN transactionslogv2.SKU_ID_A1 END)",
+  "sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"IS_URGENT_U2\" = TRUE THEN TRANSACTIONS_LOG_V2.SKU_ID_A1 END)",
   "title": "TRUE() in a boolean filter",
   "solution": ""
  },
  "F1.4": {
   "status": "PASS",
   "msg": "6.0 == 6.0",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"IS_URGENT_U2\" = FALSE THEN transactionslogv2.SKU_ID_A1 END)",
+  "sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"IS_URGENT_U2\" = FALSE THEN TRANSACTIONS_LOG_V2.SKU_ID_A1 END)",
   "title": "FALSE() in a boolean filter",
   "solution": ""
  },
  "F1.5": {
   "status": "PASS",
   "msg": "0.5 == 0.5",
-  "sql": "ROUND(AVG(transactionslogv2.\"UNITS_P4\"::FLOAT) / NULLIF(2, 0), 1) - 1",
+  "sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) / NULLIF(2, 0), 1) - 1",
   "title": "trailing -1 after a function",
   "solution": ""
  },
  "F1.6": {
   "status": "PASS",
   "msg": "12.810344827586206 == 12.810344827586206",
-  "sql": "IFF(COALESCE(SUM(transactionslogv2.\"UNITS_P4\"::FLOAT), 0) = 0, 0, SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT) / SUM(transactionslogv2.\"UNITS_P4\"::FLOAT)) - 1",
+  "sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT), 0) = 0, 0, SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT) / SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT)) - 1",
   "title": "DIVIDE(...)-1 (variance %)",
   "solution": ""
  },
  "F1.7": {
   "status": "PASS",
   "msg": "-29.0 == -29.0",
-  "sql": "CASE WHEN SUM(transactionslogv2.\"UNITS_P4\"::FLOAT) > 0 THEN -1 * SUM(transactionslogv2.\"UNITS_P4\"::FLOAT) ELSE -1 END",
+  "sql": "CASE WHEN SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) > 0 THEN -1 * SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) ELSE -1 END",
   "title": "negative literal after an operator / comma",
   "solution": ""
  },
@@ -58,49 +58,49 @@
  "F2.1": {
   "status": "PASS",
   "msg": "14.0 == 14.0",
-  "sql": "ROUND(AVG(transactionslogv2.\"UNIT_RATE_A9\"::FLOAT), 0)",
+  "sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT), 0)",
   "title": "bare [Column] inside a nested function",
   "solution": ""
  },
  "F2.2": {
   "status": "PASS",
   "msg": "279.5 == 279.5",
-  "sql": "SUM(CASE WHEN transactionslogv2.ORDER_STATE_X9 = 'Sold' THEN transactionslogv2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
   "title": "measure on an empty measure table keeps the DAX table",
   "solution": ""
  },
  "F2.3": {
   "status": "PASS",
   "msg": "13.7 == 13.7",
-  "sql": "AVG(transactionslogv2.\"PRICE_EACH_DOL_H6\")",
+  "sql": "AVG(TRANSACTIONS_LOG_V2.\"PRICE_EACH_DOL_H6\")",
   "title": "column name with spaces and special characters",
   "solution": ""
  },
  "F2.4": {
   "status": "PASS",
   "msg": "566.5 == 566.5",
-  "sql": "SUM(transactionslogv2.\"UNITS_P4\"::FLOAT) + SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT) + SUM(transactionslogv2.\"UNIT_RATE_A9\"::FLOAT)",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) + SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT) + SUM(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT)",
   "title": "several SUMs of different columns added together",
   "solution": ""
  },
  "F3.1": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "SUM(transactionslogv2.\"UNITS_P4\" * transactionslogv2.\"UNIT_RATE_A9\"::FLOAT)",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\" * TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT)",
   "title": "SUMX over the own table",
   "solution": ""
  },
  "F3.2": {
   "status": "PASS",
   "msg": "279.5 == 279.5",
-  "sql": "SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Sold' THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)",
   "title": "CALCULATE(SUMX, FILTER(own table))",
   "solution": ""
  },
  "F3.3": {
   "status": "PASS",
   "msg": "6.0 == 6.0",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Sold' THEN transactionslogv2.\"LINE_NO_H2\" END)",
+  "sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END)",
   "title": "COUNTAX(FILTER(KEEPFILTERS(...)))",
   "solution": ""
  },
@@ -121,70 +121,70 @@
  "F3.6": {
   "status": "PASS",
   "msg": "7.0 == 7.0",
-  "sql": "COUNT(CASE WHEN (transactionslogv2.\"DISPATCH_DATE_K1\" IS NOT NULL) THEN transactionslogv2.\"LINE_NO_H2\" END)",
+  "sql": "COUNT(CASE WHEN (TRANSACTIONS_LOG_V2.\"DISPATCH_DATE_K1\" IS NOT NULL) THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END)",
   "title": "CALCULATE(COUNT, FILTER(NOT(ISBLANK(...))))",
   "solution": ""
  },
  "F3.7": {
   "status": "PASS",
   "msg": "3.0 == 3.0",
-  "sql": "COUNT(CASE WHEN (transactionslogv2.\"DISPATCH_DATE_K1\" IS NULL) THEN transactionslogv2.\"LINE_NO_H2\" END)",
+  "sql": "COUNT(CASE WHEN (TRANSACTIONS_LOG_V2.\"DISPATCH_DATE_K1\" IS NULL) THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END)",
   "title": "CALCULATE(COUNT, FILTER(ISBLANK(...)))",
   "solution": ""
  },
  "F3.8": {
   "status": "PASS",
   "msg": "4.571428571428571 == 4.571428571428571",
-  "sql": "AVG(DATEDIFF(DAY, transactionslogv2.\"PLACED_ON_Y4\", transactionslogv2.\"DISPATCH_DATE_K1\")::FLOAT)",
+  "sql": "AVG(DATEDIFF(DAY, TRANSACTIONS_LOG_V2.\"PLACED_ON_Y4\", TRANSACTIONS_LOG_V2.\"DISPATCH_DATE_K1\")::FLOAT)",
   "title": "AVERAGEX with DATEDIFF",
   "solution": ""
  },
  "F3.9": {
   "status": "PASS",
   "msg": "83.0 == 83.0",
-  "sql": "MAX(transactionslogv2.\"UNITS_P4\" * transactionslogv2.\"UNIT_RATE_A9\") - MIN(transactionslogv2.\"UNIT_RATE_A9\")",
+  "sql": "MAX(TRANSACTIONS_LOG_V2.\"UNITS_P4\" * TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\") - MIN(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\")",
   "title": "MAXX / MINX",
   "solution": ""
  },
  "F4.1": {
   "status": "PASS",
   "msg": "13.810344827586206 == 13.810344827586206",
-  "sql": "(SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT)) / NULLIF((SUM(transactionslogv2.\"UNITS_P4\"::FLOAT)), 0)",
+  "sql": "(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT)), 0)",
   "title": "two variables, DIVIDE in RETURN",
   "solution": ""
  },
  "F4.2": {
   "status": "PASS",
   "msg": "838.5 == 838.5",
-  "sql": "((SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Sold' THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT)) * 2) + (SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Sold' THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT))",
+  "sql": "((SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) * 2) + (SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT))",
   "title": "variable using another variable",
   "solution": ""
  },
  "F5.1": {
   "status": "PASS",
   "msg": "161.0 == 161.0",
-  "sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(transactionslogv2.\"PIPELINE_STAGE_X5\", 1)) >= 3 THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(TRANSACTIONS_LOG_V2.\"PIPELINE_STAGE_X5\", 1)) >= 3 THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)",
   "title": "VALUE(LEFT(...)) inside a filter",
   "solution": ""
  },
  "F5.2": {
   "status": "PASS",
   "msg": "400.0 == 400.0",
-  "sql": "ROUND((SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT)) / (100)) * (100)",
+  "sql": "ROUND((SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) / (100)) * (100)",
   "title": "MROUND",
   "solution": ""
  },
  "F5.3": {
   "status": "PASS",
   "msg": "27.0 == 27.0",
-  "sql": "SIGN(AVG(transactionslogv2.\"UNIT_RATE_A9\"::FLOAT)) * CEIL(ABS(AVG(transactionslogv2.\"UNIT_RATE_A9\"::FLOAT)), 0) + SIGN(AVG(transactionslogv2.\"UNIT_RATE_A9\"::FLOAT)) * FLOOR(ABS(AVG(transactionslogv2.\"UNIT_RATE_A9\"::FLOAT)), 0)",
+  "sql": "SIGN(AVG(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT)) * CEIL(ABS(AVG(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT)), 0) + SIGN(AVG(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT)) * FLOOR(ABS(AVG(TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\"::FLOAT)), 0)",
   "title": "ROUNDUP / ROUNDDOWN",
   "solution": ""
  },
  "F5.4": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COALESCE(SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Missing' THEN transactionslogv2.\"UNITS_P4\" END::FLOAT), 0) = 0, 0, SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT) / SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Missing' THEN transactionslogv2.\"UNITS_P4\" END::FLOAT))",
+  "sql": "IFF(COALESCE(SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Missing' THEN TRANSACTIONS_LOG_V2.\"UNITS_P4\" END::FLOAT), 0) = 0, 0, SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT) / SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Missing' THEN TRANSACTIONS_LOG_V2.\"UNITS_P4\" END::FLOAT))",
   "title": "DIVIDE with alternate result on zero",
   "solution": ""
  },
@@ -226,147 +226,147 @@
  "F10.1": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COUNT(DISTINCT slidervaluesd8.\"LEVEL_P1\") + MAX(IFF(slidervaluesd8.\"LEVEL_P1\" IS NULL, 1, 0)) = 1, MAX(slidervaluesd8.\"LEVEL_P1\"), 0)",
+  "sql": "IFF(COUNT(DISTINCT SLIDER_VALUES_D8.\"LEVEL_P1\") + MAX(IFF(SLIDER_VALUES_D8.\"LEVEL_P1\" IS NULL, 1, 0)) = 1, MAX(SLIDER_VALUES_D8.\"LEVEL_P1\"), 0)",
   "title": "several values -> alternate (never ANY_VALUE)",
   "solution": ""
  },
  "F10.2": {
   "status": "PASS",
   "msg": "5.0 == 5.0",
-  "sql": "IFF(COUNT(DISTINCT singlepickp7.\"LEVEL_P1\") + MAX(IFF(singlepickp7.\"LEVEL_P1\" IS NULL, 1, 0)) = 1, MAX(singlepickp7.\"LEVEL_P1\"), 0)",
+  "sql": "IFF(COUNT(DISTINCT SINGLE_PICK_P7.\"LEVEL_P1\") + MAX(IFF(SINGLE_PICK_P7.\"LEVEL_P1\" IS NULL, 1, 0)) = 1, MAX(SINGLE_PICK_P7.\"LEVEL_P1\"), 0)",
   "title": "exactly one value -> that value",
   "solution": ""
  },
  "F10.3": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COUNT(DISTINCT holesnumsa8.\"LEVEL_P1\") + MAX(IFF(holesnumsa8.\"LEVEL_P1\" IS NULL, 1, 0)) = 1, MAX(holesnumsa8.\"LEVEL_P1\"), 0)",
+  "sql": "IFF(COUNT(DISTINCT HOLES_AND_NUMS_A8.\"LEVEL_P1\") + MAX(IFF(HOLES_AND_NUMS_A8.\"LEVEL_P1\" IS NULL, 1, 0)) = 1, MAX(HOLES_AND_NUMS_A8.\"LEVEL_P1\"), 0)",
   "title": "one number + blank -> alternate (blank counts as a value)",
   "solution": ""
  },
  "F10.4": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(transactionslogv2.\"UNITS_P4\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
   "title": "what-if measure used in another measure -> default constant",
   "solution": ""
  },
  "F10.5": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "(SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT)) + (SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT)) * (0) / NULLIF(100, 0)",
+  "sql": "(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) + (SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) * (0) / NULLIF(100, 0)",
   "title": "same, measure referenced without table prefix",
   "solution": ""
  },
  "F7.1": {
   "status": "PASS",
   "msg": "371.5 == 371.5",
-  "sql": "(SUM(transactionslogv2.\"NET_AMT_DOL_R8\")) - (SUM(transactionslogv2.\"UNITS_P4\"))",
+  "sql": "(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")) - (SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"))",
   "title": "arithmetic over two base measures",
   "solution": ""
  },
  "F7.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(transactionslogv2.\"NET_AMT_DOL_R8\"), 0) = 0, 0, SUM(CASE WHEN transactionslogv2.ORDER_STATE_X9 = 'Sold' THEN transactionslogv2.\"NET_AMT_DOL_R8\" ELSE 0 END) / SUM(transactionslogv2.\"NET_AMT_DOL_R8\"))",
+  "sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END) / SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"))",
   "title": "ratio over a base measure that lives on the measure table",
   "solution": ""
  },
  "F11.1": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "SUM(transactionslogv2.\"NET_AMT_DOL_R8\")",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")",
   "title": "declared on a dimension, data from the fact",
   "solution": "Anchor = the table the physical columns come from (after inlining measures), never the DAX home table. Apply in translation AND at DDL emission."
  },
  "F11.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(transactionslogv2.\"NET_AMT_DOL_R8\"), 0) = 0, 0, SUM(CASE WHEN transactionslogv2.ORDER_STATE_X9 = 'Sold' THEN transactionslogv2.\"NET_AMT_DOL_R8\" ELSE 0 END) / SUM(transactionslogv2.\"NET_AMT_DOL_R8\"))",
+  "sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END) / SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"))",
   "title": "declared on a dimension, built from fact measures",
   "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
  },
  "F11.3": {
   "status": "PASS",
   "msg": "10.0 == 10.0",
-  "sql": "SUM(CASE WHEN skumasterd8.SEGMENT_T4 = 'Hardware' THEN transactionslogv2.\"UNITS_P4\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN SKU_MASTER_D8.SEGMENT_T4 = 'Hardware' THEN TRANSACTIONS_LOG_V2.\"UNITS_P4\" ELSE 0 END)",
   "title": "measure table + filter on a related dimension",
   "solution": "Anchor on the fact (Orders): it reaches Product through a many-to-one relationship, so the dimension filter is valid there (join or enriched copy)."
  },
  "F12.1": {
   "status": "PASS",
   "msg": "110.0 == 110.0",
-  "sql": "SUM(CASE WHEN skumasterd8.SKU_ID_A1 = 2 THEN transactionslogv2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN SKU_MASTER_D8.SKU_ID_A1 = 2 THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
   "title": "filter on the dimension KEY -> fact foreign key",
   "solution": "If the filtered column is the 'to' key of a relationship fact->dim, rewrite the condition onto the fact's 'from' column (same table, no join)."
  },
  "F12.2": {
   "status": "PASS",
   "msg": "279.0 == 279.0",
-  "sql": "SUM(CASE WHEN skumasterd8.SEGMENT_T4 = 'Software' THEN transactionslogv2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN SKU_MASTER_D8.SEGMENT_T4 = 'Software' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
   "title": "filter on a dimension ATTRIBUTE",
   "solution": "Non-key attribute of a related dimension (reachable many-to-one): use the enriched copy <DIM>_<COLUMN> on the fact, or the dimension column through the relationship. Unreachable -> NULL + reason."
  },
  "F12.3": {
   "status": "PASS",
   "msg": "-6.291666666666668 == -6.291666666666668",
-  "sql": "CASE WHEN ((AVG(CASE WHEN skumasterd8.\"SKU_ID_A1\" = 1 THEN transactionslogv2.\"UNIT_RATE_A9\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN skumasterd8.\"SKU_ID_A1\" = 3 THEN transactionslogv2.\"UNIT_RATE_A9\" END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN skumasterd8.\"SKU_ID_A1\" = 1 THEN transactionslogv2.\"UNIT_RATE_A9\" END::FLOAT) - AVG(CASE WHEN skumasterd8.\"SKU_ID_A1\" = 3 THEN transactionslogv2.\"UNIT_RATE_A9\" END::FLOAT) ELSE NULL END",
+  "sql": "CASE WHEN ((AVG(CASE WHEN SKU_MASTER_D8.\"SKU_ID_A1\" = 1 THEN TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN SKU_MASTER_D8.\"SKU_ID_A1\" = 3 THEN TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\" END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN SKU_MASTER_D8.\"SKU_ID_A1\" = 1 THEN TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\" END::FLOAT) - AVG(CASE WHEN SKU_MASTER_D8.\"SKU_ID_A1\" = 3 THEN TRANSACTIONS_LOG_V2.\"UNIT_RATE_A9\" END::FLOAT) ELSE NULL END",
   "title": "two fixed-key filters subtracted with ISBLANK guards",
   "solution": "Same key rewrite inside each CALCULATE; NOT ISBLANK(x) -> x IS NOT NULL; IF without else -> NULL."
  },
  "F12.4": {
   "status": "PASS",
   "msg": "90.0 == 90.0",
-  "sql": "SUM(CASE WHEN tblalphas1.COL_PRISM_W6 = 3 THEN transactionslogv2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN TBL_ALPHA_S1.COL_PRISM_W6 = 3 THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END)",
   "title": "filter on a date-dimension attribute (active relationship)",
   "solution": "Date dimension attribute through the ACTIVE relationship (Order Date): enriched copy or join."
  },
  "F13.1": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN tbl_alpha_s1_dispatch_date_k1.\"COL_PRISM_W6\" = 3 THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.\"COL_PRISM_W6\" = 3 THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)",
   "title": "USERELATIONSHIP on the inactive date path",
   "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
  },
  "F13.2": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN tbl_alpha_s1_dispatch_date_k1.\"COL_PRISM_W6\" = 1 THEN transactionslogv2.SKU_ID_A1 END)",
+  "sql": "COUNT(CASE WHEN TBL_ALPHA_S1_DISPATCH_DATE_K1.\"COL_PRISM_W6\" = 1 THEN TRANSACTIONS_LOG_V2.SKU_ID_A1 END)",
   "title": "USERELATIONSHIP with a row count",
   "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
  },
  "F13.3": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN tblalphas1.\"COL_PRISM_W6\" = 1 THEN transactionslogv2.SKU_ID_A1 END)",
+  "sql": "COUNT(CASE WHEN TBL_ALPHA_S1.\"COL_PRISM_W6\" = 1 THEN TRANSACTIONS_LOG_V2.SKU_ID_A1 END)",
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "solution": "The alias must not change measures that do not ask for it."
  },
  "F14.1": {
-  "status": "PASS",
-  "msg": "excluded: not applicable: needs window metric",
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
   "sql": null,
   "title": "ALL(dimension table) in the denominator",
   "solution": "Until window metrics are available: CAST(NULL AS DOUBLE) + reason 'needs window metric'. Never drop silently, never emit a constant (1.0 is only right at grand total)."
  },
  "F14.2": {
-  "status": "PASS",
-  "msg": "excluded: not applicable: needs window metric",
-  "sql": null,
+  "status": "FAIL",
+  "msg": "translated to a metric although it is needs window metric",
+  "sql": "TRANSACTIONS_LOG_V2.\"TOTAL_AMOUNT\" / NULLIF(SUM(TRANSACTIONS_LOG_V2.\"TOTAL_AMOUNT\"::FLOAT) OVER (PARTITION BY EXCLUDING SKU MASTER D8.\"SEGMENT_T4\"), 0)",
   "title": "ALL(one column) with measure references",
   "solution": "Same as F14.1."
  },
  "F15.1": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(tbldeltaf9.\"COL_ORBIT_G7\")",
+  "sql": "COUNT(TBL_DELTA_F9.\"COL_ORBIT_G7\")",
   "title": "closing balance (value at the last period)",
   "solution": "FILTER(ALL(T[p]), T[p] = MAX(T[p])) -> plain aggregate + NON ADDITIVE BY (T.p, direction proven to take the LAST period)."
  },
  "F15.2": {
   "status": "PASS",
   "msg": "3.0 == 3.0",
-  "sql": "COUNT(CASE WHEN (tbldeltaf9.\"COL_ALPHA_S6\" IS NULL) THEN tbldeltaf9.\"COL_ORBIT_G7\" ELSE NULL END)",
+  "sql": "COUNT(CASE WHEN (TBL_DELTA_F9.\"COL_ALPHA_S6\" IS NULL) THEN TBL_DELTA_F9.\"COL_ORBIT_G7\" ELSE NULL END)",
   "title": "filtered closing balance (actives)",
   "solution": "A filter on top of a non-additive measure keeps its NON ADDITIVE BY."
  },
@@ -387,7 +387,7 @@
  "F13.4": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN tbl_kappa_a4_col_zeta_t6.\"COL_ALPHA_U9\" = 3 THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN TBL_KAPPA_A4_COL_ZETA_T6.\"COL_ALPHA_U9\" = 3 THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)",
   "title": "USERELATIONSHIP with special characters in dim and FK",
   "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
  },
@@ -401,22 +401,36 @@
  "F17.1": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "COUNT(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'X' THEN transactionslogv2.\"LINE_NO_H2\" END) / NULLIF(COUNT(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'X' THEN transactionslogv2.\"LINE_NO_H2\" END) + COUNT(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'Y' THEN transactionslogv2.\"LINE_NO_H2\" END), 0)",
+  "sql": "COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'X' THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END) / NULLIF(COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'X' THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END) + COUNT(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Y' THEN TRANSACTIONS_LOG_V2.\"LINE_NO_H2\" END), 0)",
   "title": "DAX '/' with zero denominator -> BLANK, not an error",
   "solution": "DAX a / b -> a / NULLIF(b, 0): Snowflake raises 'Division by zero', DAX returns BLANK."
  },
  "F17.2": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "SUM(transactionslogv2.\"NET_AMT_DOL_R8\"::FLOAT) / NULLIF(SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'X' THEN transactionslogv2.\"UNITS_P4\" END::FLOAT), 0)",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT) / NULLIF(SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'X' THEN TRANSACTIONS_LOG_V2.\"UNITS_P4\" END::FLOAT), 0)",
   "title": "DIVIDE without alternate -> NULL",
   "solution": ""
  },
  "F17.3": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "IFF(COALESCE(SUM(transactionslogv2.\"UNITS_P4\"::FLOAT), 0) = 0, 0, SUM(CASE WHEN transactionslogv2.\"ORDER_STATE_X9\" = 'X' THEN transactionslogv2.\"NET_AMT_DOL_R8\" END::FLOAT) / SUM(transactionslogv2.\"UNITS_P4\"::FLOAT))",
+  "sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'X' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT) / SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT))",
   "title": "blank numerator keeps BLANK (not the alternate)",
   "solution": "DIVIDE(a, b, alt) -> IFF(COALESCE(b,0)=0, alt, a/b) - not COALESCE(a/b, alt)."
+ },
+ "F10.6": {
+  "status": "PASS",
+  "msg": "279.5 == 279.5",
+  "sql": "(SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) + (SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) * (0) / NULLIF(100, 0)",
+  "title": "what-if inside VAR with CALCULATE ('Table'[Measure])",
+  "solution": ""
+ },
+ "F17.5": {
+  "status": "PASS",
+  "msg": "0.3021223470661673 == 0.3021223470661673",
+  "sql": "((SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")) - (SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END))) / NULLIF(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"), 0)",
+  "title": "DIVIDE([A-B], [B]) numerator precedence",
+  "solution": "Numerator with subtraction must keep parentheses in division to avoid precedence bug."
  }
 }

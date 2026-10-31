@@ -1,0 +1,8 @@
+fix(dax): support share of total via enriched view window columns and dynamic date resolution
+
+- Enable Share of Total (% of Grand Total) measures to translate into Snowflake Semantic Views by precomputing window aggregates in helper views (_create_enriched_view) and re-rendering metrics using scalar MAX() references (e.g. (COUNT(*)) / NULLIF(MAX(cases.ALL_COUNT), 0)).
+- Extend _is_enrichable_all_measure to be division-aware: supports whole-table ALL(table) and ratio denominators DIVIDE(..., CALCULATE(..., ALL(col))) (e.g. Cases % by Product, Cases % by Subject) while safely excluding non-ratio selective dimension filters (Life Expectancy) and interactive slicers (CSAT Impact) as explicit NULL placeholders.
+- Upgrade date dimension resolution in DaxSqlRenderer: replace hardcoded {"date"} set with canonical synonyms ({"date", "calendar", "dim_date", "dimdate", "dates"}) and dynamic model metadata inspection for DATE/DATETIME column types, resolving calendar-named tables cleanly without foreign table errors.
+- Add complex measure test framework (validate_complex_translation.py and validate_complex_ddl.py) for offline, generic DAG and DDL validation with DuckDB.
+- Tests: 7/7 unit tests passing in test_share_of_total_enriched.py, 58/58 Phase A pipeline tests passing with 0 regressions, 0 hardcoded identifiers in audit.
+

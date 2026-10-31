@@ -32,9 +32,12 @@ def demo_mode_globally_armed() -> bool:
 
 
 def resolve_effective_demo_mode(project_flag: bool) -> bool:
-    """Effective demo_mode for a run = server armed (project_flag is ignored).
+    """Effective demo_mode for a run = server armed AND project has demo_mode enabled.
 
-    Only the server-level env var matters. The project_flag parameter is
-    kept for backwards compatibility but is not used.
+    Can be disabled globally with SEMABRIDGE_DEMO_MODE=false or SEMABRIDGE_DISABLE_DEMO_MODE=true.
     """
-    return demo_mode_globally_armed()
+    if os.environ.get("SEMABRIDGE_DEMO_MODE", "").strip().lower() in ("false", "0", "off", "no"):
+        return False
+    if os.environ.get("SEMABRIDGE_DISABLE_DEMO_MODE", "").strip().lower() in ("true", "1", "yes"):
+        return False
+    return bool(project_flag) and demo_mode_globally_armed()

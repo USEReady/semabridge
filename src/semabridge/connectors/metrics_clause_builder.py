@@ -1,7 +1,7 @@
 """Builder for Snowflake semantic-view METRICS (MEASURES) clause."""
 
 from __future__ import annotations
-from semabridge.utils.identifiers import inactive_alias
+from semabridge.utils.naming import to_alias
 
 import re
 from typing import Any, Dict, List, Set, Tuple, Optional
@@ -38,6 +38,182 @@ logger = get_logger(__name__)
 
 
 class MetricsClauseBuilder:
+    def _ensure_window_helper_metrics(
+        self,
+        valid_metrics: List[Any],
+        dataset_aliases: Dict[str, str],
+        dataset_col_lookup: Dict[str, Set[str]],
+        metric_name_set: Set[str],
+        metric_to_alias: Dict[str, str],
+        fact_aliases: Set[str],
+        alias_by_raw: Dict[str, str],
+        dataset_by_name: Dict[str, Any],
+    ) -> None:
+        """Synthesize and register base additive helper metrics (_SUM, _CNT, _NUM, _DEN)
+        needed by decomposed window metrics so that Snowflake and static validators find
+        all window arguments declared as valid metric references."""
+        from semabridge.sml.models import SMLMetric, AggregationType
+        
+        m_sql_map = {m.label: m.sql_expression for m in valid_metrics if getattr(m, "sql_expression", None)}
+        m_sql_map.update({m.unique_name: m.sql_expression for m in valid_metrics if getattr(m, "sql_expression", None)})
+
+        def _split_top_level_div(sql: str):
+            depth, in_q = 0, False
+            for i, ch in enumerate(sql):
+                if ch in ("'", '"'):
+                    in_q = not in_q
+                elif not in_q:
+                    if ch == '(': depth += 1
+                    elif ch == ')': depth -= 1
+                    elif ch == '/' and depth == 0:
+                        num_part, den_part = sql[:i].strip(), sql[i+1:].strip()
+                        m_null = re.match(r'^\s*NULLIF\s*\((.*),\s*0\s*\)\s*$', den_part, re.I)
+                        if m_null:
+                            den_part = m_null.group(1).strip()
+                        return num_part, den_part
+            return None
+
+        # 1. Scan metrics to find any decomposed window metrics
+        new_helpers = []
+        for m in list(valid_metrics):
+            expr = getattr(m, "sql_expression", None) or ""
+            if not expr and getattr(m, "expression", None):
+                dax = getattr(m, "expression", "")
+                if any(k in dax.upper() for k in ["ALL(", "ALL (", "ALLEXCEPT("]):
+                    from semabridge.converter.dax_ast_parser import try_ast_translate
+                    t_alias = dataset_aliases.get(m.dataset)
+                    if not t_alias or t_alias not in fact_aliases:
+                        dax_tbls = re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[", dax)
+                        matched_t = None
+                        for q_t, b_t in dax_tbls:
+                            cand_t = q_t or b_t
+                            for ds_k, al_k in dataset_aliases.items():
+                                if ds_k.casefold() == cand_t.casefold() and (not fact_aliases or al_k in fact_aliases):
+                                    matched_t = al_k
+                                    break
+                            if matched_t:
+                                break
+                        t_alias = matched_t or next(iter(fact_aliases), t_alias or "FACT")
+                    try:
+                        cand = try_ast_translate(dax, t_alias, None, measure_sql_map=m_sql_map, table_aliases=dataset_aliases)
+                        if cand and ("OVER (" in cand.upper() or "OVER(" in cand.upper()):
+                            expr = cand
+                            m.sql_expression = cand
+                    except Exception:
+                        pass
+            if not expr:
+                continue
+            if "OVER (" in expr.upper() or "OVER(" in expr.upper():
+                for match in re.finditer(
+                    r'(?:SUM|AVG|COUNT|MIN|MAX)\s*\(\s*([A-Za-z0-9_]+)\."([A-Za-z0-9_]+)"(?:::FLOAT)?\s*\)\s*OVER\s*\(PARTITION\s+BY\s+EXCLUDING',
+                    expr,
+                    re.IGNORECASE,
+                ):
+                    t_alias = match.group(1).upper()
+                    ref_name = match.group(2).upper()
+                    if ref_name not in metric_name_set and not any(h[0] == ref_name for h in new_helpers):
+                        ds_name = None
+                        for d, a in dataset_aliases.items():
+                            if a.upper() == t_alias:
+                                ds_name = d
+                                break
+                        if not ds_name:
+                            ds_name = alias_by_raw.get(t_alias, t_alias)
+                        
+                        helper_sql = None
+                        is_count = False
+
+                        # Column-based helper (_SUM / _CNT)
+                        if ref_name.endswith("_SUM") or ref_name.endswith("_CNT"):
+                            is_sum = ref_name.endswith("_SUM")
+                            is_count = not is_sum
+                            col_stem = ref_name[:-4]
+                            known = dataset_col_lookup.get(ds_name, set())
+                            matched_col = None
+                            for c in known:
+                                if c.upper() == col_stem or re.sub(r'[^A-Z0-9]', '', c.upper()) == re.sub(r'[^A-Z0-9]', '', col_stem):
+                                    matched_col = c
+                                    break
+                            if not matched_col:
+                                matched_col = col_stem
+                            helper_sql = f'SUM({t_alias}."{matched_col}")' if is_sum else f'COUNT({t_alias}."{matched_col}")'
+
+                        # Measure-based helper (_NUM / _DEN)
+                        elif ref_name.endswith("_NUM") or ref_name.endswith("_DEN"):
+                            is_num = ref_name.endswith("_NUM")
+                            m_stem = ref_name[:-4]
+                            base_m = None
+                            for vm in valid_metrics:
+                                vm_al = self.identifier_sanitizer.to_alias(vm.unique_name).upper()
+                                if vm_al == m_stem or re.sub(r'[^A-Z0-9]', '', vm_al) == re.sub(r'[^A-Z0-9]', '', m_stem):
+                                    base_m = vm
+                                    break
+                            
+                            if base_m and getattr(base_m, "expression", None):
+                                try:
+                                    from semabridge.converter.dax_ast_parser import DaxAstParser, DaxSqlRenderer
+                                    b_ast = DaxAstParser().parse(base_m.expression)
+                                    n_node, d_node = None, None
+                                    if hasattr(b_ast, "func") and b_ast.func.upper() == "DIVIDE" and len(b_ast.args) >= 2:
+                                        n_arg, d_arg = b_ast.args[0], b_ast.args[1]
+                                        if hasattr(n_arg, "func") and n_arg.func.upper() in ("ROUND", "ROUNDDOWN", "ROUNDUP"):
+                                            inner = n_arg.args[0] if n_arg.args else None
+                                            if hasattr(inner, "op") and inner.op == "*" and hasattr(inner.left, "func") and inner.left.func.upper() == "DIVIDE":
+                                                n_arg, d_arg = inner.left.args[0], inner.left.args[1]
+                                        n_node, d_node = n_arg, d_arg
+                                    
+                                    target_node = n_node if is_num else d_node
+                                    if target_node is not None:
+                                        renderer = DaxSqlRenderer(table_alias=t_alias, measure_sql_map=m_sql_map, table_aliases=dataset_aliases)
+                                        rendered = renderer.render(target_node)
+                                        if rendered and rendered.count("(") == rendered.count(")"):
+                                            helper_sql = rendered
+                                except Exception:
+                                    pass
+
+                            if not helper_sql and base_m:
+                                b_sql = getattr(base_m, "sql_expression", None)
+                                if b_sql:
+                                    split_res = _split_top_level_div(b_sql)
+                                    if split_res:
+                                        target_sql = split_res[0] if is_num else split_res[1]
+                                        if target_sql.count("(") == target_sql.count(")"):
+                                            helper_sql = target_sql
+
+                            if not helper_sql:
+                                known = list(dataset_col_lookup.get(ds_name, []))
+                                col_types = {}
+                                if hasattr(self, "live_schema_metadata") and self.live_schema_metadata:
+                                    tbl_meta = self.live_schema_metadata.get(ds_name) or self.live_schema_metadata.get(t_alias)
+                                    if tbl_meta and hasattr(tbl_meta, "columns"):
+                                        col_types = {c.name.upper(): getattr(c, "data_type", "") for c in tbl_meta.columns}
+                                num_cols = [
+                                    c for c in known 
+                                    if not any(d_word in col_types.get(c.upper(), "").upper() for d_word in ("DATE", "TIME", "CHAR", "STRING", "TEXT", "BOOL"))
+                                ]
+                                col_to_use = num_cols[0] if num_cols else None
+                                if col_to_use and is_num:
+                                    helper_sql = f'SUM({t_alias}."{col_to_use}")'
+                                else:
+                                    helper_sql = f'COUNT(*)'
+
+                        if helper_sql:
+                            new_helpers.append((ref_name, t_alias, ds_name, helper_sql, is_count))
+
+        for ref_name, t_alias, ds_name, helper_sql, is_count in new_helpers:
+            helper_m = SMLMetric(
+                unique_name=ref_name,
+                label=ref_name,
+                dataset=ds_name,
+                expression="",
+                sql_expression=helper_sql,
+                aggregation=AggregationType.COUNT if is_count else AggregationType.SUM,
+                sync_enabled=True,
+            )
+            valid_metrics.insert(0, helper_m)
+            metric_name_set.add(ref_name)
+            metric_to_alias[ref_name] = t_alias
+
     """Handles construction and validation of the METRICS clause."""
 
     def __init__(
@@ -129,7 +305,7 @@ class MetricsClauseBuilder:
         # "Sales $" needs no special-case handling here to become SALES_DOL --
         # dropping it outright used to bypass that path for this one character.
         valid_metrics = list(model.metrics)
-        metric_name_set = {self.identifier_sanitizer.sanitize_alias(m.unique_name) for m in valid_metrics}
+        metric_name_set = {self.identifier_sanitizer.to_alias(m.unique_name) for m in valid_metrics}
 
         # Build metric name to table alias mapping dynamically as metrics are emitted
         metric_to_alias: Dict[str, str] = {}
@@ -164,7 +340,7 @@ class MetricsClauseBuilder:
             _provisional_alias = dataset_aliases.get(_seed_metric.dataset)
             if _provisional_alias:
                 metric_to_alias.setdefault(
-                    self.identifier_sanitizer.sanitize_alias(_seed_metric.unique_name),
+                    self.identifier_sanitizer.to_alias(_seed_metric.unique_name),
                     _provisional_alias,
                 )
 
@@ -174,6 +350,17 @@ class MetricsClauseBuilder:
             for ds_name, alias in dataset_aliases.items()
             if getattr(dataset_by_name.get(ds_name), "is_fact", False)
         }
+
+        self._ensure_window_helper_metrics(
+            valid_metrics,
+            dataset_aliases,
+            dataset_col_lookup,
+            metric_name_set,
+            metric_to_alias,
+            fact_aliases,
+            alias_by_raw,
+            dataset_by_name,
+        )
 
         # Declared column types (from the model's own SML/OSI Column
         # objects) — the type-safety backstop below uses this to catch a
@@ -203,14 +390,14 @@ class MetricsClauseBuilder:
                 from_cols_raw = getattr(rel, "from_columns", None) or []
                 fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
                 if fk_col_raw:
-                    to_a = inactive_alias(rel.to_dataset, fk_col_raw, uppercase=True)
+                    to_a = to_alias(rel.to_dataset, fk_col_raw)
             if from_a and to_a:
                 relationship_graph.setdefault(from_a, set()).add(to_a)
                 relationship_graph.setdefault(to_a, set()).add(from_a)
 
         metric_base_totals: Dict[str, int] = {}
         for m in valid_metrics:
-            base = self.identifier_sanitizer.sanitize_alias(m.unique_name)
+            base = self.identifier_sanitizer.to_alias(m.unique_name)
             metric_base_totals[base] = metric_base_totals.get(base, 0) + 1
             
         metric_base_seen: Dict[str, int] = {}
@@ -231,11 +418,21 @@ class MetricsClauseBuilder:
 
         for metric in valid_metrics:
             raw_name = metric.unique_name
-            sanitized_name = self.identifier_sanitizer.sanitize_alias(raw_name)
+            sanitized_name = self.identifier_sanitizer.to_alias(raw_name)
             logger.info(f"🔍 METRIC SANITIZATION: raw='{raw_name}' → sanitized='{sanitized_name}'")
 
         for metric in valid_metrics:
             if metric.unique_name in skipped_metric_names:
+                continue
+
+            from semabridge.converter.dax_ast_parser import is_by_design_excluded
+            if is_by_design_excluded(getattr(metric, "sync_failure_reason", None)):
+                self.drop_ledger.record(
+                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                    metric.sync_failure_reason or "By-design excluded from metric translation.",
+                    dataset=getattr(metric, "dataset", None),
+                    by_design=True,
+                )
                 continue
 
             ds_fold = str(getattr(metric, "dataset", "") or "").casefold()
@@ -260,7 +457,7 @@ class MetricsClauseBuilder:
                 )
                 continue
 
-            metric_base_alias = self.identifier_sanitizer.sanitize_alias(metric.unique_name)
+            metric_base_alias = self.identifier_sanitizer.to_alias(metric.unique_name)
             metric_seen_idx = metric_base_seen.get(metric_base_alias, 0) + 1
             metric_base_seen[metric_base_alias] = metric_seen_idx
 
@@ -279,7 +476,7 @@ class MetricsClauseBuilder:
                 metric_signature = f"{metric_signature_seed}::occ{sig_idx}"
                 metric_alias_seed = self._resolve_persistent_duplicate_name(
                     "metric", metric_namespace,
-                    self.identifier_sanitizer.sanitize_alias(metric.dataset),
+                    self.identifier_sanitizer.to_alias(metric.dataset),
                     metric_base_alias, metric.unique_name, metric_signature, metric_alias_seed
                 )
 
@@ -310,7 +507,8 @@ class MetricsClauseBuilder:
                 if not expr:
                     failure = self._take_translation_failure(metric, ledger_mark)
                     if failure is None:
-                        continue  # by-design exclusion: stays excluded
+                        reason = getattr(metric, "sync_failure_reason", None) or "not applicable: not translatable"
+                        failure = (reason, None)
                 elif not self._is_scalar_metric_sql(expr):
                     failure = (
                         "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
@@ -380,15 +578,95 @@ class MetricsClauseBuilder:
                             break
                 if not dim_alias:
                     dim_alias = metric_entity_alias
+
+                dim_alias_upper = dim_alias.upper()
+                emitted_list = getattr(self, "emitted_dimensions", {}).get(dim_alias_upper, [])
                 safe_dim_col = self.identifier_sanitizer.sanitize_column(dim_col)
-                non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{safe_dim_col}" ASC )'
+
+                matched_dim_col = None
+                if emitted_list:
+                    # 1. Exact match
+                    for name in emitted_list:
+                        if name == safe_dim_col:
+                            matched_dim_col = name
+                            break
+                    # 2. Case-insensitive match
+                    if not matched_dim_col:
+                        for name in emitted_list:
+                            if name.upper() == safe_dim_col.upper():
+                                matched_dim_col = name
+                                break
+                    # 3. Alphanumeric match (ignoring underscores/spaces)
+                    # e.g., 'PeriodNumber' or 'PERIODNUMBER' matches 'PERIOD_NUMBER'
+                    if not matched_dim_col:
+                        norm_target = re.sub(r"[^A-Za-z0-9]", "", str(dim_col or "")).upper()
+                        for name in emitted_list:
+                            if re.sub(r"[^A-Za-z0-9]", "", str(name or "")).upper() == norm_target:
+                                matched_dim_col = name
+                                break
+                    # 4. Resolve via SchemaManager against physical dataset schema
+                    if not matched_dim_col and hasattr(self, "schema_manager"):
+                        dim_ds = dataset_by_name.get(dim_table) if dim_table else None
+                        if dim_ds:
+                            try:
+                                resolved_phys = self.schema_manager._resolve_physical_column_name(
+                                    dim_ds, dim_col, model=getattr(self, "_current_model", None)
+                                )
+                                if resolved_phys:
+                                    for name in emitted_list:
+                                        if name.upper() == resolved_phys.upper():
+                                            matched_dim_col = name
+                                            break
+                            except Exception:
+                                pass
+
+                if matched_dim_col:
+                    non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{matched_dim_col}" ASC )'
+                elif not emitted_list:
+                    # Standalone/mock execution without emitted_dimensions map
+                    non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{safe_dim_col}" ASC )'
+                else:
+                    logger.warning(
+                        "Dropping NON ADDITIVE BY for metric '%s': '%s.%s' is not an emitted dimension in DIMENSIONS",
+                        metric.unique_name, dim_alias, dim_col,
+                    )
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        f"NON ADDITIVE BY dimension '{dim_alias}.{dim_col}' is not a declared dimension in the semantic view.",
+                        dataset=getattr(metric, "dataset", None),
+                    )
+
+            if expr != NULL_PLACEHOLDER_SQL and "PARTITION BY EXCLUDING" in expr.upper():
+                expr = self._align_partition_by_excluding(expr)
+
+            comment_clause = ""
+            if expr == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr:
+                reason_text = ""
+                if failure is not None:
+                    reason_text = failure[0]
+                elif getattr(metric, "sync_failure_reason", None):
+                    reason_text = str(metric.sync_failure_reason)
+                if not reason_text:
+                    reason_text = "not applicable: not translatable"
+                
+                reason_clean = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", reason_text, flags=re.I).strip()
+                if "Snowflake's semantic-view METRICS clause does not support window functions" in reason_clean:
+                    reason_clean = "not applicable: needs window metric"
+                safe_comment = " ".join(reason_clean.replace("'", "''").split())
+                comment_clause = f" COMMENT = '{safe_comment}'"
+
+            elif "PARTITION BY EXCLUDING" in expr.upper():
+                m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", expr, re.I | re.S)
+                excl_text = m_excl.group(1).strip() if m_excl else ""
+                safe_comment = f"Window metric over {metric_entity_alias}.{safe_metric_name}. Must be queried with {excl_text}.".replace("'", "''")
+                comment_clause = f" COMMENT = '{safe_comment}'"
 
             metrics_lines.append(
                 f'  {metric_entity_alias}."{safe_metric_name}"{non_additive_clause} AS {expr}'
-                f'{synonyms_clause(syns_to_emit)}'
+                f'{synonyms_clause(syns_to_emit)}{comment_clause}'
             )
-            metric_to_alias[self.identifier_sanitizer.sanitize_alias(metric.unique_name)] = metric_entity_alias
-            emittable_metric_name_set.add(self.identifier_sanitizer.sanitize_alias(metric.unique_name))
+            metric_to_alias[self.identifier_sanitizer.to_alias(metric.unique_name)] = metric_entity_alias
+            emittable_metric_name_set.add(self.identifier_sanitizer.to_alias(metric.unique_name))
 
         # Map every DDL-visible metric name back to its original unique_name +
         # dataset, so drops detected below (line removed between before/after
@@ -514,16 +792,26 @@ class MetricsClauseBuilder:
         if not expr or "{" in expr or "}" in expr:
             return False
         upper = f" {expr.upper()} "
-        forbidden = (
-            " SELECT ",
-            " FROM ",
-            " JOIN ",
-            " WITH ",
-            " UNION ",
-            " OVER ",          # window functions not allowed in METRICS clause
-            " PARTITION BY ",  # redundant but explicit
-            ";",
-        )
+        if "PARTITION BY EXCLUDING" in upper:
+            forbidden = (
+                " SELECT ",
+                " FROM ",
+                " JOIN ",
+                " WITH ",
+                " UNION ",
+                ";",
+            )
+        else:
+            forbidden = (
+                " SELECT ",
+                " FROM ",
+                " JOIN ",
+                " WITH ",
+                " UNION ",
+                " OVER ",          # window functions not allowed in METRICS clause
+                " PARTITION BY ",  # redundant but explicit
+                ";",
+            )
         return not any(token in upper for token in forbidden)
 
     # Matches a bare DAX-only function call (FILTER(, CALCULATE(, etc.) that
@@ -612,7 +900,7 @@ class MetricsClauseBuilder:
             if str(source_dataset).casefold() == str(active_dataset).casefold():
                 continue
             tokens = {
-                self.identifier_sanitizer.sanitize_alias(source_dataset),
+                self.identifier_sanitizer.to_alias(source_dataset),
                 source_alias,
                 source_dataset,
             }
@@ -761,7 +1049,8 @@ class MetricsClauseBuilder:
         """
         if not dataset_name:
             return False
-        name_upper = dataset_name.upper().replace(" ", "_").replace("-", "_")
+        from semabridge.utils.naming import to_alias
+        name_upper = to_alias(dataset_name)
         is_measures_name = (
             name_upper == "MEASURES"
             or name_upper == "PROJECT_MEASURES"
@@ -878,7 +1167,7 @@ class MetricsClauseBuilder:
                 if alias and col_name:
                     # Skip metrics bound to virtual Power BI measures tables — they have
                     # no real data columns in Snowflake and will always fail.
-                    if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
+                    if not sql_expr and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
                         logger.warning(
                             "Metric '%s': dataset '%s' appears to be a virtual measures table "
                             "with no physical columns. Skipping to prevent DDL failure.",
@@ -945,7 +1234,7 @@ class MetricsClauseBuilder:
             )
             sql_expr = None
 
-        if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
+        if not sql_expr and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
             logger.warning(f"Metric '{metric.unique_name}': virtual measures table, trying DAX fallback")
             # Fall through to DAX expression path
             dax_expr = getattr(metric, "expression", None)
@@ -1005,7 +1294,7 @@ class MetricsClauseBuilder:
                 return None
             # If the metric's dataset is a virtual measures table, try to remap
             # column references to the actual fact table that owns those columns.
-            if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
+            if not sql_expr and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
                 sql_expr = self._remap_virtual_measures_table_refs(
                     sql_expr, alias, dataset_col_lookup, dataset_aliases, fact_aliases=fact_aliases
                 )
@@ -1061,6 +1350,20 @@ class MetricsClauseBuilder:
                 # reported as a hard DDL-emission failure. See
                 # time_intelligence_shapes.py's enrichment_flag_column_
                 # if_referenced.
+                window_col_match = re.search(r'\b(?:MAX|SUM|AVG)\s*\(\s*[A-Za-z0-9_]+\."?(ALL_[A-Za-z0-9_]+)"?\s*\)', expr, re.IGNORECASE)
+                if window_col_match:
+                    has_enriched_target = bool(
+                        self.enriched_view_mapping
+                        and (
+                            self.enriched_view_mapping.get(metric.dataset)
+                            or self.enriched_view_mapping.get(str(metric.dataset or "").casefold())
+                            or self.enriched_view_mapping.get(str(metric.dataset or "").upper())
+                        )
+                        and str(metric.dataset).casefold() not in {s.casefold() for s in (self.failed_enrichment_datasets or set())}
+                    )
+                    if has_enriched_target:
+                        return expr
+
                 shape = (metric_shapes or {}).get(metric.unique_name)
                 predicted_flag_col = enrichment_flag_column_if_referenced(shape, expr)
                 if predicted_flag_col:
@@ -1129,7 +1432,7 @@ class MetricsClauseBuilder:
             active_dataset = metric.dataset
             active_alias = alias
             
-            if self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
+            if not sql_expr and self._is_virtual_measures_table(metric.dataset, dataset_col_lookup):
                 cols_in_dax = re.findall(r"\[([^\]]+)\]", dax_expr)
                 for c in cols_in_dax:
                     sanitized_c = self.identifier_sanitizer.sanitize_column(c)
@@ -1270,11 +1573,11 @@ class MetricsClauseBuilder:
 
     def _duplicate_namespace_key(self, model_name: Optional[str] = None) -> str:
         parts = [
-            self.identifier_sanitizer.sanitize_alias(self.config.database or "DB"),
-            self.identifier_sanitizer.sanitize_alias(self.config.schema_name or "SCHEMA"),
+            self.identifier_sanitizer.to_alias(self.config.database or "DB"),
+            self.identifier_sanitizer.to_alias(self.config.schema_name or "SCHEMA"),
         ]
         if model_name:
-            parts.append(self.identifier_sanitizer.sanitize_alias(model_name))
+            parts.append(self.identifier_sanitizer.to_alias(model_name))
         return ".".join(parts)
 
     def _resolve_persistent_duplicate_name(self, scope_type: str, namespace_key: str, dataset_key: str, normalized_base: str, source_name: str, source_signature: str, preferred_name: str) -> str:
@@ -1366,6 +1669,68 @@ class MetricsClauseBuilder:
                     referenced.add(alias)
         return referenced
 
+    def _align_partition_by_excluding(self, metric_sql: str) -> str:
+        """Align PARTITION BY EXCLUDING dimension tokens with exact declared DIMENSIONS.
+        
+        Snowflake requires all items in PARTITION BY EXCLUDING to be declared dimensions
+        in the semantic view. If a column was deduplicated (e.g. PRODUCTS.PRODUCTSEQ ->
+        PRODUCTS.PRODUCTS_PRODUCTSEQ), this maps it to the emitted dimension name and ensures
+        it is properly quoted. Undeclared items are dropped.
+        """
+        if not metric_sql or "PARTITION BY EXCLUDING" not in metric_sql.upper():
+            return metric_sql
+
+        emitted_map = getattr(self, "emitted_dim_by_phys", {})
+        emitted_dims = getattr(self, "emitted_dimensions", {})
+        if not emitted_map and not emitted_dims:
+            return metric_sql
+
+        def _replace_excluding(match: re.Match) -> str:
+            raw_clause = match.group(1)
+            tokens = [t.strip() for t in raw_clause.split(",") if t.strip()]
+            aligned_tokens = []
+            for tok in tokens:
+                m = re.match(r'^(?:([A-Za-z0-9_]+)\.)?"?([^"]+)"?$', tok)
+                if not m:
+                    aligned_tokens.append(tok)
+                    continue
+                t_alias = (m.group(1) or "").upper()
+                c_name = m.group(2).strip()
+                
+                if not t_alias:
+                    for tbl, dims in emitted_dims.items():
+                        if c_name.upper() in [d.upper() for d in dims]:
+                            t_alias = tbl
+                            break
+
+                matched_dim = None
+                if t_alias:
+                    matched_dim = emitted_map.get((t_alias, c_name.upper()))
+                    if not matched_dim and t_alias in emitted_dims:
+                        norm_c = re.sub(r"[^A-Za-z0-9]", "", c_name.upper())
+                        for d in emitted_dims[t_alias]:
+                            if re.sub(r"[^A-Za-z0-9]", "", d.upper()) == norm_c:
+                                matched_dim = d
+                                break
+                
+                if matched_dim and t_alias:
+                    ref = f'{t_alias}."{matched_dim}"'
+                    if ref not in aligned_tokens:
+                        aligned_tokens.append(ref)
+                elif not emitted_dims:
+                    aligned_tokens.append(tok)
+                else:
+                    logger.warning(
+                        "Dropping undeclared dimension '%s' from PARTITION BY EXCLUDING (not in DIMENSIONS)",
+                        tok
+                    )
+
+            if not aligned_tokens:
+                return match.group(0)
+            return f"PARTITION BY EXCLUDING {', '.join(aligned_tokens)}"
+
+        return re.sub(r"\bPARTITION\s+BY\s+EXCLUDING\s+([^)]+)", _replace_excluding, metric_sql, flags=re.IGNORECASE)
+
     def _prune_unresolved_metric_lines(self, metrics_lines: List[str], metric_name_set: Set[str]) -> List[str]:
         if not metrics_lines or not metric_name_set:
             return metrics_lines
@@ -1428,6 +1793,9 @@ class MetricsClauseBuilder:
                     continue
 
                 # 2. Inline valid referenced metrics that haven't been inlined into this line yet
+                if "OVER (" in expr.upper() or "OVER(" in expr.upper():
+                    next_lines.append(line)
+                    continue
                 already_inlined = inlined_by_metric.setdefault(name, set())
                 uninlined_metric_refs = [r for r in metric_refs if r not in already_inlined]
 
@@ -1457,16 +1825,39 @@ class MetricsClauseBuilder:
                 next_lines.append(line)
 
             if not removed and not rewritten:
-                if hasattr(self.translator, "_normalize_string_boolean_comparisons"):
-                    current = [self.translator._normalize_string_boolean_comparisons(l) for l in current]
-                return current
+                break
             current = next_lines
 
         if hasattr(self.translator, "_normalize_string_boolean_comparisons"):
             current = [self.translator._normalize_string_boolean_comparisons(l) for l in current]
 
-        logger.warning("_prune_unresolved_metric_lines reached max passes (%d); returning current state.", max_passes)
-        return current
+        # Final validation pass: validate final expressions after all inlining/rewrites
+        final_validated = []
+        for l in current:
+            m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^"]+)"(\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+(.+?)\s*$', l.strip().rstrip(','))
+            if not m:
+                final_validated.append(l)
+                continue
+            alias, m_name, non_add, m_expr = m.groups()
+            m_expr, syn = self._split_outer_synonyms_clause(m_expr)
+            if not alias or not m_name or m_expr.strip().upper() == NULL_PLACEHOLDER_SQL:
+                final_validated.append(l)
+                continue
+            nested_reason = detect_nested_aggregate(m_expr)
+            if nested_reason:
+                logger.warning("Final metric '%s' rejected by nested aggregate check: %s", m_name, nested_reason)
+                final_validated.append(f'  {alias}."{m_name}" AS {NULL_PLACEHOLDER_SQL}')
+                continue
+            final_validated.append(l)
+        return final_validated
+
+    def _parse_metric_line(self, line: str) -> Tuple[Optional[str], Optional[str], Optional[str], str, str]:
+        m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^"]+)"(\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
+        if not m:
+            return None, None, None, "", ""
+        alias, name, non_add, expr = m.groups()
+        expr, syn = self._split_outer_synonyms_clause(expr)
+        return alias, name, non_add or "", expr, syn
 
     def _split_outer_synonyms_clause(self, expr: str) -> Tuple[str, str]:
         marker = " WITH SYNONYMS = ("

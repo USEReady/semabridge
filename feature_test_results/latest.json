@@ -2,49 +2,49 @@
  "F1.1": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN orders.\"STATUS\" = 'Open' THEN orders.\"ORDERID\" END)",
+  "sql": "COUNT(CASE WHEN ORDERS.\"STATUS\" = 'Open' THEN ORDERS.\"ORDERID\" END)",
   "title": "-- comment inside a FILTER",
   "solution": ""
  },
  "F1.2": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(orders.\"QTY\"::FLOAT)",
+  "sql": "SUM(ORDERS.\"QTY\"::FLOAT)",
   "title": "// and /* */ comments",
   "solution": ""
  },
  "F1.3": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(CASE WHEN orders.\"IS_PRIORITY\" = TRUE THEN orders.ORDERID END)",
+  "sql": "COUNT(CASE WHEN ORDERS.\"IS_PRIORITY\" = TRUE THEN ORDERS.ORDERID END)",
   "title": "TRUE() in a boolean filter",
   "solution": ""
  },
  "F1.4": {
   "status": "PASS",
   "msg": "6.0 == 6.0",
-  "sql": "COUNT(CASE WHEN orders.\"IS_PRIORITY\" = FALSE THEN orders.ORDERID END)",
+  "sql": "COUNT(CASE WHEN ORDERS.\"IS_PRIORITY\" = FALSE THEN ORDERS.ORDERID END)",
   "title": "FALSE() in a boolean filter",
   "solution": ""
  },
  "F1.5": {
   "status": "PASS",
   "msg": "0.5 == 0.5",
-  "sql": "ROUND(AVG(orders.\"QTY\"::FLOAT) / NULLIF(2, 0), 1) - 1",
+  "sql": "ROUND(AVG(ORDERS.\"QTY\"::FLOAT) / NULLIF(2, 0), 1) - 1",
   "title": "trailing -1 after a function",
   "solution": ""
  },
  "F1.6": {
   "status": "PASS",
   "msg": "12.810344827586206 == 12.810344827586206",
-  "sql": "IFF(COALESCE(SUM(orders.\"QTY\"::FLOAT), 0) = 0, 0, SUM(orders.\"AMOUNT\"::FLOAT) / SUM(orders.\"QTY\"::FLOAT)) - 1",
+  "sql": "IFF(COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) = 0, 0, SUM(ORDERS.\"AMOUNT\"::FLOAT) / SUM(ORDERS.\"QTY\"::FLOAT)) - 1",
   "title": "DIVIDE(...)-1 (variance %)",
   "solution": ""
  },
  "F1.7": {
   "status": "PASS",
   "msg": "-29.0 == -29.0",
-  "sql": "CASE WHEN SUM(orders.\"QTY\"::FLOAT) > 0 THEN -1 * SUM(orders.\"QTY\"::FLOAT) ELSE -1 END",
+  "sql": "CASE WHEN SUM(ORDERS.\"QTY\"::FLOAT) > 0 THEN -1 * SUM(ORDERS.\"QTY\"::FLOAT) ELSE -1 END",
   "title": "negative literal after an operator / comma",
   "solution": ""
  },
@@ -58,49 +58,49 @@
  "F2.1": {
   "status": "PASS",
   "msg": "14.0 == 14.0",
-  "sql": "ROUND(AVG(orders.\"PRICE\"::FLOAT), 0)",
+  "sql": "ROUND(AVG(ORDERS.\"PRICE\"::FLOAT), 0)",
   "title": "bare [Column] inside a nested function",
   "solution": ""
  },
  "F2.2": {
   "status": "PASS",
   "msg": "279.5 == 279.5",
-  "sql": "SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.\"AMOUNT\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END)",
   "title": "measure on an empty measure table keeps the DAX table",
   "solution": ""
  },
  "F2.3": {
   "status": "PASS",
   "msg": "13.7 == 13.7",
-  "sql": "AVG(orders.\"UNIT_PRICE_DOL\")",
+  "sql": "AVG(ORDERS.\"UNIT_PRICE_DOL\")",
   "title": "column name with spaces and special characters",
   "solution": ""
  },
  "F2.4": {
   "status": "PASS",
   "msg": "566.5 == 566.5",
-  "sql": "SUM(orders.\"QTY\"::FLOAT) + SUM(orders.\"AMOUNT\"::FLOAT) + SUM(orders.\"PRICE\"::FLOAT)",
+  "sql": "SUM(ORDERS.\"QTY\"::FLOAT) + SUM(ORDERS.\"AMOUNT\"::FLOAT) + SUM(ORDERS.\"PRICE\"::FLOAT)",
   "title": "several SUMs of different columns added together",
   "solution": ""
  },
  "F3.1": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "SUM(orders.\"QTY\" * orders.\"PRICE\"::FLOAT)",
+  "sql": "SUM(ORDERS.\"QTY\" * ORDERS.\"PRICE\"::FLOAT)",
   "title": "SUMX over the own table",
   "solution": ""
  },
  "F3.2": {
   "status": "PASS",
   "msg": "279.5 == 279.5",
-  "sql": "SUM(CASE WHEN orders.\"STATUS\" = 'Sold' THEN orders.\"AMOUNT\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)",
   "title": "CALCULATE(SUMX, FILTER(own table))",
   "solution": ""
  },
  "F3.3": {
   "status": "PASS",
   "msg": "6.0 == 6.0",
-  "sql": "COUNT(CASE WHEN orders.\"STATUS\" = 'Sold' THEN orders.\"ORDERID\" END)",
+  "sql": "COUNT(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"ORDERID\" END)",
   "title": "COUNTAX(FILTER(KEEPFILTERS(...)))",
   "solution": ""
  },
@@ -121,70 +121,70 @@
  "F3.6": {
   "status": "PASS",
   "msg": "7.0 == 7.0",
-  "sql": "COUNT(CASE WHEN (orders.\"SHIP_DATE\" IS NOT NULL) THEN orders.\"ORDERID\" END)",
+  "sql": "COUNT(CASE WHEN (ORDERS.\"SHIP_DATE\" IS NOT NULL) THEN ORDERS.\"ORDERID\" END)",
   "title": "CALCULATE(COUNT, FILTER(NOT(ISBLANK(...))))",
   "solution": ""
  },
  "F3.7": {
   "status": "PASS",
   "msg": "3.0 == 3.0",
-  "sql": "COUNT(CASE WHEN (orders.\"SHIP_DATE\" IS NULL) THEN orders.\"ORDERID\" END)",
+  "sql": "COUNT(CASE WHEN (ORDERS.\"SHIP_DATE\" IS NULL) THEN ORDERS.\"ORDERID\" END)",
   "title": "CALCULATE(COUNT, FILTER(ISBLANK(...)))",
   "solution": ""
  },
  "F3.8": {
   "status": "PASS",
   "msg": "4.571428571428571 == 4.571428571428571",
-  "sql": "AVG(DATEDIFF(DAY, orders.\"ORDER_DATE\", orders.\"SHIP_DATE\")::FLOAT)",
+  "sql": "AVG(DATEDIFF(DAY, ORDERS.\"ORDER_DATE\", ORDERS.\"SHIP_DATE\")::FLOAT)",
   "title": "AVERAGEX with DATEDIFF",
   "solution": ""
  },
  "F3.9": {
   "status": "PASS",
   "msg": "83.0 == 83.0",
-  "sql": "MAX(orders.\"QTY\" * orders.\"PRICE\") - MIN(orders.\"PRICE\")",
+  "sql": "MAX(ORDERS.\"QTY\" * ORDERS.\"PRICE\") - MIN(ORDERS.\"PRICE\")",
   "title": "MAXX / MINX",
   "solution": ""
  },
  "F4.1": {
   "status": "PASS",
   "msg": "13.810344827586206 == 13.810344827586206",
-  "sql": "(SUM(orders.\"AMOUNT\"::FLOAT)) / NULLIF((SUM(orders.\"QTY\"::FLOAT)), 0)",
+  "sql": "(SUM(ORDERS.\"AMOUNT\"::FLOAT)) / NULLIF((SUM(ORDERS.\"QTY\"::FLOAT)), 0)",
   "title": "two variables, DIVIDE in RETURN",
   "solution": ""
  },
  "F4.2": {
   "status": "PASS",
   "msg": "838.5 == 838.5",
-  "sql": "((SUM(CASE WHEN orders.\"STATUS\" = 'Sold' THEN orders.\"AMOUNT\" END::FLOAT)) * 2) + (SUM(CASE WHEN orders.\"STATUS\" = 'Sold' THEN orders.\"AMOUNT\" END::FLOAT))",
+  "sql": "((SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) * 2) + (SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT))",
   "title": "variable using another variable",
   "solution": ""
  },
  "F5.1": {
   "status": "PASS",
   "msg": "161.0 == 161.0",
-  "sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(orders.\"STEP\", 1)) >= 3 THEN orders.\"AMOUNT\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN TRY_TO_NUMBER(LEFT(ORDERS.\"STEP\", 1)) >= 3 THEN ORDERS.\"AMOUNT\" END::FLOAT)",
   "title": "VALUE(LEFT(...)) inside a filter",
   "solution": ""
  },
  "F5.2": {
   "status": "PASS",
   "msg": "400.0 == 400.0",
-  "sql": "ROUND((SUM(orders.\"AMOUNT\"::FLOAT)) / (100)) * (100)",
+  "sql": "ROUND((SUM(ORDERS.\"AMOUNT\"::FLOAT)) / (100)) * (100)",
   "title": "MROUND",
   "solution": ""
  },
  "F5.3": {
   "status": "PASS",
   "msg": "27.0 == 27.0",
-  "sql": "SIGN(AVG(orders.\"PRICE\"::FLOAT)) * CEIL(ABS(AVG(orders.\"PRICE\"::FLOAT)), 0) + SIGN(AVG(orders.\"PRICE\"::FLOAT)) * FLOOR(ABS(AVG(orders.\"PRICE\"::FLOAT)), 0)",
+  "sql": "SIGN(AVG(ORDERS.\"PRICE\"::FLOAT)) * CEIL(ABS(AVG(ORDERS.\"PRICE\"::FLOAT)), 0) + SIGN(AVG(ORDERS.\"PRICE\"::FLOAT)) * FLOOR(ABS(AVG(ORDERS.\"PRICE\"::FLOAT)), 0)",
   "title": "ROUNDUP / ROUNDDOWN",
   "solution": ""
  },
  "F5.4": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COALESCE(SUM(CASE WHEN orders.\"STATUS\" = 'Missing' THEN orders.\"QTY\" END::FLOAT), 0) = 0, 0, SUM(orders.\"AMOUNT\"::FLOAT) / SUM(CASE WHEN orders.\"STATUS\" = 'Missing' THEN orders.\"QTY\" END::FLOAT))",
+  "sql": "IFF(COALESCE(SUM(CASE WHEN ORDERS.\"STATUS\" = 'Missing' THEN ORDERS.\"QTY\" END::FLOAT), 0) = 0, 0, SUM(ORDERS.\"AMOUNT\"::FLOAT) / SUM(CASE WHEN ORDERS.\"STATUS\" = 'Missing' THEN ORDERS.\"QTY\" END::FLOAT))",
   "title": "DIVIDE with alternate result on zero",
   "solution": ""
  },
@@ -226,14 +226,14 @@
  "F7.1": {
   "status": "PASS",
   "msg": "371.5 == 371.5",
-  "sql": "(SUM(orders.\"AMOUNT\")) - (SUM(orders.\"QTY\"))",
+  "sql": "(SUM(ORDERS.\"AMOUNT\")) - (SUM(ORDERS.\"QTY\"))",
   "title": "arithmetic over two base measures",
   "solution": ""
  },
  "F7.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(orders.\"AMOUNT\"), 0) = 0, 0, SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.\"AMOUNT\" ELSE 0 END) / SUM(orders.\"AMOUNT\"))",
+  "sql": "IFF(COALESCE(SUM(ORDERS.\"AMOUNT\"), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END) / SUM(ORDERS.\"AMOUNT\"))",
   "title": "ratio over a base measure that lives on the measure table",
   "solution": ""
  },
@@ -264,133 +264,133 @@
  "F10.1": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COUNT(DISTINCT param.\"COL_VALUE\") + MAX(IFF(param.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(param.\"COL_VALUE\"), 0)",
+  "sql": "IFF(COUNT(DISTINCT PARAM.\"COL_VALUE\") + MAX(IFF(PARAM.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(PARAM.\"COL_VALUE\"), 0)",
   "title": "several values -> alternate (never ANY_VALUE)",
   "solution": ""
  },
  "F10.2": {
   "status": "PASS",
   "msg": "5.0 == 5.0",
-  "sql": "IFF(COUNT(DISTINCT scenario.\"COL_VALUE\") + MAX(IFF(scenario.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(scenario.\"COL_VALUE\"), 0)",
+  "sql": "IFF(COUNT(DISTINCT SCENARIO.\"COL_VALUE\") + MAX(IFF(SCENARIO.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(SCENARIO.\"COL_VALUE\"), 0)",
   "title": "exactly one value -> that value",
   "solution": ""
  },
  "F10.3": {
   "status": "PASS",
   "msg": "0.0 == 0.0",
-  "sql": "IFF(COUNT(DISTINCT nullable.\"COL_VALUE\") + MAX(IFF(nullable.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(nullable.\"COL_VALUE\"), 0)",
+  "sql": "IFF(COUNT(DISTINCT NULLABLE.\"COL_VALUE\") + MAX(IFF(NULLABLE.\"COL_VALUE\" IS NULL, 1, 0)) = 1, MAX(NULLABLE.\"COL_VALUE\"), 0)",
   "title": "one number + blank -> alternate (blank counts as a value)",
   "solution": ""
  },
  "F10.4": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(orders.\"QTY\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
+  "sql": "SUM(ORDERS.\"QTY\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
   "title": "what-if measure used in another measure -> default constant",
   "solution": ""
  },
  "F10.5": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "(SUM(orders.\"AMOUNT\"::FLOAT)) + (SUM(orders.\"AMOUNT\"::FLOAT)) * (0) / NULLIF(100, 0)",
+  "sql": "(SUM(ORDERS.\"AMOUNT\"::FLOAT)) + (SUM(ORDERS.\"AMOUNT\"::FLOAT)) * (0) / NULLIF(100, 0)",
   "title": "same, measure referenced without table prefix",
   "solution": ""
  },
  "F11.1": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "SUM(orders.\"AMOUNT\")",
+  "sql": "SUM(ORDERS.\"AMOUNT\")",
   "title": "declared on a dimension, data from the fact",
   "solution": "Anchor = the table the physical columns come from (after inlining measures), never the DAX home table. Apply in translation AND at DDL emission."
  },
  "F11.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(orders.\"AMOUNT\"), 0) = 0, 0, SUM(CASE WHEN orders.STATUS = 'Sold' THEN orders.\"AMOUNT\" ELSE 0 END) / SUM(orders.\"AMOUNT\"))",
+  "sql": "IFF(COALESCE(SUM(ORDERS.\"AMOUNT\"), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END) / SUM(ORDERS.\"AMOUNT\"))",
   "title": "declared on a dimension, built from fact measures",
   "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
  },
  "F11.3": {
   "status": "PASS",
   "msg": "10.0 == 10.0",
-  "sql": "SUM(CASE WHEN product.CATEGORY = 'Hardware' THEN orders.\"QTY\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN PRODUCT.CATEGORY = 'Hardware' THEN ORDERS.\"QTY\" ELSE 0 END)",
   "title": "measure table + filter on a related dimension",
   "solution": "Anchor on the fact (Orders): it reaches Product through a many-to-one relationship, so the dimension filter is valid there (join or enriched copy)."
  },
  "F12.1": {
   "status": "PASS",
   "msg": "110.0 == 110.0",
-  "sql": "SUM(CASE WHEN product.PRODUCTID = 2 THEN orders.\"AMOUNT\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN PRODUCT.PRODUCTID = 2 THEN ORDERS.\"AMOUNT\" ELSE 0 END)",
   "title": "filter on the dimension KEY -> fact foreign key",
   "solution": "If the filtered column is the 'to' key of a relationship fact->dim, rewrite the condition onto the fact's 'from' column (same table, no join)."
  },
  "F12.2": {
   "status": "PASS",
   "msg": "279.0 == 279.0",
-  "sql": "SUM(CASE WHEN product.CATEGORY = 'Software' THEN orders.\"AMOUNT\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN PRODUCT.CATEGORY = 'Software' THEN ORDERS.\"AMOUNT\" ELSE 0 END)",
   "title": "filter on a dimension ATTRIBUTE",
   "solution": "Non-key attribute of a related dimension (reachable many-to-one): use the enriched copy <DIM>_<COLUMN> on the fact, or the dimension column through the relationship. Unreachable -> NULL + reason."
  },
  "F12.3": {
   "status": "PASS",
   "msg": "-6.291666666666668 == -6.291666666666668",
-  "sql": "CASE WHEN ((AVG(CASE WHEN product.\"PRODUCTID\" = 1 THEN orders.\"PRICE\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN product.\"PRODUCTID\" = 3 THEN orders.\"PRICE\" END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN product.\"PRODUCTID\" = 1 THEN orders.\"PRICE\" END::FLOAT) - AVG(CASE WHEN product.\"PRODUCTID\" = 3 THEN orders.\"PRICE\" END::FLOAT) ELSE NULL END",
+  "sql": "CASE WHEN ((AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 1 THEN ORDERS.\"PRICE\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 3 THEN ORDERS.\"PRICE\" END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 1 THEN ORDERS.\"PRICE\" END::FLOAT) - AVG(CASE WHEN PRODUCT.\"PRODUCTID\" = 3 THEN ORDERS.\"PRICE\" END::FLOAT) ELSE NULL END",
   "title": "two fixed-key filters subtracted with ISBLANK guards",
   "solution": "Same key rewrite inside each CALCULATE; NOT ISBLANK(x) -> x IS NOT NULL; IF without else -> NULL."
  },
  "F12.4": {
   "status": "PASS",
   "msg": "90.0 == 90.0",
-  "sql": "SUM(CASE WHEN calendar.MONTH_NO = 3 THEN orders.\"AMOUNT\" ELSE 0 END)",
+  "sql": "SUM(CASE WHEN CALENDAR.MONTH_NO = 3 THEN ORDERS.\"AMOUNT\" ELSE 0 END)",
   "title": "filter on a date-dimension attribute (active relationship)",
   "solution": "Date dimension attribute through the ACTIVE relationship (Order Date): enriched copy or join."
  },
  "F13.1": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN calendar_ship_date.\"MONTH_NO\" = 3 THEN orders.\"AMOUNT\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN CALENDAR_SHIP_DATE.\"MONTH_NO\" = 3 THEN ORDERS.\"AMOUNT\" END::FLOAT)",
   "title": "USERELATIONSHIP on the inactive date path",
   "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
  },
  "F13.2": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN calendar_ship_date.\"MONTH_NO\" = 1 THEN orders.ORDERID END)",
+  "sql": "COUNT(CASE WHEN CALENDAR_SHIP_DATE.\"MONTH_NO\" = 1 THEN ORDERS.ORDERID END)",
   "title": "USERELATIONSHIP with a row count",
   "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
  },
  "F13.3": {
   "status": "PASS",
   "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN calendar.\"MONTH_NO\" = 1 THEN orders.ORDERID END)",
+  "sql": "COUNT(CASE WHEN CALENDAR.\"MONTH_NO\" = 1 THEN ORDERS.ORDERID END)",
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "solution": "The alias must not change measures that do not ask for it."
  },
  "F14.1": {
-  "status": "PASS",
-  "msg": "excluded: not applicable: needs window metric",
+  "status": "WARN",
+  "msg": "no SQL (good) but no 'not applicable' reason exposed (fail)",
   "sql": null,
   "title": "ALL(dimension table) in the denominator",
   "solution": "Until window metrics are available: CAST(NULL AS DOUBLE) + reason 'needs window metric'. Never drop silently, never emit a constant (1.0 is only right at grand total)."
  },
  "F14.2": {
-  "status": "PASS",
-  "msg": "excluded: not applicable: needs window metric",
-  "sql": null,
+  "status": "FAIL",
+  "msg": "translated to a metric although it is needs window metric",
+  "sql": "ORDERS.\"TOTAL_AMOUNT\" / NULLIF(SUM(ORDERS.\"TOTAL_AMOUNT\"::FLOAT) OVER (PARTITION BY EXCLUDING PRODUCT.\"CATEGORY\"), 0)",
   "title": "ALL(one column) with measure references",
   "solution": "Same as F14.1."
  },
  "F15.1": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(snapshot.\"EMP_ID\")",
+  "sql": "COUNT(SNAPSHOT.\"EMP_ID\")",
   "title": "closing balance (value at the last period)",
   "solution": "FILTER(ALL(T[p]), T[p] = MAX(T[p])) -> plain aggregate + NON ADDITIVE BY (T.p, direction proven to take the LAST period)."
  },
  "F15.2": {
   "status": "PASS",
   "msg": "3.0 == 3.0",
-  "sql": "COUNT(CASE WHEN (snapshot.\"END_DATE\" IS NULL) THEN snapshot.\"EMP_ID\" ELSE NULL END)",
+  "sql": "COUNT(CASE WHEN (SNAPSHOT.\"END_DATE\" IS NULL) THEN SNAPSHOT.\"EMP_ID\" ELSE NULL END)",
   "title": "filtered closing balance (actives)",
   "solution": "A filter on top of a non-additive measure keeps its NON ADDITIVE BY."
  },
@@ -403,7 +403,7 @@
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "excluded: not applicable: depends on non-additive metric [Headcount]",
+  "msg": "excluded: not applicable: depends on non-additive metric [Actives]",
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."
@@ -411,7 +411,7 @@
  "F13.4": {
   "status": "PASS",
   "msg": "30.0 == 30.0",
-  "sql": "SUM(CASE WHEN dim_and_dates_pct_dolship_and_pct_date.\"MONTH_AND_PCT\" = 3 THEN orders.\"AMOUNT\" END::FLOAT)",
+  "sql": "SUM(CASE WHEN DIM_AND_DATES_PCT_DOLSHIP_AND_PCT_DATE.\"MONTH_AND_PCT\" = 3 THEN ORDERS.\"AMOUNT\" END::FLOAT)",
   "title": "USERELATIONSHIP with special characters in dim and FK",
   "solution": "inactive_alias sanitizes '&', '%', '$' and spaces via IdentifierSanitizer."
  },
@@ -425,22 +425,36 @@
  "F17.1": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "COUNT(CASE WHEN orders.\"STATUS\" = 'X' THEN orders.\"ORDERID\" END) / NULLIF(COUNT(CASE WHEN orders.\"STATUS\" = 'X' THEN orders.\"ORDERID\" END) + COUNT(CASE WHEN orders.\"STATUS\" = 'Y' THEN orders.\"ORDERID\" END), 0)",
+  "sql": "COUNT(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"ORDERID\" END) / NULLIF(COUNT(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"ORDERID\" END) + COUNT(CASE WHEN ORDERS.\"STATUS\" = 'Y' THEN ORDERS.\"ORDERID\" END), 0)",
   "title": "DAX '/' with zero denominator -> BLANK, not an error",
   "solution": "DAX a / b -> a / NULLIF(b, 0): Snowflake raises 'Division by zero', DAX returns BLANK."
  },
  "F17.2": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "SUM(orders.\"AMOUNT\"::FLOAT) / NULLIF(SUM(CASE WHEN orders.\"STATUS\" = 'X' THEN orders.\"QTY\" END::FLOAT), 0)",
+  "sql": "SUM(ORDERS.\"AMOUNT\"::FLOAT) / NULLIF(SUM(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"QTY\" END::FLOAT), 0)",
   "title": "DIVIDE without alternate -> NULL",
   "solution": ""
  },
  "F17.3": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "IFF(COALESCE(SUM(orders.\"QTY\"::FLOAT), 0) = 0, 0, SUM(CASE WHEN orders.\"STATUS\" = 'X' THEN orders.\"AMOUNT\" END::FLOAT) / SUM(orders.\"QTY\"::FLOAT))",
+  "sql": "IFF(COALESCE(SUM(ORDERS.\"QTY\"::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.\"STATUS\" = 'X' THEN ORDERS.\"AMOUNT\" END::FLOAT) / SUM(ORDERS.\"QTY\"::FLOAT))",
   "title": "blank numerator keeps BLANK (not the alternate)",
   "solution": "DIVIDE(a, b, alt) -> IFF(COALESCE(b,0)=0, alt, a/b) - not COALESCE(a/b, alt)."
+ },
+ "F10.6": {
+  "status": "PASS",
+  "msg": "279.5 == 279.5",
+  "sql": "(SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) + (SUM(CASE WHEN ORDERS.\"STATUS\" = 'Sold' THEN ORDERS.\"AMOUNT\" END::FLOAT)) * (0) / NULLIF(100, 0)",
+  "title": "what-if inside VAR with CALCULATE ('Table'[Measure])",
+  "solution": ""
+ },
+ "F17.5": {
+  "status": "PASS",
+  "msg": "0.3021223470661673 == 0.3021223470661673",
+  "sql": "((SUM(ORDERS.\"AMOUNT\")) - (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END))) / NULLIF(SUM(ORDERS.\"AMOUNT\"), 0)",
+  "title": "DIVIDE([A-B], [B]) numerator precedence",
+  "solution": "Numerator with subtraction must keep parentheses in division to avoid precedence bug."
  }
 }

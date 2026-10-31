@@ -1,0 +1,614 @@
+{
+ "Employee History and Hiring|Employees": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Employee History and Hiring|Separations": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Employee History and Hiring|Actives": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|New Hires": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|AVG Tenure Days": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|AVG Tenure Months": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|AVG Age": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Employee History and Hiring|New Hires SPLY": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Actives SPLY": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Seps SPLY": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Employees SPLY": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Seps YoY Var": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Actives YoY Var": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|New Hires YoY Var": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Seps YoY % Change": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Actives YoY % Change": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|New Hires YoY % Change": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Bad Hires SPLY": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Bad Hires YoY Var": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Bad Hires YoY % Change": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Employee History and Hiring|Sep % of Active": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Sep % of SMLY Actives": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Bad hires % of actives": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Bad hires % of Active SPLY": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Employee History and Hiring|Bad hires": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Artificial Intelligence|Revenue Won": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Artificial Intelligence|Revenue In Pipeline": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Artificial Intelligence|Forecast %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|Forecast": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|Opportunity Count In Pipeline": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Artificial Intelligence|Opportunity Count": {
+  "outcome": "MISSING",
+  "reason": "UNKNOWN"
+ },
+ "Artificial Intelligence|Count of Won": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Artificial Intelligence|Count of Lost": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Artificial Intelligence|Close %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|Revenue Open": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Artificial Intelligence|Rev Goal": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Artificial Intelligence|Forecast Adjustment Value": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Artificial Intelligence|Case Count": {
+  "outcome": "MISSING",
+  "reason": "UNKNOWN"
+ },
+ "Artificial Intelligence|Escalations": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|SLA Compliance": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|Cases MoM%": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Artificial Intelligence|Cases % by Product": {
+  "outcome": "MISSING",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|Cases % by Subject": {
+  "outcome": "MISSING",
+  "reason": "CASCADED"
+ },
+ "Artificial Intelligence|CSAT Impact": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Artificial Intelligence|CSAT Impact - Subject": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Artificial Intelligence|CSAT Impact - Products": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Artificial Intelligence|CSAT Impact - Agent": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Net Sales": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Net Sales PM": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Last 2 Months Net Sales": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Net Sales Variance": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Net Sales Variance %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Units Sold": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Units Sold PM": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Units Sold Variance %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Returns": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Returns PM": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Last 2 Months Returns": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Returns Variance": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Returns Variance %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Units Returned": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Units Returned PM": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Units Returned Variance %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|Return Rate": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|WIF Units Returned": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Units Returned Average": {
+  "outcome": "MISSING",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Units Returned Difference": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Units Returned_1": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|WIF Units Returned_2": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Adjusted Units Returned": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Adjusted Net Sales": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Price per Unit": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "COLUMN_NOT_RESOLVED"
+ },
+ "Sales and Return|WIF Profit": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|Profit Difference": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|WIF Adjusted Sales": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|WIF Sales": {
+  "outcome": "MISSING",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|WIF Same": {
+  "outcome": "MISSING",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Forecast": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Total Forecast": {
+  "outcome": "MISSING",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Total Profit": {
+  "outcome": "MISSING",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|WIF Profit Difference": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|Total Return Rate": {
+  "outcome": "MISSING",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Product Top N": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Product Sales Top 3": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Product Sales Other": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Store Top N": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Store Sales Other": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Store Sales Top 3": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Net Sales Indicator": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Units Sold Indicator": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Returns Indicator": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|ProductR Top N": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Product Returns Other": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Product Returns Top 3": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|StoreR Top N": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Store Returns Other": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Returns Sales Top 3": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Sales and Return|Units Returned Indicator": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Net Sales Label": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Profit Indicator": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Association": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Sales and Return|Lift Label": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|% Return Rate Value": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Sales and Return|Info Tooltip": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Sales and Return|Info Tooltip 2": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "Performance Analyzer|MS Since Previous Edge": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "UNREACHABLE"
+ },
+ "Performance Analyzer|MS Since First Edge": {
+  "outcome": "MISSING",
+  "reason": "UNKNOWN"
+ },
+ "Performance Analyzer|Data Quality Messages": {
+  "outcome": "MISSING",
+  "reason": "UNKNOWN"
+ },
+ "Performance Analyzer|DataStatus": {
+  "outcome": "MISSING",
+  "reason": "CASCADED"
+ },
+ "Performance Analyzer|User Action Count": {
+  "outcome": "MISSING",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Performance Analyzer|Visual Update Count": {
+  "outcome": "MISSING",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Performance Analyzer|Change Detection Count": {
+  "outcome": "MISSING",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "COVID-19 US Tracking|Updated": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "COVID-19 US Tracking|Max date": {
+  "outcome": "MISSING",
+  "reason": "UNKNOWN"
+ },
+ "COVID-19 US Tracking|Drill-through button text": {
+  "outcome": "MISSING",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "COVID-19 US Tracking|Methodology": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "COVID-19 US Tracking|Notes": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "COVID-19 US Tracking|Terms of use": {
+  "outcome": "MISSING",
+  "reason": "BY_DESIGN"
+ },
+ "COVID-19 US Tracking|Total confirmed cases": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "COVID-19 US Tracking|Total deaths": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "COVID-19 US Tracking|Case fatality rate": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "COVID-19 US Tracking|Confirmed cases": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "COVID-19 US Tracking|Deaths": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Count of BU": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Count of Date": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|EmpCount": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Human Resource|Seps": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Human Resource|Actives": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|New Hires": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|AVG Tenure Days": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|AVG Tenure Months": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|AVG Age": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "NOT_TRANSLATABLE"
+ },
+ "Human Resource|Sum of BadHires": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|New Hires SPLY": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Actives SPLY": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|Seps SPLY": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|EmpCount SPLY": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Seps YoY Var": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|Actives YoY Var": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|New Hires YoY Var": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Seps YoY % Change": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|Actives YoY % Change": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|New Hires YoY % Change": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Bad Hires SPLY": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Bad Hires YoY Var": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|Bad Hires YoY % Change": {
+  "outcome": "REAL_SQL",
+  "reason": ""
+ },
+ "Human Resource|TO %": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|TO % Norm": {
+  "outcome": "MISSING",
+  "reason": "CASCADED"
+ },
+ "Human Resource|TO % Var": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|Sep%ofActive": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|Sep%ofSMLYActives": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|BadHire%ofActives": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ },
+ "Human Resource|BadHire%ofActiveSPLY": {
+  "outcome": "NULL_PLACEHOLDER",
+  "reason": "CASCADED"
+ }
+}

@@ -498,7 +498,7 @@ def _normalize_connector_name(value: Optional[str]) -> str:
 def _default_target_identifier(source_name: str, target_connector: Optional[str]) -> str:
     connector = _normalize_connector_name(target_connector)
     if connector == "snowflake":
-        return _SNOWFLAKE_SANITIZER.sanitize_alias(source_name)
+        return _SNOWFLAKE_SANITIZER.to_alias(source_name)
     return sanitize_identifier(source_name)
 
 
@@ -536,10 +536,10 @@ def _validate_target_name(
                 "validation_status": "invalid",
                 "validation_code": "RESERVED_KEYWORD",
                 "validation_message": "Target name is a Snowflake reserved keyword.",
-                "suggested_target_name": _SNOWFLAKE_SANITIZER.sanitize_alias(resolved_target),
+                "suggested_target_name": _SNOWFLAKE_SANITIZER.to_alias(resolved_target),
             }
 
-        sanitized = _SNOWFLAKE_SANITIZER.sanitize_alias(resolved_target)
+        sanitized = _SNOWFLAKE_SANITIZER.to_alias(resolved_target)
         if sanitized != upper_name:
             return {
                 "validation_status": "invalid",
