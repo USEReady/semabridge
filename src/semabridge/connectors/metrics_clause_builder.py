@@ -416,13 +416,15 @@ class MetricsClauseBuilder:
             if is_by_design_excluded(getattr(metric, "sync_failure_reason", None)):
                 reason_str = str(metric.sync_failure_reason or "").lower()
                 if "compile-time constant" in reason_str or "no column/measure/table reference" in reason_str:
-                    self.drop_ledger.record(
-                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                        metric.sync_failure_reason or "By-design excluded from metric translation.",
-                        dataset=getattr(metric, "dataset", None),
-                        by_design=True,
-                    )
-                    continue
+                    expr_str = str(getattr(metric, "expression", "") or "").strip()
+                    if expr_str in ('""', "''", ""):
+                        self.drop_ledger.record(
+                            "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                            metric.sync_failure_reason or "By-design excluded from metric translation.",
+                            dataset=getattr(metric, "dataset", None),
+                            by_design=True,
+                        )
+                        continue
 
             ds_fold = str(getattr(metric, "dataset", "") or "").casefold()
             is_ti = (

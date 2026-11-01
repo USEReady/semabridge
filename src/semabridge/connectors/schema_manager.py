@@ -762,11 +762,6 @@ class SnowflakeSchemaManager:
         # renamed) label. This must run before the exact/case-insensitive
         # checks below, which would otherwise trivially match the
         # fallback's self-derived entry first.
-        if not has_confirmed_live_schema and model is not None:
-            via_relationship = self._resolve_column_via_relationship(model, dataset, raw_col_name)
-            if via_relationship:
-                return via_relationship
-
         # 1. Exact match
         if raw_upper in live_cols:
             return raw_upper
@@ -856,7 +851,13 @@ class SnowflakeSchemaManager:
             if self._sanitize_col_name(col_name).upper() == sanitized_raw:
                 return col_name
 
-        # 6. Default to sanitizing raw_col_name if no match is found
+        # 6. Fallback: check active FK relationship partner
+        if not has_confirmed_live_schema and model is not None:
+            via_relationship = self._resolve_column_via_relationship(model, dataset, raw_col_name)
+            if via_relationship:
+                return via_relationship
+
+        # 7. Default to sanitizing raw_col_name if no match is found
         return self._sanitize_col_name(raw_col_name)
 
 
