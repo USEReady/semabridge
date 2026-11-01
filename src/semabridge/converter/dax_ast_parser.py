@@ -3813,6 +3813,24 @@ class DaxSqlRenderer:
         safe_col = sanitize_column(best_col)
         return [f'{alias}."{safe_col}"']
 
+    def _has_nested_window(self, sql_expr: str, visited: Optional[Set[str]] = None) -> bool:
+        if not sql_expr:
+            return False
+        if "OVER (" in sql_expr.upper() or "OVER(" in sql_expr.upper():
+            return True
+        if visited is None:
+            visited = set()
+        norm_map = {re.sub(r'[^A-Za-z0-9]', '', k.upper()): v for k, v in self.measure_sql_map.items()} if self.measure_sql_map else {}
+        for ref in re.findall(r'"([A-Za-z0-9_]+)"', sql_expr):
+            norm_ref = re.sub(r'[^A-Za-z0-9]', '', ref.upper())
+            if norm_ref in visited:
+                continue
+            visited.add(norm_ref)
+            ref_sql = norm_map.get(norm_ref)
+            if ref_sql and self._has_nested_window(ref_sql, visited):
+                return True
+        return False
+
     def _render_calculate(self, args: List[DaxNode]) -> str:
 
         """
@@ -4172,10 +4190,19 @@ class DaxSqlRenderer:
                             m_name = base_arg.name
                             sql_cand = self.measure_sql_map.get(m_name) or self.measure_sql_map.get(m_name.casefold())
                             if sql_cand:
+                                if self._has_nested_window(sql_cand):
+                                    raise self.DaxRenderError("nested window over a non-additive measure")
                                 cand_u = sql_cand.upper()
                                 if any(bad in cand_u for bad in ("AVG(", "AVERAGE(", "MEDIAN(", "STDDEV(", "VARIANCE(", "COUNT(DISTINCT")) or "/" in cand_u:
                                     m_alias = sanitize_column(m_name)
-                                    return f'SUM({fact_alias}."{m_alias}_NUM"::FLOAT) OVER (PARTITION BY EXCLUDING {excl_clause}) / NULLIF(SUM({fact_alias}."{m_alias}_DEN"::FLOAT) OVER (PARTITION BY EXCLUDING {excl_clause}), 0)'
+                                    ratio = f'SUM({fact_alias}."{m_alias}_NUM"::FLOAT) OVER (PARTITION BY EXCLUDING {excl_clause}) / NULLIF(SUM({fact_alias}."{m_alias}_DEN"::FLOAT) OVER (PARTITION BY EXCLUDING {excl_clause}), 0)'
+                                    m_wrap = re.match(r'^ROUND\s*\(\s*(.+?)\s*(\*\s*\d+\s*,\s*\d+)\s*\)\s*/\s*(\d+)$', sql_cand.strip(), re.IGNORECASE | re.DOTALL)
+                                    if m_wrap:
+                                        return f'ROUND(({ratio}) {m_wrap.group(2)}) / {m_wrap.group(3)}'
+                                    m_round_only = re.match(r'^ROUND\s*\(\s*(.+?)\s*,\s*(\d+)\s*\)$', sql_cand.strip(), re.IGNORECASE | re.DOTALL)
+                                    if m_round_only:
+                                        return f'ROUND(({ratio}), {m_round_only.group(2)})'
+                                    return ratio
                                 if False:
                                     raise self.DaxRenderError(f"not applicable: not decomposable for a window (non-additive base metric '{m_name}')")
                             m_alias = sanitize_column(m_name)
@@ -4183,6 +4210,10 @@ class DaxSqlRenderer:
                             return f'SUM({metric_ref}) OVER (PARTITION BY EXCLUDING {excl_clause})'
                         elif isinstance(base_arg, FunctionCallNode):
                             fn_u = base_arg.func.upper()
+                            if fn_u in ("ROUND", "ROUNDUP", "ROUNDDOWN") and base_arg.args:
+                                inner_calc = self._render_calculate([base_arg.args[0]] + list(filter_args))
+                                dec = self._render_node(base_arg.args[1]) if len(base_arg.args) > 1 else "0"
+                                return f"ROUND(({inner_calc}), {dec})"
                             if fn_u in ("AVERAGE", "AVERAGEX"):
                                 col_node = base_arg.args[0] if base_arg.args else None
                                 col_part = getattr(col_node, "column", None) or getattr(col_node, "name", "AMT") if col_node else "AMT"
@@ -4215,7 +4246,14 @@ class DaxSqlRenderer:
                         elif isinstance(base_arg, BinaryOpNode) and base_arg.op in ("+", "-"):
                             r_left = self._render_calculate([base_arg.left] + list(filter_args))
                             r_right = self._render_calculate([base_arg.right] + list(filter_args))
-                            return f"({r_left} {base_arg.op} {r_right})" 
+                            return f"({r_left} {base_arg.op} {r_right})"
+                        elif isinstance(base_arg, BinaryOpNode) and base_arg.op == "*":
+                            if isinstance(base_arg.right, LiteralNode) and isinstance(base_arg.right.value, (int, float)):
+                                inner_calc = self._render_calculate([base_arg.left] + list(filter_args))
+                                return f"({inner_calc}) * {base_arg.right.value}"
+                            elif isinstance(base_arg.left, LiteralNode) and isinstance(base_arg.left.value, (int, float)):
+                                inner_calc = self._render_calculate([base_arg.right] + list(filter_args))
+                                return f"{base_arg.left.value} * ({inner_calc})" 
 
                 raise self.DaxRenderError(
                     "not applicable: needs window metric"
@@ -5433,7 +5471,12 @@ def _is_enrichable_all_measure(node: DaxNode, in_division: bool = False) -> bool
                     if not a.args:
                         has_disqualifying_filter = True
                     elif not in_division:
-                        if any(isinstance(arg, IdentifierNode) for arg in a.args):
+                        has_col = any(
+                            isinstance(arg, (ColumnRefNode, MeasureRefNode))
+                            or (isinstance(arg, IdentifierNode) and ("[" in getattr(arg, "name", "") or "." in getattr(arg, "name", "")))
+                            for arg in a.args
+                        )
+                        if not has_col:
                             has_disqualifying_filter = True
                         else:
                             has_all = True

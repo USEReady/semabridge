@@ -181,20 +181,7 @@ class MetricsClauseBuilder:
                                             helper_sql = target_sql
 
                             if not helper_sql:
-                                known = list(dataset_col_lookup.get(ds_name, []))
-                                col_types = {}
-                                if hasattr(self, "live_schema_metadata") and self.live_schema_metadata:
-                                    tbl_meta = self.live_schema_metadata.get(ds_name) or self.live_schema_metadata.get(t_alias)
-                                    if tbl_meta and hasattr(tbl_meta, "columns"):
-                                        col_types = {c.name.upper(): getattr(c, "data_type", "") for c in tbl_meta.columns}
-                                num_cols = [
-                                    c for c in known 
-                                    if not any(d_word in col_types.get(c.upper(), "").upper() for d_word in ("DATE", "TIME", "CHAR", "STRING", "TEXT", "BOOL"))
-                                ]
-                                col_to_use = num_cols[0] if num_cols else None
-                                if col_to_use and is_num:
-                                    helper_sql = f'SUM({t_alias}."{col_to_use}")'
-                                else:
+                                if is_count:
                                     helper_sql = f'COUNT(*)'
 
                         if helper_sql:
