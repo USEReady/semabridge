@@ -65,3 +65,4 @@ Text measures (indicators, labels), RANKX/ISINSCOPE ranking, constant URLs — e
 - One fix → one small commit with its test.
 - After each change: `py_compile`, the gates above, dry run of all five models.
 - Never change a test expectation without writing why.
+

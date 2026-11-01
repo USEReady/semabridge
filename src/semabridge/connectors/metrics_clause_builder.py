@@ -647,13 +647,13 @@ class MetricsClauseBuilder:
                 reason_clean = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", reason_text, flags=re.I).strip()
                 if "Snowflake's semantic-view METRICS clause does not support window functions" in reason_clean:
                     reason_clean = "not applicable: needs window metric"
-                safe_comment = " ".join(reason_clean.replace("'", "''").split())
+                safe_comment = " ".join(self._escape_comment(reason_clean).split())
                 comment_clause = f" COMMENT = '{safe_comment}'"
 
             elif "PARTITION BY EXCLUDING" in expr.upper():
                 m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", expr, re.I | re.S)
                 excl_text = m_excl.group(1).strip() if m_excl else ""
-                safe_comment = f"Window metric over {metric_entity_alias}.{safe_metric_name}. Must be queried with {excl_text}.".replace("'", "''")
+                safe_comment = self._escape_comment(f"Window metric over {metric_entity_alias}.{safe_metric_name}. Must be queried with {excl_text}.")
                 comment_clause = f" COMMENT = '{safe_comment}'"
 
             metrics_lines.append(
@@ -1679,6 +1679,14 @@ class MetricsClauseBuilder:
                     referenced.add(alias)
         return referenced
 
+    @staticmethod
+    def _escape_comment(text: str) -> str:
+        """Escape single quotes in COMMENT literals exactly once (never produce '''' sequences)."""
+        clean = str(text or "")
+        while "''" in clean:
+            clean = clean.replace("''", "'")
+        return clean.replace("'", "''")
+
     def _align_partition_by_excluding(self, metric_sql: str) -> str:
         """Align PARTITION BY EXCLUDING dimension tokens with exact declared DIMENSIONS.
         
@@ -1706,23 +1714,70 @@ class MetricsClauseBuilder:
                     continue
                 t_alias = (m.group(1) or "").upper()
                 c_name = m.group(2).strip()
-                
-                if not t_alias:
-                    for tbl, dims in emitted_dims.items():
-                        if c_name.upper() in [d.upper() for d in dims]:
-                            t_alias = tbl
-                            break
+                cu = c_name.upper()
 
-                matched_dim = None
-                if t_alias:
-                    matched_dim = emitted_map.get((t_alias, c_name.upper()))
-                    if not matched_dim and t_alias in emitted_dims:
-                        norm_c = re.sub(r"[^A-Za-z0-9]", "", c_name.upper())
-                        for d in emitted_dims[t_alias]:
-                            if re.sub(r"[^A-Za-z0-9]", "", d.upper()) == norm_c:
-                                matched_dim = d
+                # Rule 1: PARTITION BY EXCLUDING must use the declared dimension of the DIMENSION TABLE
+                # (STORE."STORE", YEAR."YEAR"), never an enriched copy on the fact (SALES."STORE_STORE",
+                # INDICATORS."YEAR_YEAR").
+                resolved_tbl = None
+                resolved_dim = None
+
+                # 1. Enriched copy check: <OTHER_TABLE>_<COL>
+                for o_tbl, dims in emitted_dims.items():
+                    if o_tbl.upper() != t_alias:
+                        prefix = f"{o_tbl.upper()}_"
+                        if cu.startswith(prefix):
+                            suffix = cu[len(prefix):]
+                            matched = emitted_map.get((o_tbl.upper(), suffix))
+                            if not matched:
+                                norm_s = re.sub(r"[^A-Za-z0-9]", "", suffix)
+                                for d in dims:
+                                    if re.sub(r"[^A-Za-z0-9]", "", d.upper()) == norm_s:
+                                        matched = d
+                                        break
+                            if matched:
+                                resolved_tbl = o_tbl.upper()
+                                resolved_dim = matched
                                 break
-                
+
+                # 2. Check if c_name exists directly on another dimension table
+                if not resolved_dim:
+                    norm_c = re.sub(r"[^A-Za-z0-9]", "", cu)
+                    for o_tbl, dims in emitted_dims.items():
+                        if o_tbl.upper() != t_alias:
+                            norm_o = re.sub(r"[^A-Za-z0-9]", "", o_tbl.upper())
+                            if norm_c == norm_o:
+                                for d in dims:
+                                    if re.sub(r"[^A-Za-z0-9]", "", d.upper()) == norm_c:
+                                        resolved_tbl = o_tbl.upper()
+                                        resolved_dim = d
+                                        break
+                                if not resolved_dim and dims:
+                                    resolved_tbl = o_tbl.upper()
+                                    resolved_dim = dims[0]
+                                if resolved_dim:
+                                    break
+
+                if resolved_tbl and resolved_dim:
+                    t_alias = resolved_tbl
+                    matched_dim = resolved_dim
+                else:
+                    if not t_alias:
+                        for tbl, dims in emitted_dims.items():
+                            if c_name.upper() in [d.upper() for d in dims]:
+                                t_alias = tbl
+                                break
+
+                    matched_dim = None
+                    if t_alias:
+                        matched_dim = emitted_map.get((t_alias, c_name.upper()))
+                        if not matched_dim and t_alias in emitted_dims:
+                            norm_c = re.sub(r"[^A-Za-z0-9]", "", c_name.upper())
+                            for d in emitted_dims[t_alias]:
+                                if re.sub(r"[^A-Za-z0-9]", "", d.upper()) == norm_c:
+                                    matched_dim = d
+                                    break
+
                 if matched_dim and t_alias:
                     ref = f'{t_alias}."{matched_dim}"'
                     if ref not in aligned_tokens:
@@ -1737,6 +1792,7 @@ class MetricsClauseBuilder:
 
             if not aligned_tokens:
                 return match.group(0)
+            aligned_tokens.sort()
             return f"PARTITION BY EXCLUDING {', '.join(aligned_tokens)}"
 
         return re.sub(r"\bPARTITION\s+BY\s+EXCLUDING\s+([^)]+)", _replace_excluding, metric_sql, flags=re.IGNORECASE)
@@ -1768,6 +1824,8 @@ class MetricsClauseBuilder:
                 m_comm = re.search(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", expr, re.IGNORECASE)
                 if m_comm:
                     comment_text = m_comm.group(1)
+                    while "''" in comment_text:
+                        comment_text = comment_text.replace("''", "'")
                     expr = expr[:m_comm.start()].strip()
                 elif "/*" in expr:
                     m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr)
@@ -1807,7 +1865,7 @@ class MetricsClauseBuilder:
                 if unresolved_or_invalid:
                     missing_ref = next((r for r in metric_refs if r not in defined), "unknown")
                     reason = f"depends on [{missing_ref}]: missing/unresolved dependency"
-                    safe_comm = reason.replace("'", "''")
+                    safe_comm = self._escape_comment(reason)
                     self.__dict__.setdefault("_null_propagated", {})[name] = "missing/unresolved dependency"
                     next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason
@@ -1821,7 +1879,7 @@ class MetricsClauseBuilder:
                         m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr_by_name.get(null_ref, ""))
                         ref_reason = m_blk.group(1).strip() if m_blk else "not translatable"
                     reason = f"depends on [{null_ref}]: {ref_reason}"
-                    safe_comm = reason.replace("'", "''")
+                    safe_comm = self._escape_comment(reason)
                     next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason
                     rewritten = True
@@ -1830,7 +1888,7 @@ class MetricsClauseBuilder:
                 if expr.strip().upper() == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr.upper():
                     if not comment_text:
                         comment_text = "not applicable: not translatable"
-                    safe_comm = comment_text.replace("'", "''")
+                    safe_comm = self._escape_comment(comment_text)
                     next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     continue
 
@@ -1860,6 +1918,8 @@ class MetricsClauseBuilder:
                             substituted = True
 
                     if substituted:
+                        if "PARTITION BY EXCLUDING" in expanded_expr.upper():
+                            expanded_expr = self._align_partition_by_excluding(expanded_expr)
                         next_lines.append(f'  {alias}."{name}"{non_additive_clause} AS {expanded_expr}{synonym_suffix}')
                         rewritten = True
                         continue
@@ -1885,13 +1945,22 @@ class MetricsClauseBuilder:
             if not alias or not m_name or m_expr.strip().upper() == NULL_PLACEHOLDER_SQL:
                 final_validated.append(l)
                 continue
+            if "PARTITION BY EXCLUDING" in m_expr.upper():
+                m_expr = self._align_partition_by_excluding(m_expr)
+                m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", m_expr, re.I | re.S)
+                if m_excl:
+                    excl_text = m_excl.group(1).strip()
+                    m_comm = re.search(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", m_expr, re.IGNORECASE)
+                    if m_comm and "Window metric over" in m_comm.group(1):
+                        new_comm = f"Window metric over {alias}.{m_name}. Must be queried with {excl_text}."
+                        m_expr = m_expr[:m_comm.start()] + f" COMMENT = '{self._escape_comment(new_comm)}'"
             nested_reason = detect_nested_aggregate(m_expr)
             if nested_reason:
                 logger.warning("Final metric '%s' rejected by nested aggregate check: %s", m_name, nested_reason)
-                safe_comm = f"not applicable: {nested_reason}".replace("'", "''")
+                safe_comm = self._escape_comment(f"not applicable: {nested_reason}")
                 final_validated.append(f'  {alias}."{m_name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                 continue
-            final_validated.append(l)
+            final_validated.append(f'  {alias}."{m_name}"{non_add or ""} AS {m_expr}{syn}')
         return final_validated
 
     def _parse_metric_line(self, line: str) -> Tuple[Optional[str], Optional[str], Optional[str], str, str]:

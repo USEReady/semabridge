@@ -30,7 +30,7 @@
  "F1.5": {
   "status": "PASS",
   "msg": "0.5 == 0.5",
-  "sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) / NULLIF(2, 0), 1) - 1",
+  "sql": "ROUND(AVG(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) / 2, 1) - 1",
   "title": "trailing -1 after a function",
   "solution": ""
  },
@@ -247,14 +247,14 @@
  "F10.4": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
+  "sql": "SUM(TRANSACTIONS_LOG_V2.\"UNITS_P4\"::FLOAT) * (1 + (0) / 100)",
   "title": "what-if measure used in another measure -> default constant",
   "solution": ""
  },
  "F10.5": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) + (SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) * (0) / NULLIF(100, 0)",
+  "sql": "(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) + (SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"::FLOAT)) * (0) / 100",
   "title": "same, measure referenced without table prefix",
   "solution": ""
  },
@@ -266,9 +266,9 @@
   "solution": ""
  },
  "F7.2": {
-  "status": "PASS",
-  "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END) / SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"))",
+  "status": "FAIL",
+  "msg": "value 0.0, expected 0.6978776529338327",
+  "sql": "IFF(COALESCE(NULL, 0) = 0, 0, (SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END)) / NULL)",
   "title": "ratio over a base measure that lives on the measure table",
   "solution": ""
  },
@@ -280,9 +280,9 @@
   "solution": "Anchor = the table the physical columns come from (after inlining measures), never the DAX home table. Apply in translation AND at DDL emission."
  },
  "F11.2": {
-  "status": "PASS",
-  "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"), 0) = 0, 0, SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END) / SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"))",
+  "status": "FAIL",
+  "msg": "value None, expected 0.6978776529338327",
+  "sql": "IFF(COALESCE((SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")), 0) = 0, 0, NULL / (SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")))",
   "title": "declared on a dimension, built from fact measures",
   "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
  },
@@ -422,14 +422,14 @@
  "F10.6": {
   "status": "PASS",
   "msg": "279.5 == 279.5",
-  "sql": "(SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) + (SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) * (0) / NULLIF(100, 0)",
+  "sql": "(SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) + (SUM(CASE WHEN TRANSACTIONS_LOG_V2.\"ORDER_STATE_X9\" = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" END::FLOAT)) * (0) / 100",
   "title": "what-if inside VAR with CALCULATE ('Table'[Measure])",
   "solution": ""
  },
  "F17.5": {
-  "status": "PASS",
-  "msg": "0.3021223470661673 == 0.3021223470661673",
-  "sql": "((SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")) - (SUM(CASE WHEN TRANSACTIONS_LOG_V2.ORDER_STATE_X9 = 'Sold' THEN TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\" ELSE 0 END))) / NULLIF(SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\"), 0)",
+  "status": "FAIL",
+  "msg": "value 1.0, expected 0.3021223470661673",
+  "sql": "((SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")) - COALESCE(NULL, 0)) / NULLIF((SUM(TRANSACTIONS_LOG_V2.\"NET_AMT_DOL_R8\")), 0)",
   "title": "DIVIDE([A-B], [B]) numerator precedence",
   "solution": "Numerator with subtraction must keep parentheses in division to avoid precedence bug."
  }

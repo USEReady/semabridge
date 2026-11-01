@@ -1,9 +1,9 @@
-project_name: Sales and returns
+project_name: Sales and Returns
 source:
   type: pbix
-  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-sales-and-returns/9dff3d1e860741dbbcd79f4526e1195c_Sales
+  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-sales-and-returns/0fbd97d861e84ac6afbfa8fe2afdd6e0_Sales
     & Returns Sample v201912.pbix
-  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-sales-and-returns/9dff3d1e860741dbbcd79f4526e1195c_Sales
+  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-sales-and-returns/0fbd97d861e84ac6afbfa8fe2afdd6e0_Sales
     & Returns Sample v201912.pbix
 targets:
 - type: snowflake
@@ -275,14 +275,9 @@ mappings_overrides:
 ui:
   intermediate_format: osi
   editor_mode: form
-  output_format: osi
 options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
 project_id: proj-sales-and-returns
-display_name: Sales and returns
-target:
-  type: snowflake
-  database: SEMABRIDGE
-  schema: SALES_AND_RETURNS
+display_name: Sales and Returns

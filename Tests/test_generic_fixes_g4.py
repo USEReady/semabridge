@@ -76,3 +76,4 @@ class TestGenericFixG4WhatIfParameters:
         assert res is not None
         sql = res.sql
         assert "COALESCE" in sql
+

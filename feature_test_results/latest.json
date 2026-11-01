@@ -233,7 +233,7 @@
  "F7.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(ORDERS.\"AMOUNT\"), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END) / SUM(ORDERS.\"AMOUNT\"))",
+  "sql": "IFF(COALESCE((SUM(ORDERS.\"AMOUNT\")), 0) = 0, 0, (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END)) / (SUM(ORDERS.\"AMOUNT\")))",
   "title": "ratio over a base measure that lives on the measure table",
   "solution": ""
  },
@@ -306,7 +306,7 @@
  "F11.2": {
   "status": "PASS",
   "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(ORDERS.\"AMOUNT\"), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END) / SUM(ORDERS.\"AMOUNT\"))",
+  "sql": "IFF(COALESCE((SUM(ORDERS.\"AMOUNT\")), 0) = 0, 0, (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END)) / (SUM(ORDERS.\"AMOUNT\")))",
   "title": "declared on a dimension, built from fact measures",
   "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
  },
@@ -403,7 +403,7 @@
  },
  "F15.4": {
   "status": "PASS",
-  "msg": "excluded: not applicable: depends on non-additive metric [Actives]",
+  "msg": "excluded: not applicable: depends on non-additive metric [Headcount]",
   "sql": null,
   "title": "arithmetic between two non-additive measures",
   "solution": "Same as F15.3."
@@ -453,7 +453,7 @@
  "F17.5": {
   "status": "PASS",
   "msg": "0.3021223470661673 == 0.3021223470661673",
-  "sql": "((SUM(ORDERS.\"AMOUNT\")) - (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END))) / NULLIF(SUM(ORDERS.\"AMOUNT\"), 0)",
+  "sql": "((SUM(ORDERS.\"AMOUNT\")) - (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.\"AMOUNT\" ELSE 0 END))) / NULLIF((SUM(ORDERS.\"AMOUNT\")), 0)",
   "title": "DIVIDE([A-B], [B]) numerator precedence",
   "solution": "Numerator with subtraction must keep parentheses in division to avoid precedence bug."
  }
