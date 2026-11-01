@@ -1625,6 +1625,19 @@ class MetricsClauseBuilder:
 
     def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None) -> str:
         valid_aliases = set(dataset_aliases.values())
+        if metric_sql and "OVER" in metric_sql.upper():
+            # For window metrics, Snowflake rule 010263 requires the window metric to be placed
+            # on the exact same table as the inner metric or aggregate inside its OVER clause,
+            # never on an excluded dimension in PARTITION BY EXCLUDING.
+            win_matches = re.findall(
+                r'(?:SUM|AVG|COUNT|MIN|MAX)\s*\(\s*\(?\s*([A-Za-z0-9_]+)\."?[A-Za-z0-9_]+"?',
+                metric_sql,
+                re.IGNORECASE,
+            )
+            for tbl_cand in win_matches:
+                for a in valid_aliases:
+                    if a.upper() == tbl_cand.upper():
+                        return a
         referenced_aliases = self._extract_referenced_table_aliases(metric_sql, valid_aliases)
         if len(referenced_aliases) == 1:
             return next(iter(referenced_aliases))
@@ -1661,10 +1674,12 @@ class MetricsClauseBuilder:
 
     def _extract_referenced_table_aliases(self, metric_sql: str, valid_aliases: Set[str]) -> Set[str]:
         if not metric_sql: return set()
+        # Exclude dimension columns inside PARTITION BY EXCLUDING clauses
+        clean_sql = re.sub(r'\bPARTITION\s+BY\s+EXCLUDING\s+[^)]+\)', '', metric_sql, flags=re.IGNORECASE)
         referenced = set()
         patterns = [r'(\w+)\."([^"]+)"', r'(\w+)\.([A-Za-z_][A-Za-z0-9_$]*)']
         for pattern in patterns:
-            for alias, _ in re.findall(pattern, metric_sql):
+            for alias, _ in re.findall(pattern, clean_sql):
                 if alias in valid_aliases:
                     referenced.add(alias)
         return referenced

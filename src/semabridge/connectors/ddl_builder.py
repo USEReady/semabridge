@@ -478,7 +478,8 @@ class SemanticViewBuilder:
         metric_map = {_clean_id(m.unique_name): m for m in metrics}
 
         # 3. Iteratively resolve and re-anchor metrics
-        for _ in range(3):
+        for _ in range(6):
+            any_changed = False
             for m in metrics:
                 curr_ds = getattr(m, "dataset", None)
                 m_name = getattr(m, "unique_name", "") or ""
@@ -487,8 +488,9 @@ class SemanticViewBuilder:
                 ref_tables: set[str] = set()
 
                 if sql_expr and not re.match(r"^\(?\s*CAST\s*\(\s*NULL", sql_expr, re.IGNORECASE):
-                    # Check explicit table.col in SQL
-                    for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', sql_expr):
+                    # Check explicit table.col in SQL, ignoring dimensions in PARTITION BY EXCLUDING
+                    clean_sql = re.sub(r'\bPARTITION\s+BY\s+EXCLUDING\s+[^)]+\)', '', sql_expr, flags=re.IGNORECASE)
+                    for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', clean_sql):
                         t_clean = _clean_id(t_match)
                         col_clean = _clean_id(col_match)
                         if col_clean in metric_map:
@@ -510,9 +512,16 @@ class SemanticViewBuilder:
                                 elif owners:
                                     for o in owners:
                                         _add_ref(o, ref_tables)
+                    if "OVER" in sql_expr.upper():
+                        m_win = re.findall(r'(?:SUM|AVG|COUNT|MIN|MAX)\s*\(\s*\(?\s*([a-zA-Z0-9_]+)\."?[a-zA-Z0-9_]+"?', sql_expr, re.IGNORECASE)
+                        for t_cand in m_win:
+                            for ds_name in datasets:
+                                if _clean_id(ds_name) == _clean_id(t_cand):
+                                    _add_ref(ds_name, ref_tables)
                 else:
-                    # Check explicit Table[ColOrMeasure] in DAX
-                    for q_tbl, b_tbl, col_match in re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[([^\]]+)\]", dax_expr):
+                    # Check explicit Table[ColOrMeasure] in DAX, ignoring excluded dimensions in ALL/ALLEXCEPT
+                    clean_dax = re.sub(r'\b(?:ALL|ALLEXCEPT|REMOVEFILTERS)\s*\([^)]*\)', '', dax_expr, flags=re.IGNORECASE)
+                    for q_tbl, b_tbl, col_match in re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[([^\]]+)\]", clean_dax):
                         t_match = q_tbl or b_tbl
                         t_clean = _clean_id(t_match)
                         col_clean = _clean_id(col_match)
@@ -526,7 +535,7 @@ class SemanticViewBuilder:
                                     _add_ref(ds_name, ref_tables)
 
                     # Check bare [Identifier] in DAX
-                    for col_match in re.findall(r'\[([^\]]+)\]', dax_expr):
+                    for col_match in re.findall(r'\[([^\]]+)\]', clean_dax):
                         c_clean = _clean_id(col_match)
                         if c_clean in metric_map:
                             target_m = metric_map[c_clean]
@@ -558,6 +567,7 @@ class SemanticViewBuilder:
                     if best_cand != curr_ds:
                         logger.info("Re-anchoring metric '%s' from '%s' to '%s' (referenced tables: %s)", m_name, curr_ds, best_cand, sorted(ref_tables))
                         m.dataset = best_cand
+                        any_changed = True
                         if curr_ds and m.sql_expression:
                             curr_alias = to_alias(curr_ds).upper()
                             best_alias = to_alias(best_cand).upper()
@@ -568,6 +578,8 @@ class SemanticViewBuilder:
                                 m.sql_expression,
                                 flags=re.IGNORECASE
                             )
+            if not any_changed:
+                break
 
         # 4. Final verification: drop metrics that cannot reach all referenced tables
         surviving_metrics = []
@@ -580,7 +592,8 @@ class SemanticViewBuilder:
             ref_tables = set()
 
             if sql_expr and not re.match(r"^\(?\s*CAST\s*\(\s*NULL", sql_expr, re.IGNORECASE):
-                for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', sql_expr):
+                clean_sql = re.sub(r'\bPARTITION\s+BY\s+EXCLUDING\s+[^)]+\)', '', sql_expr, flags=re.IGNORECASE)
+                for t_match, col_match in re.findall(r'([a-zA-Z0-9_]+)\."?([a-zA-Z0-9_]+)"?', clean_sql):
                     t_clean = _clean_id(t_match)
                     col_clean = _clean_id(col_match)
                     if col_clean in metric_map:
@@ -591,8 +604,15 @@ class SemanticViewBuilder:
                             if _clean_id(ds_name) == t_clean:
                                 _add_ref(ds_name, ref_tables)
                                 break
+                if "OVER" in sql_expr.upper():
+                    m_win = re.findall(r'(?:SUM|AVG|COUNT|MIN|MAX)\s*\(\s*\(?\s*([a-zA-Z0-9_]+)\."?[a-zA-Z0-9_]+"?', sql_expr, re.IGNORECASE)
+                    for t_cand in m_win:
+                        for ds_name in datasets:
+                            if _clean_id(ds_name) == _clean_id(t_cand):
+                                _add_ref(ds_name, ref_tables)
             else:
-                for q_tbl, b_tbl, col_match in re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[([^\]]+)\]", dax_expr):
+                clean_dax = re.sub(r'\b(?:ALL|ALLEXCEPT|REMOVEFILTERS)\s*\([^)]*\)', '', dax_expr, flags=re.IGNORECASE)
+                for q_tbl, b_tbl, col_match in re.findall(r"(?:'([^']+)'|\b([a-zA-Z0-9_]+))\s*\[([^\]]+)\]", clean_dax):
                     t_match = q_tbl or b_tbl
                     col_clean = _clean_id(col_match)
                     if col_clean in metric_map:
@@ -603,7 +623,7 @@ class SemanticViewBuilder:
                             if _clean_id(ds_name) == _clean_id(t_match):
                                 _add_ref(ds_name, ref_tables)
 
-                for col_match in re.findall(r'\[([^\]]+)\]', dax_expr):
+                for col_match in re.findall(r'\[([^\]]+)\]', clean_dax):
                     c_clean = _clean_id(col_match)
                     if c_clean in metric_map:
                         if metric_map[c_clean].dataset:
