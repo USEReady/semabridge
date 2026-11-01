@@ -414,13 +414,15 @@ class MetricsClauseBuilder:
 
             from semabridge.converter.dax_ast_parser import is_by_design_excluded
             if is_by_design_excluded(getattr(metric, "sync_failure_reason", None)):
-                self.drop_ledger.record(
-                    "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                    metric.sync_failure_reason or "By-design excluded from metric translation.",
-                    dataset=getattr(metric, "dataset", None),
-                    by_design=True,
-                )
-                continue
+                reason_str = str(metric.sync_failure_reason or "").lower()
+                if "compile-time constant" in reason_str or "no column/measure/table reference" in reason_str:
+                    self.drop_ledger.record(
+                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                        metric.sync_failure_reason or "By-design excluded from metric translation.",
+                        dataset=getattr(metric, "dataset", None),
+                        by_design=True,
+                    )
+                    continue
 
             ds_fold = str(getattr(metric, "dataset", "") or "").casefold()
             is_ti = (
@@ -433,6 +435,10 @@ class MetricsClauseBuilder:
             )
 
             alias = dataset_aliases.get(metric.dataset)
+            if not alias and fact_aliases:
+                alias = sorted(fact_aliases)[0]
+            if not alias and dataset_aliases:
+                alias = sorted(dataset_aliases.values())[0]
             if not alias:
                 # No home table in this view to hold even a NULL placeholder.
                 self.drop_ledger.record(
@@ -1746,23 +1752,37 @@ class MetricsClauseBuilder:
             window_metrics: Set[str] = set()
             parsed = []
             expr_by_name = {}
+            comment_by_name: Dict[str, str] = {}
             for line in current:
                 m = re.search(r'([A-Z_][A-Z0-9_]*)\."([^\"]+)"(\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
                 if not m:
-                    parsed.append((line, None, None, "", "", ""))
+                    parsed.append((line, None, None, "", "", "", ""))
                     continue
                 alias, name, non_additive_clause, expr = m.groups()
                 non_additive_clause = non_additive_clause or ""
                 expr, synonym_suffix = self._split_outer_synonyms_clause(expr)
+
+                comment_text = ""
+                m_comm = re.search(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", expr, re.IGNORECASE)
+                if m_comm:
+                    comment_text = m_comm.group(1)
+                    expr = expr[:m_comm.start()].strip()
+                elif "/*" in expr:
+                    m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr)
+                    if m_blk:
+                        comment_text = m_blk.group(1).strip()
+
                 defined.add(name)
                 expr_by_name[name] = expr
+                if comment_text:
+                    comment_by_name[name] = comment_text
                 if re.search(r'\bOVER\b', expr, flags=re.IGNORECASE):
                     window_metrics.add(name)
-                parsed.append((line, alias, name, non_additive_clause, expr, synonym_suffix))
+                parsed.append((line, alias, name, non_additive_clause, expr, synonym_suffix, comment_text))
 
             removed = rewritten = False
             next_lines = []
-            for line, alias, name, non_additive_clause, expr, synonym_suffix in parsed:
+            for line, alias, name, non_additive_clause, expr, synonym_suffix, comment_text in parsed:
                 if not name:
                     next_lines.append(line)
                     continue
@@ -1783,15 +1803,33 @@ class MetricsClauseBuilder:
                         null_ref = null_ref or r
 
                 if unresolved_or_invalid:
+                    missing_ref = next((r for r in metric_refs if r not in defined), "unknown")
+                    reason = f"depends on [{missing_ref}]: missing/unresolved dependency"
+                    safe_comm = reason.replace("'", "''")
                     self.__dict__.setdefault("_null_propagated", {})[name] = "missing/unresolved dependency"
-                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL}')
+                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                    comment_by_name[name] = reason
                     rewritten = True
                     continue
 
                 if null_ref and expr.strip().upper() != NULL_PLACEHOLDER_SQL:
                     self.__dict__.setdefault("_null_propagated", {})[name] = null_ref
-                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL}')
+                    ref_reason = comment_by_name.get(null_ref)
+                    if not ref_reason:
+                        m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr_by_name.get(null_ref, ""))
+                        ref_reason = m_blk.group(1).strip() if m_blk else "not translatable"
+                    reason = f"depends on [{null_ref}]: {ref_reason}"
+                    safe_comm = reason.replace("'", "''")
+                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                    comment_by_name[name] = reason
                     rewritten = True
+                    continue
+
+                if expr.strip().upper() == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr.upper():
+                    if not comment_text:
+                        comment_text = "not applicable: not translatable"
+                    safe_comm = comment_text.replace("'", "''")
+                    next_lines.append(f'  {alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     continue
 
                 # 2. Inline valid referenced metrics that haven't been inlined into this line yet
@@ -1848,7 +1886,8 @@ class MetricsClauseBuilder:
             nested_reason = detect_nested_aggregate(m_expr)
             if nested_reason:
                 logger.warning("Final metric '%s' rejected by nested aggregate check: %s", m_name, nested_reason)
-                final_validated.append(f'  {alias}."{m_name}" AS {NULL_PLACEHOLDER_SQL}')
+                safe_comm = f"not applicable: {nested_reason}".replace("'", "''")
+                final_validated.append(f'  {alias}."{m_name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                 continue
             final_validated.append(l)
         return final_validated
