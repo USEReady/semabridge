@@ -2565,7 +2565,7 @@ class DaxSqlRenderer:
                         if m_sql.strip().upper() in (rendered_left.strip().upper(), f"({rendered_left.strip().upper()})"):
                             left = f'{self.table_alias.upper()}."{sanitize_column(m_k)}"'
                             break
-            if self._is_nonzero_constant(node.right, right_expr):
+            if self._is_nonzero_constant(node.right, right_expr) or right_expr.strip().upper().startswith("NULLIF("):
                 return f"{left} / {right_expr}"
             return f"{left} / NULLIF({right_expr}, 0)"
 
@@ -3255,90 +3255,9 @@ class DaxSqlRenderer:
         
 
         if func == "COUNTROWS":
-
-            target_col = None
-
-            tbl_name = None
-
-            if agg_node.args:
-
-                tbl_node = agg_node.args[0]
-
-                tbl_name = getattr(tbl_node, "name", None) or getattr(tbl_node, "table", None) or str(tbl_node)
-
-            if not tbl_name:
-
-                tbl_name = self.primary_table_name
-
-
-
-            target_alias = self._resolve_table_alias(tbl_name) if tbl_name else self.table_alias
-
-
-
-            if self.table_key_map and tbl_name:
-
-                clean_t = str(tbl_name).strip("'").casefold()
-
-                target_col = (
-
-                    self.table_key_map.get(clean_t)
-
-                    or self.table_key_map.get(target_alias.casefold())
-
-                    or self.table_key_map.get(to_alias(clean_t).casefold())
-
-                )
-
-
-
-            if not target_col and self.relationships and tbl_name:
-
-                clean_t = str(tbl_name).strip("'").casefold()
-
-                for r in self.relationships:
-
-                    if str(getattr(r, "from_dataset", "")).strip("'").casefold() == clean_t:
-
-                        cols = getattr(r, "from_columns", None)
-
-                        if cols:
-
-                            target_col = cols[0]
-
-                            break
-
-                    elif str(getattr(r, "to_dataset", "")).strip("'").casefold() == clean_t:
-
-                        cols = getattr(r, "to_columns", None)
-
-                        if cols:
-
-                            target_col = cols[0]
-
-                            break
-
-
-
-            if target_col:
-
-                san_col = sanitize_column(target_col)
-
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", san_col):
-
-                    col_ref = f"{target_alias}.{san_col}"
-
-                else:
-
-                    col_ref = f'{target_alias}."{san_col}"'
-
-                case_expr = f"CASE WHEN {condition_sql} THEN {col_ref} END"
-
-            else:
-
-                case_expr = f"CASE WHEN {condition_sql} THEN 1 END"
-
-            return f"COUNT({case_expr})"
+            if condition_sql and condition_sql.strip() not in ("1=1", "TRUE", "1 = 1", "(1=1)", "(TRUE)"):
+                return f"COUNT(CASE WHEN {condition_sql} THEN 1 END)"
+            return "COUNT(*)"
 
 
 

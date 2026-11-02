@@ -84,6 +84,33 @@ def _truncate_for_log(text: Optional[str], limit: int = 4000) -> str:
     return text[:limit] + f"... [truncated, {len(text)} chars total]"
 
 
+def _check_no_invented_literals(sql: str, dax: str) -> Tuple[bool, Optional[str]]:
+    """Reject LLM translation if it uses string literal values not present in the DAX.
+
+    Prevents LLM hallucinations like inventing status filters ('In Progress', 'In Pipeline')
+    when the DAX only references 'Won' or 'Open'.
+    """
+    if not sql or not dax:
+        return False, None
+    sql_literals = re.findall(r"'((?:''|[^'])*)'", sql)
+    if not sql_literals:
+        return False, None
+
+    dax_upper = dax.upper()
+    safe_literals = {"", "%", "%%", "TRUE", "FALSE", "Y", "N", "NULL"}
+
+    for lit in sql_literals:
+        clean = lit.replace("''", "'").strip()
+        if not clean or clean.upper() in safe_literals:
+            continue
+        # Pure numbers, timestamps, format strings or simple arithmetic/punctuation
+        if re.match(r"^[\d\s.,\-+*/%:;]+$", clean):
+            continue
+        if clean.upper() not in dax_upper:
+            return True, f"LLM invented literal value '{clean}' not present in DAX"
+    return False, None
+
+
 def _repair_and_validate(sql: Optional[str], request: TranslationRequest) -> Tuple[Optional[str], Optional[str]]:
     """The full repair + validation pipeline every Tier-5 candidate must
     pass before being trusted -- whether it just arrived from a live
@@ -119,6 +146,9 @@ def _repair_and_validate(sql: Optional[str], request: TranslationRequest) -> Tup
     ok, err = validate_metric_column_references(normalized, request)
     if not ok:
         return None, err
+    has_invented, invented_reason = _check_no_invented_literals(normalized, request.dax)
+    if has_invented:
+        return None, invented_reason
     return normalized, None
 
 
