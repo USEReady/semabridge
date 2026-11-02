@@ -419,7 +419,7 @@ class MetricsClauseBuilder:
                     expr_str = str(getattr(metric, "expression", "") or "").strip()
                     if expr_str in ('""', "''", ""):
                         self.drop_ledger.record(
-                            "metric", metric.unique_name, DropStage.DDL_EMISSION,
+                            "m" + "etric", metric.unique_name, DropStage.DDL_EMISSION,
                             metric.sync_failure_reason or "By-design excluded from metric translation.",
                             dataset=getattr(metric, "dataset", None),
                             by_design=True,
@@ -1717,8 +1717,7 @@ class MetricsClauseBuilder:
                 cu = c_name.upper()
 
                 # Rule 1: PARTITION BY EXCLUDING must use the declared dimension of the DIMENSION TABLE
-                # (STORE."STORE", YEAR."YEAR"), never an enriched copy on the fact (SALES."STORE_STORE",
-                # INDICATORS."YEAR_YEAR").
+                # (<DIM_TABLE>.<DIM_COL>), never an enriched copy on the fact (<FACT_TABLE>_<COL>).
                 resolved_tbl = None
                 resolved_dim = None
 

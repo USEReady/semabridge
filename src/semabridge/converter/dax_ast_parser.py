@@ -4136,13 +4136,15 @@ class DaxSqlRenderer:
                                             raise self.DaxRenderError(
                                                 f"ALL({tbl_name}) on the metric's own table is a whole-table total and must not be a window metric"
                                             )
-                                        clean_base = "SUM_AMOUNT"
+                                        clean_base = "TOTAL"
                                         base_arg = filtered_args[0]
                                         if isinstance(base_arg, MeasureRefNode):
                                             clean_base = sanitize_column(base_arg.name).upper()
                                         elif isinstance(base_arg, FunctionCallNode):
                                             col_part = getattr(base_arg.args[0], "column", str(base_arg.args[0])) if base_arg.args else ""
                                             clean_base = f"{base_arg.func.upper()}_{sanitize_column(col_part).upper()}"
+                                        elif hasattr(base_arg, "name"):
+                                            clean_base = sanitize_column(base_arg.name).upper()
                                         return f'MAX({fact_alias}."__SB_ALL_{clean_base}")'
                                     dims_found = self._get_minimal_groupable_dimensions(tbl_name, alias)
                                     for d in dims_found:
