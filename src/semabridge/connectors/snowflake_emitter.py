@@ -3832,7 +3832,7 @@ class SnowflakeEmitter(BaseEmitter):
             if has_fiscal_anchor and fact_date_col:
                 anchor_joins.append(
                     f'CROSS JOIN (SELECT MAX("{resolved_fiscal_col}") AS "_CURRENT_FISCAL_PERIOD" '
-                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" = (SELECT MAX("{fact_date_col}") FROM {fact_source_ref})) anchor_fiscal'
+                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" <= (SELECT COALESCE(MAX("{fact_date_col}")::DATE, CURRENT_DATE()) FROM {fact_source_ref})) anchor_fiscal'
                 )
                 select_parts.append('\n            , anchor_fiscal."_CURRENT_FISCAL_PERIOD" AS "_CURRENT_FISCAL_PERIOD"')
                 projected_cols.add("_CURRENT_FISCAL_PERIOD")

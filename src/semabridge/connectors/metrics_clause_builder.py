@@ -1309,7 +1309,7 @@ class MetricsClauseBuilder:
                     return None
             expr = sql_expr
             if expr:
-                expr = re.sub(r'(>|<|=|\+|-|\*|/)\s*["\']?_["\']?', r'\1 0', expr)
+                expr = re.sub(r'(>|<|=|\+|-|\*|/)\s*(?:["\']_["\']|(?<!\w)_(?!\w))', r'\1 0', expr)
             
             # ✅ NEW: Qualify cross-table references FIRST (before normalization)
             expr = self.translator._auto_qualify_cross_table_refs(expr, dataset_aliases)
@@ -1569,23 +1569,26 @@ class MetricsClauseBuilder:
         return "|".join([source_name or "", source_expression or "", data_type or "", aggregation or ""])
 
     def _duplicate_namespace_key(self, model_name: Optional[str] = None) -> str:
-        parts = [
-            self.identifier_sanitizer.to_alias(self.config.database or "DB"),
-            self.identifier_sanitizer.to_alias(self.config.schema_name or "SCHEMA"),
+        parts: List[str] = [
+            str(self.identifier_sanitizer.to_alias(self.config.database or "DB")),
+            str(self.identifier_sanitizer.to_alias(self.config.schema_name or "SCHEMA")),
         ]
         if model_name:
-            parts.append(self.identifier_sanitizer.to_alias(model_name))
-        return ".".join(parts)
+            alias = self.identifier_sanitizer.to_alias(model_name)
+            if alias:
+                parts.append(str(alias))
+        return str(".".join(parts))
 
     def _resolve_persistent_duplicate_name(self, scope_type: str, namespace_key: str, dataset_key: str, normalized_base: str, source_name: str, source_signature: str, preferred_name: str) -> str:
         if not self.dup_name_repo:
             return preferred_name
         try:
-            return self.dup_name_repo.get_or_create_assigned_name(
+            assigned = self.dup_name_repo.get_or_create_assigned_name(
                 scope_type=scope_type, namespace_key=namespace_key, dataset_key=dataset_key, 
                 normalized_base=normalized_base, source_name=source_name, source_signature=source_signature, 
                 preferred_name=preferred_name
             )
+            return str(assigned) if assigned is not None else preferred_name
         except Exception as exc:
             logger.warning("Duplicate mapping failed for %s: %s", source_name, exc)
             return preferred_name

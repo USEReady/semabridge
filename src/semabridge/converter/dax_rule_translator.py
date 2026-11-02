@@ -822,8 +822,8 @@ def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
     op = period_match.group(3) if period_match else "<"
     period_table = ((period_match.group(1) or period_match.group(2)) if period_match else "DATES") or "DATES"
     return (
-        f"SUM(CASE WHEN {_column_ref(period_table, 'FISCAL_YR_PERIOD', table_alias)} {op} _current_fiscal_period "
-        f"THEN {_column_ref(measure_table, measure_col, table_alias)} ELSE 0 END)"
+        f"SUM(CASE WHEN {_column_ref(period_table, 'FISCAL_YR_PERIOD', table_alias)} {op} {table_alias}.\"_CURRENT_FISCAL_PERIOD\" "
+        f"THEN {_column_ref(measure_table, measure_col, table_alias)} END)"
     )
 
 
