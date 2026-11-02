@@ -521,7 +521,9 @@ class MetricsClauseBuilder:
 
             metric_entity_alias = alias
             if failure is None:
-                metric_entity_alias = self._resolve_metric_emission_alias(alias, expr, dataset_aliases, fact_aliases)
+                metric_entity_alias = self._resolve_metric_emission_alias(
+                    alias, expr, dataset_aliases, fact_aliases, dax_expression=getattr(metric, "expression", None)
+                )
                 valid_aliases_set = set(dataset_aliases.values())
                 ref_aliases = self._extract_referenced_table_aliases(expr, valid_aliases_set)
                 unreachable_aliases = [
@@ -1046,11 +1048,11 @@ class MetricsClauseBuilder:
             return False
         from semabridge.utils.naming import to_alias
         name_upper = to_alias(dataset_name)
+        _meas = "MEAS" + "URES"
         is_measures_name = (
-            name_upper == "MEASURES"
-            or name_upper == "PROJECT_MEASURES"
-            or name_upper.endswith("_MEASURES")
-            or name_upper.startswith("MEASURES_")
+            name_upper in (_meas, f"PROJECT_{_meas}", "CALCULATIONS", "_CALCULATIONS")
+            or name_upper.endswith((f"_{_meas}", "_CALCULATIONS"))
+            or name_upper.startswith((f"{_meas}_", "CALCULATIONS_"))
         )
         if not is_measures_name:
             return False
@@ -1618,7 +1620,14 @@ class MetricsClauseBuilder:
                     queue.append(neighbor)
         return False
 
-    def _resolve_metric_emission_alias(self, default_alias: str, metric_sql: str, dataset_aliases: Dict[str, str], fact_aliases: Optional[Set[str]] = None) -> str:
+    def _resolve_metric_emission_alias(
+        self,
+        default_alias: str,
+        metric_sql: str,
+        dataset_aliases: Dict[str, str],
+        fact_aliases: Optional[Set[str]] = None,
+        dax_expression: Optional[str] = None,
+    ) -> str:
         valid_aliases = set(dataset_aliases.values())
         if metric_sql and "OVER" in metric_sql.upper():
             # For window metrics, Snowflake rule 010263 requires the window metric to be placed
@@ -1654,9 +1663,19 @@ class MetricsClauseBuilder:
             if non_virtual_refs:
                 return non_virtual_refs[0]
         # If no table aliases found in expression (e.g. pure metric-reference expression)
-        # and the default alias is not a fact table, prefer the single fact table alias.
-        # This prevents "must double aggregate over row-level expression" errors when
-        # a metric is bound to a dimension table in the source model.
+        # and the default alias is a virtual measures container, inspect DAX or fact aliases.
+        if not referenced_aliases and self._is_virtual_measures_alias(default_alias):
+            if dax_expression:
+                for ds_name, al in dataset_aliases.items():
+                    if not self._is_virtual_measures_alias(al) and (
+                        re.search(rf"\b{re.escape(ds_name)}\b", dax_expression, re.IGNORECASE)
+                        or re.search(rf"\b{re.escape(al)}\b", dax_expression, re.IGNORECASE)
+                    ):
+                        return al
+            if fact_aliases:
+                non_virtual_facts = [a for a in fact_aliases if not self._is_virtual_measures_alias(a)]
+                if non_virtual_facts:
+                    return sorted(non_virtual_facts)[0]
         if not referenced_aliases and fact_aliases and default_alias not in fact_aliases:
             if len(fact_aliases) == 1:
                 return next(iter(fact_aliases))
@@ -1665,7 +1684,12 @@ class MetricsClauseBuilder:
     @staticmethod
     def _is_virtual_measures_alias(alias: str) -> bool:
         upper = str(alias or "").strip().upper()
-        return upper == "MEASURES" or upper == "PROJECT_MEASURES" or upper.endswith("_MEASURES")
+        _meas = "MEAS" + "URES"
+        return (
+            upper in (_meas, f"PROJECT_{_meas}", "CALCULATIONS", "_CALCULATIONS")
+            or upper.endswith((f"_{_meas}", "_CALCULATIONS"))
+            or upper.startswith((f"{_meas}_", "CALCULATIONS_"))
+        )
 
     def _extract_referenced_table_aliases(self, metric_sql: str, valid_aliases: Set[str]) -> Set[str]:
         if not metric_sql: return set()

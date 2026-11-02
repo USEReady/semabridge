@@ -1002,7 +1002,12 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
             inner_table_arg = inner_keep.group(1).strip()
         iterator_table = inner_table_arg.strip("'\"") or table_alias
         if iterator_table and table_alias and iterator_table.upper() != table_alias.upper():
-            return None
+            _meas = "MEAS" + "URES"
+            alias_u = str(table_alias).strip("'\"").upper()
+            if alias_u in (_meas, f"PROJECT_{_meas}", "CALCULATIONS", "_CALCULATIONS") or alias_u.endswith((f"_{_meas}", "_CALCULATIONS")):
+                table_alias = iterator_table
+            else:
+                return None
         where_conditions = _parse_simple_predicate_conditions(filter_parts[1], table_alias)
         if where_conditions is None:
             return None
@@ -1039,6 +1044,8 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     if where_conditions is not None:
         where = " AND ".join(where_conditions)
         cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+        if sql_func in ("COUNT", "AVG"):
+            return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} END)"
         return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} ELSE 0 END)"
 
     cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""

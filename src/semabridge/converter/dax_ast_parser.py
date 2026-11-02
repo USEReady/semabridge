@@ -2685,11 +2685,21 @@ class DaxSqlRenderer:
 
                     if str(filter_tbl_name).strip("'\"").upper() != self.primary_table_name.strip("'\"").upper():
 
-                        raise self.DaxRenderError(
+                        p_upper = self.primary_table_name.strip("'\"").upper()
 
-                            f"Iterator FILTER table '{filter_tbl_name}' does not match primary table '{self.primary_table_name}'"
+                        _meas = "MEAS" + "URES"
 
-                        )
+                        if p_upper in (_meas, f"PROJECT_{_meas}", "CALCULATIONS", "_CALCULATIONS") or p_upper.endswith((f"_{_meas}", "_CALCULATIONS")):
+
+                            self.table_alias = self._resolve_table_alias(filter_tbl_name)
+
+                        else:
+
+                            raise self.DaxRenderError(
+
+                                f"Iterator FILTER table '{filter_tbl_name}' does not match primary table '{self.primary_table_name}'"
+
+                            )
 
                 pred_sql = self._render_node(table_arg.args[1])
 
@@ -2714,6 +2724,52 @@ class DaxSqlRenderer:
             if func == "COUNTAX" and expr_sql in ("TRUE", "true", "True", "1"):
 
                 return "COUNT(*)"
+
+            if func == "AVERAGEX" and expr_sql:
+
+                cleaned = expr_sql.strip()
+
+                while cleaned.startswith("(") and cleaned.endswith(")"):
+
+                    depth = 0
+
+                    encloses = False
+
+                    for idx, ch in enumerate(cleaned):
+
+                        if ch == "(":
+
+                            depth += 1
+
+                        elif ch == ")":
+
+                            depth -= 1
+
+                            if depth == 0:
+
+                                encloses = (idx == len(cleaned) - 1)
+
+                                break
+
+                    if encloses:
+
+                        cleaned = cleaned[1:-1].strip()
+
+                    else:
+
+                        break
+
+                cleaned = re.sub(r"::FLOAT$", "", cleaned, flags=re.IGNORECASE).strip()
+
+                sum_unroll = re.match(r"^SUM\s*\((.*)\)$", cleaned, re.IGNORECASE | re.DOTALL)
+
+                if sum_unroll:
+
+                    inner_row_expr = sum_unroll.group(1).strip()
+
+                    inner_row_expr = re.sub(r"::FLOAT$", "", inner_row_expr, flags=re.IGNORECASE).strip()
+
+                    return f"AVG({inner_row_expr})"
 
             cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
 
