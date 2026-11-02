@@ -33,6 +33,8 @@ from semabridge.api.websocket_alerts import alert_router
 from semabridge.api.routers.diagnostics_router import router as diagnostics_router
 from semabridge.api.routers.mapping_router import router as mapping_router
 from semabridge.api.routers.synonyms_router import router as synonyms_router
+from semabridge.api.routers.domain_ontology_router import router as domain_ontology_router
+from semabridge.api.routers.ai_router import router as ai_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -81,6 +83,8 @@ for router in [
     diagnostics_router,
     mapping_router,
     synonyms_router,
+    domain_ontology_router,
+    ai_router,
 ]:
     app.include_router(router)
 

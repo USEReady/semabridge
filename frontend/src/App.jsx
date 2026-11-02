@@ -18,6 +18,7 @@ import ProjectsPage     from './pages/ProjectsPage';
 import LoginPage        from './pages/LoginPage';
 
 const ExplorePage        = lazy(() => import('./pages/ExplorePage'));
+const OntologyPage       = lazy(() => import('./pages/OntologyPage'));
 const CreateProjectPage  = lazy(() => import('./pages/CreateProjectPage'));
 const EditProjectPage    = lazy(() => import('./pages/EditProjectPage'));
 const ProjectConfigPage  = lazy(() => import('./pages/ProjectConfigPage'));
@@ -101,6 +102,7 @@ export default function App() {
           }>
             <Route index element={<Navigate to="/projects" replace />} />
             <Route path="/explore"       element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ExplorePage /></Suspense></ErrorBoundary>} />
+            <Route path="/ontology"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage /></Suspense></ErrorBoundary>} />
             <Route path="/projects"      element={<ProjectsPage />} />
             <Route path="/projects/new"  element={<ErrorBoundary><Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense></ErrorBoundary>} />
             <Route path="/projects/:id" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectDetailPage /></Suspense></ErrorBoundary>} />
