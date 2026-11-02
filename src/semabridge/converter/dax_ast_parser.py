@@ -4205,8 +4205,6 @@ class DaxSqlRenderer:
                                     if m_round_only:
                                         return f'ROUND(({ratio}), {m_round_only.group(2)})'
                                     return ratio
-                                if False:
-                                    raise self.DaxRenderError(f"not applicable: not decomposable for a window (non-additive base metric '{m_name}')")
                             m_alias = sanitize_column(m_name)
                             metric_ref = f'{self.table_alias.upper()}."{m_alias}"::FLOAT'
                             return f'SUM({metric_ref}) OVER (PARTITION BY EXCLUDING {excl_clause})'
