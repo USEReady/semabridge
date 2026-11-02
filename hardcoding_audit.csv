@@ -5,5 +5,6 @@ REVIEW,src/semabridge/converter/dax_ast_parser.py,2397,equality with a capitalis
 REVIEW,src/semabridge/converter/dax_ast_parser.py,2517,equality with a capitalised literal,"if s.upper() == ""NULL"":"
 REVIEW,src/semabridge/converter/dax_ast_parser.py,2555,equality with a capitalised literal,"if right_expr.strip().upper() == ""NULL"":"
 REVIEW,src/semabridge/converter/dax_ast_parser.py,2557,equality with a capitalised literal,"if left.strip().upper() == ""NULL"":"
-REVIEW,src/semabridge/converter/dax_ast_parser.py,4213,list/set of capitalised names,"if fn_u in (""ROUND"", ""ROUNDUP"", ""ROUNDDOWN"") and base_arg.args:"
+REVIEW,src/semabridge/converter/dax_ast_parser.py,2568,startswith/endswith a capitalised literal,"if self._is_nonzero_constant(node.right, right_expr) or right_expr.strip().upper().startswith(""NULLIF(""):"
+REVIEW,src/semabridge/converter/dax_ast_parser.py,4132,list/set of capitalised names,"if fn_u in (""ROUND"", ""ROUNDUP"", ""ROUNDDOWN"") and base_arg.args:"
 REVIEW,src/semabridge/converter/dax_translator.py,2003,list/set of capitalised names,"if m_sv_call and m_sv_call.group(1).strip() and m_sv_call.group(1).strip().upper() not in (""BLANK()"", ""NULL"", ""NONE""):"
