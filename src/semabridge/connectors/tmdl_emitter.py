@@ -42,9 +42,8 @@ class FabricTmdlEmitter:
         self.compatibility_level = compatibility_level
         self.culture = culture
 
-    def emit_tmdl_files(self, model: OSIModel, output_dir: str | Path) -> Dict[str, str]:
+    def emit_tmdl_files(self, model: OSIModel, output_dir: Optional[str | Path] = None) -> Dict[str, str]:
         """Generate full TMDL folder structure and return mapping of relative file paths to content."""
-        out_path = Path(output_dir)
         files: Dict[str, str] = {}
 
         # 1. model.tmdl
@@ -114,10 +113,19 @@ class FabricTmdlEmitter:
             files["relationships.tmdl"] = "\n".join(rel_lines)
 
         # Write files if output_dir provided
-        for rel_file, content in files.items():
-            full_path = out_path / rel_file
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content)
+        if output_dir:
+            out_path = Path(output_dir)
+            for rel_file, content in files.items():
+                full_path = out_path / rel_file
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(content)
 
         return files
+
+    def emit_tmdl_project(self, model: OSIModel, output_dir: Optional[str | Path] = None) -> Dict[str, str]:
+        """Alias for emit_tmdl_files returning dictionary of relative paths to contents."""
+        return self.emit_tmdl_files(model, output_dir=output_dir)
+
+
+TMDLEmitter = FabricTmdlEmitter

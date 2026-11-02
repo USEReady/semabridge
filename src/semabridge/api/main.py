@@ -35,6 +35,11 @@ from semabridge.api.routers.mapping_router import router as mapping_router
 from semabridge.api.routers.synonyms_router import router as synonyms_router
 from semabridge.api.routers.domain_ontology_router import router as domain_ontology_router
 from semabridge.api.routers.ai_router import router as ai_router
+from semabridge.api.routers.reconciliation_router import router as reconciliation_router
+from semabridge.api.routers.governance_router import router as governance_router
+from semabridge.api.routers.fabric_cloud_router import router as fabric_cloud_router
+from semabridge.api.routers.security_router import router as security_router
+from semabridge.api.routers.databricks_metric_router import router as databricks_metric_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -85,6 +90,11 @@ for router in [
     synonyms_router,
     domain_ontology_router,
     ai_router,
+    reconciliation_router,
+    governance_router,
+    fabric_cloud_router,
+    security_router,
+    databricks_metric_router,
 ]:
     app.include_router(router)
 
