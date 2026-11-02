@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -20,6 +20,9 @@ class SynonymOverrideRequest(BaseModel):
     table_name: str
     column_name: str
     synonyms: List[str] = Field(default_factory=list)
+    description: Optional[str] = None
+    business_rules: List[str] = Field(default_factory=list)
+    data_steward: Optional[str] = None
 
 
 def _clean_synonyms(values: List[str]) -> List[str]:
@@ -51,6 +54,35 @@ def _find_row(
     ).scalar_one_or_none()
 
 
+@router.get("/{project_id}/{model_name}")
+def get_model_ontology_overrides(
+    project_id: str,
+    model_name: str,
+    db: Session = Depends(get_db),
+):
+    """Retrieve all ontology overrides for a model."""
+    try:
+        rows = db.execute(
+            select(SynonymOverride).where(
+                SynonymOverride.project_id == project_id,
+                SynonymOverride.model_name == model_name,
+            )
+        ).scalars().all()
+        return [
+            {
+                "table_name": r.table_name,
+                "column_name": r.column_name,
+                "synonyms": r.synonyms,
+                "description": r.description,
+                "business_rules": r.business_rules,
+                "data_steward": r.data_steward,
+            }
+            for r in rows
+        ]
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail=f"Ontology overrides unavailable: {exc}") from exc
+
+
 @router.get("/{project_id}/{model_name}/{table_name}/{column_name}")
 def get_synonym_override(
     project_id: str,
@@ -61,7 +93,12 @@ def get_synonym_override(
 ):
     try:
         row = _find_row(db, project_id, model_name, table_name, column_name)
-        return {"synonyms": row.synonyms if row else []}
+        return {
+            "synonyms": row.synonyms if row else [],
+            "description": row.description if row else None,
+            "business_rules": row.business_rules if row else [],
+            "data_steward": row.data_steward if row else None,
+        }
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail=f"Synonym overrides unavailable: {exc}") from exc
 
@@ -80,9 +117,22 @@ def upsert_synonym_override(req: SynonymOverrideRequest, db: Session = Depends(g
             )
             db.add(row)
         row.synonyms = synonyms
+        if req.description is not None:
+            row.description = req.description.strip() or None
+        if req.business_rules is not None:
+            row.business_rules = [r.strip() for r in req.business_rules if r and r.strip()]
+        if req.data_steward is not None:
+            row.data_steward = req.data_steward.strip() or None
         db.commit()
         db.refresh(row)
-        return {"status": "success", "id": row.id, "synonyms": row.synonyms}
+        return {
+            "status": "success",
+            "id": row.id,
+            "synonyms": row.synonyms,
+            "description": row.description,
+            "business_rules": row.business_rules,
+            "data_steward": row.data_steward,
+        }
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail=f"Synonym overrides unavailable: {exc}") from exc

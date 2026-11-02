@@ -143,6 +143,56 @@ def lookup_synonym_override(
     return []
 
 
+def load_ontology_overrides(project_id: str | None) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Load full UI ontology overrides (synonyms, description, business_rules, data_steward) for a project."""
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return {}
+
+    try:
+        from sqlalchemy import select
+
+        from semabridge.repository.orm.models import SynonymOverride
+        from semabridge.repository.orm.session_factory import db_manager
+
+        overrides: dict[tuple[str, str, str], dict[str, Any]] = {}
+        with db_manager.get_session() as session:
+            rows = session.execute(
+                select(SynonymOverride).where(SynonymOverride.project_id == project_id)
+            ).scalars().all()
+            for row in rows:
+                key = synonym_override_key(row.model_name, row.table_name, row.column_name)
+                overrides[key] = {
+                    "synonyms": _clean_items(row.synonyms),
+                    "description": getattr(row, "description", None),
+                    "business_rules": list(getattr(row, "business_rules", []) or []),
+                    "data_steward": getattr(row, "data_steward", None),
+                }
+        return overrides
+    except Exception as exc:
+        logger.warning(
+            "Ontology override table unavailable for project '%s'; continuing without UI overrides: %s",
+            project_id,
+            exc,
+        )
+        return {}
+
+
+def lookup_ontology_override(
+    overrides: dict[tuple[str, str, str], dict[str, Any]] | None,
+    model_names: Iterable[str],
+    table_name: str,
+    object_name: str,
+) -> dict[str, Any] | None:
+    if not overrides:
+        return None
+    for model_name in model_names:
+        found = overrides.get(synonym_override_key(model_name, table_name, object_name))
+        if found:
+            return found
+    return None
+
+
 def lookup_attribute_synonyms(attr: Any, dataset_obj: Any, phys_col: str | None = None) -> list[str]:
     """Retrieve synonyms for a dimension attribute by looking up the backing column."""
     if not dataset_obj:
@@ -229,7 +279,7 @@ def copy_synonym_overrides(
 
         copied = 0
         with db_manager.get_session() as session:
-            merged: dict[tuple[str, str, str], tuple[tuple[str, str, str], list[str], Any]] = {}
+            merged: dict[tuple[str, str, str], tuple[tuple[str, str, str], list[str], str | None, list[str], str | None, Any]] = {}
             for source in sources:
                 rows = session.execute(
                     select(SynonymOverride).where(SynonymOverride.project_id == source)
@@ -242,6 +292,9 @@ def copy_synonym_overrides(
                     merged[key] = (
                         (model_name, row.table_name, row.column_name),
                         _clean_items(row.synonyms),
+                        getattr(row, "description", None),
+                        list(getattr(row, "business_rules", []) or []),
+                        getattr(row, "data_steward", None),
                         _row_timestamp(row),
                     )
             if not merged:
@@ -253,15 +306,19 @@ def copy_synonym_overrides(
                 synonym_override_key(r.model_name, r.table_name, r.column_name): r
                 for r in existing_rows
             }
-            for key, ((model_name, table_name, column_name), values, source_ts) in merged.items():
+            for key, ((model_name, table_name, column_name), values, desc, rules, steward, source_ts) in merged.items():
                 row = existing.get(key)
                 if row is not None:
                     target_ts = _row_timestamp(row)
                     if source_ts is None or target_ts is None or source_ts <= target_ts:
                         continue
-                    if list(row.synonyms) == values:
-                        continue
                     row.synonyms = values
+                    if desc is not None:
+                        row.description = desc
+                    if rules:
+                        row.business_rules = rules
+                    if steward is not None:
+                        row.data_steward = steward
                     # Carry the dry-run edit's own timestamp, so "newer"
                     # always compares edit times, not copy times.
                     row.updated_at = source_ts
@@ -273,6 +330,12 @@ def copy_synonym_overrides(
                         column_name=column_name,
                     )
                     row.synonyms = values
+                    if desc is not None:
+                        row.description = desc
+                    if rules:
+                        row.business_rules = rules
+                    if steward is not None:
+                        row.data_steward = steward
                     if source_ts is not None:
                         row.created_at = source_ts
                         row.updated_at = source_ts

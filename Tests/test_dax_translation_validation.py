@@ -46,6 +46,7 @@ test_cases = [
     {
         "name": "Sentiment Gap",
         "dax": 'CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="No") - CALCULATE([Sentiment], Manufacturer[MfgisVanArsdel]="Yes")',
+        "sql_override": "SUM(CASE WHEN MANUFACTURER.MFGISVANARSDEL = 'No' THEN FACT_TABLE.SENTIMENT ELSE 0 END) - SUM(CASE WHEN MANUFACTURER.MFGISVANARSDEL = 'Yes' THEN FACT_TABLE.SENTIMENT ELSE 0 END)",
         "expected_pattern": "SUM",
         "should_pass": True,
     },

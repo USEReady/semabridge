@@ -1822,9 +1822,11 @@ class DaxSqlRenderer:
 
     # ColumnRefNode naming one of these is resolved to date_alias rather
 
-    # than the primary table.
-
-    _DEFAULT_DATE_TABLE_NAMES = frozenset({"date", "dates", "dim_date", "dimdate", "dim_dates"})
+    _DEFAULT_DATE_TABLE_NAMES = frozenset({
+        "date", "dates", "dim_date", "dimdate", "dim_dates",
+        "calendar", "calendars", "dim_calendar", "dimcalendar", "dim_calendars",
+        "fiscal_calendar", "fiscalcalendar", "posting_date", "posting_dates",
+    })
 
     @classmethod
     def _is_date_table_name(cls, name: Optional[str]) -> bool:

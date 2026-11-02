@@ -37,19 +37,19 @@ export default function SynonymEditModal({
   tableName,
   columnName,
   currentSynonyms = [],
+  currentDescription = '',
+  currentRules = [],
+  currentSteward = '',
   onSave,
 }) {
   const [synonyms, setSynonyms] = useState([]);
+  const [description, setDescription] = useState('');
+  const [businessRules, setBusinessRules] = useState([]);
+  const [ruleInput, setRuleInput] = useState('');
+  const [dataSteward, setDataSteward] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (!open) return;
-    setSynonyms(normalizeSynonyms(currentSynonyms));
-    setInputValue('');
-    setError('');
-  }, [open, currentSynonyms]);
 
   const identity = useMemo(() => ({
     projectId,
@@ -57,6 +57,35 @@ export default function SynonymEditModal({
     tableName,
     columnName,
   }), [projectId, modelName, tableName, columnName]);
+
+  useEffect(() => {
+    if (!open) return;
+    setSynonyms(normalizeSynonyms(currentSynonyms));
+    setDescription(currentDescription || '');
+    setBusinessRules(Array.isArray(currentRules) ? currentRules : []);
+    setDataSteward(currentSteward || '');
+    setInputValue('');
+    setRuleInput('');
+    setError('');
+
+    // Fetch live backend override values if available
+    if (projectId && modelName && tableName && columnName) {
+      api.getSynonymOverride(identity)
+        .then((res) => {
+          if (res) {
+            if (res.synonyms && res.synonyms.length > 0) {
+              setSynonyms(normalizeSynonyms(res.synonyms));
+            }
+            if (res.description) setDescription(res.description);
+            if (res.business_rules && res.business_rules.length > 0) {
+              setBusinessRules(res.business_rules);
+            }
+            if (res.data_steward) setDataSteward(res.data_steward);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [open, currentSynonyms, currentDescription, currentRules, currentSteward, identity]);
 
   function addSynonym(raw = inputValue) {
     const parts = String(raw || '')
@@ -79,6 +108,19 @@ export default function SynonymEditModal({
     setSynonyms((prev) => prev.filter((item) => item !== value));
   }
 
+  function addRule() {
+    const text = String(ruleInput || '').trim();
+    if (!text) return;
+    if (!businessRules.includes(text)) {
+      setBusinessRules((prev) => [...prev, text]);
+    }
+    setRuleInput('');
+  }
+
+  function removeRule(index) {
+    setBusinessRules((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function save() {
     setLoading(true);
     setError('');
@@ -89,11 +131,18 @@ export default function SynonymEditModal({
         table_name: tableName,
         column_name: columnName,
         synonyms,
+        description: description.trim() || null,
+        business_rules: businessRules,
+        data_steward: dataSteward.trim() || null,
       });
-      onSave?.(response?.synonyms || synonyms);
+      onSave?.(response?.synonyms || synonyms, {
+        description: response?.description || description,
+        business_rules: response?.business_rules || businessRules,
+        data_steward: response?.data_steward || dataSteward,
+      });
       onClose?.();
     } catch (err) {
-      setError(err?.message || 'Failed to save synonyms.');
+      setError(err?.message || 'Failed to save ontology metadata.');
     } finally {
       setLoading(false);
     }
@@ -104,10 +153,10 @@ export default function SynonymEditModal({
     setError('');
     try {
       await api.deleteSynonymOverride(identity);
-      onSave?.([]);
+      onSave?.([], { description: '', business_rules: [], data_steward: '' });
       onClose?.();
     } catch (err) {
-      setError(err?.message || 'Failed to reset synonyms.');
+      setError(err?.message || 'Failed to reset metadata.');
     } finally {
       setLoading(false);
     }
@@ -139,7 +188,7 @@ export default function SynonymEditModal({
         style={{ ...buttonBase, border: '1px solid var(--accent-blue)', background: 'var(--accent-blue)', color: '#fff' }}
       >
         {loading && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
-        Save
+        Save Ontology
       </button>
     </>
   );
@@ -148,27 +197,53 @@ export default function SynonymEditModal({
     <Modal
       open={open}
       onClose={loading ? undefined : onClose}
-      title={`Edit Synonyms - ${columnName || 'Field'}`}
-      size="md"
+      title={`Ontology & Business Semantics - ${columnName || tableName || 'Field'}`}
+      size="lg"
       footer={footer}
     >
-      <div style={{ display: 'grid', gap: 14 }}>
+      <div style={{ display: 'grid', gap: 16 }}>
+        {/* Business Definition / Description */}
+        <div style={{ display: 'grid', gap: 6 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>
+            Official Business Definition (Description)
+          </label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            placeholder="Official enterprise meaning of this metric/entity (e.g. Recognized revenue net of returns)..."
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              border: '1px solid var(--border-main)',
+              borderRadius: 8,
+              background: 'var(--bg-input)',
+              color: 'var(--text-primary)',
+              padding: '8px 10px',
+              fontSize: 12,
+              fontFamily: 'inherit',
+              resize: 'vertical',
+            }}
+          />
+        </div>
+
+        {/* Synonyms */}
         <div style={{ display: 'grid', gap: 6 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>
-            Override Synonyms
+            Synonyms & Preferred Labels (AI Search Terms)
           </div>
           <div style={{
             display: 'flex',
             flexWrap: 'wrap',
             gap: 6,
-            minHeight: 42,
+            minHeight: 40,
             padding: 8,
             borderRadius: 8,
             border: '1px solid var(--border-main)',
             background: 'var(--bg-input)',
           }}>
             {synonyms.length === 0 && (
-              <span style={{ fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No overrides yet</span>
+              <span style={{ fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No synonyms defined</span>
             )}
             {synonyms.map((synonym) => (
               <span
@@ -199,35 +274,120 @@ export default function SynonymEditModal({
               </span>
             ))}
           </div>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <input
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type synonym, press Enter or comma (e.g. ARR, Topline, Sales)"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: '1px solid var(--border-main)',
+                borderRadius: 8,
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                padding: '8px 10px',
+                fontSize: 12,
+                outline: 'none',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => addSynonym()}
+              disabled={!inputValue.trim()}
+              title="Add synonym"
+              style={{ ...buttonBase, width: 36, padding: 0, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', color: 'var(--text-primary)', opacity: inputValue.trim() ? 1 : 0.55 }}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
+        {/* Business Rules & Constraints */}
+        <div style={{ display: 'grid', gap: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>
+            Business Rules & Constraints (For AI Agent Grounding)
+          </div>
+          {businessRules.length > 0 && (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {businessRules.map((rule, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid var(--border-main)',
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ color: 'var(--text-secondary)' }}>• {rule}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeRule(idx)}
+                    title="Remove rule"
+                    style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+            <input
+              value={ruleInput}
+              onChange={(e) => setRuleInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRule(); } }}
+              placeholder="e.g. Must exclude internal test accounts, Currency normalized to USD"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: '1px solid var(--border-main)',
+                borderRadius: 8,
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                padding: '8px 10px',
+                fontSize: 12,
+                outline: 'none',
+              }}
+            />
+            <button
+              type="button"
+              onClick={addRule}
+              disabled={!ruleInput.trim()}
+              title="Add rule"
+              style={{ ...buttonBase, width: 36, padding: 0, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', color: 'var(--text-primary)', opacity: ruleInput.trim() ? 1 : 0.55 }}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+        </div>
+
+        {/* Data Steward / Business Owner */}
+        <div style={{ display: 'grid', gap: 6 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>
+            Data Steward / Owner
+          </label>
           <input
-            value={inputValue}
-            onChange={(event) => setInputValue(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type synonym, press Enter or comma"
+            value={dataSteward}
+            onChange={(e) => setDataSteward(e.target.value)}
+            placeholder="e.g. Commercial Finance Team (finance-ops@company.com)"
             style={{
-              flex: 1,
-              minWidth: 0,
               border: '1px solid var(--border-main)',
               borderRadius: 8,
               background: 'var(--bg-input)',
               color: 'var(--text-primary)',
               padding: '8px 10px',
-              fontSize: 13,
+              fontSize: 12,
               outline: 'none',
             }}
           />
-          <button
-            type="button"
-            onClick={() => addSynonym()}
-            disabled={!inputValue.trim()}
-            title="Add synonym"
-            style={{ ...buttonBase, width: 38, padding: 0, border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', color: 'var(--text-primary)', opacity: inputValue.trim() ? 1 : 0.55 }}
-          >
-            <Plus size={14} />
-          </button>
         </div>
 
         {error && (

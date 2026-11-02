@@ -38,7 +38,7 @@ def test_tier1_direct_aggregation():
     result = translate_tiers_1_4(_request("SUM('SomeTable'[SomeColumn])"))
     assert result is not None
     assert result.tier == 1
-    assert result.sql == 'SUM(sometable."SOMECOLUMN")'
+    assert result.sql == 'SUM(SOMETABLE."SOMECOLUMN")'
     assert result.is_success
 
 

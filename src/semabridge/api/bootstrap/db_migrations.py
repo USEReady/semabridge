@@ -220,6 +220,15 @@ def _apply_schema_compatibility_fixes() -> None:
         if "demo_masked" not in run_columns:
             pending_alters.append("ALTER TABLE runs ADD COLUMN demo_masked BOOLEAN NOT NULL DEFAULT FALSE")
 
+    if _table_exists(engine, "synonym_overrides"):
+        so_columns = _get_column_names(engine, "synonym_overrides")
+        if "description" not in so_columns:
+            pending_alters.append("ALTER TABLE synonym_overrides ADD COLUMN description TEXT")
+        if "business_rules" not in so_columns:
+            pending_alters.append("ALTER TABLE synonym_overrides ADD COLUMN business_rules TEXT DEFAULT '[]'")
+        if "data_steward" not in so_columns:
+            pending_alters.append("ALTER TABLE synonym_overrides ADD COLUMN data_steward VARCHAR(255)")
+
     try:
         ensure_dry_run_job_columns(engine)
     except Exception as exc:  # noqa: BLE001

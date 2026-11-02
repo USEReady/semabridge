@@ -56,6 +56,9 @@ class SynonymOverride(Base):
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
     column_name: Mapped[str] = mapped_column(String(255), nullable=False)
     synonyms_json: Mapped[str] = mapped_column("synonyms", Text, nullable=False, default="[]")
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    business_rules_json: Mapped[Optional[str]] = mapped_column("business_rules", Text, nullable=True, default="[]")
+    data_steward: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(
         _UTC_DT, server_default=func.now(), nullable=True
     )
@@ -81,6 +84,21 @@ class SynonymOverride(Base):
     def synonyms(self, values: List[str]) -> None:
         cleaned = [str(value).strip() for value in (values or []) if str(value or "").strip()]
         self.synonyms_json = json.dumps(cleaned, ensure_ascii=False)
+
+    @property
+    def business_rules(self) -> List[str]:
+        try:
+            values = json.loads(self.business_rules_json or "[]")
+        except Exception:
+            return []
+        if not isinstance(values, list):
+            return []
+        return [str(value).strip() for value in values if str(value or "").strip()]
+
+    @business_rules.setter
+    def business_rules(self, values: List[str]) -> None:
+        cleaned = [str(value).strip() for value in (values or []) if str(value or "").strip()]
+        self.business_rules_json = json.dumps(cleaned, ensure_ascii=False)
 
 
 class PrecomputeAggregationOverride(Base):

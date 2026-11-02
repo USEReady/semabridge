@@ -30,7 +30,7 @@ def test_tier1_result_returned_without_reaching_tier5(monkeypatch):
 
     result = service.translate_metric(_request("SUM('SomeTable'[SomeColumn])"))
     assert result.tier == 1
-    assert result.sql == 'SUM(sometable."SOMECOLUMN")'
+    assert result.sql == 'SUM(SOMETABLE."SOMECOLUMN")'
 
 
 def test_falls_through_to_tier5_when_deterministic_tiers_decline(monkeypatch):

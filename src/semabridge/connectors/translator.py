@@ -1787,8 +1787,8 @@ class MetricExpressionTranslator:
             if f in sql_upper:
                 result["issues"].append(f"Contains forbidden keyword: {f}")
         
-        # Rule 2: No nested aggregates
-        if re.search(r'(SUM|AVG|COUNT)\(.*(SUM|AVG|COUNT)\(', sql, re.IGNORECASE):
+        # Rule 2: No nested aggregates (e.g. SUM(SUM(...)) or SUM(AVG(...)))
+        if re.search(r'\b(SUM|AVG|COUNT|MIN|MAX)\s*\([^)]*\b(SUM|AVG|COUNT|MIN|MAX)\s*\(', sql, re.IGNORECASE):
             result["issues"].append("Contains nested aggregates")
         
         # Rule 3: YTD must use MAX_DATE, not CURRENT_DATE
