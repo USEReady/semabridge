@@ -190,7 +190,7 @@ class DimensionsClauseBuilder:
                 continue
                 
             _SYNTHETIC_COLS = {
-                "MAX_DATE", "_CURRENT_FISCAL_PERIOD",
+                "MAX_DATE",
                 "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX",
             }
             _LIVE_ONLY_COLS = {"MONTHINDEX", "YEARINDEX", "QUARTERINDEX", "WEEKINDEX"}
@@ -199,7 +199,7 @@ class DimensionsClauseBuilder:
             for col in dataset.columns:
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
                     continue
-                if col.unique_name.upper() in _SYNTHETIC_COLS:
+                if col.unique_name.upper() in _SYNTHETIC_COLS or col.unique_name.upper().startswith("_CURRENT_"):
                     continue
 
                 col_key = (alias, col.unique_name.strip().upper())
@@ -321,7 +321,13 @@ class DimensionsClauseBuilder:
                 )
             )
             if is_enriched_target:
-                candidate_cols.add("_CURRENT_FISCAL_PERIOD")
+                from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                for m in getattr(model, "metrics", []) or []:
+                    m_ds = getattr(m, "dataset", None)
+                    if m_ds and str(m_ds).casefold() == str(dataset.unique_name).casefold():
+                        pat = match_scalar_dim_lookup_pattern(getattr(m, "expression", "") or "")
+                        if pat:
+                            candidate_cols.add(pat.helper_name)
 
             ds_orig_cols = {
                 self.identifier_sanitizer.sanitize_column(c.unique_name).upper()
@@ -331,7 +337,7 @@ class DimensionsClauseBuilder:
             for phys_col in sorted(candidate_cols):
                 if not phys_col or phys_col.startswith("RowNumber"):
                     continue
-                if phys_col.startswith("_") and phys_col.upper() != "_CURRENT_FISCAL_PERIOD":
+                if phys_col.startswith("_") and not phys_col.upper().startswith("_CURRENT_"):
                     continue
 
                 physical_dim_key = (alias, phys_col)
@@ -348,6 +354,11 @@ class DimensionsClauseBuilder:
                     semantic_name, ds_used, phys_col
                 )
                 is_helper = (
+                    phys_col.startswith("IS_")
+                    or phys_col.startswith("_CURRENT_")
+                    or phys_col == "MAX_DATE"
+                    or (phys_col.startswith("ALL_") and phys_col not in ds_orig_cols)
+                )
                     phys_col.upper() not in ds_orig_cols
                     and semantic_name.upper() not in ds_orig_cols
                     and emitted_name.upper() not in ds_orig_cols

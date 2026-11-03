@@ -879,7 +879,6 @@ class MetricExpressionTranslator:
                     cols.add(flag_val)
         # Pre-computed anchor columns available on enriched views
         cols.update({
-            "_CURRENT_FISCAL_PERIOD", "CURRENT_FISCAL_PERIOD",
             "MAX_DATE", "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX"
         })
         return cols
@@ -1552,7 +1551,12 @@ class MetricExpressionTranslator:
         return sql
 
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
-        if not known_columns: return None
+        if not candidate:
+            return None
+        if candidate.upper().startswith(("_CURRENT_", "CURRENT_")):
+            return candidate
+        if not known_columns:
+            return None
         # Case-insensitive check
         candidate_lower = candidate.lower()
         for col in known_columns:

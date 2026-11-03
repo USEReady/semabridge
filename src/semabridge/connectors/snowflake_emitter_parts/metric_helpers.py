@@ -189,7 +189,6 @@ def _get_effective_known_columns(emitter, dataset_name: str, dataset_col_lookup:
     )
     if enriched_map or is_enriched:
         cols.update({
-            "_CURRENT_FISCAL_PERIOD", "CURRENT_FISCAL_PERIOD",
             "MAX_DATE", "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX"
         })
     return cols
@@ -340,6 +339,10 @@ def normalize_metric_column_references(
 
 
 def resolve_column_name_for_dataset(known_columns: set[str], candidate: str) -> Optional[str]:
+    if not candidate:
+        return None
+    if candidate.upper().startswith(("_CURRENT_", "CURRENT_")):
+        return candidate
     if not known_columns:
         return None
     if candidate in known_columns:

@@ -173,17 +173,7 @@ class TablesClauseBuilder:
                 or self.live_schema_metadata.get(date_table.upper())
                 or set()
             )
-            if _live_cols and resolved_fiscal_col not in _live_cols:
-                # Fiscal column confirmed absent from live schema — skip anchor.
-                import logging as _log
-                _log.getLogger(__name__).debug(
-                    "Skipping _CURRENT_FISCAL_PERIOD anchor: column '%s' not found "
-                    "in live Snowflake schema for table '%s'.",
-                    resolved_fiscal_col, safe_table,
-                )
-                return source_fq
-
-        # Anchors (_CURRENT_FISCAL_PERIOD, MAX_DATE) are computed inside the
+        # Anchors (_CURRENT_<c>, MAX_DATE) are computed inside the
         # fact's enriched view (see SnowflakeEmitter._create_enriched_view),
         # never fetched from table data at sync time and spliced in here.
         return source_fq

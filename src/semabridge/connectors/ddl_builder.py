@@ -732,12 +732,14 @@ class SemanticViewBuilder:
                                 needs_enrich = True
                         except Exception:
                             pass
-                    if not needs_enrich and (
-                        re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', sql, re.IGNORECASE)
-                        or re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', dax, re.IGNORECASE)
-                        or re.search(r'FISCAL_YR_PERIOD.*(?:fiscalMonth|currentPeriod)', dax, re.IGNORECASE)
-                    ):
-                        needs_enrich = True
+                    if not needs_enrich:
+                        from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                        if (
+                            match_scalar_dim_lookup_pattern(dax) is not None
+                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
+                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
+                        ):
+                            needs_enrich = True
                     if needs_enrich:
                         safe_ds = self.identifier_sanitizer.sanitize_table_name(ds)
                         fq_view = f'"{self.config.database}"."{self.config.schema_name}"."{safe_ds}_ENRICHED"'
@@ -844,12 +846,14 @@ class SemanticViewBuilder:
                                 needs_enrich = True
                         except Exception:
                             pass
-                    if not needs_enrich and (
-                        re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', sql, re.IGNORECASE)
-                        or re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', dax, re.IGNORECASE)
-                        or re.search(r'FISCAL_YR_PERIOD.*(?:fiscalMonth|currentPeriod)', dax, re.IGNORECASE)
-                    ):
-                        needs_enrich = True
+                    if not needs_enrich:
+                        from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                        if (
+                            match_scalar_dim_lookup_pattern(dax) is not None
+                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
+                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
+                        ):
+                            needs_enrich = True
                     if needs_enrich:
                         safe_ds = self.identifier_sanitizer.sanitize_table_name(ds)
                         fq_view = f'"{self.config.database}"."{self.config.schema_name}"."{safe_ds}_ENRICHED"'

@@ -564,6 +564,25 @@ class MetricsClauseBuilder:
                     )
                     metric_entity_alias = alias
 
+            # Requirement 4: If the enriched view cannot be created, dependent metrics -> NULL with the reason; other metrics still deploy.
+            if failure is None:
+                failed_enriched_map = getattr(self, "failed_enriched_view_datasets", {}) or {}
+                failed_enriched_set = {s.casefold() for s in (getattr(self, "failed_enrichment_datasets", set()) or set())}
+                if isinstance(failed_enriched_map, dict):
+                    failed_enriched_set.update(k.casefold() for k in failed_enriched_map)
+                m_ds_key = str(getattr(metric, "dataset", "") or "").casefold()
+                if m_ds_key in failed_enriched_set:
+                    dax = getattr(metric, "expression", "") or ""
+                    from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                    if (
+                        match_scalar_dim_lookup_pattern(dax)
+                        or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', expr, re.IGNORECASE)
+                        or "MAX_DATE" in expr
+                        or any(s in expr for s in ["IS_YTD", "IS_MTD", "IS_QTD", "IS_SPLY"])
+                    ):
+                        err_reason = failed_enriched_map.get(m_ds_key, "Enriched view creation failed")
+                        failure = (f"Enriched view creation failed for '{metric.dataset}': {err_reason}", expr[:200])
+
             if failure is not None:
                 reason, detail = failure
                 logger.warning(
@@ -662,14 +681,17 @@ class MetricsClauseBuilder:
             if expr != NULL_PLACEHOLDER_SQL and "PARTITION BY EXCLUDING" in expr.upper():
                 expr = self._align_partition_by_excluding(expr)
 
-            if expr != NULL_PLACEHOLDER_SQL and "FISCAL_YR_PERIOD" in expr.upper():
-                # If metric table has FISCAL_YR_PERIOD, redirect any external FISCAL_YR_PERIOD reference to the metric table
-                fact_ds = dataset_by_name.get(metric.dataset)
-                fact_cols = {c.upper() for c in (dataset_col_lookup.get(metric.dataset, set()) or set())}
-                if fact_ds:
-                    fact_cols.update(c.unique_name.upper() for c in getattr(fact_ds, "columns", []) or [])
-                if "FISCAL_YR_PERIOD" in fact_cols and alias:
-                    expr = re.sub(r'\b[A-Za-z0-9_]+\."?FISCAL_YR_PERIOD"?', f'{alias}."FISCAL_YR_PERIOD"', expr, flags=re.IGNORECASE)
+            if expr != NULL_PLACEHOLDER_SQL:
+                from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                pat = match_scalar_dim_lookup_pattern(getattr(metric, "expression", "") or "")
+                if pat:
+                    fact_ds = dataset_by_name.get(metric.dataset)
+                    fact_cols = {c.upper() for c in (dataset_col_lookup.get(metric.dataset, set()) or set())}
+                    if fact_ds:
+                        fact_cols.update(c.unique_name.upper() for c in getattr(fact_ds, "columns", []) or [])
+                    c_clean = pat.dim_col.upper()
+                    if c_clean in fact_cols and alias:
+                        expr = re.sub(rf'\b[A-Za-z0-9_]+\."?{re.escape(c_clean)}"?', f'{alias}."{c_clean}"', expr, flags=re.IGNORECASE)
 
             comment_clause = ""
             if expr == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr:
@@ -1404,8 +1426,8 @@ class MetricsClauseBuilder:
                     if has_enriched_target:
                         return expr
 
-                fiscal_anchor_match = re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', expr, re.IGNORECASE)
-                if fiscal_anchor_match:
+                scalar_anchor_match = re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', expr, re.IGNORECASE)
+                if scalar_anchor_match:
                     has_enriched_target = bool(
                         self.enriched_view_mapping
                         and (

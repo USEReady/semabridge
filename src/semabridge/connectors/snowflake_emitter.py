@@ -401,9 +401,8 @@ class SnowflakeEmitter(BaseEmitter):
                 set_allowed_model_objects(_allowed_objs)
 
                 # Let TablesClauseBuilder precompute anchor literals (e.g.
-                # _CURRENT_FISCAL_PERIOD) via a live lookup instead of
-                # embedding a subquery in the TABLES clause — see
-                # TablesClauseBuilder._fetch_fiscal_anchor_literal.
+                # _CURRENT_<c>) via a live lookup instead of
+                # embedding a subquery in the TABLES clause.
                 self.semantic_view_builder.cursor = cur
 
                 # Step -2: Ensure this project's own target schema exists.
@@ -2706,10 +2705,11 @@ class SnowflakeEmitter(BaseEmitter):
                             continue
                     except Exception:
                         pass
+                from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
                 if (
-                    re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', sql, re.IGNORECASE)
-                    or re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', dax, re.IGNORECASE)
-                    or re.search(r'FISCAL_YR_PERIOD.*(?:fiscalMonth|currentPeriod)', dax, re.IGNORECASE)
+                    match_scalar_dim_lookup_pattern(dax) is not None
+                    or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
+                    or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
                 ):
                     seen.add(ds.casefold())
                     fact_tables.append(ds)
@@ -2775,6 +2775,30 @@ class SnowflakeEmitter(BaseEmitter):
                 if getattr(c, "unique_name", None)
             }
 
+        # Requirement 3: fact_date_col must be a date-typed column (schema type DATE/TIMESTAMP); never an integer join column.
+        def _is_date_type(col_name: str) -> bool:
+            if not col_name:
+                return False
+            col_u = col_name.upper()
+            live_types = getattr(self, "_live_column_types", {}).get(fact_source_key, {})
+            if col_u in live_types:
+                t = str(live_types[col_u]).upper()
+                if any(dt in t for dt in ["DATE", "TIME", "TIMESTAMP"]):
+                    return True
+                if any(nt in t for nt in ["INT", "NUMBER", "FLOAT", "DECIMAL", "NUMERIC", "VARCHAR", "STRING", "BOOLEAN"]):
+                    return False
+            for c in getattr(fact_dataset, "columns", []) or []:
+                c_uname = getattr(c, "unique_name", "") or ""
+                c_name = getattr(c, "name", "") or ""
+                if c_uname.upper() == col_u or c_name.upper() == col_u:
+                    dt = getattr(c, "data_type", None)
+                    dt_str = str(getattr(dt, "value", dt) or "").upper()
+                    if any(t in dt_str for t in ["DATE", "TIME", "TIMESTAMP"]):
+                        return True
+                    if any(t in dt_str for t in ["INT", "INTEGER", "DECIMAL", "FLOAT", "NUMERIC", "STRING", "VARCHAR", "BOOL"]):
+                        return False
+            return False
+
         # 1. Check active relationship between fact_table and date_table
         for rel in getattr(model, "relationships", []) or []:
             if not getattr(rel, "is_active", True):
@@ -2785,25 +2809,25 @@ class SnowflakeEmitter(BaseEmitter):
                 from_cols = getattr(rel, "from_columns", []) or []
                 if from_cols:
                     c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, from_cols[0], model=model)
-                    if c_phys and c_phys.upper() in fact_cols:
+                    if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys):
                         return c_phys
             elif to_ds == fact_table and from_ds == date_table:
                 to_cols = getattr(rel, "to_columns", []) or []
                 if to_cols:
                     c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, to_cols[0], model=model)
-                    if c_phys and c_phys.upper() in fact_cols:
+                    if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys):
                         return c_phys
 
         # 2. Check direct date column match
         resolved_date_col = self.schema_manager._resolve_physical_column_name(
             fact_dataset, date_col, model=model
         )
-        if resolved_date_col and resolved_date_col.upper() in fact_cols:
+        if resolved_date_col and resolved_date_col.upper() in fact_cols and _is_date_type(resolved_date_col):
             return resolved_date_col
 
-        # 3. Check any date-like column on fact
+        # 3. Check any date-typed column on fact
         cand = next(
-            (fc for fc in sorted(fact_cols) if any(t in fc.upper() for t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR"])),
+            (fc for fc in sorted(fact_cols) if _is_date_type(fc)),
             None
         )
         return cand
@@ -2939,7 +2963,7 @@ class SnowflakeEmitter(BaseEmitter):
         Config/date_resolution.yaml) instead of a separate hardcoded
         keyword list. The old body here required an exact date-column name
         match AND a "fiscal"-named column to both be present, so it
-        returned None (silently skipping MAX_DATE/_CURRENT_FISCAL_PERIOD
+        returned None (silently skipping MAX_DATE/_CURRENT_<c>
         anchor injection in _create_enriched_view) for any model whose date
         table has no fiscal-period column at all — even though the later,
         correct resolution in TablesClauseBuilder only ever required the
@@ -3726,18 +3750,55 @@ class SnowflakeEmitter(BaseEmitter):
                     if getattr(c, "unique_name", None)
                 }
 
-            has_fiscal_anchor = (
-                resolved_fiscal_col in date_cols
-                and resolved_date_col in date_cols
-                and resolved_fiscal_col != resolved_date_col
-            )
-            if has_fiscal_anchor:
+            from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+            # Requirement 2: Pattern-driven scalar lookup
+            # Dim, c, k, aggregate (MAX/MIN) and comparison operator come from DAX
+            # Helper name = _CURRENT_<c>
+            scalar_patterns = []
+            for m in getattr(model, "metrics", []) or []:
+                m_ds = getattr(m, "dataset", None)
+                if m_ds and str(m_ds).casefold() != str(fact_table).casefold():
+                    continue
+                dax = getattr(m, "expression", "") or ""
+                pat = match_scalar_dim_lookup_pattern(dax)
+                if pat:
+                    scalar_patterns.append(pat)
+
+            seen_helpers = set()
+            for pat in scalar_patterns:
+                helper_name = pat.helper_name
+                if helper_name in seen_helpers:
+                    continue
+                seen_helpers.add(helper_name)
+
+                dim_ds = self._get_dataset_by_name(model, pat.dim_table) if pat.dim_table else (date_dataset or None)
+                if dim_ds is not None:
+                    from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+                    resolved_dim_table = resolve_dataset_to_physical_table(
+                        dim_ds.unique_name,
+                        [c.unique_name for c in getattr(dim_ds, "columns", []) or []],
+                        self._live_schema_metadata,
+                        model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
+                    )
+                    safe_dim_table = self._id.sanitize_table_name(resolved_dim_table)
+                    dim_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
+                    resolved_c = self.schema_manager._resolve_physical_column_name(dim_ds, pat.dim_col, model=model)
+                    resolved_k = self.schema_manager._resolve_physical_column_name(dim_ds, pat.key_col, model=model)
+                else:
+                    safe_dim_table = self._id.sanitize_table_name(pat.dim_table or date_table)
+                    dim_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
+                    resolved_c = self._id.sanitize_column(pat.dim_col)
+                    resolved_k = self._id.sanitize_column(pat.key_col)
+
+                # Requirement 1: Match the DAX with '=' (Dim[k] = TODAY()), not '<='.
+                # SELECT MAX(<c>) FROM <Dim> WHERE <k> = CURRENT_DATE()
+                anchor_alias = f'anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat.dim_col).lower()}'
                 anchor_joins.append(
-                    f'CROSS JOIN (SELECT MAX("{resolved_fiscal_col}") AS "_CURRENT_FISCAL_PERIOD" '
-                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" <= CURRENT_DATE()) anchor_fiscal'
+                    f'CROSS JOIN (SELECT {pat.agg}("{resolved_c}") AS "{helper_name}" '
+                    f'FROM {dim_ref} WHERE "{resolved_k}" = CURRENT_DATE()) {anchor_alias}'
                 )
-                select_parts.append('\n            , anchor_fiscal."_CURRENT_FISCAL_PERIOD" AS "_CURRENT_FISCAL_PERIOD"')
-                projected_cols.add("_CURRENT_FISCAL_PERIOD")
+                select_parts.append(f'\n            , {anchor_alias}."{helper_name}" AS "{helper_name}"')
+                projected_cols.add(helper_name)
 
             from semabridge.converter.time_intelligence_shapes import (
                 build_shape_boolean_sql,
@@ -3762,7 +3823,7 @@ class SnowflakeEmitter(BaseEmitter):
                     len(s) == 1 and s[0].startswith("R") and s[0].endswith("M") and s[0][1:-1].isdigit()
                     for s in shapes
                 )
-                if has_rolling_months and has_fiscal_anchor:
+                if has_rolling_months and scalar_patterns:
                     anchor_joins.append(
                         f'LEFT JOIN {date_table_ref} dt_anchor ON f."{fact_date_col}" = dt_anchor."{resolved_date_col}"'
                     )
@@ -3774,19 +3835,20 @@ class SnowflakeEmitter(BaseEmitter):
                         and shape[0].startswith("R")
                         and shape[0].endswith("M")
                         and shape[0][1:-1].isdigit()
-                        and has_fiscal_anchor
+                        and scalar_patterns
                     ):
                         n_months = int(shape[0][1:-1])
+                        pat0 = scalar_patterns[0]
                         flag_sql = (
-                            f'dt_anchor."{resolved_fiscal_col}" <= anchor_fiscal."_CURRENT_FISCAL_PERIOD" '
-                            f'AND dt_anchor."{resolved_fiscal_col}" > anchor_fiscal."_CURRENT_FISCAL_PERIOD" - {n_months}'
+                            f'dt_anchor."{pat0.dim_col}" <= anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" '
+                            f'AND dt_anchor."{pat0.dim_col}" > anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" - {n_months}'
                         )
                     else:
                         flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_sql)
                     select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
                     projected_cols.add(flag_name)
                     new_flag_map[shape] = flag_name
-            elif not shapes and not has_fiscal_anchor and not fact_date_col:
+            elif not shapes and not scalar_patterns and not fact_date_col:
                 logger.info(
                     "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
                     fact_table,
