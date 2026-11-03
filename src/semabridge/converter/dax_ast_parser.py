@@ -1670,6 +1670,92 @@ def extract_measure_references_from_ast(dax: str, known_measure_names: Optional[
 
 
 
+_TI_DATE_ARG_FUNCS = {
+    "TOTALYTD": 1, "TOTALMTD": 1, "TOTALQTD": 1,                 # arg index of the dates column
+    "SAMEPERIODLASTYEAR": 0, "PREVIOUSYEAR": 0, "PREVIOUSMONTH": 0, "PREVIOUSQUARTER": 0,
+    "DATEADD": 0, "DATESYTD": 0, "DATESMTD": 0, "DATESQTD": 0, "PARALLELPERIOD": 0,
+    "DATESINPERIOD": 0, "DATESBETWEEN": 0, "LASTDATE": 0, "FIRSTDATE": 0,
+}
+
+
+def _ti_date_tables_in_ast(node: Optional[DaxNode], out: Set[str]) -> None:
+    """Tables used as the dates argument of a time-intelligence function."""
+    if node is None:
+        return
+    if isinstance(node, FunctionCallNode):
+        idx = _TI_DATE_ARG_FUNCS.get(node.func.upper())
+        if idx is not None and len(node.args) > idx and isinstance(node.args[idx], ColumnRefNode) and node.args[idx].table:
+            out.add(node.args[idx].table.strip("'").casefold())
+        for a in node.args:
+            _ti_date_tables_in_ast(a, out)
+    elif isinstance(node, BinaryOpNode):
+        _ti_date_tables_in_ast(node.left, out)
+        _ti_date_tables_in_ast(node.right, out)
+    elif isinstance(node, UnaryOpNode):
+        _ti_date_tables_in_ast(node.operand, out)
+    elif isinstance(node, VarNode):
+        for _, v in node.variables:
+            _ti_date_tables_in_ast(v, out)
+        _ti_date_tables_in_ast(node.body, out)
+
+
+def detect_date_tables(
+    datasets: Iterable[Any],
+    relationships: Iterable[Any],
+    measure_dax: Iterable[str],
+    config_date_table_names: Optional[Iterable[str]] = None,
+) -> Set[str]:
+    """Date tables from metadata only - never from table names.
+    Optional config_date_table_names provides an explicit override list if specified.
+    """
+    found: Set[str] = set()
+    if config_date_table_names:
+        for n in config_date_table_names:
+            if n:
+                found.add(str(n).strip().casefold())
+    col_type: Dict[Tuple[str, str], str] = {}
+    keys: Dict[str, Set[str]] = {}
+    for ds in datasets or ():
+        name = str(getattr(ds, "unique_name", None) or getattr(ds, "name", "")).strip().casefold()
+        if not name:
+            continue
+        # 1. marked as date table in Power BI
+        if getattr(ds, "is_date_table", False) or str(getattr(ds, "data_category", "") or "").casefold() == "time":
+            found.add(name)
+        pk = getattr(ds, "primary_key", None) or []
+        keys[name] = {str(k).casefold() for k in ([pk] if isinstance(pk, str) else pk)}
+        for col in getattr(ds, "columns", []) or []:
+            c = str(getattr(col, "unique_name", None) or getattr(col, "name", "")).casefold()
+            dt = getattr(col, "data_type", None) or getattr(col, "type", None)
+            col_type[(name, c)] = str(getattr(dt, "value", dt) or "").upper()
+            if getattr(col, "is_key", False) or getattr(col, "is_unique", False):
+                keys[name].add(c)
+    # 2. used as the dates argument of a time-intelligence function
+    parser = DaxAstParser()
+    for dax in measure_dax or ():
+        if not dax:
+            continue
+        try:
+            ast = parser.parse(dax)
+            _ti_date_tables_in_ast(ast, found)
+        except Exception:
+            pass
+    # 3. 'one' side of an active relationship on a unique, date-typed key
+    for rel in relationships or ():
+        if not getattr(rel, "is_active", getattr(rel, "isActive", True)):
+            continue
+        to_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "toTable", "") or "").strip().casefold()
+        to_cols = getattr(rel, "to_columns", None) or ([getattr(rel, "toColumn", None)] if getattr(rel, "toColumn", None) else [])
+        for c in to_cols:
+            if not c:
+                continue
+            c_cf = str(c).casefold()
+            t_type = col_type.get((to_ds, c_cf), "")
+            if ("DATE" in t_type or "TIME" in t_type) and c_cf in keys.get(to_ds, set()):
+                found.add(to_ds)
+    return found
+
+
 class DaxSqlRenderer:
 
     """
@@ -1824,15 +1910,24 @@ class DaxSqlRenderer:
 
     # than the primary table.
 
-    _DEFAULT_DATE_TABLE_NAMES = frozenset({"date", "dates", "dim_date", "dimdate", "dim_dates"})
-
-    @classmethod
-    def _is_date_table_name(cls, name: Optional[str]) -> bool:
-        """Check if a table name matches known standard date table names."""
-        if not name:
-            return False
-        clean = str(name).strip().strip("'\"").casefold()
-        return clean in cls._DEFAULT_DATE_TABLE_NAMES
+    def _ti_date_column_sql(self, args: List[DaxNode]) -> str:
+        """The dates column exactly as written in the DAX, on its own table's alias."""
+        search_args = args[1:] if len(args) > 1 else args
+        for arg in search_args:
+            if isinstance(arg, ColumnRefNode) and arg.column:
+                alias = self._resolve_table_alias(arg.table) if arg.table else self.date_alias
+                return f'{alias}."{sanitize_column(arg.column)}"'
+            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
+                alias = self.date_alias
+                return f'{alias}."{sanitize_column(arg.name)}"'
+        for arg in args:
+            if isinstance(arg, ColumnRefNode) and arg.column:
+                alias = self._resolve_table_alias(arg.table) if arg.table else self.date_alias
+                return f'{alias}."{sanitize_column(arg.column)}"'
+            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
+                alias = self.date_alias
+                return f'{alias}."{sanitize_column(arg.name)}"'
+        raise self.DaxRenderError("no date column found for time-intelligence function")
 
 
     def __init__(
@@ -1914,64 +2009,17 @@ class DaxSqlRenderer:
         self.primary_table_name = primary_table_name
 
         self._date_table_names_cf = {
-
-            str(n).strip().casefold()
-
-            for n in (date_table_names or self._DEFAULT_DATE_TABLE_NAMES)
-
+            str(n).strip().strip("'").casefold()
+            for n in (date_table_names or ())
         }
-        self._date_table_names_cf.update(self._DEFAULT_DATE_TABLE_NAMES)
 
         self.table_aliases = table_aliases or {}
 
         self._table_aliases_cf = {
-
             str(k).strip().strip("'").casefold(): v for k, v in self.table_aliases.items()
-
         }
-        for tbl_name in self.table_aliases:
-            if self._is_date_table_name(tbl_name):
-                self._date_table_names_cf.add(str(tbl_name).strip().casefold())
 
-        # Build column type map and identify date tables from metadata only
-        all_datasets = datasets or getattr(model_metadata, "datasets", None) or []
-        ds_col_types = {}
-        for ds in all_datasets:
-            ds_name = getattr(ds, "unique_name", None) or getattr(ds, "name", None)
-            if not ds_name:
-                continue
-            ds_name_cf = str(ds_name).strip().casefold()
-            is_dt_table = getattr(ds, "is_date_table", False)
-            data_cat = str(getattr(ds, "data_category", "") or "").casefold()
-            if is_dt_table or data_cat == "time" or self._is_date_table_name(ds_name):
-                self._date_table_names_cf.add(ds_name_cf)
-            for col in getattr(ds, "columns", []) or []:
-                c_name = getattr(col, "unique_name", None) or getattr(col, "name", None)
-                if c_name:
-                    dt = getattr(col, "data_type", None) or getattr(col, "type", None)
-                    dt_str = str(dt.value if hasattr(dt, "value") else dt or "").upper()
-                    ds_col_types[(ds_name_cf, str(c_name).casefold())] = dt_str
-
-        # Relationships: date-typed join keys in active relationships
         self.relationships = relationships
-        if self.relationships is not None:
-            for rel in self.relationships:
-                is_active = getattr(rel, "is_active", getattr(rel, "isActive", True))
-                if not is_active:
-                    continue
-                f_ds = str(getattr(rel, "from_dataset", "") or getattr(rel, "fromTable", "") or "").strip().casefold()
-                t_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "toTable", "") or "").strip().casefold()
-                f_cols = getattr(rel, "from_columns", None) or [getattr(rel, "fromColumn", None)]
-                t_cols = getattr(rel, "to_columns", None) or [getattr(rel, "toColumn", None)]
-
-                for fc in f_cols:
-                    if fc and any(d_word in ds_col_types.get((f_ds, str(fc).casefold()), "") for d_word in ("DATE", "TIME")):
-                        if self.primary_table_name and f_ds != self.primary_table_name.strip("'").casefold():
-                            self._date_table_names_cf.add(f_ds)
-                for tc in t_cols:
-                    if tc and any(d_word in ds_col_types.get((t_ds, str(tc).casefold()), "") for d_word in ("DATE", "TIME")):
-                        if self.primary_table_name and t_ds != self.primary_table_name.strip("'").casefold():
-                            self._date_table_names_cf.add(t_ds)
 
         # Shape tuple (see converter/time_intelligence_shapes.py, e.g.
 
@@ -2329,9 +2377,7 @@ class DaxSqlRenderer:
 
             return self._table_aliases_cf[name_cf]
 
-        if name_cf in self._date_table_names_cf or self._is_date_table_name(name_clean):
 
-            return self.date_alias
 
         if self.relationships is not None:
 
@@ -4301,35 +4347,7 @@ class DaxSqlRenderer:
 
 
 
-        d = self.date_alias
-
-        extracted_col = None
-
-        for arg in args:
-
-            if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
-
-                extracted_col = arg.column
-
-                break
-
-            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
-
-                extracted_col = arg.name
-
-                break
-
-        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
-
-            d_col = "COL_DATE"
-
-        else:
-
-            d_col = extracted_col
-        if not d_col:
-            raise self.DaxRenderError("no date column found for time-intelligence function")
-
-        date_col = f'{d}."{d_col}"'
+        date_col = self._ti_date_column_sql(args)
 
 
 
@@ -4535,35 +4553,7 @@ class DaxSqlRenderer:
 
  
 
-        d = self.date_alias
-
-        extracted_col = None
-
-        for arg in args:
-
-            if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
-
-                extracted_col = arg.column
-
-                break
-
-            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
-
-                extracted_col = arg.name
-
-                break
-
-        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
-
-            d_col = "COL_DATE"
-
-        else:
-
-            d_col = extracted_col
-        if not d_col:
-            raise self.DaxRenderError("no date column found for time-intelligence function")
-
-        date_col = f'{d}."{d_col}"'
+        date_col = self._ti_date_column_sql(args)
 
         # No flag column provisioned for this shape — anchor to CURRENT_DATE()
 
@@ -4996,6 +4986,11 @@ def try_ast_translate(
     that cannot be handled by the fast-path regex approach.
 
     """
+
+    if date_table_names is None and (datasets or model_metadata):
+        all_ds = datasets or getattr(model_metadata, "datasets", None) or []
+        all_rels = relationships or getattr(model_metadata, "relationships", None) or []
+        date_table_names = detect_date_tables(all_ds, all_rels, [dax])
 
     allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
 

@@ -14,6 +14,7 @@ import json
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.null_sentinel import is_null_cast_sql
+from semabridge.connectors.type_safety_validator import detect_nested_aggregate
 
 logger = get_logger(__name__)
 
@@ -865,7 +866,7 @@ class MetricExpressionTranslator:
         padded = f" {upper} "
         if any(token in padded for token in forbidden):
             return False
-        if re.search(r"\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\([^)]*\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\(", sql, re.IGNORECASE | re.DOTALL):
+        if detect_nested_aggregate(sql):
             return False
         return True
 
@@ -1788,8 +1789,9 @@ class MetricExpressionTranslator:
                 result["issues"].append(f"Contains forbidden keyword: {f}")
         
         # Rule 2: No nested aggregates
-        if re.search(r'(SUM|AVG|COUNT)\(.*(SUM|AVG|COUNT)\(', sql, re.IGNORECASE):
-            result["issues"].append("Contains nested aggregates")
+        nested_reason = detect_nested_aggregate(sql)
+        if nested_reason:
+            result["issues"].append(nested_reason)
         
         # Rule 3: YTD must use MAX_DATE, not CURRENT_DATE
         if "YTD" in metric_name.upper() or "TOTALYTD" in dax.upper():

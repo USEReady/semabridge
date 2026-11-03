@@ -1,3 +1,1 @@
 level,file,line,finding,code
-REVIEW,src/semabridge/converter/dax_ast_parser.py,2728,equality with a capitalised literal,"if func == ""AVERAGEX"" and expr_sql:"
-REVIEW,src/semabridge/converter/dax_rule_translator.py,1047,list/set of capitalised names,"if sql_func in (""COUNT"", ""AVG""):"

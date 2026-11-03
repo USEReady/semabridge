@@ -10,6 +10,7 @@ candidate from every adapter — no call site can opt out.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.utils.logger import get_logger

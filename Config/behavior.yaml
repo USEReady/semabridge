@@ -183,3 +183,8 @@ discovery:
   # from Fabric models.  Must match the value in semantic_model.view_suffix
   # if that key is set; defaults to "_SEMANTIC".
   semantic_view_suffix: "_SEMANTIC"
+
+# Date dimension configuration
+date_dimension:
+  # Optional override table names recognized as date/calendar dimensions for time intelligence (empty by default)
+  date_table_names: []

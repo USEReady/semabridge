@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from semabridge.connectors.translator import MetricExpressionTranslator
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.sml.loader import SMLLoader
+from semabridge.connectors.type_safety_validator import detect_nested_aggregate
 
 def test_all_measures(project_name: str):
     """Test all measures in a project"""
@@ -63,8 +64,9 @@ def test_all_measures(project_name: str):
             if f in sql_upper:
                 result["issues"].append(f"Contains forbidden keyword: {f}")
         
-        if re.search(r'(SUM|AVG|COUNT)\(.*(SUM|AVG|COUNT)\(', sql, re.IGNORECASE):
-            result["issues"].append("Contains nested aggregates")
+        nested_reason = detect_nested_aggregate(sql)
+        if nested_reason:
+            result["issues"].append(nested_reason)
         
         if "YTD" in metric_name.upper() or "TOTALYTD" in dax.upper():
             if "CURRENT_DATE" in sql_upper:
