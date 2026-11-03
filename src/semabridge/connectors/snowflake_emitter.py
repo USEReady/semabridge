@@ -3731,15 +3731,22 @@ class SnowflakeEmitter(BaseEmitter):
                 and resolved_date_col in date_cols
                 and resolved_fiscal_col != resolved_date_col
             )
-            if has_fiscal_anchor and fact_date_col:
+            if has_fiscal_anchor:
                 anchor_joins.append(
                     f'CROSS JOIN (SELECT MAX("{resolved_fiscal_col}") AS "_CURRENT_FISCAL_PERIOD" '
-                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" <= (SELECT COALESCE(MAX("{fact_date_col}")::DATE, CURRENT_DATE()) FROM {fact_source_ref})) anchor_fiscal'
+                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" <= CURRENT_DATE()) anchor_fiscal'
                 )
                 select_parts.append('\n            , anchor_fiscal."_CURRENT_FISCAL_PERIOD" AS "_CURRENT_FISCAL_PERIOD"')
                 projected_cols.add("_CURRENT_FISCAL_PERIOD")
 
-            if fact_date_col:
+            from semabridge.converter.time_intelligence_shapes import (
+                build_shape_boolean_sql,
+                discover_time_intelligence_shapes,
+                flag_column_name,
+            )
+
+            shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
+            if shapes and fact_date_col:
                 anchor_joins.append(
                     f'CROSS JOIN (SELECT COALESCE(MAX("{fact_date_col}"), CURRENT_DATE()) AS "MAX_DATE" '
                     f'FROM {fact_source_ref}) anchor_max'
@@ -3748,13 +3755,6 @@ class SnowflakeEmitter(BaseEmitter):
                 select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
                 projected_cols.add("MAX_DATE")
 
-                from semabridge.converter.time_intelligence_shapes import (
-                    build_shape_boolean_sql,
-                    discover_time_intelligence_shapes,
-                    flag_column_name,
-                )
-
-                shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
                 fact_date_col_sql = f'f."{fact_date_col}"'
                 new_flag_map = {}
 
@@ -3786,7 +3786,7 @@ class SnowflakeEmitter(BaseEmitter):
                     select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
                     projected_cols.add(flag_name)
                     new_flag_map[shape] = flag_name
-            else:
+            elif not shapes and not has_fiscal_anchor and not fact_date_col:
                 logger.info(
                     "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
                     fact_table,
