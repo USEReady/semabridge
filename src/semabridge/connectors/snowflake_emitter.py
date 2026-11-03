@@ -3462,12 +3462,16 @@ class SnowflakeEmitter(BaseEmitter):
         """
         clean_fact = str(fact_table or "").strip().strip('"')
         if clean_fact.upper().endswith("_ENRICHED"):
-            return self._namespaced_physical_name(clean_fact)
+            clean_fact_base = clean_fact.rsplit(".", 1)[-1].strip('"')
+            return self._namespaced_physical_name(clean_fact_base)
 
         fact_dataset = self._get_dataset_by_name(model, clean_fact) if model else None
         modeled_cols = [c.unique_name for c in getattr(fact_dataset, "columns", []) or []] if fact_dataset else []
         from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
-        explicit_mapping = getattr(self.sf_behavior, 'source_table_mapping', None) if hasattr(self, 'sf_behavior') else None
+        explicit_mapping = {
+            k: v for k, v in (getattr(self.sf_behavior, 'source_table_mapping', None) or {}).items()
+            if not str(v).upper().endswith("_ENRICHED") and "_ENRICHED" not in str(v).upper()
+        } if hasattr(self, 'sf_behavior') else None
         model_name = getattr(model, "unique_name", None) or getattr(model, "name", None) if model else None
 
         bound_table = resolve_dataset_to_physical_table(
@@ -3477,7 +3481,10 @@ class SnowflakeEmitter(BaseEmitter):
             explicit_mapping=explicit_mapping,
             model_name=model_name,
         )
-        return self._namespaced_physical_name(f"{bound_table}_ENRICHED")
+        clean_bound = str(bound_table or "").rsplit(".", 1)[-1].strip('"')
+        if clean_bound.upper().endswith("_ENRICHED"):
+            clean_bound = clean_bound[:-9]
+        return self._namespaced_physical_name(f"{clean_bound}_ENRICHED")
 
     def _dataset_for_enriched_view(self, model, view_name: str) -> Optional[str]:
         """Which dataset an enriched view belongs to, found by applying

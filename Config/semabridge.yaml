@@ -1,277 +1,217 @@
-project_name: Sales and Returns
+project_name: xcv
 source:
   type: pbix
-  pbix_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-sales-and-returns/0fbd97d861e84ac6afbfa8fe2afdd6e0_Sales
-    & Returns Sample v201912.pbix
-  pbix_file_path: C:/Users/manoj.s/AppData/Local/Temp/semabridge/projects/proj-sales-and-returns/0fbd97d861e84ac6afbfa8fe2afdd6e0_Sales
-    & Returns Sample v201912.pbix
+  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-xcv/ad207c5865d24666929a1a4c03510ad8_Competitive
+    Marketing Analysis (More Synonyms).pbix
+  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-xcv/ad207c5865d24666929a1a4c03510ad8_Competitive
+    Marketing Analysis (More Synonyms).pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
-  schema: SALES_AND_RETURNS
+  schema: SEMABRIDGE_WORKSPACE
   warehouse: DI_OTH_POC_WH
-  identity_id: 766ac499-4d9b-4f9f-adc9-5206789f1d57
+  identity_id: 9a025edb-697f-4fcd-987a-4b286821aeff
 mappings_overrides:
-- source_path: datasets.% Return Rate.columns.% Return Rate
-  target_name: PCT_RETURN_RATE
-- source_path: datasets.Age.columns.Age
-  target_name: COL_AGE
-- source_path: datasets.Age.columns.Age Bucket
-  target_name: AGE_BUCKET
-- source_path: datasets.Associated Product.columns.ProductID
-  target_name: ASSOCIATED_PRODUCT_PRODUCTID
-- source_path: datasets.Associated Product.columns.Product Image
-  target_name: ASSOCIATED_PRODUCT_PRODUCT_IMAGE
-- source_path: datasets.Associated Product.columns.Product
-  target_name: ASSOCIATED_PRODUCT_PRODUCT
-- source_path: datasets.Associated Product.columns.Segmented by
-  target_name: SEGMENTED_BY
-- source_path: datasets.Association.columns.RuleID
-  target_name: RULEID
-- source_path: datasets.Association.columns.LeftItemSetId
-  target_name: LEFTITEMSETID
-- source_path: datasets.Association.columns.RightItemSetId
-  target_name: RIGHTITEMSETID
-- source_path: datasets.Association.columns.Probability
-  target_name: PROBABILITY
-- source_path: datasets.Association.columns.Importance
-  target_name: IMPORTANCE
-- source_path: datasets.Association.columns.Support
-  target_name: SUPPORT
-- source_path: datasets.Calendar.columns.Date
-  target_name: CALENDAR_DATE
-- source_path: datasets.Calendar.columns.Month
+- source_path: datasets.Category.columns.Category
+  target_name: COL_CATEGORY
+- source_path: datasets.Category.columns.Ch
+  target_name: CH
+- source_path: datasets.Category.columns.Sort
+  target_name: CATEGORY_SORT
+- source_path: datasets.Date.columns.Date
+  target_name: DATE_DATE
+- source_path: datasets.Date.columns.MonthNo
+  target_name: MONTHNO
+- source_path: datasets.Date.columns.MonthName
+  target_name: MONTHNAME
+- source_path: datasets.Date.columns.MonthID
+  target_name: MONTHID
+- source_path: datasets.Date.columns.Month
   target_name: MONTH
-- source_path: datasets.Calendar.columns.MonthSort
-  target_name: MONTHSORT
-- source_path: datasets.Calendar.columns.Week
-  target_name: WEEK
-- source_path: datasets.Calendar.columns.Empty
-  target_name: CALENDAR_EMPTY
-- source_path: datasets.Customer.columns.ID
-  target_name: CUSTOMER_ID
-- source_path: datasets.Customer.columns.Unit
-  target_name: CUSTOMER_UNIT
-- source_path: datasets.Customer.columns.Gender
-  target_name: GENDER
-- source_path: datasets.Customer.columns.Product
-  target_name: CUSTOMER_PRODUCT
-- source_path: datasets.Customer.columns.Category
-  target_name: CUSTOMER_CATEGORY
-- source_path: datasets.Customer.columns.Segment
-  target_name: CUSTOMER_SEGMENT
-- source_path: datasets.Customer.columns.Store
-  target_name: CUSTOMER_STORE
-- source_path: datasets.Customer.columns.Type
-  target_name: CUSTOMER_TYPE
-- source_path: datasets.Customer.columns.Issue
-  target_name: CUSTOMER_ISSUE
-- source_path: datasets.Customer.columns.Promotion
-  target_name: CUSTOMER_PROMOTION
-- source_path: datasets.Customer.columns.Amount
-  target_name: CUSTOMER_AMOUNT
-- source_path: datasets.Customer.columns.Age
-  target_name: CUSTOMER_AGE
-- source_path: datasets.Customer.columns.Price Range
-  target_name: CUSTOMER_PRICE_RANGE
-- source_path: datasets.Details.columns.Design Factor
-  target_name: DESIGN_FACTOR
-- source_path: datasets.Details.columns.DFSort
-  target_name: DFSORT
-- source_path: datasets.Details.columns.Topic
-  target_name: TOPIC
-- source_path: datasets.Details.columns.TSort
-  target_name: TSORT
-- source_path: datasets.Issues and Promotions.columns.ID
-  target_name: ISSUES_AND_PROMOTIONS_ID
-- source_path: datasets.Issues and Promotions.columns.Issue
-  target_name: ISSUES_AND_PROMOTIONS_ISSUE
-- source_path: datasets.Issues and Promotions.columns.Promotion
-  target_name: ISSUES_AND_PROMOTIONS_PROMOTION
-- source_path: datasets.Product.columns.Product
-  target_name: COL_PRODUCT
-- source_path: datasets.Product.columns.ProductID
-  target_name: PRODUCT_PRODUCTID
+- source_path: datasets.Date.columns.Quarter
+  target_name: QUARTER
+- source_path: datasets.Date.columns.Year
+  target_name: YEAR
+- source_path: datasets.Date.columns.RunningMonths
+  target_name: RUNNINGMONTHS
+- source_path: datasets.Date.columns.Running Year
+  target_name: RUNNING_YEAR
+- source_path: datasets.Date.columns.Running Months
+  target_name: RUNNING_MONTHS
+- source_path: datasets.Date.columns.Rolling Period
+  target_name: ROLLING_PERIOD
+- source_path: datasets.Date.columns.Rolling Period Sort
+  target_name: ROLLING_PERIOD_SORT
+- source_path: datasets.Date.columns.MonthIndex
+  target_name: MONTHINDEX
+- source_path: datasets.Date.columns.Months
+  target_name: MONTHS
+- source_path: datasets.Geo.columns.Zip
+  target_name: GEO_ZIP
+- source_path: datasets.Geo.columns.City
+  target_name: CITY
+- source_path: datasets.Geo.columns.State
+  target_name: GEO_STATE
+- source_path: datasets.Geo.columns.Region
+  target_name: REGION
+- source_path: datasets.Geo.columns.District
+  target_name: DISTRICT
+- source_path: datasets.Indicators.columns.Sort
+  target_name: INDICATORS_SORT
+- source_path: datasets.Indicators.columns.Status
+  target_name: STATUS
+- source_path: datasets.Indicators.columns.Image
+  target_name: IMAGE
+- source_path: datasets.KPI.columns.KPI
+  target_name: KPI
+- source_path: datasets.KPI.columns.Category
+  target_name: KPI_CATEGORY
+- source_path: datasets.Manufacturer.columns.ManufacturerID
+  target_name: MANUFACTURER_MANUFACTURERID
+- source_path: datasets.Manufacturer.columns.Manufacturer
+  target_name: COL_MANUFACTURER
+- source_path: datasets.Manufacturer.columns.MfgisVanArsdel
+  target_name: MFGISVANARSDEL
+- source_path: datasets.Product.columns.Manufacturer
+  target_name: PRODUCT_MANUFACTURER
 - source_path: datasets.Product.columns.Category
   target_name: PRODUCT_CATEGORY
-- source_path: datasets.Product.columns.CategoryID
-  target_name: CATEGORYID
 - source_path: datasets.Product.columns.Segment
-  target_name: PRODUCT_SEGMENT
-- source_path: datasets.Product.columns.SegmentID
-  target_name: SEGMENTID
-- source_path: datasets.Product.columns.Product Image
-  target_name: PRODUCT_PRODUCT_IMAGE
-- source_path: datasets.Product.columns.Category Image
-  target_name: CATEGORY_IMAGE
-- source_path: datasets.Product.columns.Segement Color
-  target_name: SEGEMENT_COLOR
-- source_path: datasets.Product.columns.Segment image
-  target_name: SEGMENT_IMAGE
-- source_path: datasets.Product.columns.Price
-  target_name: PRICE
-- source_path: datasets.Product.columns.Price Range
-  target_name: PRODUCT_PRICE_RANGE
-- source_path: datasets.STable.columns.Metric
-  target_name: METRIC
-- source_path: datasets.STable.columns.Sort
-  target_name: SORT
-- source_path: datasets.Sales.columns.ProductID
-  target_name: SALES_PRODUCTID
-- source_path: datasets.Sales.columns.StoreID
-  target_name: SALES_STOREID
-- source_path: datasets.Sales.columns.Status
-  target_name: STATUS
-- source_path: datasets.Sales.columns.ID
-  target_name: SALES_ID
-- source_path: datasets.Sales.columns.Unit
-  target_name: SALES_UNIT
-- source_path: datasets.Sales.columns.Amount
-  target_name: SALES_AMOUNT
-- source_path: datasets.Sales.columns.Date
-  target_name: SALES_DATE
-- source_path: datasets.Store.columns.StoreID
-  target_name: STORE_STOREID
-- source_path: datasets.Store.columns.Store
-  target_name: COL_STORE
-- source_path: datasets.Store.columns.Type
-  target_name: STORE_TYPE
-- source_path: datasets.Store.columns.Longitude
-  target_name: LONGITUDE
-- source_path: datasets.Store.columns.Latitude
-  target_name: LATITUDE
-- source_path: datasets.Store.columns.image
-  target_name: IMAGE
-- source_path: datasets.Tooltip Info.columns.nombre
-  target_name: TOOLTIP_INFO_NOMBRE
-- source_path: datasets.Tooltip Info.columns.URL
-  target_name: TOOLTIP_INFO_URL
-- source_path: datasets.Tooltip Info.columns.DLINK
-  target_name: TOOLTIP_INFO_DLINK
-- source_path: datasets.Tooltip Info.columns.Empty
-  target_name: TOOLTIP_INFO_EMPTY
-- source_path: datasets.Tooltip Info2.columns.Nombre
-  target_name: TOOLTIP_INFO2_NOMBRE
-- source_path: datasets.Tooltip Info2.columns.URL
-  target_name: TOOLTIP_INFO2_URL
-- source_path: datasets.Tooltip Info2.columns.DLINK
-  target_name: TOOLTIP_INFO2_DLINK
-- source_path: metrics.% Return Rate Value
-  target_name: PCT_RETURN_RATE_VALUE
-- source_path: metrics.Info Tooltip
-  target_name: INFO_TOOLTIP
-- source_path: metrics.Info Tooltip 2
-  target_name: INFO_TOOLTIP_2
-- source_path: metrics.Net Sales
-  target_name: NET_SALES
-- source_path: metrics.Net Sales PM
-  target_name: NET_SALES_PM
-- source_path: metrics.Last 2 Months Net Sales
-  target_name: LAST_2_MONTHS_NET_SALES
-- source_path: metrics.Net Sales Variance
-  target_name: NET_SALES_VARIANCE
-- source_path: metrics.Net Sales Variance %
-  target_name: NET_SALES_VARIANCE_PCT
-- source_path: metrics.Units Sold
-  target_name: UNITS_SOLD
-- source_path: metrics.Units Sold PM
-  target_name: UNITS_SOLD_PM
-- source_path: metrics.Units Sold Variance %
-  target_name: UNITS_SOLD_VARIANCE_PCT
-- source_path: metrics.Returns
-  target_name: RETURNS
-- source_path: metrics.Returns PM
-  target_name: RETURNS_PM
-- source_path: metrics.Last 2 Months Returns
-  target_name: LAST_2_MONTHS_RETURNS
-- source_path: metrics.Returns Variance
-  target_name: RETURNS_VARIANCE
-- source_path: metrics.Returns Variance %
-  target_name: RETURNS_VARIANCE_PCT
-- source_path: metrics.Units Returned
-  target_name: UNITS_RETURNED
-- source_path: metrics.Units Returned PM
-  target_name: UNITS_RETURNED_PM
-- source_path: metrics.Units Returned Variance %
-  target_name: UNITS_RETURNED_VARIANCE_PCT
-- source_path: metrics.Return Rate
-  target_name: RETURN_RATE
-- source_path: metrics.WIF Units Returned
-  target_name: WIF_UNITS_RETURNED
-- source_path: metrics.WIF Units Returned Average
-  target_name: WIF_UNITS_RETURNED_AVERAGE
-- source_path: metrics.WIF Units Returned Difference
-  target_name: WIF_UNITS_RETURNED_DIFFERENCE
-- source_path: metrics.WIF Units Returned_1
-  target_name: WIF_UNITS_RETURNED_1
-- source_path: metrics.WIF Units Returned_2
-  target_name: WIF_UNITS_RETURNED_2
-- source_path: metrics.WIF Adjusted Units Returned
-  target_name: WIF_ADJUSTED_UNITS_RETURNED
-- source_path: metrics.WIF Adjusted Net Sales
-  target_name: WIF_ADJUSTED_NET_SALES
-- source_path: metrics.WIF Price per Unit
-  target_name: WIF_PRICE_PER_UNIT
-- source_path: metrics.WIF Profit
-  target_name: WIF_PROFIT
-- source_path: metrics.Profit Difference
-  target_name: PROFIT_DIFFERENCE
-- source_path: metrics.WIF Adjusted Sales
-  target_name: WIF_ADJUSTED_SALES
-- source_path: metrics.WIF Sales
-  target_name: WIF_SALES
-- source_path: metrics.WIF Same
-  target_name: WIF_SAME
-- source_path: metrics.WIF Forecast
-  target_name: WIF_FORECAST
-- source_path: metrics.WIF Total Forecast
-  target_name: WIF_TOTAL_FORECAST
-- source_path: metrics.WIF Total Profit
-  target_name: WIF_TOTAL_PROFIT
-- source_path: metrics.WIF Profit Difference
-  target_name: WIF_PROFIT_DIFFERENCE
-- source_path: metrics.Total Return Rate
-  target_name: TOTAL_RETURN_RATE
-- source_path: metrics.Product Top N
-  target_name: PRODUCT_TOP_N
-- source_path: metrics.Product Sales Top 3
-  target_name: PRODUCT_SALES_TOP_3
-- source_path: metrics.Product Sales Other
-  target_name: PRODUCT_SALES_OTHER
-- source_path: metrics.Store Top N
-  target_name: STORE_TOP_N
-- source_path: metrics.Store Sales Other
-  target_name: STORE_SALES_OTHER
-- source_path: metrics.Store Sales Top 3
-  target_name: STORE_SALES_TOP_3
-- source_path: metrics.Net Sales Indicator
-  target_name: NET_SALES_INDICATOR
-- source_path: metrics.Units Sold Indicator
-  target_name: UNITS_SOLD_INDICATOR
-- source_path: metrics.Returns Indicator
-  target_name: RETURNS_INDICATOR
-- source_path: metrics.ProductR Top N
-  target_name: PRODUCTR_TOP_N
-- source_path: metrics.Product Returns Other
-  target_name: PRODUCT_RETURNS_OTHER
-- source_path: metrics.Product Returns Top 3
-  target_name: PRODUCT_RETURNS_TOP_3
-- source_path: metrics.StoreR Top N
-  target_name: STORER_TOP_N
-- source_path: metrics.Store Returns Other
-  target_name: STORE_RETURNS_OTHER
-- source_path: metrics.Returns Sales Top 3
-  target_name: RETURNS_SALES_TOP_3
-- source_path: metrics.Units Returned Indicator
-  target_name: UNITS_RETURNED_INDICATOR
-- source_path: metrics.Net Sales Label
-  target_name: NET_SALES_LABEL
-- source_path: metrics.Profit Indicator
-  target_name: PROFIT_INDICATOR
-- source_path: metrics.Association
-  target_name: ASSOCIATION
-- source_path: metrics.Lift Label
-  target_name: LIFT_LABEL
+  target_name: SEGMENT
+- source_path: datasets.Product.columns.Product
+  target_name: PRODUCT
+- source_path: datasets.Product.columns.ProductID
+  target_name: PRODUCT_PRODUCTID
+- source_path: datasets.Product.columns.isVanArsdel
+  target_name: ISVANARSDEL
+- source_path: datasets.Product.columns.IsCompeteHide
+  target_name: ISCOMPETEHIDE
+- source_path: datasets.Product.columns.ManufacturerID
+  target_name: PRODUCT_MANUFACTURERID
+- source_path: datasets.Product.columns.IsCompete
+  target_name: ISCOMPETE
+- source_path: datasets.SalesFact.columns.ProductID
+  target_name: SALESFACT_PRODUCTID
+- source_path: datasets.SalesFact.columns.Date
+  target_name: SALESFACT_DATE
+- source_path: datasets.SalesFact.columns.Zip
+  target_name: SALESFACT_ZIP
+- source_path: datasets.SalesFact.columns.Units
+  target_name: UNITS
+- source_path: datasets.SalesFact.columns.Revenue
+  target_name: REVENUE
+- source_path: datasets.Sentiment.columns.DateID
+  target_name: DATEID
+- source_path: datasets.Sentiment.columns.StateID
+  target_name: STATEID
+- source_path: datasets.Sentiment.columns.ManufacturerID
+  target_name: SENTIMENT_MANUFACTURERID
+- source_path: datasets.Sentiment.columns.Score
+  target_name: SCORE
+- source_path: datasets.Sentiment.columns.Manufacturer
+  target_name: SENTIMENT_MANUFACTURER
+- source_path: datasets.Sentiment.columns.Date
+  target_name: SENTIMENT_DATE
+- source_path: datasets.Sentiment.columns.State
+  target_name: SENTIMENT_STATE
+- source_path: datasets.Sentiment.columns.zip
+  target_name: SENTIMENT_ZIP
+- source_path: datasets.Sentiment.columns.ProductID
+  target_name: SENTIMENT_PRODUCTID
+- source_path: metrics.KPI01
+  target_name: KPI01
+- source_path: metrics.KPI02
+  target_name: KPI02
+- source_path: metrics.Count of Product
+  target_name: COUNT_OF_PRODUCT
+- source_path: metrics.NewCount of Product
+  target_name: NEWCOUNT_OF_PRODUCT
+- source_path: metrics.NewNewCount of Product
+  target_name: NEWNEWCOUNT_OF_PRODUCT
+- source_path: metrics.Total Units
+  target_name: TOTAL_UNITS
+- source_path: metrics.Sales $
+  target_name: SALES_DOL
+- source_path: metrics.Sentiment
+  target_name: SENTIMENT
+- source_path: metrics.Total Units YTD
+  target_name: TOTAL_UNITS_YTD
+- source_path: metrics.Total VanArsdel Units YTD
+  target_name: TOTAL_VANARSDEL_UNITS_YTD
+- source_path: metrics.Total OTHER Units YTD
+  target_name: TOTAL_OTHER_UNITS_YTD
+- source_path: metrics.Total VanArsdel Units
+  target_name: TOTAL_VANARSDEL_UNITS
+- source_path: metrics.Total OTHER Units
+  target_name: TOTAL_OTHER_UNITS
+- source_path: metrics.% Units Market Share
+  target_name: PCT_UNITS_MARKET_SHARE
+- source_path: metrics.Total Category Volume
+  target_name: TOTAL_CATEGORY_VOLUME
+- source_path: metrics.Total Compete Volume
+  target_name: TOTAL_COMPETE_VOLUME
+- source_path: metrics.% Category Compete Share
+  target_name: PCT_CATEGORY_COMPETE_SHARE
+- source_path: metrics.TOTAL UNITS SPLY
+  target_name: TOTAL_UNITS_SPLY
+- source_path: metrics.Total Units YTD SPLY
+  target_name: TOTAL_UNITS_YTD_SPLY
+- source_path: metrics.Total VanArsdel Units YTD SPLY
+  target_name: TOTAL_VANARSDEL_UNITS_YTD_SPLY
+- source_path: metrics.Total OTHER Units YTD SPLY
+  target_name: TOTAL_OTHER_UNITS_YTD_SPLY
+- source_path: metrics.% Units Market Share YTD
+  target_name: PCT_UNITS_MARKET_SHARE_YTD
+- source_path: metrics.% Market Share SPLY YTD
+  target_name: PCT_MARKET_SHARE_SPLY_YTD
+- source_path: metrics.% Unit Market Share YOY Change
+  target_name: PCT_UNIT_MARKET_SHARE_YOY_CHANGE
+- source_path: metrics.% Units Market Share SPLY
+  target_name: PCT_UNITS_MARKET_SHARE_SPLY
+- source_path: metrics.Total Units R12Ms
+  target_name: TOTAL_UNITS_R12MS
+- source_path: metrics.Total VanArsdel Units R12M
+  target_name: TOTAL_VANARSDEL_UNITS_R12M
+- source_path: metrics.Total OTHER Units R12M
+  target_name: TOTAL_OTHER_UNITS_R12M
+- source_path: metrics.% Units Market Share R12M
+  target_name: PCT_UNITS_MARKET_SHARE_R12M
+- source_path: metrics.Sentiment Gap
+  target_name: SENTIMENT_GAP
+- source_path: metrics.Total Units YTD Var
+  target_name: TOTAL_UNITS_YTD_VAR
+- source_path: metrics.Total Units YTD Var %
+  target_name: TOTAL_UNITS_YTD_VAR_PCT
+- source_path: metrics.Sum of Units
+  target_name: SUM_OF_UNITS
+- source_path: metrics.Sum of Revenue
+  target_name: SUM_OF_REVENUE
+- source_path: metrics.@Indicator01
+  target_name: ATINDICATOR01
+- source_path: metrics.@Indicator02
+  target_name: ATINDICATOR02
+- source_path: metrics.#Space01
+  target_name: NUMSPACE01
+- source_path: metrics.#Space02
+  target_name: NUMSPACE02
+- source_path: metrics.@Indicator03
+  target_name: ATINDICATOR03
+- source_path: metrics.@Indicator04
+  target_name: ATINDICATOR04
+- source_path: metrics.@Indicator05
+  target_name: ATINDICATOR05
+- source_path: metrics.@Indicator04A
+  target_name: ATINDICATOR04A
+- source_path: metrics.@Indicator05A
+  target_name: ATINDICATOR05A
+- source_path: metrics.Total Units YTD Var %2
+  target_name: TOTAL_UNITS_YTD_VAR_PCT2
+- source_path: metrics.Sum of Score
+  target_name: SUM_OF_SCORE
+- source_path: metrics.Average of Score
+  target_name: AVERAGE_OF_SCORE
+- source_path: metrics.New Demo Measure
+  target_name: NEW_DEMO_MEASURE
 ui:
   intermediate_format: osi
   editor_mode: form
@@ -279,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-sales-and-returns
-display_name: Sales and Returns
+project_id: proj-xcv
+display_name: xcv
