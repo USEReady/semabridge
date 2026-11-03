@@ -1985,7 +1985,7 @@ class DaxSqlRenderer:
 
         self.table_key_map = table_key_map or {}
 
-        self.allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+        self.allow_window_enrichment = bool(allow_window_enrichment)
 
         self.window_precompute_columns: List[Tuple[str, str, str, str]] = []
         self.datasets = datasets
@@ -2569,12 +2569,32 @@ class DaxSqlRenderer:
         if sql_op in ("AND", "OR"):
             return f"({left}) {sql_op} ({right})"
 
+        def _is_numeric_literal(n: Optional[DaxNode], s: str) -> bool:
+            if n is not None and isinstance(n, LiteralNode):
+                try:
+                    float(str(n.value).strip())
+                    return True
+                except (ValueError, TypeError):
+                    pass
+            clean_s = (s or "").strip()
+            while clean_s.startswith("(") and clean_s.endswith(")"):
+                clean_s = clean_s[1:-1].strip()
+            try:
+                float(clean_s)
+                return True
+            except (ValueError, TypeError):
+                return False
+
         if sql_op in ("+", "-"):
-            if _needs_coalesce_zero(left):
-                left = f"COALESCE({left}, 0)"
-            if _needs_coalesce_zero(right):
-                right = f"COALESCE({right}, 0)"
-            return f"{left} {sql_op} {right}"
+            is_left_lit = _is_numeric_literal(node.left, left)
+            is_right_lit = _is_numeric_literal(node.right, right)
+            if is_left_lit and is_right_lit:
+                return f"{left} {sql_op} {right}"
+            if is_left_lit:
+                return f"CASE WHEN ({right}) IS NULL THEN NULL ELSE {left} {sql_op} ({right}) END"
+            if is_right_lit:
+                return f"CASE WHEN ({left}) IS NULL THEN NULL ELSE ({left}) {sql_op} {right} END"
+            return f"CASE WHEN ({left}) IS NULL AND ({right}) IS NULL THEN NULL ELSE COALESCE({left}, 0) {sql_op} COALESCE({right}, 0) END"
 
         if sql_op in ("=", "<>", "<", "<=", ">", ">="):
             if _needs_coalesce_zero(left):
@@ -2727,25 +2747,10 @@ class DaxSqlRenderer:
 
                 filter_tbl_name = getattr(filter_tbl_node, "name", None) or getattr(filter_tbl_node, "raw", None)
 
-                if filter_tbl_name and self.primary_table_name:
-
-                    if str(filter_tbl_name).strip("'\"").upper() != self.primary_table_name.strip("'\"").upper():
-
-                        p_upper = self.primary_table_name.strip("'\"").upper()
-
-                        _meas = "MEAS" + "URES"
-
-                        if p_upper in (_meas, f"PROJECT_{_meas}", "CALCULATIONS", "_CALCULATIONS") or p_upper.endswith((f"_{_meas}", "_CALCULATIONS")):
-
-                            self.table_alias = self._resolve_table_alias(filter_tbl_name)
-
-                        else:
-
-                            raise self.DaxRenderError(
-
-                                f"Iterator FILTER table '{filter_tbl_name}' does not match primary table '{self.primary_table_name}'"
-
-                            )
+                if filter_tbl_name:
+                    resolved_tbl_alias = self._resolve_table_alias(filter_tbl_name)
+                    if resolved_tbl_alias:
+                        self.table_alias = resolved_tbl_alias
 
                 pred_sql = self._render_node(table_arg.args[1])
 
@@ -4992,7 +4997,7 @@ def try_ast_translate(
         all_rels = relationships or getattr(model_metadata, "relationships", None) or []
         date_table_names = detect_date_tables(all_ds, all_rels, [dax])
 
-    allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+    allow_window_enrichment = bool(allow_window_enrichment)
 
     cache_key = _ast_cache_key(
 

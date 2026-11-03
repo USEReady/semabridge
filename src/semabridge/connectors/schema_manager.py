@@ -2472,6 +2472,33 @@ class SnowflakeSchemaManager:
             self._declared_pk_cache = result
         return result
 
+    def check_key_uniqueness(self, table_name: str, columns: List[str], cursor: Optional[Any] = None) -> Optional[bool]:
+        """Check whether columns form a unique key in data using the KEY UNIQUENESS query.
+
+        Returns True if proven unique (COUNT(DISTINCT) == COUNT(*)),
+        False if proven non-unique (COUNT(DISTINCT) < COUNT(*)),
+        or None if check cannot be performed (e.g. offline / no cursor).
+        """
+        table_upper = str(table_name or "").strip('"').upper()
+        cols = [str(c).strip('"') for c in columns or [] if c]
+        cur = cursor or getattr(self, "_active_cursor", None)
+        if cur is None or not cols:
+            return None
+        col_list = ", ".join(f'"{c}"' for c in cols)
+        try:
+            self._execute_sql(
+                cur,
+                f"SELECT COUNT(*), COUNT(DISTINCT {col_list}) FROM {self._schema_fqn()}.\"{table_upper}\"",
+                context=f"KEY UNIQUENESS {table_upper}",
+                expected_failure=True,
+            )
+            row = cur.fetchone() or (0, 0)
+            total, distinct = int(row[0] or 0), int(row[1] or 0)
+            return (distinct == total) if total > 0 else True
+        except Exception as exc:
+            logger.debug("Key uniqueness check skipped for %s: %s", table_upper, exc)
+            return None
+
     def warn_if_key_not_unique(self, table_name: str, columns: List[str], cursor: Optional[Any] = None) -> None:
         """Log a WARNING when a declared primary key isn't unique in the data.
 

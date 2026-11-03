@@ -144,6 +144,31 @@ class RelationshipsClauseBuilder:
                     if validated_to:
                         to_cols = validated_to
 
+            # T8: Verify target columns are declared PRIMARY KEY or UNIQUE on to_alias
+            if to_cols:
+                to_cols_upper = [c.upper() for c in to_cols]
+                all_target_keys = declared_pk_by_alias.get(f"__keys__{to_alias}")
+                if all_target_keys is None:
+                    pk = declared_pk_by_alias.get(to_alias)
+                    all_target_keys = [pk] if pk else []
+                is_valid_target = any(
+                    [k.upper() for k in key] == to_cols_upper
+                    for key in all_target_keys
+                )
+                if not is_valid_target:
+                    logger.warning(
+                        "Dropping relationship '%s' -> '%s' on %s: target columns are not a declared PRIMARY KEY or UNIQUE on '%s'.",
+                        rel.from_dataset, rel.to_dataset, to_cols, to_alias,
+                    )
+                    self.drop_ledger.record(
+                        "relationship",
+                        f"{rel.from_dataset} -> {rel.to_dataset}",
+                        DropStage.DDL_EMISSION,
+                        f"Target column(s) {to_cols} not declared as PRIMARY KEY or UNIQUE on {to_alias} (uniqueness not proven).",
+                        dataset=rel.from_dataset,
+                    )
+                    continue
+
 
             quoted_to_cols = [f'"{c}"' for c in to_cols]
             ref_clause = f'{to_alias} ({", ".join(quoted_to_cols)})' if to_cols else to_alias

@@ -198,6 +198,8 @@ class SemanticViewBuilder:
 
             drop_ledger=self.drop_ledger,
 
+            enriched_view_mapping=self.enriched_view_mapping,
+
         )
 
         self.no_populated_date_link_datasets: Set[str] = set()
@@ -709,7 +711,37 @@ class SemanticViewBuilder:
 
                     dataset.source_table = source_overrides[dataset.unique_name]
 
-
+            auto_enrich = bool(
+                getattr(self.behavior, "snowflake", None)
+                and getattr(self.behavior.snowflake, "auto_create_enriched_view", True)
+            )
+            if auto_enrich:
+                from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
+                _parser = DaxAstParser()
+                for m in getattr(sml, "metrics", []) or []:
+                    dax = getattr(m, "expression", "") or ""
+                    sql = getattr(m, "sql_expression", "") or ""
+                    ds = getattr(m, "dataset", None)
+                    if not ds or ds in self.enriched_view_mapping:
+                        continue
+                    needs_enrich = False
+                    if "ALL(" in dax.upper():
+                        try:
+                            ast = _parser.parse(dax)
+                            if _is_enrichable_all_measure(ast):
+                                needs_enrich = True
+                        except Exception:
+                            pass
+                    if not needs_enrich and (
+                        re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', sql, re.IGNORECASE)
+                        or re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', dax, re.IGNORECASE)
+                        or re.search(r'FISCAL_YR_PERIOD.*(?:fiscalMonth|currentPeriod)', dax, re.IGNORECASE)
+                    ):
+                        needs_enrich = True
+                    if needs_enrich:
+                        safe_ds = self.identifier_sanitizer.sanitize_table_name(ds)
+                        fq_view = f'"{self.config.database}"."{self.config.schema_name}"."{safe_ds}_ENRICHED"'
+                        self.enriched_view_mapping[ds] = fq_view
 
             semantic_ddl = self._generate_semantic_view(sml)
 
@@ -791,7 +823,37 @@ class SemanticViewBuilder:
 
                     dataset.source_table = source_overrides[dataset.unique_name]
 
-
+            auto_enrich = bool(
+                getattr(self.behavior, "snowflake", None)
+                and getattr(self.behavior.snowflake, "auto_create_enriched_view", True)
+            )
+            if auto_enrich:
+                from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
+                _parser = DaxAstParser()
+                for m in getattr(osi, "metrics", []) or []:
+                    dax = getattr(m, "expression", "") or ""
+                    sql = getattr(m, "sql_expression", "") or ""
+                    ds = getattr(m, "dataset", None)
+                    if not ds or ds in self.enriched_view_mapping:
+                        continue
+                    needs_enrich = False
+                    if "ALL(" in dax.upper():
+                        try:
+                            ast = _parser.parse(dax)
+                            if _is_enrichable_all_measure(ast):
+                                needs_enrich = True
+                        except Exception:
+                            pass
+                    if not needs_enrich and (
+                        re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', sql, re.IGNORECASE)
+                        or re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', dax, re.IGNORECASE)
+                        or re.search(r'FISCAL_YR_PERIOD.*(?:fiscalMonth|currentPeriod)', dax, re.IGNORECASE)
+                    ):
+                        needs_enrich = True
+                    if needs_enrich:
+                        safe_ds = self.identifier_sanitizer.sanitize_table_name(ds)
+                        fq_view = f'"{self.config.database}"."{self.config.schema_name}"."{safe_ds}_ENRICHED"'
+                        self.enriched_view_mapping[ds] = fq_view
 
             semantic_ddl = self._generate_semantic_view_from_osi(osi)
 

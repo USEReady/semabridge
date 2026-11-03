@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 from semabridge.utils.naming import to_alias
+from semabridge.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 from typing import Any, Dict, List, Tuple, Set, Optional
 import re
@@ -222,6 +225,12 @@ class TablesClauseBuilder:
            unique by the engine).
         4. Or verified by schema_manager data checks if available.
         """
+        # 0. Live KEY UNIQUENESS query
+        if hasattr(self.schema_manager, "check_key_uniqueness"):
+            live_result = self.schema_manager.check_key_uniqueness(unqualified_table, target_cols, cursor=self.cursor)
+            if live_result is not None:
+                return live_result
+
         # 1. Column metadata
         cols = getattr(dataset, "columns", []) or []
         col_map = {str(c.unique_name).upper(): c for c in cols}
@@ -384,6 +393,8 @@ class TablesClauseBuilder:
                 full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
+            if getattr(dataset, "name", None):
+                registry.register_dataset_alias(dataset.name, alias)
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
 
             def _physical(col_name: str) -> str:
@@ -481,29 +492,32 @@ class TablesClauseBuilder:
                     continue
                 if any(tkey_upper == [c.upper() for c in u] for u in declared_unique_keys):
                     continue
-                if self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
-                    u_cols = ", ".join(f'"{c}"' for c in tkey)
-                    unique_clauses.append(f"UNIQUE ({u_cols})")
-                    declared_unique_keys.append(tkey)
-                else:
-                    import logging as _log
-                    _log.getLogger(__name__).warning(
-                        "Unresolved key constraint for relationship target '%s' on %s: uniqueness cannot be guaranteed.",
-                        dataset.unique_name, tkey
-                    )
+                # T8: Never declare UNIQUE without proof!
+                if not self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
+                    logger.info("Skipping UNIQUE constraint for non-unique target key %s on %s", tkey, alias)
+                    continue
+                u_cols = ", ".join(f'"{c}"' for c in tkey)
+                unique_clauses.append(f"UNIQUE ({u_cols})")
+                declared_unique_keys.append(tkey)
 
+            all_declared_keys = []
             if verified_pk:
-                declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
+                clean_pk = [c.strip('"') for c in verified_pk]
+                declared_pk_by_alias[alias] = clean_pk
+                all_declared_keys.append(clean_pk)
                 for c in verified_pk:
                     relationship_target_alias[(dataset.unique_name, c.strip('"').upper())] = alias
                 if hasattr(self.schema_manager, "warn_if_key_not_unique"):
                     self.schema_manager.warn_if_key_not_unique(
-                        unqualified_table, [c.strip('"') for c in verified_pk], cursor=self.cursor
+                        unqualified_table, clean_pk, cursor=self.cursor
                     )
 
             for ukey in declared_unique_keys:
+                all_declared_keys.append(ukey)
                 for c in ukey:
                     relationship_target_alias[(dataset.unique_name, c.upper())] = alias
+
+            declared_pk_by_alias[f"__keys__{alias}"] = all_declared_keys
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             constraints = [c for c in [pk_clause, *unique_clauses] if c]
@@ -561,7 +575,8 @@ class TablesClauseBuilder:
                     line = f'  {inact_alias} AS {dim_full_table}{dim_pk_suffix}'
                     if line not in tables_lines:
                         tables_lines.append(line)
-                        declared_pk_by_alias[inact_alias] = dim_pks
+                        declared_pk_by_alias[inact_alias] = inact_pks
+                        declared_pk_by_alias[f"__keys__{inact_alias}"] = [inact_pks]
                         registry.register_dataset_alias(inact_alias, inact_alias)
                         registry.register_dataset_alias(inact_alias.lower(), inact_alias)
                         registry.used_table_aliases.add(inact_alias)

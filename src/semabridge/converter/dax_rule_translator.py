@@ -821,8 +821,11 @@ def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
     )
     op = period_match.group(3) if period_match else "<"
     period_table = ((period_match.group(1) or period_match.group(2)) if period_match else "DATES") or "DATES"
+    # When filtering by FISCAL_YR_PERIOD, prefer the measure's own table alias so the comparison
+    # evaluates directly on the fact row without requiring an unreachble/invalid dimension join
+    period_ref_table = table_alias if table_alias else period_table
     return (
-        f"SUM(CASE WHEN {_column_ref(period_table, 'FISCAL_YR_PERIOD', table_alias)} {op} {table_alias}.\"_CURRENT_FISCAL_PERIOD\" "
+        f"SUM(CASE WHEN {_column_ref(period_ref_table, 'FISCAL_YR_PERIOD', table_alias)} {op} {table_alias}.\"_CURRENT_FISCAL_PERIOD\" "
         f"THEN {_column_ref(measure_table, measure_col, table_alias)} END)"
     )
 
@@ -1001,13 +1004,8 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
         if inner_keep:
             inner_table_arg = inner_keep.group(1).strip()
         iterator_table = inner_table_arg.strip("'\"") or table_alias
-        if iterator_table and table_alias and iterator_table.upper() != table_alias.upper():
-            _meas = "MEAS" + "URES"
-            alias_u = str(table_alias).strip("'\"").upper()
-            if alias_u in (_meas, f"PROJECT_{_meas}", "CALCULATIONS", "_CALCULATIONS") or alias_u.endswith((f"_{_meas}", "_CALCULATIONS")):
-                table_alias = iterator_table
-            else:
-                return None
+        if iterator_table:
+            table_alias = iterator_table
         where_conditions = _parse_simple_predicate_conditions(filter_parts[1], table_alias)
         if where_conditions is None:
             return None

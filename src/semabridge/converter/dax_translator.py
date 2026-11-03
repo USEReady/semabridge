@@ -546,7 +546,7 @@ class DAXTranslator:
         
 
         clean_dax = dax.strip()
-        allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+        allow_window_enrichment = bool(allow_window_enrichment)
         self._allow_window_enrichment = allow_window_enrichment
         measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
         from semabridge.converter.dax_ast_parser import DaxAstParser, classify_dax_ast_not_applicable

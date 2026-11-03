@@ -177,6 +177,21 @@ def _get_effective_known_columns(emitter, dataset_name: str, dataset_col_lookup:
         for flag_val in ds_flags.values():
             if isinstance(flag_val, str) and flag_val:
                 cols.add(flag_val)
+    # Pre-computed anchor columns available on enriched views
+    enriched_map = (
+        getattr(emitter, "_enriched_view_mapping", None)
+        or getattr(emitter, "enriched_view_mapping", None)
+        or {}
+    )
+    is_enriched = bool(
+        getattr(emitter, "behavior", None)
+        and getattr(getattr(emitter.behavior, "snowflake", None), "auto_create_enriched_view", True)
+    )
+    if enriched_map or is_enriched:
+        cols.update({
+            "_CURRENT_FISCAL_PERIOD", "CURRENT_FISCAL_PERIOD",
+            "MAX_DATE", "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX"
+        })
     return cols
 
 

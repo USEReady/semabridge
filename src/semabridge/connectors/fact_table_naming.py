@@ -18,7 +18,7 @@ _WORD_RE = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+')
 
 def tokenize_dataset_name(name: str) -> list[str]:
     """
-    Split a dataset name into whole "words" so keyword matching can't be
+    Split a dataset name into whole "words" so token matching can't be
     fooled by a keyword appearing mid-word (e.g. "Manufacturer" contains
     "fact" as a substring, "Artifact" and "Satisfaction" do too, but none
     of them are actual fact tables).

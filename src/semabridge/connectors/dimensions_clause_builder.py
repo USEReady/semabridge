@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Set, Tuple, Optional
+import re
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
@@ -23,6 +24,7 @@ class DimensionsClauseBuilder:
         translator: Any,
         behavior: Any,
         drop_ledger: Optional[DropLedger] = None,
+        enriched_view_mapping: Optional[Dict[str, str]] = None,
     ):
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -30,6 +32,7 @@ class DimensionsClauseBuilder:
         self.translator = translator
         self.behavior = behavior
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.enriched_view_mapping = enriched_view_mapping if enriched_view_mapping is not None else {}
 
     def build_for_sml(
         self,
@@ -39,6 +42,7 @@ class DimensionsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         measure_columns: Set[Tuple[str, str]],
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+        relationships: Optional[List[Any]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         """Build DIMENSIONS clause for SML model.
 
@@ -51,6 +55,7 @@ class DimensionsClauseBuilder:
             sml.dimensions, sml.datasets, dataset_aliases, dataset_by_name,
             dataset_col_lookup, measure_columns, sml.unique_name or sml.label,
             is_osi=False, live_col_lookup=live_col_lookup or {},
+            relationships=getattr(sml, "relationships", []) or [],
         )
 
     def build_for_osi(
@@ -70,6 +75,7 @@ class DimensionsClauseBuilder:
             osi.dimensions, osi.datasets, dataset_aliases, dataset_by_name,
             dataset_col_lookup, measure_columns, osi.unique_name or osi.label,
             is_osi=True, live_col_lookup=live_col_lookup or {},
+            relationships=getattr(osi, "relationships", []) or [],
         )
 
     def _build_dimensions(
@@ -83,6 +89,7 @@ class DimensionsClauseBuilder:
         model_name: str,
         is_osi: bool,
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+        relationships: Optional[List[Any]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         dims_lines: List[str] = []
         # Tracks columns present in the source model but skipped because they
@@ -305,8 +312,26 @@ class DimensionsClauseBuilder:
                     if isinstance(flag_val, str) and flag_val:
                         candidate_cols.add(flag_val)
 
+            is_enriched_target = bool(
+                self.enriched_view_mapping
+                and (
+                    self.enriched_view_mapping.get(dataset.unique_name)
+                    or self.enriched_view_mapping.get(str(dataset.unique_name or "").casefold())
+                    or self.enriched_view_mapping.get(str(dataset.unique_name or "").upper())
+                )
+            )
+            if is_enriched_target:
+                candidate_cols.add("_CURRENT_FISCAL_PERIOD")
+
+            ds_orig_cols = {
+                self.identifier_sanitizer.sanitize_column(c.unique_name).upper()
+                for c in getattr(dataset, "columns", []) or []
+                if getattr(c, "unique_name", None)
+            }
             for phys_col in sorted(candidate_cols):
-                if not phys_col or phys_col.startswith("RowNumber") or phys_col.startswith("_") or phys_col.upper().startswith(("ALL_", "__SB_")):
+                if not phys_col or phys_col.startswith("RowNumber"):
+                    continue
+                if phys_col.startswith("_") and phys_col.upper() != "_CURRENT_FISCAL_PERIOD":
                     continue
 
                 physical_dim_key = (alias, phys_col)
@@ -322,8 +347,14 @@ class DimensionsClauseBuilder:
                 emitted_name = self._resolve_unique_dimension_alias(
                     semantic_name, ds_used, phys_col
                 )
+                is_helper = (
+                    phys_col.upper() not in ds_orig_cols
+                    and semantic_name.upper() not in ds_orig_cols
+                    and emitted_name.upper() not in ds_orig_cols
+                )
+                priv_prefix = "PRIVATE " if is_helper else ""
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS '
+                    f'  {priv_prefix}{alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                 )
                 added_dimensions.add(dim_key)
@@ -334,6 +365,27 @@ class DimensionsClauseBuilder:
             fallback_alias = dataset_aliases.get(datasets[0].unique_name, "")
             ds_used = used_dimension_aliases_by_dataset.setdefault(fallback_alias, set())
             self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, ds_used, dims_lines, model_name, is_osi)
+
+        # 4. Duplicate dimensions for inactive-relationship alias tables
+        seen_inact_aliases = set()
+        for rel in relationships or ():
+            if not getattr(rel, "is_active", True):
+                to_ds = getattr(rel, "to_dataset", None)
+                from_cols = getattr(rel, "from_columns", None) or []
+                fk_col = from_cols[0] if from_cols else ""
+                if to_ds and fk_col:
+                    from semabridge.utils.naming import to_alias
+                    inact_alias = to_alias(to_ds, fk_col)
+                    base_alias = dataset_aliases.get(to_ds)
+                    if base_alias and inact_alias != base_alias and inact_alias not in seen_inact_aliases:
+                        seen_inact_aliases.add(inact_alias)
+                        prefix_pat = re.compile(rf'^\s*(?:PRIVATE\s+)?{re.escape(base_alias)}\.', re.IGNORECASE)
+                        alias_dims = []
+                        for l in list(dims_lines):
+                            if prefix_pat.search(l):
+                                rep_line = re.sub(rf'\b{re.escape(base_alias)}\b', inact_alias, l)
+                                alias_dims.append(rep_line)
+                        dims_lines.extend(alias_dims)
 
         return dims_lines, missing_dims
 

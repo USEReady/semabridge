@@ -868,8 +868,8 @@ class TMSLToOSIConverter(BaseConverter):
 
                 duplicate_name_groups = [k for k, v in name_totals.items() if v > 1]
                 duplicate_display_groups = [k for k, v in display_totals.items() if v > 1]
-                is_project_measures = table_name.strip().casefold() == "project measures"
-                if not (is_project_measures or duplicate_name_groups or duplicate_display_groups):
+                is_measure_table = not (table.get("columns") or []) or all(c.get("isHidden") for c in table.get("columns", []))
+                if not (is_measure_table or duplicate_name_groups or duplicate_display_groups):
                     continue
 
                 rows: List[Dict[str, Any]] = []

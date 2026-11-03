@@ -8,14 +8,26 @@ from typing import List
 def _extract_block(ddl: str, header: str) -> List[str]:
     lines = ddl.splitlines()
     start = None
+    target_header = header.strip().upper()
     for i, line in enumerate(lines):
-        if line.strip().upper() == header:
+        line_clean = line.strip().upper()
+        if line_clean == target_header or line_clean.startswith(target_header):
             start = i
             break
     if start is None:
         return []
     end = start + 1
-    while end < len(lines) and not lines[end].strip().startswith(")"):
+    depth = 1
+    while end < len(lines):
+        for ch in lines[end]:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+        if depth == 0:
+            break
         end += 1
     return [l.strip() for l in lines[start + 1:end] if l.strip()]
 
@@ -26,8 +38,11 @@ def validate_semantic_ddl(ddl: str) -> List[str]:
         errors.append("DDL is empty")
         return errors
 
-    # Basic parentheses balance
-    if ddl.count("(") != ddl.count(")"):
+    # Basic parentheses balance (ignoring string literals and comments)
+    clean_ddl = re.sub(r"'(?:[^']|'')*'", "''", ddl)
+    clean_ddl = re.sub(r"--.*$", "", clean_ddl, flags=re.MULTILINE)
+    clean_ddl = re.sub(r"/\*.*?\*/", "", clean_ddl, flags=re.DOTALL)
+    if clean_ddl.count("(") != clean_ddl.count(")"):
         errors.append("Unbalanced parentheses in DDL")
 
     metrics = _extract_block(ddl, "METRICS (")
@@ -43,5 +58,63 @@ def validate_semantic_ddl(ddl: str) -> List[str]:
         if any(tok in upper for tok in forbidden):
             errors.append(f"Non-scalar SQL detected in METRICS: {line[:160]}")
             break
+
+    # Granularity / reachability pre-deploy check (Snowflake 010219):
+    # A metric's anchor table must reach (many -> one via RELATIONSHIPS) every table whose columns it aggregates.
+    tables_block = _extract_block(ddl, "TABLES (")
+    known_tables = set()
+    for line in tables_block:
+        line_clean = line.strip().rstrip(",")
+        as_m = re.match(r'^\s*([A-Za-z0-9_]+)\s+AS\s+', line_clean, re.I)
+        if as_m:
+            known_tables.add(as_m.group(1).upper())
+        else:
+            first = line_clean.split()[0].split(".")[-1].strip('"').upper() if line_clean else ""
+            if first:
+                known_tables.add(first)
+
+    rels_block = _extract_block(ddl, "RELATIONSHIPS (")
+    reach_graph: dict[str, set[str]] = {}
+    for line in rels_block:
+        m = re.search(r'AS\s+([A-Za-z0-9_]+)\s*\([^)]*\)\s+REFERENCES\s+([A-Za-z0-9_]+)\s*\(', line, re.I)
+        if m:
+            from_tbl, to_tbl = m.group(1).upper(), m.group(2).upper()
+            reach_graph.setdefault(from_tbl, set()).add(to_tbl)
+
+    for line in metrics:
+        m = re.match(r'^\s*([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))(?:\s+NON\s+ADDITIVE\s+BY\s*\([^)]*\))?\s+AS\s+(.*)$', line, re.I | re.S)
+        if not m:
+            continue
+        anchor_alias = m.group(1).upper()
+        metric_name = m.group(2) or m.group(3)
+        expr = m.group(4)
+        expr_clean = re.sub(r"(?i)\bCOMMENT\s*=\s*'(?:[^']|'')*'", '', expr)
+        expr_clean = re.sub(r"'(?:[^']|'')*'", "''", expr_clean)
+        if re.match(r'^\s*(?:CAST\s*\(\s*NULL\s+AS\s+\w+\s*\)|NULL)\s*$', expr_clean.strip().rstrip(","), re.I):
+            continue
+
+        agg_tables = set()
+        for agg_m in re.finditer(r'\b(?:SUM|AVG|COUNT|MIN|MAX|MEDIAN)\s*\((.*?)\)', expr_clean, re.I):
+            agg_body = agg_m.group(1)
+            for t_ref in re.findall(r'([A-Za-z0-9_]+)\."?[A-Za-z0-9_]+"?', agg_body):
+                t_ref_u = t_ref.upper()
+                if t_ref_u in known_tables and t_ref_u != anchor_alias:
+                    agg_tables.add(t_ref_u)
+
+        if agg_tables:
+            reachable = {anchor_alias}
+            stack = [anchor_alias]
+            while stack:
+                curr = stack.pop()
+                for nxt in reach_graph.get(curr, ()):
+                    if nxt not in reachable:
+                        reachable.add(nxt)
+                        stack.append(nxt)
+            unreachable = sorted(t for t in agg_tables if t not in reachable)
+            if unreachable:
+                errors.append(
+                    f"Metric '{anchor_alias}.{metric_name}': aggregates columns from {unreachable}, not reachable (many -> one) from '{anchor_alias}'. "
+                    f"Snowflake 010219: metric must sit on the 'many' side table that reaches all aggregated tables."
+                )
 
     return errors

@@ -2194,7 +2194,7 @@ class DatabricksPublisher:
 
         # Some translated expressions reference synthetic measure-table aliases
         # that do not exist in Databricks source SQL.
-        expr = re.sub(r"(?i)\b(projectmeasures|project_measures|measuretable)\s*\.", "", expr)
+        expr = re.sub(r"(?i)\b\w*measures?\w*\s*\.", "", expr)
 
         # Legacy translator token used for current fiscal period comparisons.
         expr = re.sub(r"(?i)\bFISCAL_MONTH_VALUE\b", "_current_fiscal_period", expr)
@@ -2784,12 +2784,12 @@ class DatabricksPublisher:
         # Also strip any remaining join-table prefixes that used the dummy
         # Power BI '_Measures' or 'Project_Measures' table names.
         expr = re.sub(
-            r'(?i)\b(?:project_measures|_measures)\."([^"]+)"',
+            r'(?i)\b\w*measures?\."([^"]+)"',
             lambda m: m.group(1).lower(),
             expr,
         )
         expr = re.sub(
-            r"(?i)\b(?:project_measures|_measures)\.([A-Za-z_][A-Za-z0-9_]*)",
+            r"(?i)\b\w*measures?\.([A-Za-z_][A-Za-z0-9_]*)",
             lambda m: m.group(1).lower(),
             expr,
         )

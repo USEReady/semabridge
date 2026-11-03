@@ -561,15 +561,6 @@ class SnowflakeEmitter(BaseEmitter):
                 except Exception as _rerender_exc:
                     logger.warning("Anchor-dependent metric re-render skipped: %s", _rerender_exc)
 
-                if os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1":
-                    try:
-                        _w_rerendered = self._rerender_window_enriched_metrics(
-                            model, _dataset_col_lookup, _dataset_aliases
-                        )
-                        if _w_rerendered:
-                            logger.info("Re-rendered %d window-enriched metric(s) with helper view window columns", _w_rerendered)
-                    except Exception as _w_exc:
-                        logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
 
                 if is_osi:
                     self.schema_manager._preflight_check_osi(cur, model)
@@ -2425,6 +2416,7 @@ class SnowflakeEmitter(BaseEmitter):
                         all_errors.append(f"Primary key '{alias}.{pk_col}' does not exist in bound physical table '{phys_table}'")
 
             # 2. Parse RELATIONSHIPS clause
+            reach_graph: Dict[str, Set[str]] = {}
             rels_match = re.search(r'RELATIONSHIPS\s*\((.*?)\)\s*(?:DIMENSIONS|METRICS)', ddl, re.DOTALL | re.IGNORECASE)
             if rels_match:
                 rels_clause = rels_match.group(1)
@@ -2437,6 +2429,7 @@ class SnowflakeEmitter(BaseEmitter):
                         rel_name, from_alias, from_cols, to_alias, to_cols = m.groups()
                         from_alias = from_alias.upper()
                         to_alias = to_alias.upper()
+                        reach_graph.setdefault(from_alias, set()).add(to_alias)
                         from_phys = table_map.get(from_alias, from_alias)
                         to_phys = table_map.get(to_alias, to_alias)
                         
@@ -2500,6 +2493,31 @@ class SnowflakeEmitter(BaseEmitter):
                                 all_errors.append(
                                     f"Metric '{alias}.{metric_name}': NON ADDITIVE BY references '{nad_alias}.{nad_col}' which is not a declared dimension in DIMENSIONS"
                                 )
+
+                    # Check granularity reachability (Snowflake 010219):
+                    # Metric's anchor table must reach (many -> one) every table whose columns it aggregates
+                    agg_tables = set()
+                    for agg_m in re.finditer(r'\b(?:SUM|AVG|COUNT|MIN|MAX|MEDIAN)\s*\((.*?)\)', expr, re.IGNORECASE):
+                        agg_body = agg_m.group(1)
+                        for t_match in re.findall(r'([A-Za-z0-9_]+)\."?[A-Za-z0-9_]+"?', agg_body):
+                            t_upper = t_match.upper()
+                            if t_upper in table_map and t_upper != alias:
+                                agg_tables.add(t_upper)
+                    if agg_tables:
+                        reachable = {alias}
+                        stack = [alias]
+                        while stack:
+                            curr = stack.pop()
+                            for nxt in reach_graph.get(curr, ()):
+                                if nxt not in reachable:
+                                    reachable.add(nxt)
+                                    stack.append(nxt)
+                        unreachable = sorted(t for t in agg_tables if t not in reachable)
+                        if unreachable:
+                            all_errors.append(
+                                f"Metric '{alias}.{metric_name}': aggregates {unreachable}, not reachable (many -> one) from '{alias}'. "
+                                f"Snowflake 010219: metric must sit on the 'many' side table that reaches all aggregated tables."
+                            )
 
                     expr = _sb_strip_semantic_refs(expr, ddl, all_errors, f"{alias}.{metric_name}")  # >>> SB_PREDEPLOY_SEMANTIC_REFS
                     for talias, phys_tbl in table_map.items():
@@ -2608,7 +2626,7 @@ class SnowflakeEmitter(BaseEmitter):
         for dataset in datasets:
             tokens = set(self._tokenize_dataset_name(dataset.unique_name))
             if tokens & self._FACT_KEYWORDS:
-                logger.info(f"✅ Identified fact table: {dataset.unique_name} (keyword match)")
+                logger.info(f"✅ Identified fact table: {dataset.unique_name} (token match)")
                 return dataset.unique_name
         
         # Strategy 2: Table with most relationships
@@ -2653,9 +2671,22 @@ class SnowflakeEmitter(BaseEmitter):
         self.semantic_view_builder._precompute_suggestions(model)
         seen: set = set()
         fact_tables: list[str] = []
+
+        def _is_virtual_dataset(ds_name: str) -> bool:
+            ds = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", "") == ds_name), None)
+            if not ds:
+                return False
+            if getattr(ds, "is_measure_table", False):
+                return True
+            cols = getattr(ds, "columns", []) or []
+            if not cols:
+                return True
+            non_dummy = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            return len(non_dummy) == 0
+
         for detail in self.semantic_view_builder.get_precompute_details():
             target = detail.get("target_dataset")
-            if target and target.casefold() not in seen:
+            if target and not _is_virtual_dataset(target) and target.casefold() not in seen:
                 seen.add(target.casefold())
                 fact_tables.append(target)
 
@@ -2663,22 +2694,31 @@ class SnowflakeEmitter(BaseEmitter):
         parser = DaxAstParser()
         for m in getattr(model, "metrics", []) or []:
             dax = getattr(m, "expression", "") or ""
-            if "ALL(" in dax.upper() and getattr(m, "dataset", None):
-                try:
-                    ast = parser.parse(dax)
-                    if _is_enrichable_all_measure(ast):
-                        ds = getattr(m, "dataset", None)
-                        if ds and ds.casefold() not in seen:
+            sql = getattr(m, "sql_expression", "") or ""
+            ds = getattr(m, "dataset", None)
+            if ds and not _is_virtual_dataset(ds) and ds.casefold() not in seen:
+                if "ALL(" in dax.upper():
+                    try:
+                        ast = parser.parse(dax)
+                        if _is_enrichable_all_measure(ast):
                             seen.add(ds.casefold())
                             fact_tables.append(ds)
-                except Exception:
-                    pass
+                            continue
+                    except Exception:
+                        pass
+                if (
+                    re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', sql, re.IGNORECASE)
+                    or re.search(r'\b_?CURRENT_FISCAL_PERIOD\b', dax, re.IGNORECASE)
+                    or re.search(r'FISCAL_YR_PERIOD.*(?:fiscalMonth|currentPeriod)', dax, re.IGNORECASE)
+                ):
+                    seen.add(ds.casefold())
+                    fact_tables.append(ds)
 
         if fact_tables:
             return fact_tables
 
         fallback = self._identify_fact_table(model)
-        return [fallback] if fallback else []
+        return [fallback] if fallback and not _is_virtual_dataset(fallback) else []
 
     def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
         """Resolve the date column a fact table's time-intelligence anchor
@@ -2710,16 +2750,10 @@ class SnowflakeEmitter(BaseEmitter):
         date_info = self._find_date_table(model)
         if not date_info:
             return None
-        _date_table, date_col, _fiscal_col = date_info
+        date_table, date_col, _fiscal_col = date_info
 
         fact_dataset = self._get_dataset_by_name(model, fact_table)
         if fact_dataset is None:
-            return None
-
-        resolved_date_col = self.schema_manager._resolve_physical_column_name(
-            fact_dataset, date_col, model=model
-        )
-        if not resolved_date_col:
             return None
 
         from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
@@ -2741,7 +2775,38 @@ class SnowflakeEmitter(BaseEmitter):
                 if getattr(c, "unique_name", None)
             }
 
-        return resolved_date_col if resolved_date_col.upper() in fact_cols else None
+        # 1. Check active relationship between fact_table and date_table
+        for rel in getattr(model, "relationships", []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            from_ds = getattr(rel, "from_dataset", "")
+            to_ds = getattr(rel, "to_dataset", "")
+            if from_ds == fact_table and to_ds == date_table:
+                from_cols = getattr(rel, "from_columns", []) or []
+                if from_cols:
+                    c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, from_cols[0], model=model)
+                    if c_phys and c_phys.upper() in fact_cols:
+                        return c_phys
+            elif to_ds == fact_table and from_ds == date_table:
+                to_cols = getattr(rel, "to_columns", []) or []
+                if to_cols:
+                    c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, to_cols[0], model=model)
+                    if c_phys and c_phys.upper() in fact_cols:
+                        return c_phys
+
+        # 2. Check direct date column match
+        resolved_date_col = self.schema_manager._resolve_physical_column_name(
+            fact_dataset, date_col, model=model
+        )
+        if resolved_date_col and resolved_date_col.upper() in fact_cols:
+            return resolved_date_col
+
+        # 3. Check any date-like column on fact
+        cand = next(
+            (fc for fc in sorted(fact_cols) if any(t in fc.upper() for t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR"])),
+            None
+        )
+        return cand
 
     def _predict_eligible_enrichment_fact_tables(self, model: Any) -> list[str]:
         """Fact tables `predict_anchor_flag_map` should treat as eligible
@@ -3521,169 +3586,6 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as exc:
             logger.warning("Could not compare live enriched view %s: %s", view_name, exc)
         return False
-# Adds whole-table "ALL_<col>" totals (AGG OVER ()) to the *_ENRICHED view for CALCULATE(..., ALL(...)) share-of-total measures; approximation: ignores all other query filters.
-    def _rerender_window_enriched_metrics(
-        self,
-        model: Any,
-        dataset_col_lookup: Dict[str, set],
-        dataset_aliases: Dict[str, str],
-    ) -> int:
-        """Re-render metrics eligible for window enrichment (e.g. Share of Total)
-        using the pre-computed helper view columns (ALL_COUNT, ALL_<col>).
-        """
-        metrics = getattr(model, "metrics", []) or []
-        rerendered = 0
-        from semabridge.converter.dax_translator import DAXTranslator
-        from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
-        parser = DaxAstParser()
-        translator = DAXTranslator()
-
-        for metric in metrics:
-            dax = getattr(metric, "expression", "") or ""
-            if not dax or "ALL(" not in dax.upper():
-                continue
-            try:
-                ast = parser.parse(dax)
-                if not _is_enrichable_all_measure(ast):
-                    continue
-            except Exception:
-                continue
-
-            table_alias = dataset_aliases.get(metric.dataset) or "fact"
-            res = translator.translate(
-                dax,
-                table_alias,
-                metric.dataset,
-                metric_name=metric.unique_name,
-                dataset_col_lookup=dataset_col_lookup,
-                dataset_aliases=dataset_aliases,
-                metrics_context=metrics,
-                skip_tier5=True,
-                allow_window_enrichment=True,
-            )
-            if res.is_success and res.sql:
-                metric.sql_expression = res.sql
-                metric.complexity_tier = res.tier
-                metric.sync_enabled = True
-                metric.sync_failure_reason = None
-                rerendered += 1
-
-        return rerendered
-
-    def _build_window_precomputed_columns(
-        self,
-        model: Any,
-        fact_table: str,
-        projected_cols: Set[str],
-    ) -> List[str]:
-        """Discover and build window columns (e.g. SUM(sales) OVER () AS ALL_AMOUNT)
-        for 'Share of Total' measures that use CALCULATE(..., ALL(...)).
-        """
-        window_projections = []
-        metrics = getattr(model, "metrics", []) or []
-        fact_dataset = self._get_dataset_by_name(model, fact_table)
-        fact_cols = {
-            self._resolve_model_column_name(model, fact_table, getattr(c, "unique_name", "")).upper()
-            for c in getattr(fact_dataset, "columns", []) or []
-            if getattr(c, "unique_name", None)
-        }
-
-        measure_expr_by_name = {
-            (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "") or ""
-            for m in metrics
-        }
-
-        for metric in metrics:
-            dax = getattr(metric, "expression", "") or ""
-            if not dax or "ALL(" not in dax.upper():
-                continue
-
-            from semabridge.converter.dax_ast_parser import (
-                DaxAstParser,
-                FunctionCallNode,
-                ColumnRefNode,
-                MeasureRefNode,
-                BinaryOpNode,
-            )
-            try:
-                ast = DaxAstParser().parse(dax)
-            except Exception:
-                continue
-
-            def _find_window_targets(node, in_division=False):
-                targets = []
-                if isinstance(node, FunctionCallNode):
-                    func = node.func.upper()
-                    if func == "DIVIDE" and len(node.args) >= 2:
-                        return _find_window_targets(node.args[1], in_division=True)
-                    if func == "CALCULATE" and len(node.args) >= 2:
-                        has_all = False
-                        has_disqualifying = False
-                        for a in node.args[1:]:
-                            if isinstance(a, FunctionCallNode) and a.func.upper() in ("ALL", "ALLEXCEPT"):
-                                is_col_ref = a.args and any(isinstance(arg, ColumnRefNode) for arg in a.args)
-                                if is_col_ref and not in_division:
-                                    has_disqualifying = True
-                                else:
-                                    has_all = True
-                            else:
-                                has_disqualifying = True
-                        if has_all and not has_disqualifying:
-                            targets.append(node.args[0])
-                    for a in node.args:
-                        targets.extend(_find_window_targets(a, in_division=in_division))
-                elif isinstance(node, BinaryOpNode):
-                    if node.op == "/":
-                        return _find_window_targets(node.right, in_division=True)
-                    targets.extend(_find_window_targets(node.left, in_division=in_division))
-                    targets.extend(_find_window_targets(node.right, in_division=in_division))
-                return targets
-
-            for target in _find_window_targets(ast):
-                agg_func = None
-                target_col = None
-                if isinstance(target, FunctionCallNode):
-                    t_func = target.func.upper()
-                    if t_func == "COUNTROWS":
-                        agg_func = "COUNT"
-                        target_col = "*"
-                    elif t_func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
-                        agg_func = "AVG" if t_func == "AVERAGE" else t_func
-                        if target.args and isinstance(target.args[0], ColumnRefNode):
-                            target_col = target.args[0].column
-                elif isinstance(target, MeasureRefNode):
-                    ref_dax = measure_expr_by_name.get(target.name.casefold(), "")
-                    if ref_dax:
-                        try:
-                            ref_ast = DaxAstParser().parse(ref_dax)
-                            if isinstance(ref_ast, FunctionCallNode):
-                                r_func = ref_ast.func.upper()
-                                if r_func == "COUNTROWS":
-                                    agg_func = "COUNT"
-                                    target_col = "*"
-                                elif r_func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
-                                    agg_func = "AVG" if r_func == "AVERAGE" else r_func
-                                    if ref_ast.args and isinstance(ref_ast.args[0], ColumnRefNode):
-                                        target_col = ref_ast.args[0].column
-                        except Exception:
-                            pass
-
-                if agg_func:
-                    if target_col in ("*", "1"):
-                        w_alias = "ALL_COUNT"
-                        if w_alias.upper() not in projected_cols:
-                            window_projections.append(f'\n            , {agg_func}(*) OVER () AS "{w_alias}"')
-                            projected_cols.add(w_alias.upper())
-                    elif target_col:
-                        phys_col = self._resolve_model_column_name(model, fact_table, target_col)
-                        if phys_col.upper() in fact_cols or not fact_cols:
-                            safe_col = self._id.sanitize_column(phys_col)
-                            w_alias = f"ALL_{safe_col}"
-                            if w_alias.upper() not in projected_cols:
-                                window_projections.append(f'\n            , {agg_func}(f."{safe_col}") OVER () AS "{w_alias}"')
-                                projected_cols.add(w_alias.upper())
-
-        return window_projections
 
     def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None, dry_run: bool = False):
         """

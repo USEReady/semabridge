@@ -877,6 +877,11 @@ class MetricExpressionTranslator:
             for flag_val in ds_flags.values():
                 if isinstance(flag_val, str) and flag_val:
                     cols.add(flag_val)
+        # Pre-computed anchor columns available on enriched views
+        cols.update({
+            "_CURRENT_FISCAL_PERIOD", "CURRENT_FISCAL_PERIOD",
+            "MAX_DATE", "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX"
+        })
         return cols
 
     def _validate_metric_column_references(
