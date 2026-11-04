@@ -6,30 +6,20 @@ from typing import List
 
 
 def _extract_block(ddl: str, header: str) -> List[str]:
-    lines = ddl.splitlines()
-    start = None
-    target_header = header.strip().upper()
-    for i, line in enumerate(lines):
-        line_clean = line.strip().upper()
-        if line_clean == target_header or line_clean.startswith(target_header):
-            start = i
-            break
-    if start is None:
+    word = header.split("(")[0].strip()
+    m = re.search(rf"\b{re.escape(word)}\s*\(", ddl, re.I)
+    if not m:
         return []
-    end = start + 1
-    depth = 1
-    while end < len(lines):
-        for ch in lines[end]:
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-        if depth == 0:
-            break
-        end += 1
-    return [l.strip() for l in lines[start + 1:end] if l.strip()]
+    d, i, q = 1, m.end(), False
+    while i < len(ddl) and d:
+        ch = ddl[i]
+        if ch == "'":
+            q = not q
+        elif not q:
+            d += {"(": 1, ")": -1}.get(ch, 0)
+        i += 1
+    inner = ddl[m.end():i - 1]
+    return [l.strip() for l in inner.splitlines() if l.strip()]
 
 
 def validate_semantic_ddl(ddl: str) -> List[str]:
