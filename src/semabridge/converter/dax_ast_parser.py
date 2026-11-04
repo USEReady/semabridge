@@ -4107,11 +4107,13 @@ class DaxSqlRenderer:
                                 clean_base = "SUM_AMOUNT"
                                 base_arg = filtered_args[0]
                                 if isinstance(base_arg, MeasureRefNode):
-                                    clean_base = sanitize_column(base_arg.name).upper()
+                                    clean_base = re.sub(r'[^A-Za-z0-9_]', '_', base_arg.name).upper()
                                 elif isinstance(base_arg, FunctionCallNode):
                                     col_part = getattr(base_arg.args[0], "column", str(base_arg.args[0])) if base_arg.args else ""
-                                    clean_base = f"{base_arg.func.upper()}_{sanitize_column(col_part).upper()}"
-                                return f'MAX({fact_alias}."__SB_ALL_{clean_base}")'
+                                    clean_base = f"{base_arg.func.upper()}_{re.sub(r'[^A-Za-z0-9_]', '_', col_part).upper()}".strip("_")
+                                clean_base = re.sub(r'^_?ALL_', '', clean_base)
+                                tgt_alias = (fact_alias or fact_tbl or "f").upper()
+                                return f'MAX({tgt_alias}."_ALL_{clean_base}")'
                             if (len(filter_arg.args) >= 3 and 
                                 isinstance(filter_arg.args[0], ColumnRefNode) and 
                                 getattr(filter_arg.args[1], "name", "") == "."):
@@ -4158,20 +4160,18 @@ class DaxSqlRenderer:
                                     tbl_name = arg.name.strip('"\'')
                                     alias = self.table_aliases.get(tbl_name, tbl_name).upper() if self.table_aliases else tbl_name.upper()
                                     if alias == fact_alias or tbl_name.upper() == fact_tbl:
-                                        if not self.datasets:
-                                            raise self.DaxRenderError(
-                                                f"ALL({tbl_name}) on the metric's own table is a whole-table total and must not be a window metric"
-                                            )
                                         clean_base = "TOTAL"
                                         base_arg = filtered_args[0]
                                         if isinstance(base_arg, MeasureRefNode):
-                                            clean_base = sanitize_column(base_arg.name).upper()
+                                            clean_base = re.sub(r'[^A-Za-z0-9_]', '_', base_arg.name).upper()
                                         elif isinstance(base_arg, FunctionCallNode):
                                             col_part = getattr(base_arg.args[0], "column", str(base_arg.args[0])) if base_arg.args else ""
-                                            clean_base = f"{base_arg.func.upper()}_{sanitize_column(col_part).upper()}"
+                                            clean_base = f"{base_arg.func.upper()}_{re.sub(r'[^A-Za-z0-9_]', '_', col_part).upper()}".strip("_")
                                         elif hasattr(base_arg, "name"):
-                                            clean_base = sanitize_column(base_arg.name).upper()
-                                        return f'MAX({fact_alias}."__SB_ALL_{clean_base}")'
+                                            clean_base = re.sub(r'[^A-Za-z0-9_]', '_', base_arg.name).upper()
+                                        clean_base = re.sub(r'^_?ALL_', '', clean_base)
+                                        tgt_alias = (fact_alias or fact_tbl or "f").upper()
+                                        return f'MAX({tgt_alias}."_ALL_{clean_base}")'
                                     dims_found = self._get_minimal_groupable_dimensions(tbl_name, alias)
                                     for d in dims_found:
                                         if d not in excl_dims:
@@ -5434,6 +5434,12 @@ def _get_measure_refs(n: DaxNode) -> Set[str]:
 
 
 def _is_enrichable_all_measure(node: DaxNode, in_division: bool = False) -> bool:
+    try:
+        from semabridge.converter.whole_table_all import match_whole_table_all_ast
+        if match_whole_table_all_ast(node) is not None:
+            return True
+    except Exception:
+        pass
     if isinstance(node, FunctionCallNode):
         func = node.func.upper()
         if func == "DIVIDE" and len(node.args) >= 2:

@@ -202,7 +202,7 @@ class DimensionsClauseBuilder:
             for col in dataset.columns:
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
                     continue
-                if col.unique_name.upper() in _SYNTHETIC_COLS or col.unique_name.upper().startswith("_CURRENT_"):
+                if col.unique_name.upper() in _SYNTHETIC_COLS or col.unique_name.upper().startswith(("_CURRENT_", "_ALL_")):
                     continue
 
                 col_key = (alias, col.unique_name.strip().upper())
@@ -325,12 +325,21 @@ class DimensionsClauseBuilder:
             )
             if is_enriched_target and model is not None:
                 from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                from semabridge.converter.whole_table_all import match_whole_table_all_pattern
+                metrics_dict = {
+                    (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "")
+                    for m in (getattr(model, "metrics", []) or [])
+                }
                 for m in getattr(model, "metrics", []) or []:
                     m_ds = getattr(m, "dataset", None)
                     if m_ds and str(m_ds).casefold() == str(dataset.unique_name).casefold():
-                        pat = match_scalar_dim_lookup_pattern(getattr(m, "expression", "") or "")
+                        expr = getattr(m, "expression", "") or ""
+                        pat = match_scalar_dim_lookup_pattern(expr)
                         if pat:
                             candidate_cols.add(pat.helper_name)
+                        wpat = match_whole_table_all_pattern(expr, fact_table=dataset.unique_name, metrics_dict=metrics_dict)
+                        if wpat:
+                            candidate_cols.add(wpat.helper_name)
 
             ds_orig_cols = {
                 self.identifier_sanitizer.sanitize_column(c.unique_name).upper()
@@ -340,7 +349,7 @@ class DimensionsClauseBuilder:
             for phys_col in sorted(candidate_cols):
                 if not phys_col or phys_col.startswith("RowNumber"):
                     continue
-                if phys_col.startswith("_") and not phys_col.upper().startswith("_CURRENT_"):
+                if phys_col.startswith("_") and not phys_col.upper().startswith(("_CURRENT_", "_ALL_")):
                     continue
 
                 physical_dim_key = (alias, phys_col)
@@ -358,7 +367,7 @@ class DimensionsClauseBuilder:
                 )
                 is_helper = (
                     phys_col.startswith("IS_")
-                    or phys_col.startswith("_CURRENT_")
+                    or phys_col.startswith(("_CURRENT_", "_ALL_"))
                     or phys_col == "MAX_DATE"
                     or (phys_col.startswith("ALL_") and phys_col not in ds_orig_cols)
                     or (

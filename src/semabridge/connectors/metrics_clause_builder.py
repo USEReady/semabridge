@@ -1412,7 +1412,7 @@ class MetricsClauseBuilder:
                 # reported as a hard DDL-emission failure. See
                 # time_intelligence_shapes.py's enrichment_flag_column_
                 # if_referenced.
-                window_col_match = re.search(r'\b(?:MAX|SUM|AVG)\s*\(\s*[A-Za-z0-9_]+\."?(ALL_[A-Za-z0-9_]+)"?\s*\)', expr, re.IGNORECASE)
+                window_col_match = re.search(r'\b(?:MAX|SUM|AVG|MIN)\s*\(\s*[A-Za-z0-9_]+\."?(_?ALL_[A-Za-z0-9_]+)"?\s*\)', expr, re.IGNORECASE)
                 if window_col_match:
                     has_enriched_target = bool(
                         self.enriched_view_mapping

@@ -2696,7 +2696,7 @@ class SnowflakeEmitter(BaseEmitter):
             sql = getattr(m, "sql_expression", "") or ""
             ds = getattr(m, "dataset", None)
             if ds and not _is_virtual_dataset(ds) and ds.casefold() not in seen:
-                if "ALL(" in dax.upper():
+                if "ALL(" in dax.upper() or "REMOVEFILTERS" in dax.upper():
                     try:
                         ast = parser.parse(dax)
                         if _is_enrichable_all_measure(ast):
@@ -3856,6 +3856,54 @@ class SnowflakeEmitter(BaseEmitter):
                 self.no_populated_date_link_datasets.add(str(fact_table).casefold())
                 if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
                     self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
+
+        # Whole-table constant precomputes: CALCULATE(<agg>(T[C]), ALL(T))
+        # Generates CROSS JOIN (SELECT <agg>(C) AS _ALL_<AGG>_<C> FROM T) anchor_all_<agg>_<c>
+        from semabridge.converter.whole_table_all import match_whole_table_all_pattern
+        whole_table_patterns = []
+        metrics_dict = {
+            (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "")
+            for m in (getattr(model, "metrics", []) or [])
+        }
+        for m in getattr(model, "metrics", []) or []:
+            m_ds = getattr(m, "dataset", None)
+            if m_ds and str(m_ds).casefold() != str(fact_table).casefold():
+                continue
+            dax = getattr(m, "expression", "") or ""
+            pat = match_whole_table_all_pattern(dax, fact_table=fact_table, metrics_dict=metrics_dict)
+            if pat:
+                whole_table_patterns.append(pat)
+
+        seen_whole_helpers = set()
+        for pat in whole_table_patterns:
+            helper_name = pat.helper_name
+            if helper_name in seen_whole_helpers or helper_name in projected_cols:
+                continue
+            seen_whole_helpers.add(helper_name)
+
+            if pat.col:
+                resolved_col = self.schema_manager._resolve_physical_column_name(
+                    fact_dataset, pat.col, model=model
+                ) if fact_dataset else self._id.sanitize_column(pat.col)
+            else:
+                resolved_col = None
+
+            safe_anchor_name = re.sub(r"[^A-Za-z0-9_]", "_", pat.col or "rows").lower()
+            anchor_alias = f'anchor_all_{pat.agg.lower()}_{safe_anchor_name}'
+
+            if pat.sql_agg == "COUNT(*)":
+                agg_expr = "COUNT(*)"
+            elif pat.sql_agg.startswith("COUNT(DISTINCT"):
+                agg_expr = f'COUNT(DISTINCT "{resolved_col}")'
+            else:
+                agg_expr = f'{pat.sql_agg}("{resolved_col}")'
+
+            anchor_joins.append(
+                f'CROSS JOIN (SELECT {agg_expr} AS "{helper_name}" '
+                f'FROM {fact_source_ref}) {anchor_alias}'
+            )
+            select_parts.append(f'\n            , {anchor_alias}."{helper_name}" AS "{helper_name}"')
+            projected_cols.add(helper_name)
 
         select_parts.append(f"FROM {fact_source_ref} f")
         select_parts.extend(anchor_joins)

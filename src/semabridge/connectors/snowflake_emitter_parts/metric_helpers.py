@@ -341,7 +341,7 @@ def normalize_metric_column_references(
 def resolve_column_name_for_dataset(known_columns: set[str], candidate: str) -> Optional[str]:
     if not candidate:
         return None
-    if candidate.upper().startswith(("_CURRENT_", "CURRENT_")):
+    if candidate.upper().startswith(("_CURRENT_", "CURRENT_", "_ALL_")):
         return candidate
     if not known_columns:
         return None

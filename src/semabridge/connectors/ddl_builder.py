@@ -725,7 +725,7 @@ class SemanticViewBuilder:
                     if not ds or ds in self.enriched_view_mapping:
                         continue
                     needs_enrich = False
-                    if "ALL(" in dax.upper():
+                    if "ALL(" in dax.upper() or "REMOVEFILTERS" in dax.upper():
                         try:
                             ast = _parser.parse(dax)
                             if _is_enrichable_all_measure(ast):
@@ -839,7 +839,7 @@ class SemanticViewBuilder:
                     if not ds or ds in self.enriched_view_mapping:
                         continue
                     needs_enrich = False
-                    if "ALL(" in dax.upper():
+                    if "ALL(" in dax.upper() or "REMOVEFILTERS" in dax.upper():
                         try:
                             ast = _parser.parse(dax)
                             if _is_enrichable_all_measure(ast):
