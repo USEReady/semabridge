@@ -358,10 +358,11 @@ class DimensionsClauseBuilder:
                     or phys_col.startswith("_CURRENT_")
                     or phys_col == "MAX_DATE"
                     or (phys_col.startswith("ALL_") and phys_col not in ds_orig_cols)
-                )
-                    phys_col.upper() not in ds_orig_cols
-                    and semantic_name.upper() not in ds_orig_cols
-                    and emitted_name.upper() not in ds_orig_cols
+                    or (
+                        phys_col.upper() not in ds_orig_cols
+                        and semantic_name.upper() not in ds_orig_cols
+                        and emitted_name.upper() not in ds_orig_cols
+                    )
                 )
                 priv_prefix = "PRIVATE " if is_helper else ""
                 dims_lines.append(

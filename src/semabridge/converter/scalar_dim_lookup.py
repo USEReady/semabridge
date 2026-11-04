@@ -115,3 +115,4 @@ def match_scalar_dim_lookup_pattern(dax: Optional[str]) -> Optional[ScalarDimLoo
         measure_table=measure_table,
         measure_col=measure_col,
     )
+
