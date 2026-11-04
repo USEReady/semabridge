@@ -80,38 +80,15 @@ export default function Header({ onToggleLogs, onToggleVersionControl, onToggleR
 
             {/* Right: Actions */}
             <div className="flex items-center gap-1">
-                <nav className="flex items-center gap-1 mr-4">
-                    <DropdownMenu
-                        label="File"
-                        items={[
-                            { label: 'New Config', icon: Plus, shortcut: 'Ctrl+N', onClick: () => {} },
-                            { label: 'Open repository...', icon: FolderOpen, shortcut: 'Ctrl+O', onClick: onToggleRepoMap },
-                            { label: 'Save configuration', icon: Save, shortcut: 'Ctrl+S', onClick: () => {
-                                document.dispatchEvent(new CustomEvent('semabridge:save'));
-                            }},
-                            { label: 'Export SML', icon: FileCode2, shortcut: 'Ctrl+E', onClick: () => {} },
-                        ]}
-                    />
-                    <DropdownMenu
-                        label="Project"
-                        items={[
-                            { label: 'Sync Models', icon: RefreshCw, shortcut: 'Ctrl+R', onClick: () => {
-                                document.dispatchEvent(new CustomEvent('semabridge:sync'));
-                            }},
-                            { label: 'Validate Metadata', icon: CheckCircle2, shortcut: 'Ctrl+L', onClick: () => {} },
-                            { label: 'Configure Pipeline', icon: Settings, onClick: onToggleConnections },
-                        ]}
-                    />
-                    <DropdownMenu
-                        label="View"
-                        items={[
-                            { label: 'Repository Map', icon: Map, onClick: onToggleRepoMap },
-                            { label: 'Terminal', icon: PanelBottom, onClick: onToggleTerminal, shortcut: 'Ctrl+`' },
-                            { label: 'Logs & Activity', icon: Bell, onClick: onToggleLogs },
-                            { label: 'Version Control', icon: GitCommit, onClick: onToggleVersionControl },
-                        ]}
-                    />
-                </nav>
+                {/* Active Cloud Mesh Status Pill */}
+                <div 
+                    className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-surface-raised border border-main text-xs text-secondary mr-2"
+                    title="SemaBridge Unified Semantic Translation Layer — Connected to Target Cloud Warehouses"
+                >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="font-medium text-[11px] text-primary">Multi-Cloud Mesh</span>
+                    <span className="text-[10px] text-tertiary">Snowflake & Databricks</span>
+                </div>
 
                 <div className="flex items-center gap-1 border-l border-main pl-3 ml-2">
                     <button

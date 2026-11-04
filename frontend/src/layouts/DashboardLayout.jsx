@@ -56,7 +56,7 @@ export default function DashboardLayout() {
   return (
     <div
       className="flex flex-col h-screen overflow-hidden bg-app theme-transition"
-      style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}
+      style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}
     >
       {/* ── Top row: Sidebar + Main ── */}
       <div className="flex flex-1 overflow-hidden min-h-0 relative">

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import usePageCache from '../hooks/usePageCache';
-import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText, AlertTriangle } from 'lucide-react';
+import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText, AlertTriangle, Plus, Pencil, Trash2, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import PageHeader from '../components/common/PageHeader';
@@ -9,12 +9,15 @@ import StatusBadge from '../components/common/StatusBadge';
 import SearchInput from '../components/common/SearchInput';
 import DroppedFieldsPanel from '../components/common/DroppedFieldsPanel';
 import Modal from '../components/common/Modal';
+import ScheduleModal from '../components/projects/ScheduleModal';
 import RunReportSummary from '../components/RunReportSummary';
 import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import { buildMockRunLogs, getPerModelRunEntries, getRunLogs, saveRunLogs } from '../utils/runLogs';
 import ModelRunSection from '../components/runs/ModelRunSection';
 import { cleanPbixLabel } from '../utils/pbixLabel';
+import { translateCron, formatRelativeCountdown } from '../utils/cronTranslator';
+import { isInternalAutoTable } from '../utils/placeholderMetric';
 
 const REFRESH_INTERVAL_MS = 4000;
 
@@ -194,9 +197,13 @@ export default function ProjectJobsPage() {
   const location = useLocation();
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const [runningScheduleId, setRunningScheduleId] = useState('');
 
   // Cached UI state — survives SPA navigation within the same tab.
   const [jobsCache, setJobsCache] = usePageCache('jobs-page', {
@@ -255,9 +262,10 @@ export default function ProjectJobsPage() {
 
     const loadPageData = async () => {
       try {
-        const [runsData, schedulesData] = await Promise.all([
+        const [runsData, schedulesData, projectsData] = await Promise.all([
           api.listJobRuns().catch(() => []),
           api.listJobSchedules().catch(() => []),
+          api.listProjects().catch(() => []),
         ]);
 
         if (cancelled) return;
@@ -270,10 +278,12 @@ export default function ProjectJobsPage() {
         });
         setRuns(nextRuns);
         setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
+        setProjects(Array.isArray(projectsData) ? projectsData : []);
       } catch {
         if (cancelled) return;
         setRuns([]);
         setSchedules([]);
+        setProjects([]);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -295,6 +305,41 @@ export default function ProjectJobsPage() {
       window.clearTimeout(timerId);
     };
   }, []);
+
+  const handleOpenScheduleModal = (schedule = null) => {
+    setEditingSchedule(schedule);
+    setScheduleModalOpen(true);
+  };
+
+  const handleScheduleSaved = (saved) => {
+    setSchedules((prev) => {
+      const filtered = prev.filter(
+        (s) => String(s.project_id || s.id) !== String(saved.project_id || saved.id)
+      );
+      return [saved, ...filtered];
+    });
+  };
+
+  const handleRunScheduledProject = async (projectId) => {
+    if (!projectId || runningScheduleId) return;
+    setRunningScheduleId(String(projectId));
+    try {
+      const result = await api.runProjectNow(projectId);
+      if (result) {
+        const nextRun = { ...result, status: 'running' };
+        if (nextRun?.id) {
+          saveRunLogs(nextRun.id, buildMockRunLogs(nextRun));
+        }
+        setRuns((prev) => [nextRun, ...prev]);
+        setExpandedRunId(nextRun.id ?? null);
+      }
+    } catch (err) {
+      console.error('Trigger project run failed:', err);
+      alert(`Trigger run failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setRunningScheduleId('');
+    }
+  };
 
   const [clearingLogs, setClearingLogs] = useState(false);
   const handleClearLogs = async () => {
@@ -534,73 +579,242 @@ export default function ProjectJobsPage() {
           padding: 24,
         }}
       >
-        <div className="flex items-center gap-2 mb-4">
-          <CalendarClock size={16} style={{ color: 'var(--accent-blue)' }} />
-          <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Scheduled Jobs</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <CalendarClock size={16} style={{ color: 'var(--accent-blue)' }} />
+              <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Scheduled Jobs</h2>
+            </div>
+            <p className="text-[11px] text-tertiary mt-0.5" style={{ margin: '2px 0 0 24px' }}>
+              Automated background synchronizations for PowerBI, Snowflake Cortex, and Databricks Genie
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleOpenScheduleModal(null)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              borderRadius: 8,
+              background: 'var(--accent-blue)',
+              color: '#ffffff',
+              border: 'none',
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Plus size={14} /> Add Schedule
+          </button>
         </div>
 
         {schedules.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-            No saved schedules yet. Use the Schedule action from Edit Config to create one.
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '28px 16px',
+              background: 'var(--bg-surface-raised)',
+              borderRadius: 10,
+              border: '1px dashed var(--border-main)',
+            }}
+          >
+            <CalendarClock size={32} style={{ color: 'var(--text-tertiary)', margin: '0 auto 10px auto' }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>No active job schedules</div>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4, marginBottom: 14, maxWidth: 440, marginLeft: 'auto', marginRight: 'auto' }}>
+              Set up automated background synchronizations for your semantic models using friendly cadences (Hourly, Daily, Weekly) or Custom Cron.
+            </div>
+            <button
+              type="button"
+              onClick={() => handleOpenScheduleModal(null)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 16px',
+                borderRadius: 8,
+                background: 'var(--accent-blue)',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              <Plus size={14} /> Create Your First Schedule
+            </button>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {schedules.map((schedule) => (
-              <div
-                key={schedule.id || schedule.project_id}
-                className="flex flex-col md:grid md:grid-cols-[1.5fr_0.8fr_1.2fr_auto] gap-4"
-                style={{
-                  border: '1px solid var(--border-main)',
-                  borderRadius: 10,
-                  padding: 14,
-                  alignItems: 'center',
-                  background: 'var(--bg-surface-raised)',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {schedule.project_name || schedule.project_id}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
-                    {schedule.schedule_type === 'cron'
-                      ? `Cron: ${schedule.cron || 'N/A'}`
-                      : `One-time: ${schedule.date || 'N/A'} ${schedule.time || ''}`.trim()}
-                  </div>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  {String(schedule.schedule_type || 'manual').toUpperCase()}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  Next run: {formatDate(schedule.next_run_at)}
-                </div>
-                <button
-                  onClick={() => handleDeleteSchedule(schedule.project_id)}
-                  disabled={scheduleDeletingId === String(schedule.project_id)}
+            {schedules.map((schedule) => {
+              const humanSchedule = schedule.schedule_type === 'cron'
+                ? translateCron(schedule.cron)
+                : `One-time: ${schedule.date || ''} ${schedule.time || ''}`.trim();
+              const relativeCountdown = formatRelativeCountdown(schedule.next_run_at);
+              const pid = schedule.project_id || schedule.id;
+              const isRunningThis = runningScheduleId === String(pid);
+
+              return (
+                <div
+                  key={schedule.id || schedule.project_id}
+                  className="flex flex-col md:grid md:grid-cols-[1.5fr_1.2fr_1fr_auto] gap-4"
                   style={{
                     border: '1px solid var(--border-main)',
-                    background: 'transparent',
-                    color: 'var(--text-secondary)',
-                    borderRadius: 8,
-                    padding: '8px 12px',
-                    cursor: scheduleDeletingId === String(schedule.project_id) ? 'not-allowed' : 'pointer',
-                    opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
+                    borderRadius: 10,
+                    padding: '14px 18px',
+                    alignItems: 'center',
+                    background: 'var(--bg-surface-raised)',
                   }}
                 >
-                  {scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}
-                </button>
-              </div>
-            ))}
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{schedule.project_name || schedule.project_id}</span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          background: 'rgba(16, 185, 129, 0.15)',
+                          color: '#10b981',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        Active
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        {humanSchedule}
+                      </span>
+                      {schedule.cron && (
+                        <span
+                          style={{
+                            fontFamily: 'monospace',
+                            fontSize: 10,
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                            background: 'var(--bg-surface)',
+                            border: '1px solid var(--border-main)',
+                            color: 'var(--text-tertiary)',
+                          }}
+                        >
+                          {schedule.cron}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                      Next Execution
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginTop: 2 }}>
+                      {formatDate(schedule.next_run_at)}
+                      {relativeCountdown && (
+                        <span style={{ color: 'var(--accent-blue)', marginLeft: 6, fontSize: 11 }}>
+                          ({relativeCountdown})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                    Timezone: <strong style={{ color: 'var(--text-secondary)' }}>{schedule.timezone || 'UTC'}</strong>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleRunScheduledProject(pid)}
+                      disabled={isRunningThis}
+                      style={{
+                        border: '1px solid rgba(59, 130, 246, 0.4)',
+                        background: 'rgba(59, 130, 246, 0.1)',
+                        color: '#3b82f6',
+                        borderRadius: 8,
+                        padding: '6px 12px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: isRunningThis ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        opacity: isRunningThis ? 0.6 : 1,
+                      }}
+                      title="Trigger immediate sync for this project"
+                    >
+                      {isRunningThis ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
+                      <span>{isRunningThis ? 'Running…' : 'Run Now'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenScheduleModal(schedule)}
+                      style={{
+                        border: '1px solid var(--border-main)',
+                        background: 'var(--bg-surface)',
+                        color: 'var(--text-secondary)',
+                        borderRadius: 8,
+                        padding: '6px 10px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                      title="Edit schedule configuration"
+                    >
+                      <Pencil size={12} />
+                      <span>Edit</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSchedule(schedule.project_id)}
+                      disabled={scheduleDeletingId === String(schedule.project_id)}
+                      style={{
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        background: 'rgba(239, 68, 68, 0.08)',
+                        color: '#ef4444',
+                        borderRadius: 8,
+                        padding: '6px 10px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: scheduleDeletingId === String(schedule.project_id) ? 'not-allowed' : 'pointer',
+                        opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                      title="Cancel and remove schedule"
+                    >
+                      <Trash2 size={12} />
+                      <span>{scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
       <div className="mt-10">
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <h2 className="text-primary font-bold" style={{ fontSize: 18, margin: 0 }}>Run History</h2>
-            <span className="px-2 py-0.5 rounded-full bg-surface-raised border border-main text-[11px] text-tertiary">
-              {runs.length} runs
-            </span>
+          <div>
+            <div className="flex items-center gap-3">
+              <h2 className="text-primary font-bold" style={{ fontSize: 18, margin: 0 }}>Run History</h2>
+              <span className="px-2 py-0.5 rounded-full bg-surface-raised border border-main text-[11px] text-tertiary">
+                {runs.length} runs
+              </span>
+            </div>
+            <p className="text-[11px] text-tertiary mt-0.5">
+              Live status, execution durations, per-model diffs, and step logs
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -766,12 +980,20 @@ export default function ProjectJobsPage() {
                     {isExpanded && (
                       <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
                         {(() => {
-                          const totalDroppedCount = perModelEntries.reduce(
-                            (sum, e) => sum + (Array.isArray(e.droppedEntities) ? e.droppedEntities.length : 0),
-                            0
-                          ) || (Array.isArray(run.dropped_entities) ? run.dropped_entities.length : 0)
-                            || (Array.isArray(run.summary?.dropped_entities) ? run.summary.dropped_entities.length : 0)
-                            || (Array.isArray(run.summary?.drop_ledger) ? run.summary.drop_ledger.length : 0);
+                          const allDroppedList = perModelEntries.flatMap((e) =>
+                            Array.isArray(e.droppedEntities) ? e.droppedEntities : []
+                          );
+                          const fallbackDropped =
+                            (Array.isArray(run.dropped_entities) && run.dropped_entities) ||
+                            (Array.isArray(run.summary?.dropped_entities) && run.summary.dropped_entities) ||
+                            (Array.isArray(run.summary?.drop_ledger) && run.summary.drop_ledger) ||
+                            [];
+                          const combinedDropped = allDroppedList.length > 0 ? allDroppedList : fallbackDropped;
+                          const totalDroppedCount = combinedDropped.length;
+                          const actionableCount = combinedDropped.filter(
+                            (e) => !e?.by_design && !isInternalAutoTable(e)
+                          ).length;
+                          const byDesignCount = totalDroppedCount - actionableCount;
 
                           return (
                             <>
@@ -785,46 +1007,89 @@ export default function ProjectJobsPage() {
                               </div>
 
                               {totalDroppedCount > 0 && !isUpsertFocusedRun(run) && (
-                                <div
-                                  style={{
-                                    marginBottom: 12,
-                                    padding: '10px 14px',
-                                    borderRadius: 6,
-                                    background: 'rgba(239, 68, 68, 0.08)',
-                                    border: '1px solid rgba(239, 68, 68, 0.35)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    flexWrap: 'wrap',
-                                    gap: 10,
-                                  }}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-error, #ef4444)', fontWeight: 600 }}>
-                                    <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-                                    <span>
-                                      This run recorded {totalDroppedCount} dropped or excluded {totalDroppedCount === 1 ? 'entity' : 'entities'} across models. See individual model sections below for the exact rejection reasons and error logs.
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => openDroppedFieldsModal(run)}
+                                actionableCount > 0 ? (
+                                  <div
                                     style={{
-                                      display: 'inline-flex',
+                                      marginBottom: 12,
+                                      padding: '10px 14px',
+                                      borderRadius: 8,
+                                      background: 'rgba(239, 68, 68, 0.08)',
+                                      border: '1px solid rgba(239, 68, 68, 0.35)',
+                                      display: 'flex',
                                       alignItems: 'center',
-                                      gap: 6,
-                                      padding: '4px 10px',
-                                      fontSize: 11,
-                                      fontWeight: 600,
-                                      borderRadius: 4,
-                                      background: 'var(--bg-surface-raised)',
-                                      color: 'var(--text-primary)',
-                                      border: '1px solid var(--border-main)',
-                                      cursor: 'pointer',
+                                      justifyContent: 'space-between',
+                                      flexWrap: 'wrap',
+                                      gap: 10,
                                     }}
                                   >
-                                    View All Dropped In Model
-                                  </button>
-                                </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-error, #ef4444)', fontWeight: 600 }}>
+                                      <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                                      <span>
+                                        This run recorded {actionableCount} entity {actionableCount === 1 ? 'issue' : 'issues'} requiring attention. See individual model sections below for rejection reasons and logs.
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => openDroppedFieldsModal(run)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        padding: '4px 10px',
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        borderRadius: 4,
+                                        background: 'var(--bg-surface-raised)',
+                                        color: 'var(--text-primary)',
+                                        border: '1px solid var(--border-main)',
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      View Dropped Details
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div
+                                    style={{
+                                      marginBottom: 12,
+                                      padding: '10px 14px',
+                                      borderRadius: 8,
+                                      background: 'rgba(100, 116, 139, 0.08)',
+                                      border: '1px solid rgba(100, 116, 139, 0.25)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      flexWrap: 'wrap',
+                                      gap: 10,
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>
+                                      <Info size={15} style={{ color: '#38bdf8', flexShrink: 0 }} />
+                                      <span>
+                                        Clean target schema: <strong>{byDesignCount}</strong> Power BI system {byDesignCount === 1 ? 'table was' : 'tables were'} excluded by design (auto date hierarchies & spacers). No action needed.
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => openDroppedFieldsModal(run)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        padding: '4px 10px',
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        borderRadius: 4,
+                                        background: 'var(--bg-surface-raised)',
+                                        color: 'var(--text-secondary)',
+                                        border: '1px solid var(--border-main)',
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      View Excluded Tables
+                                    </button>
+                                  </div>
+                                )
                               )}
                             </>
                           );
@@ -1288,6 +1553,15 @@ export default function ProjectJobsPage() {
           </div>
         )}
       </Modal>
+
+      {/* Direct Scheduling Modal */}
+      <ScheduleModal
+        open={scheduleModalOpen}
+        onClose={() => setScheduleModalOpen(false)}
+        onSaved={handleScheduleSaved}
+        projects={projects}
+        initialSchedule={editingSchedule}
+      />
     </div>
   );
 }

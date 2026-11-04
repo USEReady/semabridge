@@ -145,9 +145,11 @@ class NLQueryEngine:
         if not select_parts:
             select_parts.append("    *")
 
+        target_engine = "Snowflake Cortex Analyst & Semantic View" if dialect.upper() == "SNOWFLAKE" else "Databricks AI/BI Genie & Unity Catalog Metric View" if dialect.upper() == "DATABRICKS" else "SemaBridge Local Engine"
         sql_lines: List[str] = []
-        sql_lines.append("-- SemaBridge AI Generated Governed Semantic Query")
-        sql_lines.append(f"-- Natural Query: \"{clean_prompt}\"")
+        sql_lines.append(f"-- SemaBridge AI Generated Governed Semantic Query")
+        sql_lines.append(f"-- Target Engine: {target_engine}")
+        sql_lines.append(f"-- Question: \"{clean_prompt}\"")
         sql_lines.append(f"-- Dialect: {dialect.upper()}")
         sql_lines.append("SELECT")
         sql_lines.append(",\n".join(select_parts))
@@ -166,6 +168,9 @@ class NLQueryEngine:
         sql_lines.append("LIMIT 100;")
 
         generated_sql = "\n".join(sql_lines)
+        if dialect.upper() == "DATABRICKS":
+            # Adapt any Snowflake-specific IFF to Databricks standard IF
+            generated_sql = re.sub(r"\bIFF\(", "IF(", generated_sql, flags=re.IGNORECASE)
 
         # 4. Compute Confidence Score & Explanation
         metric_score = 0.5 if detected_metrics else 0.1

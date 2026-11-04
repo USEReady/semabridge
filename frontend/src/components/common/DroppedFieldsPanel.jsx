@@ -29,7 +29,7 @@
 import { useState, useMemo } from 'react';
 import { AlertTriangle, ChevronRight, Info } from 'lucide-react';
 import { cleanPbixLabel } from '../../utils/pbixLabel';
-import { PLACEHOLDER_NOTE, isPlaceholderEntry } from '../../utils/placeholderMetric';
+import { PLACEHOLDER_NOTE, isPlaceholderEntry, isInternalAutoTable } from '../../utils/placeholderMetric';
 
 const STAGE_LABELS = {
   extraction: 'Extraction',
@@ -103,8 +103,15 @@ function DropStageGroups({ groups }) {
 }
 
 function DropEntryRow({ entry }) {
-  const byDesign = Boolean(entry?.by_design);
+  const [showRawDetail, setShowRawDetail] = useState(false);
+  const isAutoTable = isInternalAutoTable(entry);
+  const byDesign = Boolean(entry?.by_design || isAutoTable);
   const isPlaceholder = isPlaceholderEntry(entry);
+  
+  const displayReason = isAutoTable
+    ? 'Power BI internal auto date/time table omitted to preserve warehouse schema hygiene.'
+    : (entry?.reason || 'Excluded during sync.');
+
   return (
     <div
       style={{
@@ -112,7 +119,7 @@ function DropEntryRow({ entry }) {
         borderRadius: 6,
         background: byDesign ? 'transparent' : 'var(--bg-surface)',
         border: `1px solid ${byDesign ? 'var(--border-main)' : 'rgba(245,158,11,0.3)'}`,
-        opacity: byDesign ? 0.6 : 1,
+        opacity: byDesign ? 0.75 : 1,
         display: 'flex',
         alignItems: 'flex-start',
         gap: 8,
@@ -129,7 +136,7 @@ function DropEntryRow({ entry }) {
             {entry?.entity_name || 'unknown'}
           </span>
           <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', fontWeight: 700, textTransform: 'uppercase' }}>
-            {entry?.entity_kind || 'entity'}
+            {isAutoTable ? 'Internal Table' : (entry?.entity_kind || 'entity')}
           </span>
           {entry?.dataset && (
             <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
@@ -137,7 +144,7 @@ function DropEntryRow({ entry }) {
             </span>
           )}
           {byDesign && (
-            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', fontWeight: 600 }}>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(100, 116, 139, 0.15)', color: 'var(--text-secondary)', fontWeight: 600 }}>
               By Design
             </span>
           )}
@@ -148,12 +155,39 @@ function DropEntryRow({ entry }) {
           )}
         </div>
         <p style={{ margin: '4px 0 0 0', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-          {entry?.reason || 'No reason recorded.'}
+          {displayReason}
         </p>
         {entry?.detail && (
-          <p style={{ margin: '4px 0 0 0', fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', wordBreak: 'break-word' }}>
-            {entry.detail}
-          </p>
+          <div style={{ marginTop: 4 }}>
+            {isAutoTable ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowRawDetail(!showRawDetail)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    color: 'var(--accent-blue)',
+                    fontSize: 10,
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                  }}
+                >
+                  {showRawDetail ? 'Hide internal metadata' : 'View internal metadata'}
+                </button>
+                {showRawDetail && (
+                  <p style={{ margin: '4px 0 0 0', fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', wordBreak: 'break-word' }}>
+                    {typeof entry.detail === 'object' ? JSON.stringify(entry.detail) : String(entry.detail)}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p style={{ margin: '4px 0 0 0', fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', wordBreak: 'break-word' }}>
+                {typeof entry.detail === 'object' ? JSON.stringify(entry.detail) : String(entry.detail)}
+              </p>
+            )}
+          </div>
         )}
         {isPlaceholder && (
           <p style={{ margin: '6px 0 0 0', fontSize: 12, color: '#f59e0b', lineHeight: 1.5 }}>

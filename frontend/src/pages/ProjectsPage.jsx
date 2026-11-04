@@ -877,8 +877,8 @@ export default function ProjectsPage() {
               <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                 {selectedFolder === null ? 'Projects' : (folders.find(f => f.id === selectedFolder)?.name ?? 'Folder')}
               </h1>
-              <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
-                {filtered.length} project{filtered.length !== 1 ? 's' : ''}
+              <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
+                Manage semantic models, bi-directional sync pipelines, and domain ontologies ({filtered.length} project{filtered.length !== 1 ? 's' : ''})
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1471,8 +1471,31 @@ const ProjectCard = React.memo(function ProjectCard({
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border-subtle)',
       }}>
-        <div className={status === 'Running' ? 'animate-pulse' : ''}>
-          <StatusBadge status={status || 'draft'} size="sm" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className={status === 'Running' ? 'animate-pulse' : ''}>
+            <StatusBadge status={status || 'draft'} size="sm" />
+          </div>
+          {(() => {
+            const mode = resolveProjectSyncMode(project);
+            return (
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: '0.05em',
+                  padding: '1px 5px',
+                  borderRadius: 3,
+                  textTransform: 'uppercase',
+                  background: mode === 'upsert' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(100, 116, 139, 0.15)',
+                  color: mode === 'upsert' ? '#10b981' : '#64748b',
+                  border: `1px solid ${mode === 'upsert' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(100, 116, 139, 0.25)'}`,
+                }}
+                title={mode === 'upsert' ? 'Sync Strategy: Upsert (Incremental)' : 'Sync Strategy: Copy (Replace)'}
+              >
+                {mode.toUpperCase()}
+              </span>
+            );
+          })()}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <IconBtn title={syncInFlight ? 'Running...' : 'Run Now'} onClick={handleSyncClick} disabled={syncInFlight}>

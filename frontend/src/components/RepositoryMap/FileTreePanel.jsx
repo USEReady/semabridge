@@ -52,6 +52,16 @@ function formatDate(iso) {
     } catch { return ''; }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function formatNodeName(name) {
+    if (!name) return '';
+    if (UUID_REGEX.test(name)) {
+        return `Workspace (${name.slice(0, 8)}…)`;
+    }
+    return name;
+}
+
 /**
  * A single tree node (file or folder).
  */
@@ -68,8 +78,8 @@ const TreeNode = memo(function TreeNode({
         ? (expanded ? FolderOpen : Folder)
         : (ICON_MAP[node.icon] || FileText);
     const iconColor = isDir
-        ? (expanded ? '#818CF8' : '#6366F1')
-        : (COLOR_MAP[node.icon] || '#6B7280');
+        ? (expanded ? 'var(--accent-blue)' : 'var(--text-tertiary)')
+        : (COLOR_MAP[node.icon] || 'var(--text-tertiary)');
 
     const handleClick = () => {
         if (isDir) {
@@ -78,6 +88,8 @@ const TreeNode = memo(function TreeNode({
             onFileClick(node.path);
         }
     };
+
+    const displayName = formatNodeName(node.name);
 
     return (
         <>
@@ -89,16 +101,18 @@ const TreeNode = memo(function TreeNode({
                         : `${node.name}\n${formatSize(node.size || 0)}\n${formatDate(node.modified)}`
                 }
                 style={{
-                    display: 'flex', alignItems: 'center', gap: 4,
-                    padding: '3px 8px 3px ' + (12 + depth * 16) + 'px',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '5px 8px 5px ' + (10 + depth * 14) + 'px',
+                    margin: '1px 6px',
                     cursor: 'pointer',
-                    fontSize: 12,
-                    color: isSelected ? '#fff' : 'var(--text-primary)',
+                    fontSize: 11.5,
+                    color: isSelected ? 'var(--accent-blue)' : 'var(--text-primary)',
                     background: isSelected
-                        ? 'linear-gradient(90deg, var(--accent-blue-dark) 0%, var(--accent-blue) 100%)'
+                        ? 'var(--color-accent-faint)'
                         : 'transparent',
-                    borderRadius: isSelected ? 4 : 0,
-                    transition: 'background .12s, color .12s',
+                    border: isSelected ? '1px solid var(--accent-blue)' : '1px solid transparent',
+                    borderRadius: 6,
+                    transition: 'all .14s ease',
                     userSelect: 'none',
                     overflow: 'hidden',
                     whiteSpace: 'nowrap',
@@ -113,32 +127,34 @@ const TreeNode = memo(function TreeNode({
                 {/* Chevron for directories */}
                 {isDir ? (
                     expanded
-                        ? <ChevronDown size={12} style={{ flexShrink: 0, opacity: .5 }} />
-                        : <ChevronRight size={12} style={{ flexShrink: 0, opacity: .5 }} />
+                        ? <ChevronDown size={12} style={{ flexShrink: 0, opacity: .6, color: 'var(--text-tertiary)' }} />
+                        : <ChevronRight size={12} style={{ flexShrink: 0, opacity: .6, color: 'var(--text-tertiary)' }} />
                 ) : (
                     <span style={{ width: 12, flexShrink: 0 }} />
                 )}
 
                 <IconComp
                     size={14}
-                    style={{ flexShrink: 0, color: isSelected ? '#fff' : iconColor }}
+                    style={{ flexShrink: 0, color: iconColor }}
                 />
 
                 <span style={{
                     overflow: 'hidden', textOverflow: 'ellipsis',
-                    fontWeight: isDir ? 600 : 400,
+                    fontWeight: isSelected ? 600 : isDir ? 600 : 450,
                     minWidth: 0,
                     flex: 1,
+                    letterSpacing: '-0.01em',
                 }}>
-                    {node.name}
+                    {displayName}
                 </span>
 
                 {/* File size badge */}
                 {!isDir && node.size != null && (
                     <span style={{
-                        fontSize: 9, opacity: .45,
+                        fontSize: 9.5, opacity: .5,
                         flexShrink: 0,
                         marginLeft: 4,
+                        fontFamily: 'monospace',
                     }}>
                         {formatSize(node.size)}
                     </span>

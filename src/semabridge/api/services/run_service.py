@@ -316,6 +316,22 @@ def _create_project_run(
             or _compat_normalize_sync_mode(fallback_sync_mode)
             or "copy"
         )
+
+    # Intelligent Sync Guard: Initial deployment requires COPY to establish baseline schema and target objects.
+    initial_deployment_promoted = False
+    if str(sync_mode).lower() == "upsert":
+        prior_runs = _compat_project_runs.get(project_id, [])
+        has_prior_successful_run = bool(
+            prior_runs and any(str(r.get("status") or "").lower() in ("success", "active", "warning") for r in prior_runs)
+        )
+        if not has_prior_successful_run:
+            logger.info(
+                "Project '%s' has no prior successful runs. Automatically promoting initial deployment from UPSERT to COPY.",
+                project_id,
+            )
+            sync_mode = "copy"
+            initial_deployment_promoted = True
+
     run = {
         "run_id": run_id,
         "id": run_id,
@@ -331,7 +347,10 @@ def _create_project_run(
             fallback=str(project_meta.get("source") or "fabric").lower(),
         ),
         "message": "Execution started.",
-        "logs": ["LIVE Run queued. Waiting for execution engine..."],
+        "logs": [
+            "LIVE Run queued. Waiting for execution engine...",
+            *(["Notice: Initial project deployment promoted from UPSERT to COPY to establish baseline target schema."] if initial_deployment_promoted else []),
+        ],
         "stage_states": _build_stage_states({}),
         "duration_ms": 0,
         "started_at": _compat_now_iso(),

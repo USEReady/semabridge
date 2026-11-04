@@ -122,7 +122,7 @@ export function StepBasicInfo({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, alignItems: 'stretch' }}>
             {/* Source Column */}
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyBetween: 'space-between', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <div style={LABEL}>Source Connector</div>
                 <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)' }}>SINGLE</span>
               </div>
@@ -161,7 +161,7 @@ export function StepBasicInfo({
 
             {/* Target Column */}
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyBetween: 'space-between', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <div style={LABEL}>Target Connector(s)</div>
                 <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-success)' }}>MULTIPLE</span>
               </div>
@@ -210,7 +210,7 @@ export function StepBasicInfo({
           </div>
 
           {/* Format Selection (Bottom Row) */}
-          <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 24 }}>
+          <div style={{ borderTop: '1px solid var(--border-main)', paddingTop: 24 }}>
             <label style={LABEL}>Intermediate Format</label>
             <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
               {INTERMEDIATE_FORMAT_TYPES.map(t => (

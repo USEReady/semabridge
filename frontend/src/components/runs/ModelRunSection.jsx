@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight, AlertTriangle, Copy, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, AlertTriangle, Copy, Check, ShieldCheck, Info } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import UpsertChangesView from '../UpsertChangesView';
-import { PLACEHOLDER_NOTE, isMetricEntry, isPlaceholderEntry } from '../../utils/placeholderMetric';
+import { PLACEHOLDER_NOTE, isMetricEntry, isPlaceholderEntry, isInternalAutoTable } from '../../utils/placeholderMetric';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
@@ -23,27 +23,93 @@ function ReconciliationSummary({ reconciliation }) {
     ? Object.entries(reconciliation.unaccounted)
     : [];
   const clean = reconciliation.is_clean === true;
-  const accent = reconciliation.ddl_error
-    ? 'var(--color-error)'
-    : clean ? 'var(--color-success)' : 'var(--color-warning)';
+
+  if (clean && !reconciliation.ddl_error) {
+    return (
+      <div
+        style={{
+          marginTop: 12,
+          padding: '12px 16px',
+          borderRadius: 8,
+          background: 'rgba(16, 185, 129, 0.08)',
+          border: '1px solid rgba(16, 185, 129, 0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: 'rgba(16, 185, 129, 0.2)',
+              color: '#10b981',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <ShieldCheck size={18} />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Reconciliation: 100% Metric Parity Validated</span>
+              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.2)', color: '#10b981', fontWeight: 800 }}>
+                CLEAN
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Target objects accurately match source semantic definitions with zero unaccounted discrepancies.
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {reconciliation.deployed_live_count != null && (
+            <div style={{ padding: '4px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-tertiary)', marginRight: 4 }}>Live:</span>
+              <strong style={{ color: '#10b981' }}>{reconciliation.deployed_live_count}</strong>
+            </div>
+          )}
+          {reconciliation.deployed_dead_count != null && (
+            <div style={{ padding: '4px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-tertiary)', marginRight: 4 }}>Dead:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{reconciliation.deployed_dead_count}</strong>
+            </div>
+          )}
+          <div style={{ padding: '4px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', fontSize: 11 }}>
+            <span style={{ color: 'var(--text-tertiary)', marginRight: 4 }}>Unaccounted:</span>
+            <strong style={{ color: '#10b981' }}>0</strong>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const accent = reconciliation.ddl_error ? 'var(--color-error)' : 'var(--color-warning)';
 
   return (
     <div
       style={{
         marginTop: 10,
-        padding: 10,
-        borderRadius: 6,
+        padding: 12,
+        borderRadius: 8,
         background: 'var(--bg-input)',
-        borderLeft: `3px solid ${accent}`,
+        borderLeft: `4px solid ${accent}`,
+        border: '1px solid var(--border-main)',
         fontSize: 12,
         color: 'var(--text-secondary)',
-        overflowWrap: 'anywhere',
       }}
     >
-      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
-        Reconciliation{' '}
-        <span style={{ color: accent, fontWeight: 600 }}>
-          {reconciliation.ddl_error ? 'could not run' : clean ? 'clean' : 'needs attention'}
+      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <AlertTriangle size={14} style={{ color: accent }} />
+        <span>Reconciliation:</span>
+        <span style={{ color: accent, fontWeight: 700 }}>
+          {reconciliation.ddl_error ? 'Deployment Check Failed' : 'Discrepancies Detected'}
         </span>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
@@ -56,7 +122,7 @@ function ReconciliationSummary({ reconciliation }) {
         <span>Unaccounted: <strong style={{ color: unaccounted.length ? 'var(--color-warning)' : 'var(--text-primary)' }}>{unaccounted.length}</strong></span>
       </div>
       {unaccounted.length > 0 && (
-        <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11 }}>
+        <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11, background: 'rgba(0,0,0,0.2)', padding: '6px 8px', borderRadius: 4 }}>
           {unaccounted.map(([name, count]) => `${name} (${count})`).join(', ')}
         </div>
       )}
@@ -122,12 +188,18 @@ function normalizeStage(stage, reason = '') {
   return s || 'conversion';
 }
 
-function DroppedItemDetail({ detail }) {
+function DroppedItemDetail({ detail, reason }) {
   const [copied, setCopied] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
   if (!detail) return null;
 
   const detailText = typeof detail === 'object' ? JSON.stringify(detail, null, 2) : String(detail);
   if (!detailText.trim()) return null;
+
+  const isUnresolvedRef =
+    String(reason || '').toLowerCase().includes('unresolved reference') ||
+    detailText.toLowerCase().includes('unresolved reference') ||
+    detailText.toLowerCase().includes('does not exist in bound physical table');
 
   const handleCopy = (e) => {
     e.stopPropagation();
@@ -139,54 +211,83 @@ function DroppedItemDetail({ detail }) {
   };
 
   return (
-    <div
-      style={{
-        marginTop: 6,
-        padding: '8px 10px',
-        borderRadius: 4,
-        background: 'rgba(0, 0, 0, 0.35)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        position: 'relative',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)' }}>
-          Detailed Error / Rejection Log
-        </span>
-        <button
-          type="button"
-          onClick={handleCopy}
+    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {isUnresolvedRef && (
+        <div
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '2px 6px',
-            fontSize: 10,
-            borderRadius: 3,
-            background: 'var(--bg-surface-raised)',
-            color: 'var(--text-secondary)',
-            border: '1px solid var(--border-main)',
-            cursor: 'pointer',
+            padding: '10px 12px',
+            borderRadius: 6,
+            background: 'rgba(59, 130, 246, 0.08)',
+            border: '1px solid rgba(59, 130, 246, 0.25)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: 'var(--text-primary)',
           }}
-          title="Copy error details"
         >
-          {copied ? <Check size={11} style={{ color: 'var(--color-success, #10b981)' }} /> : <Copy size={11} />}
-          <span>{copied ? 'Copied' : 'Copy'}</span>
-        </button>
-      </div>
+          <Info size={15} style={{ color: '#3b82f6', flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <strong style={{ color: '#3b82f6' }}>Actionable Remediation Tip:</strong>{' '}
+            This column is referenced in a dimension or measure definition, but was not found in the physical warehouse table.
+            If this column is a calculated alias or measure in Power BI, consider mapping it in{' '}
+            <code style={{ fontFamily: MONO, fontSize: 11, background: 'var(--bg-surface-raised)', padding: '2px 4px', borderRadius: 3 }}>
+              source_table_mapping
+            </code>{' '}
+            or emitting it as a semantic metric.
+          </div>
+        </div>
+      )}
+
       <div
         style={{
-          fontFamily: MONO,
-          fontSize: 11,
-          lineHeight: 1.5,
-          color: '#f87171',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          maxHeight: 160,
-          overflowY: 'auto',
+          padding: '8px 10px',
+          borderRadius: 4,
+          background: 'rgba(0, 0, 0, 0.35)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          position: 'relative',
         }}
       >
-        {detailText}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)' }}>
+            Error / Rejection Log
+          </span>
+          <button
+            type="button"
+            onClick={handleCopy}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '2px 6px',
+              fontSize: 10,
+              borderRadius: 3,
+              background: 'var(--bg-surface-raised)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-main)',
+              cursor: 'pointer',
+            }}
+            title="Copy error details"
+          >
+            {copied ? <Check size={11} style={{ color: 'var(--color-success, #10b981)' }} /> : <Copy size={11} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: '#f87171',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            maxHeight: 160,
+            overflowY: 'auto',
+          }}
+        >
+          {detailText}
+        </div>
       </div>
     </div>
   );
@@ -194,8 +295,6 @@ function DroppedItemDetail({ detail }) {
 
 function DroppedFieldsSection({ droppedEntities }) {
   const count = droppedEntities?.length || 0;
-  // Default open when dropped fields exist so reasons are immediately visible
-  const [open, setOpen] = useState(true);
   if (!count) return null;
 
   // Metric issues are warnings (yellow): the metric is a NULL placeholder or
@@ -203,14 +302,40 @@ function DroppedFieldsSection({ droppedEntities }) {
   const metricWarningCount = droppedEntities.filter((e) => !e?.by_design && isMetricEntry(e)).length;
   const placeholderCount = droppedEntities.filter(isPlaceholderEntry).length;
   const rejectedCount = droppedEntities.filter(
-    (e) => !isMetricEntry(e) && (!e?.by_design || String(e?.stage || '').includes('deployment') || String(e?.reason || '').toLowerCase().includes('snowflake'))
+    (e) => !isMetricEntry(e) && (!e?.by_design || String(e?.stage || '').includes('deployment') || String(e?.reason || '').toLowerCase().includes('snowflake')) && !isInternalAutoTable(e)
   ).length;
   const byDesignCount = count - rejectedCount - metricWarningCount;
 
   const hasErrors = rejectedCount > 0;
-  const accentColor = hasErrors ? 'var(--color-error, #ef4444)' : 'var(--color-warning, #f59e0b)';
-  const accentBg = hasErrors ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.08)';
-  const accentBorder = hasErrors ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.35)';
+  const isAllByDesign = count > 0 && rejectedCount === 0 && metricWarningCount === 0;
+
+  // Default open ONLY when there are real errors or warnings to review.
+  // If all exclusions are intentional system tables (by design), default collapsed!
+  const [open, setOpen] = useState(!isAllByDesign);
+
+  const accentColor = hasErrors
+    ? 'var(--color-error, #ef4444)'
+    : metricWarningCount > 0
+    ? 'var(--color-warning, #f59e0b)'
+    : 'var(--text-secondary)';
+  const accentBg = hasErrors
+    ? 'rgba(239, 68, 68, 0.08)'
+    : metricWarningCount > 0
+    ? 'rgba(245, 158, 11, 0.08)'
+    : 'var(--bg-surface-raised)';
+  const accentBorder = hasErrors
+    ? 'rgba(239, 68, 68, 0.35)'
+    : metricWarningCount > 0
+    ? 'rgba(245, 158, 11, 0.35)'
+    : 'var(--border-main)';
+
+  // Sort: Put actionable errors/warnings at the top, and safe by-design exclusions at the bottom
+  const sortedEntities = [...droppedEntities].sort((a, b) => {
+    const aSafe = Boolean(a?.by_design || isInternalAutoTable(a));
+    const bSafe = Boolean(b?.by_design || isInternalAutoTable(b));
+    if (aSafe === bSafe) return 0;
+    return aSafe ? 1 : -1;
+  });
 
   return (
     <div
@@ -243,10 +368,31 @@ function DroppedFieldsSection({ droppedEntities }) {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          <AlertTriangle size={14} />
+          {isAllByDesign ? (
+            <Info size={14} style={{ color: '#38bdf8' }} />
+          ) : (
+            <AlertTriangle size={14} />
+          )}
           <span style={{ fontWeight: 700 }}>
-            Dropped Fields & Excluded Entities ({count})
+            {isAllByDesign
+              ? `System Exclusions — By Design (${byDesignCount})`
+              : `Dropped Fields & Excluded Entities (${count})`}
           </span>
+          {isAllByDesign && (
+            <span
+              style={{
+                fontSize: 10,
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: 'rgba(56, 189, 248, 0.15)',
+                color: '#38bdf8',
+                fontWeight: 700,
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+              }}
+            >
+              Schema Clean · No Action Required
+            </span>
+          )}
           {rejectedCount > 0 && (
             <span
               style={{
@@ -279,7 +425,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                 : `${metricWarningCount} metric warning${metricWarningCount !== 1 ? 's' : ''}`}
             </span>
           )}
-          {byDesignCount > 0 && (
+          {!isAllByDesign && byDesignCount > 0 && (
             <span
               style={{
                 fontSize: 10,
@@ -302,9 +448,10 @@ function DroppedFieldsSection({ droppedEntities }) {
       {open && (
         <div style={{ padding: '10px 12px', borderTop: '1px solid var(--border-subtle, var(--border-main))' }}>
           <div style={{ display: 'grid', gap: 8 }}>
-            {droppedEntities.map((item, idx) => {
+            {sortedEntities.map((item, idx) => {
               const name = item.entity_name || item.name || item.field || item.entity || `Field ${idx + 1}`;
-              const kind = item.entity_kind || item.kind || item.type || item.entity_type || 'field';
+              const isAutoTable = isInternalAutoTable(item);
+              const kind = isAutoTable ? 'internal table' : (item.entity_kind || item.kind || item.type || item.entity_type || 'field');
               const rawStage = normalizeStage(item.stage, item.reason);
               const stageMeta = STAGE_CONFIG[rawStage] || {
                 label: item.stage ? String(item.stage).replace(/_/g, ' ') : 'Conversion',
@@ -312,9 +459,11 @@ function DroppedFieldsSection({ droppedEntities }) {
                 bg: 'var(--bg-surface-raised)',
                 border: 'var(--border-main)',
               };
-              const reason = item.reason || item.message || item.error || 'Excluded during sync';
+              const reason = isAutoTable
+                ? 'Power BI internal auto date/time table omitted to preserve warehouse schema hygiene.'
+                : (item.reason || item.message || item.error || 'Excluded during sync');
               const detail = item.detail || item.details || item.raw_error || item.stack || item.sql || null;
-              const byDesign = Boolean(item.by_design);
+              const byDesign = Boolean(item.by_design || isAutoTable);
               const isPlaceholder = isPlaceholderEntry(item);
               const isMetricWarning = !byDesign && isMetricEntry(item);
               const isSnowflakeReject = !isMetricWarning && (rawStage === 'ddl_deployment' || String(reason).toLowerCase().includes('snowflake'));
@@ -327,6 +476,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                     borderRadius: 6,
                     background: byDesign ? 'var(--bg-surface-raised)' : 'var(--bg-input)',
                     border: `1px solid ${isSnowflakeReject ? 'rgba(239, 68, 68, 0.4)' : byDesign ? 'var(--border-main)' : 'rgba(245, 158, 11, 0.4)'}`,
+                    opacity: byDesign ? 0.75 : 1,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
@@ -371,7 +521,7 @@ function DroppedFieldsSection({ droppedEntities }) {
 
                     <div>
                       {byDesign ? (
-                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'var(--bg-surface-raised)', color: 'var(--text-tertiary)', fontWeight: 600 }}>
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: 'rgba(100, 116, 139, 0.15)', color: 'var(--text-secondary)', fontWeight: 600 }}>
                           Excluded by design
                         </span>
                       ) : isMetricWarning ? (
@@ -403,7 +553,7 @@ function DroppedFieldsSection({ droppedEntities }) {
                   )}
 
                   {/* Detailed Error / Rejection Log */}
-                  <DroppedItemDetail detail={detail} />
+                  <DroppedItemDetail detail={detail} reason={reason} />
                 </div>
               );
             })}

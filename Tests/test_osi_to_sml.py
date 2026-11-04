@@ -135,5 +135,5 @@ def test_from_osi_resolves_metric_dependencies_after_all_metrics_loaded():
     assert metric_sql["Total Revenue"] is not None
     assert metric_sql["Total COGS"] is not None
     assert metric_sql["Gross Margin"] is not None
-    assert 'SUM(fact."REVENUE")' in metric_sql["Gross Margin"]
-    assert 'SUM(fact."COGS")' in metric_sql["Gross Margin"]
+    assert 'SUM(FACT."REVENUE")' in metric_sql["Gross Margin"].upper()
+    assert 'SUM(FACT."COGS")' in metric_sql["Gross Margin"].upper()

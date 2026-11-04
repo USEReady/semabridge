@@ -17,7 +17,7 @@ import { useLogs } from '../context/LogsContext';
 import { useSyncStatusStore } from '../context/SyncStatusContext';
 import { api } from '../utils/api';
 import { buildMockRunLogs, saveRunLogs } from '../utils/runLogs';
-import { normalizeSyncMode } from '../utils/syncMode';
+import { normalizeSyncMode, canProjectUpsert } from '../utils/syncMode';
 import { useUIStore } from '../store/uiStore';
 import usePageCache from '../hooks/usePageCache';
 
@@ -145,31 +145,38 @@ const SegmentedControl = ({ options, value, onChange, label }) => (
       width: 'fit-content',
       gap: 2
     }}>
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          onClick={() => onChange(opt.value)}
-          style={{
-            padding: '8px 16px',
-            borderRadius: 8,
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 700,
-            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-            background: value === opt.value ? 'var(--accent-blue)' : 'transparent',
-            color: value === opt.value ? 'white' : 'var(--text-tertiary)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            minWidth: 120,
-            boxShadow: value === opt.value ? '0 4px 12px rgba(88, 166, 255, 0.25)' : 'none'
-          }}
-        >
-          <span>{opt.label}</span>
-          {opt.subtext && <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.8, marginTop: 2 }}>{opt.subtext}</span>}
-        </button>
-      ))}
+      {options.map((opt) => {
+        const isDisabled = Boolean(opt.disabled);
+        const isActive = value === opt.value && !isDisabled;
+        return (
+          <button
+            key={opt.value}
+            disabled={isDisabled}
+            title={opt.tooltip || (isDisabled ? 'Option unavailable' : undefined)}
+            onClick={() => !isDisabled && onChange(opt.value)}
+            style={{
+              padding: '8px 16px',
+              borderRadius: 8,
+              border: 'none',
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              fontSize: 12,
+              fontWeight: 700,
+              opacity: isDisabled ? 0.45 : 1,
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              background: isActive ? 'var(--accent-blue)' : 'transparent',
+              color: isActive ? 'white' : 'var(--text-tertiary)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              minWidth: 120,
+              boxShadow: isActive ? '0 4px 12px rgba(88, 166, 255, 0.25)' : 'none'
+            }}
+          >
+            <span>{opt.label}</span>
+            {opt.subtext && <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.8, marginTop: 2 }}>{opt.subtext}</span>}
+          </button>
+        );
+      })}
     </div>
   </div>
 );
@@ -265,15 +272,36 @@ function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus
           </div>
 
           <div style={{ gridColumn: 'span 2' }}>
-            <SegmentedControl 
-              label="Sync Strategy"
-              value={configForm.write_strategy || 'copy'}
-              onChange={val => updateField('write_strategy', val)}
-              options={[
-                { label: 'Copy', value: 'copy', subtext: 'Overwrite destination' },
-                { label: 'Upsert', value: 'upsert', subtext: 'Incremental update' }
-              ]}
-            />
+            {(() => {
+              const hasPriorRuns = canProjectUpsert(project);
+              return (
+                <>
+                  <SegmentedControl 
+                    label="Sync Strategy"
+                    value={hasPriorRuns ? (configForm.write_strategy || 'copy') : 'copy'}
+                    onChange={val => {
+                      if (val === 'upsert' && !hasPriorRuns) return;
+                      updateField('write_strategy', val);
+                    }}
+                    options={[
+                      { label: 'Copy', value: 'copy', subtext: 'Overwrite destination' },
+                      { 
+                        label: 'Upsert', 
+                        value: 'upsert', 
+                        disabled: !hasPriorRuns,
+                        subtext: hasPriorRuns ? 'Incremental update' : 'Requires first run',
+                        tooltip: !hasPriorRuns ? 'Initial deployment requires Copy to establish target views and baseline schemas. Upsert unlocks after first run.' : undefined
+                      }
+                    ]}
+                  />
+                  {!hasPriorRuns && (
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: -14, marginBottom: 16 }}>
+                      ℹ️ Initial deployment must use <strong>Copy</strong> to generate target views and tables. <strong>Upsert</strong> will unlock automatically after your first successful run.
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {String(configForm.source_type || '').toLowerCase() === 'pbix' && (
@@ -1985,14 +2013,14 @@ export default function ProjectConfigPage() {
         display: 'flex', 
         alignItems: 'center',
         justifyContent: 'space-between', 
-        background: 'rgba(18, 20, 28, 0.95)', 
-        backdropFilter: 'blur(12px)',
+        background: 'var(--bg-surface)', 
+        backdropFilter: 'blur(16px)',
         position: 'fixed', 
         bottom: 0, 
         left: 0,
         right: 0,
         zIndex: 1000,
-        boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.2)'
+        boxShadow: 'var(--shadow-md)'
       }}>
         <div style={{ display: 'flex', gap: 12 }}>
           <button 

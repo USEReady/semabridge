@@ -780,30 +780,43 @@ class OSIToSMLConverter(BaseConverter):
         }
 
         for metric in sml.metrics:
-            reason = metric.sync_failure_reason or ""
-            if metric.sql_expression or self._STALE_TIER5_DEFERRED_MARKER not in reason:
+            if metric.sql_expression or not (metric.expression or "").strip():
                 continue
+            metric.sync_enabled = False
+            reason = metric.sync_failure_reason or ""
+            if self._STALE_TIER5_DEFERRED_MARKER in reason or not reason:
+                unresolved_deps = []
+                for ref in re.findall(r"\[([^\]]+)\]", metric.expression or ""):
+                    dep = by_name.get(ref.strip().casefold())
+                    if dep is not None and dep is not metric and not dep.sql_expression:
+                        unresolved_deps.append(dep)
 
-            unresolved_deps = []
-            for ref in re.findall(r"\[([^\]]+)\]", metric.expression or ""):
-                dep = by_name.get(ref.strip().casefold())
-                if dep is not None and dep is not metric and not dep.sql_expression:
-                    unresolved_deps.append(dep)
-
-            if unresolved_deps:
-                dep_text = "; ".join(
-                    f"'{dep.unique_name}' ({dep.sync_failure_reason or 'no SQL yet'})"
-                    for dep in unresolved_deps
-                )
-                metric.sync_failure_reason = (
-                    f"Cannot compute — depends on unresolved metric(s): {dep_text}. "
-                    f"This metric's own DAX has no translation issue of its own."
-                )
-            else:
-                metric.sync_failure_reason = (
-                    "Tier-5 (LLM) batch translation was attempted for this metric and "
-                    "did not produce a usable result."
-                )
+                if unresolved_deps:
+                    dep_text = "; ".join(
+                        f"'{dep.unique_name}' ({dep.sync_failure_reason or 'unresolved'})"
+                        for dep in unresolved_deps
+                    )
+                    metric.sync_failure_reason = (
+                        f"Cannot compute — depends on unresolved metric(s): {dep_text}. "
+                        f"This metric's own DAX has no translation issue of its own."
+                    )
+                else:
+                    from semabridge.converter.dax_ast_parser import (
+                        DaxAstParser,
+                        _calculate_has_direct_all_or_allexcept_modifier,
+                        classify_dax_ast_not_applicable,
+                    )
+                    ast_node = DaxAstParser().parse(metric.expression)
+                    classified_reason = classify_dax_ast_not_applicable(ast_node) if ast_node else None
+                    if classified_reason:
+                        metric.sync_failure_reason = classified_reason
+                    elif ast_node and _calculate_has_direct_all_or_allexcept_modifier(ast_node):
+                        metric.sync_failure_reason = "BY_DESIGN_EXCLUDED: not applicable: not decomposable for a window"
+                    else:
+                        metric.sync_failure_reason = (
+                            "Tier-5 (LLM) batch translation was attempted for this metric and "
+                            "did not produce a usable result."
+                        )
 
     def _decompose_disconnected_selector_metrics(
         self,

@@ -48,6 +48,7 @@ import { cleanPbixLabel } from '../utils/pbixLabel';
 import { useMultiDryRunJob } from '../components/CreateProjectWizard/useMultiDryRunJob';
 import { normalizeRows } from '../utils/normalizeRows';
 import { escapeYamlString } from '../utils/yaml';
+import { canProjectUpsert } from '../utils/syncMode';
 import { StepBasicInfo } from '../components/CreateProjectWizard/StepBasicInfo';
 import { StepConnectorConfig } from '../components/CreateProjectWizard/StepConnectorConfig';
 import { StepSourceBrowser } from '../components/CreateProjectWizard/StepSourceBrowser';
@@ -647,7 +648,9 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       if (initialData.target_identity_id != null) setFabricAccountId(initialData.target_identity_id);
       if (initialData.target_workspace_id != null) setFabricWorkspaceId(initialData.target_workspace_id);
       // sync/write strategy (copy | upsert)
-      if (initialData.write_strategy != null) {
+      if (!editMode) {
+        setWizardState({ write_strategy: 'copy' });
+      } else if (initialData.write_strategy != null) {
         setWizardState({ write_strategy: String(initialData.write_strategy).toLowerCase() });
       } else if (initialData.sync_mode != null) {
         // Some project records store sync_mode at the project level (copy|upsert)
@@ -2057,6 +2060,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         navigate={navigate}
         name={name}
         step={step}
+        canUpsert={canProjectUpsert(initialData)}
       />
 
       {/* Main Content Area */}

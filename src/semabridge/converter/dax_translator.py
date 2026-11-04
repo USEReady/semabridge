@@ -324,9 +324,8 @@ class DAXTranslator:
     # accurate reason.
 
     LAG_PERIOD_FUNCTIONS = frozenset({
-
         "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
-
+        "DATEADD",
     })
 
 

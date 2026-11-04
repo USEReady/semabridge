@@ -14,3 +14,12 @@ export function isPlaceholderEntry(entry) {
 export function isMetricEntry(entry) {
   return String(entry?.entity_kind || entry?.kind || '').toLowerCase() === 'metric';
 }
+
+export function isInternalAutoTable(entry) {
+  const name = String(entry?.entity_name || entry?.name || entry?.field || '').trim();
+  if (name.startsWith('LocalDateTable_') || name.startsWith('DateTableTemplate_') || name.startsWith('RowNumber-')) {
+    return true;
+  }
+  return false;
+}
+

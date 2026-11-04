@@ -1,0 +1,9 @@
+[
+  {
+    "name": "what_is_gross_margin_and_arr_by_customer",
+    "question": "What is gross margin and arr by customer?",
+    "sql": "-- SemaBridge AI Generated Governed Semantic Query\n-- Target Engine: Databricks AI/BI Genie & Unity Catalog Metric View\n-- Question: \"What is gross margin and arr by customer?\"\n-- Dialect: DATABRICKS\nSELECT\n    Customer,\n    SUM(revenue) - SUM(cogs) AS gross_margin,\n    SUM(monthly_contract_value) * 12 AS arr\nFROM FINANCE_METRICS_VIEW\nGROUP BY 1\nORDER BY 1 DESC\nLIMIT 100;",
+    "verified_at": "2026-11-03T17:34:27Z",
+    "verified_by": "semabridge_analyst"
+  }
+]

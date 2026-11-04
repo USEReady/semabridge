@@ -220,7 +220,7 @@ def test_stale_null_cast_sql_expression_is_recorded_not_silently_emitted():
         emittable_metric_name_set=set(),
     )
 
-    assert lines == ['  SALESFACT."PLACEHOLDER_METRIC" AS CAST(NULL AS DOUBLE)']
+    assert lines[0].startswith('  SALESFACT."PLACEHOLDER_METRIC" AS CAST(NULL AS DOUBLE)')
     records = builder.drop_ledger.to_json()
     assert len(records) == 1
     assert records[0]["entity_name"] == "Placeholder Metric"

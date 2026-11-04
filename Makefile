@@ -1,4 +1,4 @@
-.PHONY: help install dev run migrate migrate-upgrade migrate-downgrade migrate-current migrate-history lint format clean test
+.PHONY: help install dev run migrate migrate-upgrade migrate-downgrade migrate-current migrate-history lint format clean test pre-deploy
 
 # Color output
 YELLOW := \033[1;33m
@@ -24,7 +24,8 @@ help:
 	@echo "  make run              Start Uvicorn dev server (port 8001)"
 	@echo "  make run-frontend     Start Vite frontend dev server"
 	@echo ""
-	@echo "$(YELLOW)Code Quality:$(NC)"
+	@echo "$(YELLOW)Code Quality & Deployment:$(NC)"
+	@echo "  make pre-deploy       Run automated pre-deploy quality gates (secrets, build, tests)"
 	@echo "  make lint             Run pylint and eslint"
 	@echo "  make format           Format Python code (black)"
 	@echo "  make test             Run pytest test suite"
@@ -106,6 +107,14 @@ ifeq ($(OS),Windows_NT)
 	powershell -NoProfile -Command "& '.\scripts\migrate.ps1' -Command history"
 else
 	bash ./scripts/migrate.sh history
+endif
+
+pre-deploy:
+	@echo "$(YELLOW)Running SemaBridge Automated Pre-Deploy Quality Gate...$(NC)"
+ifeq ($(OS),Windows_NT)
+	bash ./scripts/pre_deploy_check.sh
+else
+	bash ./scripts/pre_deploy_check.sh
 endif
 
 lint:

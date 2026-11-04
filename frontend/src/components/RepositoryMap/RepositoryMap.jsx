@@ -830,14 +830,18 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, [filterType, erMode]);
 
     const dropdownStyle = {
-        border: '1px solid var(--border-color)',
-        borderRadius: 6,
-        background: 'var(--bg-app)',
-        color: 'var(--text-secondary)',
-        fontSize: 11,
-        padding: '4px 8px',
-        maxWidth: 220,
-        minWidth: 120,
+        border: '1px solid var(--border-main)',
+        borderRadius: 8,
+        background: 'var(--bg-surface-raised)',
+        color: 'var(--text-primary)',
+        fontSize: 11.5,
+        fontWeight: 500,
+        padding: '5px 10px',
+        maxWidth: 240,
+        minWidth: 130,
+        outline: 'none',
+        transition: 'all 0.15s ease',
+        cursor: 'pointer',
     };
 
     return (
@@ -858,8 +862,11 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             }}>
                 {/* Title */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <MapIcon size={16} style={{ color: '#2563EB' }} />
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>Repository Map</span>
+                    <MapIcon size={16} style={{ color: 'var(--accent-blue)' }} />
+                    <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>Repository Map</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500, marginLeft: 2 }}>
+                        • Semantic ER Diagram
+                    </span>
                 </div>
 
                 <div style={{ width: 1, height: 20, background: 'var(--border-color)' }} />
@@ -885,12 +892,14 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Open model/data inspector"
                     style={{
                         ...toolBtnStyle,
-                        color: workbenchOpen ? '#2563EB' : 'var(--text-tertiary)',
+                        color: workbenchOpen ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                        background: workbenchOpen ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+                        borderColor: workbenchOpen ? 'var(--accent-blue)' : 'var(--border-main)',
                         marginLeft: 4,
                     }}
                 >
-                    <PanelRight size={15} />
-                    <span style={{ fontSize: 11 }}>Inspector</span>
+                    <PanelRight size={14} />
+                    <span>Inspector</span>
                 </button>
 
                 <button
@@ -898,11 +907,13 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Toggle snapshot/files explorer"
                     style={{
                         ...toolBtnStyle,
-                        color: showExplorer ? '#2563EB' : 'var(--text-tertiary)',
+                        color: showExplorer ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                        background: showExplorer ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+                        borderColor: showExplorer ? 'var(--accent-blue)' : 'var(--border-main)',
                     }}
                 >
-                    <Files size={15} />
-                    <span style={{ fontSize: 11 }}>Explorer</span>
+                    <Files size={14} />
+                    <span>Explorer</span>
                 </button>
 
                 {connectorOptions.length > 0 && (
@@ -1065,15 +1076,20 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 
                         {selectedModelId !== '__all__' && (
                             <span style={{
-                                fontSize: 10,
-                                color: '#2563EB',
-                                border: '1px solid rgba(37, 99, 235, 0.35)',
-                                background: 'rgba(37, 99, 235, 0.10)',
-                                padding: '4px 8px',
-                                borderRadius: 999,
+                                fontSize: 10.5,
+                                fontWeight: 600,
+                                color: 'var(--accent-blue)',
+                                border: '1px solid var(--accent-blue)',
+                                background: 'var(--color-accent-faint)',
+                                padding: '3px 8px',
+                                borderRadius: 6,
                                 whiteSpace: 'nowrap',
                                 marginLeft: 4,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
                             }}>
+                                <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent-blue)' }} />
                                 Model filtered
                             </span>
                         )}
@@ -1089,11 +1105,13 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         title="Toggle version history badges"
                         style={{
                             ...toolBtnStyle,
-                            color: showVersionBadges ? '#2563EB' : 'var(--text-tertiary)',
+                            color: showVersionBadges ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                            background: showVersionBadges ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+                            borderColor: showVersionBadges ? 'var(--accent-blue)' : 'var(--border-main)',
                         }}
                     >
-                        {showVersionBadges ? <Eye size={15} /> : <EyeOff size={15} />}
-                        <span style={{ fontSize: 11 }}>Versions</span>
+                        {showVersionBadges ? <Eye size={14} /> : <EyeOff size={14} />}
+                        <span>Versions</span>
                     </button>
                 )}
 
@@ -1103,30 +1121,32 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                         title="Include system-generated tables in snapshot"
                         style={{
                             ...toolBtnStyle,
-                            color: includeSystemTables ? '#2563EB' : 'var(--text-tertiary)',
+                            color: includeSystemTables ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                            background: includeSystemTables ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+                            borderColor: includeSystemTables ? 'var(--accent-blue)' : 'var(--border-main)',
                         }}
                     >
-                        <Filter size={15} />
-                        <span style={{ fontSize: 11 }}>{includeSystemTables ? 'System: On' : 'System: Off'}</span>
+                        <Filter size={14} />
+                        <span>{includeSystemTables ? 'System: On' : 'System: Off'}</span>
                     </button>
                 )}
 
                 {/* Layout toggles */}
                 <button
                     onClick={() => {
-                        setErMode(v => {
-                            const next = !v;
-                            return next;
-                        });
+                        setErMode(v => !v);
                     }}
                     title="Toggle ER relationship view"
                     style={{
                         ...toolBtnStyle,
-                        color: erMode ? '#2563EB' : 'var(--text-tertiary)',
+                        color: erMode ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                        background: erMode ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+                        borderColor: erMode ? 'var(--accent-blue)' : 'var(--border-main)',
+                        fontWeight: erMode ? 600 : 500,
                     }}
                 >
-                    <Database size={15} />
-                    <span style={{ fontSize: 11 }}>ER View</span>
+                    <Database size={14} />
+                    <span>ER View</span>
                 </button>
 
                 {!erMode && (
@@ -1136,20 +1156,22 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                             title="Hierarchical layout"
                             style={{
                                 ...toolBtnStyle,
-                                color: layout === 'hierarchical' ? '#2563EB' : 'var(--text-tertiary)',
+                                color: layout === 'hierarchical' ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                                background: layout === 'hierarchical' ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
                             }}
                         >
-                            <LayoutGrid size={15} />
+                            <LayoutGrid size={14} />
                         </button>
                         <button
                             onClick={() => setLayout('force')}
                             title="Force-directed layout"
                             style={{
                                 ...toolBtnStyle,
-                                color: layout === 'force' ? '#2563EB' : 'var(--text-tertiary)',
+                                color: layout === 'force' ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                                background: layout === 'force' ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
                             }}
                         >
-                            <Waypoints size={15} />
+                            <Waypoints size={14} />
                         </button>
                     </>
                 )}
@@ -1161,15 +1183,17 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     title="Refresh Map"
                     style={{
                         ...toolBtnStyle,
-                        background: '#2563EB',
+                        background: 'var(--accent-blue)',
                         color: '#fff',
-                        padding: '4px 10px',
-                        borderRadius: 6,
+                        border: '1px solid var(--accent-blue)',
+                        padding: '5px 12px',
+                        borderRadius: 8,
+                        fontWeight: 600,
                         opacity: syncing ? .6 : 1,
                     }}
                 >
                     <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-                    <span style={{ fontSize: 11, fontWeight: 600 }}>
+                    <span>
                         {syncing ? 'Syncing...' : 'Refresh'}
                     </span>
                 </button>
@@ -1525,43 +1549,46 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
 const iconBtnStyle = {
     border: 'none', background: 'transparent', cursor: 'pointer',
     color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center',
-    padding: 2,
+    padding: 4, borderRadius: 6, transition: 'all .15s ease',
 };
 const toolBtnStyle = {
-    border: 'none', background: 'transparent', cursor: 'pointer',
-    display: 'flex', alignItems: 'center', gap: 4,
-    padding: '4px 6px', borderRadius: 4,
-    transition: 'all .15s',
+    border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)', cursor: 'pointer',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: '5px 10px', borderRadius: 8,
+    color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 500,
+    transition: 'all .15s ease',
 };
 const chipStyle = {
-    border: '1px solid var(--border-color)',
-    background: 'transparent',
+    border: '1px solid var(--border-main)',
+    background: 'var(--bg-surface-raised)',
     color: 'var(--text-secondary)',
     fontSize: 11,
-    padding: '3px 10px',
-    borderRadius: 12,
+    fontWeight: 500,
+    padding: '4px 10px',
+    borderRadius: 8,
     cursor: 'pointer',
-    transition: 'all .15s',
+    transition: 'all .15s ease',
 };
 const activeChipStyle = {
-    background: 'var(--accent-blue)',
+    background: 'var(--color-accent-faint)',
     border: '1px solid var(--accent-blue)',
-    color: '#fff',
+    color: 'var(--accent-blue)',
     fontWeight: 600,
 };
 
 function AuditCard({ label, value, tone }) {
     return (
         <div style={{
-            border: '1px solid var(--border-color)',
-            borderRadius: 8,
-            padding: '8px 10px',
-            background: 'var(--bg-app)',
+            border: '1px solid var(--border-main)',
+            borderRadius: 10,
+            padding: '10px 14px',
+            background: 'var(--bg-surface-raised)',
+            boxShadow: 'var(--shadow-sm)',
         }}>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)', marginBottom: 4 }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-tertiary)', marginBottom: 4, fontWeight: 600 }}>
                 {label}
             </div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: tone }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: tone, letterSpacing: '-0.02em' }}>
                 {value}
             </div>
         </div>

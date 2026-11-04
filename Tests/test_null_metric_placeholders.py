@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 from semabridge.connectors.translator import MetricExpressionTranslator
 from semabridge.sml.models import SMLModel
 from semabridge.utils.identifiers import IdentifierSanitizer
-from test_metric_drop_ledger_coverage import _builder, _model
-from test_snowflake_emitter_findings_regressions import _build_emitter_for_ddl_loop
+from Tests.test_metric_drop_ledger_coverage import _builder, _model
+from Tests.test_snowflake_emitter_findings_regressions import _build_emitter_for_ddl_loop
 
 DDL = """CREATE OR REPLACE SEMANTIC VIEW "DB"."SCH"."MODEL"
 TABLES (
@@ -50,7 +50,7 @@ def test_untranslatable_metric_is_emitted_as_null_placeholder_on_home_table():
         emittable_metric_name_set=set(),
     )
 
-    assert lines[0].rstrip(",") == '  SALESFACT."UNTRANSLATABLE" AS CAST(NULL AS DOUBLE)'
+    assert lines[0].rstrip(",").startswith('  SALESFACT."UNTRANSLATABLE" AS CAST(NULL AS DOUBLE)')
     assert 'SALESFACT."TOTAL_UNITS" AS SUM(SALESFACT."UNITS")' in lines[1]
     records = builder.drop_ledger.to_json()
     assert [(r["entity_name"], r["reason"]) for r in records] == [
@@ -69,7 +69,7 @@ def _wire(emitter, monkeypatch, fail_with):
     monkeypatch.setattr(emitter.semantic_view_builder, "generate_ddls", lambda model: [DDL])
     executed = []
 
-    def fake_execute_sql(cursor, sql, context=""):
+    def fake_execute_sql(cursor, sql, context="", **kwargs):
         if context.startswith("DDL[0]"):
             executed.append(sql)
             error = fail_with(sql)

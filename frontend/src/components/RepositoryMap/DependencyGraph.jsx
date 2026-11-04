@@ -8,7 +8,7 @@ import {
     useEdgesState,
     Panel,
 } from '@xyflow/react';
-import { Loader2, Database } from 'lucide-react';
+import { Loader2, Database, Maximize2 } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
@@ -552,22 +552,24 @@ export default function DependencyGraph({
             if (isRelationship) {
                 return {
                     ...e,
+                    type: 'smoothstep',
                     animated: false,
                     style: {
                         ...(e.style || {}),
-                        stroke: (e.style && e.style.stroke) || '#818CF8',
-                        strokeWidth: 1.8,
+                        stroke: (e.style && e.style.stroke) || 'var(--er-edge-stroke)',
+                        strokeWidth: 1.5,
                     },
                     labelStyle: {
-                        fill: '#A5B4FC',
+                        fill: 'var(--er-edge-label-text)',
                         fontSize: 10,
-                        fontWeight: 700,
+                        fontWeight: 600,
+                        fontFamily: "'Inter', sans-serif",
                     },
                     labelBgStyle: {
-                        fill: 'rgba(15,23,42,0.88)',
+                        fill: 'var(--er-edge-label-bg)',
                     },
-                    labelBgPadding: [4, 2],
-                    labelBgBorderRadius: 4,
+                    labelBgPadding: [6, 3],
+                    labelBgBorderRadius: 6,
                 };
             }
             return e;
@@ -871,30 +873,33 @@ export default function DependencyGraph({
 
                 <Controls
                     position="bottom-left"
-                    style={{ margin: 15 }}
+                    style={{ margin: 16 }}
                 />
                 <MiniMap
                     position="bottom-right"
-                    style={{ margin: 15 }}
-                    nodeColor={n => {
-                        if (n.data?.nodeType === 'model') return '#3B82F6';
-                        if (n.data?.nodeType === 'table') return '#22C55E';
-                        if (n.data?.nodeType === 'measure') return '#EAB308';
-                        return '#6B7280';
+                    style={{
+                        margin: 16,
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-main)',
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        boxShadow: 'var(--shadow-md)',
                     }}
-                    maskColor="rgba(0,0,0,0.15)"
+                    nodeColor={n => {
+                        if (n.data?.nodeType === 'model') return 'var(--accent-blue)';
+                        if (n.data?.nodeType === 'table') return '#10B981';
+                        if (n.data?.nodeType === 'measure') return '#F59E0B';
+                        return 'var(--text-tertiary)';
+                    }}
+                    nodeStrokeWidth={1}
+                    maskColor="rgba(0, 0, 0, 0.45)"
                 />
-                <Background gap={20} size={1} color="var(--border-color)" />
+                <Background gap={24} size={1} color="var(--er-canvas-dots)" />
 
-                {/* Legend */}
+                {/* Legend & Fullscreen Panel */}
                 <Panel position="top-right">
                     <div style={{
                         display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8,
-
-
-
-
-
                     }}>
                         {/* Full Screen Button above legend */}
                         {showFullScreenButton && (
@@ -902,29 +907,36 @@ export default function DependencyGraph({
                                 onClick={onRequestFullScreen}
                                 title="Full Screen Relationship Diagram"
                                 style={{
-                                    width: 44, height: 44,
-                                    background: '#18181b', color: 'var(--accent-blue)',
-                                    border: '2.5px solid var(--accent-blue)', borderRadius: '50%',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    fontSize: 24, fontWeight: 900,
-                                    boxShadow: '0 4px 16px rgba(0,0,0,.18)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    padding: '6px 12px',
+                                    background: 'var(--bg-surface)',
+                                    color: 'var(--text-primary)',
+                                    border: '1px solid var(--border-main)',
+                                    borderRadius: 8,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    boxShadow: 'var(--shadow-md)',
                                     cursor: 'pointer',
-                                    opacity: 0.96,
-                                    transition: 'box-shadow .18s, border-color .18s, background .18s',
-                                    marginBottom: 2,
+                                    backdropFilter: 'blur(8px)',
+                                    transition: 'all 0.15s ease',
                                 }}
-                                onMouseOver={e => e.currentTarget.style.background = '#23234a'}
-                                onMouseOut={e => e.currentTarget.style.background = '#18181b'}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent-blue)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-main)'; e.currentTarget.style.transform = 'none'; }}
                             >
-                                <span style={{ fontSize: 24, lineHeight: 1 }}>+</span>
+                                <Maximize2 size={13} style={{ color: 'var(--accent-blue)' }} />
+                                <span>Full Screen</span>
                             </button>
                         )}
                         <div style={{
                             background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: 8,
+                            border: '1px solid var(--border-main)',
+                            borderRadius: 10,
                             padding: '10px 14px',
                             fontSize: 11,
+                            boxShadow: 'var(--shadow-md)',
+                            backdropFilter: 'blur(8px)',
                             display: 'flex', flexDirection: 'column', gap: 5,
                             minWidth: 140,
                         }}>
@@ -979,6 +991,41 @@ export default function DependencyGraph({
                     }}>
                         <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--accent-blue)' }} />
                         <span>{snapshotId ? 'Loading snapshot graph...' : 'Loading dependency graph...'}</span>
+                    </div>
+                </div>
+            )}
+
+            {!isLoading && nodes.length === 0 && (
+                <div style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    pointerEvents: 'none',
+                    zIndex: 4,
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '24px 32px',
+                        borderRadius: 12,
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-color)',
+                        boxShadow: 'var(--shadow-md)',
+                        maxWidth: 420,
+                        textAlign: 'center',
+                    }}>
+                        <Database size={28} style={{ color: 'var(--text-tertiary)' }} />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                            No Semantic Objects Found
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                            Select a different connector or model from the top bar, or sync a project to visualize table relationships, foreign keys, and metrics.
+                        </span>
                     </div>
                 </div>
             )}

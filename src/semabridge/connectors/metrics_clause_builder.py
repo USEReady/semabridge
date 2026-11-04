@@ -54,8 +54,15 @@ class MetricsClauseBuilder:
         all window arguments declared as valid metric references."""
         from semabridge.sml.models import SMLMetric, AggregationType
         
-        m_sql_map = {m.label: m.sql_expression for m in valid_metrics if getattr(m, "sql_expression", None)}
-        m_sql_map.update({m.unique_name: m.sql_expression for m in valid_metrics if getattr(m, "sql_expression", None)})
+        m_sql_map = {}
+        for m in valid_metrics:
+            sql = getattr(m, "sql_expression", None)
+            if not sql:
+                continue
+            for attr in ("label", "unique_name", "name"):
+                val = getattr(m, attr, None)
+                if val:
+                    m_sql_map[val] = sql
 
         def _split_top_level_div(sql: str):
             depth, in_q = 0, False

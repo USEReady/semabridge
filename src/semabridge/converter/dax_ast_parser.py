@@ -568,23 +568,28 @@ class DaxLexer:
         self.pos += 1  # skip closing '
 
         # Now consume [ColumnName]
-
         col_name = ""
-
         if self.pos < len(self.text) and self.text[self.pos] == "[":
-
             self.pos += 1  # skip [
-
             while self.pos < len(self.text) and self.text[self.pos] != "]":
-
                 col_name += self.text[self.pos]
-
                 self.pos += 1
-
             self.pos += 1  # skip ]
 
-        raw = self.text[start : self.pos]
+        # Check for Power BI hierarchy: 'Table'[Column].[Level]
+        while (
+            self.pos < len(self.text)
+            and self.text[self.pos] == "."
+            and self.pos + 1 < len(self.text)
+            and self.text[self.pos + 1] == "["
+        ):
+            self.pos += 2  # skip .[
+            while self.pos < len(self.text) and self.text[self.pos] != "]":
+                self.pos += 1
+            if self.pos < len(self.text) and self.text[self.pos] == "]":
+                self.pos += 1
 
+        raw = self.text[start : self.pos]
         return DaxToken(DaxTokenType.COLUMN_REF, raw, start)
 
 
@@ -1318,17 +1323,12 @@ class DaxAstParser:
 
 
         if tok.type == DaxTokenType.COLUMN_REF:
-
             self._advance()
-
-            # Parse 'Table'[Column]
-
-            m = re.match(r"'([^']+)'\[([^\]]+)\]", tok.value)
-
+            # Parse 'Table'[Column] or 'Table'[Column].[Level]
+            m = re.match(r"'([^']+)'\[([^\]]+)\](?:\.\[([^\]]+)\])?", tok.value)
             if m:
-
-                return ColumnRefNode(table=m.group(1), column=m.group(2), raw=tok.value)
-
+                target_col = m.group(3) or m.group(2)
+                return ColumnRefNode(table=m.group(1), column=target_col, raw=tok.value)
             return IdentifierNode(name=tok.value)
 
 
@@ -2093,19 +2093,35 @@ class DaxSqlRenderer:
 
         self._var_scopes.append(new_scope)
 
+        if not hasattr(self, "_var_ast_map"):
+
+            self._var_ast_map = {}
+
+        old_ast_map = dict(self._var_ast_map)
+
         try:
 
             for var_name, var_expr in node.variables:
 
-                var_sql = self._render_node(var_expr)
-
-                if not var_sql or not validate_emitted_sql(var_sql):
-
-                    raise self.DaxRenderError(f"Failed to render variable '{var_name}'")
-
                 clean_name = str(var_name or "").strip("[]").casefold()
 
-                new_scope[clean_name] = f"({var_sql})"
+                self._var_ast_map[clean_name] = var_expr
+
+                if self._extract_closing_balance_dimension(var_expr) is not None:
+
+                    continue
+
+                try:
+
+                    var_sql = self._render_node(var_expr)
+
+                    if var_sql and validate_emitted_sql(var_sql):
+
+                        new_scope[clean_name] = f"({var_sql})"
+
+                except self.DaxRenderError:
+
+                    pass
 
             body_sql = self._render_node(node.body)
 
@@ -2118,6 +2134,8 @@ class DaxSqlRenderer:
         finally:
 
             self._var_scopes.pop()
+
+            self._var_ast_map = old_ast_map
 
 
 
@@ -2793,6 +2811,14 @@ class DaxSqlRenderer:
 
 
 
+        # IF (special form -- must evaluate before eager argument rendering)
+
+        if func == "IF":
+
+            return self._render_if(node.args)
+
+
+
         # Registry-driven templates (if configured)
 
         rendered_args = [self._render_node(a) for a in node.args]
@@ -2821,11 +2847,7 @@ class DaxSqlRenderer:
 
 
 
-        # IF
 
-        if func == "IF":
-
-            return self._render_if(node.args)
 
 
 
@@ -3121,6 +3143,22 @@ class DaxSqlRenderer:
         if len(args) < 2:
 
             raise self.DaxRenderError("IF requires at least 2 arguments")
+
+        if len(args) == 3:
+            then_node = args[1]
+            if isinstance(then_node, FunctionCallNode) and then_node.func.upper() == "ERROR":
+                return self._render_node(args[2])
+
+            cond_node = args[0]
+            if isinstance(cond_node, FunctionCallNode) and cond_node.func.upper() == "HASONEVALUE":
+                cb_dim = None
+                if cond_node.args and isinstance(cond_node.args[0], ColumnRefNode):
+                    cb_dim = (cond_node.args[0].table, cond_node.args[0].column)
+                elif cond_node.args and isinstance(cond_node.args[0], IdentifierNode):
+                    cb_dim = (None, cond_node.args[0].name)
+                if cb_dim and cb_dim not in self.non_additive_dimensions:
+                    self.non_additive_dimensions.append(cb_dim)
+                return self._render_node(args[1])
 
         cond_node = args[0]
 
@@ -3519,9 +3557,41 @@ class DaxSqlRenderer:
 
           col = MAX(col)
 
+          LASTNONBLANK(table[col], ...)
+
+          LASTNONBLANK(ALL(table[col]), ...)
+
         Returns (table_name, column_name) if matched, else None.
 
         """
+
+        if isinstance(node, IdentifierNode):
+
+            var_name = node.name.strip("[]").casefold()
+
+            if hasattr(self, "_var_ast_map") and var_name in self._var_ast_map:
+
+                node = self._var_ast_map[var_name]
+
+
+
+        if isinstance(node, FunctionCallNode) and node.func.upper() == "LASTNONBLANK" and len(node.args) >= 1:
+
+            first_arg = node.args[0]
+
+            if isinstance(first_arg, FunctionCallNode) and first_arg.func.upper() in ("ALL", "ALLEXCEPT", "VALUES") and first_arg.args:
+
+                first_arg = first_arg.args[0]
+
+            if isinstance(first_arg, ColumnRefNode):
+
+                return (first_arg.table, first_arg.column)
+
+            if isinstance(first_arg, IdentifierNode):
+
+                return (None, first_arg.name)
+
+
 
         pred_node = node
 
@@ -3544,6 +3614,16 @@ class DaxSqlRenderer:
 
 
     def _match_col_equals_max(self, col_node: DaxNode, max_node: DaxNode) -> Optional[Tuple[Optional[str], str]]:
+
+        if isinstance(max_node, IdentifierNode):
+
+            var_name = max_node.name.strip("[]").casefold()
+
+            if hasattr(self, "_var_ast_map") and var_name in self._var_ast_map:
+
+                max_node = self._var_ast_map[var_name]
+
+
 
         if isinstance(col_node, ColumnRefNode) and isinstance(max_node, FunctionCallNode):
 
@@ -3843,32 +3923,43 @@ class DaxSqlRenderer:
                         break
 
             lag_filter_arg = None
-
             lag_interval = "year"
-
+            lag_amount = -1
             for filter_arg in filtered_args[1:]:
-
                 if isinstance(filter_arg, FunctionCallNode):
-
                     fname = filter_arg.func.upper()
-
                     if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
-
                         lag_interval = "year" if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR") else ("quarter" if fname == "PREVIOUSQUARTER" else "month")
-
                         lag_filter_arg = filter_arg
-
+                        lag_amount = -1
                         break
+                    elif fname == "DATEADD" and len(filter_arg.args) >= 3:
+                        # DAX: DATEADD(<dates>, <number>, <interval>)
+                        amount_node = filter_arg.args[1]
+                        interval_node = filter_arg.args[2]
+                        amount = -1
+                        if isinstance(amount_node, LiteralNode) and isinstance(amount_node.value, (int, float)):
+                            amount = int(amount_node.value)
+                        elif isinstance(amount_node, UnaryOpNode) and amount_node.op == "-" and isinstance(amount_node.operand, LiteralNode):
+                            amount = -int(amount_node.operand.value)
+
+                        interval_str = ""
+                        if isinstance(interval_node, IdentifierNode):
+                            interval_str = interval_node.name.lower()
+                        elif isinstance(interval_node, LiteralNode):
+                            interval_str = str(interval_node.value).lower()
+
+                        if interval_str in ("year", "quarter", "month", "day"):
+                            lag_interval = interval_str
+                            lag_filter_arg = filter_arg
+                            lag_amount = amount
+                            break
 
             if lag_filter_arg is not None:
-
                 date_arg = lag_filter_arg.args[0] if lag_filter_arg.args else None
-
                 if date_arg is None:
-
                     raise self.DaxRenderError(f"{lag_filter_arg.func} requires a date-column argument")
-
-                return self._render_lag_period([filtered_args[0], date_arg], interval=lag_interval, amount=-1)
+                return self._render_lag_period([filtered_args[0], date_arg], interval=lag_interval, amount=lag_amount)
 
             for filter_arg in filtered_args[1:]:
 
@@ -4533,9 +4624,9 @@ class DaxSqlRenderer:
 
         agg_node = args[0]
 
-        lag_component = self._LAG_COMPONENT[interval]
+        lag_component = self._LAG_COMPONENT.get(interval, f"LAG_{interval}_{amount}")
 
-        base_flag = self.anchor_flag_map.get((lag_component,))
+        base_flag = self.anchor_flag_map.get((lag_component,)) if (self.anchor_flag_map and amount == -1) else None
 
  
 
@@ -4555,15 +4646,19 @@ class DaxSqlRenderer:
 
                 condition_sql = f'{self.table_alias}."{base_flag}"'
 
+            elif interval == "day":
+
+                condition_sql = f"{date_col} = DATEADD(DAY, {amount}, {max_date})"
+
             elif interval == "year":
 
                 condition_sql = (
 
-                    f"YEAR({date_col}) = YEAR({max_date}) - 1 "
+                    f"YEAR({date_col}) = YEAR({max_date}) + ({amount}) "
 
-                    f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
+                    f"AND {date_col} BETWEEN DATEADD(YEAR, {amount}, DATE_TRUNC('YEAR', {max_date})) "
 
-                    f"AND DATEADD(YEAR, -1, {max_date})"
+                    f"AND DATEADD(YEAR, {amount}, {max_date})"
 
                 )
 
@@ -4571,9 +4666,9 @@ class DaxSqlRenderer:
 
                 condition_sql = (
 
-                    f"YEAR({date_col}) = YEAR(DATEADD(QUARTER, -1, {max_date})) "
+                    f"YEAR({date_col}) = YEAR(DATEADD(QUARTER, {amount}, {max_date})) "
 
-                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, -1, {max_date}))"
+                    f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, {amount}, {max_date}))"
 
                 )
 
@@ -4581,9 +4676,9 @@ class DaxSqlRenderer:
 
                 condition_sql = (
 
-                    f"YEAR({date_col}) = YEAR(DATEADD(MONTH, -1, {max_date})) "
+                    f"YEAR({date_col}) = YEAR(DATEADD(MONTH, {amount}, {max_date})) "
 
-                    f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, -1, {max_date}))"
+                    f"AND MONTH({date_col}) = MONTH(DATEADD(MONTH, {amount}, {max_date}))"
 
                 )
 
@@ -4597,15 +4692,7 @@ class DaxSqlRenderer:
 
         agg_sql = self._render_node(agg_node)
 
-        shift_expr = {
-
-            "year": f"DATEADD(YEAR, -1, {max_date})",
-
-            "quarter": f"DATEADD(QUARTER, -1, {max_date})",
-
-            "month": f"DATEADD(MONTH, -1, {max_date})",
-
-        }[interval]
+        shift_expr = f"DATEADD({interval.upper()}, {amount}, {max_date})" 
 
  
 
@@ -4773,15 +4860,7 @@ class DaxSqlRenderer:
 
             # missing flag.
 
-            legacy_shift_expr = {
-
-                "year": f"DATEADD(YEAR, -1, {legacy_max_date})",
-
-                "quarter": f"DATEADD(QUARTER, -1, {legacy_max_date})",
-
-                "month": f"DATEADD(MONTH, -1, {legacy_max_date})",
-
-            }[interval]
+            legacy_shift_expr = f"DATEADD({interval.upper()}, {amount}, {legacy_max_date})" 
 
             return agg_sql.replace(legacy_max_date, legacy_shift_expr)
 
@@ -4797,13 +4876,17 @@ class DaxSqlRenderer:
 
         # measure-reference fallback for TOTALYTD/MTD/QTD).
 
-        if interval == "year":
+        if interval == "day":
+
+            condition_sql = f"{date_col} = {shift_expr}"
+
+        elif interval == "year":
 
             condition_sql = (
 
-                f"YEAR({date_col}) = YEAR({max_date}) - 1 "
+                f"YEAR({date_col}) = YEAR({shift_expr}) "
 
-                f"AND {date_col} BETWEEN DATEADD(YEAR, -1, DATE_TRUNC('YEAR', {max_date})) "
+                f"AND {date_col} BETWEEN DATEADD(YEAR, {amount}, DATE_TRUNC('YEAR', {max_date})) "
 
                 f"AND {shift_expr}"
 
@@ -5263,8 +5346,18 @@ def _has_closing_balance(node: DaxNode) -> bool:
 
 def _has_selectedvalue_in_filter_all(node: DaxNode) -> bool:
     res = False
+    var_map = {}
+    if isinstance(node, VarNode):
+        for name, v_expr in node.variables:
+            var_map[name.casefold()] = v_expr
+
     def _has_selectedvalue(n):
         if n is None:
+            return False
+        if isinstance(n, IdentifierNode):
+            v = var_map.get(n.name.casefold())
+            if v:
+                return _has_selectedvalue(v)
             return False
         if isinstance(n, FunctionCallNode):
             if n.func.upper() == "SELECTEDVALUE":
@@ -5285,6 +5378,8 @@ def _has_selectedvalue_in_filter_all(node: DaxNode) -> bool:
                 first_arg = cur.args[0]
                 is_all_table = False
                 if isinstance(first_arg, FunctionCallNode) and first_arg.func.upper() in ("ALL", "ALLEXCEPT", "ALLSELECTED"):
+                    is_all_table = True
+                elif isinstance(first_arg, (IdentifierNode, ColumnRefNode)):
                     is_all_table = True
                 if is_all_table and any(_has_selectedvalue(a) for a in cur.args[1:]):
                     res = True
@@ -5464,14 +5559,14 @@ def classify_dax_ast_not_applicable(
     if _has_ranking_function(parsed_ast):
         return "not applicable: needs window metric (ranking)"
 
-    # 4. Window metric
+    # 4. Window metric & report selection
+    if _has_allselected(parsed_ast):
+        return "not applicable: depends on report selection (ALLSELECTED)"
     if _has_selectedvalue_in_filter_all(parsed_ast):
         return "not applicable: needs window metric"
     if _calculate_has_direct_all_or_allexcept_modifier(parsed_ast):
         if _is_enrichable_all_measure(parsed_ast):
             pass
-        elif _has_allselected(parsed_ast):
-            return "not applicable: depends on report selection (ALLSELECTED)"
         elif _has_non_decomposable_aggregate(parsed_ast):
             return "not applicable: not decomposable for a window"
         else:

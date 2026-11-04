@@ -1,9 +1,9 @@
-project_name: xcv
+project_name: tiral_comp
 source:
   type: pbix
-  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-xcv/ad207c5865d24666929a1a4c03510ad8_Competitive
+  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-tiral_comp/4275671811c548c8916423f778d9bcb5_Competitive
     Marketing Analysis (More Synonyms).pbix
-  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-xcv/ad207c5865d24666929a1a4c03510ad8_Competitive
+  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-tiral_comp/4275671811c548c8916423f778d9bcb5_Competitive
     Marketing Analysis (More Synonyms).pbix
 targets:
 - type: snowflake
@@ -219,5 +219,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-xcv
-display_name: xcv
+project_id: proj-tiral_comp
+display_name: tiral_comp

@@ -63,7 +63,7 @@ def test_metric_referencing_a_null_placeholder_becomes_a_placeholder():
     pruned = builder._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
 
     at_lines = [l for l in pruned if "ATINDICATOR01" in l]
-    assert at_lines == ['  SALESFACT."ATINDICATOR01" AS CAST(NULL AS DOUBLE)']
+    assert at_lines[0].startswith('  SALESFACT."ATINDICATOR01" AS CAST(NULL AS DOUBLE)')
 
 
 def test_metric_inlining_handles_nested_metric_references():

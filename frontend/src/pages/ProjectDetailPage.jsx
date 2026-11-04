@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, Edit3, Trash2, Play, Calendar, 
   Clock, Tag, Info, Layers, ExternalLink,
-  ChevronRight, BarChart3, Cloud, Snowflake, Database
+  ChevronRight, BarChart3, Cloud, Snowflake, Database, Sparkles
 } from 'lucide-react';
 import { api } from '../utils/api';
 import StatusBadge from '../components/common/StatusBadge';
@@ -138,6 +138,20 @@ export default function ProjectDetailPage() {
             {running ? 'Running...' : 'Run Now'}
           </button>
           
+          <button 
+            onClick={() => navigate('/ontology')}
+            className="flex items-center gap-2 rounded-lg font-semibold px-4 py-2.5 transition-all"
+            style={{ 
+              background: 'rgba(245, 158, 11, 0.12)', 
+              border: '1px solid rgba(245, 158, 11, 0.3)',
+              color: '#f59e0b'
+            }}
+            title="Test conversational analytics in Cortex Analyst & Databricks Genie Studio"
+          >
+            <Sparkles size={16} />
+            AI Studio
+          </button>
+
           <button 
             onClick={() => navigate(`/projects/${id}/edit`)}
             className="flex items-center gap-2 rounded-lg font-semibold px-4 py-2.5 transition-all"

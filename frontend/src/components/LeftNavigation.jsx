@@ -113,16 +113,6 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
               {isPinned ? 'Collapse Menu' : 'Pin Menu'}
             </span>
           </button>
-
-          {/* Emergency Reset */}
-          <button
-            onClick={onEmergencyReset}
-            title="Emergency Reset State"
-            className="nav-item reset-button"
-          >
-            <span className="reset-icon">R</span>
-            <span className="nav-label">Reset State</span>
-          </button>
         </div>
       </aside>
       {!isPinned && <div className="sidebar-spacer" />}
