@@ -56,6 +56,7 @@ class DimensionsClauseBuilder:
             dataset_col_lookup, measure_columns, sml.unique_name or sml.label,
             is_osi=False, live_col_lookup=live_col_lookup or {},
             relationships=getattr(sml, "relationships", []) or [],
+            model=sml,
         )
 
     def build_for_osi(
@@ -76,6 +77,7 @@ class DimensionsClauseBuilder:
             dataset_col_lookup, measure_columns, osi.unique_name or osi.label,
             is_osi=True, live_col_lookup=live_col_lookup or {},
             relationships=getattr(osi, "relationships", []) or [],
+            model=osi,
         )
 
     def _build_dimensions(
@@ -90,6 +92,7 @@ class DimensionsClauseBuilder:
         is_osi: bool,
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
         relationships: Optional[List[Any]] = None,
+        model: Optional[Any] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         dims_lines: List[str] = []
         # Tracks columns present in the source model but skipped because they
@@ -320,7 +323,7 @@ class DimensionsClauseBuilder:
                     or self.enriched_view_mapping.get(str(dataset.unique_name or "").upper())
                 )
             )
-            if is_enriched_target:
+            if is_enriched_target and model is not None:
                 from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
                 for m in getattr(model, "metrics", []) or []:
                     m_ds = getattr(m, "dataset", None)
