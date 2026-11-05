@@ -58,6 +58,9 @@ class DomainMetric(BaseModel):
     business_rules: List[str] = Field(default_factory=list)
     data_steward: Optional[str] = None
     domain: Optional[str] = None
+    # Optional explicit binding to the concept (dataset) this metric is computed over.
+    # When omitted, OSI conversion infers a concept from the metric's domain / grain.
+    concept: Optional[str] = None
     semantic_view_name: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
 

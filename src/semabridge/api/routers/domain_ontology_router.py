@@ -30,6 +30,13 @@ class SaveDomainRequest(BaseModel):
     yaml_content: str
 
 
+class FromOsiRequest(BaseModel):
+    osi_model: Optional[Dict[str, Any]] = None
+    project_id: Optional[str] = None
+    domain_name: Optional[str] = None
+    save_to_disk: bool = True
+
+
 @router.get("", response_model=Dict[str, Any])
 def list_domains() -> Dict[str, Any]:
     """List all federated domain ontologies with concept counts, metric counts, and collisions."""
@@ -100,8 +107,9 @@ def validate_domain_yaml(req: ValidateYamlRequest) -> Dict[str, Any]:
         }
 
 
+@router.post("", response_model=Dict[str, Any])
 @router.put("/{domain_name}", response_model=Dict[str, Any])
-def save_domain(domain_name: str, req: SaveDomainRequest) -> Dict[str, Any]:
+def save_domain(req: SaveDomainRequest, domain_name: Optional[str] = None) -> Dict[str, Any]:
     """Update or create a domain ontology from edited YAML content."""
     try:
         dom = FederatedOntologyLoader.parse_yaml_string(req.yaml_content, domain_name)
@@ -187,3 +195,50 @@ def export_unified_yaml() -> str:
         lines.append(FederatedOntologyLoader.dump_domain_yaml(dom))
         lines.append("")
     return "\n".join(lines)
+
+
+@router.post("/from-osi", response_model=Dict[str, Any])
+async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
+    """Bootstrap or update a domain ontology directly from an OSI model or existing project snapshot.
+
+    Preserves any existing human-authored enrichments (business rules, data stewards,
+    descriptions, custom synonyms, concept types, tags, owner) in the current ontology.
+    """
+    from semabridge.intermediate.models import OSIModel
+
+    osi_obj: Optional[OSIModel] = None
+
+    if req.osi_model:
+        try:
+            osi_obj = OSIModel(**req.osi_model)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid OSIModel payload: {e}")
+    elif req.project_id:
+        from semabridge.api.routers.export_router import _load_osi_model
+        osi_obj = await _load_osi_model(req.project_id)
+        if not osi_obj:
+            raise HTTPException(status_code=404, detail=f"No OSI model found for project '{req.project_id}'.")
+    else:
+        raise HTTPException(status_code=400, detail="Must provide either 'osi_model' dictionary or 'project_id'.")
+
+    target_domain = req.domain_name or osi_obj.label or osi_obj.unique_name or "Enterprise"
+    existing_domain_obj = ontology_store.domains.get(target_domain)
+
+    domain_ontology = FederatedOntologyLoader.from_osi_model(
+        model=osi_obj,
+        domain_name=target_domain,
+        existing_ontology=existing_domain_obj,
+    )
+
+    fed = ontology_store.add_or_update_domain(domain_ontology, save_to_disk=req.save_to_disk)
+
+    return {
+        "success": True,
+        "domain": domain_ontology.domain,
+        "concept_count": len(domain_ontology.concepts),
+        "metric_count": len(domain_ontology.metrics),
+        "relationship_count": len(domain_ontology.relationships),
+        "total_domains": len(fed.domains),
+        "collisions": [c.model_dump() for c in fed.collisions],
+        "yaml_content": FederatedOntologyLoader.dump_domain_yaml(domain_ontology),
+    }

@@ -8,6 +8,29 @@ from semabridge.api.main import app
 client = TestClient(app)
 
 
+@pytest.fixture
+def seeded_store(tmp_path):
+    """Temporarily load demo domains into the live singleton (in memory, tmp storage)."""
+    from semabridge.ontology.store import ontology_store
+
+    orig_domains, orig_dir = ontology_store.domains, ontology_store.storage_dir
+    ontology_store.domains, ontology_store.storage_dir = {}, tmp_path
+    ontology_store.seed_demo_domains()
+    try:
+        yield ontology_store
+    finally:
+        ontology_store.domains, ontology_store.storage_dir = orig_domains, orig_dir
+        ontology_store._refresh_index()
+
+
+def test_store_empty_by_default_and_opt_in_seed(tmp_path):
+    from semabridge.ontology.store import DomainOntologyStore
+
+    assert DomainOntologyStore(storage_dir=tmp_path).domains == {}
+    seeded = DomainOntologyStore(storage_dir=tmp_path, seed_demo=True)
+    assert set(seeded.domains) == {"Finance", "Sales"}
+
+
 def test_api_list_domains():
     response = client.get("/api/ontology/domains")
     assert response.status_code == 200
@@ -43,7 +66,7 @@ def test_api_validate_invalid_yaml():
     assert len(data["errors"]) > 0
 
 
-def test_api_ai_search():
+def test_api_ai_search(seeded_store):
     response = client.post("/api/ai/search", json={"query": "gross margin", "limit": 5})
     assert response.status_code == 200
     hits = response.json()
@@ -52,7 +75,7 @@ def test_api_ai_search():
     assert hits[0]["name"] == "gross_margin"
 
 
-def test_api_ai_nl_query():
+def test_api_ai_nl_query(seeded_store):
     response = client.post(
         "/api/ai/nl-query",
         json={"prompt": "Show me gross margin by customer", "dialect": "SNOWFLAKE"},

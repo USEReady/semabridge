@@ -34,6 +34,7 @@ class QueryResolutionPlan(BaseModel):
     generated_sql: str
     confidence_score: float
     explanation: str
+    warnings: List[str] = Field(default_factory=list)
 
 
 class NLQueryEngine:
@@ -90,17 +91,24 @@ class NLQueryEngine:
                 elif h.item_type == "CONCEPT" and h.name in self.ontology.concepts and h.name not in seen_c:
                     seen_c.add(h.name)
                     detected_concepts.append(self.ontology.concepts[h.name])
-                    detected_concepts.append(self.ontology.concepts[h.name])
 
         # Extract potential time filters from prompt (e.g. 2024, 2023, Q1, Q2)
         filters: List[str] = []
+        warnings: List[str] = []
         year_match = re.search(r"\b(20[12][0-9])\b", clean_prompt)
-        if year_match:
-            filters.append(f"YEAR(date) = {year_match.group(1)}")
-
-        quarter_match = re.search(r"\b(Q[1-4])\b", clean_prompt, re.IGNORECASE)
-        if quarter_match:
-            filters.append(f"QUARTER(date) = '{quarter_match.group(1).upper()}'")
+        quarter_match = re.search(r"\bQ([1-4])\b", clean_prompt, re.IGNORECASE)
+        if year_match or quarter_match:
+            date_col = self._resolve_date_column(detected_concepts)
+            if date_col is None:
+                date_col = "date"
+                warnings.append(
+                    "No date attribute found in the ontology; time filters assume a column named 'date'."
+                )
+            if year_match:
+                filters.append(f"YEAR({date_col}) = {year_match.group(1)}")
+            if quarter_match:
+                # QUARTER() returns an integer 1-4, so compare against a number, not 'Q1'.
+                filters.append(f"QUARTER({date_col}) = {quarter_match.group(1)}")
 
         # Determine target tables and relationships
         tables: Set[str] = set()
@@ -184,6 +192,8 @@ class NLQueryEngine:
             explanation_parts.append(f"Grouped by dimensions: {', '.join(c.name for c in detected_concepts)}")
         if filters:
             explanation_parts.append(f"Applied filters: {', '.join(filters)}")
+        for w in warnings:
+            explanation_parts.append(f"Warning: {w}")
         explanation = "; ".join(explanation_parts) if explanation_parts else "Resolved against semantic ontology."
 
         return QueryResolutionPlan(
@@ -196,4 +206,38 @@ class NLQueryEngine:
             generated_sql=generated_sql,
             confidence_score=round(confidence, 2),
             explanation=explanation,
+            warnings=warnings,
         )
+
+    _DATE_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"}
+
+    def _resolve_date_column(self, detected_concepts: List[DomainConcept]) -> Optional[str]:
+        """Find the date attribute to filter on, from the ontology rather than a hard-coded name.
+
+        Prefers date-typed attributes on the concepts the question resolved to. If none of
+        those has one, uses the ontology-wide date attribute only when it is unambiguous
+        (exactly one distinct name). Returns None when it cannot be determined.
+        """
+
+        def date_attrs(concepts: List[DomainConcept]) -> List[str]:
+            found: List[str] = []
+            for c in concepts:
+                for a in c.attributes:
+                    base = (a.data_type or "").split("(")[0].strip().upper()
+                    if base in self._DATE_TYPES and a.name not in found:
+                        found.append(a.name)
+            return found
+
+        def pick(names: List[str]) -> str:
+            exact = [n for n in names if n.casefold() == "date"]
+            partial = [n for n in names if "date" in n.casefold()]
+            return (exact or partial or names)[0]
+
+        local = date_attrs(detected_concepts)
+        if local:
+            return pick(local)
+
+        global_names = date_attrs(list(self.ontology.concepts.values()))
+        if len(global_names) == 1:
+            return global_names[0]
+        return None

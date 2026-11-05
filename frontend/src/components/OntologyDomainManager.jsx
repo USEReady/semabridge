@@ -38,6 +38,12 @@ export default function OntologyDomainManager() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const fileInputRef = useRef(null);
 
+  // Bootstrap from OSI Modal State
+  const [bootstrapModalOpen, setBootstrapModalOpen] = useState(false);
+  const [bootstrapProject, setBootstrapProject] = useState('');
+  const [bootstrapDomain, setBootstrapDomain] = useState('');
+  const [bootstrapping, setBootstrapping] = useState(false);
+
   // Multi-Target AI/BI Playground State
   const [selectedTarget, setSelectedTarget] = useState('SNOWFLAKE'); // 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
   const [projectsList, setProjectsList] = useState([]);
@@ -197,6 +203,72 @@ export default function OntologyDomainManager() {
     }
   };
 
+  const handleBootstrapFromOsi = async () => {
+    if (!bootstrapProject) return;
+    setBootstrapping(true);
+    try {
+      const res = await fetch('/api/ontology/domains/from-osi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: bootstrapProject,
+          domain_name: bootstrapDomain.trim() || undefined,
+          save_to_disk: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMessage({
+          type: 'success',
+          text: `Successfully generated ontology domain '${data.domain}' from OSI model (${data.concept_count} concepts, ${data.metric_count} metrics)!`,
+        });
+        setBootstrapModalOpen(false);
+        fetchDomains();
+        fetchAiStatus();
+        handleOpenDomainInspector(data.domain, 'metrics');
+      } else {
+        setStatusMessage({ type: 'error', text: data.detail || 'Failed to generate ontology from OSI.' });
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setBootstrapping(false);
+      setTimeout(() => setStatusMessage(null), 5000);
+    }
+  };
+
+  const handleSyncWithOsi = async (domainName) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/ontology/domains/from-osi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: domainName,
+          domain_name: domainName,
+          save_to_disk: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMessage({
+          type: 'success',
+          text: `Synchronized '${domainName}' with latest OSI model while preserving your human-authored edits!`,
+        });
+        fetchDomains();
+        fetchAiStatus();
+        handleOpenDomainInspector(domainName, 'metrics');
+      } else {
+        setStatusMessage({ type: 'error', text: data.detail || 'OSI sync failed.' });
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setLoading(false);
+      setTimeout(() => setStatusMessage(null), 4000);
+    }
+  };
+
   const handleResolveNlQuery = async () => {
     if (!nlPrompt.trim()) return;
     setLoading(true);
@@ -345,6 +417,21 @@ export default function OntologyDomainManager() {
               <span className="font-bold text-sm text-emerald-400">{domainData.total_metrics}</span>
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (projectsList.length > 0 && !bootstrapProject) {
+                setBootstrapProject(projectsList[0].id || projectsList[0].name);
+              }
+              setBootstrapModalOpen(true);
+            }}
+            className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+            title="Auto-generate a domain ontology from translated BI reports or OSI models"
+          >
+            <Sparkles size={14} className="text-amber-200" />
+            <span>Generate from OSI</span>
+          </button>
 
           <button
             type="button"
@@ -1199,6 +1286,15 @@ export default function OntologyDomainManager() {
                       <button
                         type="button"
                         disabled={loading}
+                        onClick={() => handleSyncWithOsi(inspectingDomain)}
+                        className="px-3 py-1 rounded bg-surface hover:bg-surface-hover border border-main text-xs text-secondary hover:text-primary transition-colors flex items-center gap-1"
+                        title="Re-sync tables and calculation expressions from source OSI model while preserving your comments and governance definitions"
+                      >
+                        <RefreshCw size={12} className={loading ? 'animate-spin' : 'text-amber-400'} /> Sync from OSI
+                      </button>
+                      <button
+                        type="button"
+                        disabled={loading}
                         onClick={handleSaveDomain}
                         className="px-3.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-1 transition-colors disabled:opacity-50"
                       >
@@ -1313,6 +1409,102 @@ export default function OntologyDomainManager() {
           </div>
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════════════════════════
+          GENERATE / SYNC FROM OSI MODAL
+         ══════════════════════════════════════════════════════════════════════════ */}
+      {bootstrapModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg bg-surface border border-main rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-main">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-accent-blue/10 text-accent-blue">
+                  <Sparkles size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-primary m-0">Generate Ontology from OSI Model</h3>
+                  <p className="text-[11px] text-secondary m-0 mt-0.5">
+                    Extract concepts, attributes, metrics, and relationships from existing BI models.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBootstrapModalOpen(false)}
+                className="p-1 rounded-lg text-tertiary hover:text-primary transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="font-bold text-secondary uppercase tracking-wider block text-[11px] mb-1">
+                  Source BI Project / Model
+                </label>
+                <select
+                  value={bootstrapProject}
+                  onChange={(e) => setBootstrapProject(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-surface-raised border border-main text-primary text-xs font-medium focus:outline-none focus:border-accent-blue"
+                >
+                  <option value="">Select a translated BI project...</option>
+                  {projectsList.map((p) => (
+                    <option key={p.id || p.name} value={p.id || p.name}>
+                      {p.name || p.id}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-tertiary block mt-1">
+                  Uses the latest OSI intermediate snapshot compiled from Power BI, Fabric, or Snowflake.
+                </span>
+              </div>
+
+              <div>
+                <label className="font-bold text-secondary uppercase tracking-wider block text-[11px] mb-1">
+                  Target Domain Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={bootstrapDomain}
+                  onChange={(e) => setBootstrapDomain(e.target.value)}
+                  placeholder="e.g. Finance, Sales, SupplyChain (Defaults to project name)"
+                  className="w-full p-2.5 rounded-xl bg-surface-raised border border-main text-primary text-xs focus:outline-none focus:border-accent-blue"
+                />
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-surface-raised/70 border border-main space-y-1.5 text-[11px]">
+                <span className="font-bold text-primary flex items-center gap-1.5">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  Human-Enrichment Preserving Merge
+                </span>
+                <p className="text-secondary leading-relaxed m-0">
+                  If this domain already exists, your manually authored business rules, data stewards, custom synonyms, and metric overrides will be <strong>preserved</strong>. Only updated calculations, new tables, and columns will be refreshed.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-main">
+              <button
+                type="button"
+                onClick={() => setBootstrapModalOpen(false)}
+                className="px-4 py-2 rounded-lg border border-main text-xs font-semibold text-secondary hover:text-primary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={bootstrapping || !bootstrapProject}
+                onClick={handleBootstrapFromOsi}
+                className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              >
+                {bootstrapping ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                Generate & Save Domain
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

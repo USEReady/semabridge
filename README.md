@@ -17,14 +17,14 @@ Source (Snowflake/Fabric) → Extract → OSI (YAML) → Transform → Emit → 
 
 ### Key Features
 
-- 🔄 **Fully Automated**: No manual modeling required. Synchronize semantic models between platforms.
-- 📊 **Complete Metadata**: Tables, columns, relationships, measures, hierarchies, and complex DAX.
+- 🔄 **Fully Automated Bi-Directional Sync**: Synchronize semantic models between Snowflake, Microsoft Fabric, and local `.pbix` models.
+- 📦 **Offline Local PBIX Extraction**: Ingest and deconstruct `.pbix` desktop files directly without needing Power BI Desktop, Windows, or XMLA endpoints.
+- 🧠 **5-Tier DAX-to-Snowflake Translation Engine**: Deterministic AST-based translation of complex DAX (time-intelligence, hierarchies, semi-additive closing balances, non-additive dimensions) into native Snowflake Semantic View SQL.
+- 📊 **Complete Semantic Fidelity**: Tables, columns, PK/FK relationships, measures, hierarchies, window metrics, and DropLedger transparency.
 - 📝 **OSI Intermediate Format**: Human-readable YAML semantic layer (Open Semantic Intermediate).
-- 🗄️ **DuckDB Version Control**: State and history tracking powered by DuckDB.
-- 🎨 **Modern Web UI**: Built-in React/Vite dashboard for configuration, logs, and synchronization control.
-- 🚀 **REST API Integration**: No XMLA endpoint required for Fabric emission.
-- ⚡ **Incremental Processing**: Only process changed tables with local caching.
-- 🔍 **Auto-Detection**: Foreign keys, date/geo patterns, and numeric measures.
+- 🗄️ **DuckDB & PostgreSQL Metadata Storage**: Full audit logging, snapshot history, and version control.
+- 🎨 **Modern Web UI**: React/Vite interactive dashboard with dependency graphs, run monitoring, and visual mapping tools.
+- 🛡️ **Automated Pre-Deploy Quality Gates**: 5-stage automated verification (`make pre-deploy`) ensuring zero secrets, 100% bytecode compilation, and regression safety.
 
 ---
 
@@ -60,10 +60,12 @@ We provide **convenient commands** for common development tasks on all platforms
 **Linux/macOS with Make:**
 ```bash
 make help              # Show all available commands
-make install           # Install all dependencies
+make install           # Install all dependencies (Python + npm)
 make migrate           # Apply database migrations
-make run               # Start backend
-make run-frontend      # Start frontend
+make run               # Start FastAPI backend (port 8001)
+make run-frontend      # Start Vite React frontend
+make test              # Run backend pytest test suite
+make pre-deploy        # Run 5-stage automated pre-deploy quality gates
 ```
 
 **Windows (PowerShell) — No Make Required:**
@@ -84,6 +86,7 @@ These provide a **uniform interface** across Windows, macOS, and Linux. All back
 make migrate      # Apply latest database migrations
 make run          # Start Uvicorn backend (http://127.0.0.1:8001)
 make run-frontend # Start Vite frontend dev server
+make pre-deploy   # Run automated quality gates before pushing code
 
 # Windows (PowerShell)
 .\dev.ps1 migrate
@@ -176,6 +179,24 @@ semabridge logs list
 
 ---
 
+## 📈 Real-World Benchmark Suite (13 Power BI Enterprise Models)
+
+SemaBridge is continuously validated against an offline suite of **13 real-world Power BI desktop models (`.pbix`)** comprising 116 tables, 96 relationships, and 297 production DAX measures:
+
+| Metric Dimension | Pre-Fix Baseline | Current Translation Suite | Status |
+| :--- | :---: | :---: | :---: |
+| **Total Models Audited** | 13 Models | **13 Models** | 100% Extracted Cleanly |
+| **Total Extracted Tables** | 116 Tables | **116 Tables** | 100% Mapped |
+| **Total Relationships** | 96 Relationships | **96 Relationships** | 100% Mapped |
+| **Measures Translated** | 206 (69.4%) | **228 (76.8%)** | **+22 Business Metrics Unlocked** |
+| **Dropped / Excluded** | 91 (30.6%) | **69 (23.2%)** | **All 69 Categorized (55 by-design, 14 future)** |
+| **Unknown / Empty SQL Drops** | Multiple | **0 (0.0%)** | **Completely Eliminated** |
+
+> 📖 **Full Audit Report:** See [`Docs/reports/SEMABRIDGE_13_REPORTS_TRANSLATION_AUDIT.md`](Docs/reports/SEMABRIDGE_13_REPORTS_TRANSLATION_AUDIT.md) for the complete model-by-model before-and-after audit and line-by-line classification of all 69 dropped measures.  
+> 📘 **Team Onboarding Handbook:** See [`Docs/TEAM_ONBOARDING_HANDBOOK.md`](Docs/TEAM_ONBOARDING_HANDBOOK.md) for setup, architecture, and step-by-step developer workflows.
+
+---
+
 ## 🏗️ Architecture & Structure
 
 Semabridge enforces a strictly typed "Plugin-First" architectural pattern centering around the **OSI** representation:
@@ -184,17 +205,18 @@ Semabridge enforces a strictly typed "Plugin-First" architectural pattern center
 semabridge/
 ├── src/semabridge/
 │   ├── core/            # Execution lifecycle, config loading, logging
-│   ├── connectors/      # External integrations (Snowflake, Fabric)
-│   ├── converter/       # Transformation logic (e.g., TMSL ↔ SML/OSI)
+│   ├── connectors/      # External integrations (Snowflake, Fabric, Local PBIX)
+│   ├── converter/       # Transformation logic (e.g., TMSL ↔ SML/OSI, DAX AST Parser)
 │   ├── formats/         # Format definitions & schema rules
 │   ├── intermediate/    # Pydantic models for OSI / SML representation
-│   ├── repository/      # DuckDB version control logic, persistence
+│   ├── repository/      # DuckDB & PostgreSQL version control logic, persistence
 │   ├── cli/             # Typer/Click CLI commands
 │   ├── plugins/         # Extensible plugin architecture
-│   └── utils/           # Shared utilities (logging, caching)
+│   └── utils/           # Shared utilities (logging, caching, sanitizers)
 ├── frontend/            # React/Vite-based modern Web UI
-├── tests/               # Pytest test suite
-└── docs/                # Extended documentation and development guides
+├── Tests/               # Pytest test suite (unit, integration, feature gates)
+├── Docs/                # Architecture guides, onboarding handbook, and benchmark reports
+└── pbix_files/          # Immutable real-world Power BI evaluation models
 ```
 
 ---

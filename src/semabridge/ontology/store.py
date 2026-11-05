@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -20,11 +21,12 @@ logger = logging.getLogger("semabridge.ontology.store")
 class DomainOntologyStore:
     """Manages active domain ontologies and syncs the embedded AI semantic search index."""
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Optional[Path] = None, seed_demo: bool = False):
         self.storage_dir = storage_dir or Path("Config/ontologies")
         self.domains: Dict[str, DomainOntology] = {}
         self.search_index = SemanticSearchIndex()
         self.query_engine: Optional[NLQueryEngine] = None
+        self._seed_demo = seed_demo
         self._ensure_storage_dir()
         self._load_seed_defaults()
 
@@ -44,10 +46,18 @@ class DomainOntologyStore:
                 except Exception as e:
                     logger.warning("Failed to load initial ontology %s: %s", f, e)
 
-        # If empty, initialize standard enterprise sample domains (Finance and Sales)
+        # Demo domains (Finance and Sales) are opt-in only; never injected into real stores.
         if not self.domains:
-            self._seed_sample_domains()
+            if self._seed_demo:
+                self._seed_sample_domains()
+            else:
+                logger.info("Ontology store is empty (no files in %s); demo seeding disabled.", self.storage_dir)
 
+        self._refresh_index()
+
+    def seed_demo_domains(self) -> None:
+        """Explicitly load the demo Finance/Sales domains (in memory only) and re-index."""
+        self._seed_sample_domains()
         self._refresh_index()
 
     def _seed_sample_domains(self) -> None:
@@ -178,5 +188,8 @@ relationships:
         return False
 
 
-# Global singleton instance for application use
-ontology_store = DomainOntologyStore()
+# Global singleton instance for application use.
+# Set SEMABRIDGE_SEED_DEMO_ONTOLOGY=1 to preload demo domains when no ontology files exist.
+ontology_store = DomainOntologyStore(
+    seed_demo=os.environ.get("SEMABRIDGE_SEED_DEMO_ONTOLOGY", "").strip().lower() in ("1", "true", "yes", "on")
+)
