@@ -45,7 +45,7 @@
    "DDL": "REAL"
   },
   "title": "several SUMs of different columns added together",
-  "ddl_sql": "SUM(ORDERS.QTY::FLOAT) + SUM(ORDERS.AMOUNT::FLOAT) + SUM(ORDERS.PRICE::FLOAT)"
+  "ddl_sql": "CASE WHEN (CASE WHEN (SUM(ORDERS.QTY::FLOAT)) IS NULL AND (SUM(ORDERS.AMOUNT::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(ORDERS.QTY::FLOAT), 0) + COALESCE(SUM(ORDERS.AMOUNT::FLOAT), 0) END) IS NULL AND (SUM(ORDERS.PRICE::FLOAT)) IS NULL THEN NULL ELSE COALESCE(CASE WHEN (SUM(ORDERS.QTY::FLOAT)) IS "
  },
  "F1.1": {
   "status": "PASS",
@@ -81,7 +81,7 @@
    "DDL": "REAL"
   },
   "title": "TRUE() in a boolean filter",
-  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = TRUE THEN ORDERS.ORDERID END)"
+  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = TRUE THEN 1 END)"
  },
  "F1.4": {
   "status": "PASS",
@@ -93,7 +93,7 @@
    "DDL": "REAL"
   },
   "title": "FALSE() in a boolean filter",
-  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = FALSE THEN ORDERS.ORDERID END)"
+  "ddl_sql": "COUNT(CASE WHEN ORDERS.IS_PRIORITY = FALSE THEN 1 END)"
  },
  "F1.5": {
   "status": "PASS",
@@ -105,7 +105,7 @@
    "DDL": "REAL"
   },
   "title": "trailing -1 after a function",
-  "ddl_sql": "ROUND(AVG(ORDERS.QTY::FLOAT) / NULLIF(2, 0), 1) - 1"
+  "ddl_sql": "CASE WHEN (ROUND(AVG(ORDERS.QTY::FLOAT) / 2, 1)) IS NULL THEN NULL ELSE (ROUND(AVG(ORDERS.QTY::FLOAT) / 2, 1)) - 1 END"
  },
  "F1.6": {
   "status": "PASS",
@@ -117,7 +117,7 @@
    "DDL": "REAL"
   },
   "title": "DIVIDE(...)-1 (variance %)",
-  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, SUM(ORDERS.AMOUNT::FLOAT) / SUM(ORDERS.QTY::FLOAT)) - 1"
+  "ddl_sql": "CASE WHEN (IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, SUM(ORDERS.AMOUNT::FLOAT) / SUM(ORDERS.QTY::FLOAT))) IS NULL THEN NULL ELSE (IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, SUM(ORDERS.AMOUNT::FLOAT) / SUM(ORDERS.QTY::FLOAT))) - 1 END"
  },
  "F1.7": {
   "status": "PASS",
@@ -249,7 +249,7 @@
    "DDL": "REAL"
   },
   "title": "MAXX / MINX",
-  "ddl_sql": "MAX(ORDERS.QTY * ORDERS.PRICE) - MIN(ORDERS.PRICE)"
+  "ddl_sql": "CASE WHEN (MAX(ORDERS.QTY * ORDERS.PRICE)) IS NULL AND (MIN(ORDERS.PRICE)) IS NULL THEN NULL ELSE COALESCE(MAX(ORDERS.QTY * ORDERS.PRICE), 0) - COALESCE(MIN(ORDERS.PRICE), 0) END"
  },
  "F4.1": {
   "status": "PASS",
@@ -273,7 +273,7 @@
    "DDL": "REAL"
   },
   "title": "variable using another variable",
-  "ddl_sql": "((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT)) * 2) + (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT))"
+  "ddl_sql": "CASE WHEN (((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT)) * 2)) IS NULL AND ((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT))) IS NULL THEN NULL ELSE COALESCE(((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT)) * 2), 0) + COALESCE((SUM("
  },
  "F5.1": {
   "status": "PASS",
@@ -309,7 +309,7 @@
    "DDL": "REAL"
   },
   "title": "ROUNDUP / ROUNDDOWN",
-  "ddl_sql": "SIGN(AVG(ORDERS.PRICE::FLOAT)) * CEIL(ABS(AVG(ORDERS.PRICE::FLOAT)), 0) + SIGN(AVG(ORDERS.PRICE::FLOAT)) * FLOOR(ABS(AVG(ORDERS.PRICE::FLOAT)), 0)"
+  "ddl_sql": "CASE WHEN (SIGN(AVG(ORDERS.PRICE::FLOAT)) * CEIL(ABS(AVG(ORDERS.PRICE::FLOAT)), 0)) IS NULL AND (SIGN(AVG(ORDERS.PRICE::FLOAT)) * FLOOR(ABS(AVG(ORDERS.PRICE::FLOAT)), 0)) IS NULL THEN NULL ELSE COALESCE(SIGN(AVG(ORDERS.PRICE::FLOAT)) * CEIL(ABS(AVG(ORDERS.PRICE::FLOAT)), 0), 0) + COALESCE(SIGN(AVG(O"
  },
  "F5.4": {
   "status": "PASS",
@@ -333,7 +333,7 @@
    "DDL": "NULL"
   },
   "title": "text label",
-  "ddl_sql": "CAST(NULL AS DOUBLE)"
+  "ddl_sql": "CAST(NULL AS DOUBLE) COMMENT = 'expression''s root operation produces a string value"
  },
  "F6.2": {
   "status": "PASS",
@@ -381,7 +381,7 @@
    "DDL": "NULL"
   },
   "title": "constant",
-  "ddl_sql": "CAST(NULL AS DOUBLE)"
+  "ddl_sql": "CAST(NULL AS DOUBLE) COMMENT = 'expression has no column/measure/table reference (a compile-time constant) \u2014 there is nothing to aggregate"
  },
  "F7.1": {
   "status": "PASS",
@@ -393,11 +393,11 @@
    "DDL": "REAL"
   },
   "title": "arithmetic over two base measures",
-  "ddl_sql": "(SUM(ORDERS.AMOUNT::FLOAT)) - (SUM(ORDERS.QTY::FLOAT))"
+  "ddl_sql": "CASE WHEN ((SUM(ORDERS.AMOUNT::FLOAT))) IS NULL AND ((SUM(ORDERS.QTY::FLOAT))) IS NULL THEN NULL ELSE COALESCE((SUM(ORDERS.AMOUNT::FLOAT)), 0) - COALESCE((SUM(ORDERS.QTY::FLOAT)), 0) END"
  },
  "F7.2": {
-  "status": "PASS",
-  "msg": "",
+  "status": "FAIL",
+  "msg": "DDL value 0.0, expected 0.6978776529338327",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -405,7 +405,7 @@
    "DDL": "REAL"
   },
   "title": "ratio over a base measure that lives on the measure table",
-  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.AMOUNT::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT) / SUM(ORDERS.AMOUNT::FLOAT))"
+  "ddl_sql": "IFF(COALESCE(NULL, 0) = 0, 0, (SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)) / NULL)"
  },
  "F1.9": {
   "status": "PASS",
@@ -480,16 +480,16 @@
   "ddl_sql": "IFF(COUNT(DISTINCT NULLABLE.COL_VALUE) + MAX(IFF(NULLABLE.COL_VALUE IS NULL, 1, 0)) = 1, MAX(NULLABLE.COL_VALUE), 0)"
  },
  "F10.4": {
-  "status": "FAIL",
-  "msg": "lost at SML (no SQL: translation)",
+  "status": "PASS",
+  "msg": "",
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": false,
-   "DDL": "NULL"
+   "SML_SQL": true,
+   "DDL": "REAL"
   },
   "title": "what-if measure used in another measure -> default constant",
-  "ddl_sql": "CAST(NULL AS DOUBLE)"
+  "ddl_sql": "SUM(ORDERS.QTY::FLOAT) * (CASE WHEN ((0) / 100) IS NULL THEN NULL ELSE 1 + ((0) / 100) END)"
  },
  "F10.5": {
   "status": "PASS",
@@ -501,7 +501,7 @@
    "DDL": "REAL"
   },
   "title": "same, measure referenced without table prefix",
-  "ddl_sql": "(SUM(ORDERS.AMOUNT::FLOAT)) + (SUM(ORDERS.AMOUNT::FLOAT)) * (0) / NULLIF(100, 0)"
+  "ddl_sql": "CASE WHEN ((SUM(ORDERS.AMOUNT::FLOAT))) IS NULL AND ((SUM(ORDERS.AMOUNT::FLOAT)) * (0) / 100) IS NULL THEN NULL ELSE COALESCE((SUM(ORDERS.AMOUNT::FLOAT)), 0) + COALESCE((SUM(ORDERS.AMOUNT::FLOAT)) * (0) / 100, 0) END"
  },
  "F11.1": {
   "status": "PASS",
@@ -516,8 +516,8 @@
   "ddl_sql": "SUM(ORDERS.AMOUNT::FLOAT)"
  },
  "F11.2": {
-  "status": "PASS",
-  "msg": "",
+  "status": "FAIL",
+  "msg": "DDL value None, expected 0.6978776529338327",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -525,7 +525,7 @@
    "DDL": "REAL"
   },
   "title": "declared on a dimension, built from fact measures",
-  "ddl_sql": "IFF(COALESCE(SUM(ORDERS.AMOUNT::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT ELSE 0 END::FLOAT) / SUM(ORDERS.AMOUNT::FLOAT))"
+  "ddl_sql": "IFF(COALESCE((SUM(ORDERS.AMOUNT::FLOAT)), 0) = 0, 0, NULL / (SUM(ORDERS.AMOUNT::FLOAT)))"
  },
  "F11.3": {
   "status": "PASS",
@@ -549,7 +549,7 @@
    "DDL": "REAL"
   },
   "title": "filter on the dimension KEY -> fact foreign key",
-  "ddl_sql": "SUM(CASE WHEN PRODUCT.PRODUCTID = 2 THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)"
+  "ddl_sql": "SUM(CASE WHEN ORDERS.\"PRODUCTID\" = 2 THEN ORDERS.AMOUNT ELSE 0 END::FLOAT)"
  },
  "F12.2": {
   "status": "PASS",
@@ -573,7 +573,7 @@
    "DDL": "REAL"
   },
   "title": "two fixed-key filters subtracted with ISBLANK guards",
-  "ddl_sql": "CASE WHEN ((AVG(CASE WHEN PRODUCT.PRODUCTID = 1 THEN ORDERS.PRICE END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN PRODUCT.PRODUCTID = 3 THEN ORDERS.PRICE END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN PRODUCT.PRODUCTID = 1 THEN ORDERS.PRICE END::FLOAT) - AVG(CASE WHEN PRODUCT.PRODUCTID = 3 THEN ORDERS.P"
+  "ddl_sql": "CASE WHEN ((AVG(CASE WHEN ORDERS.\"PRODUCTID\" = 1 THEN ORDERS.PRICE END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN ORDERS.\"PRODUCTID\" = 3 THEN ORDERS.PRICE END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN ORDERS.\"PRODUCTID\" = 1 THEN ORDERS.PRICE END::FLOAT)) IS NULL AND (AVG(CASE WHEN ORDERS.\"P"
  },
  "F12.4": {
   "status": "PASS",
@@ -600,8 +600,8 @@
   "ddl_sql": "SUM(CASE WHEN CALENDAR_SHIP_DATE.MONTH_NO = 3 THEN ORDERS.AMOUNT END::FLOAT)"
  },
  "F13.2": {
-  "status": "PASS",
-  "msg": "",
+  "status": "FAIL",
+  "msg": "DDL value 31.0, expected 2.0",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -609,11 +609,11 @@
    "DDL": "REAL"
   },
   "title": "USERELATIONSHIP with a row count",
-  "ddl_sql": "COUNT(CASE WHEN CALENDAR_SHIP_DATE.MONTH_NO = 1 THEN ORDERS.ORDERID END)"
+  "ddl_sql": "COUNT(CASE WHEN CALENDAR_SHIP_DATE.MONTH_NO = 1 THEN 1 END)"
  },
  "F13.3": {
-  "status": "PASS",
-  "msg": "",
+  "status": "FAIL",
+  "msg": "DDL value 31.0, expected 2.0",
   "stages": {
    "OSI": true,
    "SML": true,
@@ -621,7 +621,7 @@
    "DDL": "REAL"
   },
   "title": "without USERELATIONSHIP the ACTIVE path is used",
-  "ddl_sql": "COUNT(CASE WHEN CALENDAR.MONTH_NO = 1 THEN ORDERS.ORDERID END)"
+  "ddl_sql": "COUNT(CASE WHEN CALENDAR.MONTH_NO = 1 THEN 1 END)"
  },
  "F14.1": {
   "status": "PASS",
@@ -629,35 +629,35 @@
   "stages": {
    "OSI": true,
    "SML": true,
-   "SML_SQL": false,
+   "SML_SQL": true,
    "DDL": "NULL"
   },
   "title": "ALL(dimension table) in the denominator",
-  "ddl_sql": "CAST(NULL AS DOUBLE)"
+  "ddl_sql": "CAST(NULL AS DOUBLE) COMMENT = 'Nested aggregate: SUM(...::FLOAT) appears inside the row-level argument of SUM(...::FLOAT)"
  },
  "F14.2": {
-  "status": "PASS",
-  "msg": "emitted as NULL placeholder",
-  "stages": {
-   "OSI": true,
-   "SML": true,
-   "SML_SQL": false,
-   "DDL": "NULL"
-  },
-  "title": "ALL(one column) with measure references",
-  "ddl_sql": "CAST(NULL AS DOUBLE)"
- },
- "F15.1": {
-  "status": "PASS",
-  "msg": "",
+  "status": "FAIL",
+  "msg": "emitted as REAL metric",
   "stages": {
    "OSI": true,
    "SML": true,
    "SML_SQL": true,
    "DDL": "REAL"
   },
+  "title": "ALL(one column) with measure references",
+  "ddl_sql": "ORDERS.AMOUNT / NULLIF(SUM(ORDERS.AMOUNT::FLOAT) OVER (PARTITION BY EXCLUDING PRODUCT.\"CATEGORY\"), 0)"
+ },
+ "F15.1": {
+  "status": "FAIL",
+  "msg": "lost at DDL (NULL)",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "NULL"
+  },
   "title": "closing balance (value at the last period)",
-  "ddl_sql": "COUNT(SNAPSHOT.EMP_ID)"
+  "ddl_sql": "CAST(NULL AS DOUBLE)"
  },
  "F15.2": {
   "status": "PASS",
@@ -729,7 +729,7 @@
    "DDL": "REAL"
   },
   "title": "DAX '/' with zero denominator -> BLANK, not an error",
-  "ddl_sql": "COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.ORDERID END) / NULLIF(COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.ORDERID END) + COUNT(CASE WHEN ORDERS.STATUS = 'Y' THEN ORDERS.ORDERID END), 0)"
+  "ddl_sql": "COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.ORDERID END) / NULLIF(CASE WHEN (COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.ORDERID END)) IS NULL AND (COUNT(CASE WHEN ORDERS.STATUS = 'Y' THEN ORDERS.ORDERID END)) IS NULL THEN NULL ELSE COALESCE(COUNT(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.OR"
  },
  "F17.2": {
   "status": "PASS",
@@ -754,5 +754,29 @@
   },
   "title": "blank numerator keeps BLANK (not the alternate)",
   "ddl_sql": "IFF(COALESCE(SUM(ORDERS.QTY::FLOAT), 0) = 0, 0, SUM(CASE WHEN ORDERS.STATUS = 'X' THEN ORDERS.AMOUNT END::FLOAT) / SUM(ORDERS.QTY::FLOAT))"
+ },
+ "F10.6": {
+  "status": "PASS",
+  "msg": "",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "what-if inside VAR with CALCULATE ('Table'[Measure])",
+  "ddl_sql": "CASE WHEN ((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT))) IS NULL AND ((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT)) * (0) / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN ORDERS.STATUS = 'Sold' THEN ORDERS.AMOUNT END::FLOAT)), 0) + COALESCE((SUM("
+ },
+ "F17.5": {
+  "status": "FAIL",
+  "msg": "DDL value 1.0, expected 0.3021223470661673",
+  "stages": {
+   "OSI": true,
+   "SML": true,
+   "SML_SQL": true,
+   "DDL": "REAL"
+  },
+  "title": "DIVIDE([A-B], [B]) numerator precedence",
+  "ddl_sql": "(CASE WHEN ((SUM(ORDERS.AMOUNT::FLOAT))) IS NULL AND (NULL) IS NULL THEN NULL ELSE COALESCE((SUM(ORDERS.AMOUNT::FLOAT)), 0) - COALESCE(NULL, 0) END) / NULLIF((SUM(ORDERS.AMOUNT::FLOAT)), 0)"
  }
 }

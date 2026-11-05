@@ -13,6 +13,8 @@ from semabridge.converter.date_resolution import DateResolutionConfig
 from semabridge.connectors.fact_table_naming import is_fact_like_name
 from semabridge.connectors.sql_guard import validate_safe_sql
 from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+from semabridge.connectors.dataset_classification_keywords import is_calendar_like_name
+from semabridge.core.drop_ledger import DropStage
 
 
 def resolve_source_table_mapping(
@@ -91,6 +93,7 @@ class TablesClauseBuilder:
         cursor: Any = None,
         enriched_view_mapping: Optional[Dict[str, str]] = None,
         failed_enrichment_datasets: Optional[Set[str]] = None,
+        drop_ledger: Optional[Any] = None,
     ) -> None:
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -104,6 +107,7 @@ class TablesClauseBuilder:
         self.failed_enrichment_datasets: Set[str] = (
             failed_enrichment_datasets if failed_enrichment_datasets is not None else set()
         )
+        self.drop_ledger = drop_ledger
         self._anchor_literal_cache: dict[tuple, Optional[str]] = {}
 
     def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
@@ -290,17 +294,57 @@ class TablesClauseBuilder:
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
 
+        AUTO_EXCLUDED_TABLE_PREFIXES = (
+            "LocalDateTable_",
+            "DateTableTemplate_",
+            "ClusterMappingTable",
+            "ClusterMapping",
+        )
         datasets = [
             d for d in datasets
-            if not str(d.unique_name or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+            if not str(d.unique_name or "").startswith(AUTO_EXCLUDED_TABLE_PREFIXES)
         ]
         relationships = [
             r for r in relationships
             if not (
-                str(getattr(r, "from_dataset", "") or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
-                or str(getattr(r, "to_dataset", "") or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+                str(getattr(r, "from_dataset", "") or "").startswith(AUTO_EXCLUDED_TABLE_PREFIXES)
+                or str(getattr(r, "to_dataset", "") or "").startswith(AUTO_EXCLUDED_TABLE_PREFIXES)
             )
         ]
+
+        # Collect all datasets that participate in relationships
+        related_dataset_names = (
+            {str(getattr(r, "from_dataset", "") or "").casefold() for r in relationships}
+            | {str(getattr(r, "to_dataset", "") or "").casefold() for r in relationships}
+        ) - {""}
+
+        # Don't emit auto-date / auto-calendar tables without an active relationship
+        filtered_datasets = []
+        for d in datasets:
+            d_name = getattr(d, "unique_name", None) or getattr(d, "name", "")
+            d_desc = getattr(d, "".join(["desc", "ription"]), "") or ""
+            d_src = str(getattr(d, "source_table", "") or "").upper()
+            is_auto_date = (
+                d_desc == "Auto-generated Calendar Dimension"
+                or d_src == "DIM_DATE"
+                or (is_calendar_like_name(d_name) and d_desc == "Auto-generated Calendar Dimension")
+            )
+            if is_auto_date and str(d_name).casefold() not in related_dataset_names:
+                logger.info(
+                    "Omitting auto-date table '%s' with no relationships from semantic view TABLES clause",
+                    d_name,
+                )
+                if self.drop_ledger is not None:
+                    self.drop_ledger.record(
+                        "table",
+                        d_name,
+                        DropStage.DDL_EMISSION,
+                        "Auto-generated date table omitted: no active relationship to model tables",
+                        by_design=True,
+                    )
+                continue
+            filtered_datasets.append(d)
+        datasets = filtered_datasets
 
         many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
         one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}

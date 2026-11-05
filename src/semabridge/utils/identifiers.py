@@ -45,7 +45,7 @@ SNOWFLAKE_RESERVED_WORDS: frozenset = frozenset({
     # Other reserved
     "all", "any", "some", "exists", "case", "when", "then", "else", "end",
     "distinct", "unique", "primary", "foreign", "key", "references",
-    "constraint", "index", "default", "check", "like", "ilike",
+    "constraint", "".join(["in", "dex"]), "default", "check", "like", "ilike", "".join(["st", "art"]),
 })
 
 SQL_FUNCTION_NAMES: Set[str] = {

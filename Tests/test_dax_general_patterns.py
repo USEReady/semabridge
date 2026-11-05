@@ -480,7 +480,7 @@ class TestAllExceptContextTransitionFailsClosed:
         from semabridge.converter.dax_translator import DAXTranslator
 
         translator = DAXTranslator()
-        dax = "CALCULATE(SUM('SomeTable'[SomeColumn]), ALL('SomeTable'))"
+        dax = "CALCULATE(SUM('SomeTable'[SomeColumn]), ALLEXCEPT('SomeTable', 'SomeTable'[SomeColumn2]))"
 
         complexity = translator.analyze_complexity(dax)
         assert complexity["sync_enabled"] is False
@@ -872,9 +872,9 @@ class TestLagPeriodOfMeasureReferenceGeneralizesToAnyCombiningStructure:
             return "".join(out)
 
         sql = _convert_dateadd(sql)
-        sql = sql.replace('calendar."COL_DATE"', "combined.col_date")
-        sql = sql.replace('sometable."TOTAL_UNITS"', "combined.total_units")
-        sql = sql.replace('sometable."VAN_UNITS"', "combined.van_units")
+        sql = re.sub(r'(?:calendar|COL_DATE)\."?COL_DATE"?', "combined.col_date", sql, flags=re.IGNORECASE)
+        sql = re.sub(r'sometable\."?TOTAL_UNITS"?', "combined.total_units", sql, flags=re.IGNORECASE)
+        sql = re.sub(r'sometable\."?VAN_UNITS"?', "combined.van_units", sql, flags=re.IGNORECASE)
 
         con = duckdb.connect()
         con.execute("CREATE TABLE combined (col_date DATE, total_units DOUBLE, van_units DOUBLE)")

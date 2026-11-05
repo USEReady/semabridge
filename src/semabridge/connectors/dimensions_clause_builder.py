@@ -7,6 +7,7 @@ import re
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
+from semabridge.utils.naming import to_alias
 from semabridge.connectors.synonym_clause import synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 
@@ -104,10 +105,34 @@ class DimensionsClauseBuilder:
         used_dimension_aliases_by_dataset: Dict[str, Set[str]] = {}
         alias_to_phys_col: Dict[Tuple[str, str], str] = {}
 
+        # Collect metric names for each table alias to detect column-metric clashes.
+        # Snowflake 010220: in a semantic view, T.NAME inside a metric resolves to the
+        # metric when a metric NAME exists on table T. If a physical column equals a
+        # metric name, declare the column as a PRIVATE fact with name _COL_<NAME> so
+        # aggregates can reference the fact column without triggering error 010220.
+        metric_names_by_alias: Dict[str, Set[str]] = {}
+        for m in getattr(model, "metrics", []) or []:
+            m_uname = (getattr(m, "unique_name", None) or getattr(m, "name", "") or "").strip().upper()
+            m_alias_clean = to_alias(m_uname).upper() if m_uname else ""
+            m_sem_clean = self.sanitizer.sanitize_semantic_name(m_uname).upper() if m_uname else ""
+            m_ds = getattr(m, "dataset", None)
+            m_alias = (dataset_aliases.get(m_ds) or str(m_ds or "")).upper() if m_ds else ""
+            target_ds_obj = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None) == m_ds), None)
+            is_meas_only = getattr(target_ds_obj, "is_measure_table", False) if target_ds_obj else False
+            if not is_meas_only and target_ds_obj:
+                c_list = [c for c in getattr(target_ds_obj, "columns", []) or [] if getattr(c, "unique_name", "").upper() not in ("ID", "_ID")]
+                is_meas_only = len(c_list) == 0
+            all_target_aliases = [m_alias] if (m_alias and not is_meas_only) else list(dataset_aliases.values())
+            for a in all_target_aliases:
+                s = metric_names_by_alias.setdefault(a.upper(), set())
+                if m_uname: s.add(m_uname)
+                if m_alias_clean: s.add(m_alias_clean)
+                if m_sem_clean: s.add(m_sem_clean)
+
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
             for attr in dim.attributes:
-                if str(attr.dataset or "").startswith(("LocalDateTable_", "DateTableTemplate_")):
+                if str(attr.dataset or "").startswith(("LocalDateTable_", "DateTableTemplate_", "ClusterMappingTable", "ClusterMapping")):
                     continue
                 alias = dataset_aliases.get(attr.dataset)
                 if not alias:
@@ -170,15 +195,26 @@ class DimensionsClauseBuilder:
                         if orig_pbix not in col_synonyms:
                             col_synonyms.append(orig_pbix)
 
+                    clash = (
+                        emitted_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
+                        or phys_col.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
+                        or semantic_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
+                    )
+                    if clash:
+                        emitted_name = f"_COL_{emitted_name}"
+                        priv_prefix = "PRIVATE "
+                    else:
+                        priv_prefix = ""
+
                     alias_to_phys_col[(alias, emitted_name.strip().upper())] = phys_col
                     alias_to_phys_col[(alias, semantic_name.strip().upper())] = phys_col
                     if orig_pbix:
                         alias_to_phys_col[(alias, str(orig_pbix).strip().upper())] = phys_col
 
                     dims_lines.append(
-                        f'  {alias}."{emitted_name}" AS '
+                        f'  {priv_prefix}{alias}."{emitted_name}" AS '
                         f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                        f'{synonyms_clause(col_synonyms)}'
+                        f'{synonyms_clause(col_synonyms) if not clash else ""}'
                     )
                     added_dimensions.add(dim_key)
                     added_physical_dimensions.add(physical_dim_key)
@@ -288,10 +324,21 @@ class DimensionsClauseBuilder:
                 if semantic_source_name and semantic_source_name.strip().upper() != emitted_name.strip().upper():
                     if semantic_source_name not in col_syns:
                         col_syns.append(semantic_source_name)
+                clash = (
+                    emitted_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
+                    or phys_col.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
+                    or semantic_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
+                )
+                if clash:
+                    emitted_name = f"_COL_{emitted_name}"
+                    priv_prefix = "PRIVATE "
+                else:
+                    priv_prefix = ""
+
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS '
+                    f'  {priv_prefix}{alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                    f'{synonyms_clause(col_syns)}'
+                    f'{synonyms_clause(col_syns) if not clash else ""}'
                 )
                 added_dimensions.add((alias, emitted_name, phys_col))
                 added_physical_dimensions.add((alias, phys_col))
@@ -398,7 +445,6 @@ class DimensionsClauseBuilder:
                 from_cols = getattr(rel, "from_columns", None) or []
                 fk_col = from_cols[0] if from_cols else ""
                 if to_ds and fk_col:
-                    from semabridge.utils.naming import to_alias
                     inact_alias = to_alias(to_ds, fk_col)
                     base_alias = dataset_aliases.get(to_ds)
                     if base_alias and inact_alias != base_alias and inact_alias not in seen_inact_aliases:

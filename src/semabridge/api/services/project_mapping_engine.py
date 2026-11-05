@@ -450,6 +450,16 @@ def extract_model_entities(
         measure_tables = _extract_metric_source_tables(metric, dataset_lookup)
         metric_parent = f"datasets.{measure_tables[0]}" if len(measure_tables) == 1 else None
         metric_expression = str(metric.get("expression") or "").strip()
+        m_has_src = bool(metric_expression)
+        m_target_sql = metric.get("sql_expression")
+        m_has_sql = bool(str(m_target_sql or "").strip())
+        m_sync_enabled = metric.get("sync_enabled")
+        m_sync_reason = metric.get("sync_failure_reason")
+        if m_has_src and not m_has_sql:
+            m_sync_enabled = False
+            if not m_sync_reason:
+                m_sync_reason = "DAX translation unavailable: no SQL expression produced"
+
         entities.append({
             "entity_kind": "metric",
             "model_name": model_name,
@@ -459,9 +469,9 @@ def extract_model_entities(
             "data_type": metric.get("data_type"),
             "measure_source_tables": measure_tables,
             "source_expression": metric_expression,
-            "target_expression": metric.get("sql_expression"),
-            "sync_enabled": metric.get("sync_enabled"),
-            "sync_failure_reason": metric.get("sync_failure_reason"),
+            "target_expression": m_target_sql,
+            "sync_enabled": m_sync_enabled,
+            "sync_failure_reason": m_sync_reason,
             "advisory_notes": list(metric.get("advisory_notes") or []),
             "advisory_categories": list(metric.get("advisory_categories") or []),
             "depends_on_measures": list(metric.get("depends_on_measures") or []),

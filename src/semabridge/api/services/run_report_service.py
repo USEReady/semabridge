@@ -31,7 +31,8 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
+from semabridge.utils.naming import to_alias
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,7 @@ def _load_snapshot_data(sml_snapshot_id: Optional[str]) -> Optional[Dict[str, An
 def _classify_metrics(
     sml_metrics: List[Dict[str, Any]],
     dropped_metric_names: Optional[set[str]] = None,
+    live_ddl_metric_names: Optional[set[str]] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Split a snapshot's metrics into Standard / Standard-with-a-flag /
     AI-assisted, reusing the same risky-DAX-pattern check the dry-run page's
@@ -391,7 +393,10 @@ def _classify_metrics(
         if not metric.get("sync_enabled", True):
             continue  # not successfully converted -- appears in the drop ledger instead
         name = metric.get("unique_name") or metric.get("label") or "Unnamed calculation"
-        if name in dropped_metric_names:
+        name_alias = to_alias(name).upper()
+        if name in dropped_metric_names or name_alias in dropped_metric_names:
+            continue
+        if live_ddl_metric_names is not None and name_alias not in live_ddl_metric_names and name.upper() not in live_ddl_metric_names:
             # A later stage (DDL emission/deployment) recorded this exact
             # metric as dropped -- that outcome wins over a stale
             # sync_enabled=True from the earlier translation stage.
@@ -444,6 +449,20 @@ def _parse_project_cfg(project_cfg: str) -> Dict[str, Any]:
     except Exception:
         return {}
 
+
+
+def _extract_ddl_for_result(result: Dict[str, Any], summary: Dict[str, Any]) -> str:
+    ddl = result.get("deployed_ddl_text") or summary.get("deployed_ddl_text") or result.get("deployed_ddl") or ""
+    if not ddl:
+        art_path = result.get("target_artifact_path") or summary.get("target_artifact_path")
+        if art_path:
+            p = Path(str(art_path))
+            if p.suffix == ".sql" and p.exists():
+                try:
+                    ddl = p.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+    return ddl
 
 def _describe_source(project_cfg: str, run: Dict[str, Any]) -> Tuple[str, List[str]]:
     """Returns (source kind label, [one description per source file/dataset]).
@@ -681,7 +700,17 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
                 d.get("entity_name") for d in model_dropped
                 if d.get("entity_kind") == "metric" and d.get("entity_name")
             }
-            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
+            ddl_text = _extract_ddl_for_result(result, summary)
+            live_ddl_names = None
+            if ddl_text:
+                from semabridge.core.reconciliation import _extract_deployed_metric_names
+                live_mets, dead_mets = _extract_deployed_metric_names(ddl_text)
+                if live_mets or dead_mets:
+                    live_ddl_names = {m.upper() for m in live_mets}
+                    for dead_m in dead_mets:
+                        dropped_metric_names.add(dead_m)
+                        dropped_metric_names.add(dead_m.upper())
+            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names, live_ddl_names)
             prefix = f"{model_label}: " if multi_model and model_label else ""
             for entry in classified["standard"]:
                 standard.append({**entry, "name": f"{prefix}{entry['name']}"})
@@ -952,7 +981,17 @@ def generate_run_report_markdown(
                 d.get("entity_name") for d in model_dropped
                 if d.get("entity_kind") == "metric" and d.get("entity_name")
             }
-            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names)
+            ddl_text = _extract_ddl_for_result(result, summary)
+            live_ddl_names = None
+            if ddl_text:
+                from semabridge.core.reconciliation import _extract_deployed_metric_names
+                live_mets, dead_mets = _extract_deployed_metric_names(ddl_text)
+                if live_mets or dead_mets:
+                    live_ddl_names = {m.upper() for m in live_mets}
+                    for dead_m in dead_mets:
+                        dropped_metric_names.add(dead_m)
+                        dropped_metric_names.add(dead_m.upper())
+            classified = _classify_metrics(snap_data["metrics"], dropped_metric_names, live_ddl_names)
             prefix = f"{model_label}: " if multi_model and model_label else ""
             for entry in classified["standard"]:
                 standard.append({**entry, "name": f"{prefix}{entry['name']}"})

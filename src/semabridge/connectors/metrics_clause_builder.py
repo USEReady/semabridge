@@ -1,7 +1,7 @@
 """Builder for Snowflake semantic-view METRICS (MEASURES) clause."""
 
 from __future__ import annotations
-from semabridge.utils.naming import to_alias
+from semabridge.utils.naming import to_alias, sanitize_column
 
 import re
 from typing import Any, Dict, List, Set, Tuple, Optional
@@ -357,9 +357,15 @@ class MetricsClauseBuilder:
             dax = getattr(m, "expression", None)
             if dax:
                 measure_dax_map[m.unique_name] = dax
+                measure_dax_map[self.identifier_sanitizer.to_alias(m.unique_name).upper()] = dax
                 if getattr(m, "label", None):
                     measure_dax_map[m.label] = dax
+                    measure_dax_map[self.identifier_sanitizer.to_alias(m.label).upper()] = dax
 
+        self._measure_dax_map = measure_dax_map
+        self._dataset_col_lookup = dataset_col_lookup
+        self._dataset_aliases = dataset_aliases
+        self._relationships = getattr(model, "relationships", None)
         self._ensure_window_helper_metrics(
             valid_metrics,
             dataset_aliases,
@@ -2156,6 +2162,13 @@ class MetricsClauseBuilder:
                         tokens = [t.strip().replace('"', '') for t in m_excl.group(1).split(",") if t.strip()]
                         window_dims_by_metric[m_name.upper()] = set(tokens)
 
+        # Collect defined metric names for Error 010220 validation
+        defined_metric_names: Set[str] = set()
+        for l in current:
+            m_scan = re.search(r'^\s*(?:PRIVATE\s+)?([A-Z_][A-Z0-9_]*)\."([^"]+)"', l.strip())
+            if m_scan:
+                defined_metric_names.add(m_scan.group(2).upper())
+
         # Final validation pass: validate final expressions after all inlining/rewrites
         final_validated = []
         for l in current:
@@ -2197,11 +2210,42 @@ class MetricsClauseBuilder:
                 else:
                     m_expr = m_expr + f" COMMENT = '{self._clean_comment(req_text)}'"
 
+            m_expr = self._rewrite_foreign_table_columns_in_aggregates(
+                m_expr=m_expr,
+                alias=alias,
+                relationships=getattr(self, "_relationships", None),
+                dataset_aliases=getattr(self, "_dataset_aliases", None),
+            )
+
+            m_expr = self._rewrite_clashing_columns_in_aggregates(
+                m_expr=m_expr,
+                defined_metric_names=defined_metric_names,
+                dataset_col_lookup=getattr(self, "_dataset_col_lookup", None),
+                dataset_aliases=getattr(self, "_dataset_aliases", None),
+            )
+
             nested_reason = detect_nested_aggregate(m_expr)
             if nested_reason:
                 logger.warning("Final metric '%s' rejected by nested aggregate check: %s", m_name, nested_reason)
                 safe_comm = self._clean_comment(f"not applicable: {nested_reason}")
                 final_validated.append(f'  {priv}{alias}."{m_name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                continue
+
+            dax_expr = getattr(self, "_measure_dax_map", {}).get(m_name.upper())
+            predeploy_reason = self._run_predeploy_checks(
+                m_name=m_name,
+                alias=alias,
+                m_expr=m_expr,
+                dax_expr=dax_expr,
+                dataset_col_lookup=getattr(self, "_dataset_col_lookup", None),
+                dataset_aliases=getattr(self, "_dataset_aliases", None),
+                relationships=getattr(self, "_relationships", None),
+                defined_metric_names=defined_metric_names,
+            )
+            if predeploy_reason:
+                logger.warning("Final metric '%s' rejected by pre-deploy check: %s", m_name, predeploy_reason)
+                safe_comm = self._clean_comment(f"not applicable: {predeploy_reason}")
+                final_validated.append(f'  {priv}{alias}."' + m_name + f'" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                 continue
             final_validated.append(f'  {priv}{alias}."{m_name}"{non_add or ""} AS {m_expr}{syn}')
         return final_validated
@@ -2220,3 +2264,337 @@ class MetricsClauseBuilder:
         if idx < 0:
             return expr, ""
         return expr[:idx].rstrip(), expr[idx:]
+
+    def _rewrite_foreign_table_columns_in_aggregates(
+        self,
+        m_expr: str,
+        alias: str,
+        relationships: Optional[Iterable[Any]],
+        dataset_aliases: Optional[Dict[str, str]],
+    ) -> str:
+        if not relationships or not m_expr:
+            return m_expr
+
+        # Build FK map for alias: (parent_alias_upper, pk_col_upper) -> fk_col_name
+        fk_map: Dict[Tuple[str, str], str] = {}
+        for rel in relationships:
+            from_ds = getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "") or ""
+            to_ds = getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "") or ""
+            from_al = (dataset_aliases.get(from_ds) or to_alias(from_ds) or from_ds).upper() if dataset_aliases else from_ds.upper()
+            to_al = (dataset_aliases.get(to_ds) or to_alias(to_ds) or to_ds).upper() if dataset_aliases else to_ds.upper()
+
+            if from_al == alias.upper() and to_al != alias.upper():
+                from_cols = getattr(rel, "from_columns", None) or getattr(rel, "from_column", None) or []
+                to_cols = getattr(rel, "to_columns", None) or getattr(rel, "to_column", None) or []
+                if isinstance(from_cols, str):
+                    from_cols = [from_cols]
+                if isinstance(to_cols, str):
+                    to_cols = [to_cols]
+                for fk, pk in zip(from_cols, to_cols):
+                    if fk and pk:
+                        fk_sanitized = sanitize_column(str(fk))
+                        pk_upper = str(pk).strip('"').upper()
+                        fk_map[(to_al, pk_upper)] = fk_sanitized
+                        fk_map[(to_al, sanitize_column(str(pk)).upper())] = fk_sanitized
+
+        if not fk_map:
+            return m_expr
+
+        # Find aggregate functions and rewrite parent_alias.pk inside them
+        agg_pattern = re.compile(r'\b(SUM|AVG|AVERAGE|COUNT|MIN|MAX)\s*\(', re.IGNORECASE)
+        pos = 0
+        result = []
+        while pos < len(m_expr):
+            m = agg_pattern.search(m_expr, pos)
+            if not m:
+                result.append(m_expr[pos:])
+                break
+
+            result.append(m_expr[pos:m.end()])
+            depth = 1
+            curr = m.end()
+            while curr < len(m_expr) and depth > 0:
+                if m_expr[curr] == '(':
+                    depth += 1
+                elif m_expr[curr] == ')':
+                    depth -= 1
+                curr += 1
+
+            agg_body = m_expr[m.end():curr - 1]
+            def _replace_col(col_match):
+                tbl = col_match.group(1)
+                col = col_match.group(2)
+                key = (tbl.upper(), col.upper())
+                if key in fk_map:
+                    fk = fk_map[key]
+                    return f'{alias}."{fk}"'
+                return col_match.group(0)
+
+            rewritten_body = re.sub(
+                r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?',
+                _replace_col,
+                agg_body
+            )
+            result.append(rewritten_body)
+            if depth == 0:
+                result.append(')')
+            pos = curr
+
+        return "".join(result)
+
+    def _rewrite_clashing_columns_in_aggregates(
+        self,
+        m_expr: str,
+        defined_metric_names: Set[str],
+        dataset_col_lookup: Optional[Dict[str, Set[str]]],
+        dataset_aliases: Optional[Dict[str, str]],
+    ) -> str:
+        """When a metric name equals a physical column of its table, in a Snowflake
+        semantic view T.NAME inside an aggregate resolves to the metric (Snowflake 010220).
+        This rewrites T.NAME inside any aggregate function (SUM, AVG, MIN, MAX, COUNT)
+        to T._COL_NAME so it targets the declared PRIVATE fact column.
+        """
+        if not m_expr or not defined_metric_names:
+            return m_expr
+
+        # Build clashing set: (table_alias_upper, col_upper)
+        clashing: Set[Tuple[str, str]] = set()
+        if dataset_col_lookup:
+            for ds, cols in dataset_col_lookup.items():
+                al = (dataset_aliases.get(ds) or to_alias(ds) or ds).upper() if dataset_aliases else to_alias(ds).upper()
+                for c in cols:
+                    c_clean = sanitize_column(c).upper()
+                    c_orig = str(c).strip().upper()
+                    if c_clean in defined_metric_names:
+                        clashing.add((al, c_clean))
+                    if c_orig in defined_metric_names:
+                        clashing.add((al, c_orig))
+
+        if not clashing:
+            return m_expr
+
+        agg_pattern = re.compile(r'\b(SUM|AVG|AVERAGE|COUNT|MIN|MAX)\s*\(', re.IGNORECASE)
+        pos = 0
+        result = []
+        while pos < len(m_expr):
+            m = agg_pattern.search(m_expr, pos)
+            if not m:
+                result.append(m_expr[pos:])
+                break
+            result.append(m_expr[pos:m.end()])
+            depth = 1
+            curr = m.end()
+            while curr < len(m_expr) and depth > 0:
+                if m_expr[curr] == '(':
+                    depth += 1
+                elif m_expr[curr] == ')':
+                    depth -= 1
+                curr += 1
+            agg_inner = m_expr[m.end():curr - 1]
+            for tbl, col in clashing:
+                pat = rf'\b({re.escape(tbl)})\.([\"\']?{re.escape(col)}[\"\']?)(?!\w)'
+                def _rep(match):
+                    q = '"' if '"' in match.group(2) else ''
+                    c_name = match.group(2).replace('"', '').replace("'", '')
+                    return f'{match.group(1)}.{q}_COL_{c_name}{q}'
+                agg_inner = re.sub(pat, _rep, agg_inner, flags=re.IGNORECASE)
+            result.append(agg_inner)
+            if curr <= len(m_expr) and depth == 0:
+                result.append(')')
+            pos = curr
+        return ''.join(result)
+
+    def _run_predeploy_checks(
+        self,
+        m_name: str,
+        alias: str,
+        m_expr: str,
+        dax_expr: Optional[str],
+        dataset_col_lookup: Optional[Dict[str, Set[str]]],
+        dataset_aliases: Optional[Dict[str, str]],
+        relationships: Optional[Iterable[Any]],
+        defined_metric_names: Optional[Set[str]] = None,
+    ) -> Optional[str]:
+        """Pre-deploy validation checks (a)-(g) for every metric.
+        Returns failure reason string or None if valid.
+        """
+        expr_upper = m_expr.strip().upper()
+        clean_expr = re.sub(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", "", expr_upper).strip()
+        if clean_expr in (NULL_PLACEHOLDER_SQL, "CAST(NULL AS DOUBLE)", "NULL"):
+            return None
+
+        # Check (g): no CAST(NULL) inside a larger expression (composite null)
+        if "CAST(NULL" in clean_expr:
+            return "CAST(NULL) detected inside larger expression (composite null)"
+
+        # Check (a): every TABLE.COLUMN exists in that table (live schema)
+        if dataset_col_lookup:
+            alias_to_cols: Dict[str, Set[str]] = {}
+            for ds, cols in dataset_col_lookup.items():
+                al = (dataset_aliases.get(ds) or ds).upper() if dataset_aliases else ds.upper()
+                alias_to_cols[al] = {c.upper() for c in cols}
+                alias_to_cols[ds.upper()] = {c.upper() for c in cols}
+
+            col_refs = re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', m_expr)
+            for tbl_ref, col_ref in col_refs:
+                tbl_u = tbl_ref.upper()
+                col_u = col_ref.upper()
+                if tbl_u in alias_to_cols:
+                    if (col_u.startswith("IS_") or col_u.startswith("__SB_") or 
+                        col_u.startswith("_CURRENT_") or col_u.startswith("_ALL_") or 
+                        col_u.startswith("_GLOBAL_") or col_u == "ONE_ROW_KEY"):
+                        continue
+                    known_cols = alias_to_cols[tbl_u]
+                    clean_col_u = re.sub(r'[^A-Z0-9]', '', col_u)
+                    if col_u.startswith("_COL_"):
+                        base_c = col_u[5:]
+                        clean_base = re.sub(r'[^A-Z0-9]', '', base_c)
+                        if any(c == base_c or re.sub(r'[^A-Z0-9]', '', c) == clean_base for c in known_cols):
+                            continue
+                    matched = any(c == col_u or re.sub(r'[^A-Z0-9]', '', c) == clean_col_u for c in known_cols)
+                    if not matched:
+                        if defined_metric_names and col_u in defined_metric_names:
+                            continue
+                        return f"TABLE.COLUMN '{tbl_ref}.{col_ref}' does not exist in schema"
+
+        # Snowflake error 010220 safety:
+        # (1) aggregate on table alias cannot reference cross-table columns
+        # (2) aggregate cannot wrap another defined metric (aggregating a metric)
+        # (3) cannot mix raw aggregates with metric references
+        def _is_phys_col(t_name: str, c_name: str) -> bool:
+            if not dataset_col_lookup:
+                return False
+            c_check = c_name[5:] if c_name.upper().startswith("_COL_") else c_name
+            clean_check = re.sub(r'[^A-Z0-9]', '', c_check.upper())
+            for ds_name, cols in dataset_col_lookup.items():
+                al = (dataset_aliases.get(ds_name) or ds_name).upper() if dataset_aliases else ds_name.upper()
+                if al == t_name.upper() or ds_name.upper() == t_name.upper():
+                    return c_check.upper() in {str(c).upper() for c in cols} or any(re.sub(r'[^A-Z0-9]', '', str(c).upper()) == clean_check for c in cols)
+            return False
+
+        agg_pattern = re.compile(r'\b(SUM|AVG|AVERAGE|COUNT|MIN|MAX)\s*\(', re.IGNORECASE)
+        has_aggregate = bool(agg_pattern.search(m_expr))
+        if has_aggregate:
+            raw_agg_spans = []
+            all_spans = []
+            for agg_m in agg_pattern.finditer(m_expr):
+                start = agg_m.end()
+                depth = 1
+                curr = start
+                while curr < len(m_expr) and depth > 0:
+                    if m_expr[curr] == '(':
+                        depth += 1
+                    elif m_expr[curr] == ')':
+                        depth -= 1
+                    curr += 1
+
+                over_m = re.match(r'^\s*OVER\s*\(', m_expr[curr:], re.IGNORECASE)
+                is_window_agg = bool(over_m)
+                if is_window_agg:
+                    over_start = curr + over_m.end()
+                    over_depth = 1
+                    over_curr = over_start
+                    while over_curr < len(m_expr) and over_depth > 0:
+                        if m_expr[over_curr] == '(':
+                            over_depth += 1
+                        elif m_expr[over_curr] == ')':
+                            over_depth -= 1
+                        over_curr += 1
+                    all_spans.append((agg_m.start(), over_curr))
+                else:
+                    raw_agg_spans.append((agg_m.start(), curr))
+                    all_spans.append((agg_m.start(), curr))
+
+                agg_body = m_expr[start:curr-1] if depth == 0 else m_expr[start:]
+                for col_m in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', agg_body):
+                    tbl_ref = col_m.group(1).upper()
+                    col_ref = col_m.group(2)
+                    if _is_phys_col(tbl_ref, col_ref):
+                        continue
+                    if not is_window_agg and defined_metric_names and col_ref.upper() in defined_metric_names and col_ref.upper() != m_name.upper():
+                        return f"BY_DESIGN_EXCLUDED: metric '{m_name}' cannot wrap aggregate around existing metric '{col_ref}' (Snowflake error 010220)"
+
+            # Check (3): cannot mix raw aggregates with metric references outside aggregates
+            if raw_agg_spans and defined_metric_names:
+                outside_expr = m_expr
+                for s, e in reversed(all_spans):
+                    outside_expr = outside_expr[:s] + " " + outside_expr[e:]
+                for col_m in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', outside_expr):
+                    tbl_ref = col_m.group(1).upper()
+                    col_ref = col_m.group(2)
+                    if _is_phys_col(tbl_ref, col_ref):
+                        continue
+                    if col_ref.upper() in defined_metric_names and col_ref.upper() != m_name.upper():
+                        return f"BY_DESIGN_EXCLUDED: metric '{m_name}' cannot mix raw aggregate with metric reference '{col_ref}' (Snowflake error 010220)"
+
+        # Check (d): no SUM/COUNT/AVG of a dimension column copied onto a fact (fan-out)
+        for agg_fn in ("SUM", "AVG", "AVERAGE", "COUNT"):
+            for m in re.finditer(rf'\b{agg_fn}\s*\(\s*(?:DISTINCT\s+)?([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?\s*\)', m_expr, re.IGNORECASE):
+                t_ref = m.group(1).upper()
+                c_ref = m.group(2).upper()
+                if relationships:
+                    for rel in relationships:
+                        from_ds = str(getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "")).upper()
+                        to_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "")).upper()
+                        from_al = (dataset_aliases.get(from_ds) or from_ds).upper() if dataset_aliases else from_ds
+                        to_al = (dataset_aliases.get(to_ds) or to_ds).upper() if dataset_aliases else to_ds
+                        if t_ref in (from_al, from_ds) and to_al != t_ref:
+                            to_clean = re.sub(r'[^A-Z0-9]', '', to_al)
+                            if c_ref.startswith(f"{to_al}_") or (to_clean and c_ref.startswith(f"{to_clean}_")):
+                                return f"BY_DESIGN_EXCLUDED: aggregating dimension column with {agg_fn} on fact table causes fan-out duplication (measure should aggregate on dimension table directly)"
+
+        # DAX-based checks if dax_expr is available
+        if dax_expr:
+            dax_upper = dax_expr.upper()
+
+            # Check (e): iterators over VALUES/DISTINCT are not unrolled (iteration grain)
+            for it_fn in ("SUMX", "AVERAGEX", "MINX", "MAXX", "COUNTX", "COUNTAX", "PRODUCTX", "GEOMEANX"):
+                if it_fn in dax_upper:
+                    m_it = re.search(rf'\b{it_fn}\s*\(\s*(VALUES|DISTINCT|SUMMARIZE|SUMMARIZECOLUMNS)\s*\(', dax_upper)
+                    if m_it:
+                        if not re.search(r'\bOVER\s*\(', m_expr, re.IGNORECASE) and not re.search(r'\bGROUP\s+BY\b', m_expr, re.IGNORECASE):
+                            return "BY_DESIGN_EXCLUDED: aggregation over groups requires multi-level grouping not supported in a single semantic metric"
+                    m_all_col = re.search(rf"\b{it_fn}\s*\(\s*(?:ALL|ALLNOBLANKROW|REMOVEFILTERS)\s*\(\s*['\"]?[A-Za-z0-9_ ]+['\"]?\s*\[", dax_upper)
+                    if m_all_col and it_fn not in ("MINX", "MAXX"):
+                        return "BY_DESIGN_EXCLUDED: aggregation over groups requires multi-level grouping not supported in a single semantic metric"
+
+            # Check (b): every DAX filter condition appears in the SQL
+            has_dax_filter = False
+            if "FILTER(" in dax_upper or "KEEPFILTERS(" in dax_upper:
+                has_dax_filter = True
+            elif "CALCULATE(" in dax_upper:
+                calc_args = [a.strip() for a in dax_upper.split("CALCULATE(", 1)[1].split(",")] if "CALCULATE(" in dax_upper else []
+                if len(calc_args) > 1 and not all("USERELATIONSHIP" in a or ("ALL(" in a and "[" not in a) for a in calc_args[1:]):
+                    has_dax_filter = True
+
+            if has_dax_filter:
+                is_bare_agg = bool(re.match(r'^\s*(?:SUM|AVG|MIN|MAX|COUNT)\s*\([^)]*\)\s*(?:::FLOAT)?\s*$', m_expr, re.IGNORECASE))
+                has_sql_cond = any(k in expr_upper for k in ("CASE", "WHEN", "IFF", "WHERE", "IS_YTD", "IS_MTD", "IS_QTD", "__SB_"))
+                if is_bare_agg and not has_sql_cond:
+                    return "DAX filter condition lost in SQL translation (bare aggregate with no CASE/condition)"
+
+            # Check (c): SQL tables == DAX lineage tables
+            dax_tables = set(re.findall(r"'([^']+)'\[", dax_expr))
+            dax_filter_tables = set(re.findall(r"(?:FILTER|SUMX|AVERAGEX|MINX|MAXX|COUNTAX|COUNTROWS)\s*\(\s*'([^']+)'", dax_expr, re.IGNORECASE))
+            dax_all_tables = dax_tables | dax_filter_tables
+            if dax_all_tables and dataset_aliases:
+                expected_sql_aliases = {(dataset_aliases.get(t) or to_alias(t)).upper() for t in dax_all_tables}
+                sql_table_aliases = {m.upper() for m in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\."?[A-Za-z_][A-Za-z0-9_]*"?', m_expr)}
+                for ft in dax_filter_tables:
+                    ft_alias = (dataset_aliases.get(ft) or to_alias(ft)).upper()
+                    if ft_alias not in sql_table_aliases and sql_table_aliases:
+                        return f"SQL tables do not match DAX lineage tables (expected '{ft_alias}' in SQL)"
+
+            # Check (f): outer numeric literals preserved
+            m_mult = re.search(r'\*\s*([0-9]+(?:\.[0-9]+)?)\s*$', dax_expr.strip())
+            if m_mult:
+                num = m_mult.group(1)
+                if not re.search(rf'\*\s*{re.escape(num)}\b', m_expr):
+                    return f"outer numeric literal (* {num}) from DAX expression was lost in SQL translation"
+            m_sub = re.search(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*', dax_expr.strip())
+            if m_sub:
+                num = m_sub.group(1)
+                if not re.search(rf'\b{re.escape(num)}\s*-\s*', m_expr):
+                    return f"outer numeric literal ({num} -) from DAX expression was lost in SQL translation"
+
+        return None

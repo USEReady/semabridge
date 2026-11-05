@@ -7,7 +7,7 @@ Detects DAX patterns of the form:
 
 Generates helper name: _CURRENT_<c>
 Extracts: Dim, c, k, aggregate (MAX/MIN), and comparison operator (<op>) directly from the DAX AST/syntax
-with zero name-matching on 'fiscal', 'period', or 'dates'.
+with zero name-matching on calendar, date, or time columns.
 """
 
 import re

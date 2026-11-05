@@ -1644,22 +1644,10 @@ class MetricExpressionTranslator:
         return re.sub(composite_agg_pattern, _replace_composite, normalized)
 
     def _normalize_date_part_arguments(self, metric_sql: str) -> str:
+        # Date-part functions (YEAR, MONTH, QUARTER, etc.) and EXTRACT operate directly
+        # on DATE/TIMESTAMP columns in Snowflake. TRY_TO_DATE is invalid on DATE types.
         normalized = metric_sql
-        def _is_date_like(identifier: str) -> bool:
-            upper = identifier.upper()
-            return upper.endswith('.DATE') or upper.endswith('_DATE')
-        def _wrap_try_to_date(match: re.Match) -> str:
-            fn = match.group(1)
-            arg = match.group(2).strip()
-            if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper(): return f"{fn}(TRY_TO_DATE({arg}))"
-            return match.group(0)
-        normalized = re.sub(r'\b(YEAR|MONTH|DAY|WEEK|QUARTER)\s*\(\s*([^\)]+)\)', _wrap_try_to_date, normalized, flags=re.IGNORECASE)
-        def _wrap_extract(match: re.Match) -> str:
-            part = match.group(1)
-            arg = match.group(2).strip()
-            if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper(): return f"EXTRACT({part} FROM TRY_TO_DATE({arg}))"
-            return match.group(0)
-        normalized = re.sub(r'\bEXTRACT\s*\(\s*([A-Z_]+)\s+FROM\s+([^\)]+)\)', _wrap_extract, normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'TRY_TO_DATE\s*\(\s*([^()]+)\s*\)', r'\1', normalized, flags=re.IGNORECASE)
         return normalized
 
     def _normalize_rolling_monthindex_max_predicates(self, metric_sql: str) -> str:

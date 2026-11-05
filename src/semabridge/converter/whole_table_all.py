@@ -18,7 +18,7 @@ Helper column in DIMENSIONS:
 
 import re
 from dataclasses import dataclass
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from semabridge.converter.dax_ast_parser import (
     DaxAstParser,
     DaxNode,
@@ -26,6 +26,8 @@ from semabridge.converter.dax_ast_parser import (
     ColumnRefNode,
     MeasureRefNode,
     IdentifierNode,
+    LiteralNode,
+    BinaryOpNode,
     unwrap_var_body,
 )
 from semabridge.utils.naming import sanitize_column
@@ -53,6 +55,68 @@ class WholeTableAllPattern:
     col: Optional[str] # e.g. "Date" or None for COUNTROWS
     helper_name: str   # e.g. "_ALL_MAX_DATE"
     sql_agg: str       # e.g. "MAX", "COUNT(*)", "COUNT(DISTINCT"
+    filter_predicate: Optional[str] = None # e.g. '"STORE_TYPE" = \'New Store\''
+
+
+def _extract_predicate_sql_and_suffix(
+    node: DaxNode,
+    target_table: Optional[str] = None,
+) -> Optional[Tuple[str, str]]:
+    """Extract (sql_where_clause, clean_suffix) from a DAX filter predicate."""
+    if isinstance(node, BinaryOpNode):
+        op = node.op.upper()
+        if op in ("=", "<>", "!=", ">", "<", ">=", "<="):
+            left, right = node.left, node.right
+            # Normalize so column is on left, literal is on right if possible
+            if isinstance(right, (ColumnRefNode, MeasureRefNode, IdentifierNode)) and isinstance(left, LiteralNode):
+                left, right = right, left
+                if op == ">": op = "<"
+                elif op == "<": op = ">"
+                elif op == ">=": op = "<="
+                elif op == "<=": op = ">="
+
+            col_name = None
+            if isinstance(left, ColumnRefNode):
+                if target_table and left.table and left.table.casefold() != target_table.casefold():
+                    return None
+                col_name = left.column
+            elif isinstance(left, (MeasureRefNode, IdentifierNode)):
+                raw = left.name.strip("'\"")
+                if "[" in raw:
+                    m = re.match(r"(?:'([^']+)'|([A-Za-z0-9_ ]+))\s*\[([^\]]+)\]", raw)
+                    if m:
+                        t = m.group(1) or m.group(2)
+                        if target_table and t and t.casefold() != target_table.casefold():
+                            return None
+                        col_name = m.group(3)
+                    else:
+                        col_name = raw.strip("[]")
+                else:
+                    col_name = raw.strip("[]")
+
+            if col_name and isinstance(right, LiteralNode):
+                safe_col = sanitize_column(col_name)
+                val = right.value
+                if isinstance(val, str):
+                    escaped_val = val.replace("'", "''")
+                    sql_val = f"'{escaped_val}'"
+                    clean_val = re.sub(r'[^A-Za-z0-9_]', '_', val).upper().strip('_')
+                elif isinstance(val, (int, float)):
+                    sql_val = str(val)
+                    clean_val = str(val).replace('.', '_')
+                elif isinstance(val, bool):
+                    sql_val = "TRUE" if val else "FALSE"
+                    clean_val = "TRUE" if val else "FALSE"
+                else:
+                    return None
+
+                sql_op = "<>" if op == "!=" else op
+                sql_where = f'"{safe_col}" {sql_op} {sql_val}'
+                clean_col = re.sub(r'[^A-Za-z0-9_]', '_', safe_col).upper().strip('_')
+                suffix = f"{clean_col}_{clean_val}"
+                return (sql_where, suffix)
+
+    return None
 
 
 def match_whole_table_all_pattern(
@@ -98,38 +162,74 @@ def match_whole_table_all_ast(
     base_expr = node.args[0]
     filter_args = node.args[1:]
 
-    # Check filter args: must ONLY be whole-table ALL/REMOVEFILTERS
+    # Check filter args: must ONLY be whole-table ALL/REMOVEFILTERS or FILTER(ALL(T), cond)
     # Do NOT match if any filter is a column reference ALL(T[C]) or dimension ALL(Dim)
     target_table = fact_table
+    filter_predicate = None
+    filter_suffix = None
 
     for farg in filter_args:
         if not isinstance(farg, FunctionCallNode):
             return None
         fname = farg.func.upper()
-        if fname not in ("ALL", "REMOVEFILTERS", "ALLNOBLANKROW"):
-            return None
+        if fname in ("ALL", "REMOVEFILTERS", "ALLNOBLANKROW"):
+            # If ALL() has no arguments, it removes all filters on all tables
+            if not farg.args:
+                continue
 
-        # If ALL() has no arguments, it removes all filters on all tables
-        if not farg.args:
-            continue
+            # If ALL has arguments, verify it is a TABLE identifier, NOT a column
+            for arg in farg.args:
+                if isinstance(arg, ColumnRefNode):
+                    # Column-level ALL(T[C]) -> MUST NOT use whole-table constant!
+                    return None
+                if isinstance(arg, IdentifierNode):
+                    tbl_name = arg.name.strip("'\"")
+                    if "[" in tbl_name or "." in tbl_name:
+                        # Column reference in identifier form
+                        return None
+                    if target_table is None:
+                        target_table = tbl_name
+                    elif target_table.casefold() != tbl_name.casefold():
+                        # Mismatched table
+                        return None
+                else:
+                    return None
 
-        # If ALL has arguments, verify it is a TABLE identifier, NOT a column
-        for arg in farg.args:
-            if isinstance(arg, ColumnRefNode):
-                # Column-level ALL(T[C]) -> MUST NOT use whole-table constant!
+        elif fname == "FILTER" and len(farg.args) == 2:
+            t_arg = farg.args[0]
+            cond_arg = farg.args[1]
+
+            if not isinstance(t_arg, FunctionCallNode) or t_arg.func.upper() not in ("ALL", "REMOVEFILTERS", "ALLNOBLANKROW"):
                 return None
-            if isinstance(arg, IdentifierNode):
-                tbl_name = arg.name.strip("'\"")
-                if "[" in tbl_name or "." in tbl_name:
-                    # Column reference in identifier form
+
+            # Verify table arg inside FILTER(ALL(T), cond)
+            for arg in t_arg.args:
+                if isinstance(arg, ColumnRefNode):
                     return None
-                if target_table is None:
-                    target_table = tbl_name
-                elif target_table.casefold() != tbl_name.casefold():
-                    # Mismatched table
+                if isinstance(arg, IdentifierNode):
+                    tbl_name = arg.name.strip("'\"")
+                    if "[" in tbl_name or "." in tbl_name:
+                        return None
+                    if target_table is None:
+                        target_table = tbl_name
+                    elif target_table.casefold() != tbl_name.casefold():
+                        return None
+                else:
                     return None
+
+            extracted = _extract_predicate_sql_and_suffix(cond_arg, target_table)
+            if not extracted:
+                return None
+            pred_sql, pred_suffix = extracted
+            if filter_predicate is None:
+                filter_predicate = pred_sql
+                filter_suffix = pred_suffix
             else:
-                return None
+                filter_predicate = f"({filter_predicate} AND {pred_sql})"
+                filter_suffix = f"{filter_suffix}_{pred_suffix}"
+
+        else:
+            return None
 
     # Now inspect the base expression: <agg>(T[C]) or MeasureRef
     agg = None
@@ -191,7 +291,16 @@ def match_whole_table_all_ast(
         return None
 
     clean_agg = agg.upper()
-    if col:
+    if filter_suffix:
+        if col:
+            clean_col = re.sub(r'[^A-Za-z0-9_]', '_', col).upper()
+            if filter_suffix.startswith(f"{clean_col}_"):
+                helper_name = f"_ALL_{clean_agg}_{filter_suffix}"
+            else:
+                helper_name = f"_ALL_{clean_agg}_{clean_col}_{filter_suffix}"
+        else:
+            helper_name = f"_ALL_{clean_agg}_{filter_suffix}"
+    elif col:
         clean_col = re.sub(r'[^A-Za-z0-9_]', '_', col).upper()
         helper_name = f"_ALL_{clean_agg}_{clean_col}"
     else:
@@ -205,5 +314,6 @@ def match_whole_table_all_ast(
         col=col,
         helper_name=helper_name,
         sql_agg=sql_agg,
+        filter_predicate=filter_predicate,
     )
 

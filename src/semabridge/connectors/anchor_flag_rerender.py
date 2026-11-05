@@ -120,21 +120,27 @@ def rerender_anchor_dependent_metrics(
             continue
 
         dataset_name = getattr(metric, "dataset", None)
+        target_ds = dataset_name
         flag_map_for_dataset = anchor_flag_map.get(str(dataset_name or "").casefold(), {})
         if not flag_map_for_dataset and anchor_flag_map:
             if len(anchor_flag_map) == 1:
-                flag_map_for_dataset = list(anchor_flag_map.values())[0]
+                target_ds, flag_map_for_dataset = next(iter(anchor_flag_map.items()))
             else:
                 for k, v in anchor_flag_map.items():
                     if v:
-                        flag_map_for_dataset = v
+                        target_ds, flag_map_for_dataset = k, v
                         break
 
-        table_alias = dataset_aliases.get(dataset_name, dataset_name)
+        # If metric belongs to a virtual measure table, resolve table_alias to the fact table where flags reside
+        table_alias = (
+            dataset_aliases.get(target_ds)
+            or dataset_aliases.get(dataset_name, dataset_name)
+        )
+        effective_dataset = target_ds if (target_ds and target_ds in (dataset_col_lookup or {})) else dataset_name
         translation = translator.translate(
             dax_expr,
             table_alias,
-            dataset_name,
+            effective_dataset,
             dataset_col_lookup=dataset_col_lookup,
             dataset_aliases=dataset_aliases,
             metric_name=name,

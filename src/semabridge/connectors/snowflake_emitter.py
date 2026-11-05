@@ -98,6 +98,7 @@ class SnowflakeEmitter(BaseEmitter):
         config: SnowflakeConfig,
         behavior: Optional[ConnectorBehavior] = None,
         physical_namespace: Optional[str] = None,
+        drop_ledger: Optional[DropLedger] = None,
     ):
         self.config = config
         # Per-model physical-object namespace (multi-model batches only; see
@@ -176,7 +177,7 @@ class SnowflakeEmitter(BaseEmitter):
         # at the start of each deploy so this object identity — and every
         # sub-builder's reference to it — stays valid across reused emitter
         # instances.
-        self.drop_ledger = DropLedger()
+        self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
         self.no_populated_date_link_datasets: Set[str] = set()
         self.semantic_view_builder = SemanticViewBuilder(
             config=self.config,
@@ -811,112 +812,13 @@ class SnowflakeEmitter(BaseEmitter):
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
                         _ddls_executed_count += 1
                     except Exception as ddl_exc:
-                        # Auto-remediate invalid identifier errors iteratively.
-                        # Each pass fixes one invalid identifier; we retry up to
-                        # MAX_REMEDIATION_PASSES times so chained bad identifiers
-                        # (e.g. MAX_DATE → fixed, then cross-metric reference → fixed)
-                        # are all resolved before giving up.
-                        from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
-                        _sanitizer = SemanticDDLSanitizer(self._id)
-                        _current_sql = sql
-                        _current_exc = ddl_exc
-                        # At most 5 retries; each pass nulls only metrics.
-                        _MAX_PASSES = 5
-                        _remediated = False
-                        for _pass in range(_MAX_PASSES):
-                            # The identifier-extraction/sanitizer/drop-recording
-                            # calls below live in OTHER modules
-                            # (connection_manager.py, semantic_ddl_sanitizer.py)
-                            # and are not wrapped by anything else here. If any
-                            # of them ever raises (a bug/edge case unrelated to
-                            # the actual Snowflake DDL failure this loop exists
-                            # to remediate), that must not surface as an
-                            # unrelated traceback that aborts the whole deploy
-                            # and masks the real error -- degrade exactly like
-                            # the "sanitizer could not fix it" give-up path
-                            # below: stop remediating this DDL and fall through
-                            # to re-raising the ORIGINAL Snowflake error.
-                            try:
-                                _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
-                                if not _invalid_id:
-                                    break
-                                _fixed_sql, _changed, _nulled_metric_names = _sanitizer.remediate_invalid_identifier(
-                                    _current_sql, _invalid_id
-                                )
-                                if not _changed:
-                                    logger.warning(
-                                        "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
-                                        idx, _pass + 1, _invalid_id,
-                                    )
-                                    break
-                                logger.warning(
-                                    "DDL[%d] pass %d: fixing invalid identifier '%s'",
-                                    idx, _pass + 1, _invalid_id,
-                                )
-                                # Track metric-definition drops (as opposed to anchor-column
-                                # substitutions like MAX_DATE/MAX_MONTHINDEX, which keep the
-                                # metric's real semantics) so the user gets a clear final
-                                # summary of which metrics didn't make it into the deployed
-                                # semantic view, instead of this being buried in these
-                                # pass-by-pass WARNING logs.
-                                #
-                                # Gating this on "." in _invalid_id (as this used to) is
-                                # wrong: Snowflake's classic 000904 "invalid identifier"
-                                # error is frequently reported BARE/unqualified -- that is
-                                # exactly why MAX_DATE/MAX_MONTHINDEX (also bare) needed
-                                # their own carve-out below. Any OTHER bare identifier
-                                # that remediate_invalid_identifier's METRICS-clause sweep
-                                # nulls metrics for would previously skip this call
-                                # entirely: no drop_ledger record, no _dropped_metrics
-                                # entry -- silently under-reporting exactly like the
-                                # CAST(NULL AS DOUBLE)-sentinel bug fixed earlier in this
-                                # codebase. The only cases that must NOT be recorded are
-                                # the two known bare substitutions that keep every
-                                # metric's real semantics (never null anything --
-                                # confirmed by remediate_invalid_identifier always
-                                # returning an empty nulled_metric_names list for both).
-                                _invalid_upper = _invalid_id.upper().replace('"', "")
-                                if _invalid_upper not in ("MAX_DATE", "MAX_MONTHINDEX"):
-                                    self._record_ddl_deployment_drops(
-                                        _invalid_id, _nulled_metric_names, _current_sql, _current_exc
-                                    )
-                                _current_sql = _fixed_sql
-                            except Exception as _remediation_bug_exc:
-                                logger.warning(
-                                    "DDL[%d] pass %d: internal error while attempting "
-                                    "remediation (giving up on this DDL; the original "
-                                    "Snowflake error will be reported instead): %s",
-                                    idx, _pass + 1, _remediation_bug_exc,
-                                )
-                                break
-                            try:
-                                self.connection_manager._execute_sql(
-                                    cur, _current_sql, context=f"DDL[{idx}] pass {_pass + 1}"
-                                )
-                                _remediated = True
-                                ddls[idx] = _current_sql
-                                break
-                            except Exception as _retry_exc:
-                                _current_exc = _retry_exc
-                        if _remediated:
-                            ddls[idx] = _current_sql
-                            _ddls_executed_count += 1
-                            continue  # DDL succeeded after remediation
-                        # Remediation is exhausted -- this DDL statement is
-                        # not going to succeed. Record how far the loop got
-                        # BEFORE re-raising, so the outer handler can tell a
-                        # true "nothing was deployed" failure apart from a
-                        # "some objects already exist in Snowflake, this
-                        # deploy is now partial/inconsistent" one -- the two
-                        # need very different next steps from whoever reads
-                        # last_deployment_error.
                         if _ddls_executed_count > 0:
                             self._partial_deploy_info = {
                                 "ddls_executed": _ddls_executed_count,
                                 "ddls_total": _ddls_with_sql_total,
                                 "failed_ddl_index": idx,
                             }
-                        raise _current_exc  # re-raise last failure
+                        raise ddl_exc
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
@@ -2714,6 +2616,13 @@ class SnowflakeEmitter(BaseEmitter):
                     seen.add(ds.casefold())
                     fact_tables.append(ds)
 
+        from semabridge.converter.time_intelligence_shapes import discover_time_intelligence_shapes
+        if discover_time_intelligence_shapes(getattr(model, "metrics", []) or []):
+            primary_fact = self._identify_fact_table(model)
+            if primary_fact and not _is_virtual_dataset(primary_fact) and primary_fact.casefold() not in seen:
+                seen.add(primary_fact.casefold())
+                fact_tables.append(primary_fact)
+
         if fact_tables:
             return fact_tables
 
@@ -2787,10 +2696,19 @@ class SnowflakeEmitter(BaseEmitter):
                     return True
                 if any(nt in t for nt in ["INT", "NUMBER", "FLOAT", "DECIMAL", "NUMERIC", "VARCHAR", "STRING", "BOOLEAN"]):
                     return False
+            clean_col_u = re.sub(r'[^A-Z0-9]', '', col_u)
             for c in getattr(fact_dataset, "columns", []) or []:
                 c_uname = getattr(c, "unique_name", "") or ""
                 c_name = getattr(c, "name", "") or ""
-                if c_uname.upper() == col_u or c_name.upper() == col_u:
+                c_clean = re.sub(r'[^A-Z0-9]', '', c_uname.upper())
+                c_name_clean = re.sub(r'[^A-Z0-9]', '', c_name.upper())
+                if (
+                    c_uname.upper() == col_u
+                    or c_name.upper() == col_u
+                    or (clean_col_u and (c_clean == clean_col_u or c_name_clean == clean_col_u))
+                    or self._id.sanitize_column(c_uname).upper() == col_u
+                    or (c_name and self._id.sanitize_column(c_name).upper() == col_u)
+                ):
                     dt = getattr(c, "data_type", None)
                     dt_str = str(getattr(dt, "value", dt) or "").upper()
                     if any(t in dt_str for t in ["DATE", "TIME", "TIMESTAMP"]):
@@ -3533,6 +3451,8 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _is_fact_table_date_eligible(self, model: Any, fact_table: str, date_table: str, date_col: str, fact_cols: set[str]) -> bool:
         """Helper to determine if a fact table is eligible for date anchoring."""
+        if str(fact_table).casefold() == str(date_table).casefold():
+            return False
         if date_col in fact_cols or self._id.sanitize_column(date_col) in fact_cols:
             return True
         for rel in getattr(model, "relationships", []) or []:
@@ -3849,13 +3769,26 @@ class SnowflakeEmitter(BaseEmitter):
                     projected_cols.add(flag_name)
                     new_flag_map[shape] = flag_name
             elif not shapes and not scalar_patterns and not fact_date_col:
-                logger.info(
-                    "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
-                    fact_table,
-                )
-                self.no_populated_date_link_datasets.add(str(fact_table).casefold())
-                if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
-                    self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                # Do not mark fact table as having no usable dates if it has an active relationship to a date table (T7)
+                has_active_date_rel = False
+                for rel in getattr(model, "relationships", []) or []:
+                    if not getattr(rel, "is_active", True):
+                        continue
+                    f_ds = getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "") or ""
+                    t_ds = getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "") or ""
+                    if str(f_ds).casefold() == str(fact_table).casefold() or str(t_ds).casefold() == str(fact_table).casefold():
+                        other_ds = t_ds if str(f_ds).casefold() == str(fact_table).casefold() else f_ds
+                        if date_info and str(other_ds).casefold() == str(date_info[0]).casefold():
+                            has_active_date_rel = True
+                            break
+                if not has_active_date_rel:
+                    logger.info(
+                        "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
+                        fact_table,
+                    )
+                    self.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                    if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
+                        self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
 
         # Whole-table constant precomputes: CALCULATE(<agg>(T[C]), ALL(T))
         # Generates CROSS JOIN (SELECT <agg>(C) AS _ALL_<AGG>_<C> FROM T) anchor_all_<agg>_<c>
@@ -3888,8 +3821,8 @@ class SnowflakeEmitter(BaseEmitter):
             else:
                 resolved_col = None
 
-            safe_anchor_name = re.sub(r"[^A-Za-z0-9_]", "_", pat.col or "rows").lower()
-            anchor_alias = f'anchor_all_{pat.agg.lower()}_{safe_anchor_name}'
+            safe_anchor_name = re.sub(r"[^A-Za-z0-9_]", "_", pat.helper_name.lstrip("_")).lower()
+            anchor_alias = f'anchor_{safe_anchor_name}'
 
             if pat.sql_agg == "COUNT(*)":
                 agg_expr = "COUNT(*)"
@@ -3898,9 +3831,10 @@ class SnowflakeEmitter(BaseEmitter):
             else:
                 agg_expr = f'{pat.sql_agg}("{resolved_col}")'
 
+            where_clause = f" WHERE {pat.filter_predicate}" if pat.filter_predicate else ""
             anchor_joins.append(
                 f'CROSS JOIN (SELECT {agg_expr} AS "{helper_name}" '
-                f'FROM {fact_source_ref}) {anchor_alias}'
+                f'FROM {fact_source_ref}{where_clause}) {anchor_alias}'
             )
             select_parts.append(f'\n            , {anchor_alias}."{helper_name}" AS "{helper_name}"')
             projected_cols.add(helper_name)

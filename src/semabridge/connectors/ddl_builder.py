@@ -366,28 +366,38 @@ class SemanticViewBuilder:
 
 
 
+            def _is_fanout_agg(tbl: str, col: str) -> bool:
+                return bool(re.search(
+                    rf'\b(?:SUM|AVG|AVERAGE|AVERAGEX|COUNT|COUNTA)\s*\(\s*(?:RELATED\s*\(\s*)?[\'"]?{re.escape(tbl)}[\'"]?\s*\[\s*{re.escape(col)}\s*\]',
+                    dax,
+                    re.IGNORECASE,
+                ))
+
             # Detect RELATED('Table'[Column]) and RELATED(Table[Column]) patterns.
-
             related_pattern = r'RELATED\(\s*[\'"]?([^\'"\[\]]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]\s*\)'
-
             for table, column in re.findall(related_pattern, dax, re.IGNORECASE):
-
+                if _is_fanout_agg(table, column):
+                    logger.info(
+                        "Skipping precompute suggestion for '%s[%s]' on fact table '%s': "
+                        "aggregating dimension column causes fan-out duplication",
+                        table, column, metric_dataset,
+                    )
+                    continue
                 add_suggestion(metric_dataset, table, column)
 
-
-
             # Detect direct 'Table'[Column] references (cross-table).
-
             direct_pattern = r'[\'"]?([^\'"\[\]\(\),]+)[\'"]?\s*\[\s*([^\]]+?)\s*\]'
-
             for table, column in re.findall(direct_pattern, dax, re.IGNORECASE):
-
                 table = str(table or "").strip()
-
                 if not table:
-
                     continue
-
+                if _is_fanout_agg(table, column):
+                    logger.info(
+                        "Skipping precompute suggestion for '%s[%s]' on fact table '%s': "
+                        "aggregating dimension column causes fan-out duplication",
+                        table, column, metric_dataset,
+                    )
+                    continue
                 add_suggestion(metric_dataset, table, column)
 
 
@@ -963,7 +973,9 @@ class SemanticViewBuilder:
 
             enriched_view_mapping=self.enriched_view_mapping,
 
-            failed_enrichment_datasets=self.failed_enrichment_datasets
+            failed_enrichment_datasets=self.failed_enrichment_datasets,
+
+            drop_ledger=getattr(self, "drop_ledger", None),
 
         )
 
@@ -1126,7 +1138,9 @@ class SemanticViewBuilder:
 
             enriched_view_mapping=self.enriched_view_mapping,
 
-            failed_enrichment_datasets=self.failed_enrichment_datasets
+            failed_enrichment_datasets=self.failed_enrichment_datasets,
+
+            drop_ledger=getattr(self, "drop_ledger", None),
 
         )
 

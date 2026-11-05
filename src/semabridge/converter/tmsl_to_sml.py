@@ -54,6 +54,8 @@ class TMSLTransformer:
     AUTO_HIDDEN_TABLE_PREFIXES = (
         "LocalDateTable_",
         "DateTableTemplate_",
+        "ClusterMappingTable",
+        "ClusterMapping",
     )
     
     def __init__(self, drop_ledger: Optional[DropLedger] = None):
@@ -189,12 +191,21 @@ class TMSLTransformer:
                     )
                     continue
                 if self._is_auto_hidden_table_name(table_name):
-                    logger.info("Skipping hidden auto-date table: %s", table_name or "<unnamed>")
+                    if str(table_name).startswith(("ClusterMapping", "ClusterMappingTable")):
+                        reason = (
+                            "Power BI auto-generated clustering mapping table "
+                            "(ClusterMappingTable) — excluded from the semantic model by design."
+                        )
+                    else:
+                        reason = (
+                            "Auto-generated Power BI/Fabric date table "
+                            "(LocalDateTable_/DateTableTemplate_) — excluded from "
+                            "the semantic model by design."
+                        )
+                    logger.info("Skipping auxiliary table: %s (%s)", table_name or "<unnamed>", reason)
                     self.drop_ledger.record(
                         "table", table_name or "<unnamed>", DropStage.EXTRACTION,
-                        "Auto-generated Power BI/Fabric date table "
-                        "(LocalDateTable_/DateTableTemplate_) — excluded from "
-                        "the semantic model by design.",
+                        reason,
                         by_design=True,
                     )
                     continue

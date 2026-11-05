@@ -804,7 +804,7 @@ class DAXTranslator:
 
                 primary_table_name=dataset_name,
 
-                allow_unshifted_fallback=bool(metrics_context),
+                allow_unshifted_fallback=False,
 
                 advisory_categories=time_intel_advisories,
 
@@ -1294,6 +1294,10 @@ class DAXTranslator:
 
                 continue
 
+            if name_cf in ("_showvaluefordates", "showvaluefordates"):
+
+                continue
+
             if name_cf in resolved_lower:
 
                 saw_resolved = True
@@ -1370,6 +1374,10 @@ class DAXTranslator:
         for ref in extract_measure_references_from_ast(dax):
 
             ref_lower = ref.casefold()
+
+            if ref_lower in ("_showvaluefordates", "showvaluefordates"):
+
+                continue
 
             if known_lower:
 
@@ -2005,9 +2013,14 @@ class DAXTranslator:
                         else:
                             alt_const = "NULL"
                 elif is_cross_table and relationships is not None:
-                    from semabridge.utils.relationship_graph import has_relationship_path
-                    if not has_relationship_path(relationships, primary_table_name, dataset):
-                        alt_const = "NULL"
+                    # Virtual measure tables (e.g. '# Measures') are measure containers, not disconnected physical tables
+                    ds_clean = str(dataset).strip("'\"").casefold()
+                    rel_endpoints = {str(getattr(r, "from_table", None) or getattr(r, "from_dataset", None) or "").strip("'\"").casefold() for r in (relationships or [])} | {str(getattr(r, "to_table", None) or getattr(r, "to_dataset", None) or "").strip("'\"").casefold() for r in (relationships or [])}
+                    is_virtual_measure_table = ds_clean.startswith(("#", "_")) or (ds_clean not in rel_endpoints and primary_table_name and primary_table_name.casefold() in metric_expr.casefold())
+                    if not is_virtual_measure_table:
+                        from semabridge.utils.relationship_graph import has_relationship_path
+                        if not has_relationship_path(relationships, primary_table_name, dataset):
+                            alt_const = "NULL"
 
             if alt_const is not None:
                 resolved[name] = alt_const

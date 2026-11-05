@@ -40,10 +40,13 @@ import re
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 from semabridge.converter.dax_ast_parser import (
+    BinaryOpNode,
     DaxAstParser,
     DaxNode,
     FunctionCallNode,
     MeasureRefNode,
+    UnaryOpNode,
+    VarNode,
 )
 
 Shape = Tuple[str, ...]
@@ -54,6 +57,9 @@ PERIOD_TO_DATE_FUNCS: Dict[str, str] = {
     "TOTALYTD": "YTD",
     "TOTALMTD": "MTD",
     "TOTALQTD": "QTD",
+    "DATESYTD": "YTD",
+    "DATESMTD": "MTD",
+    "DATESQTD": "QTD",
 }
 
 # DAX function name -> canonical lag component. These are the functions
@@ -157,11 +163,20 @@ def _resolve_node_shape(
     if isinstance(node, MeasureRefNode):
         return _resolve_own_shape(node.name, dax_by_name, memo, visiting)
 
-    from semabridge.converter.dax_ast_parser import BinaryOpNode
     if isinstance(node, BinaryOpNode):
         left_s = _resolve_node_shape(node.left, dax_by_name, memo, visiting)
         right_s = _resolve_node_shape(node.right, dax_by_name, memo, visiting)
         return left_s or right_s
+
+    if isinstance(node, UnaryOpNode):
+        return _resolve_node_shape(node.operand, dax_by_name, memo, visiting)
+
+    if isinstance(node, VarNode):
+        for _vname, vexpr in node.variables:
+            s = _resolve_node_shape(vexpr, dax_by_name, memo, visiting)
+            if s:
+                return s
+        return _resolve_node_shape(node.body, dax_by_name, memo, visiting)
 
     if not isinstance(node, FunctionCallNode):
         return None
@@ -188,16 +203,54 @@ def _resolve_node_shape(
                 n_months = int(m_r.group(1))
                 return (f"R{n_months}M",)
 
-        arg0 = node.args[0] if node.args else None
+        # Unpack CALCULATETABLE modifiers if present
+        modifiers = []
+        for mod in node.args[1:]:
+            if isinstance(mod, FunctionCallNode) and mod.func.upper() == "CALCULATETABLE":
+                modifiers.extend(mod.args)
+            else:
+                modifiers.append(mod)
+
+        def _get_lag_shape(fn_node: FunctionCallNode) -> str:
+            if fn_node.func.upper() in LAG_FUNCS:
+                return LAG_FUNCS[fn_node.func.upper()]
+            intv = "YEAR"
+            if len(fn_node.args) >= 3:
+                intv = str(getattr(fn_node.args[2], "name", getattr(fn_node.args[2], "value", "YEAR"))).upper()
+            if "YEAR" in intv:
+                return "SPLY_YEAR"
+            elif "QUARTER" in intv:
+                return "SPLY_QUARTER"
+            elif "MONTH" in intv:
+                return "SPLY_MONTH"
+            elif "DAY" in intv:
+                return "SPLY_DAY"
+            return "SPLY_YEAR"
+
+        p2d_modifier: Optional[FunctionCallNode] = None
         lag_modifier: Optional[FunctionCallNode] = None
-        for modifier in node.args[1:]:
-            if isinstance(modifier, FunctionCallNode) and modifier.func.upper() in LAG_FUNCS:
-                lag_modifier = modifier
-                break
+        for modifier in modifiers:
+            if isinstance(modifier, FunctionCallNode):
+                m_fn = modifier.func.upper()
+                if m_fn in PERIOD_TO_DATE_FUNCS:
+                    p2d_modifier = modifier
+                elif m_fn in LAG_FUNCS or m_fn in ("DATEADD", "PARALLELPERIOD"):
+                    lag_modifier = modifier
+
+        arg0 = node.args[0] if node.args else None
+        inner = _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
+
+        if p2d_modifier is not None and lag_modifier is not None:
+            p2d_shape = PERIOD_TO_DATE_FUNCS[p2d_modifier.func.upper()]
+            lag_shape = _get_lag_shape(lag_modifier)
+            return (p2d_shape, lag_shape)
 
         if lag_modifier is not None:
-            inner = _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
-            outer = LAG_FUNCS[lag_modifier.func.upper()]
+            outer = _get_lag_shape(lag_modifier)
+            return (inner + (outer,)) if inner else (outer,)
+
+        if p2d_modifier is not None:
+            outer = PERIOD_TO_DATE_FUNCS[p2d_modifier.func.upper()]
             return (inner + (outer,)) if inner else (outer,)
 
         return _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)

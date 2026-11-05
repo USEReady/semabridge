@@ -573,8 +573,9 @@ function synonymSourceLabel(source) {
 }
 
 function MeasureTranslationPanel({ row, forceRevealSynonyms = false }) {
-  const isFailed = row.sync_enabled === false || !!row.sync_failure_reason;
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
+  const hasTargetExpr = Boolean(String(row.target_expression || '').trim());
+  const isFailed = row.sync_enabled === false || !!row.sync_failure_reason || (isMeasure && !hasTargetExpr);
   // Opening the panel via the row's "N detected" pill IS the explicit,
   // deliberate action the toggle below normally requires -- so it starts
   // already revealed in that case, instead of requiring a second click to

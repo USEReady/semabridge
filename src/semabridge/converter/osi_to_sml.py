@@ -266,6 +266,10 @@ class OSIToSMLConverter(BaseConverter):
                             metric.validation_notes = list(translation.validation_notes or [])
                             _apply_translation_advisories(metric, translation)
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
+                        else:
+                            metric.sync_enabled = False
+                            if not metric.sync_failure_reason:
+                                metric.sync_failure_reason = getattr(translation, "failure_reason", None) or "Tier-5 translation produced no usable SQL"
 
                 # Step 3e: one more deterministic-only convergence pass now that
                 # the batch call may have populated sql_expression for metrics
@@ -344,6 +348,16 @@ class OSIToSMLConverter(BaseConverter):
 
             # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
             self._inject_calendar_dimension(sml)
+
+            # 6. Ensure status consistency: any metric with a source expression but no
+            # sql_expression must never be left as sync_enabled=True.
+            for metric in sml.metrics:
+                has_src = bool(metric.expression and str(metric.expression).strip())
+                has_sql = bool(metric.sql_expression and str(metric.sql_expression).strip())
+                if has_src and not has_sql:
+                    metric.sync_enabled = False
+                    if not metric.sync_failure_reason:
+                        metric.sync_failure_reason = "DAX translation unavailable: no SQL expression produced"
 
             return sml
 
