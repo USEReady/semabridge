@@ -98,6 +98,7 @@ class SnowflakeEmitter(BaseEmitter):
         config: SnowflakeConfig,
         behavior: Optional[ConnectorBehavior] = None,
         physical_namespace: Optional[str] = None,
+        drop_ledger: Optional[DropLedger] = None,
     ):
         self.config = config
         # Per-model physical-object namespace (multi-model batches only; see
@@ -137,6 +138,7 @@ class SnowflakeEmitter(BaseEmitter):
         # Local mapping for enriched views when behavior config lacks an explicit mapping
         self._enriched_view_mapping: Dict[str, str] = {}
         self._failed_enrichment_datasets: set[str] = set()
+        self._failed_enriched_view_datasets: Dict[str, str] = {}
 
         # ---------------------------------------------------------
         # Initialize Domain Managers
@@ -176,7 +178,7 @@ class SnowflakeEmitter(BaseEmitter):
         # at the start of each deploy so this object identity — and every
         # sub-builder's reference to it — stays valid across reused emitter
         # instances.
-        self.drop_ledger = DropLedger()
+        self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
         self.no_populated_date_link_datasets: Set[str] = set()
         self.semantic_view_builder = SemanticViewBuilder(
             config=self.config,
@@ -401,9 +403,8 @@ class SnowflakeEmitter(BaseEmitter):
                 set_allowed_model_objects(_allowed_objs)
 
                 # Let TablesClauseBuilder precompute anchor literals (e.g.
-                # _CURRENT_FISCAL_PERIOD) via a live lookup instead of
-                # embedding a subquery in the TABLES clause — see
-                # TablesClauseBuilder._fetch_fiscal_anchor_literal.
+                # _CURRENT_<c>) via a live lookup instead of
+                # embedding a subquery in the TABLES clause.
                 self.semantic_view_builder.cursor = cur
 
                 # Step -2: Ensure this project's own target schema exists.
@@ -552,6 +553,8 @@ class SnowflakeEmitter(BaseEmitter):
                         _dataset_col_lookup,
                         _dataset_aliases,
                         label="confirmed",
+                        failed_enrichment_datasets=self._failed_enrichment_datasets,
+                        failed_enrichment_errors=getattr(self, "_failed_enriched_view_datasets", {}),
                     )
                     if _rerendered:
                         logger.info(
@@ -561,15 +564,6 @@ class SnowflakeEmitter(BaseEmitter):
                 except Exception as _rerender_exc:
                     logger.warning("Anchor-dependent metric re-render skipped: %s", _rerender_exc)
 
-                if os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1":
-                    try:
-                        _w_rerendered = self._rerender_window_enriched_metrics(
-                            model, _dataset_col_lookup, _dataset_aliases
-                        )
-                        if _w_rerendered:
-                            logger.info("Re-rendered %d window-enriched metric(s) with helper view window columns", _w_rerendered)
-                    except Exception as _w_exc:
-                        logger.warning("Window-enriched metric re-render skipped: %s", _w_exc)
 
                 if is_osi:
                     self.schema_manager._preflight_check_osi(cur, model)
@@ -821,112 +815,13 @@ class SnowflakeEmitter(BaseEmitter):
                         self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
                         _ddls_executed_count += 1
                     except Exception as ddl_exc:
-                        # Auto-remediate invalid identifier errors iteratively.
-                        # Each pass fixes one invalid identifier; we retry up to
-                        # MAX_REMEDIATION_PASSES times so chained bad identifiers
-                        # (e.g. MAX_DATE → fixed, then cross-metric reference → fixed)
-                        # are all resolved before giving up.
-                        from semabridge.connectors.semantic_ddl_sanitizer import SemanticDDLSanitizer
-                        _sanitizer = SemanticDDLSanitizer(self._id)
-                        _current_sql = sql
-                        _current_exc = ddl_exc
-                        # At most 5 retries; each pass nulls only metrics.
-                        _MAX_PASSES = 5
-                        _remediated = False
-                        for _pass in range(_MAX_PASSES):
-                            # The identifier-extraction/sanitizer/drop-recording
-                            # calls below live in OTHER modules
-                            # (connection_manager.py, semantic_ddl_sanitizer.py)
-                            # and are not wrapped by anything else here. If any
-                            # of them ever raises (a bug/edge case unrelated to
-                            # the actual Snowflake DDL failure this loop exists
-                            # to remediate), that must not surface as an
-                            # unrelated traceback that aborts the whole deploy
-                            # and masks the real error -- degrade exactly like
-                            # the "sanitizer could not fix it" give-up path
-                            # below: stop remediating this DDL and fall through
-                            # to re-raising the ORIGINAL Snowflake error.
-                            try:
-                                _invalid_id = self.connection_manager._extract_invalid_identifier(_current_exc)
-                                if not _invalid_id:
-                                    break
-                                _fixed_sql, _changed, _nulled_metric_names = _sanitizer.remediate_invalid_identifier(
-                                    _current_sql, _invalid_id
-                                )
-                                if not _changed:
-                                    logger.warning(
-                                        "DDL[%d] pass %d: sanitizer could not fix '%s' — giving up",
-                                        idx, _pass + 1, _invalid_id,
-                                    )
-                                    break
-                                logger.warning(
-                                    "DDL[%d] pass %d: fixing invalid identifier '%s'",
-                                    idx, _pass + 1, _invalid_id,
-                                )
-                                # Track metric-definition drops (as opposed to anchor-column
-                                # substitutions like MAX_DATE/MAX_MONTHINDEX, which keep the
-                                # metric's real semantics) so the user gets a clear final
-                                # summary of which metrics didn't make it into the deployed
-                                # semantic view, instead of this being buried in these
-                                # pass-by-pass WARNING logs.
-                                #
-                                # Gating this on "." in _invalid_id (as this used to) is
-                                # wrong: Snowflake's classic 000904 "invalid identifier"
-                                # error is frequently reported BARE/unqualified -- that is
-                                # exactly why MAX_DATE/MAX_MONTHINDEX (also bare) needed
-                                # their own carve-out below. Any OTHER bare identifier
-                                # that remediate_invalid_identifier's METRICS-clause sweep
-                                # nulls metrics for would previously skip this call
-                                # entirely: no drop_ledger record, no _dropped_metrics
-                                # entry -- silently under-reporting exactly like the
-                                # CAST(NULL AS DOUBLE)-sentinel bug fixed earlier in this
-                                # codebase. The only cases that must NOT be recorded are
-                                # the two known bare substitutions that keep every
-                                # metric's real semantics (never null anything --
-                                # confirmed by remediate_invalid_identifier always
-                                # returning an empty nulled_metric_names list for both).
-                                _invalid_upper = _invalid_id.upper().replace('"', "")
-                                if _invalid_upper not in ("MAX_DATE", "MAX_MONTHINDEX"):
-                                    self._record_ddl_deployment_drops(
-                                        _invalid_id, _nulled_metric_names, _current_sql, _current_exc
-                                    )
-                                _current_sql = _fixed_sql
-                            except Exception as _remediation_bug_exc:
-                                logger.warning(
-                                    "DDL[%d] pass %d: internal error while attempting "
-                                    "remediation (giving up on this DDL; the original "
-                                    "Snowflake error will be reported instead): %s",
-                                    idx, _pass + 1, _remediation_bug_exc,
-                                )
-                                break
-                            try:
-                                self.connection_manager._execute_sql(
-                                    cur, _current_sql, context=f"DDL[{idx}] pass {_pass + 1}"
-                                )
-                                _remediated = True
-                                ddls[idx] = _current_sql
-                                break
-                            except Exception as _retry_exc:
-                                _current_exc = _retry_exc
-                        if _remediated:
-                            ddls[idx] = _current_sql
-                            _ddls_executed_count += 1
-                            continue  # DDL succeeded after remediation
-                        # Remediation is exhausted -- this DDL statement is
-                        # not going to succeed. Record how far the loop got
-                        # BEFORE re-raising, so the outer handler can tell a
-                        # true "nothing was deployed" failure apart from a
-                        # "some objects already exist in Snowflake, this
-                        # deploy is now partial/inconsistent" one -- the two
-                        # need very different next steps from whoever reads
-                        # last_deployment_error.
                         if _ddls_executed_count > 0:
                             self._partial_deploy_info = {
                                 "ddls_executed": _ddls_executed_count,
                                 "ddls_total": _ddls_with_sql_total,
                                 "failed_ddl_index": idx,
                             }
-                        raise _current_exc  # re-raise last failure
+                        raise ddl_exc
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
@@ -1788,6 +1683,7 @@ class SnowflakeEmitter(BaseEmitter):
         self.translator.anchor_flag_map.clear()
         self._enriched_view_mapping.clear()
         self._failed_enrichment_datasets.clear()
+        self._failed_enriched_view_datasets.clear()
         self._load_saved_bindings()
         target = f"{self.config.database}.{self.config.schema_name}"
         try:
@@ -1864,6 +1760,8 @@ class SnowflakeEmitter(BaseEmitter):
                     _dataset_col_lookup,
                     _dataset_aliases,
                     label="confirmed",
+                    failed_enrichment_datasets=self._failed_enrichment_datasets,
+                    failed_enrichment_errors=getattr(self, "_failed_enriched_view_datasets", {}),
                 )
                 pass  # Window metrics are handled natively in B1 (no re-render needed)
                 return self.semantic_view_builder.generate_ddls(model)
@@ -2425,6 +2323,7 @@ class SnowflakeEmitter(BaseEmitter):
                         all_errors.append(f"Primary key '{alias}.{pk_col}' does not exist in bound physical table '{phys_table}'")
 
             # 2. Parse RELATIONSHIPS clause
+            reach_graph: Dict[str, Set[str]] = {}
             rels_match = re.search(r'RELATIONSHIPS\s*\((.*?)\)\s*(?:DIMENSIONS|METRICS)', ddl, re.DOTALL | re.IGNORECASE)
             if rels_match:
                 rels_clause = rels_match.group(1)
@@ -2437,6 +2336,7 @@ class SnowflakeEmitter(BaseEmitter):
                         rel_name, from_alias, from_cols, to_alias, to_cols = m.groups()
                         from_alias = from_alias.upper()
                         to_alias = to_alias.upper()
+                        reach_graph.setdefault(from_alias, set()).add(to_alias)
                         from_phys = table_map.get(from_alias, from_alias)
                         to_phys = table_map.get(to_alias, to_alias)
                         
@@ -2500,6 +2400,31 @@ class SnowflakeEmitter(BaseEmitter):
                                 all_errors.append(
                                     f"Metric '{alias}.{metric_name}': NON ADDITIVE BY references '{nad_alias}.{nad_col}' which is not a declared dimension in DIMENSIONS"
                                 )
+
+                    # Check granularity reachability (Snowflake 010219):
+                    # Metric's anchor table must reach (many -> one) every table whose columns it aggregates
+                    agg_tables = set()
+                    for agg_m in re.finditer(r'\b(?:SUM|AVG|COUNT|MIN|MAX|MEDIAN)\s*\((.*?)\)', expr, re.IGNORECASE):
+                        agg_body = agg_m.group(1)
+                        for t_match in re.findall(r'([A-Za-z0-9_]+)\."?[A-Za-z0-9_]+"?', agg_body):
+                            t_upper = t_match.upper()
+                            if t_upper in table_map and t_upper != alias:
+                                agg_tables.add(t_upper)
+                    if agg_tables:
+                        reachable = {alias}
+                        stack = [alias]
+                        while stack:
+                            curr = stack.pop()
+                            for nxt in reach_graph.get(curr, ()):
+                                if nxt not in reachable:
+                                    reachable.add(nxt)
+                                    stack.append(nxt)
+                        unreachable = sorted(t for t in agg_tables if t not in reachable)
+                        if unreachable:
+                            all_errors.append(
+                                f"Metric '{alias}.{metric_name}': aggregates {unreachable}, not reachable (many -> one) from '{alias}'. "
+                                f"Snowflake 010219: metric must sit on the 'many' side table that reaches all aggregated tables."
+                            )
 
                     expr = _sb_strip_semantic_refs(expr, ddl, all_errors, f"{alias}.{metric_name}")  # >>> SB_PREDEPLOY_SEMANTIC_REFS
                     for talias, phys_tbl in table_map.items():
@@ -2608,7 +2533,7 @@ class SnowflakeEmitter(BaseEmitter):
         for dataset in datasets:
             tokens = set(self._tokenize_dataset_name(dataset.unique_name))
             if tokens & self._FACT_KEYWORDS:
-                logger.info(f"✅ Identified fact table: {dataset.unique_name} (keyword match)")
+                logger.info(f"✅ Identified fact table: {dataset.unique_name} (token match)")
                 return dataset.unique_name
         
         # Strategy 2: Table with most relationships
@@ -2653,9 +2578,22 @@ class SnowflakeEmitter(BaseEmitter):
         self.semantic_view_builder._precompute_suggestions(model)
         seen: set = set()
         fact_tables: list[str] = []
+
+        def _is_virtual_dataset(ds_name: str) -> bool:
+            ds = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", "") == ds_name), None)
+            if not ds:
+                return False
+            if getattr(ds, "is_measure_table", False):
+                return True
+            cols = getattr(ds, "columns", []) or []
+            if not cols:
+                return True
+            non_dummy = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            return len(non_dummy) == 0
+
         for detail in self.semantic_view_builder.get_precompute_details():
             target = detail.get("target_dataset")
-            if target and target.casefold() not in seen:
+            if target and not _is_virtual_dataset(target) and target.casefold() not in seen:
                 seen.add(target.casefold())
                 fact_tables.append(target)
 
@@ -2663,22 +2601,56 @@ class SnowflakeEmitter(BaseEmitter):
         parser = DaxAstParser()
         for m in getattr(model, "metrics", []) or []:
             dax = getattr(m, "expression", "") or ""
-            if "ALL(" in dax.upper() and getattr(m, "dataset", None):
-                try:
-                    ast = parser.parse(dax)
-                    if _is_enrichable_all_measure(ast):
-                        ds = getattr(m, "dataset", None)
-                        if ds and ds.casefold() not in seen:
+            sql = getattr(m, "sql_expression", "") or ""
+            ds = getattr(m, "dataset", None)
+            if ds and not _is_virtual_dataset(ds) and ds.casefold() not in seen:
+                if "ALL(" in dax.upper() or "REMOVEFILTERS" in dax.upper():
+                    try:
+                        ast = parser.parse(dax)
+                        if _is_enrichable_all_measure(ast):
                             seen.add(ds.casefold())
                             fact_tables.append(ds)
-                except Exception:
-                    pass
+                            continue
+                    except Exception:
+                        pass
+                from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+                if (
+                    match_scalar_dim_lookup_pattern(dax) is not None
+                    or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
+                    or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
+                ):
+                    seen.add(ds.casefold())
+                    fact_tables.append(ds)
+
+        # Check for metric/column name clashes:
+        # A name clash between a metric and a physical column on a dataset forces creation of an enriched view
+        for m in getattr(model, "metrics", []) or []:
+            m_uname = (getattr(m, "unique_name", None) or getattr(m, "name", "") or "").strip().upper()
+            m_ds = getattr(m, "dataset", None)
+            if not m_uname or not m_ds or _is_virtual_dataset(m_ds) or m_ds.casefold() in seen:
+                continue
+            target_ds_obj = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None) == m_ds), None)
+            if target_ds_obj:
+                col_names = {
+                    (getattr(c, "unique_name", "") or getattr(c, "name", "")).strip().upper()
+                    for c in getattr(target_ds_obj, "columns", []) or []
+                }
+                if m_uname in col_names:
+                    seen.add(m_ds.casefold())
+                    fact_tables.append(m_ds)
+
+        from semabridge.converter.time_intelligence_shapes import discover_time_intelligence_shapes
+        if discover_time_intelligence_shapes(getattr(model, "metrics", []) or []):
+            primary_fact = self._identify_fact_table(model)
+            if primary_fact and not _is_virtual_dataset(primary_fact) and primary_fact.casefold() not in seen:
+                seen.add(primary_fact.casefold())
+                fact_tables.append(primary_fact)
 
         if fact_tables:
             return fact_tables
 
         fallback = self._identify_fact_table(model)
-        return [fallback] if fallback else []
+        return [fallback] if fallback and not _is_virtual_dataset(fallback) else []
 
     def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
         """Resolve the date column a fact table's time-intelligence anchor
@@ -2710,16 +2682,10 @@ class SnowflakeEmitter(BaseEmitter):
         date_info = self._find_date_table(model)
         if not date_info:
             return None
-        _date_table, date_col, _fiscal_col = date_info
+        date_table, date_col, _fiscal_col = date_info
 
         fact_dataset = self._get_dataset_by_name(model, fact_table)
         if fact_dataset is None:
-            return None
-
-        resolved_date_col = self.schema_manager._resolve_physical_column_name(
-            fact_dataset, date_col, model=model
-        )
-        if not resolved_date_col:
             return None
 
         from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
@@ -2741,7 +2707,71 @@ class SnowflakeEmitter(BaseEmitter):
                 if getattr(c, "unique_name", None)
             }
 
-        return resolved_date_col if resolved_date_col.upper() in fact_cols else None
+        # Requirement 3: fact_date_col must be a date-typed column (schema type DATE/TIMESTAMP); never an integer join column.
+        def _is_date_type(col_name: str) -> bool:
+            if not col_name:
+                return False
+            col_u = col_name.upper()
+            live_types = getattr(self, "_live_column_types", {}).get(fact_source_key, {})
+            if col_u in live_types:
+                t = str(live_types[col_u]).upper()
+                if any(dt in t for dt in ["DATE", "TIME", "TIMESTAMP"]):
+                    return True
+                if any(nt in t for nt in ["INT", "NUMBER", "FLOAT", "DECIMAL", "NUMERIC", "VARCHAR", "STRING", "BOOLEAN"]):
+                    return False
+            clean_col_u = re.sub(r'[^A-Z0-9]', '', col_u)
+            for c in getattr(fact_dataset, "columns", []) or []:
+                c_uname = getattr(c, "unique_name", "") or ""
+                c_name = getattr(c, "name", "") or ""
+                c_clean = re.sub(r'[^A-Z0-9]', '', c_uname.upper())
+                c_name_clean = re.sub(r'[^A-Z0-9]', '', c_name.upper())
+                if (
+                    c_uname.upper() == col_u
+                    or c_name.upper() == col_u
+                    or (clean_col_u and (c_clean == clean_col_u or c_name_clean == clean_col_u))
+                    or self._id.sanitize_column(c_uname).upper() == col_u
+                    or (c_name and self._id.sanitize_column(c_name).upper() == col_u)
+                ):
+                    dt = getattr(c, "data_type", None)
+                    dt_str = str(getattr(dt, "value", dt) or "").upper()
+                    if any(t in dt_str for t in ["DATE", "TIME", "TIMESTAMP"]):
+                        return True
+                    if any(t in dt_str for t in ["INT", "INTEGER", "DECIMAL", "FLOAT", "NUMERIC", "STRING", "VARCHAR", "BOOL"]):
+                        return False
+            return False
+
+        # 1. Check active relationship between fact_table and date_table
+        for rel in getattr(model, "relationships", []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            from_ds = getattr(rel, "from_dataset", "")
+            to_ds = getattr(rel, "to_dataset", "")
+            if from_ds == fact_table and to_ds == date_table:
+                from_cols = getattr(rel, "from_columns", []) or []
+                if from_cols:
+                    c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, from_cols[0], model=model)
+                    if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys):
+                        return c_phys
+            elif to_ds == fact_table and from_ds == date_table:
+                to_cols = getattr(rel, "to_columns", []) or []
+                if to_cols:
+                    c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, to_cols[0], model=model)
+                    if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys):
+                        return c_phys
+
+        # 2. Check direct date column match
+        resolved_date_col = self.schema_manager._resolve_physical_column_name(
+            fact_dataset, date_col, model=model
+        )
+        if resolved_date_col and resolved_date_col.upper() in fact_cols and _is_date_type(resolved_date_col):
+            return resolved_date_col
+
+        # 3. Check any date-typed column on fact
+        cand = next(
+            (fc for fc in sorted(fact_cols) if _is_date_type(fc)),
+            None
+        )
+        return cand
 
     def _predict_eligible_enrichment_fact_tables(self, model: Any) -> list[str]:
         """Fact tables `predict_anchor_flag_map` should treat as eligible
@@ -2874,7 +2904,7 @@ class SnowflakeEmitter(BaseEmitter):
         Config/date_resolution.yaml) instead of a separate hardcoded
         keyword list. The old body here required an exact date-column name
         match AND a "fiscal"-named column to both be present, so it
-        returned None (silently skipping MAX_DATE/_CURRENT_FISCAL_PERIOD
+        returned None (silently skipping MAX_DATE/_CURRENT_<c>
         anchor injection in _create_enriched_view) for any model whose date
         table has no fiscal-period column at all — even though the later,
         correct resolution in TablesClauseBuilder only ever required the
@@ -3444,6 +3474,8 @@ class SnowflakeEmitter(BaseEmitter):
 
     def _is_fact_table_date_eligible(self, model: Any, fact_table: str, date_table: str, date_col: str, fact_cols: set[str]) -> bool:
         """Helper to determine if a fact table is eligible for date anchoring."""
+        if str(fact_table).casefold() == str(date_table).casefold():
+            return False
         if date_col in fact_cols or self._id.sanitize_column(date_col) in fact_cols:
             return True
         for rel in getattr(model, "relationships", []) or []:
@@ -3528,169 +3560,6 @@ class SnowflakeEmitter(BaseEmitter):
         except Exception as exc:
             logger.warning("Could not compare live enriched view %s: %s", view_name, exc)
         return False
-# Adds whole-table "ALL_<col>" totals (AGG OVER ()) to the *_ENRICHED view for CALCULATE(..., ALL(...)) share-of-total measures; approximation: ignores all other query filters.
-    def _rerender_window_enriched_metrics(
-        self,
-        model: Any,
-        dataset_col_lookup: Dict[str, set],
-        dataset_aliases: Dict[str, str],
-    ) -> int:
-        """Re-render metrics eligible for window enrichment (e.g. Share of Total)
-        using the pre-computed helper view columns (ALL_COUNT, ALL_<col>).
-        """
-        metrics = getattr(model, "metrics", []) or []
-        rerendered = 0
-        from semabridge.converter.dax_translator import DAXTranslator
-        from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
-        parser = DaxAstParser()
-        translator = DAXTranslator()
-
-        for metric in metrics:
-            dax = getattr(metric, "expression", "") or ""
-            if not dax or "ALL(" not in dax.upper():
-                continue
-            try:
-                ast = parser.parse(dax)
-                if not _is_enrichable_all_measure(ast):
-                    continue
-            except Exception:
-                continue
-
-            table_alias = dataset_aliases.get(metric.dataset) or "fact"
-            res = translator.translate(
-                dax,
-                table_alias,
-                metric.dataset,
-                metric_name=metric.unique_name,
-                dataset_col_lookup=dataset_col_lookup,
-                dataset_aliases=dataset_aliases,
-                metrics_context=metrics,
-                skip_tier5=True,
-                allow_window_enrichment=True,
-            )
-            if res.is_success and res.sql:
-                metric.sql_expression = res.sql
-                metric.complexity_tier = res.tier
-                metric.sync_enabled = True
-                metric.sync_failure_reason = None
-                rerendered += 1
-
-        return rerendered
-
-    def _build_window_precomputed_columns(
-        self,
-        model: Any,
-        fact_table: str,
-        projected_cols: Set[str],
-    ) -> List[str]:
-        """Discover and build window columns (e.g. SUM(sales) OVER () AS ALL_AMOUNT)
-        for 'Share of Total' measures that use CALCULATE(..., ALL(...)).
-        """
-        window_projections = []
-        metrics = getattr(model, "metrics", []) or []
-        fact_dataset = self._get_dataset_by_name(model, fact_table)
-        fact_cols = {
-            self._resolve_model_column_name(model, fact_table, getattr(c, "unique_name", "")).upper()
-            for c in getattr(fact_dataset, "columns", []) or []
-            if getattr(c, "unique_name", None)
-        }
-
-        measure_expr_by_name = {
-            (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "") or ""
-            for m in metrics
-        }
-
-        for metric in metrics:
-            dax = getattr(metric, "expression", "") or ""
-            if not dax or "ALL(" not in dax.upper():
-                continue
-
-            from semabridge.converter.dax_ast_parser import (
-                DaxAstParser,
-                FunctionCallNode,
-                ColumnRefNode,
-                MeasureRefNode,
-                BinaryOpNode,
-            )
-            try:
-                ast = DaxAstParser().parse(dax)
-            except Exception:
-                continue
-
-            def _find_window_targets(node, in_division=False):
-                targets = []
-                if isinstance(node, FunctionCallNode):
-                    func = node.func.upper()
-                    if func == "DIVIDE" and len(node.args) >= 2:
-                        return _find_window_targets(node.args[1], in_division=True)
-                    if func == "CALCULATE" and len(node.args) >= 2:
-                        has_all = False
-                        has_disqualifying = False
-                        for a in node.args[1:]:
-                            if isinstance(a, FunctionCallNode) and a.func.upper() in ("ALL", "ALLEXCEPT"):
-                                is_col_ref = a.args and any(isinstance(arg, ColumnRefNode) for arg in a.args)
-                                if is_col_ref and not in_division:
-                                    has_disqualifying = True
-                                else:
-                                    has_all = True
-                            else:
-                                has_disqualifying = True
-                        if has_all and not has_disqualifying:
-                            targets.append(node.args[0])
-                    for a in node.args:
-                        targets.extend(_find_window_targets(a, in_division=in_division))
-                elif isinstance(node, BinaryOpNode):
-                    if node.op == "/":
-                        return _find_window_targets(node.right, in_division=True)
-                    targets.extend(_find_window_targets(node.left, in_division=in_division))
-                    targets.extend(_find_window_targets(node.right, in_division=in_division))
-                return targets
-
-            for target in _find_window_targets(ast):
-                agg_func = None
-                target_col = None
-                if isinstance(target, FunctionCallNode):
-                    t_func = target.func.upper()
-                    if t_func == "COUNTROWS":
-                        agg_func = "COUNT"
-                        target_col = "*"
-                    elif t_func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
-                        agg_func = "AVG" if t_func == "AVERAGE" else t_func
-                        if target.args and isinstance(target.args[0], ColumnRefNode):
-                            target_col = target.args[0].column
-                elif isinstance(target, MeasureRefNode):
-                    ref_dax = measure_expr_by_name.get(target.name.casefold(), "")
-                    if ref_dax:
-                        try:
-                            ref_ast = DaxAstParser().parse(ref_dax)
-                            if isinstance(ref_ast, FunctionCallNode):
-                                r_func = ref_ast.func.upper()
-                                if r_func == "COUNTROWS":
-                                    agg_func = "COUNT"
-                                    target_col = "*"
-                                elif r_func in ("SUM", "AVG", "AVERAGE", "COUNT", "MIN", "MAX"):
-                                    agg_func = "AVG" if r_func == "AVERAGE" else r_func
-                                    if ref_ast.args and isinstance(ref_ast.args[0], ColumnRefNode):
-                                        target_col = ref_ast.args[0].column
-                        except Exception:
-                            pass
-
-                if agg_func:
-                    if target_col in ("*", "1"):
-                        w_alias = "ALL_COUNT"
-                        if w_alias.upper() not in projected_cols:
-                            window_projections.append(f'\n            , {agg_func}(*) OVER () AS "{w_alias}"')
-                            projected_cols.add(w_alias.upper())
-                    elif target_col:
-                        phys_col = self._resolve_model_column_name(model, fact_table, target_col)
-                        if phys_col.upper() in fact_cols or not fact_cols:
-                            safe_col = self._id.sanitize_column(phys_col)
-                            w_alias = f"ALL_{safe_col}"
-                            if w_alias.upper() not in projected_cols:
-                                window_projections.append(f'\n            , {agg_func}(f."{safe_col}") OVER () AS "{w_alias}"')
-                                projected_cols.add(w_alias.upper())
-
-        return window_projections
 
     def _create_enriched_view(self, model, cursor, fact_table: Optional[str] = None, dry_run: bool = False):
         """
@@ -3743,6 +3612,25 @@ class SnowflakeEmitter(BaseEmitter):
         projected_cols: set[str] = set()
 
         select_parts = [f"SELECT f.*"]
+
+        # Metric/column name clash: project f."<col>" AS "_COL_<col>" as a real physical
+        # column in the enriched view. This allows the semantic view to define:
+        # PRIVATE T."_COL_<col>" AS T."_COL_<col>"
+        # so there is never a dimension whose expression is the clashing name!
+        fact_metric_names = {
+            (getattr(m, "unique_name", None) or getattr(m, "name", "") or "").strip().upper()
+            for m in getattr(model, "metrics", []) or []
+            if str(getattr(m, "dataset", "")).casefold() == str(fact_table).casefold()
+        }
+        for c in getattr(fact_dataset, "columns", []) or []:
+            c_name = (getattr(c, "unique_name", "") or getattr(c, "name", "")).strip().upper()
+            if c_name in fact_metric_names:
+                safe_col = self._id.sanitize_column(c_name)
+                col_alias = f"_COL_{safe_col}"
+                if col_alias not in projected_cols:
+                    select_parts.append(f'\n            , f."{safe_col}" AS "{col_alias}"')
+                    projected_cols.add(col_alias)
+                    self._live_schema_metadata.setdefault(enriched_view_name.upper(), set()).add(col_alias)
 
         # Shared across every precomputed column below so that columns
         # reached via an overlapping path (e.g. PRODUCT_ISVANARSDEL and
@@ -3804,18 +3692,10 @@ class SnowflakeEmitter(BaseEmitter):
                 resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
 
             # The fact's own date column (schema-based): the modelled one, else
-            # the first date-named column of the fact.
+            # resolved from relationships / date types (no string-guessing fallback).
             fact_date_col = self._resolve_fact_enrichment_date_column(model, fact_table)
             if not fact_date_col and resolved_date_col in fact_cols:
                 fact_date_col = resolved_date_col
-            if not fact_date_col:
-                fact_date_col = next(
-                    (
-                        _fc for _fc in sorted(fact_cols)
-                        if any(_t in _fc.upper() for _t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR"])
-                    ),
-                    None,
-                )
 
             date_source_key = self._id.sanitize_table_name(
                 (date_dataset.source_table or date_dataset.unique_name) if date_dataset else date_table
@@ -3831,35 +3711,72 @@ class SnowflakeEmitter(BaseEmitter):
                     if getattr(c, "unique_name", None)
                 }
 
-            has_fiscal_anchor = (
-                resolved_fiscal_col in date_cols
-                and resolved_date_col in date_cols
-                and resolved_fiscal_col != resolved_date_col
-            )
-            if has_fiscal_anchor and fact_date_col:
-                anchor_joins.append(
-                    f'CROSS JOIN (SELECT MAX("{resolved_fiscal_col}") AS "_CURRENT_FISCAL_PERIOD" '
-                    f'FROM {date_table_ref} WHERE "{resolved_date_col}" = (SELECT MAX("{fact_date_col}") FROM {fact_source_ref})) anchor_fiscal'
-                )
-                select_parts.append('\n            , anchor_fiscal."_CURRENT_FISCAL_PERIOD" AS "_CURRENT_FISCAL_PERIOD"')
-                projected_cols.add("_CURRENT_FISCAL_PERIOD")
+            from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+            # Requirement 2: Pattern-driven scalar lookup
+            # Dim, c, k, aggregate (MAX/MIN) and comparison operator come from DAX
+            # Helper name = _CURRENT_<c>
+            scalar_patterns = []
+            for m in getattr(model, "metrics", []) or []:
+                m_ds = getattr(m, "dataset", None)
+                if m_ds and str(m_ds).casefold() != str(fact_table).casefold():
+                    continue
+                dax = getattr(m, "expression", "") or ""
+                pat = match_scalar_dim_lookup_pattern(dax)
+                if pat:
+                    scalar_patterns.append(pat)
 
-            if fact_date_col:
+            seen_helpers = set()
+            for pat in scalar_patterns:
+                helper_name = pat.helper_name
+                if helper_name in seen_helpers:
+                    continue
+                seen_helpers.add(helper_name)
+
+                dim_ds = self._get_dataset_by_name(model, pat.dim_table) if pat.dim_table else (date_dataset or None)
+                if dim_ds is not None:
+                    from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+                    resolved_dim_table = resolve_dataset_to_physical_table(
+                        dim_ds.unique_name,
+                        [c.unique_name for c in getattr(dim_ds, "columns", []) or []],
+                        self._live_schema_metadata,
+                        model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
+                    )
+                    safe_dim_table = self._id.sanitize_table_name(resolved_dim_table)
+                    dim_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
+                    resolved_c = self.schema_manager._resolve_physical_column_name(dim_ds, pat.dim_col, model=model)
+                    resolved_k = self.schema_manager._resolve_physical_column_name(dim_ds, pat.key_col, model=model)
+                else:
+                    safe_dim_table = self._id.sanitize_table_name(pat.dim_table or date_table)
+                    dim_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dim_table}"'
+                    resolved_c = self._id.sanitize_column(pat.dim_col)
+                    resolved_k = self._id.sanitize_column(pat.key_col)
+
+                # Requirement 1: Match the DAX with '=' (Dim[k] = TODAY()), not '<='.
+                # SELECT MAX(<c>) FROM <Dim> WHERE <k> = CURRENT_DATE()
+                anchor_alias = f'anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat.dim_col).lower()}'
                 anchor_joins.append(
-                    f'CROSS JOIN (SELECT COALESCE(MAX("{fact_date_col}"), CURRENT_DATE()) AS "MAX_DATE" '
+                    f'CROSS JOIN (SELECT {pat.agg}("{resolved_c}") AS "{helper_name}" '
+                    f'FROM {dim_ref} WHERE "{resolved_k}" = CURRENT_DATE()) {anchor_alias}'
+                )
+                select_parts.append(f'\n            , {anchor_alias}."{helper_name}" AS "{helper_name}"')
+                projected_cols.add(helper_name)
+
+            from semabridge.converter.time_intelligence_shapes import (
+                build_shape_boolean_sql,
+                discover_time_intelligence_shapes,
+                flag_column_name,
+            )
+
+            shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
+            if shapes and fact_date_col:
+                anchor_joins.append(
+                    f'CROSS JOIN (SELECT MAX("{fact_date_col}") AS "MAX_DATE" '
                     f'FROM {fact_source_ref}) anchor_max'
                 )
                 max_date_sql = 'anchor_max."MAX_DATE"'
                 select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
                 projected_cols.add("MAX_DATE")
 
-                from semabridge.converter.time_intelligence_shapes import (
-                    build_shape_boolean_sql,
-                    discover_time_intelligence_shapes,
-                    flag_column_name,
-                )
-
-                shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
                 fact_date_col_sql = f'f."{fact_date_col}"'
                 new_flag_map = {}
 
@@ -3867,7 +3784,7 @@ class SnowflakeEmitter(BaseEmitter):
                     len(s) == 1 and s[0].startswith("R") and s[0].endswith("M") and s[0][1:-1].isdigit()
                     for s in shapes
                 )
-                if has_rolling_months and has_fiscal_anchor:
+                if has_rolling_months and scalar_patterns:
                     anchor_joins.append(
                         f'LEFT JOIN {date_table_ref} dt_anchor ON f."{fact_date_col}" = dt_anchor."{resolved_date_col}"'
                     )
@@ -3879,30 +3796,97 @@ class SnowflakeEmitter(BaseEmitter):
                         and shape[0].startswith("R")
                         and shape[0].endswith("M")
                         and shape[0][1:-1].isdigit()
-                        and has_fiscal_anchor
+                        and scalar_patterns
                     ):
                         n_months = int(shape[0][1:-1])
+                        pat0 = scalar_patterns[0]
                         flag_sql = (
-                            f'dt_anchor."{resolved_fiscal_col}" <= anchor_fiscal."_CURRENT_FISCAL_PERIOD" '
-                            f'AND dt_anchor."{resolved_fiscal_col}" > anchor_fiscal."_CURRENT_FISCAL_PERIOD" - {n_months}'
+                            f'dt_anchor."{pat0.dim_col}" <= anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" '
+                            f'AND dt_anchor."{pat0.dim_col}" > anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" - {n_months}'
                         )
                     else:
                         flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_sql)
                     select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
                     projected_cols.add(flag_name)
                     new_flag_map[shape] = flag_name
+            elif not shapes and not scalar_patterns and not fact_date_col:
+                # Do not mark fact table as having no usable dates if it has an active relationship to a date table (T7)
+                has_active_date_rel = False
+                for rel in getattr(model, "relationships", []) or []:
+                    if not getattr(rel, "is_active", True):
+                        continue
+                    f_ds = getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "") or ""
+                    t_ds = getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "") or ""
+                    if str(f_ds).casefold() == str(fact_table).casefold() or str(t_ds).casefold() == str(fact_table).casefold():
+                        other_ds = t_ds if str(f_ds).casefold() == str(fact_table).casefold() else f_ds
+                        if date_info and str(other_ds).casefold() == str(date_info[0]).casefold():
+                            has_active_date_rel = True
+                            break
+                if not has_active_date_rel:
+                    logger.info(
+                        "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
+                        fact_table,
+                    )
+                    self.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                    if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
+                        self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
+
+        # Whole-table constant precomputes: CALCULATE(<agg>(T[C]), ALL(T))
+        # Generates CROSS JOIN (SELECT <agg>(C) AS _ALL_<AGG>_<C> FROM T) anchor_all_<agg>_<c>
+        from semabridge.converter.whole_table_all import match_whole_table_all_pattern
+        whole_table_patterns = []
+        metrics_dict = {
+            (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "")
+            for m in (getattr(model, "metrics", []) or [])
+        }
+        for m in getattr(model, "metrics", []) or []:
+            m_ds = getattr(m, "dataset", None)
+            if m_ds and str(m_ds).casefold() != str(fact_table).casefold():
+                continue
+            dax = getattr(m, "expression", "") or ""
+            pat = match_whole_table_all_pattern(dax, fact_table=fact_table, metrics_dict=metrics_dict)
+            if pat:
+                whole_table_patterns.append(pat)
+
+        seen_whole_helpers = set()
+        for pat in whole_table_patterns:
+            helper_name = pat.helper_name
+            if helper_name in seen_whole_helpers or helper_name in projected_cols:
+                continue
+            seen_whole_helpers.add(helper_name)
+
+            if pat.col:
+                resolved_col = self.schema_manager._resolve_physical_column_name(
+                    fact_dataset, pat.col, model=model
+                ) if fact_dataset else self._id.sanitize_column(pat.col)
             else:
-                logger.info(
-                    "No date column found for fact dataset '%s'; marking dataset as having no usable dates.",
-                    fact_table,
-                )
-                self.no_populated_date_link_datasets.add(str(fact_table).casefold())
-                if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
-                    self.semantic_view_builder.no_populated_date_link_datasets.add(str(fact_table).casefold())
+                resolved_col = None
+
+            safe_anchor_name = re.sub(r"[^A-Za-z0-9_]", "_", pat.helper_name.lstrip("_")).lower()
+            anchor_alias = f'anchor_{safe_anchor_name}'
+
+            if pat.sql_agg == "COUNT(*)":
+                agg_expr = "COUNT(*)"
+            elif pat.sql_agg.startswith("COUNT(DISTINCT"):
+                agg_expr = f'COUNT(DISTINCT "{resolved_col}")'
+            else:
+                agg_expr = f'{pat.sql_agg}("{resolved_col}")'
+
+            where_clause = f" WHERE {pat.filter_predicate}" if pat.filter_predicate else ""
+            anchor_joins.append(
+                f'CROSS JOIN (SELECT {agg_expr} AS "{helper_name}" '
+                f'FROM {fact_source_ref}{where_clause}) {anchor_alias}'
+            )
+            select_parts.append(f'\n            , {anchor_alias}."{helper_name}" AS "{helper_name}"')
+            projected_cols.add(helper_name)
 
         select_parts.append(f"FROM {fact_source_ref} f")
         select_parts.extend(anchor_joins)
         select_parts.extend(join_state.get("clauses", []))
+
+        if not projected_cols:
+            logger.info("Enriched view not needed for '%s': no precomputed or anchor columns projected", fact_table)
+            return None
 
         create_view_sql = "\n".join(select_parts)
         full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} COMMENT = 'Created by SemaBridge' AS\n{create_view_sql}"
@@ -3960,8 +3944,15 @@ class SnowflakeEmitter(BaseEmitter):
             logger.warning("Failed to create enriched view for dataset '%s': %s", fact_table, e)
             self._failed_enrichment_datasets.add(str(fact_table))
             self._failed_enrichment_datasets.add(str(fact_table).casefold())
+            if not hasattr(self, "_failed_enriched_view_datasets"):
+                self._failed_enriched_view_datasets = {}
+            self._failed_enriched_view_datasets[str(fact_table).casefold()] = str(e)
+            self._failed_enriched_view_datasets[str(fact_table)] = str(e)
             if hasattr(self, "semantic_view_builder"):
                 self.semantic_view_builder.failed_enrichment_datasets = self._failed_enrichment_datasets
+                self.semantic_view_builder.failed_enriched_view_datasets = self._failed_enriched_view_datasets
+                if hasattr(self.semantic_view_builder, "metrics_builder"):
+                    self.semantic_view_builder.metrics_builder.failed_enriched_view_datasets = self._failed_enriched_view_datasets
             return None
 
     # =========================================================================

@@ -266,6 +266,10 @@ class OSIToSMLConverter(BaseConverter):
                             metric.validation_notes = list(translation.validation_notes or [])
                             _apply_translation_advisories(metric, translation)
                             logger.debug(f"✓ Applied batch translation for '{metric.unique_name}'")
+                        else:
+                            metric.sync_enabled = False
+                            if not metric.sync_failure_reason:
+                                metric.sync_failure_reason = getattr(translation, "failure_reason", None) or "Tier-5 translation produced no usable SQL"
 
                 # Step 3e: one more deterministic-only convergence pass now that
                 # the batch call may have populated sql_expression for metrics
@@ -344,6 +348,16 @@ class OSIToSMLConverter(BaseConverter):
 
             # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
             self._inject_calendar_dimension(sml)
+
+            # 6. Ensure status consistency: any metric with a source expression but no
+            # sql_expression must never be left as sync_enabled=True.
+            for metric in sml.metrics:
+                has_src = bool(metric.expression and str(metric.expression).strip())
+                has_sql = bool(metric.sql_expression and str(metric.sql_expression).strip())
+                if has_src and not has_sql:
+                    metric.sync_enabled = False
+                    if not metric.sync_failure_reason:
+                        metric.sync_failure_reason = "DAX translation unavailable: no SQL expression produced"
 
             return sml
 
@@ -518,6 +532,7 @@ class OSIToSMLConverter(BaseConverter):
                 sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
                 metric = SMLMetric(
                     unique_name=osi_metric.unique_name,
+                    original_name=getattr(osi_metric, "original_name", None) or osi_metric.unique_name,
                     label=osi_metric.label,
                     description=osi_metric.description or "",
                     dataset=osi_metric.dataset,
@@ -537,12 +552,14 @@ class OSIToSMLConverter(BaseConverter):
                 return metric
 
         # Analyze Complexity
-        complexity = self.dax_translator.analyze_complexity(expression)
+        metric_ident = getattr(osi_metric, "name", None) or osi_metric.unique_name
+        complexity = self.dax_translator.analyze_complexity(expression, metric_name=metric_ident)
         
         sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
         
         metric = SMLMetric(
             unique_name=osi_metric.unique_name,
+            original_name=getattr(osi_metric, "original_name", None) or osi_metric.unique_name,
             label=osi_metric.label,
             description=osi_metric.description or "",
             dataset=osi_metric.dataset,
@@ -617,6 +634,8 @@ class OSIToSMLConverter(BaseConverter):
         metric.synonym_sources = dict(osi_metric.synonym_sources)
         metric.has_report_alias = osi_metric.has_report_alias
         metric.source_file = osi_metric.source_file
+        if getattr(osi_metric, "original_name", None):
+            metric.original_name = osi_metric.original_name
 
         return metric
 
@@ -705,7 +724,13 @@ class OSIToSMLConverter(BaseConverter):
             and not is_by_design_excluded(m.sync_failure_reason)
         ]
         if unresolved:
-            metric_map = {str(m.unique_name).casefold(): m for m in sml.metrics if m.unique_name}
+            metric_map = {}
+            for m in sml.metrics:
+                if m.unique_name:
+                    metric_map[str(m.unique_name).casefold()] = m
+                orig = getattr(m, "original_name", None)
+                if orig:
+                    metric_map[str(orig).casefold()] = m
             for m in unresolved:
                 visited_path: List[str] = []
                 visited_set: Set[str] = set()
@@ -778,13 +803,22 @@ class OSIToSMLConverter(BaseConverter):
             for m in sml.metrics
             if getattr(m, "unique_name", None)
         }
+        for m in sml.metrics:
+            orig = getattr(m, "original_name", None)
+            if orig:
+                by_name[str(orig).casefold()] = m
 
         for metric in sml.metrics:
             if metric.sql_expression or not (metric.expression or "").strip():
                 continue
             metric.sync_enabled = False
             reason = metric.sync_failure_reason or ""
-            if self._STALE_TIER5_DEFERRED_MARKER in reason or not reason:
+            is_generic = (
+                self._STALE_TIER5_DEFERRED_MARKER in reason
+                or not reason
+                or any(g in reason.lower() for g in ("no sql expression produced", "tier-5", "unsupported dax pattern", "not translatable"))
+            )
+            if is_generic:
                 unresolved_deps = []
                 for ref in re.findall(r"\[([^\]]+)\]", metric.expression or ""):
                     dep = by_name.get(ref.strip().casefold())
@@ -813,10 +847,7 @@ class OSIToSMLConverter(BaseConverter):
                     elif ast_node and _calculate_has_direct_all_or_allexcept_modifier(ast_node):
                         metric.sync_failure_reason = "BY_DESIGN_EXCLUDED: not applicable: not decomposable for a window"
                     else:
-                        metric.sync_failure_reason = (
-                            "Tier-5 (LLM) batch translation was attempted for this metric and "
-                            "did not produce a usable result."
-                        )
+                        metric.sync_failure_reason = "not applicable: complex multi-pass or iteration calculation requires window metric"
 
     def _decompose_disconnected_selector_metrics(
         self,

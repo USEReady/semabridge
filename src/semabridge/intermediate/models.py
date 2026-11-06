@@ -334,6 +334,10 @@ class OSIMetric(OSIBaseModel):
         "disambiguates rows across a multi-PBIX project, where each file runs its own "
         "independent extraction and never merges with another file's entities.",
     )
+    original_name: Optional[str] = Field(
+        default=None,
+        description="Power BI measure name before sanitizing/overrides (stable reference key)",
+    )
     sql_expression: Optional[str] = None          # Pre-translated SQL (from Snowflake extract)
     is_placeholder: bool = Field(default=False, description="Flag indicating if metric is emitted as NULL placeholder")
     complexity_tier: int = 0                       # 0=unknown, 1-5 from DAX analysis

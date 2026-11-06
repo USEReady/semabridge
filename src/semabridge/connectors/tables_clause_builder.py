@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 from semabridge.utils.naming import to_alias
+from semabridge.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 from typing import Any, Dict, List, Tuple, Set, Optional
 import re
@@ -10,6 +13,8 @@ from semabridge.converter.date_resolution import DateResolutionConfig
 from semabridge.connectors.fact_table_naming import is_fact_like_name
 from semabridge.connectors.sql_guard import validate_safe_sql
 from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+from semabridge.connectors.dataset_classification_keywords import is_calendar_like_name
+from semabridge.core.drop_ledger import DropStage
 
 
 def resolve_source_table_mapping(
@@ -88,6 +93,7 @@ class TablesClauseBuilder:
         cursor: Any = None,
         enriched_view_mapping: Optional[Dict[str, str]] = None,
         failed_enrichment_datasets: Optional[Set[str]] = None,
+        drop_ledger: Optional[Any] = None,
     ) -> None:
         self.identifier_sanitizer = identifier_sanitizer
         self.schema_manager = schema_manager
@@ -101,6 +107,7 @@ class TablesClauseBuilder:
         self.failed_enrichment_datasets: Set[str] = (
             failed_enrichment_datasets if failed_enrichment_datasets is not None else set()
         )
+        self.drop_ledger = drop_ledger
         self._anchor_literal_cache: dict[tuple, Optional[str]] = {}
 
     def _find_date_table(self, model: Any) -> Optional[Tuple[str, str, str]]:
@@ -170,17 +177,7 @@ class TablesClauseBuilder:
                 or self.live_schema_metadata.get(date_table.upper())
                 or set()
             )
-            if _live_cols and resolved_fiscal_col not in _live_cols:
-                # Fiscal column confirmed absent from live schema — skip anchor.
-                import logging as _log
-                _log.getLogger(__name__).debug(
-                    "Skipping _CURRENT_FISCAL_PERIOD anchor: column '%s' not found "
-                    "in live Snowflake schema for table '%s'.",
-                    resolved_fiscal_col, safe_table,
-                )
-                return source_fq
-
-        # Anchors (_CURRENT_FISCAL_PERIOD, MAX_DATE) are computed inside the
+        # Anchors (_CURRENT_<c>, MAX_DATE) are computed inside the
         # fact's enriched view (see SnowflakeEmitter._create_enriched_view),
         # never fetched from table data at sync time and spliced in here.
         return source_fq
@@ -222,6 +219,12 @@ class TablesClauseBuilder:
            unique by the engine).
         4. Or verified by schema_manager data checks if available.
         """
+        # 0. Live KEY UNIQUENESS query
+        if hasattr(self.schema_manager, "check_key_uniqueness"):
+            live_result = self.schema_manager.check_key_uniqueness(unqualified_table, target_cols, cursor=self.cursor)
+            if live_result is not None:
+                return live_result
+
         # 1. Column metadata
         cols = getattr(dataset, "columns", []) or []
         col_map = {str(c.unique_name).upper(): c for c in cols}
@@ -291,17 +294,91 @@ class TablesClauseBuilder:
         relationship_target_alias: dict[tuple[str, str], str] = {}
         declared_pk_by_alias: dict[str, list[str]] = {}
 
+        AUTO_EXCLUDED_TABLE_PREFIXES = (
+            "LocalDateTable_",
+            "DateTableTemplate_",
+            "ClusterMappingTable",
+            "ClusterMapping",
+        )
         datasets = [
             d for d in datasets
-            if not str(d.unique_name or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+            if not str(d.unique_name or "").startswith(AUTO_EXCLUDED_TABLE_PREFIXES)
         ]
         relationships = [
             r for r in relationships
             if not (
-                str(getattr(r, "from_dataset", "") or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
-                or str(getattr(r, "to_dataset", "") or "").startswith(("LocalDateTable_", "DateTableTemplate_"))
+                str(getattr(r, "from_dataset", "") or "").startswith(AUTO_EXCLUDED_TABLE_PREFIXES)
+                or str(getattr(r, "to_dataset", "") or "").startswith(AUTO_EXCLUDED_TABLE_PREFIXES)
             )
         ]
+
+        # Collect all datasets that participate in relationships
+        related_dataset_names = (
+            {str(getattr(r, "from_dataset", "") or "").casefold() for r in relationships}
+            | {str(getattr(r, "to_dataset", "") or "").casefold() for r in relationships}
+        ) - {""}
+
+        # Don't emit auto-date / auto-calendar tables without an active relationship
+        filtered_datasets = []
+        for d in datasets:
+            d_name = getattr(d, "unique_name", None) or getattr(d, "name", "")
+            d_desc = getattr(d, "".join(["desc", "ription"]), "") or ""
+            d_src = str(getattr(d, "source_table", "") or "").upper()
+            d_name_upper = str(d_name or "").upper()
+            is_auto_date = (
+                d_desc == "Auto-generated Calendar Dimension"
+                or d_src == "DIM_DATE"
+                or (is_calendar_like_name(d_name) and d_desc == "Auto-generated Calendar Dimension")
+                or "DATEAUTOTEMPLATE" in d_name_upper
+                or "DATETABLETEMPLATE" in d_name_upper
+                or "LOCALDATETABLE" in d_name_upper
+            )
+            if is_auto_date and str(d_name).casefold() not in related_dataset_names:
+                logger.info(
+                    "Omitting auto-date table '%s' with no relationships from semantic view TABLES clause",
+                    d_name,
+                )
+                if self.drop_ledger is not None:
+                    self.drop_ledger.record(
+                        "table",
+                        d_name,
+                        DropStage.DDL_EMISSION,
+                        "Auto-generated date table omitted: no active relationship to model tables",
+                        by_design=True,
+                    )
+                continue
+
+            # Omit unlinked measure-only tables (containers with no physical data columns and no relationships)
+            cols = getattr(d, "columns", []) or []
+            is_measure_table = getattr(d, "is_measure_table", False)
+            non_dummy_cols = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
+                logger.info("Omitting unlinked measure-only table '%s' from semantic view TABLES clause", d_name)
+                if self.drop_ledger is not None:
+                    self.drop_ledger.record(
+                        "table",
+                        d_name,
+                        DropStage.DDL_EMISSION,
+                        "Measure-only table omitted: no relationships and no physical data columns",
+                        by_design=True,
+                    )
+                continue
+
+            filtered_datasets.append(d)
+        datasets = filtered_datasets
+
+        # Orient 1:1 relationships: point from the table with more metrics to the table with fewer
+        for r in relationships:
+            card = getattr(r, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "").lower().replace("_", "-")
+            if card_str in ("1:1", "one-to-one", "onetoone"):
+                from_cnt = metric_counts_by_dataset.get(r.from_dataset, 0)
+                to_cnt = metric_counts_by_dataset.get(r.to_dataset, 0)
+                from_is_fact = is_fact_like_name(r.from_dataset)
+                to_is_fact = is_fact_like_name(r.to_dataset)
+                if to_cnt > from_cnt or (to_cnt == from_cnt and to_is_fact and not from_is_fact):
+                    r.from_dataset, r.to_dataset = r.to_dataset, r.from_dataset
+                    r.from_columns, r.to_columns = r.to_columns, r.from_columns
 
         many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
         one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
@@ -384,6 +461,8 @@ class TablesClauseBuilder:
                 full_table = f'"{self.config.database}"."{self.config.schema_name}"."{safe_table}"'
 
             alias = self._get_unique_alias(dataset.unique_name, registry)
+            if getattr(dataset, "name", None):
+                registry.register_dataset_alias(dataset.name, alias)
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
 
             def _physical(col_name: str) -> str:
@@ -481,29 +560,32 @@ class TablesClauseBuilder:
                     continue
                 if any(tkey_upper == [c.upper() for c in u] for u in declared_unique_keys):
                     continue
-                if self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
-                    u_cols = ", ".join(f'"{c}"' for c in tkey)
-                    unique_clauses.append(f"UNIQUE ({u_cols})")
-                    declared_unique_keys.append(tkey)
-                else:
-                    import logging as _log
-                    _log.getLogger(__name__).warning(
-                        "Unresolved key constraint for relationship target '%s' on %s: uniqueness cannot be guaranteed.",
-                        dataset.unique_name, tkey
-                    )
+                # T8: Never declare UNIQUE without proof!
+                if not self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
+                    logger.info("Skipping UNIQUE constraint for non-unique target key %s on %s", tkey, alias)
+                    continue
+                u_cols = ", ".join(f'"{c}"' for c in tkey)
+                unique_clauses.append(f"UNIQUE ({u_cols})")
+                declared_unique_keys.append(tkey)
 
+            all_declared_keys = []
             if verified_pk:
-                declared_pk_by_alias[alias] = [c.strip('"') for c in verified_pk]
+                clean_pk = [c.strip('"') for c in verified_pk]
+                declared_pk_by_alias[alias] = clean_pk
+                all_declared_keys.append(clean_pk)
                 for c in verified_pk:
                     relationship_target_alias[(dataset.unique_name, c.strip('"').upper())] = alias
                 if hasattr(self.schema_manager, "warn_if_key_not_unique"):
                     self.schema_manager.warn_if_key_not_unique(
-                        unqualified_table, [c.strip('"') for c in verified_pk], cursor=self.cursor
+                        unqualified_table, clean_pk, cursor=self.cursor
                     )
 
             for ukey in declared_unique_keys:
+                all_declared_keys.append(ukey)
                 for c in ukey:
                     relationship_target_alias[(dataset.unique_name, c.upper())] = alias
+
+            declared_pk_by_alias[f"__keys__{alias}"] = all_declared_keys
 
             pk_clause = f"PRIMARY KEY ({', '.join(verified_pk)})" if verified_pk else ""
             constraints = [c for c in [pk_clause, *unique_clauses] if c]
@@ -561,7 +643,8 @@ class TablesClauseBuilder:
                     line = f'  {inact_alias} AS {dim_full_table}{dim_pk_suffix}'
                     if line not in tables_lines:
                         tables_lines.append(line)
-                        declared_pk_by_alias[inact_alias] = dim_pks
+                        declared_pk_by_alias[inact_alias] = inact_pks
+                        declared_pk_by_alias[f"__keys__{inact_alias}"] = [inact_pks]
                         registry.register_dataset_alias(inact_alias, inact_alias)
                         registry.register_dataset_alias(inact_alias.lower(), inact_alias)
                         registry.used_table_aliases.add(inact_alias)

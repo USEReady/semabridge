@@ -58,13 +58,22 @@ export function groupRowsByFieldType(rows) {
  * merely sitting at their defaults because there was nothing to translate.
  */
 function rowHasExpression(row) {
-  return Boolean(String(row?.measure_expression || '').trim() || String(row?.target_expression || '').trim());
+  return Boolean(
+    String(row?.measure_expression || row?.source_expression || row?.expression || '').trim() ||
+    String(row?.target_expression || '').trim()
+  );
 }
 
 /** null when the row has no expression to convert; otherwise the outcome. */
 export function rowConversionOutcome(row) {
   if (!rowHasExpression(row)) return null;
-  const failed = row?.sync_enabled === false || Boolean(String(row?.sync_failure_reason || '').trim());
+  const isMeasure = String(row?.field_type || row?.entity_kind || '').toLowerCase() === 'measure';
+  const hasTarget = Boolean(String(row?.target_expression || '').trim());
+  const failed =
+    row?.sync_enabled === false ||
+    Boolean(String(row?.sync_failure_reason || '').trim()) ||
+    (isMeasure && !hasTarget) ||
+    !hasTarget;
   return failed ? 'conversion_failed' : 'conversion_success';
 }
 

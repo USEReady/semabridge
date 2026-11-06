@@ -60,6 +60,7 @@ class DateResolutionConfig:
             return None
 
         table_patterns = self._patterns("date_table_patterns")
+        effective_table_patterns = list(table_patterns) + (["year"] if "year" not in table_patterns else [])
         date_patterns = self._patterns("date_column_patterns")
         year_patterns = self._patterns("year_column_patterns")
         month_patterns = self._patterns("month_column_patterns")
@@ -70,9 +71,12 @@ class DateResolutionConfig:
             n = str(name or "").lower()
             return any(p in n for p in patterns) if patterns else False
 
+        candidates: list[tuple[int, DateResolution]] = []
+        relationships = list(getattr(model, "relationships", []) or [])
+
         for ds in model.datasets:
             ds_name = str(getattr(ds, "unique_name", "") or "").lower()
-            if table_patterns and not any(p in ds_name for p in table_patterns):
+            if effective_table_patterns and not any(p in ds_name for p in effective_table_patterns):
                 continue
 
             date_col = year_col = month_col = quarter_col = monthindex_col = ""
@@ -90,13 +94,37 @@ class DateResolutionConfig:
                     monthindex_col = col_name
 
             if date_col:
-                return DateResolution(
-                    table=ds.unique_name,
-                    date_col=date_col,
-                    year_col=year_col or "YEAR",
-                    month_col=month_col or "MONTH",
-                    quarter_col=quarter_col or "QUARTER",
-                    monthindex_col=monthindex_col or "MONTHINDEX",
+                # Connected candidates take strict precedence over disconnected ones
+                connected_rels = sum(
+                    1 for r in relationships
+                    if getattr(r, "is_active", True)
+                    and (
+                        str(getattr(r, "from_dataset", "") or getattr(r, "from_table", "")).casefold() == ds.unique_name.casefold()
+                        or str(getattr(r, "to_dataset", "") or getattr(r, "to_table", "")).casefold() == ds.unique_name.casefold()
+                    )
                 )
+                score = 0
+                if connected_rels > 0:
+                    score += 1000 + connected_rels * 10
+                if _match(ds_name, ["dim_date", "calendar", "dates", "date"]):
+                    score += 100
+                cols_count = sum(1 for c in [date_col, year_col, month_col, quarter_col, monthindex_col] if c)
+                score += cols_count * 10
+
+                candidates.append((
+                    score,
+                    DateResolution(
+                        table=ds.unique_name,
+                        date_col=date_col,
+                        year_col=year_col or "YEAR",
+                        month_col=month_col or "MONTH",
+                        quarter_col=quarter_col or "QUARTER",
+                        monthindex_col=monthindex_col or "MONTHINDEX",
+                    )
+                ))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            return candidates[0][1]
 
         return None

@@ -139,7 +139,7 @@ def main():
         for rx, why in REVIEW:
             if rx.search(code) and not in_comment_only:
                 hits.append(("REVIEW", f, ln, why, text.strip()))
-        for n, why in ((lower[w][0], lower[w][1]) for w in re.findall(r"[A-Za-z][\w ]{2,}", comment.lower()) if w.strip() in lower):
+        for n, why in ((lower[w.strip()][0], lower[w.strip()][1]) for w in re.findall(r"[A-Za-z][\w ]{2,}", comment.lower()) if w.strip() in lower):
             hits.append(("INFO", f, ln, f"comment mentions {n!r} ({why})", text.strip()))
 
     with open(args.out, "w", newline="", encoding="utf-8") as fh:

@@ -14,6 +14,7 @@ import json
 
 from semabridge.utils.logger import get_logger
 from semabridge.utils.null_sentinel import is_null_cast_sql
+from semabridge.connectors.type_safety_validator import detect_nested_aggregate
 
 logger = get_logger(__name__)
 
@@ -865,7 +866,7 @@ class MetricExpressionTranslator:
         padded = f" {upper} "
         if any(token in padded for token in forbidden):
             return False
-        if re.search(r"\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\([^)]*\b(SUM|COUNT|AVG|MIN|MAX|ANY_VALUE)\s*\(", sql, re.IGNORECASE | re.DOTALL):
+        if detect_nested_aggregate(sql):
             return False
         return True
 
@@ -876,6 +877,10 @@ class MetricExpressionTranslator:
             for flag_val in ds_flags.values():
                 if isinstance(flag_val, str) and flag_val:
                     cols.add(flag_val)
+        # Pre-computed anchor columns available on enriched views
+        cols.update({
+            "MAX_DATE", "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX"
+        })
         return cols
 
     def _validate_metric_column_references(
@@ -974,9 +979,7 @@ class MetricExpressionTranslator:
                 sanitized_col_name,
             )
             if not resolved_col:
-                error = (
-                    f"Column '{col_name}' (sanitized: '{sanitized_col_name}') not found in dataset '{dataset_name}'. Available columns: {sorted(known_columns)}"
-                )
+                error = f"Column '{col_name}' not found in dataset '{dataset_name}'"
                 logger.debug(f"Metric '{metric_name}': {error}")
                 return False, error
 
@@ -1546,7 +1549,12 @@ class MetricExpressionTranslator:
         return sql
 
     def _resolve_column_name_for_dataset(self, known_columns: set[str], candidate: str) -> Optional[str]:
-        if not known_columns: return None
+        if not candidate:
+            return None
+        if candidate.upper().startswith(("_CURRENT_", "CURRENT_", "_ALL_")):
+            return candidate
+        if not known_columns:
+            return None
         # Case-insensitive check
         candidate_lower = candidate.lower()
         for col in known_columns:
@@ -1634,22 +1642,10 @@ class MetricExpressionTranslator:
         return re.sub(composite_agg_pattern, _replace_composite, normalized)
 
     def _normalize_date_part_arguments(self, metric_sql: str) -> str:
+        # Date-part functions (YEAR, MONTH, QUARTER, etc.) and EXTRACT operate directly
+        # on DATE/TIMESTAMP columns in Snowflake. TRY_TO_DATE is invalid on DATE types.
         normalized = metric_sql
-        def _is_date_like(identifier: str) -> bool:
-            upper = identifier.upper()
-            return upper.endswith('.DATE') or upper.endswith('_DATE')
-        def _wrap_try_to_date(match: re.Match) -> str:
-            fn = match.group(1)
-            arg = match.group(2).strip()
-            if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper(): return f"{fn}(TRY_TO_DATE({arg}))"
-            return match.group(0)
-        normalized = re.sub(r'\b(YEAR|MONTH|DAY|WEEK|QUARTER)\s*\(\s*([^\)]+)\)', _wrap_try_to_date, normalized, flags=re.IGNORECASE)
-        def _wrap_extract(match: re.Match) -> str:
-            part = match.group(1)
-            arg = match.group(2).strip()
-            if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper(): return f"EXTRACT({part} FROM TRY_TO_DATE({arg}))"
-            return match.group(0)
-        normalized = re.sub(r'\bEXTRACT\s*\(\s*([A-Z_]+)\s+FROM\s+([^\)]+)\)', _wrap_extract, normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'TRY_TO_DATE\s*\(\s*([^()]+)\s*\)', r'\1', normalized, flags=re.IGNORECASE)
         return normalized
 
     def _normalize_rolling_monthindex_max_predicates(self, metric_sql: str) -> str:
@@ -1787,9 +1783,10 @@ class MetricExpressionTranslator:
             if f in sql_upper:
                 result["issues"].append(f"Contains forbidden keyword: {f}")
         
-        # Rule 2: No nested aggregates (e.g. SUM(SUM(...)) or SUM(AVG(...)))
-        if re.search(r'\b(SUM|AVG|COUNT|MIN|MAX)\s*\([^)]*\b(SUM|AVG|COUNT|MIN|MAX)\s*\(', sql, re.IGNORECASE):
-            result["issues"].append("Contains nested aggregates")
+        # Rule 2: No nested aggregates
+        nested_reason = detect_nested_aggregate(sql)
+        if nested_reason:
+            result["issues"].append(nested_reason)
         
         # Rule 3: YTD must use MAX_DATE, not CURRENT_DATE
         if "YTD" in metric_name.upper() or "TOTALYTD" in dax.upper():

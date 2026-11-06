@@ -52,6 +52,8 @@ class TMSLToOSIConverter(BaseConverter):
     AUTO_HIDDEN_TABLE_PREFIXES = (
         "LocalDateTable_",
         "DateTableTemplate_",
+        "ClusterMappingTable",
+        "ClusterMapping",
     )
 
     def __init__(self, drop_ledger: Optional[DropLedger] = None) -> None:
@@ -175,15 +177,25 @@ class TMSLToOSIConverter(BaseConverter):
                 for table in model_obj["tables"]:
                     t_name = table.get("name", "")
                     if self._is_auto_hidden_table_name(t_name):
+                        if str(t_name).startswith(("ClusterMapping", "ClusterMappingTable")):
+                            reason = (
+                                "Power BI auto-generated clustering mapping table "
+                                "(ClusterMappingTable) — excluded from the semantic model by design."
+                            )
+                        else:
+                            reason = (
+                                "Auto-generated Power BI/Fabric date table "
+                                "(LocalDateTable_/DateTableTemplate_) — excluded from "
+                                "the semantic model by design."
+                            )
                         logger.info(
-                            "Skipping hidden auto-date table during OSI conversion: %s",
+                            "Skipping auxiliary table during OSI conversion: %s (%s)",
                             t_name or "<unnamed>",
+                            reason,
                         )
                         self.drop_ledger.record(
                             "table", t_name or "<unnamed>", DropStage.EXTRACTION,
-                            "Auto-generated Power BI/Fabric date table "
-                            "(LocalDateTable_/DateTableTemplate_) — excluded from "
-                            "the semantic model by design.",
+                            reason,
                             by_design=True,
                         )
                         continue
@@ -780,6 +792,7 @@ class TMSLToOSIConverter(BaseConverter):
 
         return OSIMetric(
             unique_name=name,
+            original_name=name,
             label=display_name,
             dataset=dataset_name,
             expression=dax,
@@ -868,8 +881,8 @@ class TMSLToOSIConverter(BaseConverter):
 
                 duplicate_name_groups = [k for k, v in name_totals.items() if v > 1]
                 duplicate_display_groups = [k for k, v in display_totals.items() if v > 1]
-                is_project_measures = table_name.strip().casefold() == "project measures"
-                if not (is_project_measures or duplicate_name_groups or duplicate_display_groups):
+                is_measure_table = not (table.get("columns") or []) or all(c.get("isHidden") for c in table.get("columns", []))
+                if not (is_measure_table or duplicate_name_groups or duplicate_display_groups):
                     continue
 
                 rows: List[Dict[str, Any]] = []

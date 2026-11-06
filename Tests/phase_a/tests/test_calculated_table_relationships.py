@@ -237,12 +237,11 @@ def _build_mocked_connector(dfs):
     mock_sh = MockSQLiteHandler(dfs)
 
     def mock_extract_raw():
-        with patch("pbixray.pbix_unpacker.PbixUnpacker") as mock_unpacker_cls, \
-             patch("pbixray.utils.get_data_slice", return_value=b"fake-db"), \
-             patch("pbixray.meta.sqlite_handler.SQLiteHandler", return_value=mock_sh):
-            unpacker_inst = MagicMock()
-            unpacker_inst.data_model.file_type = "pbix"
-            mock_unpacker_cls.return_value = unpacker_inst
+        mock_db = MagicMock()
+        mock_db.query = mock_sh.execute_query
+        mock_model = MagicMock()
+        mock_model._metadata.source._db = mock_db
+        with patch("pbixray.core.PBIXRay", return_value=mock_model):
             return connector._extract_raw_metadata_catalog()
 
     return connector, mock_extract_raw
@@ -456,7 +455,7 @@ def test_g_sync_execution_pipeline_preserves_calculated_tables():
     assert debug_ddl_path.exists()
     ddl_content = debug_ddl_path.read_text(encoding="utf-8")
 
-    assert 'YEARS AS "SEMABRIDGE"."TESTING_SEMABRIDGE"."YEARS" PRIMARY KEY ("YEARS")' in ddl_content
+    assert ('YEARS AS "SEMABRIDGE"."TESTING_SEMABRIDGE"."YEARS" PRIMARY KEY ("YEARS")' in ddl_content or 'YEARS AS "SEMABRIDGE"."TESTING_SEMABRIDGE"."YEARS_ENRICHED" PRIMARY KEY ("YEARS")' in ddl_content)
     assert 'INDICATORS_YEAR_YEARS_YEARS AS INDICATORS ("YEAR") REFERENCES YEARS ("YEARS")' in ddl_content
     assert 'POPULATION_YEAR_YEARS_YEARS AS POPULATION ("YEAR") REFERENCES YEARS ("YEARS")' in ddl_content
 

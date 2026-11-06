@@ -16,28 +16,28 @@
  "F1.3": {
   "status": "PASS",
   "msg": "4.0 == 4.0",
-  "sql": "COUNT(CASE WHEN FCT_SALES_C2.\"RUSH_FLAG_R7\" = TRUE THEN FCT_SALES_C2.TXN_ID_R9 END)",
+  "sql": "COUNT(CASE WHEN FCT_SALES_C2.\"RUSH_FLAG_R7\" = TRUE THEN 1 END)",
   "title": "TRUE() in a boolean filter",
   "solution": ""
  },
  "F1.4": {
   "status": "PASS",
   "msg": "6.0 == 6.0",
-  "sql": "COUNT(CASE WHEN FCT_SALES_C2.\"RUSH_FLAG_R7\" = FALSE THEN FCT_SALES_C2.TXN_ID_R9 END)",
+  "sql": "COUNT(CASE WHEN FCT_SALES_C2.\"RUSH_FLAG_R7\" = FALSE THEN 1 END)",
   "title": "FALSE() in a boolean filter",
   "solution": ""
  },
  "F1.5": {
   "status": "PASS",
   "msg": "0.5 == 0.5",
-  "sql": "ROUND(AVG(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT) / NULLIF(2, 0), 1) - 1",
+  "sql": "CASE WHEN (ROUND(AVG(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT) / 2, 1)) IS NULL THEN NULL ELSE (ROUND(AVG(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT) / 2, 1)) - 1 END",
   "title": "trailing -1 after a function",
   "solution": ""
  },
  "F1.6": {
   "status": "PASS",
   "msg": "12.810344827586206 == 12.810344827586206",
-  "sql": "IFF(COALESCE(SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT) / SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT)) - 1",
+  "sql": "CASE WHEN (IFF(COALESCE(SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT) / SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT))) IS NULL THEN NULL ELSE (IFF(COALESCE(SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) = 0, 0, SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT) / SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT))) - 1 END",
   "title": "DIVIDE(...)-1 (variance %)",
   "solution": ""
  },
@@ -79,7 +79,7 @@
  "F2.4": {
   "status": "PASS",
   "msg": "566.5 == 566.5",
-  "sql": "SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT) + SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT) + SUM(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)",
+  "sql": "CASE WHEN (CASE WHEN (SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT)) IS NULL AND (SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) + COALESCE(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT), 0) END) IS NULL AND (SUM(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(CASE WHEN (SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT)) IS NULL AND (SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)) IS NULL THEN NULL ELSE COALESCE(SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT), 0) + COALESCE(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT), 0) END, 0) + COALESCE(SUM(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT), 0) END",
   "title": "several SUMs of different columns added together",
   "solution": ""
  },
@@ -142,7 +142,7 @@
  "F3.9": {
   "status": "PASS",
   "msg": "83.0 == 83.0",
-  "sql": "MAX(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\" * FCT_SALES_C2.\"LIST_PRICE_U3\") - MIN(FCT_SALES_C2.\"LIST_PRICE_U3\")",
+  "sql": "CASE WHEN (MAX(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\" * FCT_SALES_C2.\"LIST_PRICE_U3\")) IS NULL AND (MIN(FCT_SALES_C2.\"LIST_PRICE_U3\")) IS NULL THEN NULL ELSE COALESCE(MAX(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\" * FCT_SALES_C2.\"LIST_PRICE_U3\"), 0) - COALESCE(MIN(FCT_SALES_C2.\"LIST_PRICE_U3\"), 0) END",
   "title": "MAXX / MINX",
   "solution": ""
  },
@@ -156,7 +156,7 @@
  "F4.2": {
   "status": "PASS",
   "msg": "838.5 == 838.5",
-  "sql": "((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) * 2) + (SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT))",
+  "sql": "CASE WHEN (((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) * 2)) IS NULL AND ((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT))) IS NULL THEN NULL ELSE COALESCE(((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) * 2), 0) + COALESCE((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)), 0) END",
   "title": "variable using another variable",
   "solution": ""
  },
@@ -177,7 +177,7 @@
  "F5.3": {
   "status": "PASS",
   "msg": "27.0 == 27.0",
-  "sql": "SIGN(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) * CEIL(ABS(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)), 0) + SIGN(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) * FLOOR(ABS(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)), 0)",
+  "sql": "CASE WHEN (SIGN(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) * CEIL(ABS(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)), 0)) IS NULL AND (SIGN(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) * FLOOR(ABS(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)), 0)) IS NULL THEN NULL ELSE COALESCE(SIGN(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) * CEIL(ABS(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)), 0), 0) + COALESCE(SIGN(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)) * FLOOR(ABS(AVG(FCT_SALES_C2.\"LIST_PRICE_U3\"::FLOAT)), 0), 0) END",
   "title": "ROUNDUP / ROUNDDOWN",
   "solution": ""
  },
@@ -247,28 +247,28 @@
  "F10.4": {
   "status": "PASS",
   "msg": "29.0 == 29.0",
-  "sql": "SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT) * (1 + (0) / NULLIF(100, 0))",
+  "sql": "SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"::FLOAT) * (CASE WHEN ((0) / 100) IS NULL THEN NULL ELSE 1 + ((0) / 100) END)",
   "title": "what-if measure used in another measure -> default constant",
   "solution": ""
  },
  "F10.5": {
   "status": "PASS",
   "msg": "400.5 == 400.5",
-  "sql": "(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)) + (SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)) * (0) / NULLIF(100, 0)",
+  "sql": "CASE WHEN ((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT))) IS NULL AND ((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)) * (0) / 100) IS NULL THEN NULL ELSE COALESCE((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)), 0) + COALESCE((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"::FLOAT)) * (0) / 100, 0) END",
   "title": "same, measure referenced without table prefix",
   "solution": ""
  },
  "F7.1": {
   "status": "PASS",
   "msg": "371.5 == 371.5",
-  "sql": "(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")) - (SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"))",
+  "sql": "CASE WHEN ((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"))) IS NULL AND ((SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\"))) IS NULL THEN NULL ELSE COALESCE((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")), 0) - COALESCE((SUM(FCT_SALES_C2.\"QUANTITY_SOLD_Q9\")), 0) END",
   "title": "arithmetic over two base measures",
   "solution": ""
  },
  "F7.2": {
-  "status": "PASS",
-  "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"), 0) = 0, 0, SUM(CASE WHEN FCT_SALES_C2.STAGE_FLAG_R6 = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" ELSE 0 END) / SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"))",
+  "status": "FAIL",
+  "msg": "value 0.0, expected 0.6978776529338327",
+  "sql": "IFF(COALESCE(NULL, 0) = 0, 0, (SUM(CASE WHEN FCT_SALES_C2.STAGE_FLAG_R6 = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" ELSE 0 END)) / NULL)",
   "title": "ratio over a base measure that lives on the measure table",
   "solution": ""
  },
@@ -280,9 +280,9 @@
   "solution": "Anchor = the table the physical columns come from (after inlining measures), never the DAX home table. Apply in translation AND at DDL emission."
  },
  "F11.2": {
-  "status": "PASS",
-  "msg": "0.6978776529338327 == 0.6978776529338327",
-  "sql": "IFF(COALESCE(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"), 0) = 0, 0, SUM(CASE WHEN FCT_SALES_C2.STAGE_FLAG_R6 = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" ELSE 0 END) / SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"))",
+  "status": "FAIL",
+  "msg": "value None, expected 0.6978776529338327",
+  "sql": "IFF(COALESCE((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")), 0) = 0, 0, NULL / (SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")))",
   "title": "declared on a dimension, built from fact measures",
   "solution": "Inline the referenced measures first, then anchor on the one table all columns come from."
  },
@@ -310,7 +310,7 @@
  "F12.3": {
   "status": "PASS",
   "msg": "-6.291666666666668 == -6.291666666666668",
-  "sql": "CASE WHEN ((AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 1 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 3 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT) IS NOT NULL)) THEN AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 1 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT) - AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 3 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT) ELSE NULL END",
+  "sql": "CASE WHEN ((AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 1 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT) IS NOT NULL)) AND ((AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 3 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT) IS NOT NULL)) THEN CASE WHEN (AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 1 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT)) IS NULL AND (AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 3 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT)) IS NULL THEN NULL ELSE COALESCE(AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 1 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT), 0) - COALESCE(AVG(CASE WHEN SKU_MASTER_F5.\"SKU_ID_B1\" = 3 THEN FCT_SALES_C2.\"LIST_PRICE_U3\" END::FLOAT), 0) END ELSE NULL END",
   "title": "two fixed-key filters subtracted with ISBLANK guards",
   "solution": "Same key rewrite inside each CALCULATE; NOT ISBLANK(x) -> x IS NOT NULL; IF without else -> NULL."
  },
@@ -329,16 +329,16 @@
   "solution": "Emit each inactive relationship as an alias of the dimension named '<Dim> <FK column>' (here calendar_ship_date) joined on that FK; USERELATIONSHIP(...) switches the filter to that alias."
  },
  "F13.2": {
-  "status": "PASS",
-  "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN TBL_OMEGA_K9_DISPATCH_DATE_T9.\"COL_DELTA_F9\" = 1 THEN FCT_SALES_C2.TXN_ID_R9 END)",
+  "status": "FAIL",
+  "msg": "value 31.0, expected 2.0",
+  "sql": "COUNT(CASE WHEN TBL_OMEGA_K9_DISPATCH_DATE_T9.\"COL_DELTA_F9\" = 1 THEN 1 END)",
   "title": "USERELATIONSHIP with a row count",
   "solution": "Same alias rule; counts use COUNT(CASE WHEN ... THEN key END) with no ELSE."
  },
  "F13.3": {
-  "status": "PASS",
-  "msg": "2.0 == 2.0",
-  "sql": "COUNT(CASE WHEN TBL_OMEGA_K9.\"COL_DELTA_F9\" = 1 THEN FCT_SALES_C2.TXN_ID_R9 END)",
+  "status": "FAIL",
+  "msg": "value 31.0, expected 2.0",
+  "sql": "COUNT(CASE WHEN TBL_OMEGA_K9.\"COL_DELTA_F9\" = 1 THEN 1 END)",
   "title": "without USERELATIONSHIP the ACTIVE path is used",
   "solution": "The alias must not change measures that do not ask for it."
  },
@@ -401,7 +401,7 @@
  "F17.1": {
   "status": "PASS",
   "msg": "None == None",
-  "sql": "COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'X' THEN FCT_SALES_C2.\"TXN_ID_R9\" END) / NULLIF(COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'X' THEN FCT_SALES_C2.\"TXN_ID_R9\" END) + COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Y' THEN FCT_SALES_C2.\"TXN_ID_R9\" END), 0)",
+  "sql": "COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'X' THEN FCT_SALES_C2.\"TXN_ID_R9\" END) / NULLIF(CASE WHEN (COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'X' THEN FCT_SALES_C2.\"TXN_ID_R9\" END)) IS NULL AND (COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Y' THEN FCT_SALES_C2.\"TXN_ID_R9\" END)) IS NULL THEN NULL ELSE COALESCE(COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'X' THEN FCT_SALES_C2.\"TXN_ID_R9\" END), 0) + COALESCE(COUNT(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Y' THEN FCT_SALES_C2.\"TXN_ID_R9\" END), 0) END, 0)",
   "title": "DAX '/' with zero denominator -> BLANK, not an error",
   "solution": "DAX a / b -> a / NULLIF(b, 0): Snowflake raises 'Division by zero', DAX returns BLANK."
  },
@@ -422,14 +422,14 @@
  "F10.6": {
   "status": "PASS",
   "msg": "279.5 == 279.5",
-  "sql": "(SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) + (SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) * (0) / NULLIF(100, 0)",
+  "sql": "CASE WHEN ((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT))) IS NULL AND ((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) * (0) / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN FCT_SALES_C2.\"STAGE_FLAG_R6\" = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" END::FLOAT)) * (0) / 100, 0) END",
   "title": "what-if inside VAR with CALCULATE ('Table'[Measure])",
   "solution": ""
  },
  "F17.5": {
-  "status": "PASS",
-  "msg": "0.3021223470661673 == 0.3021223470661673",
-  "sql": "((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")) - (SUM(CASE WHEN FCT_SALES_C2.STAGE_FLAG_R6 = 'Sold' THEN FCT_SALES_C2.\"NET_AMT_DOL_H1\" ELSE 0 END))) / NULLIF(SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"), 0)",
+  "status": "FAIL",
+  "msg": "value 1.0, expected 0.3021223470661673",
+  "sql": "(CASE WHEN ((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\"))) IS NULL AND (NULL) IS NULL THEN NULL ELSE COALESCE((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")), 0) - COALESCE(NULL, 0) END) / NULLIF((SUM(FCT_SALES_C2.\"NET_AMT_DOL_H1\")), 0)",
   "title": "DIVIDE([A-B], [B]) numerator precedence",
   "solution": "Numerator with subtraction must keep parentheses in division to avoid precedence bug."
  }

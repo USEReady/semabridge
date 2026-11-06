@@ -54,6 +54,8 @@ class TMSLTransformer:
     AUTO_HIDDEN_TABLE_PREFIXES = (
         "LocalDateTable_",
         "DateTableTemplate_",
+        "ClusterMappingTable",
+        "ClusterMapping",
     )
     
     def __init__(self, drop_ledger: Optional[DropLedger] = None):
@@ -189,12 +191,21 @@ class TMSLTransformer:
                     )
                     continue
                 if self._is_auto_hidden_table_name(table_name):
-                    logger.info("Skipping hidden auto-date table: %s", table_name or "<unnamed>")
+                    if str(table_name).startswith(("ClusterMapping", "ClusterMappingTable")):
+                        reason = (
+                            "Power BI auto-generated clustering mapping table "
+                            "(ClusterMappingTable) — excluded from the semantic model by design."
+                        )
+                    else:
+                        reason = (
+                            "Auto-generated Power BI/Fabric date table "
+                            "(LocalDateTable_/DateTableTemplate_) — excluded from "
+                            "the semantic model by design."
+                        )
+                    logger.info("Skipping auxiliary table: %s (%s)", table_name or "<unnamed>", reason)
                     self.drop_ledger.record(
                         "table", table_name or "<unnamed>", DropStage.EXTRACTION,
-                        "Auto-generated Power BI/Fabric date table "
-                        "(LocalDateTable_/DateTableTemplate_) — excluded from "
-                        "the semantic model by design.",
+                        reason,
                         by_design=True,
                     )
                     continue
@@ -980,7 +991,7 @@ class TMSLTransformer:
             sanitized_name = measure_name.lstrip("#@")
         
         # Analyze DAX complexity for sync metadata
-        complexity = self.dax_translator.analyze_complexity(dax)
+        complexity = self.dax_translator.analyze_complexity(dax, metric_name=measure_name)
         required_dims = self.dax_translator.get_required_dimensions(dax)
         
         # EDGE CASE 3: Known complex DAX transpiler (window-function templates)
@@ -988,12 +999,6 @@ class TMSLTransformer:
 
         # EDGE CASE 4: Detect unsupported DAX patterns upfront
         unsupported_patterns = {
-            "TOTALMTD": "Complex Time Intelligence (TOTALMTD) not automatically translatable",
-            "TOTALQTD": "Complex Time Intelligence (TOTALQTD) not automatically translatable",
-            "SAMEPERIODLASTYEAR": "Complex Time Intelligence (SAMEPERIODLASTYEAR) not automatically translatable",
-            "PREVIOUSYEAR": "Complex Time Intelligence (PREVIOUSYEAR) not automatically translatable",
-            "PREVIOUSMONTH": "Complex Time Intelligence (PREVIOUSMONTH) not automatically translatable",
-            "DATEADD": "Complex Time Intelligence (DATEADD) not automatically translatable",
             "EARLIER": "Row context functions (EARLIER) cannot be translated",
             "USERELATIONSHIP": "Dynamic relationship functions (USERELATIONSHIP) not automatically translatable",
         }
@@ -1181,8 +1186,8 @@ class TMSLTransformer:
 
                 duplicate_name_groups = [k for k, v in name_totals.items() if v > 1]
                 duplicate_display_groups = [k for k, v in display_totals.items() if v > 1]
-                is_project_measures = table_name.strip().casefold() == "project measures"
-                if not (is_project_measures or duplicate_name_groups or duplicate_display_groups):
+                is_measure_table = not (table.get("columns") or []) or all(c.get("isHidden") for c in table.get("columns", []))
+                if not (is_measure_table or duplicate_name_groups or duplicate_display_groups):
                     continue
 
                 rows: List[Dict[str, Any]] = []

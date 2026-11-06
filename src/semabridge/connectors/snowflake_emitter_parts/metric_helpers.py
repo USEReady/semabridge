@@ -177,6 +177,20 @@ def _get_effective_known_columns(emitter, dataset_name: str, dataset_col_lookup:
         for flag_val in ds_flags.values():
             if isinstance(flag_val, str) and flag_val:
                 cols.add(flag_val)
+    # Pre-computed anchor columns available on enriched views
+    enriched_map = (
+        getattr(emitter, "_enriched_view_mapping", None)
+        or getattr(emitter, "enriched_view_mapping", None)
+        or {}
+    )
+    is_enriched = bool(
+        getattr(emitter, "behavior", None)
+        and getattr(getattr(emitter.behavior, "snowflake", None), "auto_create_enriched_view", True)
+    )
+    if enriched_map or is_enriched:
+        cols.update({
+            "MAX_DATE", "MAX_MONTHINDEX", "MAX_YEARINDEX", "MAX_QUARTERINDEX", "MAX_WEEKINDEX"
+        })
     return cols
 
 
@@ -222,10 +236,7 @@ def validate_metric_column_references(
             ]
             if len(owners) == 1:
                 continue
-            return False, (
-                f"Column '{col_name}' (sanitized: '{sanitized_col_name}') not found in dataset '{dataset_name}'. "
-                f"Available columns: {sorted(known_columns)}"
-            )
+            return False, f"Column '{col_name}' not found in dataset '{dataset_name}'"
 
     return True, None
 
@@ -325,6 +336,10 @@ def normalize_metric_column_references(
 
 
 def resolve_column_name_for_dataset(known_columns: set[str], candidate: str) -> Optional[str]:
+    if not candidate:
+        return None
+    if candidate.upper().startswith(("_CURRENT_", "CURRENT_", "_ALL_")):
+        return candidate
     if not known_columns:
         return None
     if candidate in known_columns:
@@ -508,29 +523,10 @@ def prune_unresolved_metric_lines(metrics_lines: list[str], metric_name_set: Opt
 
 
 def normalize_date_part_arguments(metric_sql: str) -> str:
+    # Date-part functions (YEAR, MONTH, QUARTER, etc.) and EXTRACT operate directly
+    # on DATE/TIMESTAMP columns in Snowflake. TRY_TO_DATE is invalid on DATE types.
     normalized = metric_sql
-
-    def _is_date_like(identifier: str) -> bool:
-        upper = identifier.upper()
-        return upper.endswith('.DATE') or upper.endswith('_DATE')
-
-    def _wrap_try_to_date(match: re.Match) -> str:
-        fn = match.group(1)
-        arg = match.group(2).strip()
-        if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper():
-            return f"{fn}(TRY_TO_DATE({arg}))"
-        return match.group(0)
-
-    normalized = re.sub(r'\b(YEAR|MONTH|DAY|WEEK|QUARTER)\s*\(\s*([^\)]+)\)', _wrap_try_to_date, normalized, flags=re.IGNORECASE)
-
-    def _wrap_extract(match: re.Match) -> str:
-        part = match.group(1)
-        arg = match.group(2).strip()
-        if _is_date_like(arg) and 'TRY_TO_DATE(' not in arg.upper():
-            return f"EXTRACT({part} FROM TRY_TO_DATE({arg}))"
-        return match.group(0)
-
-    normalized = re.sub(r'\bEXTRACT\s*\(\s*([A-Z_]+)\s+FROM\s+([^\)]+)\)', _wrap_extract, normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'TRY_TO_DATE\s*\(\s*([^()]+)\s*\)', r'\1', normalized, flags=re.IGNORECASE)
     return normalized
 
 

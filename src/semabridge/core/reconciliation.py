@@ -268,8 +268,9 @@ def _extract_deployed_metric_names(ddl_text: str) -> tuple[set[str], set[str]]:
             continue
         name, expr = m.groups()
         expr_clean = expr.strip().rstrip(",")
-        # Strip a trailing WITH SYNONYMS(...) clause before checking for the
-        # NULL-cast shape, same split used in metrics_clause_builder.py.
+        # Strip trailing COMMENT = '...' and WITH SYNONYMS(...) clause before checking
+        # for the NULL-cast shape, same split used in metrics_clause_builder.py.
+        expr_clean = re.sub(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", "", expr_clean, flags=re.IGNORECASE).rstrip()
         expr_clean = _SYNONYMS_SUFFIX_RE.sub("", expr_clean).rstrip()
         if _NULL_CAST_RE.match(expr_clean):
             dead.add(name.upper())

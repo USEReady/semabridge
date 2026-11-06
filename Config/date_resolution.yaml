@@ -29,3 +29,5 @@ monthindex_column_patterns:
   - monthindex
   - cal_mnth_num
   - month_index
+  - fiscal_yr_period
+  - fiscal_period

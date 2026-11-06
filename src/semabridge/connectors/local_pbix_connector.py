@@ -487,6 +487,22 @@ class LocalPBIXConnector(BaseConnector):
                 if not table_name or not column_name:
                     continue
 
+                if table_name.startswith(("LocalDateTable_", "DateTableTemplate_", "ClusterMappingTable", "ClusterMapping")):
+                    if table_name not in tables_by_name:
+                        if str(table_name).startswith(("ClusterMapping", "ClusterMappingTable")):
+                            reason = "Power BI auto-generated clustering mapping table — excluded from the semantic model by design"
+                        else:
+                            reason = "Auto date/time table excluded by design"
+                        self.drop_ledger.record(
+                            entity_kind="table",
+                            entity_name=table_name,
+                            stage=DropStage.EXTRACTION,
+                            reason=reason,
+                            dataset=self._pbix_path.stem,
+                            by_design=True,
+                        )
+                    continue
+
                 table = tables_by_name.setdefault(
                     table_name,
                     {
@@ -667,11 +683,17 @@ class LocalPBIXConnector(BaseConnector):
                 auto_tbls_df = sh.execute_query(auto_tbls_sql)
                 for _, row in auto_tbls_df.iterrows():
                     tbl_name = str(row.get("Name") or "")
+                    if str(tbl_name).startswith(("ClusterMapping", "ClusterMappingTable")):
+                        reason = "Power BI auto-generated clustering mapping table — excluded from the semantic model by design"
+                    elif str(tbl_name).startswith(("LocalDateTable_", "DateTableTemplate_")):
+                        reason = "Auto date/time table excluded by design"
+                    else:
+                        reason = "Power BI private/auxiliary table excluded by design"
                     self.drop_ledger.record(
                         entity_kind="table",
                         entity_name=tbl_name,
                         stage=DropStage.EXTRACTION,
-                        reason="Auto date/time table excluded by design",
+                        reason=reason,
                         dataset=self._pbix_path.stem,
                         detail=f"table_id={row.get('ID')}, is_private={row.get('IsPrivate')}, variations={row.get('ShowAsVariationsOnly')}",
                         by_design=True,

@@ -195,6 +195,8 @@ class SMLSerializer:
             for ds_file in ds_folder.glob("*.yaml"):
                 ds_data = yaml.safe_load(ds_file.read_text(encoding="utf-8"))
                 datasets.append(SMLSerializer._dict_to_dataset(ds_data))
+        elif "datasets" in model_data:
+            datasets = [SMLSerializer._dict_to_dataset(ds) for ds in model_data["datasets"]]
         
         # Load dimensions
         dimensions = []
@@ -203,6 +205,8 @@ class SMLSerializer:
             for dim_file in dim_folder.glob("*.yaml"):
                 dim_data = yaml.safe_load(dim_file.read_text(encoding="utf-8"))
                 dimensions.append(SMLSerializer._dict_to_dimension(dim_data))
+        elif "dimensions" in model_data:
+            dimensions = [SMLSerializer._dict_to_dimension(dim) for dim in model_data["dimensions"]]
         
         # Load metrics
         metrics = []
@@ -211,6 +215,8 @@ class SMLSerializer:
             for metric_file in metric_folder.glob("*.yaml"):
                 metric_data = yaml.safe_load(metric_file.read_text(encoding="utf-8"))
                 metrics.append(SMLSerializer._dict_to_metric(metric_data))
+        elif "metrics" in model_data:
+            metrics = [SMLSerializer._dict_to_metric(m) for m in model_data["metrics"]]
         
         # Load relationships from model file
         relationships = []
@@ -479,6 +485,7 @@ class SMLSerializer:
             "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
             "synonym_sources": dict(metric.synonym_sources or {}),
             "has_report_alias": metric.has_report_alias,
+            "original_name": metric.original_name,
         }
 
     @staticmethod
@@ -487,6 +494,7 @@ class SMLSerializer:
         above — see its docstring for the real incident this matters for."""
         return SMLMetric(
             unique_name=data["unique_name"],
+            original_name=data.get("original_name"),
             label=data.get("label", ""),
             description=data.get("description", ""),
             dataset=data["dataset"],

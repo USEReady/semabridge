@@ -40,10 +40,13 @@ import re
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 from semabridge.converter.dax_ast_parser import (
+    BinaryOpNode,
     DaxAstParser,
     DaxNode,
     FunctionCallNode,
     MeasureRefNode,
+    UnaryOpNode,
+    VarNode,
 )
 
 Shape = Tuple[str, ...]
@@ -54,6 +57,9 @@ PERIOD_TO_DATE_FUNCS: Dict[str, str] = {
     "TOTALYTD": "YTD",
     "TOTALMTD": "MTD",
     "TOTALQTD": "QTD",
+    "DATESYTD": "YTD",
+    "DATESMTD": "MTD",
+    "DATESQTD": "QTD",
 }
 
 # DAX function name -> canonical lag component. These are the functions
@@ -63,9 +69,9 @@ PERIOD_TO_DATE_FUNCS: Dict[str, str] = {
 # `interval="year"` dispatch for both.
 LAG_FUNCS: Dict[str, str] = {
     "SAMEPERIODLASTYEAR": "SPLY_YEAR",
-    "PREVIOUSYEAR": "SPLY_YEAR",
-    "PREVIOUSMONTH": "SPLY_MONTH",
-    "PREVIOUSQUARTER": "SPLY_QUARTER",
+    "PREVIOUSYEAR": "PREV_YEAR",
+    "PREVIOUSMONTH": "PREV_MONTH",
+    "PREVIOUSQUARTER": "PREV_QUARTER",
 }
 
 # Calendar unit each component operates on — shared by the boolean-SQL
@@ -75,6 +81,15 @@ LAG_UNITS: Dict[str, str] = {
     "SPLY_YEAR": "YEAR",
     "SPLY_MONTH": "MONTH",
     "SPLY_QUARTER": "QUARTER",
+    "PREV_YEAR": "YEAR",
+    "PREV_MONTH": "MONTH",
+    "PREV_QUARTER": "QUARTER",
+}
+CURRENT_UNITS: Dict[str, str] = {
+    "CURRENT_MONTH": "MONTH",
+    "CURRENT_QUARTER": "QUARTER",
+    "CURRENT_YEAR": "YEAR",
+    "CURRENT_DAY": "DAY",
 }
 
 
@@ -157,11 +172,20 @@ def _resolve_node_shape(
     if isinstance(node, MeasureRefNode):
         return _resolve_own_shape(node.name, dax_by_name, memo, visiting)
 
-    from semabridge.converter.dax_ast_parser import BinaryOpNode
     if isinstance(node, BinaryOpNode):
         left_s = _resolve_node_shape(node.left, dax_by_name, memo, visiting)
         right_s = _resolve_node_shape(node.right, dax_by_name, memo, visiting)
         return left_s or right_s
+
+    if isinstance(node, UnaryOpNode):
+        return _resolve_node_shape(node.operand, dax_by_name, memo, visiting)
+
+    if isinstance(node, VarNode):
+        for _vname, vexpr in node.variables:
+            s = _resolve_node_shape(vexpr, dax_by_name, memo, visiting)
+            if s:
+                return s
+        return _resolve_node_shape(node.body, dax_by_name, memo, visiting)
 
     if not isinstance(node, FunctionCallNode):
         return None
@@ -188,16 +212,77 @@ def _resolve_node_shape(
                 n_months = int(m_r.group(1))
                 return (f"R{n_months}M",)
 
-        arg0 = node.args[0] if node.args else None
+        # Unpack CALCULATETABLE modifiers if present
+        modifiers = []
+        for mod in node.args[1:]:
+            if isinstance(mod, FunctionCallNode) and mod.func.upper() == "CALCULATETABLE":
+                modifiers.extend(mod.args)
+            else:
+                modifiers.append(mod)
+
+        def _get_lag_shape(fn_node: FunctionCallNode) -> str:
+            if fn_node.func.upper() in LAG_FUNCS:
+                return LAG_FUNCS[fn_node.func.upper()]
+            intv = "YEAR"
+            if len(fn_node.args) >= 3:
+                intv = str(getattr(fn_node.args[2], "name", getattr(fn_node.args[2], "value", "YEAR"))).upper()
+            amt = 1
+            if len(fn_node.args) >= 2:
+                arg1 = fn_node.args[1]
+                if isinstance(arg1, UnaryOpNode) and arg1.op == "-":
+                    try:
+                        amt = abs(int(getattr(arg1.operand, "value", 1)))
+                    except Exception:
+                        amt = 1
+                else:
+                    try:
+                        amt = abs(int(getattr(arg1, "value", 1)))
+                    except Exception:
+                        amt = 1
+
+            unit = "YEAR"
+            if "YEAR" in intv:
+                unit = "YEAR"
+            elif "QUARTER" in intv:
+                unit = "QUARTER"
+            elif "MONTH" in intv:
+                unit = "MONTH"
+            elif "DAY" in intv:
+                unit = "DAY"
+
+            if fn_node.func.upper() == "PARALLELPERIOD":
+                if amt == 1:
+                    return f"PREV_{unit}"
+                return f"PREV_{amt}_{unit}"
+
+            if amt == 1:
+                return f"SPLY_{unit}"
+            return f"SPLY_{amt}_{unit}"
+
+        p2d_modifier: Optional[FunctionCallNode] = None
         lag_modifier: Optional[FunctionCallNode] = None
-        for modifier in node.args[1:]:
-            if isinstance(modifier, FunctionCallNode) and modifier.func.upper() in LAG_FUNCS:
-                lag_modifier = modifier
-                break
+        for modifier in modifiers:
+            if isinstance(modifier, FunctionCallNode):
+                m_fn = modifier.func.upper()
+                if m_fn in PERIOD_TO_DATE_FUNCS:
+                    p2d_modifier = modifier
+                elif m_fn in LAG_FUNCS or m_fn in ("DATEADD", "PARALLELPERIOD"):
+                    lag_modifier = modifier
+
+        arg0 = node.args[0] if node.args else None
+        inner = _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
+
+        if p2d_modifier is not None and lag_modifier is not None:
+            p2d_shape = PERIOD_TO_DATE_FUNCS[p2d_modifier.func.upper()]
+            lag_shape = _get_lag_shape(lag_modifier)
+            return (p2d_shape, lag_shape)
 
         if lag_modifier is not None:
-            inner = _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
-            outer = LAG_FUNCS[lag_modifier.func.upper()]
+            outer = _get_lag_shape(lag_modifier)
+            return (inner + (outer,)) if inner else (outer,)
+
+        if p2d_modifier is not None:
+            outer = PERIOD_TO_DATE_FUNCS[p2d_modifier.func.upper()]
             return (inner + (outer,)) if inner else (outer,)
 
         return _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
@@ -283,6 +368,118 @@ def metrics_with_time_intelligence_shapes(metrics: Iterable[Any]) -> Dict[str, S
     return result
 
 
+def detect_comparison_shapes(node: Optional[DaxNode]) -> Set[Shape]:
+    """Detect if an AST represents a time-shifted comparison measure comparing
+    an unshifted reference with a shifted reference (e.g. [X] - CALCULATE([X], DATEADD(...))).
+    Returns both the current period shape and the matching previous period shape."""
+    if node is None:
+        return set()
+
+    shifted_calls: List[Tuple[Any, str, int, str]] = []
+
+    def _find_shifted(n: DaxNode):
+        if isinstance(n, FunctionCallNode):
+            fn = n.func.upper()
+            if fn == "CALCULATE" and len(n.args) >= 2:
+                base = n.args[0]
+                for mod in n.args[1:]:
+                    if isinstance(mod, FunctionCallNode):
+                        mfn = mod.func.upper()
+                        if mfn in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
+                            u = "YEAR" if "YEAR" in mfn else ("MONTH" if "MONTH" in mfn else "QUARTER")
+                            shifted_calls.append((base, u, -1, mfn))
+                        elif mfn in ("DATEADD", "PARALLELPERIOD") and len(mod.args) >= 3:
+                            intv_raw = str(getattr(mod.args[2], "name", getattr(mod.args[2], "value", "YEAR"))).upper()
+                            u = "YEAR" if "YEAR" in intv_raw else ("QUARTER" if "QUARTER" in intv_raw else ("MONTH" if "MONTH" in intv_raw else "DAY"))
+                            amt = -1
+                            arg1 = mod.args[1]
+                            if isinstance(arg1, UnaryOpNode) and arg1.op == "-":
+                                try:
+                                    amt = -abs(int(getattr(arg1.operand, "value", 1)))
+                                except Exception:
+                                    amt = -1
+                            elif isinstance(arg1, LiteralNode):
+                                try:
+                                    amt = int(getattr(arg1, "value", -1))
+                                except Exception:
+                                    amt = -1
+                            shifted_calls.append((base, u, amt, mfn))
+            for a in n.args:
+                _find_shifted(a)
+        elif isinstance(n, BinaryOpNode):
+            _find_shifted(n.left)
+            _find_shifted(n.right)
+        elif isinstance(n, UnaryOpNode):
+            _find_shifted(n.operand)
+        elif isinstance(n, VarNode):
+            for _, ve in n.variables:
+                _find_shifted(ve)
+            _find_shifted(n.body)
+
+    _find_shifted(node)
+    if not shifted_calls:
+        return set()
+
+    target_names = set()
+    has_target = False
+    for base, _, _, _ in shifted_calls:
+        if isinstance(base, MeasureRefNode):
+            target_names.add(base.name.upper())
+        elif isinstance(base, FunctionCallNode):
+            has_target = True
+
+    found_unshifted = [False]
+
+    def _find_unshifted(n: DaxNode, inside_shifted: bool = False):
+        if inside_shifted:
+            return
+        if isinstance(n, FunctionCallNode):
+            fn = n.func.upper()
+            if fn == "CALCULATE" and len(n.args) >= 2:
+                is_shifted_call = False
+                for mod in n.args[1:]:
+                    if isinstance(mod, FunctionCallNode) and mod.func.upper() in (
+                        "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "DATEADD", "PARALLELPERIOD"
+                    ):
+                        is_shifted_call = True
+                        break
+                if is_shifted_call:
+                    for a in n.args:
+                        _find_unshifted(a, True)
+                    return
+            if has_target and fn in ("SUM", "AVG", "AVERAGE", "MIN", "MAX"):
+                found_unshifted[0] = True
+            for a in n.args:
+                _find_unshifted(a, False)
+        elif isinstance(n, MeasureRefNode):
+            if n.name.upper() in target_names:
+                found_unshifted[0] = True
+        elif isinstance(n, BinaryOpNode):
+            _find_unshifted(n.left, False)
+            _find_unshifted(n.right, False)
+        elif isinstance(n, UnaryOpNode):
+            _find_unshifted(n.operand, False)
+        elif isinstance(n, VarNode):
+            for _, ve in n.variables:
+                _find_unshifted(ve, False)
+            _find_unshifted(n.body, False)
+
+    _find_unshifted(node)
+    if not found_unshifted[0]:
+        return set()
+
+    res = set()
+    for _, u, amt, mfn in shifted_calls:
+        res.add((f"CURRENT_{u}",))
+        if mfn == "SAMEPERIODLASTYEAR":
+            res.add(("SPLY_YEAR",))
+        elif abs(amt) == 1:
+            res.add((f"PREV_{u}",))
+        else:
+            res.add((f"SPLY_{abs(amt)}_{u}",))
+    return res
+
+
 def discover_time_intelligence_shapes(metrics: Iterable[Any]) -> Set[Shape]:
     """Scan every metric's own DAX expression and return the deduplicated
     set of canonical time-intelligence shapes actually needed by this
@@ -294,7 +491,19 @@ def discover_time_intelligence_shapes(metrics: Iterable[Any]) -> Set[Shape]:
     `.expression` (DAX text) attributes — the same shape as SML/OSI metric
     objects already used throughout this package.
     """
-    return set(metrics_with_time_intelligence_shapes(metrics).values())
+    discovered = set(metrics_with_time_intelligence_shapes(metrics).values())
+    parser = DaxAstParser()
+    for m in metrics:
+        expr = getattr(m, "expression", None)
+        if not expr or not str(expr).strip():
+            continue
+        try:
+            ast = parser.parse(expr)
+            if ast:
+                discovered |= detect_comparison_shapes(ast)
+        except Exception:
+            pass
+    return discovered
 
 
 def predict_anchor_flag_map(
@@ -364,17 +573,37 @@ def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) ->
     if not shape:
         raise ValueError("build_shape_boolean_sql requires a non-empty shape")
 
+    if len(shape) == 1 and shape[0] in CURRENT_UNITS:
+        unit = CURRENT_UNITS[shape[0]]
+        if unit == "MONTH":
+            return f"YEAR({date_col_sql}) = YEAR({anchor_sql}) AND MONTH({date_col_sql}) = MONTH({anchor_sql})"
+        if unit == "QUARTER":
+            return f"YEAR({date_col_sql}) = YEAR({anchor_sql}) AND QUARTER({date_col_sql}) = QUARTER({anchor_sql})"
+        if unit == "YEAR":
+            return f"YEAR({date_col_sql}) = YEAR({anchor_sql})"
+        if unit == "DAY":
+            return f"{date_col_sql} = {anchor_sql}"
+
     if len(shape) == 1 and shape[0].startswith("R") and shape[0].endswith("M") and shape[0][1:-1].isdigit():
         n_months = int(shape[0][1:-1])
         return f"{date_col_sql} > DATEADD(MONTH, -{n_months}, {anchor_sql}) AND {date_col_sql} <= {anchor_sql}"
 
     effective_anchor = anchor_sql
-    lag_components = [c for c in shape if c in LAG_UNITS]
+    lag_components = [
+        c for c in shape
+        if c in LAG_UNITS or bool(re.match(r"^SPLY_\d+_[A-Z]+$", c))
+    ]
     period_components = [c for c in shape if c in PERIOD_UNITS]
 
     for component in lag_components:
-        unit = LAG_UNITS[component]
-        effective_anchor = f"DATEADD({unit}, -1, {effective_anchor})"
+        m_amt = re.match(r"^SPLY_(\d+)_([A-Z]+)$", component)
+        if m_amt:
+            amt = int(m_amt.group(1))
+            unit = m_amt.group(2)
+        else:
+            amt = 1
+            unit = LAG_UNITS.get(component, "YEAR")
+        effective_anchor = f"DATEADD({unit}, -{amt}, {effective_anchor})"
 
     if period_components:
         unit = PERIOD_UNITS[period_components[0]]
@@ -384,12 +613,30 @@ def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) ->
         )
 
     # Lag-only shape (no period-to-date component): whole-prior-unit bound.
-    unit = LAG_UNITS[lag_components[-1]]
+    last_comp = lag_components[-1]
+    m_amt = re.match(r"^SPLY_(\d+)_([A-Z]+)$", last_comp)
+    if m_amt:
+        amt = int(m_amt.group(1))
+        unit = m_amt.group(2)
+    else:
+        amt = 1
+        unit = LAG_UNITS.get(last_comp, "YEAR")
+
+    if unit == "DAY":
+        return f"{date_col_sql} = {effective_anchor}"
+    if unit == "MONTH":
+        return f"YEAR({date_col_sql}) = YEAR({effective_anchor}) AND MONTH({date_col_sql}) = MONTH({effective_anchor})"
+    if unit == "QUARTER":
+        return f"YEAR({date_col_sql}) = YEAR({effective_anchor}) AND QUARTER({date_col_sql}) = QUARTER({effective_anchor})"
     if unit == "YEAR":
+        if last_comp.startswith("PREV_"):
+            return f"YEAR({date_col_sql}) = YEAR({effective_anchor})"
         return (
             f"{date_col_sql} >= DATE_TRUNC('YEAR', {effective_anchor}) "
             f"AND {date_col_sql} <= {effective_anchor}"
         )
-    if unit == "MONTH":
-        return f"YEAR({date_col_sql}) = YEAR({effective_anchor}) AND MONTH({date_col_sql}) = MONTH({effective_anchor})"
-    return f"YEAR({date_col_sql}) = YEAR({effective_anchor}) AND QUARTER({date_col_sql}) = QUARTER({effective_anchor})"
+
+    return (
+        f"{date_col_sql} >= DATE_TRUNC('{unit}', {effective_anchor}) "
+        f"AND {date_col_sql} <= {effective_anchor}"
+    )

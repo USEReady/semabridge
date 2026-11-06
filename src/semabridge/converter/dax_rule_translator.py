@@ -283,7 +283,7 @@ def rule_based_translation(
 
     advanced_translators = (
         ("time_intelligence", translate_time_intelligence_with_anchors),
-        ("fiscal_cutoff", translate_fiscal_cutoff),
+        ("scalar_dim_lookup", translate_scalar_dim_lookup),
         ("calculate_filters", translate_calculate_with_filters),
         ("divide_measures", translate_divide_measures),
         ("if_wrapped_divide", translate_if_wrapped_divide),
@@ -674,10 +674,11 @@ def _column_ref(table: str, column: str, default_alias: str = "") -> str:
 
 def _is_deterministic_rule_supported(dax: str) -> bool:
     clean = dax or ""
+    from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
     return bool(
         re.search(r"^\s*(SUM|AVERAGE|COUNT|MIN|MAX|DISTINCTCOUNT)\s*\(", clean, re.IGNORECASE)
         or re.search(r"\bTOTAL[YM]TD\s*\(|\bTOTALQTD\s*\(", clean, re.IGNORECASE)
-        or re.search(r"\bfiscal_yr_period\b", clean, re.IGNORECASE)
+        or match_scalar_dim_lookup_pattern(clean) is not None
         or re.search(r"^\s*CALCULATE\s*\(", clean, re.IGNORECASE)
         or re.search(r"^\s*(SUMX|AVERAGEX|MINX|MAXX)\s*\(", clean, re.IGNORECASE)
     )
@@ -797,33 +798,33 @@ def translate_time_intelligence_with_anchors(
     return result
 
 
-def translate_fiscal_cutoff(dax: str, table_alias: str) -> Optional[str]:
-    """Translate common fiscal period VAR/RETURN cutoff patterns."""
-    if not re.search(r"\bfiscal_yr_period\b", dax or "", re.IGNORECASE):
+def translate_scalar_dim_lookup(dax: str, table_alias: str) -> Optional[str]:
+    """Translate pattern-driven scalar dimension lookup into CASE-based aggregation.
+    
+    Pattern:
+      VAR x = CALCULATE(MAX|MIN(Dim[c]), Dim[k] = <scalar>)
+      ...
+      RETURN CALCULATE(<agg>(Fact[measure]), Fact[c] <op> x)
+    
+    Generates:
+      <agg>(CASE WHEN table_alias."<c>" <op> table_alias."_CURRENT_<c>" THEN table_alias."<measure>" END)
+    """
+    from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
+    pattern = match_scalar_dim_lookup_pattern(dax)
+    if not pattern:
         return None
 
-    return_match = re.search(r"\bRETURN\b\s+(.+)$", dax or "", re.IGNORECASE | re.DOTALL)
-    return_block = return_match.group(1).strip() if return_match else dax
-    agg_match = re.search(
-        r"SUM\s*\(\s*(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[([^\]]+)\]\s*\)",
-        return_block,
-        re.IGNORECASE,
-    )
-    if not agg_match:
-        return None
+    measure_table = pattern.measure_table or table_alias
+    measure_col = pattern.measure_col
+    meas_ref = _column_ref(measure_table, measure_col, table_alias)
 
-    measure_table = (agg_match.group(1) or agg_match.group(2) or table_alias).strip()
-    measure_col = agg_match.group(3).strip()
-    period_match = re.search(
-        r"(?:'([^']+)'|([A-Za-z_][A-Za-z0-9_ ]*))?\s*\[\s*FISCAL_YR_PERIOD\s*\]\s*(<=|>=|<>|=|<|>)\s*(?:fiscalMonth|currentPeriod|_current_fiscal_period)",
-        return_block,
-        re.IGNORECASE,
-    )
-    op = period_match.group(3) if period_match else "<"
-    period_table = ((period_match.group(1) or period_match.group(2)) if period_match else "DATES") or "DATES"
+    # Self-contained on the fact row: compare the fact's own <c> against the helper anchor _CURRENT_<c>
+    dim_col_ref = _column_ref(table_alias, pattern.dim_col, table_alias)
+    helper_ref = f'{table_alias}."{pattern.helper_name}"'
+
     return (
-        f"SUM(CASE WHEN {_column_ref(period_table, 'FISCAL_YR_PERIOD', table_alias)} {op} _current_fiscal_period "
-        f"THEN {_column_ref(measure_table, measure_col, table_alias)} ELSE 0 END)"
+        f"{pattern.measure_agg}(CASE WHEN {dim_col_ref} {pattern.op} {helper_ref} "
+        f"THEN {meas_ref} END)"
     )
 
 
@@ -1001,8 +1002,8 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
         if inner_keep:
             inner_table_arg = inner_keep.group(1).strip()
         iterator_table = inner_table_arg.strip("'\"") or table_alias
-        if iterator_table and table_alias and iterator_table.upper() != table_alias.upper():
-            return None
+        if iterator_table:
+            table_alias = iterator_table
         where_conditions = _parse_simple_predicate_conditions(filter_parts[1], table_alias)
         if where_conditions is None:
             return None
@@ -1039,6 +1040,8 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     if where_conditions is not None:
         where = " AND ".join(where_conditions)
         cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
+        if sql_func in ("COUNT", "AVG"):
+            return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} END)"
         return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} ELSE 0 END)"
 
     cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""

@@ -8,7 +8,7 @@ This separates "what to run" (ExecutionConfig) from "how to run it" (ConnectorBe
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, List, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -408,6 +408,14 @@ class FeatureFlags(BaseModel):
         ),
     )
 
+class DateDimensionBehavior(BaseModel):
+    """Configuration for date/calendar dimensions used in time intelligence."""
+    date_table_names: List[str] = Field(
+        default_factory=list,
+        description="Table names or patterns recognized as date/calendar dimensions",
+    )
+
+
 class LegacyCleanup(BaseModel):
     """Cleanup options for old features."""
     drop_deprecated_views: bool = Field(
@@ -427,6 +435,7 @@ class ConnectorBehavior(BaseModel):
     compatibility: CompatibilityBehavior = Field(default_factory=CompatibilityBehavior)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
     legacy: LegacyCleanup = Field(default_factory=LegacyCleanup)
+    date_dimension: DateDimensionBehavior = Field(default_factory=DateDimensionBehavior)
 
     @model_validator(mode="before")
     @classmethod

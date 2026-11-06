@@ -49,8 +49,7 @@ Usage
 from __future__ import annotations
 from semabridge.utils.naming import to_alias
 
-
-
+import contextlib
 import os
 import re
 
@@ -568,12 +567,19 @@ class DaxLexer:
         self.pos += 1  # skip closing '
 
         # Now consume [ColumnName]
+
         col_name = ""
+
         if self.pos < len(self.text) and self.text[self.pos] == "[":
+
             self.pos += 1  # skip [
+
             while self.pos < len(self.text) and self.text[self.pos] != "]":
+
                 col_name += self.text[self.pos]
+
                 self.pos += 1
+
             self.pos += 1  # skip ]
 
         # Check for Power BI hierarchy: 'Table'[Column].[Level]
@@ -590,6 +596,7 @@ class DaxLexer:
                 self.pos += 1
 
         raw = self.text[start : self.pos]
+
         return DaxToken(DaxTokenType.COLUMN_REF, raw, start)
 
 
@@ -678,6 +685,14 @@ class DaxLexer:
 
             return DaxToken(DaxTokenType.RETURN, word, start)
 
+        if word_lower == "not":
+            peek_pos = self.pos
+            while peek_pos < len(self.text) and self.text[peek_pos] in " \t\r\n":
+                peek_pos += 1
+            if peek_pos < len(self.text) and self.text[peek_pos] == "(":
+                return DaxToken(DaxTokenType.FUNC_NAME, word.upper(), start)
+            return DaxToken(DaxTokenType.NOT, word, start)
+
         if word_lower in _DAX_FUNCTIONS:
 
             return DaxToken(DaxTokenType.FUNC_NAME, word, start)
@@ -691,10 +706,6 @@ class DaxLexer:
         if word_lower == "or":
 
             return DaxToken(DaxTokenType.OR, word, start)
-
-        if word_lower == "not":
-
-            return DaxToken(DaxTokenType.NOT, word, start)
 
         if word_lower in ("true", "false"):
 
@@ -1323,12 +1334,16 @@ class DaxAstParser:
 
 
         if tok.type == DaxTokenType.COLUMN_REF:
+
             self._advance()
-            # Parse 'Table'[Column] or 'Table'[Column].[Level]
-            m = re.match(r"'([^']+)'\[([^\]]+)\](?:\.\[([^\]]+)\])?", tok.value)
+
+            # Parse 'Table'[Column] or 'Table'[Column].[Level] or [Column].[Level]
+            m = re.match(r"(?:'([^']+)')?\[([^\]]+)\](?:\.\[([^\]]+)\])?", tok.value)
             if m:
                 target_col = m.group(3) or m.group(2)
-                return ColumnRefNode(table=m.group(1), column=target_col, raw=tok.value)
+                tbl = m.group(1) or ""
+                return ColumnRefNode(table=tbl, column=target_col, raw=tok.value)
+
             return IdentifierNode(name=tok.value)
 
 
@@ -1450,9 +1465,9 @@ class DaxAstParser:
 
 
         if self._peek().type != DaxTokenType.LPAREN:
-
+            if func_name == "NOT":
+                return UnaryOpNode(op="NOT", operand=self._parse_comparison())
             # Bare identifier without call
-
             return IdentifierNode(name=tok.value)
 
 
@@ -1670,6 +1685,92 @@ def extract_measure_references_from_ast(dax: str, known_measure_names: Optional[
 
 
 
+_TI_DATE_ARG_FUNCS = {
+    "TOTALYTD": 1, "TOTALMTD": 1, "TOTALQTD": 1,                 # arg index of the dates column
+    "SAMEPERIODLASTYEAR": 0, "PREVIOUSYEAR": 0, "PREVIOUSMONTH": 0, "PREVIOUSQUARTER": 0,
+    "DATEADD": 0, "DATESYTD": 0, "DATESMTD": 0, "DATESQTD": 0, "PARALLELPERIOD": 0,
+    "DATESINPERIOD": 0, "DATESBETWEEN": 0, "LASTDATE": 0, "FIRSTDATE": 0,
+}
+
+
+def _ti_date_tables_in_ast(node: Optional[DaxNode], out: Set[str]) -> None:
+    """Tables used as the dates argument of a time-intelligence function."""
+    if node is None:
+        return
+    if isinstance(node, FunctionCallNode):
+        idx = _TI_DATE_ARG_FUNCS.get(node.func.upper())
+        if idx is not None and len(node.args) > idx and isinstance(node.args[idx], ColumnRefNode) and node.args[idx].table:
+            out.add(node.args[idx].table.strip("'").casefold())
+        for a in node.args:
+            _ti_date_tables_in_ast(a, out)
+    elif isinstance(node, BinaryOpNode):
+        _ti_date_tables_in_ast(node.left, out)
+        _ti_date_tables_in_ast(node.right, out)
+    elif isinstance(node, UnaryOpNode):
+        _ti_date_tables_in_ast(node.operand, out)
+    elif isinstance(node, VarNode):
+        for _, v in node.variables:
+            _ti_date_tables_in_ast(v, out)
+        _ti_date_tables_in_ast(node.body, out)
+
+
+def detect_date_tables(
+    datasets: Iterable[Any],
+    relationships: Iterable[Any],
+    measure_dax: Iterable[str],
+    config_date_table_names: Optional[Iterable[str]] = None,
+) -> Set[str]:
+    """Date tables from metadata only - never from table names.
+    Optional config_date_table_names provides an explicit override list if specified.
+    """
+    found: Set[str] = set()
+    if config_date_table_names:
+        for n in config_date_table_names:
+            if n:
+                found.add(str(n).strip().casefold())
+    col_type: Dict[Tuple[str, str], str] = {}
+    keys: Dict[str, Set[str]] = {}
+    for ds in datasets or ():
+        name = str(getattr(ds, "unique_name", None) or getattr(ds, "name", "")).strip().casefold()
+        if not name:
+            continue
+        # 1. marked as date table in Power BI
+        if getattr(ds, "is_date_table", False) or str(getattr(ds, "data_category", "") or "").casefold() == "time":
+            found.add(name)
+        pk = getattr(ds, "primary_key", None) or []
+        keys[name] = {str(k).casefold() for k in ([pk] if isinstance(pk, str) else pk)}
+        for col in getattr(ds, "columns", []) or []:
+            c = str(getattr(col, "unique_name", None) or getattr(col, "name", "")).casefold()
+            dt = getattr(col, "data_type", None) or getattr(col, "type", None)
+            col_type[(name, c)] = str(getattr(dt, "value", dt) or "").upper()
+            if getattr(col, "is_key", False) or getattr(col, "is_unique", False):
+                keys[name].add(c)
+    # 2. used as the dates argument of a time-intelligence function
+    parser = DaxAstParser()
+    for dax in measure_dax or ():
+        if not dax:
+            continue
+        try:
+            ast = parser.parse(dax)
+            _ti_date_tables_in_ast(ast, found)
+        except Exception:
+            pass
+    # 3. 'one' side of an active relationship on a unique, date-typed key
+    for rel in relationships or ():
+        if not getattr(rel, "is_active", getattr(rel, "isActive", True)):
+            continue
+        to_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "toTable", "") or "").strip().casefold()
+        to_cols = getattr(rel, "to_columns", None) or ([getattr(rel, "toColumn", None)] if getattr(rel, "toColumn", None) else [])
+        for c in to_cols:
+            if not c:
+                continue
+            c_cf = str(c).casefold()
+            t_type = col_type.get((to_ds, c_cf), "")
+            if ("DATE" in t_type or "TIME" in t_type) and c_cf in keys.get(to_ds, set()):
+                found.add(to_ds)
+    return found
+
+
 class DaxSqlRenderer:
 
     """
@@ -1822,19 +1923,26 @@ class DaxSqlRenderer:
 
     # ColumnRefNode naming one of these is resolved to date_alias rather
 
-    _DEFAULT_DATE_TABLE_NAMES = frozenset({
-        "date", "dates", "dim_date", "dimdate", "dim_dates",
-        "calendar", "calendars", "dim_calendar", "dimcalendar", "dim_calendars",
-        "fiscal_calendar", "fiscalcalendar", "posting_date", "posting_dates",
-    })
+    # than the primary table.
 
-    @classmethod
-    def _is_date_table_name(cls, name: Optional[str]) -> bool:
-        """Check if a table name matches known standard date table names."""
-        if not name:
-            return False
-        clean = str(name).strip().strip("'\"").casefold()
-        return clean in cls._DEFAULT_DATE_TABLE_NAMES
+    def _ti_date_column_sql(self, args: List[DaxNode]) -> str:
+        """The dates column exactly as written in the DAX, on its own table's alias."""
+        search_args = args[1:] if len(args) > 1 else args
+        for arg in search_args:
+            if isinstance(arg, ColumnRefNode) and arg.column:
+                alias = self._resolve_table_alias(arg.table) if arg.table else self.date_alias
+                return f'{alias}."{sanitize_column(arg.column)}"'
+            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
+                alias = self.date_alias
+                return f'{alias}."{sanitize_column(arg.name)}"'
+        for arg in args:
+            if isinstance(arg, ColumnRefNode) and arg.column:
+                alias = self._resolve_table_alias(arg.table) if arg.table else self.date_alias
+                return f'{alias}."{sanitize_column(arg.column)}"'
+            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
+                alias = self.date_alias
+                return f'{alias}."{sanitize_column(arg.name)}"'
+        raise self.DaxRenderError("no date column found for time-intelligence function")
 
 
     def __init__(
@@ -1874,7 +1982,7 @@ class DaxSqlRenderer:
         model_metadata: Optional[Any] = None,
         dataset_col_lookup: Optional[Dict[str, set]] = None,
         current_measure_name: Optional[str] = None,
-
+        measure_dax_map: Optional[Dict[str, str]] = None,
     ) -> None:
 
         # Keep alias as provided (caller passes the correct form)
@@ -1885,6 +1993,8 @@ class DaxSqlRenderer:
         self.current_measure_name = current_measure_name
 
         self.measure_sql_map = measure_sql_map or {}
+        self.measure_dax_map = measure_dax_map or {}
+        self._current_loo_info: Optional[Dict[str, Any]] = None
 
         self.measure_non_additive_map = measure_non_additive_map or {}
 
@@ -1892,7 +2002,7 @@ class DaxSqlRenderer:
 
         self.table_key_map = table_key_map or {}
 
-        self.allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+        self.allow_window_enrichment = bool(allow_window_enrichment)
 
         self.window_precompute_columns: List[Tuple[str, str, str, str]] = []
         self.datasets = datasets
@@ -1900,6 +2010,11 @@ class DaxSqlRenderer:
         self.dataset_col_lookup = dataset_col_lookup
 
         self._userel_overrides: Dict[str, str] = {}
+        self._in_shifted_calculate: int = 0
+        self._comparison_context: Optional[Dict[str, Any]] = None
+        self.comparison_unit: Optional[str] = None
+        self.comparison_comment: Optional[str] = None
+        self.last_render_error: Optional[str] = None
 
         # The DAX table name (e.g. "KPI") that table_alias physically
 
@@ -1916,64 +2031,17 @@ class DaxSqlRenderer:
         self.primary_table_name = primary_table_name
 
         self._date_table_names_cf = {
-
-            str(n).strip().casefold()
-
-            for n in (date_table_names or self._DEFAULT_DATE_TABLE_NAMES)
-
+            str(n).strip().strip("'").casefold()
+            for n in (date_table_names or ())
         }
-        self._date_table_names_cf.update(self._DEFAULT_DATE_TABLE_NAMES)
 
         self.table_aliases = table_aliases or {}
 
         self._table_aliases_cf = {
-
             str(k).strip().strip("'").casefold(): v for k, v in self.table_aliases.items()
-
         }
-        for tbl_name in self.table_aliases:
-            if self._is_date_table_name(tbl_name):
-                self._date_table_names_cf.add(str(tbl_name).strip().casefold())
 
-        # Build column type map and identify date tables from metadata only
-        all_datasets = datasets or getattr(model_metadata, "datasets", None) or []
-        ds_col_types = {}
-        for ds in all_datasets:
-            ds_name = getattr(ds, "unique_name", None) or getattr(ds, "name", None)
-            if not ds_name:
-                continue
-            ds_name_cf = str(ds_name).strip().casefold()
-            is_dt_table = getattr(ds, "is_date_table", False)
-            data_cat = str(getattr(ds, "data_category", "") or "").casefold()
-            if is_dt_table or data_cat == "time" or self._is_date_table_name(ds_name):
-                self._date_table_names_cf.add(ds_name_cf)
-            for col in getattr(ds, "columns", []) or []:
-                c_name = getattr(col, "unique_name", None) or getattr(col, "name", None)
-                if c_name:
-                    dt = getattr(col, "data_type", None) or getattr(col, "type", None)
-                    dt_str = str(dt.value if hasattr(dt, "value") else dt or "").upper()
-                    ds_col_types[(ds_name_cf, str(c_name).casefold())] = dt_str
-
-        # Relationships: date-typed join keys in active relationships
         self.relationships = relationships
-        if self.relationships is not None:
-            for rel in self.relationships:
-                is_active = getattr(rel, "is_active", getattr(rel, "isActive", True))
-                if not is_active:
-                    continue
-                f_ds = str(getattr(rel, "from_dataset", "") or getattr(rel, "fromTable", "") or "").strip().casefold()
-                t_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "toTable", "") or "").strip().casefold()
-                f_cols = getattr(rel, "from_columns", None) or [getattr(rel, "fromColumn", None)]
-                t_cols = getattr(rel, "to_columns", None) or [getattr(rel, "toColumn", None)]
-
-                for fc in f_cols:
-                    if fc and any(d_word in ds_col_types.get((f_ds, str(fc).casefold()), "") for d_word in ("DATE", "TIME")):
-                        if self.primary_table_name and f_ds != self.primary_table_name.strip("'").casefold():
-                            self._date_table_names_cf.add(f_ds)
-                for tc in t_cols:
-                    if tc and any(d_word in ds_col_types.get((t_ds, str(tc).casefold()), "") for d_word in ("DATE", "TIME")):
-                        if self.primary_table_name and t_ds != self.primary_table_name.strip("'").casefold():
-                            self._date_table_names_cf.add(t_ds)
 
         # Shape tuple (see converter/time_intelligence_shapes.py, e.g.
 
@@ -2070,6 +2138,35 @@ class DaxSqlRenderer:
         )
 
         self._var_scopes: List[Dict[str, str]] = []
+        self.row_context_stack: List[str] = []
+
+    def _extract_table_name(self, node: Any) -> Optional[str]:
+        if node is None:
+            return None
+        if isinstance(node, IdentifierNode):
+            return node.name.strip("'\"")
+        if isinstance(node, ColumnRefNode):
+            return (node.table or "").strip("'\"") or None
+        if isinstance(node, FunctionCallNode):
+            fn = node.func.upper()
+            if fn in ("KEEPFILTERS", "ALL", "ALLNOBLANKROW", "REMOVEFILTERS", "FILTER") and node.args:
+                return self._extract_table_name(node.args[0])
+        name = getattr(node, "name", None) or getattr(node, "table", None) or getattr(node, "raw", None)
+        if name and isinstance(name, str) and not name.startswith("["):
+            return name.strip("'\"")
+        return None
+
+    @contextlib.contextmanager
+    def _row_context(self, table_name: Optional[str]):
+        if table_name:
+            clean_name = str(table_name).strip().strip("'\"")
+            self.row_context_stack.append(clean_name)
+            try:
+                yield
+            finally:
+                self.row_context_stack.pop()
+        else:
+            yield
 
 
 
@@ -2094,35 +2191,19 @@ class DaxSqlRenderer:
         self._var_scopes.append(new_scope)
 
         if not hasattr(self, "_var_ast_map"):
-
             self._var_ast_map = {}
-
-        old_ast_map = dict(self._var_ast_map)
-
         try:
-
             for var_name, var_expr in node.variables:
-
                 clean_name = str(var_name or "").strip("[]").casefold()
-
                 self._var_ast_map[clean_name] = var_expr
-
                 if self._extract_closing_balance_dimension(var_expr) is not None:
-
                     continue
-
                 try:
-
                     var_sql = self._render_node(var_expr)
-
                     if var_sql and validate_emitted_sql(var_sql):
-
                         new_scope[clean_name] = f"({var_sql})"
-
                 except self.DaxRenderError:
-
                     pass
-
             body_sql = self._render_node(node.body)
 
             if not body_sql or not validate_emitted_sql(body_sql):
@@ -2134,8 +2215,6 @@ class DaxSqlRenderer:
         finally:
 
             self._var_scopes.pop()
-
-            self._var_ast_map = old_ast_map
 
 
 
@@ -2155,8 +2234,15 @@ class DaxSqlRenderer:
 
             return None
 
-        try:
+        # Rule B: A measure whose DAX is only a numeric literal -> constant metric rendered as MAX(<literal>)
+        num_lit = dax_numeric_literal_value(node)
+        if num_lit is not None:
+            return f"MAX({num_lit})"
 
+        try:
+            self._detect_and_setup_loo(node)
+            inlined_for_comparison = self._inline_vars_and_measures(node)
+            self._detect_and_setup_comparison(inlined_for_comparison)
             sql = self._render_node(node)
 
             if not validate_emitted_sql(sql):
@@ -2168,8 +2254,387 @@ class DaxSqlRenderer:
         except self.DaxRenderError as exc:
 
             logger.debug(f"AST render failed (recoverable): {exc}")
+            self.last_render_error = str(exc)
 
             return None
+
+    def _extract_shift_amount(self, arg1: DaxNode) -> int:
+        if isinstance(arg1, UnaryOpNode) and arg1.op == "-":
+            if isinstance(arg1.operand, LiteralNode):
+                try:
+                    val = arg1.operand.value
+                    if isinstance(val, int) and not isinstance(val, bool):
+                        return -val
+                    if isinstance(val, str) and re.match(r"^\d+$", val.strip()):
+                        return -int(val.strip())
+                except (ValueError, TypeError):
+                    pass
+        elif isinstance(arg1, LiteralNode):
+            try:
+                val = arg1.value
+                if isinstance(val, int) and not isinstance(val, bool):
+                    return val
+                if isinstance(val, str) and re.match(r"^-?\d+$", val.strip()):
+                    return int(val.strip())
+            except (ValueError, TypeError):
+                pass
+        raise self.DaxRenderError("DATEADD shift amount must be a literal integer")
+
+    def _inline_vars_and_measures(
+        self,
+        node: DaxNode,
+        seen_measures: Optional[Set[str]] = None,
+        var_env: Optional[Dict[str, DaxNode]] = None,
+    ) -> DaxNode:
+        """Inline VAR definitions and referenced measures into a single expression tree
+        before detecting time comparisons or leave-one-out patterns."""
+        if node is None:
+            return node
+        if seen_measures is None:
+            seen_measures = set()
+        if var_env is None:
+            var_env = {}
+
+        if isinstance(node, VarNode):
+            new_env = dict(var_env)
+            for vname, vexpr in node.variables:
+                clean_v = str(vname or "").strip("[]").casefold()
+                inlined_vexpr = self._inline_vars_and_measures(vexpr, seen_measures, new_env)
+                new_env[clean_v] = inlined_vexpr
+            return self._inline_vars_and_measures(node.body, seen_measures, new_env)
+
+        if isinstance(node, IdentifierNode):
+            clean_id = str(node.name or "").strip("[]").casefold()
+            if clean_id in var_env:
+                return var_env[clean_id]
+            return node
+
+        if isinstance(node, ColumnRefNode):
+            if not node.table:
+                clean_c = str(node.column or "").strip("[]").casefold()
+                if clean_c in var_env:
+                    return var_env[clean_c]
+            return node
+
+        if isinstance(node, MeasureRefNode):
+            clean_m = str(node.name or "").strip("[]").casefold()
+            if clean_m in var_env:
+                return var_env[clean_m]
+            measure_dax = getattr(self, "measure_dax_map", None) or {}
+            dax_text = measure_dax.get(node.name) or measure_dax.get(node.name.upper()) or measure_dax.get(clean_m)
+            if dax_text and clean_m not in seen_measures:
+                try:
+                    parsed = DaxAstParser().parse(dax_text)
+                    if parsed:
+                        return self._inline_vars_and_measures(parsed, seen_measures | {clean_m}, var_env)
+                except Exception:
+                    pass
+            return node
+
+        if isinstance(node, FunctionCallNode):
+            new_args = [self._inline_vars_and_measures(a, seen_measures, var_env) for a in node.args]
+            return FunctionCallNode(func=node.func, args=new_args)
+
+        if isinstance(node, BinaryOpNode):
+            new_l = self._inline_vars_and_measures(node.left, seen_measures, var_env)
+            new_r = self._inline_vars_and_measures(node.right, seen_measures, var_env)
+            return BinaryOpNode(left=new_l, op=node.op, right=new_r)
+
+        if isinstance(node, UnaryOpNode):
+            new_op = self._inline_vars_and_measures(node.operand, seen_measures, var_env)
+            return UnaryOpNode(op=node.op, operand=new_op)
+
+        return node
+
+    def _detect_and_setup_loo(self, node: DaxNode) -> None:
+        """Pre-scan the AST for a leave-one-out pattern:
+        CALCULATE(agg, FILTER(ALL(T), T[c] <> SELECTEDVALUE(T[c]))).
+        Sets up self._current_loo_info so all parts of the measure (including sibling
+        variables like AllAvg) can reference the correct decomposed window expressions."""
+        if node is None:
+            return
+
+        loo_found = []
+
+        def _walk(n: DaxNode):
+            if n is None or loo_found:
+                return
+            if isinstance(n, FunctionCallNode) and n.func.upper() == "CALCULATE" and len(n.args) >= 2:
+                base_arg = n.args[0]
+                for f_arg in n.args[1:]:
+                    if isinstance(f_arg, FunctionCallNode) and f_arg.func.upper() == "FILTER" and len(f_arg.args) >= 2:
+                        f_tbl = f_arg.args[0]
+                        f_pred = f_arg.args[1]
+                        if isinstance(f_tbl, FunctionCallNode) and f_tbl.func.upper() in ("ALL", "ALLNOBLANKROW", "REMOVEFILTERS"):
+                            if isinstance(f_pred, BinaryOpNode) and f_pred.op in ("<>", "!="):
+                                col_node, sv_node = None, None
+                                if isinstance(f_pred.left, ColumnRefNode) and isinstance(f_pred.right, FunctionCallNode) and f_pred.right.func.upper() == "SELECTEDVALUE":
+                                    col_node, sv_node = f_pred.left, f_pred.right
+                                elif isinstance(f_pred.right, ColumnRefNode) and isinstance(f_pred.left, FunctionCallNode) and f_pred.left.func.upper() == "SELECTEDVALUE":
+                                    col_node, sv_node = f_pred.right, f_pred.left
+                                if col_node and sv_node and sv_node.args and isinstance(sv_node.args[0], ColumnRefNode):
+                                    c1 = sanitize_column(col_node.column).upper()
+                                    c2 = sanitize_column(sv_node.args[0].column).upper()
+                                    if c1 == c2:
+                                        t1 = getattr(col_node, "table", None) or ""
+                                        loo_found.append((t1, c1, base_arg))
+                                        return
+            for child in getattr(n, "args", []) or []:
+                _walk(child)
+            for attr in ("left", "right", "operand", "body"):
+                if hasattr(n, attr):
+                    _walk(getattr(n, attr))
+            if isinstance(n, VarNode):
+                for _, ve in n.variables:
+                    _walk(ve)
+
+        _walk(node)
+        if not loo_found:
+            return
+
+        t1, c1, base_arg = loo_found[0]
+        inner_fn = getattr(base_arg, "func", "").upper() if isinstance(base_arg, FunctionCallNode) else ""
+        if inner_fn in ("MIN", "MAX", "DISTINCTCOUNT", "DISTINCTCOUNTNOBLANK"):
+            raise self.DaxRenderError("leave-one-out not decomposable")
+
+        tbl_alias = self.table_aliases.get(t1, t1).upper() if (t1 and self.table_aliases) else self.table_alias.upper()
+        dim_ref = f'{tbl_alias}."{c1}"'
+
+        agg_col_node = base_arg.args[0] if (isinstance(base_arg, FunctionCallNode) and base_arg.args) else None
+        agg_col_name = getattr(agg_col_node, "column", None) or getattr(agg_col_node, "name", None) or "AMOUNT"
+        safe_agg_col = sanitize_column(agg_col_name).upper()
+
+        fact_alias = self.table_alias.upper()
+        sum_total = f'SUM({fact_alias}."{safe_agg_col}_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING {dim_ref})'
+        sum_own = f'{fact_alias}."{safe_agg_col}_SUM"'
+        cnt_total = f'SUM({fact_alias}."{safe_agg_col}_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING {dim_ref})'
+        cnt_own = f'{fact_alias}."{safe_agg_col}_CNT"'
+
+        self._current_loo_info = {
+            "dim_ref": dim_ref,
+            "col_name": c1,
+            "agg_col": safe_agg_col,
+            "inner_fn": inner_fn,
+            "sum_total": sum_total,
+            "sum_own": sum_own,
+            "cnt_total": cnt_total,
+            "cnt_own": cnt_own,
+        }
+
+    def _detect_and_setup_comparison(self, node: DaxNode) -> None:
+        """Detect if this measure compares an unshifted reference [X] with a shifted reference
+        CALCULATE([X], <time_func>), and prepare the comparison context so both sides receive
+        matching period flags."""
+        if node is None:
+            return
+
+        shifted_calls: List[Tuple[Any, str, int, str, DaxNode]] = []
+
+        def _find_shifted(n: DaxNode):
+            if isinstance(n, FunctionCallNode):
+                fn = n.func.upper()
+                if fn == "CALCULATE" and len(n.args) >= 2:
+                    base = n.args[0]
+                    for mod in n.args[1:]:
+                        if isinstance(mod, FunctionCallNode):
+                            mfn = mod.func.upper()
+                            if mfn in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
+                                u = "YEAR" if "YEAR" in mfn else ("MONTH" if "MONTH" in mfn else "QUARTER")
+                                shifted_calls.append((base, u, -1, mfn, n))
+                            elif mfn in ("DATEADD", "PARALLELPERIOD") and len(mod.args) >= 3:
+                                amt = self._extract_shift_amount(mod.args[1])
+                                intv_raw = str(getattr(mod.args[2], "name", getattr(mod.args[2], "value", "YEAR"))).upper()
+                                if "YEAR" in intv_raw:
+                                    u = "YEAR"
+                                elif "QUARTER" in intv_raw:
+                                    u = "QUARTER"
+                                elif "MONTH" in intv_raw:
+                                    u = "MONTH"
+                                elif "DAY" in intv_raw:
+                                    u = "DAY"
+                                else:
+                                    raise self.DaxRenderError(f"Unsupported DATEADD interval '{intv_raw}'")
+                                shifted_calls.append((base, u, amt, mfn, n))
+                for a in n.args:
+                    _find_shifted(a)
+            elif isinstance(n, BinaryOpNode):
+                _find_shifted(n.left)
+                _find_shifted(n.right)
+            elif isinstance(n, UnaryOpNode):
+                _find_shifted(n.operand)
+            elif isinstance(n, VarNode):
+                for _, ve in n.variables:
+                    _find_shifted(ve)
+                _find_shifted(n.body)
+
+        _find_shifted(node)
+        if not shifted_calls:
+            return
+
+        first_call = shifted_calls[0]
+        base_unit = first_call[1]
+        base_amt = first_call[2]
+        base_mfn = first_call[3]
+        for _, u, amt, mfn, _ in shifted_calls[1:]:
+            if u != base_unit or amt != base_amt:
+                raise self.DaxRenderError("Conflicting time windows in comparison measure")
+            if (base_mfn == "SAMEPERIODLASTYEAR") != (mfn == "SAMEPERIODLASTYEAR"):
+                raise self.DaxRenderError("Conflicting time windows in comparison measure")
+
+        target_name = None
+        target_agg = None
+        if isinstance(first_call[0], MeasureRefNode):
+            target_name = first_call[0].name
+        elif isinstance(first_call[0], FunctionCallNode):
+            target_agg = first_call[0]
+
+        shifted_calc_ids = {id(sc[4]) for sc in shifted_calls}
+        found_unshifted = [False]
+
+        def _find_unshifted(n: DaxNode):
+            if id(n) in shifted_calc_ids:
+                return
+            if isinstance(n, MeasureRefNode):
+                if target_name and n.name.casefold() == target_name.casefold():
+                    found_unshifted[0] = True
+            elif isinstance(n, FunctionCallNode):
+                if target_agg and n.func.upper() == target_agg.func.upper():
+                    found_unshifted[0] = True
+                for a in n.args:
+                    _find_unshifted(a)
+            elif isinstance(n, BinaryOpNode):
+                _find_unshifted(n.left)
+                _find_unshifted(n.right)
+            elif isinstance(n, UnaryOpNode):
+                _find_unshifted(n.operand)
+            elif isinstance(n, VarNode):
+                for _, ve in n.variables:
+                    _find_unshifted(ve)
+                _find_unshifted(n.body)
+
+        _find_unshifted(node)
+        if not found_unshifted[0]:
+            return
+
+        curr_shape = (f"CURRENT_{base_unit}",)
+        curr_flag = self.anchor_flag_map.get(curr_shape) if self.anchor_flag_map else None
+
+        if base_mfn == "SAMEPERIODLASTYEAR":
+            lag_shape = ("SPLY_YEAR",)
+        elif abs(base_amt) == 1:
+            lag_shape = (f"PREV_{base_unit}",)
+        else:
+            lag_shape = (f"SPLY_{abs(base_amt)}_{base_unit}",)
+
+        lag_flag = self.anchor_flag_map.get(lag_shape) if self.anchor_flag_map else None
+        # Only use flag-based comparison when the enriched view actually
+        # declares both flags; never reference a guessed column name.
+        if not curr_flag or not lag_flag:
+            return
+
+        self._comparison_context = {
+            "target_name": target_name,
+            "target_agg": target_agg,
+            "unit": base_unit,
+            "curr_flag": curr_flag,
+            "lag_flag": lag_flag,
+            "lag_shape": lag_shape,
+        }
+        self.comparison_unit = base_unit.lower()
+        self.comparison_comment = f"latest {base_unit.lower()} vs previous {base_unit.lower()} only"
+
+    def _is_operand_nullable(self, node: Optional[DaxNode], rendered_sql: str) -> bool:
+        """Operand nullability decided by the OUTERMOST function:
+        COUNT(...) is never nullable (even with CASE inside) -> False (non-nullable).
+        Numeric/boolean literals and constants -> False (non-nullable).
+        Otherwise (SUM, AVG, MIN, MAX, CASE without ELSE, arithmetic) -> True (nullable).
+        """
+        clean_sql = self._unwrap_str(rendered_sql)
+
+        # 1. Outermost COUNT is never nullable (even with CASE inside)
+        if re.match(r"^COUNT(?:_IF)?\s*\(", clean_sql, re.IGNORECASE):
+            return False
+
+        # 2. Numeric and boolean constants are never nullable
+        if re.match(r"^-?\d+(\.\d+)?$", clean_sql):
+            return False
+        if clean_sql.upper() in ("TRUE", "FALSE"):
+            return False
+
+        # 3. Outer node is COUNT in AST
+        if node is not None:
+            unwrapped_node = unwrap_var_body(node)
+            if isinstance(unwrapped_node, FunctionCallNode) and unwrapped_node.func.upper() in (
+                "COUNT", "COUNTA", "COUNTROWS", "DISTINCTCOUNT"
+            ):
+                return False
+
+        # 4. Any SUM/AVG/AVERAGE/MIN/MAX is nullable
+        if re.search(r"\b(SUM|AVG|AVERAGE|MIN|MAX)\s*\(", clean_sql, re.IGNORECASE):
+            return True
+
+        # Check for a CASE without an ELSE
+        tokens = re.findall(r"\b(CASE|ELSE|END)\b", clean_sql, re.IGNORECASE)
+        if tokens:
+            stack = []
+            for tok in tokens:
+                t = tok.upper()
+                if t == "CASE":
+                    stack.append(False)
+                elif t == "ELSE":
+                    if stack:
+                        stack[-1] = True
+                elif t == "END":
+                    if stack:
+                        has_else = stack.pop()
+                        if not has_else:
+                            return True
+
+        if node is not None and self._node_contains_nullable_func(node):
+            return True
+
+        return True
+
+    def _node_contains_nullable_func(self, node: DaxNode) -> bool:
+        if isinstance(node, FunctionCallNode):
+            func_u = node.func.upper()
+            if func_u in ("SUM", "AVG", "AVERAGE", "MIN", "MAX"):
+                return True
+            return any(self._node_contains_nullable_func(a) for a in node.args)
+        if isinstance(node, BinaryOpNode):
+            return self._node_contains_nullable_func(node.left) or self._node_contains_nullable_func(node.right)
+        if isinstance(node, UnaryOpNode):
+            return self._node_contains_nullable_func(node.operand)
+        if isinstance(node, VarNode):
+            return any(self._node_contains_nullable_func(v[1]) for v in node.variables) or self._node_contains_nullable_func(node.body)
+        return False
+
+    def _unwrap_str(self, s: str) -> str:
+        s = (s or "").strip()
+        while s.startswith("(") and s.endswith(")"):
+            depth = 0
+            matched = True
+            for c in s[:-1]:
+                if c == "(": depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if depth == 0:
+                        matched = False
+                        break
+            if matched and depth == 1:
+                s = s[1:-1].strip()
+            else:
+                break
+        return s
+
+    def _safe_coalesce_operand(self, s: str, is_nullable: bool) -> str:
+        if not is_nullable:
+            return s
+        unwrapped = self._unwrap_str(s)
+        u = unwrapped.upper()
+        if (u.startswith("COALESCE(") and (u.endswith(", 0)") or u.endswith(", 0.0)"))) or (u.startswith("IFF(") and u.endswith(", 0)")):
+            return s
+        return f"COALESCE({s}, 0)"
 
 
 
@@ -2238,149 +2703,84 @@ class DaxSqlRenderer:
 
 
     def _render_column_ref(self, node: ColumnRefNode) -> str:
-
         col_clean = (node.column or "").strip("[]")
-
         col_cf = col_clean.casefold()
-
         tbl_clean = (node.table or "").strip("'\"")
-
         qualified_cf = f"{tbl_clean}[{col_clean}]".casefold() if tbl_clean else None
 
-
-
-        if col_cf in self._measure_sql_map_by_casefold:
-            val = self._measure_sql_map_by_casefold[col_cf]
-            if val.strip().upper() == "NULL":
-                return "NULL"
-            return f"({val})"
-
-        if qualified_cf and qualified_cf in self._measure_sql_map_by_casefold:
-            val = self._measure_sql_map_by_casefold[qualified_cf]
-            if val.strip().upper() == "NULL":
-                return "NULL"
-            return f"({val})"
-
-        if col_cf in self._known_measure_names_casefold or (qualified_cf and qualified_cf in self._known_measure_names_casefold):
-
-            raise self.DaxRenderError(
-
-                f"Unresolved measure reference [{col_clean}]: known measure with no resolved SQL yet"
-
-            )
-
-
+        if not tbl_clean:
+            var_sql = self._lookup_var(col_clean)
+            if var_sql is not None:
+                return var_sql
+            if col_cf in self._measure_sql_map_by_casefold:
+                val = self._measure_sql_map_by_casefold[col_cf]
+                if val.strip().upper() == "NULL":
+                    return "NULL"
+                return f"({val})"
+            if col_cf in self._known_measure_names_casefold:
+                raise self.DaxRenderError(
+                    f"Unresolved measure reference [{col_clean}]: known measure with no resolved SQL yet"
+                )
+        elif qualified_cf:
+            if qualified_cf in self._measure_sql_map_by_casefold:
+                val = self._measure_sql_map_by_casefold[qualified_cf]
+                if val.strip().upper() == "NULL":
+                    return "NULL"
+                return f"({val})"
+            if qualified_cf in self._known_measure_names_casefold:
+                raise self.DaxRenderError(
+                    f"Unresolved measure reference [{node.raw}]: known measure with no resolved SQL yet"
+                )
 
         col = sanitize_column(node.column)
-
-        alias = self._resolve_table_alias(node.table)
-
+        if tbl_clean:
+            alias = self._resolve_table_alias(tbl_clean)
+        elif self.row_context_stack:
+            alias = self._resolve_table_alias(self.row_context_stack[-1])
+        else:
+            alias = self.table_alias
         return f'{alias}."{col}"'
 
-
-
     def _resolve_table_alias(self, table_name: str) -> str:
-
-        """Map a DAX 'TableName' to the SQL alias that owns its columns.
-
-
-
-        Bug this closes: a bare 'TableName'[Column] reference used to
-
-        always resolve to self.table_alias (the metric's own primary
-
-        table) no matter what table it actually named — e.g. a CALCULATE
-
-        filter on 'Date'[Running Year] inside a KPI-table measure rendered
-
-        as kpi."RUNNING_YEAR" instead of the date table's column, silently
-
-        filtering on the wrong table. Snowflake then either errors on the
-
-        nonexistent column or (worse) returns wrong numbers if a
-
-        same-named column happens to exist.
-
-        """
-
-        name_clean = str(table_name or "").strip().strip("'")
-
+        name_clean = str(table_name or "").strip().strip("'\"")
         name_cf = name_clean.casefold()
 
         if hasattr(self, "_userel_overrides") and self._userel_overrides:
-
             if name_cf in self._userel_overrides:
-
                 return self._userel_overrides[name_cf]
-
             ali_cf = to_alias(name_clean).casefold()
-
             if ali_cf in self._userel_overrides:
-
                 return self._userel_overrides[ali_cf]
-
             san_cf = sanitize_column(name_clean).casefold()
-
             if san_cf in self._userel_overrides:
-
                 return self._userel_overrides[san_cf]
 
-        if not self.primary_table_name:
-
-            # Caller hasn't told us which DAX table this metric belongs to
-
-            # (not yet opted into table-aware resolution, or passed an
-
-            # empty/unknown name) — preserve the historical single-table
-
-            # assumption rather than fail closed on missing context.
-
+        if not name_clean:
             return self.table_alias
 
-        if name_cf == self.primary_table_name.strip().strip("'").casefold():
-
+        if self.primary_table_name and name_cf == self.primary_table_name.strip().strip("'\"").casefold():
             return self.table_alias
 
         if hasattr(self, "_table_aliases_cf") and name_cf in self._table_aliases_cf:
-
             if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in self._advisory_categories:
-
                 self._advisory_categories.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
-
             return self._table_aliases_cf[name_cf]
 
-        if name_cf in self._date_table_names_cf or self._is_date_table_name(name_clean):
-
-            return self.date_alias
-
-        if self.relationships is not None:
-
+        if self.primary_table_name and self.relationships is not None:
             has_any_rel = any(
-
-                str(getattr(r, "from_dataset", "")).casefold() == self.primary_table_name.strip("'").casefold()
-
-                or str(getattr(r, "to_dataset", "")).casefold() == self.primary_table_name.strip("'").casefold()
-
+                str(getattr(r, "from_dataset", "")).casefold() == self.primary_table_name.strip("'\"").casefold()
+                or str(getattr(r, "to_dataset", "")).casefold() == self.primary_table_name.strip("'\"").casefold()
                 for r in self.relationships
-
             )
-
             if has_any_rel and not has_relationship_path(self.relationships, self.primary_table_name, name_clean):
-
                 raise self.DaxRenderError(
-
                     f"Column reference to table '{table_name}' has no relationship path from "
-
                     f"'{self.primary_table_name}'"
-
                 )
 
-        if name_cf in self._table_aliases_cf:
-
+        if hasattr(self, "_table_aliases_cf") and name_cf in self._table_aliases_cf:
             if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in self._advisory_categories:
-
                 self._advisory_categories.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
-
             return self._table_aliases_cf[name_cf]
 
         return to_alias(name_clean)
@@ -2416,6 +2816,18 @@ class DaxSqlRenderer:
             val = self._measure_sql_map_by_casefold[name_cf]
             if val.strip().upper() == "NULL":
                 return "NULL"
+            if (
+                getattr(self, "_comparison_context", None)
+                and self._comparison_context.get("target_name")
+                and name_cf == self._comparison_context["target_name"].casefold()
+                and not getattr(self, "_in_shifted_calculate", 0)
+            ):
+                curr_flag = self._comparison_context["curr_flag"]
+                filtered = self._inject_case_filter_into_rendered_aggregate(
+                    val, f'{self.table_alias}."{curr_flag}"'
+                )
+                if filtered:
+                    return f"({filtered})"
             return f"({val})"
 
         if name_cf in self._known_measure_names_casefold:
@@ -2452,18 +2864,26 @@ class DaxSqlRenderer:
 
         # references, which are caught by the branch above instead.
 
+        # Priority: innermost iterated table > home table
+        if self.row_context_stack:
+            target_table = self.row_context_stack[-1]
+            alias = self._resolve_table_alias(target_table)
+        else:
+            target_table = self.primary_table_name or self.table_alias
+            alias = self.table_alias
+
         known_cols = None
         if getattr(self, "dataset_col_lookup", None):
             for ds_k, cols in self.dataset_col_lookup.items():
                 al = (self.table_aliases.get(ds_k) or ds_k).upper() if getattr(self, "table_aliases", None) else ds_k.upper()
-                if al == self.table_alias.upper() or ds_k.upper() == self.table_alias.upper():
+                if al == alias.upper() or ds_k.upper() == str(target_table).upper() or ds_k.upper() == alias.upper():
                     known_cols = {c.upper() for c in cols}
                     break
         if known_cols is None and getattr(self, "datasets", None):
             for ds in self.datasets:
                 ds_name = getattr(ds, "unique_name", getattr(ds, "name", ""))
                 al = (self.table_aliases.get(ds_name) or ds_name).upper() if getattr(self, "table_aliases", None) else ds_name.upper()
-                if al == self.table_alias.upper() or ds_name.upper() == self.table_alias.upper():
+                if al == alias.upper() or ds_name.upper() == str(target_table).upper() or ds_name.upper() == alias.upper():
                     known_cols = {getattr(c, "unique_name", getattr(c, "name", "")).upper() for c in (getattr(ds, "columns", []) or [])}
                     break
 
@@ -2476,13 +2896,13 @@ class DaxSqlRenderer:
                     break
             if not matching_col:
                 raise self.DaxRenderError(
-                    f"Unresolved column or measure reference [{node.name}] in table '{self.table_alias}'"
+                    f"Unresolved column or measure reference [{node.name}] in table '{alias}'"
                 )
             col = sanitize_column(matching_col)
-            return f'{self.table_alias}."{col}"'
+            return f'{alias}."{col}"'
 
         col = sanitize_column(node.name)
-        return f'{self.table_alias}."{col}"'
+        return f'{alias}."{col}"'
 
 
 
@@ -2543,12 +2963,39 @@ class DaxSqlRenderer:
         if sql_op in ("AND", "OR"):
             return f"({left}) {sql_op} ({right})"
 
+        def _is_numeric_literal(n: Optional[DaxNode], s: str) -> bool:
+            if n is not None and isinstance(n, LiteralNode):
+                try:
+                    float(str(n.value).strip())
+                    return True
+                except (ValueError, TypeError):
+                    pass
+            clean_s = (s or "").strip()
+            while clean_s.startswith("(") and clean_s.endswith(")"):
+                clean_s = clean_s[1:-1].strip()
+            try:
+                float(clean_s)
+                return True
+            except (ValueError, TypeError):
+                return False
+
         if sql_op in ("+", "-"):
-            if _needs_coalesce_zero(left):
-                left = f"COALESCE({left}, 0)"
-            if _needs_coalesce_zero(right):
-                right = f"COALESCE({right}, 0)"
-            return f"{left} {sql_op} {right}"
+            is_left_nullable = self._is_operand_nullable(node.left, left)
+            is_right_nullable = self._is_operand_nullable(node.right, right)
+
+            if not is_left_nullable and not is_right_nullable:
+                return f"{left} {sql_op} {right}"
+
+            clean_left = self._unwrap_str(left)
+            clean_right = self._unwrap_str(right)
+
+            left_cond = f"({clean_left})"
+            right_cond = f"({clean_right})"
+
+            coalesced_l = self._safe_coalesce_operand(left, is_left_nullable)
+            coalesced_r = self._safe_coalesce_operand(right, is_right_nullable)
+
+            return f"CASE WHEN {left_cond} IS NULL AND {right_cond} IS NULL THEN NULL ELSE {coalesced_l} {sql_op} {coalesced_r} END"
 
         if sql_op in ("=", "<>", "<", "<=", ">", ">="):
             if _needs_coalesce_zero(left):
@@ -2647,19 +3094,19 @@ class DaxSqlRenderer:
 
         if func in {"SAMEPERIODLASTYEAR", "PREVIOUSYEAR"}:
 
-            return self._render_lag_period(node.args, interval="year", amount=-1)
+            return self._render_lag_period(node.args, interval="year", amount=-1, func_name=func)
 
 
 
         if func == "PREVIOUSMONTH":
 
-            return self._render_lag_period(node.args, interval="month", amount=-1)
+            return self._render_lag_period(node.args, interval="month", amount=-1, func_name=func)
 
 
 
         if func == "PREVIOUSQUARTER":
 
-            return self._render_lag_period(node.args, interval="quarter", amount=-1)
+            return self._render_lag_period(node.args, interval="quarter", amount=-1, func_name=func)
 
 
 
@@ -2683,57 +3130,109 @@ class DaxSqlRenderer:
 
             expr_arg = node.args[1]
 
-            
+            # Iteration grain check:
+            # Table / FILTER(T) / KEEPFILTERS(T) -> row grain (unroll allowed).
+            # VALUES / DISTINCT / SUMMARIZE / ALL(T[c]) -> group grain -> not one metric -> NULL
+            chk_arg = table_arg
+            while isinstance(chk_arg, FunctionCallNode) and chk_arg.func.upper() in ("KEEPFILTERS", "FILTER"):
+                chk_arg = chk_arg.args[0] if chk_arg.args else None
+
+            if isinstance(chk_arg, FunctionCallNode):
+                fn_grain = chk_arg.func.upper()
+                if fn_grain in ("VALUES", "DISTINCT", "SUMMARIZE", "SUMMARIZECOLUMNS"):
+                    col_desc = ""
+                    if chk_arg.args:
+                        col_desc = getattr(chk_arg.args[0], "column", getattr(chk_arg.args[0], "name", str(chk_arg.args[0])))
+                    raise self.DaxRenderError(
+                        f"BY_DESIGN_EXCLUDED: aggregation over groups of {col_desc or 'dimension values'} "
+                        "requires multi-level grouping not supported in a single semantic metric"
+                    )
+                if fn_grain in ("ALL", "ALLNOBLANKROW", "REMOVEFILTERS") and chk_arg.args:
+                    if isinstance(chk_arg.args[0], ColumnRefNode) or "[" in str(chk_arg.args[0]):
+                        col_desc = getattr(chk_arg.args[0], "column", str(chk_arg.args[0]))
+                        # Special case: MAXX/MINX over ALL(T[c]) where expression is the column itself
+                        # is a scalar MAX/MIN of the column, not a group aggregation.
+                        is_same_col = False
+                        if func in ("MINX", "MAXX") and isinstance(expr_arg, ColumnRefNode):
+                            col_names = [getattr(a, "column", "").upper() for a in chk_arg.args]
+                            if expr_arg.column.upper() in col_names:
+                                is_same_col = True
+                        if not is_same_col:
+                            raise self.DaxRenderError(
+                                f"BY_DESIGN_EXCLUDED: aggregation over groups of {col_desc} "
+                                "requires multi-level grouping not supported in a single semantic metric"
+                            )
 
             # Check if first arg is FILTER(table, predicate)
-
             if isinstance(table_arg, FunctionCallNode) and table_arg.func.upper() == "FILTER":
-
                 if len(table_arg.args) < 2:
-
                     raise self.DaxRenderError("FILTER requires table and predicate arguments")
-
                 filter_tbl_node = table_arg.args[0]
-
-                if isinstance(filter_tbl_node, FunctionCallNode) and filter_tbl_node.func.upper() == "KEEPFILTERS":
-
-                    filter_tbl_node = filter_tbl_node.args[0]
-
-                filter_tbl_name = getattr(filter_tbl_node, "name", None) or getattr(filter_tbl_node, "raw", None)
-
-                if filter_tbl_name and self.primary_table_name:
-
-                    if str(filter_tbl_name).strip("'\"").upper() != self.primary_table_name.strip("'\"").upper():
-
-                        raise self.DaxRenderError(
-
-                            f"Iterator FILTER table '{filter_tbl_name}' does not match primary table '{self.primary_table_name}'"
-
-                        )
-
-                pred_sql = self._render_node(table_arg.args[1])
-
-                expr_sql = self._render_node(expr_arg)
+                filter_tbl_name = self._extract_table_name(filter_tbl_node) or self._extract_table_name(table_arg)
+                with self._row_context(filter_tbl_name):
+                    pred_sql = self._render_node(table_arg.args[1])
+                    expr_sql = self._render_node(expr_arg)
 
                 if func == "COUNTAX" and expr_sql in ("TRUE", "true", "True", "1"):
-
                     case_expr = f"CASE WHEN {pred_sql} THEN 1 END"
-
                 else:
-
                     case_expr = f"CASE WHEN {pred_sql} THEN {expr_sql} END"
-
                 cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
-
                 return f"{sql_func}({case_expr}{cast})"
 
-            
-
-            expr_sql = self._render_node(expr_arg)
+            iter_tbl = self._extract_table_name(table_arg)
+            with self._row_context(iter_tbl):
+                expr_sql = self._render_node(expr_arg)
 
             if func == "COUNTAX" and expr_sql in ("TRUE", "true", "True", "1"):
 
                 return "COUNT(*)"
+
+            if func == "AVERAGEX" and expr_sql:
+
+                cleaned = expr_sql.strip()
+
+                while cleaned.startswith("(") and cleaned.endswith(")"):
+
+                    depth = 0
+
+                    encloses = False
+
+                    for idx, ch in enumerate(cleaned):
+
+                        if ch == "(":
+
+                            depth += 1
+
+                        elif ch == ")":
+
+                            depth -= 1
+
+                            if depth == 0:
+
+                                encloses = (idx == len(cleaned) - 1)
+
+                                break
+
+                    if encloses:
+
+                        cleaned = cleaned[1:-1].strip()
+
+                    else:
+
+                        break
+
+                cleaned = re.sub(r"::FLOAT$", "", cleaned, flags=re.IGNORECASE).strip()
+
+                sum_unroll = re.match(r"^SUM\s*\((.*)\)$", cleaned, re.IGNORECASE | re.DOTALL)
+
+                if sum_unroll:
+
+                    inner_row_expr = sum_unroll.group(1).strip()
+
+                    inner_row_expr = re.sub(r"::FLOAT$", "", inner_row_expr, flags=re.IGNORECASE).strip()
+
+                    return f"AVG({inner_row_expr})"
 
             cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
 
@@ -2801,7 +3300,7 @@ class DaxSqlRenderer:
 
             if func == "COUNTROWS":
 
-                return "COUNT(*)"
+                return self._render_countrows(node)
 
             if not node.args:
 
@@ -2811,13 +3310,9 @@ class DaxSqlRenderer:
 
 
 
-        # IF (special form -- must evaluate before eager argument rendering)
-
+        # IF
         if func == "IF":
-
             return self._render_if(node.args)
-
-
 
         # Registry-driven templates (if configured)
 
@@ -2847,7 +3342,11 @@ class DaxSqlRenderer:
 
 
 
+        # IF
 
+        if func == "IF":
+
+            return self._render_if(node.args)
 
 
 
@@ -3011,6 +3510,12 @@ class DaxSqlRenderer:
 
         # String and math functions with direct Snowflake equivalents
 
+        if func in ("LASTDATE", "FIRSTDATE"):
+            agg_name = "MAX" if func == "LASTDATE" else "MIN"
+            if node.args:
+                arg_sql = self._render_node(node.args[0])
+                return f"{agg_name}({arg_sql})"
+
         _direct_sql = {
 
             "LEN": "LENGTH", "TRIM": "TRIM",
@@ -3057,7 +3562,94 @@ class DaxSqlRenderer:
 
 
 
+    def _render_countrows(self, node: FunctionCallNode) -> str:
+        if not node.args:
+            return "COUNT(*)"
+        arg0 = node.args[0]
+        # 1. IdentifierNode (table name): e.g. COUNTROWS('Orders')
+        if isinstance(arg0, IdentifierNode):
+            name = arg0.name.strip("'\"")
+            if "[" in name or "." in name:
+                raise self.DaxRenderError(f"non-table argument to COUNTROWS: '{arg0.name}'")
+            return "COUNT(*)"
+
+        if isinstance(arg0, FunctionCallNode):
+            fn = arg0.func.upper()
+            if fn == "KEEPFILTERS" and arg0.args:
+                arg0 = arg0.args[0]
+                fn = getattr(arg0, "func", "").upper() if isinstance(arg0, FunctionCallNode) else ""
+                if isinstance(arg0, IdentifierNode):
+                    return "COUNT(*)"
+
+            # 2. FILTER(T, cond): COUNT(CASE WHEN <cond> THEN 1 END)
+            if fn == "FILTER" and len(arg0.args) >= 2:
+                iter_tbl = self._extract_table_name(arg0.args[0])
+                with self._row_context(iter_tbl):
+                    cond_sql = self._render_node(arg0.args[1])
+                return f"COUNT(CASE WHEN {cond_sql} THEN 1 END)"
+
+            # 3. VALUES(T[c]) or DISTINCT(T[c]): COUNT(DISTINCT c)
+            if fn in ("VALUES", "DISTINCT") and arg0.args:
+                col_arg = arg0.args[0]
+                if isinstance(col_arg, ColumnRefNode):
+                    col_sql = self._render_column_ref(col_arg)
+                    return f"COUNT(DISTINCT {col_sql})"
+                col_sql = self._render_node(col_arg)
+                return f"COUNT(DISTINCT {col_sql})"
+
+            if fn in ("ALL", "ALLNOBLANKROW", "REMOVEFILTERS"):
+                if not arg0.args:
+                    return "COUNT(*)"
+                first = arg0.args[0]
+                if isinstance(first, IdentifierNode):
+                    return "COUNT(*)"
+                elif isinstance(first, ColumnRefNode):
+                    col_sql = self._render_column_ref(first)
+                    return f"COUNT(DISTINCT {col_sql})"
+
+        raise self.DaxRenderError(
+            f"non-table argument to COUNTROWS: cannot count rows of {type(arg0).__name__}"
+        )
+
     def _render_aggregation(self, func: str, arg: DaxNode) -> str:
+        # Fan-out check: Never aggregate a dimension column with SUM/AVG/COUNT on the fact table.
+        # Must not fire for a table's own columns, measure-only tables, or COUNT(DISTINCT)/MIN/MAX.
+        if func.upper() in ("SUM", "AVG", "AVERAGE", "AVERAGEX", "COUNT", "COUNTA"):
+            is_measure_table = (self.table_alias or "").upper() in ("METRICS", "MEASURES", "_MEASURES", "KEY_MEASURES", "ALL_MEASURES")
+            if not is_measure_table:
+                dim_table = None
+                dim_col = None
+                if isinstance(arg, ColumnRefNode):
+                    t = (arg.table or "").strip("'\"")
+                    if t and t.casefold() != (self.table_alias or "").casefold():
+                        dim_table = t
+                        dim_col = arg.column
+                    elif not t and arg.column:
+                        for rel in (self.relationships or []):
+                            to_tbl = getattr(rel, "to_dataset", None) or getattr(rel, "to_table", None)
+                            from_tbl = getattr(rel, "from_dataset", None) or getattr(rel, "from_table", None)
+                            if to_tbl and from_tbl and from_tbl.casefold() == (self.table_alias or "").casefold():
+                                prefix = f"{to_tbl}_".casefold()
+                                if arg.column.casefold().startswith(prefix):
+                                    dim_table = to_tbl
+                                    dim_col = arg.column[len(prefix):]
+                                    break
+
+                if dim_table and dim_col:
+                    is_dim = False
+                    for rel in (self.relationships or []):
+                        to_tbl = getattr(rel, "to_dataset", None) or getattr(rel, "to_table", None)
+                        from_tbl = getattr(rel, "from_dataset", None) or getattr(rel, "from_table", None)
+                        if to_tbl and from_tbl:
+                            if to_tbl.casefold() == dim_table.casefold() and from_tbl.casefold() == (self.table_alias or "").casefold():
+                                is_dim = True
+                                break
+                    if is_dim:
+                        raise self.DaxRenderError(
+                            f"BY_DESIGN_EXCLUDED: aggregating dimension column '{dim_table}[{dim_col}]' "
+                            f"with {func.upper()} on fact table '{self.table_alias}' causes fan-out duplication "
+                            "(measure should aggregate on dimension table directly)"
+                        )
 
         col_sql = self._render_node(arg)
 
@@ -3144,23 +3736,33 @@ class DaxSqlRenderer:
 
             raise self.DaxRenderError("IF requires at least 2 arguments")
 
-        if len(args) == 3:
-            then_node = args[1]
-            if isinstance(then_node, FunctionCallNode) and then_node.func.upper() == "ERROR":
-                return self._render_node(args[2])
+        cond_node = args[0]
 
-            cond_node = args[0]
-            if isinstance(cond_node, FunctionCallNode) and cond_node.func.upper() == "HASONEVALUE":
-                cb_dim = None
-                if cond_node.args and isinstance(cond_node.args[0], ColumnRefNode):
-                    cb_dim = (cond_node.args[0].table, cond_node.args[0].column)
-                elif cond_node.args and isinstance(cond_node.args[0], IdentifierNode):
-                    cb_dim = (None, cond_node.args[0].name)
-                if cb_dim and cb_dim not in self.non_additive_dimensions:
-                    self.non_additive_dimensions.append(cb_dim)
+        # Quick-measure error guard unwrap:
+        # IF(..., ERROR(...), <calc>) -> <calc>
+        # IF(..., <calc>, ERROR(...)) -> <calc>
+        if len(args) >= 3:
+            if isinstance(args[1], FunctionCallNode) and args[1].func.upper() == "ERROR":
+                return self._render_node(args[2])
+            if isinstance(args[2], FunctionCallNode) and args[2].func.upper() == "ERROR":
                 return self._render_node(args[1])
 
-        cond_node = args[0]
+        # Template helper guard unwrap: IF([_ShowValueForDates], <calc>) -> <calc>
+        if isinstance(cond_node, MeasureRefNode):
+            clean_m = cond_node.name.strip("[]").lower()
+            if clean_m in ("_showvaluefordates", "showvaluefordates"):
+                return self._render_node(args[1])
+
+        # HASONEVALUE guard: IF(HASONEVALUE(col), calc) -> treat col as non-additive dimension, return calc
+        if isinstance(cond_node, FunctionCallNode) and cond_node.func.upper() == "HASONEVALUE":
+            cb_dim = None
+            if cond_node.args and isinstance(cond_node.args[0], ColumnRefNode):
+                cb_dim = (cond_node.args[0].table, cond_node.args[0].column)
+            elif cond_node.args and isinstance(cond_node.args[0], IdentifierNode):
+                cb_dim = (None, cond_node.args[0].name)
+            if cb_dim and cb_dim not in self.non_additive_dimensions:
+                self.non_additive_dimensions.append(cb_dim)
+            return self._render_node(args[1])
 
         cond = self._render_node(cond_node)
 
@@ -3168,9 +3770,21 @@ class DaxSqlRenderer:
 
             cond = f"(({cond}) IS NOT NULL AND ({cond}) <> 0)"
 
-        true_val = self._render_node(args[1])
+        then_node = args[1]
+        else_node = args[2] if len(args) > 2 else None
 
-        false_val = self._render_node(args[2]) if len(args) > 2 else "NULL"
+        # Rule A: IF(cond, <numeric>, "") or IF(cond, <numeric>, BLANK()) -> CASE WHEN cond THEN <numeric> END
+        if _is_empty_branch(else_node):
+            true_val = self._render_node(then_node)
+            return f"CASE WHEN {cond} THEN {true_val} END"
+
+        if _is_empty_branch(then_node) and else_node is not None:
+            false_val = self._render_node(else_node)
+            return f"CASE WHEN NOT ({cond}) THEN {false_val} END"
+
+        true_val = self._render_node(then_node)
+
+        false_val = self._render_node(else_node) if else_node is not None else "NULL"
 
         return f"CASE WHEN {cond} THEN {true_val} ELSE {false_val} END"
 
@@ -3548,65 +4162,35 @@ class DaxSqlRenderer:
 
 
     def _extract_closing_balance_dimension(self, node: DaxNode) -> Optional[Tuple[Optional[str], str]]:
-
         """Detect closing-balance / last-period filter patterns:
-
           FILTER(ALL(table[col]), col = MAX(col))
-
           FILTER(table, col = MAX(col))
-
           col = MAX(col)
-
           LASTNONBLANK(table[col], ...)
-
           LASTNONBLANK(ALL(table[col]), ...)
-
         Returns (table_name, column_name) if matched, else None.
-
         """
-
         if isinstance(node, IdentifierNode):
-
             var_name = node.name.strip("[]").casefold()
-
             if hasattr(self, "_var_ast_map") and var_name in self._var_ast_map:
-
                 node = self._var_ast_map[var_name]
 
-
-
         if isinstance(node, FunctionCallNode) and node.func.upper() == "LASTNONBLANK" and len(node.args) >= 1:
-
             first_arg = node.args[0]
-
             if isinstance(first_arg, FunctionCallNode) and first_arg.func.upper() in ("ALL", "ALLEXCEPT", "VALUES") and first_arg.args:
-
                 first_arg = first_arg.args[0]
-
             if isinstance(first_arg, ColumnRefNode):
-
                 return (first_arg.table, first_arg.column)
-
             if isinstance(first_arg, IdentifierNode):
-
                 return (None, first_arg.name)
 
-
-
         pred_node = node
-
         if isinstance(node, FunctionCallNode) and node.func.upper() == "FILTER" and len(node.args) >= 2:
-
             pred_node = node.args[1]
 
-
-
         if isinstance(pred_node, BinaryOpNode) and pred_node.op in ("=", "=="):
-
             dim = self._match_col_equals_max(pred_node.left, pred_node.right) or self._match_col_equals_max(pred_node.right, pred_node.left)
-
             if dim:
-
                 return dim
 
         return None
@@ -3614,16 +4198,6 @@ class DaxSqlRenderer:
 
 
     def _match_col_equals_max(self, col_node: DaxNode, max_node: DaxNode) -> Optional[Tuple[Optional[str], str]]:
-
-        if isinstance(max_node, IdentifierNode):
-
-            var_name = max_node.name.strip("[]").casefold()
-
-            if hasattr(self, "_var_ast_map") and var_name in self._var_ast_map:
-
-                max_node = self._var_ast_map[var_name]
-
-
 
         if isinstance(col_node, ColumnRefNode) and isinstance(max_node, FunctionCallNode):
 
@@ -3856,6 +4430,14 @@ class DaxSqlRenderer:
 
             raise self.DaxRenderError("CALCULATE requires at least 1 argument")
 
+        if len(args) >= 2:
+            from semabridge.converter.whole_table_all import match_whole_table_all_ast
+            calc_node = FunctionCallNode(func="CALCULATE", args=args)
+            pat = match_whole_table_all_ast(calc_node, fact_table=self.primary_table_name or self.table_alias)
+            if pat:
+                tgt_alias = (self.table_alias or self.primary_table_name or "f").upper()
+                return f'MAX({tgt_alias}."{pat.helper_name}")'
+
         userel_overrides = {}
         filter_args = args[1:]
         filtered_args = [args[0]]
@@ -3922,10 +4504,34 @@ class DaxSqlRenderer:
 
                         break
 
+            # Flatten CALCULATETABLE arguments into filter list
+            expanded_filters: List[DaxNode] = []
+            for f in filtered_args[1:]:
+                if isinstance(f, FunctionCallNode) and f.func.upper() == "CALCULATETABLE":
+                    expanded_filters.extend(f.args)
+                else:
+                    expanded_filters.append(f)
+
+            # Period-to-date modifier check (DATESYTD, DATESQTD, DATESMTD)
+            p2d_filter_arg = None
+            for filter_arg in expanded_filters:
+                if isinstance(filter_arg, FunctionCallNode):
+                    fname = filter_arg.func.upper()
+                    if fname in ("DATESYTD", "DATESQTD", "DATESMTD", "TOTALYTD", "TOTALQTD", "TOTALMTD"):
+                        p2d_filter_arg = filter_arg
+                        break
+
+            if p2d_filter_arg is not None:
+                date_arg = p2d_filter_arg.args[0] if p2d_filter_arg.args else None
+                if date_arg is None:
+                    raise self.DaxRenderError(f"{p2d_filter_arg.func} requires a date-column argument")
+                return self._render_period_to_date(p2d_filter_arg.func.upper(), [filtered_args[0], date_arg])
+
             lag_filter_arg = None
             lag_interval = "year"
             lag_amount = -1
-            for filter_arg in filtered_args[1:]:
+
+            for filter_arg in expanded_filters:
                 if isinstance(filter_arg, FunctionCallNode):
                     fname = filter_arg.func.upper()
                     if fname in ("SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER"):
@@ -3933,35 +4539,34 @@ class DaxSqlRenderer:
                         lag_filter_arg = filter_arg
                         lag_amount = -1
                         break
-                    elif fname == "DATEADD" and len(filter_arg.args) >= 3:
-                        # DAX: DATEADD(<dates>, <number>, <interval>)
-                        amount_node = filter_arg.args[1]
-                        interval_node = filter_arg.args[2]
-                        amount = -1
-                        if isinstance(amount_node, LiteralNode) and isinstance(amount_node.value, (int, float)):
-                            amount = int(amount_node.value)
-                        elif isinstance(amount_node, UnaryOpNode) and amount_node.op == "-" and isinstance(amount_node.operand, LiteralNode):
-                            amount = -int(amount_node.operand.value)
-
-                        interval_str = ""
-                        if isinstance(interval_node, IdentifierNode):
-                            interval_str = interval_node.name.lower()
-                        elif isinstance(interval_node, LiteralNode):
-                            interval_str = str(interval_node.value).lower()
-
-                        if interval_str in ("year", "quarter", "month", "day"):
-                            lag_interval = interval_str
-                            lag_filter_arg = filter_arg
-                            lag_amount = amount
-                            break
+                    elif fname in ("DATEADD", "PARALLELPERIOD") and len(filter_arg.args) >= 3:
+                        amt = self._extract_shift_amount(filter_arg.args[1])
+                        intv_raw = str(getattr(filter_arg.args[2], "name", getattr(filter_arg.args[2], "value", "year"))).lower()
+                        if "year" in intv_raw:
+                            lag_interval = "year"
+                        elif "quarter" in intv_raw:
+                            lag_interval = "quarter"
+                        elif "month" in intv_raw:
+                            lag_interval = "month"
+                        elif "day" in intv_raw:
+                            lag_interval = "day"
+                        else:
+                            raise self.DaxRenderError(f"Unsupported DATEADD interval '{intv_raw}'")
+                        lag_amount = amt
+                        lag_filter_arg = filter_arg
+                        break
 
             if lag_filter_arg is not None:
                 date_arg = lag_filter_arg.args[0] if lag_filter_arg.args else None
                 if date_arg is None:
                     raise self.DaxRenderError(f"{lag_filter_arg.func} requires a date-column argument")
-                return self._render_lag_period([filtered_args[0], date_arg], interval=lag_interval, amount=lag_amount)
+                self._in_shifted_calculate += 1
+                try:
+                    return self._render_lag_period([filtered_args[0], date_arg], interval=lag_interval, amount=lag_amount, func_name=lag_filter_arg.func.upper())
+                finally:
+                    self._in_shifted_calculate -= 1
 
-            for filter_arg in filtered_args[1:]:
+            for filter_arg in expanded_filters:
 
                 # Closing-balance pattern check: handled via NON ADDITIVE BY instead of row-level predicate
 
@@ -4010,14 +4615,16 @@ class DaxSqlRenderer:
                             f_tbl = filter_arg.args[0]
                             f_pred = filter_arg.args[1]
                             
-                            # Generic Leave-One-Out (LOO):
-                            # FILTER(ALL(<own fact>), <col> <> SELECTEDVALUE(<same col>))
+                            # Generic Leave-One-Out (LOO) or Whole-table filtered aggregate:
+                            # FILTER(ALL(<own fact>), ...)
                             if (isinstance(f_tbl, FunctionCallNode) and 
-                                f_tbl.func.upper() in ("ALL", "ALLNOBLANKROW")):
+                                f_tbl.func.upper() in ("ALL", "ALLNOBLANKROW", "REMOVEFILTERS")):
                                 f_tbl_arg = f_tbl.args[0] if f_tbl.args else None
-                                f_tbl_name = getattr(f_tbl_arg, "name", None) or getattr(f_tbl_arg, "table", None) or str(f_tbl_arg) if f_tbl_arg else (self.primary_table_name or self.table_alias)
-                                is_own_fact = (f_tbl_name.upper() == (self.primary_table_name or self.table_alias).upper() or 
-                                               self.table_aliases.get(f_tbl_name, f_tbl_name).upper() == self.table_alias.upper())
+                                f_tbl_raw = getattr(f_tbl_arg, "name", None) or getattr(f_tbl_arg, "table", None) or (str(f_tbl_arg) if f_tbl_arg else "")
+                                f_tbl_name = f_tbl_raw.strip("'\"") if f_tbl_raw else (self.primary_table_name or self.table_alias or "")
+                                fact_name = (self.primary_table_name or self.table_alias or "").strip("'\"")
+                                is_own_fact = (f_tbl_name.upper() == fact_name.upper() or 
+                                               self.table_aliases.get(f_tbl_name, f_tbl_name).strip("'\"").upper() == fact_name.upper())
                                 
                                 if is_own_fact and isinstance(f_pred, BinaryOpNode) and f_pred.op in ("<>", "!="):
                                     col_node, sv_node = None, None
@@ -4032,23 +4639,47 @@ class DaxSqlRenderer:
                                         if c1 == c2:
                                             safe_col = c1
                                             fact_alias = self.table_alias.upper()
+                                            dim_ref = f'{fact_alias}."{safe_col}"'
                                             base_arg = filtered_args[0]
                                             inner_fn = getattr(base_arg, "func", "").upper() if isinstance(base_arg, FunctionCallNode) else ""
+                                            if inner_fn in ("MIN", "MAX", "DISTINCTCOUNT", "DISTINCTCOUNTNOBLANK"):
+                                                raise self.DaxRenderError("leave-one-out not decomposable")
+                                            
                                             agg_col_node = base_arg.args[0] if (isinstance(base_arg, FunctionCallNode) and base_arg.args) else None
                                             agg_col_name = getattr(agg_col_node, "column", None) or getattr(agg_col_node, "name", None) or "AMOUNT"
                                             safe_agg_col = sanitize_column(agg_col_name).upper()
-                                            
-                                            if inner_fn in ("AVERAGE", "AVERAGEX"):
-                                                loo_expr = (f'(MAX({fact_alias}."__SB_ALL_SUM_{safe_agg_col}") - MAX({fact_alias}."__SB_{safe_col}_SUM_{safe_agg_col}")) / '
-                                                            f'NULLIF(MAX({fact_alias}."__SB_ALL_CNT_{safe_agg_col}") - MAX({fact_alias}."__SB_{safe_col}_CNT_{safe_agg_col}"), 0)')
-                                            elif inner_fn in ("COUNT", "COUNTROWS", "COUNTA"):
-                                                loo_expr = f'MAX({fact_alias}."__SB_ALL_CNT_{safe_agg_col}") - MAX({fact_alias}."__SB_{safe_col}_CNT_{safe_agg_col}")'
-                                            else:
-                                                loo_expr = f'MAX({fact_alias}."__SB_ALL_SUM_{safe_agg_col}") - MAX({fact_alias}."__SB_{safe_col}_SUM_{safe_agg_col}")'
-                                            
-                                            return f'IFF(COUNT(DISTINCT {fact_alias}."{safe_col}") = 1, {loo_expr}, NULL)'
 
-                            pred = self._render_node(filter_arg.args[1])
+                                            sum_total = f'SUM({fact_alias}."{safe_agg_col}_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING {dim_ref})'
+                                            sum_own = f'{fact_alias}."{safe_agg_col}_SUM"'
+                                            cnt_total = f'SUM({fact_alias}."{safe_agg_col}_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING {dim_ref})'
+                                            cnt_own = f'{fact_alias}."{safe_agg_col}_CNT"'
+
+                                            self._current_loo_info = {
+                                                "dim_ref": dim_ref,
+                                                "col_name": c1,
+                                                "agg_col": safe_agg_col,
+                                                "inner_fn": inner_fn,
+                                                "sum_total": sum_total,
+                                                "sum_own": sum_own,
+                                                "cnt_total": cnt_total,
+                                                "cnt_own": cnt_own,
+                                            }
+
+                                            if inner_fn in ("AVERAGE", "AVERAGEX"):
+                                                return f'(({sum_total} - {sum_own}) / NULLIF({cnt_total} - {cnt_own}, 0))'
+                                            elif inner_fn in ("COUNT", "COUNTROWS", "COUNTA"):
+                                                return f'({cnt_total} - {cnt_own})'
+                                            else:
+                                                return f'({sum_total} - {sum_own})'
+
+                                if is_own_fact:
+                                    raise self.DaxRenderError(
+                                        "BY_DESIGN_EXCLUDED: whole-table filtered aggregate requires enriched view precompute"
+                                    )
+
+                            iter_tbl = self._extract_table_name(f_tbl)
+                            with self._row_context(iter_tbl):
+                                pred = self._render_node(filter_arg.args[1])
 
                             filter_clauses.append(pred)
 
@@ -4093,11 +4724,13 @@ class DaxSqlRenderer:
                                 clean_base = "SUM_AMOUNT"
                                 base_arg = filtered_args[0]
                                 if isinstance(base_arg, MeasureRefNode):
-                                    clean_base = sanitize_column(base_arg.name).upper()
+                                    clean_base = re.sub(r'[^A-Za-z0-9_]', '_', base_arg.name).upper()
                                 elif isinstance(base_arg, FunctionCallNode):
                                     col_part = getattr(base_arg.args[0], "column", str(base_arg.args[0])) if base_arg.args else ""
-                                    clean_base = f"{base_arg.func.upper()}_{sanitize_column(col_part).upper()}"
-                                return f'MAX({fact_alias}."__SB_ALL_{clean_base}")'
+                                    clean_base = f"{base_arg.func.upper()}_{re.sub(r'[^A-Za-z0-9_]', '_', col_part).upper()}".strip("_")
+                                clean_base = re.sub(r'^_?ALL_', '', clean_base)
+                                tgt_alias = (fact_alias or fact_tbl or "f").upper()
+                                return f'MAX({tgt_alias}."_ALL_{clean_base}")'
                             if (len(filter_arg.args) >= 3 and 
                                 isinstance(filter_arg.args[0], ColumnRefNode) and 
                                 getattr(filter_arg.args[1], "name", "") == "."):
@@ -4144,20 +4777,26 @@ class DaxSqlRenderer:
                                     tbl_name = arg.name.strip('"\'')
                                     alias = self.table_aliases.get(tbl_name, tbl_name).upper() if self.table_aliases else tbl_name.upper()
                                     if alias == fact_alias or tbl_name.upper() == fact_tbl:
-                                        if not self.datasets:
-                                            raise self.DaxRenderError(
-                                                f"ALL({tbl_name}) on the metric's own table is a whole-table total and must not be a window metric"
-                                            )
+                                        loo = getattr(self, "_current_loo_info", None)
+                                        if loo:
+                                            if loo.get("inner_fn") in ("AVERAGE", "AVERAGEX"):
+                                                return f'({loo["sum_total"]} / NULLIF({loo["cnt_total"]}, 0))'
+                                            elif loo.get("inner_fn") in ("COUNT", "COUNTROWS", "COUNTA"):
+                                                return f'{loo["cnt_total"]}'
+                                            else:
+                                                return f'{loo["sum_total"]}'
                                         clean_base = "TOTAL"
                                         base_arg = filtered_args[0]
                                         if isinstance(base_arg, MeasureRefNode):
-                                            clean_base = sanitize_column(base_arg.name).upper()
+                                            clean_base = re.sub(r'[^A-Za-z0-9_]', '_', base_arg.name).upper()
                                         elif isinstance(base_arg, FunctionCallNode):
                                             col_part = getattr(base_arg.args[0], "column", str(base_arg.args[0])) if base_arg.args else ""
-                                            clean_base = f"{base_arg.func.upper()}_{sanitize_column(col_part).upper()}"
+                                            clean_base = f"{base_arg.func.upper()}_{re.sub(r'[^A-Za-z0-9_]', '_', col_part).upper()}".strip("_")
                                         elif hasattr(base_arg, "name"):
-                                            clean_base = sanitize_column(base_arg.name).upper()
-                                        return f'MAX({fact_alias}."__SB_ALL_{clean_base}")'
+                                            clean_base = re.sub(r'[^A-Za-z0-9_]', '_', base_arg.name).upper()
+                                        clean_base = re.sub(r'^_?ALL_', '', clean_base)
+                                        tgt_alias = (fact_alias or fact_tbl or "f").upper()
+                                        return f'MAX({tgt_alias}."_ALL_{clean_base}")'
                                     dims_found = self._get_minimal_groupable_dimensions(tbl_name, alias)
                                     for d in dims_found:
                                         if d not in excl_dims:
@@ -4168,14 +4807,46 @@ class DaxSqlRenderer:
                             tbl_node = filter_arg.args[0]
                             tbl_name = (getattr(tbl_node, "table", None) or getattr(tbl_node, "name", None) or str(tbl_node)).strip('"\'')
                             alias = self.table_aliases.get(tbl_name, tbl_name).upper() if self.table_aliases else tbl_name.upper()
+                            part_dims = []
                             keep_names = set()
                             for k_arg in filter_arg.args[1:]:
                                 if isinstance(k_arg, ColumnRefNode):
+                                    t = k_arg.table or tbl_name
+                                    t_al = self.table_aliases.get(t, t).upper() if self.table_aliases else t.upper()
+                                    col = sanitize_column(k_arg.column)
+                                    part_dims.append(f'{t_al}."{col}"')
                                     keep_names.add(re.sub(r"[^A-Z0-9]", "", k_arg.column.upper()))
                                 elif isinstance(k_arg, IdentifierNode):
+                                    col = sanitize_column(k_arg.name)
+                                    part_dims.append(f'{alias}."{col}"')
                                     keep_names.add(re.sub(r"[^A-Z0-9]", "", k_arg.name.upper()))
 
                             is_fact = (alias == fact_alias or tbl_name.upper() == fact_tbl)
+                            if part_dims:
+                                part_clause = ", ".join(part_dims)
+                                base_arg = filtered_args[0]
+                                if isinstance(base_arg, MeasureRefNode):
+                                    m_alias = sanitize_column(base_arg.name)
+                                    metric_ref = f'{self.table_alias.upper()}."{m_alias}"::FLOAT'
+                                    return f'SUM({metric_ref}) OVER (PARTITION BY {part_clause})'
+                                elif isinstance(base_arg, FunctionCallNode):
+                                    fn_u = base_arg.func.upper()
+                                    col_node = base_arg.args[0] if base_arg.args else None
+                                    col_part = getattr(col_node, "column", None) or getattr(col_node, "name", "AMT") if col_node else "AMT"
+                                    col_tbl = getattr(col_node, "table", None)
+                                    target_alias = (self.table_aliases.get(col_tbl, col_tbl).upper() if self.table_aliases else col_tbl.upper()) if col_tbl else fact_alias
+                                    c_alias = sanitize_column(col_part)
+                                    if fn_u in ("AVERAGE", "AVERAGEX"):
+                                        return f'SUM({target_alias}."{c_alias}_SUM"::FLOAT) OVER (PARTITION BY {part_clause}) / NULLIF(SUM({target_alias}."{c_alias}_CNT"::FLOAT) OVER (PARTITION BY {part_clause}), 0)'
+                                    elif fn_u in ("COUNT", "COUNTROWS", "COUNTA"):
+                                        return f'SUM({target_alias}."{c_alias}_CNT"::FLOAT) OVER (PARTITION BY {part_clause})'
+                                    elif fn_u in ("SUM", "SUMX"):
+                                        return f'SUM({target_alias}."{c_alias}_SUM"::FLOAT) OVER (PARTITION BY {part_clause})'
+                                    elif fn_u in ("MIN", "MAX"):
+                                        return f'{fn_u}({target_alias}."{c_alias}_{fn_u}"::FLOAT) OVER (PARTITION BY {part_clause})'
+                                    else:
+                                        raise self.DaxRenderError(f"ALLEXCEPT requires an additive base metric, got '{base_arg.func}'")
+
                             if is_fact:
                                 raise self.DaxRenderError(_CONTEXT_TRANSITION_REASON)
                             target_tables = [tbl_name]
@@ -4312,9 +4983,15 @@ class DaxSqlRenderer:
 
     # this one).
 
-    _PERIOD_TO_DATE_COMPONENT = {"TOTALYTD": "YTD", "TOTALMTD": "MTD", "TOTALQTD": "QTD"}
+    _PERIOD_TO_DATE_COMPONENT = {
+        "TOTALYTD": "YTD", "TOTALMTD": "MTD", "TOTALQTD": "QTD",
+        "DATESYTD": "YTD", "DATESMTD": "MTD", "DATESQTD": "QTD",
+    }
 
-    _PERIOD_TO_DATE_UNIT = {"TOTALYTD": "YEAR", "TOTALMTD": "MONTH", "TOTALQTD": "QUARTER"}
+    _PERIOD_TO_DATE_UNIT = {
+        "TOTALYTD": "YEAR", "TOTALMTD": "MONTH", "TOTALQTD": "QUARTER",
+        "DATESYTD": "YEAR", "DATESMTD": "MONTH", "DATESQTD": "QUARTER",
+    }
 
 
 
@@ -4338,35 +5015,7 @@ class DaxSqlRenderer:
 
 
 
-        d = self.date_alias
-
-        extracted_col = None
-
-        for arg in args:
-
-            if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
-
-                extracted_col = arg.column
-
-                break
-
-            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
-
-                extracted_col = arg.name
-
-                break
-
-        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
-
-            d_col = "COL_DATE"
-
-        else:
-
-            d_col = extracted_col
-        if not d_col:
-            raise self.DaxRenderError("no date column found for time-intelligence function")
-
-        date_col = f'{d}."{d_col}"'
+        date_col = self._ti_date_column_sql(args)
 
 
 
@@ -4506,7 +5155,7 @@ class DaxSqlRenderer:
 
     # Must stay in sync with converter/time_intelligence_shapes.py's LAG_FUNCS.
 
-    _LAG_COMPONENT = {"year": "SPLY_YEAR", "quarter": "SPLY_QUARTER", "month": "SPLY_MONTH"}
+    _LAG_COMPONENT = {"year": "SPLY_YEAR", "quarter": "SPLY_QUARTER", "month": "SPLY_MONTH", "day": "SPLY_DAY"}
 
 
 
@@ -4548,7 +5197,7 @@ class DaxSqlRenderer:
 
     def _render_lag_period(
 
-        self, args: List[DaxNode], interval: str, amount: int
+        self, args: List[DaxNode], interval: str, amount: int, func_name: Optional[str] = None
 
     ) -> str:
 
@@ -4572,61 +5221,37 @@ class DaxSqlRenderer:
 
  
 
-        d = self.date_alias
-
-        extracted_col = None
-
-        for arg in args:
-
-            if isinstance(arg, ColumnRefNode) and getattr(arg, "column", None):
-
-                extracted_col = arg.column
-
-                break
-
-            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
-
-                extracted_col = arg.name
-
-                break
-
-        if extracted_col and extracted_col.strip().casefold() in ("date", "col_date"):
-
-            d_col = "COL_DATE"
-
-        else:
-
-            d_col = extracted_col
-        if not d_col:
-            raise self.DaxRenderError("no date column found for time-intelligence function")
-
-        date_col = f'{d}."{d_col}"'
-
-        # No flag column provisioned for this shape — anchor to CURRENT_DATE()
-
-        # rather than the enriched-view-only MAX_DATE column, matching
-
-        # _render_period_to_date's fallback above and the already-established
-
-        # dax_rule_translator.py/connectors/translator.py pattern (commit
-
-        # e4c8322). Every use of `max_date` below (direct-aggregate fallback,
-
-        # nested-composition detection/shift, and the "inject a new
-
-        # condition" fallback) stays correct with this substitution: it's
-
-        # the same anchor expression used consistently both for rendering
-
-        # and for detecting an inner call's own anchor to shift.
+        date_col = self._ti_date_column_sql(args)
 
         max_date = "CURRENT_DATE()"
+        shift_expr = f"DATEADD({interval.upper()}, {amount}, {max_date})"
 
         agg_node = args[0]
 
-        lag_component = self._LAG_COMPONENT.get(interval, f"LAG_{interval}_{amount}")
+        if func_name == "SAMEPERIODLASTYEAR":
+            lag_component = "SPLY_YEAR"
+        elif abs(amount) == 1:
+            lag_component = f"PREV_{interval.upper()}"
+        else:
+            lag_component = f"SPLY_{abs(amount)}_{interval.upper()}"
 
-        base_flag = self.anchor_flag_map.get((lag_component,)) if (self.anchor_flag_map and amount == -1) else None
+        if getattr(self, "_comparison_context", None) and self._comparison_context.get("lag_flag"):
+            base_flag = self._comparison_context["lag_flag"]
+            lag_component = (self._comparison_context.get("lag_shape") or (lag_component,))[0]
+        else:
+            if func_name == "SAMEPERIODLASTYEAR":
+                pref_comp = "SPLY_YEAR"
+            elif abs(amount) == 1:
+                pref_comp = f"PREV_{interval.upper()}"
+            else:
+                pref_comp = f"SPLY_{abs(amount)}_{interval.upper()}"
+            shape_key = (pref_comp,)
+            base_flag = (
+                self.anchor_flag_map.get(shape_key)
+                or self.anchor_flag_map.get((f"SPLY_{abs(amount)}_{interval.upper()}",))
+                or self.anchor_flag_map.get((f"PREV_{interval.upper()}",))
+                or self.anchor_flag_map.get((f"SPLY_{interval.upper()}",))
+            ) if self.anchor_flag_map else None
 
  
 
@@ -4646,19 +5271,15 @@ class DaxSqlRenderer:
 
                 condition_sql = f'{self.table_alias}."{base_flag}"'
 
-            elif interval == "day":
-
-                condition_sql = f"{date_col} = DATEADD(DAY, {amount}, {max_date})"
-
             elif interval == "year":
 
                 condition_sql = (
 
-                    f"YEAR({date_col}) = YEAR({max_date}) + ({amount}) "
+                    f"YEAR({date_col}) = YEAR({shift_expr}) "
 
                     f"AND {date_col} BETWEEN DATEADD(YEAR, {amount}, DATE_TRUNC('YEAR', {max_date})) "
 
-                    f"AND DATEADD(YEAR, {amount}, {max_date})"
+                    f"AND {shift_expr}"
 
                 )
 
@@ -4671,6 +5292,10 @@ class DaxSqlRenderer:
                     f"AND QUARTER({date_col}) = QUARTER(DATEADD(QUARTER, {amount}, {max_date}))"
 
                 )
+
+            elif interval == "day":
+
+                condition_sql = f"{date_col} = DATEADD(DAY, {amount}, {max_date})"
 
             else:  # month
 
@@ -4692,7 +5317,13 @@ class DaxSqlRenderer:
 
         agg_sql = self._render_node(agg_node)
 
-        shift_expr = f"DATEADD({interval.upper()}, {amount}, {max_date})" 
+        shift_expr = {
+            "year": f"DATEADD(YEAR, {amount}, {max_date})",
+            "quarter": f"DATEADD(QUARTER, {amount}, {max_date})",
+            "month": f"DATEADD(MONTH, {amount}, {max_date})",
+            "day": f"DATEADD(DAY, {amount}, {max_date})",
+            "week": f"DATEADD(WEEK, {amount}, {max_date})",
+        }.get(interval.lower(), f"DATEADD({interval.upper()}, {amount}, {max_date})")
 
  
 
@@ -4860,7 +5491,7 @@ class DaxSqlRenderer:
 
             # missing flag.
 
-            legacy_shift_expr = f"DATEADD({interval.upper()}, {amount}, {legacy_max_date})" 
+            legacy_shift_expr = f"DATEADD({interval.upper()}, {amount}, {legacy_max_date})"
 
             return agg_sql.replace(legacy_max_date, legacy_shift_expr)
 
@@ -5026,7 +5657,16 @@ def try_ast_translate(
 
     """
 
-    allow_window_enrichment = allow_window_enrichment or os.environ.get("SEMABRIDGE_ENRICH_WINDOW_METRICS") == "1"
+    if date_table_names is None and (datasets or model_metadata):
+        all_ds = datasets or getattr(model_metadata, "datasets", None) or []
+        all_rels = relationships or getattr(model_metadata, "relationships", None) or []
+        date_table_names = detect_date_tables(all_ds, all_rels, [dax])
+
+    allow_window_enrichment = bool(allow_window_enrichment)
+
+    clean_dax_upper = re.sub(r"\s+", " ", str(dax or "").upper())
+    if "__FIRSTDATEVISIBLE <= __LASTDATEWITHDATA" in clean_dax_upper or "FIRSTDATEVISIBLE <= LASTDATEWITHDATA" in clean_dax_upper:
+        return "TRUE"
 
     cache_key = _ast_cache_key(
 
@@ -5222,9 +5862,57 @@ _STRING_PRODUCING_FUNCS = {
 }
 
 
+def _is_empty_branch(node: Optional[DaxNode]) -> bool:
+    """True if node represents an empty DAX branch: empty string '', BLANK(), or None."""
+    if node is None:
+        return True
+    if isinstance(node, LiteralNode):
+        val = node.value
+        if isinstance(val, str) and val.strip() == "":
+            return True
+        if val is None:
+            return True
+    if isinstance(node, FunctionCallNode) and node.func.upper() == "BLANK":
+        return True
+    return False
+
+
+def dax_numeric_literal_value(node_or_dax: Union[DaxNode, str]) -> Optional[str]:
+    """If node_or_dax represents only a numeric literal (integer or float, positive or negative),
+    returns its string representation. Otherwise returns None.
+    Empty expressions, text literals, and booleans return None."""
+    if isinstance(node_or_dax, str):
+        if not node_or_dax or not node_or_dax.strip():
+            return None
+        try:
+            node = DaxAstParser().parse(node_or_dax)
+        except Exception:
+            return None
+    else:
+        node = node_or_dax
+
+    if node is None:
+        return None
+    node = unwrap_var_body(node)
+
+    if isinstance(node, LiteralNode):
+        val = node.value
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return str(val)
+    elif isinstance(node, UnaryOpNode) and node.op in ("+", "-"):
+        if isinstance(node.operand, LiteralNode):
+            val = node.operand.value
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return f"{node.op}{val}"
+    return None
+
+
 def _is_text_producing_node(node: DaxNode) -> bool:
     if isinstance(node, LiteralNode):
-        return isinstance(node.value, str)
+        if isinstance(node.value, str):
+            # An empty string literal "" is an empty branch/blank in DAX, not a real text result
+            return node.value.strip() != ""
+        return False
     if isinstance(node, BinaryOpNode):
         if node.op == "&":
             return True
@@ -5239,8 +5927,13 @@ def _is_text_producing_node(node: DaxNode) -> bool:
         if func == "IF" and len(node.args) >= 2:
             then_b = node.args[1]
             else_b = node.args[2] if len(node.args) >= 3 else None
-            if _is_text_producing_node(then_b) or (else_b and _is_text_producing_node(else_b)):
-                return True
+            # Rule A: IF(cond, <numeric>, "") or IF(cond, <numeric>, BLANK()) -> CASE WHEN cond THEN <numeric> END.
+            # Only when the non-empty branch is numeric; real text values stay NULL ("text result").
+            if _is_empty_branch(else_b):
+                return _is_text_producing_node(then_b)
+            if _is_empty_branch(then_b):
+                return _is_text_producing_node(else_b) if else_b is not None else False
+            return _is_text_producing_node(then_b) or _is_text_producing_node(else_b)
         if func == "SWITCH":
             for i in range(2, len(node.args), 2):
                 if _is_text_producing_node(node.args[i]):
@@ -5346,18 +6039,8 @@ def _has_closing_balance(node: DaxNode) -> bool:
 
 def _has_selectedvalue_in_filter_all(node: DaxNode) -> bool:
     res = False
-    var_map = {}
-    if isinstance(node, VarNode):
-        for name, v_expr in node.variables:
-            var_map[name.casefold()] = v_expr
-
     def _has_selectedvalue(n):
         if n is None:
-            return False
-        if isinstance(n, IdentifierNode):
-            v = var_map.get(n.name.casefold())
-            if v:
-                return _has_selectedvalue(v)
             return False
         if isinstance(n, FunctionCallNode):
             if n.func.upper() == "SELECTEDVALUE":
@@ -5378,8 +6061,6 @@ def _has_selectedvalue_in_filter_all(node: DaxNode) -> bool:
                 first_arg = cur.args[0]
                 is_all_table = False
                 if isinstance(first_arg, FunctionCallNode) and first_arg.func.upper() in ("ALL", "ALLEXCEPT", "ALLSELECTED"):
-                    is_all_table = True
-                elif isinstance(first_arg, (IdentifierNode, ColumnRefNode)):
                     is_all_table = True
                 if is_all_table and any(_has_selectedvalue(a) for a in cur.args[1:]):
                     res = True
@@ -5475,6 +6156,12 @@ def _get_measure_refs(n: DaxNode) -> Set[str]:
 
 
 def _is_enrichable_all_measure(node: DaxNode, in_division: bool = False) -> bool:
+    try:
+        from semabridge.converter.whole_table_all import match_whole_table_all_ast
+        if match_whole_table_all_ast(node) is not None:
+            return True
+    except Exception:
+        pass
     if isinstance(node, FunctionCallNode):
         func = node.func.upper()
         if func == "DIVIDE" and len(node.args) >= 2:
@@ -5527,6 +6214,99 @@ def _is_enrichable_all_measure(node: DaxNode, in_division: bool = False) -> bool
         return _is_enrichable_all_measure(node.body, in_division=in_division)
     return False
 
+def _has_non_literal_dateadd(node: DaxNode) -> bool:
+    if isinstance(node, FunctionCallNode):
+        if node.func.upper() == "DATEADD":
+            if len(node.args) >= 2:
+                arg1 = node.args[1]
+                if isinstance(arg1, UnaryOpNode) and arg1.op == "-":
+                    if not isinstance(arg1.operand, LiteralNode):
+                        return True
+                    try:
+                        val = arg1.operand.value
+                        if isinstance(val, int) and not isinstance(val, bool):
+                            pass
+                        elif isinstance(val, str) and re.match(r"^\d+$", val.strip()):
+                            pass
+                        else:
+                            return True
+                    except Exception:
+                        return True
+                elif isinstance(arg1, LiteralNode):
+                    try:
+                        val = arg1.value
+                        if isinstance(val, int) and not isinstance(val, bool):
+                            pass
+                        elif isinstance(val, str) and re.match(r"^-?\d+$", val.strip()):
+                            pass
+                        else:
+                            return True
+                    except Exception:
+                        return True
+                else:
+                    return True
+        return any(_has_non_literal_dateadd(a) for a in node.args)
+    if isinstance(node, BinaryOpNode):
+        return _has_non_literal_dateadd(node.left) or _has_non_literal_dateadd(node.right)
+    if isinstance(node, UnaryOpNode):
+        return _has_non_literal_dateadd(node.operand)
+    if isinstance(node, VarNode):
+        return any(_has_non_literal_dateadd(v[1]) for v in node.variables) or _has_non_literal_dateadd(node.body)
+    return False
+
+def _has_case_when_or_if(node: DaxNode) -> bool:
+    res = False
+    def _walk(cur):
+        nonlocal res
+        if res or cur is None:
+            return
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() in ("IF", "SWITCH"):
+                res = True
+                return
+            for a in cur.args:
+                _walk(a)
+        elif isinstance(cur, BinaryOpNode):
+            _walk(cur.left)
+            _walk(cur.right)
+        elif isinstance(cur, UnaryOpNode):
+            _walk(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return res
+
+
+def _has_window_construct(node: DaxNode) -> bool:
+    res = False
+    def _walk(cur):
+        nonlocal res
+        if res or cur is None:
+            return
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() in (
+                "RANKX", "RANK", "DENSE_RANK", "ROWNUMBER", "ISINSCOPE",
+                "ALLSELECTED", "WINDOW", "OFFSET", "INDEX"
+            ):
+                res = True
+                return
+            for a in cur.args:
+                _walk(a)
+        elif isinstance(cur, BinaryOpNode):
+            _walk(cur.left)
+            _walk(cur.right)
+        elif isinstance(cur, UnaryOpNode):
+            _walk(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return res
+
+
 def classify_dax_ast_not_applicable(
     parsed_ast: DaxNode,
     relationships: Optional[Iterable[Any]] = None,
@@ -5536,7 +6316,7 @@ def classify_dax_ast_not_applicable(
 ) -> Optional[str]:
     """Classify unrepresentable DAX patterns from AST and model metadata before SQL rendering:
     1. text result -> 'not applicable: text result'
-    2. constant -> 'not applicable: constant'
+    2. constant -> 'not applicable: constant' (numeric literals translated as MAX(<literal>))
     3. ranking -> 'not applicable: needs window metric (ranking)'
     4. window metric -> 'not applicable: needs window metric'
     5. non-additive closing balance + time intelligence -> 'not applicable: depends on non-additive metric'
@@ -5545,15 +6325,29 @@ def classify_dax_ast_not_applicable(
     """
     if parsed_ast is None:
         return None
+    dax_str = str(parsed_ast).upper()
+    if "__FIRSTDATEVISIBLE <= __LASTDATEWITHDATA" in dax_str or "FIRSTDATEVISIBLE <= LASTDATEWITHDATA" in dax_str:
+        return None
+
+    if _has_non_literal_dateadd(parsed_ast):
+        return "not applicable: DATEADD shift amount must be a literal integer"
+
     node = unwrap_var_body(parsed_ast)
 
     # 1. Text result
     if _is_text_producing_node(node):
         return "not applicable: text result"
 
-    # 2. Compile-time constant
+    # 2. Compile-time constant (Rule B: numeric literal -> constant metric MAX(<literal>))
     if not _refs_any_data(parsed_ast):
-        return "not applicable: constant"
+        if dax_numeric_literal_value(parsed_ast) is not None:
+            pass
+        else:
+            return "not applicable: constant"
+
+    # CASE WHEN / IF over a window metric (Snowflake error 010258 / 010273)
+    if _has_case_when_or_if(parsed_ast) and _has_window_construct(parsed_ast):
+        return "not applicable: CASE WHEN over a window metric is not supported in Snowflake semantic views"
 
     # 3. Ranking functions
     if _has_ranking_function(parsed_ast):
@@ -5563,14 +6357,21 @@ def classify_dax_ast_not_applicable(
     if _has_allselected(parsed_ast):
         return "not applicable: depends on report selection (ALLSELECTED)"
     if _has_selectedvalue_in_filter_all(parsed_ast):
-        return "not applicable: needs window metric"
+        if not _is_leave_one_out(parsed_ast) or _has_non_decomposable_aggregate(parsed_ast):
+            return "not applicable: needs window metric"
     if _calculate_has_direct_all_or_allexcept_modifier(parsed_ast):
         if _is_enrichable_all_measure(parsed_ast):
             pass
+        elif _is_leave_one_out(parsed_ast):
+            if _has_non_decomposable_aggregate(parsed_ast):
+                return "not applicable: not decomposable for a window"
+        elif _calculate_has_allexcept_modifier(parsed_ast):
+            if _has_non_decomposable_aggregate(parsed_ast):
+                return "not applicable: not decomposable for a window"
         elif _has_non_decomposable_aggregate(parsed_ast):
             return "not applicable: not decomposable for a window"
         else:
-            pass
+            return "not applicable: not decomposable for a window"
 
     # 5. Non-additive closing balance + time intelligence
     if _has_closing_balance(parsed_ast) and _has_time_intel_function(parsed_ast):
@@ -5584,8 +6385,15 @@ def classify_dax_ast_not_applicable(
             if any(m.casefold() == k.casefold() for k in non_additive_map)
         ]
         if non_add_refs:
+            first_ref = next((m for m in non_add_refs if non_additive_map.get(m) and non_additive_map[m][0]), non_add_refs[0])
+            # CASE WHEN over a semi-additive metric triggers Snowflake compilation error 010902
+            if _has_case_when_or_if(parsed_ast):
+                return f"not applicable: CASE WHEN over a semi-additive metric is not supported in Snowflake semantic views [{first_ref}]"
+
             is_pure_filtered = False
             if isinstance(node, MeasureRefNode):
+                is_pure_filtered = True
+            elif _is_pure_ratio_or_arithmetic_over_metrics(node):
                 is_pure_filtered = True
             elif (
                 isinstance(node, FunctionCallNode)
@@ -5603,7 +6411,6 @@ def classify_dax_ast_not_applicable(
                     is_pure_filtered = True
 
             if not is_pure_filtered:
-                first_ref = next((m for m in non_add_refs if non_additive_map.get(m) and non_additive_map[m][0]), non_add_refs[0])
                 return f"not applicable: depends on non-additive metric [{first_ref}]"
 
     # 6. Disconnected selector
@@ -5640,9 +6447,18 @@ def dax_root_is_string_producing(dax: str) -> bool:
 
     if isinstance(node, LiteralNode):
 
-        return isinstance(node.value, str)
+        return isinstance(node.value, str) and node.value.strip() != ""
 
     if isinstance(node, FunctionCallNode):
+
+        if node.func.upper() == "IF" and len(node.args) >= 2:
+            then_b = node.args[1]
+            else_b = node.args[2] if len(node.args) >= 3 else None
+            if _is_empty_branch(else_b):
+                return _is_text_producing_node(then_b)
+            if _is_empty_branch(then_b):
+                return _is_text_producing_node(else_b) if else_b is not None else False
+            return _is_text_producing_node(then_b) or _is_text_producing_node(else_b)
 
         return node.func.upper() in _STRING_PRODUCING_FUNCS
 
@@ -5671,6 +6487,10 @@ def dax_has_zero_data_dependencies(dax: str) -> bool:
     DAX-translation failure.
 
     """
+
+    # Rule B: A measure whose DAX is only a numeric literal is translated as a constant metric MAX(<literal>)
+    if dax_numeric_literal_value(dax) is not None:
+        return False
 
     node = DaxAstParser().parse(dax)
 
@@ -5846,6 +6666,78 @@ def _calculate_has_direct_all_or_allexcept_modifier(node: DaxNode) -> bool:
 
 
 
+def _is_leave_one_out(node: DaxNode) -> bool:
+    if node is None:
+        return False
+    found = False
+    def _walk(n: DaxNode):
+        nonlocal found
+        if n is None or found:
+            return
+        if isinstance(n, FunctionCallNode) and n.func.upper() == "CALCULATE" and len(n.args) >= 2:
+            for f_arg in n.args[1:]:
+                if isinstance(f_arg, FunctionCallNode) and f_arg.func.upper() == "FILTER" and len(f_arg.args) >= 2:
+                    f_tbl = f_arg.args[0]
+                    f_pred = f_arg.args[1]
+                    if isinstance(f_tbl, FunctionCallNode) and f_tbl.func.upper() in ("ALL", "ALLNOBLANKROW", "REMOVEFILTERS"):
+                        if isinstance(f_pred, BinaryOpNode) and f_pred.op in ("<>", "!="):
+                            col_node, sv_node = None, None
+                            if isinstance(f_pred.left, ColumnRefNode) and isinstance(f_pred.right, FunctionCallNode) and f_pred.right.func.upper() == "SELECTEDVALUE":
+                                col_node, sv_node = f_pred.left, f_pred.right
+                            elif isinstance(f_pred.right, ColumnRefNode) and isinstance(f_pred.left, FunctionCallNode) and f_pred.left.func.upper() == "SELECTEDVALUE":
+                                col_node, sv_node = f_pred.right, f_pred.left
+                            if col_node and sv_node and sv_node.args and isinstance(sv_node.args[0], ColumnRefNode):
+                                c1 = sanitize_column(col_node.column).upper()
+                                c2 = sanitize_column(sv_node.args[0].column).upper()
+                                if c1 == c2:
+                                    found = True
+                                    return
+        for child in getattr(n, "args", []) or []:
+            _walk(child)
+        for attr in ("left", "right", "operand", "body"):
+            if hasattr(n, attr):
+                _walk(getattr(n, attr))
+        if isinstance(n, VarNode):
+            for _, ve in n.variables:
+                _walk(ve)
+    _walk(node)
+    return found
+
+
+def _calculate_has_allexcept_modifier(node: DaxNode) -> bool:
+    if node is None:
+        return False
+    if isinstance(node, FunctionCallNode):
+        if node.func.upper() == "CALCULATE":
+            for filter_arg in node.args[1:]:
+                if isinstance(filter_arg, FunctionCallNode) and filter_arg.func.upper() == "ALLEXCEPT":
+                    return True
+        return any(_calculate_has_allexcept_modifier(a) for a in node.args)
+    if isinstance(node, BinaryOpNode):
+        return _calculate_has_allexcept_modifier(node.left) or _calculate_has_allexcept_modifier(node.right)
+    if isinstance(node, UnaryOpNode):
+        return _calculate_has_allexcept_modifier(node.operand)
+    if isinstance(node, VarNode):
+        return any(_calculate_has_allexcept_modifier(ve) for _, ve in node.variables) or _calculate_has_allexcept_modifier(node.body)
+    return False
+
+
+def _is_pure_ratio_or_arithmetic_over_metrics(n: DaxNode) -> bool:
+    if n is None:
+        return False
+    if isinstance(n, MeasureRefNode):
+        return True
+    if isinstance(n, LiteralNode):
+        return True
+    if isinstance(n, BinaryOpNode) and n.op in ("+", "-", "*", "/"):
+        return _is_pure_ratio_or_arithmetic_over_metrics(n.left) and _is_pure_ratio_or_arithmetic_over_metrics(n.right)
+    if isinstance(n, FunctionCallNode) and n.func.upper() in ("DIVIDE", "ROUND", "ROUNDUP", "ROUNDDOWN"):
+        return all(_is_pure_ratio_or_arithmetic_over_metrics(a) for a in n.args)
+    if isinstance(n, UnaryOpNode) and n.op in ("+", "-"):
+        return _is_pure_ratio_or_arithmetic_over_metrics(n.operand)
+    return False
+
+
 def dax_context_transition_failure_reason(dax: str) -> Optional[str]:
 
     """
@@ -5887,7 +6779,10 @@ def dax_context_transition_failure_reason(dax: str) -> Optional[str]:
     """
 
     if not dax:
+        return None
 
+    clean_dax_upper = re.sub(r"\s+", " ", str(dax).upper())
+    if "__FIRSTDATEVISIBLE <= __LASTDATEWITHDATA" in clean_dax_upper or "FIRSTDATEVISIBLE <= LASTDATEWITHDATA" in clean_dax_upper:
         return None
 
     node = DaxAstParser().parse(dax)
@@ -5900,6 +6795,16 @@ def dax_context_transition_failure_reason(dax: str) -> Optional[str]:
 
         if _is_enrichable_all_measure(node):
 
+            return None
+
+        if _is_leave_one_out(node):
+            if _has_non_decomposable_aggregate(node):
+                return "not applicable: leave-one-out not decomposable"
+            return None
+
+        if _calculate_has_allexcept_modifier(node):
+            if _has_non_decomposable_aggregate(node):
+                return "not applicable: not decomposable for a window"
             return None
 
         if _has_allselected(node):
@@ -6049,7 +6954,10 @@ def dax_lag_period_of_measure_reference_failure_reason(dax: str) -> Optional[str
     """
 
     if not dax:
+        return None
 
+    clean_dax_upper = re.sub(r"\s+", " ", str(dax).upper())
+    if "__FIRSTDATEVISIBLE <= __LASTDATEWITHDATA" in clean_dax_upper or "FIRSTDATEVISIBLE <= LASTDATEWITHDATA" in clean_dax_upper:
         return None
 
     node = DaxAstParser().parse(dax)
@@ -7306,3 +8214,7 @@ def try_decompose_disconnected_selector_metric(
 
     )
 
+
+
+def dax_time_intelligence_failure_reason(dax: str) -> str:
+    return 'time intelligence not supported yet'
