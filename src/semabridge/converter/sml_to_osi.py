@@ -169,6 +169,7 @@ class SMLToOSIConverter(BaseConverter):
         
         return OSIMetric(
             unique_name=sml_metric.unique_name,
+            original_name=getattr(sml_metric, "original_name", None),
             label=sml_metric.label,
             dataset=sml_metric.dataset,
             source_column=source_col,

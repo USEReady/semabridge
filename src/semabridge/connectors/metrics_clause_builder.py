@@ -105,7 +105,7 @@ class MetricsClauseBuilder:
                 continue
             if "OVER (" in expr.upper() or "OVER(" in expr.upper():
                 for match in re.finditer(
-                    r'(?:SUM|AVG|COUNT|MIN|MAX)\s*\(\s*([A-Za-z0-9_]+)\."([A-Za-z0-9_]+)"(?:::FLOAT)?\s*\)\s*OVER\s*\(PARTITION\s+BY\s+EXCLUDING',
+                    r'(?:SUM|AVG|COUNT|MIN|MAX)\s*\(\s*([A-Za-z0-9_]+)\."([A-Za-z0-9_]+)"(?:::FLOAT)?\s*\)\s*OVER\s*\(PARTITION\s+BY(?:\s+EXCLUDING)?',
                     expr,
                     re.IGNORECASE,
                 ):
@@ -283,6 +283,7 @@ class MetricsClauseBuilder:
     ) -> List[str]:
         self.dataset_col_lookup = dataset_col_lookup
         self.dataset_by_name = dataset_by_name
+        self._current_model = model
         metrics_lines = []
         used_metric_names: Set[str] = set()
         skipped_metric_names: Set[str] = set()
@@ -433,10 +434,22 @@ class MetricsClauseBuilder:
         except Exception as exc:
             logger.warning("OpenAI metric prefetch skipped: %s", exc)
 
+        non_additive_metric_names = {
+            self.identifier_sanitizer.sanitize_column(m.unique_name).upper()
+            for m in valid_metrics
+            if getattr(m, "non_additive_dimension", None)
+        }
+
         for metric in valid_metrics:
             raw_name = metric.unique_name
             sanitized_name = self.identifier_sanitizer.to_alias(raw_name)
             logger.info(f"🔍 METRIC SANITIZATION: raw='{raw_name}' → sanitized='{sanitized_name}'")
+
+        non_additive_metric_names = {
+            self.identifier_sanitizer.sanitize_column(m.unique_name).upper()
+            for m in valid_metrics
+            if getattr(m, "non_additive_dimension", None)
+        }
 
         for metric in valid_metrics:
             if metric.unique_name in skipped_metric_names:
@@ -616,8 +629,31 @@ class MetricsClauseBuilder:
                 syns_to_emit = []
 
             non_additive_clause = ""
-            if getattr(metric, "non_additive_dimension", None) and expr != NULL_PLACEHOLDER_SQL:
-                dim_table, dim_col = metric.non_additive_dimension
+            non_add_dim = getattr(metric, "non_additive_dimension", None)
+            if not non_add_dim and expr != NULL_PLACEHOLDER_SQL and getattr(metric, "expression", None):
+                try:
+                    from semabridge.converter.dax_ast_parser import DaxAstParser, DaxSqlRenderer, FunctionCallNode, ColumnRefNode, IdentifierNode
+                    ast = DaxAstParser().parse(metric.expression)
+                    renderer = DaxSqlRenderer()
+                    if isinstance(ast, FunctionCallNode) and ast.func.upper() == "CALCULATE" and len(ast.args) > 1:
+                        for arg in ast.args[1:]:
+                            extracted = renderer._extract_closing_balance_dimension(arg)
+                            if extracted:
+                                non_add_dim = extracted
+                                break
+                    elif isinstance(ast, FunctionCallNode) and ast.func.upper() == "IF" and len(ast.args) > 1:
+                        cond_node = ast.args[0]
+                        if isinstance(cond_node, FunctionCallNode) and cond_node.func.upper() == "HASONEVALUE" and cond_node.args:
+                            carg = cond_node.args[0]
+                            if isinstance(carg, ColumnRefNode):
+                                non_add_dim = (carg.table, carg.column)
+                            elif isinstance(carg, IdentifierNode):
+                                non_add_dim = (None, carg.name)
+                except Exception:
+                    pass
+
+            if non_add_dim and expr != NULL_PLACEHOLDER_SQL:
+                dim_table, dim_col = non_add_dim
                 dim_alias = None
                 if dim_table:
                     for ds, a in dataset_aliases.items():
@@ -669,10 +705,10 @@ class MetricsClauseBuilder:
                                 pass
 
                 if matched_dim_col:
-                    non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{matched_dim_col}" ASC )'
+                    non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{matched_dim_col}" ASC NULLS LAST )'
                 elif not emitted_list:
                     # Standalone/mock execution without emitted_dimensions map
-                    non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{safe_dim_col}" ASC )'
+                    non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{safe_dim_col}" ASC NULLS LAST )'
                 else:
                     logger.warning(
                         "Dropping NON ADDITIVE BY for metric '%s': '%s.%s' is not an emitted dimension in DIMENSIONS",
@@ -729,11 +765,24 @@ class MetricsClauseBuilder:
                 safe_comment = self._clean_comment(reason_clean)
                 comment_clause = f" COMMENT = '{safe_comment}'"
 
-            elif "PARTITION BY EXCLUDING" in expr.upper():
-                m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", expr, re.I | re.S)
-                excl_text = m_excl.group(1).strip().replace('"', "") if m_excl else ""
-                safe_comment = self._clean_comment(f"Window metric over {metric_entity_alias}.{safe_metric_name}. Must be queried with {excl_text}.")
+            elif "PARTITION BY" in expr.upper():
+                if "PARTITION BY EXCLUDING" in expr.upper():
+                    m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", expr, re.I | re.S)
+                    excl_text = m_excl.group(1).strip().replace('"', "") if m_excl else ""
+                    safe_comment = self._clean_comment(f"Window metric over {metric_entity_alias}.{safe_metric_name}. Must be queried with {excl_text}.")
+                else:
+                    m_part = re.search(r"PARTITION\s+BY\s+(.*?)(?:\)|$)", expr, re.I | re.S)
+                    part_text = m_part.group(1).strip().replace('"', "") if m_part else ""
+                    safe_comment = self._clean_comment(f"Window metric over {part_text}" if part_text else "Window metric")
                 comment_clause = f" COMMENT = '{safe_comment}'"
+
+            elif any(f"IS_CURRENT_{u}" in expr.upper() for u in ("MONTH", "YEAR", "QUARTER", "DAY")):
+                for u in ("MONTH", "YEAR", "QUARTER", "DAY"):
+                    if f"IS_CURRENT_{u}" in expr.upper():
+                        unit_str = u.lower()
+                        safe_comment = self._clean_comment(f"latest {unit_str} vs previous {unit_str} only")
+                        comment_clause = f" COMMENT = '{safe_comment}'"
+                        break
 
             is_priv = (
                 getattr(metric, "access_modifier", None) == "private_access"
@@ -741,8 +790,17 @@ class MetricsClauseBuilder:
                 or safe_metric_name.endswith(("_SUM", "_CNT", "_NUM", "_DEN"))
             )
             priv_prefix = "PRIVATE " if is_priv else ""
+
+            is_referencing_non_additive = False
+            if not non_additive_clause and non_additive_metric_names:
+                for na_name in non_additive_metric_names:
+                    if re.search(r'\b' + re.escape(na_name) + r'\b', expr, re.IGNORECASE):
+                        is_referencing_non_additive = True
+                        break
+
+            lhs_target = f'"{safe_metric_name}"' if is_referencing_non_additive else f'{metric_entity_alias}."{safe_metric_name}"'
             metrics_lines.append(
-                f'  {priv_prefix}{metric_entity_alias}."{safe_metric_name}"{non_additive_clause} AS {expr}'
+                f'  {priv_prefix}{lhs_target}{non_additive_clause} AS {expr}'
                 f'{synonyms_clause(syns_to_emit)}{comment_clause}'
             )
             metric_to_alias[self.identifier_sanitizer.to_alias(metric.unique_name)] = metric_entity_alias
@@ -1900,8 +1958,12 @@ class MetricsClauseBuilder:
             s = "not applicable: DAX expression unsupported"
         if "available columns" in s.lower():
             s = s.split("available columns")[0].strip().rstrip(":;,-")
-        if len(s) > 200:
-            s = s[:197].rstrip() + "..."
+        # Remove quoted identifiers in comment (e.g. T."COL" -> T.COL) to keep comments clean
+        s = re.sub(r'([A-Za-z0-9_]+)\."([A-Za-z0-9_]+)"', r'\1.\2', s)
+        s = s.replace('"', '')
+        if len(s) > 280:
+            # Cut at word boundary without ellipsis cutting mid-word
+            s = s[:270].rsplit(' ', 1)[0]
         return cls._escape_comment(s)
 
     def _align_partition_by_excluding(self, metric_sql: str) -> str:
@@ -2121,6 +2183,16 @@ class MetricsClauseBuilder:
                     expanded_expr = expr
                     substituted = False
                     for ref_name in sorted(set(uninlined_metric_refs)):
+                        if getattr(self, "_dataset_col_lookup", None):
+                            clean_ref = self.identifier_sanitizer.sanitize_column(ref_name).upper()
+                            is_clash = any(
+                                any(self.identifier_sanitizer.sanitize_column(c).upper() == clean_ref for c in cols)
+                                for cols in self._dataset_col_lookup.values()
+                            )
+                            if is_clash:
+                                already_inlined.add(ref_name)
+                                continue
+
                         ref_expr = expr_by_name.get(ref_name)
                         if ref_expr:
                             clean_ref_expr = re.sub(
@@ -2217,13 +2289,6 @@ class MetricsClauseBuilder:
                 dataset_aliases=getattr(self, "_dataset_aliases", None),
             )
 
-            m_expr = self._rewrite_clashing_columns_in_aggregates(
-                m_expr=m_expr,
-                defined_metric_names=defined_metric_names,
-                dataset_col_lookup=getattr(self, "_dataset_col_lookup", None),
-                dataset_aliases=getattr(self, "_dataset_aliases", None),
-            )
-
             nested_reason = detect_nested_aggregate(m_expr)
             if nested_reason:
                 logger.warning("Final metric '%s' rejected by nested aggregate check: %s", m_name, nested_reason)
@@ -2241,6 +2306,7 @@ class MetricsClauseBuilder:
                 dataset_aliases=getattr(self, "_dataset_aliases", None),
                 relationships=getattr(self, "_relationships", None),
                 defined_metric_names=defined_metric_names,
+                non_add_clause=non_add,
             )
             if predeploy_reason:
                 logger.warning("Final metric '%s' rejected by pre-deploy check: %s", m_name, predeploy_reason)
@@ -2414,6 +2480,7 @@ class MetricsClauseBuilder:
         dataset_aliases: Optional[Dict[str, str]],
         relationships: Optional[Iterable[Any]],
         defined_metric_names: Optional[Set[str]] = None,
+        non_add_clause: Optional[str] = None,
     ) -> Optional[str]:
         """Pre-deploy validation checks (a)-(g) for every metric.
         Returns failure reason string or None if valid.
@@ -2509,10 +2576,10 @@ class MetricsClauseBuilder:
                 for col_m in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', agg_body):
                     tbl_ref = col_m.group(1).upper()
                     col_ref = col_m.group(2)
-                    if _is_phys_col(tbl_ref, col_ref):
-                        continue
                     if not is_window_agg and defined_metric_names and col_ref.upper() in defined_metric_names and col_ref.upper() != m_name.upper():
                         return f"BY_DESIGN_EXCLUDED: metric '{m_name}' cannot wrap aggregate around existing metric '{col_ref}' (Snowflake error 010220)"
+                    if _is_phys_col(tbl_ref, col_ref):
+                        continue
 
             # Check (3): cannot mix raw aggregates with metric references outside aggregates
             if raw_agg_spans and defined_metric_names:
@@ -2527,11 +2594,27 @@ class MetricsClauseBuilder:
                     if col_ref.upper() in defined_metric_names and col_ref.upper() != m_name.upper():
                         return f"BY_DESIGN_EXCLUDED: metric '{m_name}' cannot mix raw aggregate with metric reference '{col_ref}' (Snowflake error 010220)"
 
-        # Check (d): no SUM/COUNT/AVG of a dimension column copied onto a fact (fan-out)
+        # Check (d): no SUM/COUNT/AVG of a column that belongs to a related 'one'-side table (fan-out)
+        # Never for COUNT(DISTINCT)/MIN/MAX, the table's own columns, or measure-only tables.
         for agg_fn in ("SUM", "AVG", "AVERAGE", "COUNT"):
-            for m in re.finditer(rf'\b{agg_fn}\s*\(\s*(?:DISTINCT\s+)?([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?\s*\)', m_expr, re.IGNORECASE):
+            for m in re.finditer(rf'\b{agg_fn}\s*\(\s*(?!DISTINCT\b)\s*([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?\s*\)', m_expr, re.IGNORECASE):
                 t_ref = m.group(1).upper()
                 c_ref = m.group(2).upper()
+                # 1. Skip if measure-only table
+                cur_model = getattr(self, "_current_model", None)
+                t_ds_obj = (getattr(self, "dataset_by_name", {}) or {}).get(t_ref)
+                if not t_ds_obj and cur_model and dataset_aliases:
+                    t_ds_obj = next((d for d in getattr(cur_model, "datasets", []) or [] if (dataset_aliases.get(getattr(d, "unique_name", None)) or getattr(d, "unique_name", "")).upper() == t_ref), None)
+                if t_ds_obj and getattr(t_ds_obj, "is_measure_table", False):
+                    continue
+                if dataset_col_lookup and t_ref in dataset_col_lookup and len(dataset_col_lookup[t_ref]) == 0:
+                    continue
+
+                # 2. If this column is the fact table's own physical column, it is not a copied dimension column
+                if _is_phys_col(t_ref, c_ref):
+                    continue
+
+                # 3. Only fire for columns belonging to a related 'one'-side table reached through a relationship
                 if relationships:
                     for rel in relationships:
                         from_ds = str(getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "")).upper()
@@ -2540,61 +2623,234 @@ class MetricsClauseBuilder:
                         to_al = (dataset_aliases.get(to_ds) or to_ds).upper() if dataset_aliases else to_ds
                         if t_ref in (from_al, from_ds) and to_al != t_ref:
                             to_clean = re.sub(r'[^A-Z0-9]', '', to_al)
-                            if c_ref.startswith(f"{to_al}_") or (to_clean and c_ref.startswith(f"{to_clean}_")):
-                                return f"BY_DESIGN_EXCLUDED: aggregating dimension column with {agg_fn} on fact table causes fan-out duplication (measure should aggregate on dimension table directly)"
+                            is_dim_prefix = c_ref.startswith(f"{to_al}_") or (bool(to_clean) and c_ref.startswith(f"{to_clean}_"))
+                            c_bare = c_ref
+                            if c_ref.startswith(f"{to_al}_"):
+                                c_bare = c_ref[len(to_al)+1:]
+                            elif to_clean and c_ref.startswith(f"{to_clean}_"):
+                                c_bare = c_ref[len(to_clean)+1:]
+
+                            if dataset_col_lookup:
+                                # Check if c_bare is in to_ds columns and NOT in t_ref columns
+                                to_cols = {str(c).upper() for c in dataset_col_lookup.get(to_ds, set())}
+                                t_cols = {str(c).upper() for c in dataset_col_lookup.get(from_ds, set())}
+                                clean_bare = re.sub(r'[^A-Z0-9]', '', c_bare)
+                                in_to = any(c == c_bare or re.sub(r'[^A-Z0-9]', '', c) == clean_bare for c in to_cols)
+                                in_t = any(c == c_bare or re.sub(r'[^A-Z0-9]', '', c) == clean_bare for c in t_cols)
+                                if in_to and not in_t:
+                                    return f"BY_DESIGN_EXCLUDED: aggregating dimension column with {agg_fn} on fact table causes fan-out duplication (measure should aggregate on dimension table directly)"
+                                elif not to_cols and is_dim_prefix:
+                                    return f"BY_DESIGN_EXCLUDED: aggregating dimension column with {agg_fn} on fact table causes fan-out duplication (measure should aggregate on dimension table directly)"
+                            else:
+                                if is_dim_prefix:
+                                    return f"BY_DESIGN_EXCLUDED: aggregating dimension column with {agg_fn} on fact table causes fan-out duplication (measure should aggregate on dimension table directly)"
 
         # DAX-based checks if dax_expr is available
         if dax_expr:
             dax_upper = dax_expr.upper()
+            dax_ast = None
+            try:
+                from semabridge.converter.dax_ast_parser import (
+                    DaxAstParser,
+                    DaxSqlRenderer,
+                    DaxNode,
+                    FunctionCallNode,
+                    ColumnRefNode,
+                    IdentifierNode,
+                    BinaryOpNode,
+                    UnaryOpNode,
+                    LiteralNode,
+                    VarNode,
+                )
+                dax_ast = DaxAstParser().parse(dax_expr)
+            except Exception:
+                dax_ast = None
+
+            def _walk_ast(node: Optional[Any]):
+                if not node:
+                    return
+                yield node
+                if isinstance(node, FunctionCallNode):
+                    for arg in node.args:
+                        yield from _walk_ast(arg)
+                elif isinstance(node, BinaryOpNode):
+                    yield from _walk_ast(node.left)
+                    yield from _walk_ast(node.right)
+                elif isinstance(node, UnaryOpNode):
+                    yield from _walk_ast(node.operand)
+                elif isinstance(node, VarNode):
+                    for _, expr in getattr(node, "variables", []):
+                        yield from _walk_ast(expr)
+                    yield from _walk_ast(getattr(node, "body", None))
 
             # Check (e): iterators over VALUES/DISTINCT are not unrolled (iteration grain)
-            for it_fn in ("SUMX", "AVERAGEX", "MINX", "MAXX", "COUNTX", "COUNTAX", "PRODUCTX", "GEOMEANX"):
-                if it_fn in dax_upper:
-                    m_it = re.search(rf'\b{it_fn}\s*\(\s*(VALUES|DISTINCT|SUMMARIZE|SUMMARIZECOLUMNS)\s*\(', dax_upper)
-                    if m_it:
-                        if not re.search(r'\bOVER\s*\(', m_expr, re.IGNORECASE) and not re.search(r'\bGROUP\s+BY\b', m_expr, re.IGNORECASE):
+            if dax_ast is not None:
+                for n in _walk_ast(dax_ast):
+                    if isinstance(n, FunctionCallNode) and n.func.upper() in (
+                        "SUMX", "AVERAGEX", "MINX", "MAXX", "COUNTX", "COUNTAX", "PRODUCTX", "GEOMEANX"
+                    ):
+                        if n.args:
+                            iter_target = n.args[0]
+                            if isinstance(iter_target, FunctionCallNode) and iter_target.func.upper() in (
+                                "VALUES", "DISTINCT", "SUMMARIZE", "SUMMARIZECOLUMNS"
+                            ):
+                                if "OVER" not in expr_upper and "GROUP BY" not in expr_upper:
+                                    return "BY_DESIGN_EXCLUDED: aggregation over groups requires multi-level grouping not supported in a single semantic metric"
+                            if isinstance(iter_target, FunctionCallNode) and iter_target.func.upper() in (
+                                "ALL", "ALLNOBLANKROW", "REMOVEFILTERS"
+                            ):
+                                if iter_target.args and isinstance(iter_target.args[0], ColumnRefNode) and n.func.upper() not in ("MINX", "MAXX"):
+                                    return "BY_DESIGN_EXCLUDED: aggregation over groups requires multi-level grouping not supported in a single semantic metric"
+            else:
+                for it_fn in ("SUMX", "AVERAGEX", "MINX", "MAXX", "COUNTX", "COUNTAX", "PRODUCTX", "GEOMEANX"):
+                    if it_fn in dax_upper:
+                        m_it = re.search(rf'\b{it_fn}\s*\(\s*(VALUES|DISTINCT|SUMMARIZE|SUMMARIZECOLUMNS)\s*\(', dax_upper)
+                        if m_it and "OVER" not in expr_upper and "GROUP BY" not in expr_upper:
                             return "BY_DESIGN_EXCLUDED: aggregation over groups requires multi-level grouping not supported in a single semantic metric"
-                    m_all_col = re.search(rf"\b{it_fn}\s*\(\s*(?:ALL|ALLNOBLANKROW|REMOVEFILTERS)\s*\(\s*['\"]?[A-Za-z0-9_ ]+['\"]?\s*\[", dax_upper)
-                    if m_all_col and it_fn not in ("MINX", "MAXX"):
-                        return "BY_DESIGN_EXCLUDED: aggregation over groups requires multi-level grouping not supported in a single semantic metric"
 
             # Check (b): every DAX filter condition appears in the SQL
-            has_dax_filter = False
-            if "FILTER(" in dax_upper or "KEEPFILTERS(" in dax_upper:
-                has_dax_filter = True
-            elif "CALCULATE(" in dax_upper:
-                calc_args = [a.strip() for a in dax_upper.split("CALCULATE(", 1)[1].split(",")] if "CALCULATE(" in dax_upper else []
-                if len(calc_args) > 1 and not all("USERELATIONSHIP" in a or ("ALL(" in a and "[" not in a) for a in calc_args[1:]):
-                    has_dax_filter = True
+            if dax_ast is not None:
+                renderer = DaxSqlRenderer()
+                has_row_filter = False
+                closing_balance_required = False
+                time_shift_required = False
 
-            if has_dax_filter:
-                is_bare_agg = bool(re.match(r'^\s*(?:SUM|AVG|MIN|MAX|COUNT)\s*\([^)]*\)\s*(?:::FLOAT)?\s*$', m_expr, re.IGNORECASE))
-                has_sql_cond = any(k in expr_upper for k in ("CASE", "WHEN", "IFF", "WHERE", "IS_YTD", "IS_MTD", "IS_QTD", "__SB_"))
-                if is_bare_agg and not has_sql_cond:
-                    return "DAX filter condition lost in SQL translation (bare aggregate with no CASE/condition)"
+                for n in _walk_ast(dax_ast):
+                    if isinstance(n, FunctionCallNode):
+                        fn_u = n.func.upper()
+                        if fn_u in ("CALCULATE", "CALCULATETABLE") and len(n.args) > 1:
+                            for filter_arg in n.args[1:]:
+                                cb_dim = renderer._extract_closing_balance_dimension(filter_arg)
+                                if cb_dim:
+                                    closing_balance_required = True
+                                    continue
+                                if isinstance(filter_arg, FunctionCallNode):
+                                    afn = filter_arg.func.upper()
+                                    if afn in ("LASTNONBLANK", "CLOSINGBALANCEMONTH", "CLOSINGBALANCEQUARTER", "CLOSINGBALANCEYEAR"):
+                                        closing_balance_required = True
+                                        continue
+                                    if afn in ("USERELATIONSHIP", "REMOVEFILTERS"):
+                                        continue
+                                    if afn in ("ALL", "ALLNOBLANKROW", "ALLSELECTED", "ALLEXCEPT"):
+                                        continue
+                                    if afn in ("DATEADD", "SAMEPERIODLASTYEAR", "PARALLELPERIOD", "DATESYTD", "DATESMTD", "DATESQTD", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "PREVIOUSDAY"):
+                                        time_shift_required = True
+                                        continue
+                                has_row_filter = True
+                        elif fn_u in ("FILTER", "KEEPFILTERS"):
+                            cb_dim = renderer._extract_closing_balance_dimension(n)
+                            if cb_dim:
+                                closing_balance_required = True
+                            elif fn_u == "FILTER" and len(n.args) >= 2:
+                                has_row_filter = True
+                            elif fn_u == "KEEPFILTERS":
+                                has_row_filter = True
+
+                has_non_additive = bool(non_add_clause and "NON ADDITIVE BY" in non_add_clause.upper()) or "NON ADDITIVE BY" in expr_upper
+
+                if closing_balance_required and not has_non_additive and non_add_clause is not None:
+                    return "DAX closing-balance filter lost in SQL translation (missing NON ADDITIVE BY)"
+
+                if time_shift_required:
+                    has_time_shift_sql = any(k in expr_upper for k in ("IS_YTD", "IS_MTD", "IS_QTD", "IS_SPLY", "__SB_", "PARTITION BY", "DATEADD", "CASE", "WHEN", "IFF", "WHERE"))
+                    if not has_time_shift_sql:
+                        return "DAX time-intelligence filter lost in SQL translation"
+
+                if has_row_filter:
+                    has_sql_cond = any(k in expr_upper for k in ("CASE", "WHEN", "IFF", "WHERE", "IS_YTD", "IS_MTD", "IS_QTD", "IS_SPLY", "__SB_"))
+                    if not has_sql_cond and not has_non_additive and "PARTITION BY EXCLUDING" not in expr_upper:
+                        return "DAX filter condition lost in SQL translation (bare aggregate with no CASE/condition)"
+            else:
+                has_dax_filter = False
+                is_closing_balance_filter = False
+                if "FILTER(" in dax_upper or "KEEPFILTERS(" in dax_upper:
+                    if (
+                        re.search(r'FILTER\s*\(\s*ALL\s*\([^)]+\)\s*,\s*[^=]+=\s*MAX\s*\(', dax_upper)
+                        or "LASTNONBLANK(" in dax_upper
+                        or "CLOSINGBALANCEMONTH(" in dax_upper
+                        or "CLOSINGBALANCEQUARTER(" in dax_upper
+                        or "CLOSINGBALANCEYEAR(" in dax_upper
+                    ):
+                        is_closing_balance_filter = True
+                    else:
+                        has_dax_filter = True
+                elif "CALCULATE(" in dax_upper:
+                    calc_args = [a.strip() for a in dax_upper.split("CALCULATE(", 1)[1].split(",")] if "CALCULATE(" in dax_upper else []
+                    if len(calc_args) > 1 and not all("USERELATIONSHIP" in a or ("ALL(" in a and "[" not in a) for a in calc_args[1:]):
+                        has_dax_filter = True
+
+                has_preserved_clause = (
+                    bool(non_add_clause and "NON ADDITIVE BY" in non_add_clause.upper())
+                    or "NON ADDITIVE BY" in expr_upper
+                    or "PARTITION BY EXCLUDING" in expr_upper
+                    or is_closing_balance_filter
+                )
+
+                if has_dax_filter and not has_preserved_clause:
+                    is_bare_agg = bool(re.match(r'^\s*(?:SUM|AVG|MIN|MAX|COUNT)\s*\([^)]*\)\s*(?:::FLOAT)?\s*$', m_expr, re.IGNORECASE))
+                    has_sql_cond = any(k in expr_upper for k in ("CASE", "WHEN", "IFF", "WHERE", "IS_YTD", "IS_MTD", "IS_QTD", "__SB_", "PARTITION BY EXCLUDING", "NON ADDITIVE BY"))
+                    if is_bare_agg and not has_sql_cond:
+                        return "DAX filter condition lost in SQL translation (bare aggregate with no CASE/condition)"
 
             # Check (c): SQL tables == DAX lineage tables
-            dax_tables = set(re.findall(r"'([^']+)'\[", dax_expr))
-            dax_filter_tables = set(re.findall(r"(?:FILTER|SUMX|AVERAGEX|MINX|MAXX|COUNTAX|COUNTROWS)\s*\(\s*'([^']+)'", dax_expr, re.IGNORECASE))
-            dax_all_tables = dax_tables | dax_filter_tables
-            if dax_all_tables and dataset_aliases:
-                expected_sql_aliases = {(dataset_aliases.get(t) or to_alias(t)).upper() for t in dax_all_tables}
-                sql_table_aliases = {m.upper() for m in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\."?[A-Za-z_][A-Za-z0-9_]*"?', m_expr)}
+            dax_filter_tables: Set[str] = set()
+            if dax_ast is not None:
+                for n in _walk_ast(dax_ast):
+                    if isinstance(n, FunctionCallNode) and n.func.upper() in ("FILTER", "SUMX", "AVERAGEX", "MINX", "MAXX", "COUNTAX", "COUNTROWS") and n.args:
+                        t_arg = n.args[0]
+                        if isinstance(t_arg, IdentifierNode):
+                            dax_filter_tables.add(t_arg.name)
+                        elif isinstance(t_arg, ColumnRefNode):
+                            dax_filter_tables.add(t_arg.table)
+            else:
+                dax_filter_tables = set(re.findall(r"(?:FILTER|SUMX|AVERAGEX|MINX|MAXX|COUNTAX|COUNTROWS)\s*\(\s*['\"]?([A-Za-z0-9_ ]+)['\"]?", dax_expr, re.IGNORECASE))
+
+            if dax_filter_tables and dataset_aliases:
+                sql_check_text = m_expr + (" " + non_add_clause if non_add_clause else "")
+                sql_table_aliases = {m.upper() for m in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\."?[A-Za-z_][A-Za-z0-9_]*"?', sql_check_text)}
                 for ft in dax_filter_tables:
                     ft_alias = (dataset_aliases.get(ft) or to_alias(ft)).upper()
                     if ft_alias not in sql_table_aliases and sql_table_aliases:
-                        return f"SQL tables do not match DAX lineage tables (expected '{ft_alias}' in SQL)"
+                        has_helper_or_flag = any(k in expr_upper for k in ("IS_", "__SB_", "_LAG_", "_CURRENT_"))
+                        is_related = False
+                        if relationships:
+                            for rel in relationships:
+                                from_ds = str(getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "")).upper()
+                                to_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "")).upper()
+                                from_al = (dataset_aliases.get(from_ds) or from_ds).upper()
+                                to_al = (dataset_aliases.get(to_ds) or to_ds).upper()
+                                if (ft_alias in (from_al, to_al)) and any(sql_al in (from_al, to_al) for sql_al in sql_table_aliases):
+                                    is_related = True
+                                    break
+                        if not (has_helper_or_flag or is_related):
+                            return f"SQL tables do not match DAX lineage tables (expected '{ft_alias}' in SQL)"
 
             # Check (f): outer numeric literals preserved
-            m_mult = re.search(r'\*\s*([0-9]+(?:\.[0-9]+)?)\s*$', dax_expr.strip())
-            if m_mult:
-                num = m_mult.group(1)
-                if not re.search(rf'\*\s*{re.escape(num)}\b', m_expr):
-                    return f"outer numeric literal (* {num}) from DAX expression was lost in SQL translation"
-            m_sub = re.search(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*', dax_expr.strip())
-            if m_sub:
-                num = m_sub.group(1)
-                if not re.search(rf'\b{re.escape(num)}\s*-\s*', m_expr):
-                    return f"outer numeric literal ({num} -) from DAX expression was lost in SQL translation"
+            if dax_ast is not None:
+                curr = dax_ast
+                while isinstance(curr, VarNode):
+                    curr = curr.body
+                if isinstance(curr, BinaryOpNode):
+                    if curr.op == "*" and isinstance(curr.right, LiteralNode) and isinstance(curr.right.value, (int, float)):
+                        val = float(curr.right.value)
+                        matches = re.findall(r'\*\s*\(?\s*([0-9]+(?:\.[0-9]+)?)\s*\)?', m_expr)
+                        if not any(abs(float(m) - val) < 1e-4 for m in matches if m):
+                            return f"outer numeric literal (* {curr.right.value}) from DAX expression was lost in SQL translation"
+                    elif curr.op == "-" and isinstance(curr.left, LiteralNode) and isinstance(curr.left.value, (int, float)):
+                        val = float(curr.left.value)
+                        matches = re.findall(r'\b([0-9]+(?:\.[0-9]+)?)\s*\)?\s*-\s*', m_expr)
+                        if not any(abs(float(m) - val) < 1e-4 for m in matches if m):
+                            return f"outer numeric literal ({curr.left.value} -) from DAX expression was lost in SQL translation"
+            else:
+                m_mult = re.search(r'\*\s*([0-9]+(?:\.[0-9]+)?)\s*$', dax_expr.strip())
+                if m_mult:
+                    num = m_mult.group(1)
+                    if not re.search(rf'\*\s*{re.escape(num)}\b', m_expr):
+                        return f"outer numeric literal (* {num}) from DAX expression was lost in SQL translation"
+                m_sub = re.search(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*', dax_expr.strip())
+                if m_sub:
+                    num = m_sub.group(1)
+                    if not re.search(rf'\b{re.escape(num)}\s*-\s*', m_expr):
+                        return f"outer numeric literal ({num} -) from DAX expression was lost in SQL translation"
 
         return None

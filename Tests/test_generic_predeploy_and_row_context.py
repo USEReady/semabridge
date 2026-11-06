@@ -114,6 +114,33 @@ def test_rule2_check_b_filter_lost():
     assert reason_good is None
 
 
+def test_rule2_check_b_closing_balance_filter_not_flagged():
+    """CALCULATE(COUNT(F[id]), FILTER(ALL(Cal[p]), Cal[p] = MAX(Cal[p]))) must not be flagged."""
+    tbl = "F"
+    dax = "CALCULATE(COUNT(F[id]), FILTER(ALL(Cal[p]), Cal[p] = MAX(Cal[p])))"
+    builder = make_builder()
+    sql = "COUNT(F.ID)"
+    # With or without explicit non_add_clause, closing-balance pattern must not be flagged as lost
+    reason = builder._run_predeploy_checks("M_Closing", tbl, sql, dax, None, {tbl: tbl, "Cal": "Cal"}, None)
+    assert reason is None
+    # Also test with non_add_clause explicitly passed
+    reason_with_clause = builder._run_predeploy_checks(
+        "M_Closing", tbl, sql, dax, None, {tbl: tbl, "Cal": "Cal"}, None,
+        non_add_clause=' NON ADDITIVE BY ( Cal."P" ASC NULLS LAST )'
+    )
+    assert reason_with_clause is None
+
+
+def test_rule2_check_b_partition_by_excluding_preserved():
+    """PARTITION BY EXCLUDING must be treated as a preserved filter."""
+    tbl = "F"
+    dax = "CALCULATE(SUM(F[Amount]), ALL(Dim[Region]))"
+    builder = make_builder()
+    sql = 'SUM(F.AMOUNT) PARTITION BY EXCLUDING (Dim."REGION")'
+    reason = builder._run_predeploy_checks("M_All", tbl, sql, dax, None, {tbl: tbl, "Dim": "Dim"}, None)
+    assert reason is None
+
+
 def test_rule2_check_c_lineage_table_mismatch():
     """Check (c): SQL tables == DAX lineage tables."""
     home_tbl = random_id("Home")
@@ -159,6 +186,17 @@ def test_rule2_check_d_fan_out():
     min_dim = f'MIN({fact_tbl}."{dim_col}")'
     reason_min = builder._run_predeploy_checks("M_Fanout", fact_tbl, min_dim, None, None, aliases, [MockRel()])
     assert reason_min is None
+
+    # COUNT(DISTINCT ...) never fans out -> ALLOWED
+    distinct_dim = f'COUNT(DISTINCT {fact_tbl}."{dim_col}")'
+    reason_distinct = builder._run_predeploy_checks("M_Fanout", fact_tbl, distinct_dim, None, None, aliases, [MockRel()])
+    assert reason_distinct is None
+
+    # Fact table's own physical column whose name starts with dim_tbl (e.g. COUNTRY_CODE) -> ALLOWED
+    fact_col_lookup = {fact_tbl: {f"{dim_tbl}_CODE"}}
+    own_fk = f'COUNT({fact_tbl}."{dim_tbl}_CODE")'
+    reason_fk = builder._run_predeploy_checks("M_FK", fact_tbl, own_fk, None, fact_col_lookup, aliases, [MockRel()])
+    assert reason_fk is None
 
 
 def test_rule2_check_e_iteration_grain():
@@ -315,5 +353,64 @@ def test_rule2_snowflake_error_010220_safety_and_fk_rewrite():
     # 5. Reserved keyword START is recognized in SNOWFLAKE_RESERVED_WORDS
     from semabridge.utils.identifiers import SNOWFLAKE_RESERVED_WORDS
     assert "start" in SNOWFLAKE_RESERVED_WORDS
+
+
+def test_ast_filter_preservation_scenarios():
+    builder = make_builder()
+    
+    # 1. Closing-balance filter: with NON ADDITIVE BY passes, without it fails
+    dax_cb = "CALCULATE ( COUNT(F[id]), FILTER ( ALL ( Cal[p] ), Cal[p] = MAX ( Cal[p] ) ) )"
+    r_pass = builder._run_predeploy_checks(
+        "M1", "F", "COUNT(F.ID)", dax_cb, None, {"F": "F", "Cal": "Cal"}, None,
+        non_add_clause=' NON ADDITIVE BY ( Cal."P" ASC NULLS LAST )'
+    )
+    assert r_pass is None
+
+    r_fail = builder._run_predeploy_checks(
+        "M1", "F", "COUNT(F.ID)", dax_cb, None, {"F": "F", "Cal": "Cal"}, None,
+        non_add_clause=""
+    )
+    assert r_fail is not None
+    assert "closing-balance filter lost" in r_fail
+
+    # 2. CALCULATE with REMOVEFILTERS modifier is not flagged as a lost filter
+    dax_rmf = "CALCULATE ( [x], REMOVEFILTERS ( 'T' ) )"
+    r_rmf = builder._run_predeploy_checks("M2", "T", "SUM(T.VAL)", dax_rmf, None, {"T": "T"}, None)
+    assert r_rmf is None
+
+    # 3. Ratio with filter lost inside numerator: COUNTROWS(FILTER(T, T[c]="a")) / COUNTROWS(T) -> COUNT(*) / COUNT(*) fails
+    dax_ratio = 'COUNTROWS(FILTER(T, T[c] = "a")) / COUNTROWS(T)'
+    r_ratio_fail = builder._run_predeploy_checks("M3", "T", "COUNT(*) / NULLIF(COUNT(*), 0)", dax_ratio, None, {"T": "T"}, None)
+    assert r_ratio_fail is not None
+    assert "filter condition lost" in r_ratio_fail
+
+    # Preserved numerator filter passes
+    r_ratio_pass = builder._run_predeploy_checks(
+        "M3", "T", "COUNT(CASE WHEN T.c = \'a\' THEN 1 END) / NULLIF(COUNT(*), 0)", dax_ratio, None, {"T": "T"}, None
+    )
+    assert r_ratio_pass is None
+
+    # 4. Filter on related table moved onto fact table via flag or helper column passes lineage
+    dax_lineage = "CALCULATE ( [x], 'Cal'[Year] = 2014 )"
+    r_lineage_fact_flag = builder._run_predeploy_checks(
+        "M4", "SALES", "SUM(CASE WHEN SALES.IS_2014 = 1 THEN SALES.VAL END)", dax_lineage, None,
+        {"SALES": "SALES", "Cal": "CAL"}, None
+    )
+    assert r_lineage_fact_flag is None
+
+    # 5. Outer numeric literal with comments and bracketed numbers
+    dax_literal = "[x] * 12 // annualise"
+    r_lit_pass = builder._run_predeploy_checks("M5", "T", "(SUM(T.VAL)) * (12)", dax_literal, None, {"T": "T"}, None)
+    assert r_lit_pass is None
+
+    r_lit_fail = builder._run_predeploy_checks("M5", "T", "SUM(T.VAL)", dax_literal, None, {"T": "T"}, None)
+    assert r_lit_fail is not None
+    assert "outer numeric literal (* 12)" in r_lit_fail
+
+    # 6. String literal containing 'FILTER(' is not falsely treated as a filter function
+    dax_str = 'IF([x] = "FILTER(", 1, 0)'
+    r_str = builder._run_predeploy_checks("M6", "T", "IFF(T.X = 'FILTER(', 1, 0)", dax_str, None, {"T": "T"}, None)
+    assert r_str is None
+
 
 

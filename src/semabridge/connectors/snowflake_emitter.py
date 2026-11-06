@@ -138,6 +138,7 @@ class SnowflakeEmitter(BaseEmitter):
         # Local mapping for enriched views when behavior config lacks an explicit mapping
         self._enriched_view_mapping: Dict[str, str] = {}
         self._failed_enrichment_datasets: set[str] = set()
+        self._failed_enriched_view_datasets: Dict[str, str] = {}
 
         # ---------------------------------------------------------
         # Initialize Domain Managers
@@ -552,6 +553,8 @@ class SnowflakeEmitter(BaseEmitter):
                         _dataset_col_lookup,
                         _dataset_aliases,
                         label="confirmed",
+                        failed_enrichment_datasets=self._failed_enrichment_datasets,
+                        failed_enrichment_errors=getattr(self, "_failed_enriched_view_datasets", {}),
                     )
                     if _rerendered:
                         logger.info(
@@ -1680,6 +1683,7 @@ class SnowflakeEmitter(BaseEmitter):
         self.translator.anchor_flag_map.clear()
         self._enriched_view_mapping.clear()
         self._failed_enrichment_datasets.clear()
+        self._failed_enriched_view_datasets.clear()
         self._load_saved_bindings()
         target = f"{self.config.database}.{self.config.schema_name}"
         try:
@@ -1756,6 +1760,8 @@ class SnowflakeEmitter(BaseEmitter):
                     _dataset_col_lookup,
                     _dataset_aliases,
                     label="confirmed",
+                    failed_enrichment_datasets=self._failed_enrichment_datasets,
+                    failed_enrichment_errors=getattr(self, "_failed_enriched_view_datasets", {}),
                 )
                 pass  # Window metrics are handled natively in B1 (no re-render needed)
                 return self.semantic_view_builder.generate_ddls(model)
@@ -2616,6 +2622,23 @@ class SnowflakeEmitter(BaseEmitter):
                     seen.add(ds.casefold())
                     fact_tables.append(ds)
 
+        # Check for metric/column name clashes:
+        # A name clash between a metric and a physical column on a dataset forces creation of an enriched view
+        for m in getattr(model, "metrics", []) or []:
+            m_uname = (getattr(m, "unique_name", None) or getattr(m, "name", "") or "").strip().upper()
+            m_ds = getattr(m, "dataset", None)
+            if not m_uname or not m_ds or _is_virtual_dataset(m_ds) or m_ds.casefold() in seen:
+                continue
+            target_ds_obj = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None) == m_ds), None)
+            if target_ds_obj:
+                col_names = {
+                    (getattr(c, "unique_name", "") or getattr(c, "name", "")).strip().upper()
+                    for c in getattr(target_ds_obj, "columns", []) or []
+                }
+                if m_uname in col_names:
+                    seen.add(m_ds.casefold())
+                    fact_tables.append(m_ds)
+
         from semabridge.converter.time_intelligence_shapes import discover_time_intelligence_shapes
         if discover_time_intelligence_shapes(getattr(model, "metrics", []) or []):
             primary_fact = self._identify_fact_table(model)
@@ -3471,12 +3494,16 @@ class SnowflakeEmitter(BaseEmitter):
         """
         clean_fact = str(fact_table or "").strip().strip('"')
         if clean_fact.upper().endswith("_ENRICHED"):
-            return self._namespaced_physical_name(clean_fact)
+            clean_fact_base = clean_fact.rsplit(".", 1)[-1].strip('"')
+            return self._namespaced_physical_name(clean_fact_base)
 
         fact_dataset = self._get_dataset_by_name(model, clean_fact) if model else None
         modeled_cols = [c.unique_name for c in getattr(fact_dataset, "columns", []) or []] if fact_dataset else []
         from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
-        explicit_mapping = getattr(self.sf_behavior, 'source_table_mapping', None) if hasattr(self, 'sf_behavior') else None
+        explicit_mapping = {
+            k: v for k, v in (getattr(self.sf_behavior, 'source_table_mapping', None) or {}).items()
+            if not str(v).upper().endswith("_ENRICHED") and "_ENRICHED" not in str(v).upper()
+        } if hasattr(self, 'sf_behavior') else None
         model_name = getattr(model, "unique_name", None) or getattr(model, "name", None) if model else None
 
         bound_table = resolve_dataset_to_physical_table(
@@ -3486,7 +3513,10 @@ class SnowflakeEmitter(BaseEmitter):
             explicit_mapping=explicit_mapping,
             model_name=model_name,
         )
-        return self._namespaced_physical_name(f"{bound_table}_ENRICHED")
+        clean_bound = str(bound_table or "").rsplit(".", 1)[-1].strip('"')
+        if clean_bound.upper().endswith("_ENRICHED"):
+            clean_bound = clean_bound[:-9]
+        return self._namespaced_physical_name(f"{clean_bound}_ENRICHED")
 
     def _dataset_for_enriched_view(self, model, view_name: str) -> Optional[str]:
         """Which dataset an enriched view belongs to, found by applying
@@ -3583,6 +3613,25 @@ class SnowflakeEmitter(BaseEmitter):
 
         select_parts = [f"SELECT f.*"]
 
+        # Metric/column name clash: project f."<col>" AS "_COL_<col>" as a real physical
+        # column in the enriched view. This allows the semantic view to define:
+        # PRIVATE T."_COL_<col>" AS T."_COL_<col>"
+        # so there is never a dimension whose expression is the clashing name!
+        fact_metric_names = {
+            (getattr(m, "unique_name", None) or getattr(m, "name", "") or "").strip().upper()
+            for m in getattr(model, "metrics", []) or []
+            if str(getattr(m, "dataset", "")).casefold() == str(fact_table).casefold()
+        }
+        for c in getattr(fact_dataset, "columns", []) or []:
+            c_name = (getattr(c, "unique_name", "") or getattr(c, "name", "")).strip().upper()
+            if c_name in fact_metric_names:
+                safe_col = self._id.sanitize_column(c_name)
+                col_alias = f"_COL_{safe_col}"
+                if col_alias not in projected_cols:
+                    select_parts.append(f'\n            , f."{safe_col}" AS "{col_alias}"')
+                    projected_cols.add(col_alias)
+                    self._live_schema_metadata.setdefault(enriched_view_name.upper(), set()).add(col_alias)
+
         # Shared across every precomputed column below so that columns
         # reached via an overlapping path (e.g. PRODUCT_ISVANARSDEL and
         # MANUFACTURER_MFGISVANARSDEL both hop through Product) register
@@ -3643,18 +3692,10 @@ class SnowflakeEmitter(BaseEmitter):
                 resolved_fiscal_col = self._id.sanitize_column(fiscal_col)
 
             # The fact's own date column (schema-based): the modelled one, else
-            # the first date-named column of the fact.
+            # resolved from relationships / date types (no string-guessing fallback).
             fact_date_col = self._resolve_fact_enrichment_date_column(model, fact_table)
             if not fact_date_col and resolved_date_col in fact_cols:
                 fact_date_col = resolved_date_col
-            if not fact_date_col:
-                fact_date_col = next(
-                    (
-                        _fc for _fc in sorted(fact_cols)
-                        if any(_t in _fc.upper() for _t in ["DATE", "TIME", "TIMESTAMP", "DT", "YEAR"])
-                    ),
-                    None,
-                )
 
             date_source_key = self._id.sanitize_table_name(
                 (date_dataset.source_table or date_dataset.unique_name) if date_dataset else date_table
@@ -3729,7 +3770,7 @@ class SnowflakeEmitter(BaseEmitter):
             shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
             if shapes and fact_date_col:
                 anchor_joins.append(
-                    f'CROSS JOIN (SELECT COALESCE(MAX("{fact_date_col}"), CURRENT_DATE()) AS "MAX_DATE" '
+                    f'CROSS JOIN (SELECT MAX("{fact_date_col}") AS "MAX_DATE" '
                     f'FROM {fact_source_ref}) anchor_max'
                 )
                 max_date_sql = 'anchor_max."MAX_DATE"'
@@ -3843,6 +3884,10 @@ class SnowflakeEmitter(BaseEmitter):
         select_parts.extend(anchor_joins)
         select_parts.extend(join_state.get("clauses", []))
 
+        if not projected_cols:
+            logger.info("Enriched view not needed for '%s': no precomputed or anchor columns projected", fact_table)
+            return None
+
         create_view_sql = "\n".join(select_parts)
         full_sql = f"CREATE OR REPLACE VIEW {enriched_view_name} COMMENT = 'Created by SemaBridge' AS\n{create_view_sql}"
         
@@ -3899,8 +3944,15 @@ class SnowflakeEmitter(BaseEmitter):
             logger.warning("Failed to create enriched view for dataset '%s': %s", fact_table, e)
             self._failed_enrichment_datasets.add(str(fact_table))
             self._failed_enrichment_datasets.add(str(fact_table).casefold())
+            if not hasattr(self, "_failed_enriched_view_datasets"):
+                self._failed_enriched_view_datasets = {}
+            self._failed_enriched_view_datasets[str(fact_table).casefold()] = str(e)
+            self._failed_enriched_view_datasets[str(fact_table)] = str(e)
             if hasattr(self, "semantic_view_builder"):
                 self.semantic_view_builder.failed_enrichment_datasets = self._failed_enrichment_datasets
+                self.semantic_view_builder.failed_enriched_view_datasets = self._failed_enriched_view_datasets
+                if hasattr(self.semantic_view_builder, "metrics_builder"):
+                    self.semantic_view_builder.metrics_builder.failed_enriched_view_datasets = self._failed_enriched_view_datasets
             return None
 
     # =========================================================================

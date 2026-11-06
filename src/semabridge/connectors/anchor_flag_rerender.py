@@ -39,6 +39,8 @@ def rerender_anchor_dependent_metrics(
     dataset_col_lookup: Dict[str, set],
     dataset_aliases: Dict[str, str],
     label: str = "",
+    failed_enrichment_datasets: Optional[Set[str]] = None,
+    failed_enrichment_errors: Optional[Dict[str, str]] = None,
 ) -> int:
     """Re-translate every metric whose DAX resolves to a time-intelligence
     shape, passing `anchor_flag_map`, and overwrite `metric.sql_expression`
@@ -130,6 +132,23 @@ def rerender_anchor_dependent_metrics(
                     if v:
                         target_ds, flag_map_for_dataset = k, v
                         break
+
+        # If enriched view creation failed for this dataset, emit NULL with the real Snowflake error (no CURRENT_DATE fallback)
+        failed_sets = failed_enrichment_datasets or set()
+        failed_errs = failed_enrichment_errors or {}
+        ds_cf = str(target_ds or dataset_name or "").casefold()
+        if ds_cf in {str(s).casefold() for s in failed_sets} or ds_cf in {str(k).casefold() for k in failed_errs}:
+            real_err = failed_errs.get(ds_cf) or next((v for k, v in failed_errs.items() if str(k).casefold() == ds_cf), "Enriched view creation failed")
+            metric.sql_expression = None
+            metric.sync_failure_reason = f"Enriched view creation failed: {real_err}"
+            metric.sync_enabled = False
+            logger.info("Enriched view failed for '%s'; metric '%s' emitted as NULL: %s", target_ds, name, real_err)
+            rerendered += 1
+            continue
+
+        if not flag_map_for_dataset:
+            # When no flag map is available, do not fall back to CURRENT_DATE()
+            continue
 
         # If metric belongs to a virtual measure table, resolve table_alias to the fact table where flags reside
         table_alias = (

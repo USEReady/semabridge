@@ -324,10 +324,14 @@ class TablesClauseBuilder:
             d_name = getattr(d, "unique_name", None) or getattr(d, "name", "")
             d_desc = getattr(d, "".join(["desc", "ription"]), "") or ""
             d_src = str(getattr(d, "source_table", "") or "").upper()
+            d_name_upper = str(d_name or "").upper()
             is_auto_date = (
                 d_desc == "Auto-generated Calendar Dimension"
                 or d_src == "DIM_DATE"
                 or (is_calendar_like_name(d_name) and d_desc == "Auto-generated Calendar Dimension")
+                or "DATEAUTOTEMPLATE" in d_name_upper
+                or "DATETABLETEMPLATE" in d_name_upper
+                or "LOCALDATETABLE" in d_name_upper
             )
             if is_auto_date and str(d_name).casefold() not in related_dataset_names:
                 logger.info(
@@ -343,8 +347,38 @@ class TablesClauseBuilder:
                         by_design=True,
                     )
                 continue
+
+            # Omit unlinked measure-only tables (containers with no physical data columns and no relationships)
+            cols = getattr(d, "columns", []) or []
+            is_measure_table = getattr(d, "is_measure_table", False)
+            non_dummy_cols = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
+                logger.info("Omitting unlinked measure-only table '%s' from semantic view TABLES clause", d_name)
+                if self.drop_ledger is not None:
+                    self.drop_ledger.record(
+                        "table",
+                        d_name,
+                        DropStage.DDL_EMISSION,
+                        "Measure-only table omitted: no relationships and no physical data columns",
+                        by_design=True,
+                    )
+                continue
+
             filtered_datasets.append(d)
         datasets = filtered_datasets
+
+        # Orient 1:1 relationships: point from the table with more metrics to the table with fewer
+        for r in relationships:
+            card = getattr(r, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "").lower().replace("_", "-")
+            if card_str in ("1:1", "one-to-one", "onetoone"):
+                from_cnt = metric_counts_by_dataset.get(r.from_dataset, 0)
+                to_cnt = metric_counts_by_dataset.get(r.to_dataset, 0)
+                from_is_fact = is_fact_like_name(r.from_dataset)
+                to_is_fact = is_fact_like_name(r.to_dataset)
+                if to_cnt > from_cnt or (to_cnt == from_cnt and to_is_fact and not from_is_fact):
+                    r.from_dataset, r.to_dataset = r.to_dataset, r.from_dataset
+                    r.from_columns, r.to_columns = r.to_columns, r.from_columns
 
         many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
         one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}

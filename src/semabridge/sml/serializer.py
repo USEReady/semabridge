@@ -481,6 +481,7 @@ class SMLSerializer:
             "synonyms": list(metric.synonyms or []) if metric.synonyms else [],
             "synonym_sources": dict(metric.synonym_sources or {}),
             "has_report_alias": metric.has_report_alias,
+            "original_name": metric.original_name,
         }
 
     @staticmethod
@@ -489,6 +490,7 @@ class SMLSerializer:
         above — see its docstring for the real incident this matters for."""
         return SMLMetric(
             unique_name=data["unique_name"],
+            original_name=data.get("original_name"),
             label=data.get("label", ""),
             description=data.get("description", ""),
             dataset=data["dataset"],

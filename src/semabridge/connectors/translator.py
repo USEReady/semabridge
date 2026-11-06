@@ -979,9 +979,7 @@ class MetricExpressionTranslator:
                 sanitized_col_name,
             )
             if not resolved_col:
-                error = (
-                    f"Column '{col_name}' (sanitized: '{sanitized_col_name}') not found in dataset '{dataset_name}'. Available columns: {sorted(known_columns)}"
-                )
+                error = f"Column '{col_name}' not found in dataset '{dataset_name}'"
                 logger.debug(f"Metric '{metric_name}': {error}")
                 return False, error
 

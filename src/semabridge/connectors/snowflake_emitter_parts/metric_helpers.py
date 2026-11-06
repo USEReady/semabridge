@@ -236,10 +236,7 @@ def validate_metric_column_references(
             ]
             if len(owners) == 1:
                 continue
-            return False, (
-                f"Column '{col_name}' (sanitized: '{sanitized_col_name}') not found in dataset '{dataset_name}'. "
-                f"Available columns: {sorted(known_columns)}"
-            )
+            return False, f"Column '{col_name}' not found in dataset '{dataset_name}'"
 
     return True, None
 

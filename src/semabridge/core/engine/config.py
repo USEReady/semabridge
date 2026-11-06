@@ -165,6 +165,8 @@ def _apply_mapping_overrides_from_config(
 
         if matched_metric is not None and str(matched_metric.unique_name) != target_name:
             old_name = str(matched_metric.unique_name)
+            if not getattr(matched_metric, "original_name", None):
+                matched_metric.original_name = old_name
             matched_metric.unique_name = target_name
             matched_metric.label = target_name
             renamed_metrics += 1

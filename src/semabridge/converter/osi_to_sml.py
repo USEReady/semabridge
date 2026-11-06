@@ -532,6 +532,7 @@ class OSIToSMLConverter(BaseConverter):
                 sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
                 metric = SMLMetric(
                     unique_name=osi_metric.unique_name,
+                    original_name=getattr(osi_metric, "original_name", None) or osi_metric.unique_name,
                     label=osi_metric.label,
                     description=osi_metric.description or "",
                     dataset=osi_metric.dataset,
@@ -551,12 +552,14 @@ class OSIToSMLConverter(BaseConverter):
                 return metric
 
         # Analyze Complexity
-        complexity = self.dax_translator.analyze_complexity(expression)
+        metric_ident = getattr(osi_metric, "name", None) or osi_metric.unique_name
+        complexity = self.dax_translator.analyze_complexity(expression, metric_name=metric_ident)
         
         sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
         
         metric = SMLMetric(
             unique_name=osi_metric.unique_name,
+            original_name=getattr(osi_metric, "original_name", None) or osi_metric.unique_name,
             label=osi_metric.label,
             description=osi_metric.description or "",
             dataset=osi_metric.dataset,
@@ -631,6 +634,8 @@ class OSIToSMLConverter(BaseConverter):
         metric.synonym_sources = dict(osi_metric.synonym_sources)
         metric.has_report_alias = osi_metric.has_report_alias
         metric.source_file = osi_metric.source_file
+        if getattr(osi_metric, "original_name", None):
+            metric.original_name = osi_metric.original_name
 
         return metric
 
@@ -719,7 +724,13 @@ class OSIToSMLConverter(BaseConverter):
             and not is_by_design_excluded(m.sync_failure_reason)
         ]
         if unresolved:
-            metric_map = {str(m.unique_name).casefold(): m for m in sml.metrics if m.unique_name}
+            metric_map = {}
+            for m in sml.metrics:
+                if m.unique_name:
+                    metric_map[str(m.unique_name).casefold()] = m
+                orig = getattr(m, "original_name", None)
+                if orig:
+                    metric_map[str(orig).casefold()] = m
             for m in unresolved:
                 visited_path: List[str] = []
                 visited_set: Set[str] = set()
@@ -792,32 +803,51 @@ class OSIToSMLConverter(BaseConverter):
             for m in sml.metrics
             if getattr(m, "unique_name", None)
         }
+        for m in sml.metrics:
+            orig = getattr(m, "original_name", None)
+            if orig:
+                by_name[str(orig).casefold()] = m
 
         for metric in sml.metrics:
-            reason = metric.sync_failure_reason or ""
-            if metric.sql_expression or self._STALE_TIER5_DEFERRED_MARKER not in reason:
+            if metric.sql_expression or not (metric.expression or "").strip():
                 continue
+            metric.sync_enabled = False
+            reason = metric.sync_failure_reason or ""
+            is_generic = (
+                self._STALE_TIER5_DEFERRED_MARKER in reason
+                or not reason
+                or any(g in reason.lower() for g in ("no sql expression produced", "tier-5", "unsupported dax pattern", "not translatable"))
+            )
+            if is_generic:
+                unresolved_deps = []
+                for ref in re.findall(r"\[([^\]]+)\]", metric.expression or ""):
+                    dep = by_name.get(ref.strip().casefold())
+                    if dep is not None and dep is not metric and not dep.sql_expression:
+                        unresolved_deps.append(dep)
 
-            unresolved_deps = []
-            for ref in re.findall(r"\[([^\]]+)\]", metric.expression or ""):
-                dep = by_name.get(ref.strip().casefold())
-                if dep is not None and dep is not metric and not dep.sql_expression:
-                    unresolved_deps.append(dep)
-
-            if unresolved_deps:
-                dep_text = "; ".join(
-                    f"'{dep.unique_name}' ({dep.sync_failure_reason or 'no SQL yet'})"
-                    for dep in unresolved_deps
-                )
-                metric.sync_failure_reason = (
-                    f"Cannot compute — depends on unresolved metric(s): {dep_text}. "
-                    f"This metric's own DAX has no translation issue of its own."
-                )
-            else:
-                metric.sync_failure_reason = (
-                    "Tier-5 (LLM) batch translation was attempted for this metric and "
-                    "did not produce a usable result."
-                )
+                if unresolved_deps:
+                    dep_text = "; ".join(
+                        f"'{dep.unique_name}' ({dep.sync_failure_reason or 'unresolved'})"
+                        for dep in unresolved_deps
+                    )
+                    metric.sync_failure_reason = (
+                        f"Cannot compute — depends on unresolved metric(s): {dep_text}. "
+                        f"This metric's own DAX has no translation issue of its own."
+                    )
+                else:
+                    from semabridge.converter.dax_ast_parser import (
+                        DaxAstParser,
+                        _calculate_has_direct_all_or_allexcept_modifier,
+                        classify_dax_ast_not_applicable,
+                    )
+                    ast_node = DaxAstParser().parse(metric.expression)
+                    classified_reason = classify_dax_ast_not_applicable(ast_node) if ast_node else None
+                    if classified_reason:
+                        metric.sync_failure_reason = classified_reason
+                    elif ast_node and _calculate_has_direct_all_or_allexcept_modifier(ast_node):
+                        metric.sync_failure_reason = "BY_DESIGN_EXCLUDED: not applicable: not decomposable for a window"
+                    else:
+                        metric.sync_failure_reason = "not applicable: complex multi-pass or iteration calculation requires window metric"
 
     def _decompose_disconnected_selector_metrics(
         self,

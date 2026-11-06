@@ -991,7 +991,7 @@ class TMSLTransformer:
             sanitized_name = measure_name.lstrip("#@")
         
         # Analyze DAX complexity for sync metadata
-        complexity = self.dax_translator.analyze_complexity(dax)
+        complexity = self.dax_translator.analyze_complexity(dax, metric_name=measure_name)
         required_dims = self.dax_translator.get_required_dimensions(dax)
         
         # EDGE CASE 3: Known complex DAX transpiler (window-function templates)
@@ -999,12 +999,6 @@ class TMSLTransformer:
 
         # EDGE CASE 4: Detect unsupported DAX patterns upfront
         unsupported_patterns = {
-            "TOTALMTD": "Complex Time Intelligence (TOTALMTD) not automatically translatable",
-            "TOTALQTD": "Complex Time Intelligence (TOTALQTD) not automatically translatable",
-            "SAMEPERIODLASTYEAR": "Complex Time Intelligence (SAMEPERIODLASTYEAR) not automatically translatable",
-            "PREVIOUSYEAR": "Complex Time Intelligence (PREVIOUSYEAR) not automatically translatable",
-            "PREVIOUSMONTH": "Complex Time Intelligence (PREVIOUSMONTH) not automatically translatable",
-            "DATEADD": "Complex Time Intelligence (DATEADD) not automatically translatable",
             "EARLIER": "Row context functions (EARLIER) cannot be translated",
             "USERELATIONSHIP": "Dynamic relationship functions (USERELATIONSHIP) not automatically translatable",
         }

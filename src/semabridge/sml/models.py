@@ -399,6 +399,10 @@ class SMLMetric(BaseModel):
     )
     has_report_alias: bool = Field(default=False, description="Whether a PBIX report-layer visual alias was matched for this field")
     is_placeholder: bool = Field(default=False, description="Whether this metric is a non-computable placeholder emitted as NULL")
+    original_name: Optional[str] = Field(
+        default=None,
+        description="Power BI measure name before sanitizing/overrides (stable reference key)",
+    )
     source_file: Optional[str] = Field(
         default=None,
         description="Full path to the source .pbix file this metric was extracted from — "

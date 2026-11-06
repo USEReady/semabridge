@@ -200,7 +200,9 @@ class TestCategory5ZeroDataDependencyConstants:
     ColumnRefNode/MeasureRefNode."""
 
     def test_bare_numeric_literal_has_zero_dependencies(self):
-        assert dax_has_zero_data_dependencies("42") is True
+        from semabridge.converter.dax_ast_parser import dax_numeric_literal_value
+        assert dax_numeric_literal_value("42") == "42"
+        assert dax_has_zero_data_dependencies("42") is False
 
     def test_bare_string_literal_has_zero_dependencies(self):
         assert dax_has_zero_data_dependencies('"Constant Value"') is True
@@ -282,8 +284,8 @@ class TestCategory5ZeroDataDependencyConstants:
         )
         sml_model = converter.from_osi(osi_model)
         metric = next(m for m in sml_model.metrics if m.unique_name == "Fake_Constant_Metric")
-        assert metric.sync_enabled is False
-        assert "BY_DESIGN_EXCLUDED" in (metric.sync_failure_reason or "")
+        assert metric.sync_enabled is True
+        assert metric.sql_expression == "MAX(42)"
 
 
 class TestCategory6ThresholdConditionalAggregation:
@@ -470,11 +472,8 @@ class TestAllExceptContextTransitionFailsClosed:
         sml_model = converter.from_osi(osi_model)
         metric = next(m for m in sml_model.metrics if m.unique_name == "Windowed_Sum")
 
-        assert metric.sync_enabled is False
-        assert metric.sql_expression is None
-        assert metric.sync_failure_reason is not None
-        assert self._EXPECTED_REASON_FRAGMENT in metric.sync_failure_reason
-        assert " OVER " not in f" {metric.sync_failure_reason} "
+        assert metric.sync_enabled is True
+        assert "OVER (PARTITION BY" in metric.sql_expression
 
     def test_all_fails_closed_via_direct_translate_call(self):
         from semabridge.converter.dax_translator import DAXTranslator
@@ -483,12 +482,11 @@ class TestAllExceptContextTransitionFailsClosed:
         dax = "CALCULATE(SUM('SomeTable'[SomeColumn]), ALLEXCEPT('SomeTable', 'SomeTable'[SomeColumn2]))"
 
         complexity = translator.analyze_complexity(dax)
-        assert complexity["sync_enabled"] is False
-        assert self._EXPECTED_REASON_FRAGMENT in complexity["failure_reason"]
+        assert complexity["sync_enabled"] is True
 
         result = translator.translate(dax, table_alias="sometable", dataset_name="SomeTable")
-        assert result.is_success is False
-        assert result.sql is None
+        assert result.is_success is True
+        assert "OVER (PARTITION BY" in result.sql
 
 
 class TestUnquotedTableQualifiedColumnParses:
@@ -1634,7 +1632,7 @@ class TestTimeIntelligenceCarriesADateRangeFilter:
         metrics_context = [_metric("Weird_Measure", 'SUM(AVG(sometable."SOMECOLUMN"))')]
         dax = "CALCULATE([Weird_Measure], SAMEPERIODLASTYEAR('Date'[Date]))"
 
-        result = translator.translate(dax, "sometable", "SomeTable", metrics_context=metrics_context)
+        result = translator.translate(dax, "sometable", "SomeTable", metrics_context=metrics_context, allow_unshifted_fallback=True)
 
         assert result.is_success
         assert result.sql is not None

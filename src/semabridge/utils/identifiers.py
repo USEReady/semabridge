@@ -45,7 +45,13 @@ SNOWFLAKE_RESERVED_WORDS: frozenset = frozenset({
     # Other reserved
     "all", "any", "some", "exists", "case", "when", "then", "else", "end",
     "distinct", "unique", "primary", "foreign", "key", "references",
-    "constraint", "".join(["in", "dex"]), "default", "check", "like", "ilike", "".join(["st", "art"]),
+    "constraint", "".join(["in", "dex"]), "default", "check", "like", "ilike", "".join(["st", "art"]), "issue",
+    # Snowflake official reserved words
+    "tablesample", "localtimestamp", "current_user", "set", "connection", "for", "minus",
+    "current_time", "current_date", "try_cast", "current_timestamp", "localtime", "inner",
+    "to", "qualify", "cross", "whenever", "increment", "natural", "following", "organization",
+    "lateral", "rlike", "sample", "with", "cast", "using", "trigger", "regexp", "right",
+    "gscluster", "full", "left", "connect", "of", "values",
 })
 
 SQL_FUNCTION_NAMES: Set[str] = {

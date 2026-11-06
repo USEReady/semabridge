@@ -792,6 +792,7 @@ class TMSLToOSIConverter(BaseConverter):
 
         return OSIMetric(
             unique_name=name,
+            original_name=name,
             label=display_name,
             dataset=dataset_name,
             expression=dax,

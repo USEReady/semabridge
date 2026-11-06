@@ -107,4 +107,34 @@ def validate_semantic_ddl(ddl: str) -> List[str]:
                     f"Snowflake 010219: metric must sit on the 'many' side table that reaches all aggregated tables."
                 )
 
+    # Cyclic reference pre-deploy check (Snowflake 010224):
+    # A dimension on table T whose RHS references T."C" where C is also a metric on T.
+    dims_block = _extract_block(ddl, "DIMENSIONS (")
+    table_metrics: dict[str, set[str]] = {}
+    for line in metrics:
+        m = re.match(r'^\s*([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))', line, re.I)
+        if m:
+            t_al = m.group(1).upper()
+            m_n = (m.group(2) or m.group(3)).upper()
+            table_metrics.setdefault(t_al, set()).add(m_n)
+
+    for line in dims_block:
+        dm = re.match(r'^\s*(?:PRIVATE\s+)?([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))\s+AS\s+(.*)$', line, re.I | re.S)
+        if not dm:
+            continue
+        dim_tbl = dm.group(1).upper()
+        dim_name = (dm.group(2) or dm.group(3)).upper()
+        rhs = dm.group(4)
+        rhs_clean = re.sub(r"(?i)\bWITH\s+SYNONYMS\b.*", '', rhs)
+        rhs_clean = re.sub(r"(?i)\bCOMMENT\s*=\s*'(?:[^']|'')*'", '', rhs_clean)
+        for ref_m in re.finditer(r'([A-Za-z0-9_]+)\."?([A-Za-z0-9_]+)"?', rhs_clean):
+            ref_tbl = ref_m.group(1).upper()
+            ref_col = ref_m.group(2).upper()
+            if ref_tbl == dim_tbl and ref_col in table_metrics.get(dim_tbl, set()):
+                errors.append(
+                    f"Cyclic reference detected (Snowflake error 010224): Dimension '{dim_tbl}.{dim_name}' "
+                    f"references '{ref_tbl}.{ref_col}' which is also a metric on '{dim_tbl}'. "
+                    f"A physical alias (e.g. _COL_{ref_col}) must be used instead."
+                )
+
     return errors

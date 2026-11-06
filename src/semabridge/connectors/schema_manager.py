@@ -582,30 +582,43 @@ class SnowflakeSchemaManager:
         signature_seen: dict[str, int] = {}
         namespace_key = self._duplicate_namespace_key()
         dataset_key = self._sanitize_alias(dataset.source_table or dataset.unique_name)
+        table_name_upper = (dataset.source_table or dataset.unique_name).upper()
+        live_cols = set()
+        if hasattr(self, "_live_schema_metadata") and isinstance(self._live_schema_metadata, dict):
+            live_cols = (
+                self._live_schema_metadata.get(table_name_upper)
+                or self._live_schema_metadata.get(dataset.unique_name.upper())
+                or set()
+            )
+            live_cols = {str(c).upper() for c in live_cols}
+
         for col in valid_columns:
             safe_base = self._sanitize_col_name(col.unique_name)
             next_idx = base_seen.get(safe_base, 0) + 1
             base_seen[safe_base] = next_idx
 
             if base_totals.get(safe_base, 0) > 1:
-                signature_seed = self._build_duplicate_signature_seed(
-                    source_name=col.unique_name,
-                    source_expression=getattr(col, "source_expression", None),
-                    data_type=str(getattr(col, "data_type", "")),
-                )
-                sig_idx = signature_seen.get(signature_seed, 0) + 1
-                signature_seen[signature_seed] = sig_idx
-                source_signature = f"{signature_seed}::occ{sig_idx}"
-                preferred_name = f"{safe_base}_{next_idx}"
-                safe_name = self._resolve_persistent_duplicate_name(
-                    scope_type="column",
-                    namespace_key=namespace_key,
-                    dataset_key=dataset_key,
-                    normalized_base=safe_base,
-                    source_name=col.unique_name,
-                    source_signature=source_signature,
-                    preferred_name=preferred_name,
-                )
+                if safe_base.upper() in live_cols and next_idx == 1:
+                    safe_name = safe_base
+                else:
+                    signature_seed = self._build_duplicate_signature_seed(
+                        source_name=col.unique_name,
+                        source_expression=getattr(col, "source_expression", None),
+                        data_type=str(getattr(col, "data_type", "")),
+                    )
+                    sig_idx = signature_seen.get(signature_seed, 0) + 1
+                    signature_seen[signature_seed] = sig_idx
+                    source_signature = f"{signature_seed}::occ{sig_idx}"
+                    preferred_name = f"{safe_base}_{next_idx}"
+                    safe_name = self._resolve_persistent_duplicate_name(
+                        scope_type="column",
+                        namespace_key=namespace_key,
+                        dataset_key=dataset_key,
+                        normalized_base=safe_base,
+                        source_name=col.unique_name,
+                        source_signature=source_signature,
+                        preferred_name=preferred_name,
+                    )
             else:
                 safe_name = safe_base
 
@@ -886,6 +899,16 @@ class SnowflakeSchemaManager:
         signature_seen: dict[str, int] = {}
         namespace_key = self._duplicate_namespace_key()
         dataset_key = self._sanitize_alias(dataset.source_table or dataset.unique_name)
+        table_name_upper = (dataset.source_table or dataset.unique_name).upper()
+        live_cols = set()
+        if hasattr(self, "_live_schema_metadata") and isinstance(self._live_schema_metadata, dict):
+            live_cols = (
+                self._live_schema_metadata.get(table_name_upper)
+                or self._live_schema_metadata.get(dataset.unique_name.upper())
+                or set()
+            )
+            live_cols = {str(c).upper() for c in live_cols}
+
         for col in valid_columns:
             safe_base = self._sanitize_col_name(col.unique_name)
             next_idx = base_seen.get(safe_base, 0) + 1
@@ -894,24 +917,27 @@ class SnowflakeSchemaManager:
             if base_totals.get(safe_base, 0) == 1:
                 safe_name = safe_base
             else:
-                signature_seed = self._build_duplicate_signature_seed(
-                    source_name=col.unique_name,
-                    source_expression=getattr(col, "source_expression", None),
-                    data_type=str(getattr(col, "data_type", "")),
-                )
-                sig_idx = signature_seen.get(signature_seed, 0) + 1
-                signature_seen[signature_seed] = sig_idx
-                source_signature = f"{signature_seed}::occ{sig_idx}"
-                preferred_name = f"{safe_base}_{next_idx}"
-                safe_name = self._resolve_persistent_duplicate_name(
-                    scope_type="column",
-                    namespace_key=namespace_key,
-                    dataset_key=dataset_key,
-                    normalized_base=safe_base,
-                    source_name=col.unique_name,
-                    source_signature=source_signature,
-                    preferred_name=preferred_name,
-                )
+                if safe_base.upper() in live_cols and next_idx == 1:
+                    safe_name = safe_base
+                else:
+                    signature_seed = self._build_duplicate_signature_seed(
+                        source_name=col.unique_name,
+                        source_expression=getattr(col, "source_expression", None),
+                        data_type=str(getattr(col, "data_type", "")),
+                    )
+                    sig_idx = signature_seen.get(signature_seed, 0) + 1
+                    signature_seen[signature_seed] = sig_idx
+                    source_signature = f"{signature_seed}::occ{sig_idx}"
+                    preferred_name = f"{safe_base}_{next_idx}"
+                    safe_name = self._resolve_persistent_duplicate_name(
+                        scope_type="column",
+                        namespace_key=namespace_key,
+                        dataset_key=dataset_key,
+                        normalized_base=safe_base,
+                        source_name=col.unique_name,
+                        source_signature=source_signature,
+                        preferred_name=preferred_name,
+                    )
             while safe_name in selected:
                 next_idx += 1
                 base_seen[safe_base] = next_idx

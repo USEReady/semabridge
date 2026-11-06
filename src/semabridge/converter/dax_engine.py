@@ -410,14 +410,14 @@ class DaxTranslationEngine:
             "by_capability": by_capability,
         }
     
-    def analyze_complexity(self, dax: str) -> dict:
+    def analyze_complexity(self, dax: str, metric_name: str | None = None) -> dict:
         """
         Analyze DAX expression complexity and return metadata for sync decisions.
         Delegates to the standard DAXTranslator to keep logic consistent.
         """
         from semabridge.converter.dax_translator import DAXTranslator
         translator = DAXTranslator()
-        return translator.analyze_complexity(dax)
+        return translator.analyze_complexity(dax, metric_name=metric_name)
 
     def get_required_dimensions(self, dax: str) -> list:
         """

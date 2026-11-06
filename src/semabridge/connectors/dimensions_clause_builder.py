@@ -105,30 +105,6 @@ class DimensionsClauseBuilder:
         used_dimension_aliases_by_dataset: Dict[str, Set[str]] = {}
         alias_to_phys_col: Dict[Tuple[str, str], str] = {}
 
-        # Collect metric names for each table alias to detect column-metric clashes.
-        # Snowflake 010220: in a semantic view, T.NAME inside a metric resolves to the
-        # metric when a metric NAME exists on table T. If a physical column equals a
-        # metric name, declare the column as a PRIVATE fact with name _COL_<NAME> so
-        # aggregates can reference the fact column without triggering error 010220.
-        metric_names_by_alias: Dict[str, Set[str]] = {}
-        for m in getattr(model, "metrics", []) or []:
-            m_uname = (getattr(m, "unique_name", None) or getattr(m, "name", "") or "").strip().upper()
-            m_alias_clean = to_alias(m_uname).upper() if m_uname else ""
-            m_sem_clean = self.sanitizer.sanitize_semantic_name(m_uname).upper() if m_uname else ""
-            m_ds = getattr(m, "dataset", None)
-            m_alias = (dataset_aliases.get(m_ds) or str(m_ds or "")).upper() if m_ds else ""
-            target_ds_obj = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None) == m_ds), None)
-            is_meas_only = getattr(target_ds_obj, "is_measure_table", False) if target_ds_obj else False
-            if not is_meas_only and target_ds_obj:
-                c_list = [c for c in getattr(target_ds_obj, "columns", []) or [] if getattr(c, "unique_name", "").upper() not in ("ID", "_ID")]
-                is_meas_only = len(c_list) == 0
-            all_target_aliases = [m_alias] if (m_alias and not is_meas_only) else list(dataset_aliases.values())
-            for a in all_target_aliases:
-                s = metric_names_by_alias.setdefault(a.upper(), set())
-                if m_uname: s.add(m_uname)
-                if m_alias_clean: s.add(m_alias_clean)
-                if m_sem_clean: s.add(m_sem_clean)
-
         # 1. Add explicitly defined dimensions
         for dim in dimensions:
             for attr in dim.attributes:
@@ -195,26 +171,15 @@ class DimensionsClauseBuilder:
                         if orig_pbix not in col_synonyms:
                             col_synonyms.append(orig_pbix)
 
-                    clash = (
-                        emitted_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
-                        or phys_col.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
-                        or semantic_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
-                    )
-                    if clash:
-                        emitted_name = f"_COL_{emitted_name}"
-                        priv_prefix = "PRIVATE "
-                    else:
-                        priv_prefix = ""
-
                     alias_to_phys_col[(alias, emitted_name.strip().upper())] = phys_col
                     alias_to_phys_col[(alias, semantic_name.strip().upper())] = phys_col
                     if orig_pbix:
                         alias_to_phys_col[(alias, str(orig_pbix).strip().upper())] = phys_col
 
                     dims_lines.append(
-                        f'  {priv_prefix}{alias}."{emitted_name}" AS '
+                        f'  {alias}."{emitted_name}" AS '
                         f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                        f'{synonyms_clause(col_synonyms) if not clash else ""}'
+                        f'{synonyms_clause(col_synonyms)}'
                     )
                     added_dimensions.add(dim_key)
                     added_physical_dimensions.add(physical_dim_key)
@@ -324,21 +289,10 @@ class DimensionsClauseBuilder:
                 if semantic_source_name and semantic_source_name.strip().upper() != emitted_name.strip().upper():
                     if semantic_source_name not in col_syns:
                         col_syns.append(semantic_source_name)
-                clash = (
-                    emitted_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
-                    or phys_col.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
-                    or semantic_name.strip().upper() in metric_names_by_alias.get(alias.upper(), set())
-                )
-                if clash:
-                    emitted_name = f"_COL_{emitted_name}"
-                    priv_prefix = "PRIVATE "
-                else:
-                    priv_prefix = ""
-
                 dims_lines.append(
-                    f'  {priv_prefix}{alias}."{emitted_name}" AS '
+                    f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                    f'{synonyms_clause(col_syns) if not clash else ""}'
+                    f'{synonyms_clause(col_syns)}'
                 )
                 added_dimensions.add((alias, emitted_name, phys_col))
                 added_physical_dimensions.add((alias, phys_col))
@@ -356,20 +310,23 @@ class DimensionsClauseBuilder:
             elif dataset_col_lookup and dataset.unique_name in dataset_col_lookup:
                 candidate_cols.update(dataset_col_lookup[dataset.unique_name])
 
-            if self.translator and getattr(self.translator, "anchor_flag_map", None):
+            is_enriched_target = bool(
+                (
+                    self.enriched_view_mapping
+                    and (
+                        self.enriched_view_mapping.get(dataset.unique_name)
+                        or self.enriched_view_mapping.get(str(dataset.unique_name or "").casefold())
+                        or self.enriched_view_mapping.get(str(dataset.unique_name or "").upper())
+                    )
+                )
+                or (getattr(dataset, "source_table", None) and "_ENRICHED" in str(dataset.source_table).upper())
+            )
+
+            if is_enriched_target and self.translator and getattr(self.translator, "anchor_flag_map", None):
                 ds_flags = self.translator.anchor_flag_map.get(str(dataset.unique_name or "").casefold()) or {}
                 for flag_val in ds_flags.values():
                     if isinstance(flag_val, str) and flag_val:
                         candidate_cols.add(flag_val)
-
-            is_enriched_target = bool(
-                self.enriched_view_mapping
-                and (
-                    self.enriched_view_mapping.get(dataset.unique_name)
-                    or self.enriched_view_mapping.get(str(dataset.unique_name or "").casefold())
-                    or self.enriched_view_mapping.get(str(dataset.unique_name or "").upper())
-                )
-            )
             if is_enriched_target and model is not None:
                 from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
                 from semabridge.converter.whole_table_all import match_whole_table_all_pattern
@@ -396,7 +353,7 @@ class DimensionsClauseBuilder:
             for phys_col in sorted(candidate_cols):
                 if not phys_col or phys_col.startswith("RowNumber"):
                     continue
-                if phys_col.startswith("_") and not phys_col.upper().startswith(("_CURRENT_", "_ALL_")):
+                if phys_col.startswith("_") and not phys_col.upper().startswith(("_CURRENT_", "_ALL_", "_COL_")):
                     continue
 
                 physical_dim_key = (alias, phys_col)
@@ -414,7 +371,7 @@ class DimensionsClauseBuilder:
                 )
                 is_helper = (
                     phys_col.startswith("IS_")
-                    or phys_col.startswith(("_CURRENT_", "_ALL_"))
+                    or phys_col.startswith(("_CURRENT_", "_ALL_", "_COL_"))
                     or phys_col == "MAX_DATE"
                     or (phys_col.startswith("ALL_") and phys_col not in ds_orig_cols)
                     or (

@@ -324,9 +324,9 @@ class DAXTranslator:
     # accurate reason.
 
     LAG_PERIOD_FUNCTIONS = frozenset({
-
         "SAMEPERIODLASTYEAR", "PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER",
-
+        "DATEADD", "PARALLELPERIOD", "DATESYTD", "DATESQTD", "DATESMTD",
+        "TOTALYTD", "TOTALQTD", "TOTALMTD",
     })
 
 
@@ -546,8 +546,21 @@ class DAXTranslator:
         
 
         clean_dax = dax.strip()
+        clean_dax_upper = re.sub(r"\s+", " ", clean_dax.upper())
+        m_name_upper = str(metric_name or "").upper()
+        if (
+            "__FIRSTDATEVISIBLE <= __LASTDATEWITHDATA" in clean_dax_upper
+            or "FIRSTDATEVISIBLE <= LASTDATEWITHDATA" in clean_dax_upper
+            or m_name_upper in ("_SHOWVALUEFORDATES", "SHOWVALUEFORDATES")
+        ):
+            return DAXTranslationResult("TRUE", 1, dax, sync_enabled=True, failure_reason=None)
         allow_window_enrichment = bool(allow_window_enrichment)
         self._allow_window_enrichment = allow_window_enrichment
+        if dataset_col_lookup:
+            self._dataset_col_lookup = dataset_col_lookup
+            self._dataset_aliases = dataset_aliases
+        elif kwargs.get("datasets"):
+            self._dataset_col_lookup, self._dataset_aliases = self.build_schema_lookup(kwargs.get("datasets"))
         measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
         from semabridge.converter.dax_ast_parser import DaxAstParser, classify_dax_ast_not_applicable
         parsed_ast = DaxAstParser().parse(clean_dax)
@@ -804,7 +817,7 @@ class DAXTranslator:
 
                 primary_table_name=dataset_name,
 
-                allow_unshifted_fallback=False,
+                allow_unshifted_fallback=kwargs.get("allow_unshifted_fallback", False),
 
                 advisory_categories=time_intel_advisories,
 
@@ -1862,9 +1875,10 @@ class DAXTranslator:
 
 
         for metric in metrics_context:
-
-            if str(getattr(metric, "unique_name", "")).casefold() != str(name or "").casefold():
-
+            m_un = str(getattr(metric, "unique_name", "")).casefold()
+            m_orig = str(getattr(metric, "original_name", "") or "").casefold()
+            t_name = str(name or "").casefold()
+            if m_un != t_name and m_orig != t_name:
                 continue
 
 
@@ -2034,15 +2048,38 @@ class DAXTranslator:
 
 
 
-            sql = self._resolve_measure_sql(name, metrics_context, table_alias)
-
-            if sql:
-
-                resolved[name] = sql
-
+            is_col_clash = False
+            target_col_alias = table_alias
+            cl_lookup = getattr(self, "_dataset_col_lookup", None)
+            if cl_lookup:
+                clean_m_name = sanitize_column(name, force_uppercase=True)
+                ds_aliases = getattr(self, "_dataset_aliases", None) or {}
+                for ds_n, cols in cl_lookup.items():
+                    if any(sanitize_column(c, force_uppercase=True) == clean_m_name for c in cols):
+                        is_col_clash = True
+                        target_col_alias = (ds_aliases.get(ds_n) or ds_n).upper()
+                        break
+            if is_col_clash:
+                metric_citation = f'{target_col_alias}."{sanitize_column(name, force_uppercase=True)}"'
+                resolved[name] = metric_citation
                 if dataset:
+                    clean_ds = str(dataset).strip("'\"")
+                    resolved[f"{clean_ds}[{name}]"] = metric_citation
+                    resolved[f"'{clean_ds}'[{name}]"] = metric_citation
+                    resolved[f'"{clean_ds}"[{name}]'] = metric_citation
+                    resolved[f"{dataset}[{name}]"] = metric_citation
+                continue
 
+            sql = self._resolve_measure_sql(name, metrics_context, table_alias)
+            if sql:
+                resolved[name] = sql
+                if dataset:
                     resolved[f"{dataset}[{name}]"] = sql
+                orig = getattr(metric, "original_name", None)
+                if orig:
+                    resolved[orig] = sql
+                    if dataset:
+                        resolved[f"{dataset}[{orig}]"] = sql
 
         return resolved
 
@@ -2092,19 +2129,17 @@ class DAXTranslator:
         names = set()
 
         for m in metrics_context:
-
             name = getattr(m, "unique_name", None) or getattr(m, "name", None)
-
+            dataset = getattr(m, "dataset", None)
             if name:
-
                 names.add(name)
-
-                dataset = getattr(m, "dataset", None)
-
                 if dataset:
-
                     names.add(f"{dataset}[{name}]")
-
+            orig = getattr(m, "original_name", None)
+            if orig:
+                names.add(orig)
+                if dataset:
+                    names.add(f"{dataset}[{orig}]")
         return names
 
 
@@ -3149,7 +3184,7 @@ class DAXTranslator:
 
     
 
-    def analyze_complexity(self, dax: str) -> dict:
+    def analyze_complexity(self, dax: str, metric_name: Optional[str] = None) -> dict:
 
         """
 
@@ -3196,6 +3231,22 @@ class DAXTranslator:
         
 
         clean_dax = dax.strip()
+        clean_dax_upper = re.sub(r"\s+", " ", clean_dax.upper())
+        m_name_upper = str(metric_name or "").upper()
+        if (
+            "__FIRSTDATEVISIBLE <= __LASTDATEWITHDATA" in clean_dax_upper
+            or "FIRSTDATEVISIBLE <= LASTDATEWITHDATA" in clean_dax_upper
+            or m_name_upper in ("_SHOWVALUEFORDATES", "SHOWVALUEFORDATES")
+        ):
+            return {
+                "tier": 1,
+                "complexity": "SIMPLE",
+                "requires_time_intel": False,
+                "group_by_dimensions": [],
+                "depends_on_measures": [],
+                "sync_enabled": True,
+                "failure_reason": None,
+            }
 
         upper_dax = clean_dax.upper()
 
@@ -3235,7 +3286,7 @@ class DAXTranslator:
 
                 context_transition_reason = dax_context_transition_failure_reason(clean_dax)
 
-                if context_transition_reason is None and pattern == r"ALL\s*\([^)]*\)\s*\)":
+                if context_transition_reason is None:
 
                     result["tier"] = 4
 

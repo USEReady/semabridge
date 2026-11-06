@@ -290,6 +290,12 @@ class SemanticViewBuilder:
 
 
 
+        connected_pairs = {
+            (str(getattr(r, "from_dataset", "")).casefold(), str(getattr(r, "to_dataset", "")).casefold())
+            for r in getattr(model, "relationships", []) or []
+            if getattr(r, "is_active", True)
+        }
+
         def add_suggestion(target_dataset: str, source_table: str, column: str) -> None:
 
             target_dataset = resolve_dataset(target_dataset)
@@ -304,6 +310,9 @@ class SemanticViewBuilder:
 
             if target_dataset.casefold() == source_table.casefold():
 
+                return
+
+            if (target_dataset.casefold(), source_table.casefold()) in connected_pairs or (source_table.casefold(), target_dataset.casefold()) in connected_pairs:
                 return
 
             source_columns = columns_by_dataset.get(source_table.casefold())
@@ -367,8 +376,26 @@ class SemanticViewBuilder:
 
 
             def _is_fanout_agg(tbl: str, col: str) -> bool:
+                # Never fan-out on the table's own columns or measure-only tables
+                if not tbl or not metric_dataset or tbl.strip().upper() == metric_dataset.strip().upper():
+                    return False
+                m_ds_obj = next((d for d in getattr(model, "datasets", []) or [] if getattr(d, "unique_name", None) == metric_dataset), None)
+                if m_ds_obj and getattr(m_ds_obj, "is_measure_table", False):
+                    return False
+                # Must be a related table reachable through a relationship
+                has_rel = False
+                for rel in getattr(model, "relationships", []) or []:
+                    from_ds = getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "") or ""
+                    to_ds = getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "") or ""
+                    if (from_ds.upper() == metric_dataset.upper() and to_ds.upper() == tbl.upper()) or \
+                       (to_ds.upper() == metric_dataset.upper() and from_ds.upper() == tbl.upper()):
+                        has_rel = True
+                        break
+                if not has_rel:
+                    return False
+
                 return bool(re.search(
-                    rf'\b(?:SUM|AVG|AVERAGE|AVERAGEX|COUNT|COUNTA)\s*\(\s*(?:RELATED\s*\(\s*)?[\'"]?{re.escape(tbl)}[\'"]?\s*\[\s*{re.escape(col)}\s*\]',
+                    rf'\b(?:SUM|AVG|AVERAGE|AVERAGEX|COUNT|COUNTA)\s*\(\s*(?!DISTINCT\b)(?:RELATED\s*\(\s*)?[\'"]?{re.escape(tbl)}[\'"]?\s*\[\s*{re.escape(col)}\s*\]',
                     dax,
                     re.IGNORECASE,
                 ))
@@ -645,9 +672,7 @@ class SemanticViewBuilder:
                         if len(owners) == 1:
                             _add_ref(next(iter(owners)), ref_tables)
 
-            if not ref_tables or (curr_ds and curr_ds in connected_datasets and ref_tables.issubset(reach.get(curr_ds, set()))):
-                surviving_metrics.append(m)
-            elif not ref_tables and curr_ds not in connected_datasets:
+            if not ref_tables or (curr_ds and ref_tables.issubset(reach.get(curr_ds, {curr_ds}))):
                 surviving_metrics.append(m)
             else:
                 is_empty_string = not bool(dax_expr.strip().strip('"\'')) if dax_expr else False
@@ -726,8 +751,11 @@ class SemanticViewBuilder:
                 and getattr(self.behavior.snowflake, "auto_create_enriched_view", True)
             )
             if auto_enrich:
-                from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
-                _parser = DaxAstParser()
+                from semabridge.converter.whole_table_all import match_whole_table_all_pattern
+                _metrics_dict = {
+                    (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "")
+                    for m in (getattr(sml, "metrics", []) or [])
+                }
                 for m in getattr(sml, "metrics", []) or []:
                     dax = getattr(m, "expression", "") or ""
                     sql = getattr(m, "sql_expression", "") or ""
@@ -736,18 +764,14 @@ class SemanticViewBuilder:
                         continue
                     needs_enrich = False
                     if "ALL(" in dax.upper() or "REMOVEFILTERS" in dax.upper():
-                        try:
-                            ast = _parser.parse(dax)
-                            if _is_enrichable_all_measure(ast):
-                                needs_enrich = True
-                        except Exception:
-                            pass
+                        if match_whole_table_all_pattern(dax, fact_table=ds, metrics_dict=_metrics_dict) is not None:
+                            needs_enrich = True
                     if not needs_enrich:
                         from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
                         if (
                             match_scalar_dim_lookup_pattern(dax) is not None
-                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
-                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
+                            or re.search(r'\b_CURRENT_(?!DATE\b|TIMESTAMP\b|TIME\b|USER\b)[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
+                            or re.search(r'\b_CURRENT_(?!DATE\b|TIMESTAMP\b|TIME\b|USER\b)[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
                         ):
                             needs_enrich = True
                     if needs_enrich:
@@ -840,8 +864,11 @@ class SemanticViewBuilder:
                 and getattr(self.behavior.snowflake, "auto_create_enriched_view", True)
             )
             if auto_enrich:
-                from semabridge.converter.dax_ast_parser import DaxAstParser, _is_enrichable_all_measure
-                _parser = DaxAstParser()
+                from semabridge.converter.whole_table_all import match_whole_table_all_pattern
+                _metrics_dict = {
+                    (getattr(m, "unique_name", None) or getattr(m, "name", "")).casefold(): getattr(m, "expression", "")
+                    for m in (getattr(osi, "metrics", []) or [])
+                }
                 for m in getattr(osi, "metrics", []) or []:
                     dax = getattr(m, "expression", "") or ""
                     sql = getattr(m, "sql_expression", "") or ""
@@ -850,18 +877,14 @@ class SemanticViewBuilder:
                         continue
                     needs_enrich = False
                     if "ALL(" in dax.upper() or "REMOVEFILTERS" in dax.upper():
-                        try:
-                            ast = _parser.parse(dax)
-                            if _is_enrichable_all_measure(ast):
-                                needs_enrich = True
-                        except Exception:
-                            pass
+                        if match_whole_table_all_pattern(dax, fact_table=ds, metrics_dict=_metrics_dict) is not None:
+                            needs_enrich = True
                     if not needs_enrich:
                         from semabridge.converter.scalar_dim_lookup import match_scalar_dim_lookup_pattern
                         if (
                             match_scalar_dim_lookup_pattern(dax) is not None
-                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
-                            or re.search(r'\b_?CURRENT_[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
+                            or re.search(r'\b_CURRENT_(?!DATE\b|TIMESTAMP\b|TIME\b|USER\b)[A-Za-z0-9_]+\b', sql or "", re.IGNORECASE)
+                            or re.search(r'\b_CURRENT_(?!DATE\b|TIMESTAMP\b|TIME\b|USER\b)[A-Za-z0-9_]+\b', dax or "", re.IGNORECASE)
                         ):
                             needs_enrich = True
                     if needs_enrich:
@@ -1038,9 +1061,8 @@ class SemanticViewBuilder:
 
 
         self.metrics_builder.enriched_view_mapping = self.enriched_view_mapping
-
         self.metrics_builder.failed_enrichment_datasets = self.failed_enrichment_datasets
-
+        self.metrics_builder.failed_enriched_view_datasets = getattr(self, "failed_enriched_view_datasets", {})
         self.metrics_builder.live_schema_metadata = self.live_schema_metadata
 
         self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
@@ -1197,9 +1219,8 @@ class SemanticViewBuilder:
         
 
         self.metrics_builder.enriched_view_mapping = self.enriched_view_mapping
-
         self.metrics_builder.failed_enrichment_datasets = self.failed_enrichment_datasets
-
+        self.metrics_builder.failed_enriched_view_datasets = getattr(self, "failed_enriched_view_datasets", {})
         self.metrics_builder.live_schema_metadata = self.live_schema_metadata
 
         self.metrics_builder.no_populated_date_link_datasets = self.no_populated_date_link_datasets
