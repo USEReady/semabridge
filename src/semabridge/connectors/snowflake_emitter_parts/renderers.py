@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import yaml
 
+from semabridge.connectors.synonym_clause import element_description, metric_comment_text
 from semabridge.connectors.snowflake_emitter_parts import metric_helpers as _metric_helpers
 from semabridge.connectors.snowflake_emitter_parts.yaml_utils import IndentDumper
 from semabridge.utils.logger import get_logger
@@ -30,9 +31,23 @@ def generate_cortex_yaml(emitter, sml, sample_fetcher=None):
         }
     }
     for ds in sml.datasets:
+        # Calculated tables / field parameters have no physical base table;
+        # keep them only when they host metrics (same rule as the DDL).
+        if str(getattr(ds, "dataset_kind", "table") or "table") != "table" and not any(
+            m.dataset == ds.unique_name for m in sml.metrics
+        ):
+            continue
         safe_table = emitter._safe_table_name(ds.source_table or ds.unique_name)
         table_def = {
             "name": ds.unique_name,
+        }
+        ds_desc = element_description(ds)
+        if ds_desc:
+            table_def["description"] = ds_desc
+        ds_syns = [s for s in (getattr(ds, "synonyms", None) or []) if str(s or "").strip()]
+        if ds_syns:
+            table_def["synonyms"] = list(ds_syns)
+        table_def.update({
             "base_table": {
                 "database": emitter.config.database,
                 "schema": emitter.config.schema_name,
@@ -40,7 +55,7 @@ def generate_cortex_yaml(emitter, sml, sample_fetcher=None):
             },
             "dimensions": [],
             "measures": [],
-        }
+        })
         for dim in sml.dimensions:
             for attr in dim.attributes:
                 if attr.dataset == ds.unique_name:
@@ -66,7 +81,7 @@ def generate_cortex_yaml(emitter, sml, sample_fetcher=None):
             if metric.dataset == ds.unique_name:
                 measure_def = {
                     "name": metric.unique_name,
-                    "description": metric.description or "",
+                    "description": metric_comment_text(metric) or "",
                 }
                 if metric.sql_expression:
                     measure_def["expr"] = _metric_helpers.sanitize_sql_markdown(metric.sql_expression)
@@ -154,7 +169,7 @@ def generate_cortex_yaml_from_osi(emitter, osi, sample_fetcher=None):
             if metric.dataset == ds.unique_name:
                 measure_def = {
                     "name": metric.unique_name,
-                    "description": metric.description or "",
+                    "description": metric_comment_text(metric) or "",
                 }
                 if metric.sql_expression:
                     measure_def["expr"] = _metric_helpers.sanitize_sql_markdown(metric.sql_expression)

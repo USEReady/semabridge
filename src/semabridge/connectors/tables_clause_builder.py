@@ -284,6 +284,19 @@ class TablesClauseBuilder:
 
         return False
 
+    def _has_live_table(self, dataset: Any) -> bool:
+        """True when the live Snowflake schema has an object for this dataset."""
+        live = self.live_schema_metadata or {}
+        if not live:
+            return False
+        names = {str(getattr(dataset, "unique_name", "") or ""), str(getattr(dataset, "source_table", "") or "")}
+        for n in names - {""}:
+            bare = n.rsplit(".", 1)[-1].strip('"')
+            safe = self.identifier_sanitizer.sanitize_table_name(bare)
+            if any(k in live for k in (bare, bare.upper(), safe, safe.upper())):
+                return True
+        return False
+
     def _build(
         self,
         datasets: List[Any],
@@ -350,6 +363,31 @@ class TablesClauseBuilder:
                         by_design=True,
                     )
                 continue
+
+            # Calculated tables / field parameters have no physical source
+            # table. Emit them only when a Snowflake object with their name
+            # exists (the user materialized them); otherwise leave them out --
+            # extraction already ledgered them as by-design with the reason.
+            # Tables that host measures stay in so the measure-table
+            # re-anchoring logic can move their metrics.
+            d_kind = str(getattr(d, "dataset_kind", "table") or "table")
+            if d_kind != "table" and not metric_counts_by_dataset.get(d_name, 0):
+                if not self._has_live_table(d):
+                    logger.info(
+                        "Omitting %s '%s' from TABLES clause: no materialized Snowflake object",
+                        d_kind, d_name,
+                    )
+                    continue
+                if self.drop_ledger is not None:
+                    self.drop_ledger.records = [
+                        r for r in self.drop_ledger.records
+                        if not (
+                            r.entity_kind == "table"
+                            and r.entity_name == str(d_name)
+                            and r.stage == DropStage.EXTRACTION
+                            and str(r.reason).startswith(("calculated table", "field parameter"))
+                        )
+                    ]
 
             # Omit unlinked measure-only tables (containers with no physical data columns and no relationships)
             cols = getattr(d, "columns", []) or []

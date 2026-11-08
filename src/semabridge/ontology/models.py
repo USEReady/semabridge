@@ -157,6 +157,9 @@ class DomainOntology(_StrictModel):
     owner: Optional[str] = None
     version: str = "1.0.0"
     description: Optional[str] = None
+    # Project whose BI model this domain was bootstrapped from; used by
+    # "sync with OSI" to re-merge the latest model into this domain.
+    source_project_id: Optional[str] = None
     concepts: List[DomainConcept] = Field(default_factory=list)
     metrics: List[DomainMetric] = Field(default_factory=list)
     relationships: List[DomainRelationship] = Field(default_factory=list)

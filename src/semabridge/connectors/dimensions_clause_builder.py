@@ -242,8 +242,25 @@ class DimensionsClauseBuilder:
                     continue
 
                 source_expr = getattr(col, 'source_expression', None)
-                if source_expr and not IdentifierSanitizer.is_physical_source_column(source_expr):
-                    continue
+                is_calc = bool(getattr(col, "is_calculated", False)) or bool(
+                    source_expr and not IdentifierSanitizer.is_physical_source_column(source_expr)
+                )
+                if is_calc:
+                    # A DAX calculated column has no physical column unless the
+                    # user materialized it; emit it only when the live schema
+                    # confirms the column, otherwise record a by-design drop.
+                    _live_calc = (live_col_lookup or {}).get(dataset.unique_name)
+                    if not (_live_calc and phys_col in _live_calc):
+                        dax = str(getattr(col, "expression", None) or source_expr or "").strip()
+                        self.drop_ledger.record(
+                            "column", col.unique_name, DropStage.DDL_EMISSION,
+                            "calculated column — DAX expression is not materialized in Snowflake; "
+                            "add it as a column in the source table/view to include it",
+                            dataset=dataset.unique_name,
+                            detail=f"DAX: {dax[:500]}" if dax else None,
+                            by_design=True,
+                        )
+                        continue
 
                 _live = (live_col_lookup or {}).get(dataset.unique_name)
                 if _live is not None:
@@ -309,6 +326,18 @@ class DimensionsClauseBuilder:
                 candidate_cols.update(live_col_lookup[dataset.unique_name])
             elif dataset_col_lookup and dataset.unique_name in dataset_col_lookup:
                 candidate_cols.update(dataset_col_lookup[dataset.unique_name])
+                # The modelled fallback includes DAX calculated columns, which
+                # have no physical column (they were ledgered in step 2).
+                calc_phys: Set[str] = set()
+                for c in getattr(dataset, "columns", []) or []:
+                    c_src = getattr(c, "source_expression", None)
+                    if getattr(c, "is_calculated", False) or (
+                        c_src and not IdentifierSanitizer.is_physical_source_column(c_src)
+                    ):
+                        calc_phys.add(str(c.unique_name).upper())
+                        calc_phys.add(str(self.schema_manager._resolve_physical_column_name(dataset, c.unique_name) or "").upper())
+                if calc_phys:
+                    candidate_cols = {cc for cc in candidate_cols if str(cc).upper() not in calc_phys}
 
             is_enriched_target = bool(
                 (

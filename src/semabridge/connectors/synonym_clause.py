@@ -172,6 +172,21 @@ def element_description(*elements: Any) -> str:
     return ""
 
 
+def metric_comment_text(metric: Any) -> str:
+    """Description plus translation advisories for a deployed metric's COMMENT.
+
+    Advisories (e.g. CALCULATE filter-override semantics, time intelligence
+    anchored to CURRENT_DATE) tell the consumer where the SQL can differ from
+    the source BI tool, so they must travel with the deployed metric.
+    """
+    desc = element_description(metric)
+    notes = [str(n).strip() for n in (getattr(metric, "advisory_notes", None) or []) if str(n or "").strip()]
+    if not notes:
+        return desc
+    note_text = "Note: " + " ".join(notes)
+    return f"{desc} {note_text}" if desc else note_text
+
+
 def column_of(dataset: Any, name: Optional[str]) -> Any:
     """Column object of ``dataset`` named ``name`` (case-insensitive) or None."""
     if dataset is None or not name:

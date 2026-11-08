@@ -267,8 +267,8 @@ export default function OntologyDomainManager() {
       const res = await authFetch('/api/ontology/domains/from-osi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // The backend re-syncs from the project this domain was built from.
         body: JSON.stringify({
-          project_id: domainName,
           domain_name: domainName,
           save_to_disk: true,
         }),

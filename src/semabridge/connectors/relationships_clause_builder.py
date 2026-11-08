@@ -194,7 +194,12 @@ class RelationshipsClauseBuilder:
         )
         conflicts = select_conflicting_relationships(
             [(f, t) for f, t, _a, _r in rel_meta],
-            [0 if active else 1 for _f, _t, active, _r in rel_meta],
+            # Priority: real active < real inactive < inferred (not in source),
+            # so a relationship SemaBridge guessed is always dropped first.
+            [
+                2 if getattr(r, "is_inferred", False) else (0 if active else 1)
+                for _f, _t, active, r in rel_meta
+            ],
         )
         if conflicts:
             kept = []

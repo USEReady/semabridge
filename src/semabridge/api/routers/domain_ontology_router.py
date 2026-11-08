@@ -86,6 +86,7 @@ def _summary(dom: Any) -> Dict[str, Any]:
         "owner": dom.owner,
         "version": dom.version,
         "description": dom.description,
+        "source_project_id": getattr(dom, "source_project_id", None),
         "concept_count": len(dom.concepts),
         "metric_count": len(dom.metrics),
         "relationship_count": len(dom.relationships),
@@ -289,16 +290,31 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
 
     osi_obj: Optional[OSIModel] = None
 
+    # "Sync with OSI" on an existing domain may omit project_id: use the
+    # project the domain was bootstrapped from.
+    project_id = req.project_id
+    if not req.osi_model and not project_id and req.domain_name:
+        _existing = ontology_store.get_domain(req.domain_name)
+        project_id = getattr(_existing, "source_project_id", None) if _existing else None
+        if not project_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Domain '{req.domain_name}' has no source project to sync from; "
+                    "provide 'project_id'."
+                ),
+            )
+
     if req.osi_model:
         try:
             osi_obj = OSIModel(**req.osi_model)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid OSIModel payload: {e}")
-    elif req.project_id:
+    elif project_id:
         from semabridge.api.routers.export_router import _load_osi_model
-        osi_obj = await _load_osi_model(req.project_id)
+        osi_obj = await _load_osi_model(project_id)
         if not osi_obj:
-            raise HTTPException(status_code=404, detail=f"No OSI model found for project '{req.project_id}'.")
+            raise HTTPException(status_code=404, detail=f"No OSI model found for project '{project_id}'.")
     else:
         raise HTTPException(status_code=400, detail="Must provide either 'osi_model' dictionary or 'project_id'.")
 
@@ -313,6 +329,10 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
             existing_ontology=existing_domain_obj,
             report=sync_report,
         )
+        if project_id:
+            domain_ontology.source_project_id = project_id
+        elif existing_domain_obj is not None and getattr(existing_domain_obj, "source_project_id", None):
+            domain_ontology.source_project_id = existing_domain_obj.source_project_id
         fed = ontology_store.add_or_update_domain(
             domain_ontology,
             save_to_disk=req.save_to_disk,
