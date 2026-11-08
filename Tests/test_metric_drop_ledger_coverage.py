@@ -191,7 +191,9 @@ def test_metric_referencing_an_untranslatable_metric_survives_via_placeholder():
 
     records = {r["entity_name"]: r for r in builder.drop_ledger.to_json()}
     assert set(records) == {"Base Metric", "Derived Metric"}
-    assert all(r["reason"] == "placeholder: not translatable" for r in records.values())
+    # Specific reasons (defect 6): the dependent names its root placeholder.
+    assert all(r["reason"].startswith("placeholder: ") for r in records.values())
+    assert records["Derived Metric"]["reason"].startswith("placeholder: depends on [BASE_METRIC]: ")
     assert all(r["stage"] == DropStage.DAX_TRANSLATION.value for r in records.values())
     assert records["Derived Metric"]["detail"] == "depends on placeholder metric BASE_METRIC"
 
@@ -225,7 +227,8 @@ def test_stale_null_cast_sql_expression_is_recorded_not_silently_emitted():
     assert len(records) == 1
     assert records[0]["entity_name"] == "Placeholder Metric"
     assert records[0]["stage"] == DropStage.DAX_TRANSLATION.value
-    assert records[0]["reason"] == "placeholder: not translatable"
+    assert records[0]["reason"].startswith("placeholder: ")
+    assert "NULL-cast placeholder" in records[0]["reason"]
 
 
 def test_real_sql_expression_mentioning_null_keyword_is_still_emitted():
@@ -384,7 +387,7 @@ def test_date_expression_compared_to_integer_column_becomes_null_placeholder():
     records = builder.drop_ledger.to_json()
     bad_records = [r for r in records if r["entity_name"] == "Rolling Metric Bad"]
     assert len(bad_records) == 1
-    assert bad_records[0]["reason"] == "placeholder: not translatable"
+    assert bad_records[0]["reason"].startswith("placeholder: Type mismatch")
     assert "Type mismatch" in bad_records[0]["detail"]
     assert "DATE" in bad_records[0]["detail"]
     assert "INTEGER" in bad_records[0]["detail"]
@@ -444,7 +447,8 @@ def test_nested_aggregate_expression_becomes_null_placeholder():
     records = builder.drop_ledger.to_json()
     bad_records = [r for r in records if r["entity_name"] == "Rolling Metric Bad"]
     assert len(bad_records) == 1
-    assert bad_records[0]["reason"] == "placeholder: not translatable"
+    assert bad_records[0]["reason"].startswith("placeholder: Nested aggregate")
+    assert bad_records[0]["by_design"] is True
     assert "Nested aggregate" in bad_records[0]["detail"]
     assert "SUM" in bad_records[0]["detail"] and "MAX" in bad_records[0]["detail"]
 

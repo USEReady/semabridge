@@ -44,7 +44,11 @@ def test_targeted_metric_remediation_preserves_unrelated_metrics():
     assert nulled_metrics == ["KPI01"], f"Expected ONLY 'KPI01' to be nulled, but got: {nulled_metrics}"
 
     # Verify KPI01 is nulled out
-    assert 'KPI."KPI01" AS CAST(NULL AS DOUBLE),' in remediated_ddl
+    # The reason is carried in an escaped COMMENT literal (never a /* */ block).
+    assert (
+        'KPI."KPI01" AS CAST(NULL AS DOUBLE) COMMENT = '
+        "'rejected by Snowflake: invalid identifier ''COL_DATE.RUNNING_YEAR''',"
+    ) in remediated_ddl
 
     # Verify all 3 working metrics referencing COL_DATE/SALESFACT remain intact and UNTOUCHED!
     assert 'SALESFACT."TOTAL_UNITS_YTD" AS SUM(CASE WHEN SALESFACT.IS_YTD THEN SALESFACT.UNITS ELSE NULL END::FLOAT),' in remediated_ddl

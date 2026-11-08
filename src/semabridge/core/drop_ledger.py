@@ -53,6 +53,95 @@ class DropRecord(BaseModel):
     by_design: bool = False
 
 
+# ---------------------------------------------------------------------------
+# Failure taxonomy: "expected / by design (Snowflake limitation)" versus
+# "unexpected (bug / data issue)".
+#
+# CONTRACT for every component that marks an item as not converted:
+#   * put the specific, human-readable reason in the record's ``reason``
+#     (metric placeholders use the ``"placeholder: <specific reason>"`` shape,
+#     never the bare generic "placeholder: not translatable" when a more
+#     specific reason is known), and any raw engine/error text in ``detail``;
+#   * set ``by_design`` with ``classify_drop_reason(reason, detail)`` unless
+#     the call site knows better (e.g. auto-generated date-table shadows).
+# A metric's ``sync_failure_reason`` that starts with ``BY_DESIGN_EXCLUDED:``
+# or ``not applicable:`` is classified as by design; anything else
+# (translation bug, unresolved column, unknown) stays unexpected.
+# ---------------------------------------------------------------------------
+
+_BY_DESIGN_MARKERS: tuple = (
+    "by_design_excluded",
+    "by design",
+    "not applicable",
+    "snowflake limitation",
+    "window function",
+    "window metric",
+    "needs window",
+    "rankx",
+    "rank function",
+    "ranking",
+    "allselected",
+    "isinscope",
+    "selectedvalue",
+    "hasonevalue",
+    "userelationship",
+    "depends on report selection",
+    "depends on slicer",
+    "depends on hierarchy scope",
+    "dynamic relationship",
+    "disconnected",
+    "not reachable",
+    "unreachable",
+    "primary key or unique",
+    "uniqueness not proven",
+    "non additive",
+    "non-additive",
+    "semi-additive",
+    "010220",
+    "010219",
+    "fan-out",
+    "fan out",
+    "nested aggregate",
+    "relationship cycle",
+    "cycle",
+    "multiple relationship paths",
+    "multiple paths",
+    "compile-time constant",
+    "no column/measure/table reference",
+    "non-scalar construct",
+    "polymorphic selector",
+    "string-producing",
+    "produces a string",
+)
+
+# Reasons that are always unexpected even if a by-design marker happens to
+# appear in surrounding text (e.g. a raw Snowflake error quoting a name).
+_UNEXPECTED_MARKERS: tuple = (
+    "invalid identifier",
+    "does not exist",
+    "translation bug",
+    "unknown error",
+    "internal error",
+)
+
+
+def classify_drop_reason(reason: Optional[str], detail: Optional[str] = None) -> bool:
+    """True when ``reason``/``detail`` describe an expected, by-design
+    exclusion (a Snowflake semantic-view limitation or an intentional
+    exclusion); False for unexpected failures (bug / data issue / unknown).
+
+    Purely structural (keyword taxonomy over the reason text) -- never keyed
+    on any model, table, column or metric name.
+    """
+    reason_l = str(reason or "").lower()
+    text = f"{reason_l} {str(detail or '').lower()}"
+    if not text.strip():
+        return False
+    if any(m in reason_l for m in _UNEXPECTED_MARKERS):
+        return False
+    return any(m in text for m in _BY_DESIGN_MARKERS)
+
+
 class DropLedger:
     """Run-scoped collector for DropRecord entries.
 

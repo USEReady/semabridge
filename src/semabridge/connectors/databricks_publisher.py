@@ -207,6 +207,11 @@ class DatabricksPublisher:
         self._last_review_required_summary: dict[str, Any] = {}
         self._last_routing_summary: dict[str, int] = {}
         self._last_skipped_details: list[dict[str, str]] = []
+        # Columns/measure sources projected as NULL because the physical
+        # source lacks them -- surfaced with a reason (never silent) and
+        # merged into _last_skipped_details / not_converted_details.
+        self._null_projection_details: list[dict[str, str]] = []
+        self.not_converted_details: list[dict[str, Any]] = []
         self._last_sql_fallback_state: str = SQL_FALLBACK_NOT_TRIGGERED
         self._last_sql_fallback_reason: str = ""
         # Lazily created and reused across every
@@ -901,8 +906,24 @@ class DatabricksPublisher:
                 dataset.unique_name,
                 ", ".join(missing[:12]) + (" ..." if len(missing) > 12 else ""),
             )
+            for col in missing:
+                self._record_null_projection(
+                    f"{dataset.unique_name}.{col}", "column",
+                    f"source column '{col}' does not exist in Databricks table {source_fq}; "
+                    "projected as NULL so the view stays valid",
+                )
 
         return mapped, missing
+
+    def _record_null_projection(self, name: str, item_type: str, reason: str) -> None:
+        """Ledger a NULL projection (column or metric source) with its reason
+        -- the item is reported as NOT converted, never as live."""
+        details = getattr(self, "_null_projection_details", None)
+        if details is None:
+            self._null_projection_details = details = []
+        if any(d.get("name") == name and d.get("item_type") == item_type for d in details):
+            return
+        details.append({"name": name, "item_type": item_type, "reason": f"projected as NULL: {reason}"})
 
     def _build_reconciled_sql_source_relation(
         self,
@@ -1925,6 +1946,11 @@ class DatabricksPublisher:
                 # but if that column is purely in Project_Measures, it won't exist.
                 # However, this mapping guarantees metric view yaml syntax validity.
                 source_expr = "CAST(NULL AS DOUBLE)"
+                self._record_null_projection(
+                    str(binding.projected_name or binding.source_column), "measure",
+                    f"metric-view source column '{binding.source_column}' does not exist in {source_fq}; "
+                    "anything aggregating it returns NULL (not converted)",
+                )
 
             projected_alias = str(binding.projected_name or "").strip()
             if projected_alias and projected_alias.lower() not in used_aliases:
@@ -2955,6 +2981,14 @@ class DatabricksPublisher:
                     dataset.unique_name,
                     expected_source,
                 )
+                # Every column of a stubbed dataset is NULL: its metrics must
+                # be reported as not converted, with the reason.
+                for _m in metrics:
+                    self._record_null_projection(
+                        str(getattr(_m, "unique_name", "") or ""), "measure",
+                        f"source table {expected_source} for dataset '{dataset.unique_name}' does not "
+                        "exist yet; the metric view is deployed with a NULL schema stub",
+                    )
 
             bindings = self._build_metric_view_column_bindings(dataset, source_fq, sml_model)
             # Resolve all measures for this dataset
@@ -6625,7 +6659,13 @@ class DatabricksPublisher:
         view_stmts, views_created, views_skipped, skipped_details = \
             self.generate_measure_view_statements(sml_model, view_type_override)
 
+        _null_proj = list(getattr(self, "_null_projection_details", None) or [])
+        self._null_projection_details = []
+        skipped_details = list(skipped_details) + _null_proj
         self._last_skipped_details = list(skipped_details)
+        self.not_converted_details = [
+            {**d, "by_design": False} for d in _null_proj
+        ]
         review_required_summary = self._emit_review_diagnostics(skipped_details)
         self._build_routing_summary(
             sml_model=sml_model,

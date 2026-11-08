@@ -123,8 +123,11 @@ class SemanticDDLSanitizer:
         in_metrics = False
         changed = False
 
+        # Every metric syntax: optional PRIVATE/PUBLIC and NON ADDITIVE BY.
         metric_line_pattern = re.compile(
-            r'^\s*(\w+)\."([^"]+)"\s+AS\s+', flags=re.IGNORECASE
+            r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?(\w+)\."([^"]+)"'
+            r'(?:\s+NON\s+ADDITIVE\s+BY\s*\((?:[^()]|\([^()]*\))*\))?\s+AS\s+',
+            flags=re.IGNORECASE,
         )
         # Build exact token patterns:
         # If invalid_identifier has alias.col (e.g. COL_DATE.RUNNING_YEAR or KPI.KPI01),
@@ -193,12 +196,17 @@ class SemanticDDLSanitizer:
                         should_null_metric = True
 
                 if should_null_metric and metric_match:
-                    prefix_match = re.match(r'^(\s*\w+\."[^"]+"\s+AS\s+)', line, flags=re.IGNORECASE)
-                    prefix = prefix_match.group(1) if prefix_match else f'  {metric_match.group(1)}."{metric_match.group(2)}" AS '
+                    from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import (
+                        escape_comment_literal,
+                    )
+                    priv = "PRIVATE " if re.match(r'^\s*PRIVATE\s', line, re.IGNORECASE) else ""
+                    prefix = f'  {priv}{metric_match.group(1)}."{metric_match.group(2)}" AS '
                     nulled_metric_names.append(metric_match.group(2))
-                    raw_after_as = line[len(prefix):]
-                    trailing_comma = "," if raw_after_as.rstrip().endswith(",") or "," in raw_after_as else ""
-                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE){trailing_comma}")
+                    trailing_comma = "," if line.rstrip().endswith(",") else ""
+                    comment = escape_comment_literal(
+                        f"rejected by Snowflake: invalid identifier '{invalid_identifier}'"
+                    )
+                    remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE) COMMENT = '{comment}'{trailing_comma}")
                     changed = True
                     continue
 

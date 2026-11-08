@@ -49,7 +49,8 @@ def test_dimensions_emit_one_semantic_dimension_per_physical_column():
         ]
     )
 
-    lines = builder.build_for_osi(
+    # build_for_osi returns (dimension_lines, missing_dims_by_dataset).
+    lines, _missing = builder.build_for_osi(
         SimpleNamespace(dimensions=[dim], datasets=[dataset], unique_name="model", label="model"),
         dataset_aliases={"diversity_dim": "DIVERSITY_DIM"},
         dataset_by_name={"diversity_dim": dataset},
@@ -77,12 +78,15 @@ def test_relationship_builder_keeps_inactive_fabric_relationships():
         dataset_aliases={"spend_fact": "SPEND_FACT", "date": "COL_DATE"},
         dataset_by_name={"spend_fact": SimpleNamespace(), "date": SimpleNamespace()},
         dataset_col_lookup={"spend_fact": {"POSTING_DATE"}, "date": {"LY_CAL_DT"}},
-        declared_pk_by_alias={},
+        # Snowflake requires a relationship target to be a declared PRIMARY
+        # KEY/UNIQUE; inactive relationships target their own role-playing
+        # alias of the date table (see TablesClauseBuilder's inactive aliases).
+        declared_pk_by_alias={"__keys__DATE_POSTING_DATE": [["LY_CAL_DT"]]},
         relationship_target_alias={},
     )
 
     assert lines == [
-        '  SPEND_FACT_POSTING_DATE_DATE_LY_CAL_DT_INACTIVE AS SPEND_FACT ("POSTING_DATE") REFERENCES COL_DATE ("LY_CAL_DT")'
+        '  SPEND_FACT_POSTING_DATE_DATE_LY_CAL_DT_INACTIVE AS SPEND_FACT ("POSTING_DATE") REFERENCES DATE_POSTING_DATE ("LY_CAL_DT")'
     ]
 
 

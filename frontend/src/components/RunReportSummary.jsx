@@ -203,7 +203,12 @@ function DroppedSection({ groups = [] }) {
           <MetricList
             entries={group.items}
             renderDetail={(entry) => (
-              <div style={{ marginTop: 4, color: 'var(--text-secondary)' }}>{entry.reason}</div>
+              <div style={{ marginTop: 4, color: 'var(--text-secondary)' }}>
+                {entry.reason}
+                {entry.specific_reason && entry.specific_reason !== entry.reason && (
+                  <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-tertiary)' }}>{entry.specific_reason}</div>
+                )}
+              </div>
             )}
           />
         </div>
@@ -253,6 +258,16 @@ export default function RunReportSummary({ data }) {
           {counts.converted_total || 0} of {counts.calculations || 0} calculations converted
         </span>
       </div>
+
+      {(counts.metrics_converted != null || (counts.expected_failures || 0) > 0 || (counts.unexpected_failures || 0) > 0) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, padding: '0 16px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
+          {counts.metrics_converted != null && (
+            <span><strong style={{ color: 'var(--text-primary)' }}>{counts.metrics_converted}</strong> live in deployed view</span>
+          )}
+          <span><strong style={{ color: 'var(--text-primary)' }}>{counts.expected_failures || 0}</strong> expected failures (by design)</span>
+          <span><strong style={{ color: 'var(--text-primary)' }}>{counts.unexpected_failures || 0}</strong> unexpected failures</span>
+        </div>
+      )}
 
       <AccordionSection sectionKey="standard" count={counts.standard || 0}>
         <MetricList entries={sections.standard} renderDetail={AdvisoryDetail} />
