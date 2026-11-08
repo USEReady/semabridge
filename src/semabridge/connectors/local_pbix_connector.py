@@ -215,7 +215,16 @@ class LocalPBIXConnector(BaseConnector):
                 result["m_code"] = fallback_result.get("m_code", [])
                 result["models"] = fallback_result.get("models", [])
                 result["metadata"]["parser"] = "pbixray"
-                fallback_tmsl = self._build_tmsl_from_fallback(result)
+                fallback_tmsl = self._build_tmsl_from_fallback(
+                    {
+                        **result,
+                        **{
+                            key: fallback_result[key]
+                            for key in ("hierarchies", "roles", "perspectives", "calculation_groups", "cultures")
+                            if key in fallback_result
+                        },
+                    }
+                )
                 result["raw_tmsl"] = fallback_tmsl
                 result["raw_tmsl_json"] = json.dumps(fallback_tmsl, ensure_ascii=False)
                 result["raw_model"] = fallback_tmsl["model"]
@@ -474,12 +483,25 @@ class LocalPBIXConnector(BaseConnector):
         # Attempt direct metadata SQLite extraction to generically capture
         # calculated tables, inferred column names, and relationships
         # without pbixray's SystemFlags=0 loss.
+        self._raw_catalog_extras = {}
         tables_by_name, relationships = self._extract_raw_metadata_catalog()
+        extras: Dict[str, Any] = dict(getattr(self, "_raw_catalog_extras", None) or {})
 
         # If raw metadata extraction was not possible (or returned empty tables),
         # fall back to pbixray's dataframes.
         if not tables_by_name:
             tables_by_name = {}
+            # pbixray's dax_columns exposes calculated-column DAX; without it
+            # every column from schema_df would masquerade as a physical one.
+            calc_col_exprs: Dict[Tuple[str, str], str] = {}
+            try:
+                dax_columns_df = model.dax_columns
+                for _, row in dax_columns_df.iterrows():
+                    calc_col_exprs[
+                        (str(row.get("TableName", "") or ""), str(row.get("ColumnName", "") or ""))
+                    ] = str(row.get("Expression", "") or "")
+            except Exception as dax_col_exc:
+                logger.debug("pbixray dax_columns unavailable: %s", dax_col_exc)
             for _, row in schema_df.iterrows():
                 table_name = str(row.get("TableName", "") or "")
                 column_name = str(row.get("ColumnName", "") or "")
@@ -513,6 +535,17 @@ class LocalPBIXConnector(BaseConnector):
                         "partitions": [],
                     },
                 )
+                if (table_name, column_name) in calc_col_exprs:
+                    table["columns"].append(
+                        {
+                            "name": column_name,
+                            "data_type": data_type,
+                            "is_hidden": False,
+                            "type": "calculated",
+                            "expression": calc_col_exprs[(table_name, column_name)],
+                        }
+                    )
+                    continue
                 table["columns"].append(
                     {
                         "name": column_name,
@@ -547,7 +580,28 @@ class LocalPBIXConnector(BaseConnector):
                     }
                 )
         measures: List[Dict[str, Any]] = []
+        # The raw catalog carries format string / hidden / KPI that pbixray's
+        # dax_measures frame does not expose; dax_measures stays the source of
+        # truth for which measures exist, enriched from the raw catalog.
+        raw_measures = extras.get("measures")
+        raw_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        if isinstance(raw_measures, list):
+            for raw_m in raw_measures:
+                raw_by_key[(str(raw_m.get("table") or ""), str(raw_m.get("name") or ""))] = raw_m
+            if dax_measures_df.empty:
+                measures = list(raw_measures)
         for _, row in dax_measures_df.iterrows():
+            raw_m = raw_by_key.get(
+                (str(row.get("TableName", "") or ""), str(row.get("Name", "") or ""))
+            )
+            if raw_m is not None:
+                measures.append(
+                    {
+                        **raw_m,
+                        "expression": str(row.get("Expression", "") or "") or raw_m.get("expression", ""),
+                    }
+                )
+                continue
             measures.append(
                 {
                     "name": str(row.get("Name", "") or ""),
@@ -605,6 +659,11 @@ class LocalPBIXConnector(BaseConnector):
             "measures": measures,
             "relationships": relationships,
             "m_code": m_code,
+            **{
+                key: extras[key]
+                for key in ("hierarchies", "roles", "perspectives", "calculation_groups", "cultures")
+                if key in extras
+            },
         }
 
     def _extract_raw_metadata_catalog(
@@ -702,7 +761,33 @@ class LocalPBIXConnector(BaseConnector):
                 logger.debug("Failed checking auto-date tables: %s", auto_tbl_exc)
 
             # 2. Extract legitimate tables and columns
-            tables_sql = """
+            # Optional semantic columns (calculated-column DAX, format string,
+            # display folder, data category, sort-by, source column) are
+            # selected only when this metadata schema version has them.
+            try:
+                col_schema = set(sh.execute_query("SELECT * FROM [Column] LIMIT 1").columns)
+            except Exception:
+                col_schema = set()
+            try:
+                tbl_schema = set(sh.execute_query("SELECT * FROM [Table] LIMIT 1").columns)
+            except Exception:
+                tbl_schema = set()
+
+            def _opt(alias: str, column: str, available: set, out_name: str) -> str:
+                return f"{alias}.{column} AS {out_name}" if column in available else f"NULL AS {out_name}"
+
+            optional_select = ",\n                ".join(
+                [
+                    _opt("c", "Expression", col_schema, "ColumnExpression"),
+                    _opt("c", "FormatString", col_schema, "ColumnFormatString"),
+                    _opt("c", "DisplayFolder", col_schema, "ColumnDisplayFolder"),
+                    _opt("c", "DataCategory", col_schema, "ColumnDataCategory"),
+                    _opt("c", "SortByColumnID", col_schema, "ColumnSortByColumnID"),
+                    _opt("c", "SourceColumn", col_schema, "ColumnSourceColumn"),
+                    _opt("t", "CalculationGroupID", tbl_schema, "TableCalculationGroupID"),
+                ]
+            )
+            tables_sql = f"""
             SELECT
                 t.ID AS TableID,
                 t.Name AS TableName,
@@ -718,7 +803,8 @@ class LocalPBIXConnector(BaseConnector):
                 c.Type AS ColumnType,
                 c.ExplicitDataType AS ColumnDataType,
                 c.IsHidden AS ColumnIsHidden,
-                c.Description AS ColumnDescription
+                c.Description AS ColumnDescription,
+                {optional_select}
             FROM [Table] t
             LEFT JOIN [Column] c ON c.TableID = t.ID
             WHERE t.SystemFlags != 1
@@ -729,6 +815,9 @@ class LocalPBIXConnector(BaseConnector):
             """
             tc_df = sh.execute_query(tables_sql)
             tables_by_name: Dict[str, Dict[str, Any]] = {}
+            table_id_to_name: Dict[Any, str] = {}
+            column_id_to_ref: Dict[Any, Tuple[str, str]] = {}
+            sort_by_ids: List[Tuple[Dict[str, Any], Any]] = []
             for _, row in tc_df.iterrows():
                 table_name = str(row.get("TableName", "") or "").strip()
                 if not table_name:
@@ -743,19 +832,49 @@ class LocalPBIXConnector(BaseConnector):
                         "partitions": [],
                     },
                 )
+                if row.get("TableID") is not None:
+                    table_id_to_name[self._id_key(row.get("TableID"))] = table_name
+                if self._present(row.get("TableCalculationGroupID")) and self._id_key(row.get("TableCalculationGroupID")):
+                    table_def["calculation_group_id"] = self._id_key(row.get("TableCalculationGroupID"))
                 col_name = str(row.get("ColumnName", "") or "").strip() if row.get("ColumnName") else None
                 if col_name:
                     dtype_code = row.get("ColumnDataType")
                     dtype = self._normalize_pbixray_data_type(dtype_code)
-                    table_def["columns"].append(
-                        {
-                            "name": col_name,
-                            "data_type": dtype,
-                            "is_hidden": bool(row.get("ColumnIsHidden", False)),
-                            "source_column": col_name,
-                            "type": "data",
-                        }
-                    )
+                    col_type_code = self._id_key(row.get("ColumnType"))
+                    col_kind = {2: "calculated", 4: "calculatedTableColumn"}.get(col_type_code, "data")
+                    col_expr = self._text(row.get("ColumnExpression"))
+                    src_col = self._text(row.get("ColumnSourceColumn"))
+                    col_def = {
+                        "name": col_name,
+                        "data_type": dtype,
+                        "is_hidden": bool(row.get("ColumnIsHidden", False)),
+                        "type": col_kind,
+                    }
+                    if col_kind == "calculated":
+                        # DAX calculated column: no physical source column.
+                        col_def["expression"] = col_expr
+                    else:
+                        col_def["source_column"] = src_col or col_name
+                    for key, src in (
+                        ("description", "ColumnDescription"),
+                        ("format_string", "ColumnFormatString"),
+                        ("display_folder", "ColumnDisplayFolder"),
+                        ("data_category", "ColumnDataCategory"),
+                    ):
+                        value = self._text(row.get(src))
+                        if value:
+                            col_def[key] = value
+                    table_def["columns"].append(col_def)
+                    if row.get("ColumnID") is not None:
+                        column_id_to_ref[self._id_key(row.get("ColumnID"))] = (table_name, col_name)
+                    sort_id = self._id_key(row.get("ColumnSortByColumnID"))
+                    if sort_id:
+                        sort_by_ids.append((col_def, sort_id))
+
+            for col_def, sort_id in sort_by_ids:
+                ref = column_id_to_ref.get(sort_id)
+                if ref:
+                    col_def["sort_by_column"] = ref[1]
 
             # 3. Extract partitions (including calculated table DAX definitions)
             try:
@@ -778,8 +897,9 @@ class LocalPBIXConnector(BaseConnector):
                     tbl_name = str(row.get("TableName", "") or "").strip()
                     if tbl_name in tables_by_name:
                         p_name = str(row.get("PartitionName", "") or "").strip() or f"{tbl_name}_Partition"
-                        p_type = row.get("PartitionType")
-                        source_type = "calculated" if p_type == 2 else "m"
+                        p_type = self._id_key(row.get("PartitionType"))
+                        # TOM PartitionSourceType: 2=Calculated, 7=CalculationGroup.
+                        source_type = {2: "calculated", 7: "calculationGroup"}.get(p_type, "m")
                         expr = str(row.get("QueryDefinition", "") or "")
                         tables_by_name[tbl_name]["partitions"].append(
                             {
@@ -790,6 +910,24 @@ class LocalPBIXConnector(BaseConnector):
                         )
             except Exception as part_exc:
                 logger.debug("Failed querying partition definitions: %s", part_exc)
+
+            # 3b. Semantic objects beyond tables/columns (measures metadata,
+            # KPIs, hierarchies, roles, perspectives, calculation groups,
+            # linguistic schema). Each is optional and independently guarded.
+            # Measure-only tables (whose sole column is the internal RowNumber)
+            # never appear in the table/column query; map their IDs too.
+            all_tbl_df = self._safe_query(
+                sh,
+                "SELECT ID, Name FROM [Table] WHERE SystemFlags != 1 "
+                "AND COALESCE(IsPrivate, 0) = 0 AND COALESCE(ShowAsVariationsOnly, 0) = 0",
+            )
+            if all_tbl_df is not None:
+                for _, row in all_tbl_df.iterrows():
+                    if self._id_key(row.get("ID")) is not None and self._text(row.get("Name")):
+                        table_id_to_name.setdefault(self._id_key(row.get("ID")), self._text(row.get("Name")))
+            self._raw_catalog_extras = self._extract_raw_catalog_extras(
+                sh, table_id_to_name, column_id_to_ref
+            )
 
             # 4. Extract relationships
             rel_sample = sh.execute_query("SELECT * FROM Relationship LIMIT 1")
@@ -913,6 +1051,280 @@ class LocalPBIXConnector(BaseConnector):
         finally:
             sh.close_connection()
 
+    # ------------------------------------------------------------------
+    # Raw metadata catalog helpers (binary DataModel / pbixray path)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _present(value: Any) -> bool:
+        if value is None:
+            return False
+        try:
+            import math
+
+            if isinstance(value, float) and math.isnan(value):
+                return False
+        except Exception:
+            pass
+        return True
+
+    @classmethod
+    def _id_key(cls, value: Any) -> Optional[int]:
+        """Normalize a metadata ID / enum code (numpy/float/str) to int."""
+        if not cls._present(value):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _text(cls, value: Any) -> str:
+        if not cls._present(value):
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _safe_query(sh: Any, sql: str) -> Any:
+        try:
+            df = sh.execute_query(sql)
+        except Exception as exc:
+            logger.debug("Optional metadata query failed (%s): %s", " ".join(sql.split())[:80], exc)
+            return None
+        if df is None or not len(getattr(df, "columns", [])):
+            return None
+        return df
+
+    def _extract_raw_catalog_extras(
+        self,
+        sh: Any,
+        table_id_to_name: Dict[Any, str],
+        column_id_to_ref: Dict[Any, Tuple[str, str]],
+    ) -> Dict[str, Any]:
+        """Read measure metadata, KPIs, hierarchies, roles, perspectives,
+        calculation groups and linguistic schema from metadata.sqlitedb.
+
+        Only objects on tables already accepted by the table query (i.e. not
+        private / auto date-time) are returned. Every section is optional.
+        """
+        extras: Dict[str, Any] = {}
+        tid = self._id_key
+        txt = self._text
+
+        def table_of(raw_id: Any) -> Optional[str]:
+            return table_id_to_name.get(tid(raw_id))
+
+        def column_of(raw_id: Any) -> Optional[Tuple[str, str]]:
+            return column_id_to_ref.get(tid(raw_id))
+
+        # Measures (+ KPIs)
+        kpis: Dict[Optional[int], Dict[str, Any]] = {}
+        kpi_df = self._safe_query(sh, "SELECT * FROM KPI")
+        if kpi_df is not None:
+            for _, row in kpi_df.iterrows():
+                kpi: Dict[str, Any] = {}
+                for src, dst in (
+                    ("TargetExpression", "targetExpression"),
+                    ("StatusExpression", "statusExpression"),
+                    ("TrendExpression", "trendExpression"),
+                    ("TargetFormatString", "targetFormatString"),
+                    ("TargetDescription", "targetDescription"),
+                    ("StatusGraphic", "statusGraphic"),
+                    ("StatusDescription", "statusDescription"),
+                    ("TrendGraphic", "trendGraphic"),
+                    ("TrendDescription", "trendDescription"),
+                    ("Description", "description"),
+                ):
+                    value = txt(row.get(src))
+                    if value:
+                        kpi[dst] = value
+                kpis[tid(row.get("MeasureID"))] = kpi
+        measure_df = self._safe_query(sh, "SELECT * FROM Measure")
+        if measure_df is not None:
+            measures: List[Dict[str, Any]] = []
+            for _, row in measure_df.iterrows():
+                table_name = table_of(row.get("TableID"))
+                name = txt(row.get("Name"))
+                if not table_name or not name:
+                    continue
+                m: Dict[str, Any] = {
+                    "name": name,
+                    "table": table_name,
+                    "expression": txt(row.get("Expression")),
+                    "format_string": txt(row.get("FormatString")),
+                    "description": txt(row.get("Description")),
+                    "is_hidden": bool(tid(row.get("IsHidden")) or 0),
+                    "display_folder": txt(row.get("DisplayFolder")),
+                }
+                m_kpi = kpis.get(tid(row.get("ID")))
+                if m_kpi is not None:
+                    m["kpi"] = m_kpi or {"description": "KPI"}
+                measures.append(m)
+            extras["measures"] = measures
+
+        # Hierarchies + levels
+        hier_df = self._safe_query(sh, "SELECT * FROM Hierarchy")
+        level_df = self._safe_query(sh, "SELECT * FROM Level")
+        if hier_df is not None:
+            levels_by_h: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            if level_df is not None:
+                for _, row in level_df.iterrows():
+                    ref = column_of(row.get("ColumnID"))
+                    if not ref:
+                        continue
+                    levels_by_h.setdefault(tid(row.get("HierarchyID")), []).append(
+                        {
+                            "name": txt(row.get("Name")) or ref[1],
+                            "column": ref[1],
+                            "ordinal": tid(row.get("Ordinal")) or 0,
+                        }
+                    )
+            hierarchies: Dict[str, List[Dict[str, Any]]] = {}
+            for _, row in hier_df.iterrows():
+                table_name = table_of(row.get("TableID"))
+                name = txt(row.get("Name"))
+                if not table_name or not name:
+                    continue
+                h: Dict[str, Any] = {
+                    "name": name,
+                    "levels": sorted(levels_by_h.get(tid(row.get("ID")), []), key=lambda lv: lv["ordinal"]),
+                }
+                if txt(row.get("Description")):
+                    h["description"] = txt(row.get("Description"))
+                if tid(row.get("IsHidden")):
+                    h["isHidden"] = True
+                if txt(row.get("DisplayFolder")):
+                    h["displayFolder"] = txt(row.get("DisplayFolder"))
+                hierarchies.setdefault(table_name, []).append(h)
+            extras["hierarchies"] = hierarchies
+
+        # Security roles (RLS filters + OLS)
+        role_df = self._safe_query(sh, "SELECT * FROM Role")
+        if role_df is not None:
+            perm_codes = {1: "default", 2: "none", 3: "read"}
+            model_perm_codes = {1: "none", 2: "read", 3: "readRefresh", 4: "refresh", 5: "administrator"}
+            tp_df = self._safe_query(sh, "SELECT * FROM TablePermission")
+            cp_df = self._safe_query(sh, "SELECT * FROM ColumnPermission")
+            cps_by_tp: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            if cp_df is not None:
+                for _, row in cp_df.iterrows():
+                    ref = column_of(row.get("ColumnID"))
+                    if not ref:
+                        continue
+                    cps_by_tp.setdefault(tid(row.get("TablePermissionID")), []).append(
+                        {
+                            "name": ref[1],
+                            "metadataPermission": perm_codes.get(tid(row.get("MetadataPermission")), "default"),
+                        }
+                    )
+            tps_by_role: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            if tp_df is not None:
+                for _, row in tp_df.iterrows():
+                    table_name = table_of(row.get("TableID"))
+                    if not table_name:
+                        continue
+                    tp: Dict[str, Any] = {"name": table_name}
+                    if txt(row.get("FilterExpression")):
+                        tp["filterExpression"] = txt(row.get("FilterExpression"))
+                    meta_perm = tid(row.get("MetadataPermission"))
+                    if meta_perm in perm_codes and meta_perm != 1:
+                        tp["metadataPermission"] = perm_codes[meta_perm]
+                    if cps_by_tp.get(tid(row.get("ID"))):
+                        tp["columnPermissions"] = cps_by_tp[tid(row.get("ID"))]
+                    tps_by_role.setdefault(tid(row.get("RoleID")), []).append(tp)
+            roles = []
+            for _, row in role_df.iterrows():
+                name = txt(row.get("Name"))
+                if not name:
+                    continue
+                role: Dict[str, Any] = {
+                    "name": name,
+                    "modelPermission": model_perm_codes.get(tid(row.get("ModelPermission")), "read"),
+                    "tablePermissions": tps_by_role.get(tid(row.get("ID")), []),
+                }
+                if txt(row.get("Description")):
+                    role["description"] = txt(row.get("Description"))
+                roles.append(role)
+            extras["roles"] = roles
+
+        # Perspectives
+        persp_df = self._safe_query(sh, "SELECT * FROM Perspective")
+        if persp_df is not None:
+            pt_df = self._safe_query(sh, "SELECT * FROM PerspectiveTable")
+            pc_df = self._safe_query(sh, "SELECT * FROM PerspectiveColumn")
+            cols_by_pt: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            if pc_df is not None:
+                for _, row in pc_df.iterrows():
+                    ref = column_of(row.get("ColumnID"))
+                    if ref:
+                        cols_by_pt.setdefault(tid(row.get("PerspectiveTableID")), []).append({"name": ref[1]})
+            tables_by_p: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            if pt_df is not None:
+                for _, row in pt_df.iterrows():
+                    table_name = table_of(row.get("TableID"))
+                    if table_name:
+                        tables_by_p.setdefault(tid(row.get("PerspectiveID")), []).append(
+                            {"name": table_name, "columns": cols_by_pt.get(tid(row.get("ID")), [])}
+                        )
+            perspectives = []
+            for _, row in persp_df.iterrows():
+                name = txt(row.get("Name"))
+                if name:
+                    p: Dict[str, Any] = {"name": name, "tables": tables_by_p.get(tid(row.get("ID")), [])}
+                    if txt(row.get("Description")):
+                        p["description"] = txt(row.get("Description"))
+                    perspectives.append(p)
+            extras["perspectives"] = perspectives
+
+        # Calculation groups
+        cg_df = self._safe_query(sh, "SELECT * FROM CalculationGroup")
+        if cg_df is not None:
+            ci_df = self._safe_query(sh, "SELECT * FROM CalculationItem")
+            items_by_cg: Dict[Optional[int], List[Dict[str, Any]]] = {}
+            if ci_df is not None:
+                for _, row in ci_df.iterrows():
+                    items_by_cg.setdefault(tid(row.get("CalculationGroupID")), []).append(
+                        {
+                            "name": txt(row.get("Name")),
+                            "expression": txt(row.get("Expression")),
+                            "ordinal": tid(row.get("Ordinal")) or 0,
+                        }
+                    )
+            groups: Dict[str, Dict[str, Any]] = {}
+            for _, row in cg_df.iterrows():
+                table_name = table_of(row.get("TableID"))
+                if not table_name:
+                    continue
+                groups[table_name] = {
+                    "precedence": tid(row.get("Precedence")) or 0,
+                    "calculationItems": sorted(
+                        items_by_cg.get(tid(row.get("ID")), []), key=lambda i: i["ordinal"]
+                    ),
+                }
+            extras["calculation_groups"] = groups
+
+        # Linguistic schema (Q&A synonyms)
+        ling_df = self._safe_query(sh, "SELECT * FROM LinguisticMetadata")
+        if ling_df is not None:
+            culture_names: Dict[Optional[int], str] = {}
+            culture_df = self._safe_query(sh, "SELECT * FROM Culture")
+            if culture_df is not None:
+                for _, row in culture_df.iterrows():
+                    culture_names[tid(row.get("ID"))] = txt(row.get("Name")) or "en-US"
+            cultures = []
+            for _, row in ling_df.iterrows():
+                content = txt(row.get("Content"))
+                if content:
+                    cultures.append(
+                        {
+                            "name": culture_names.get(tid(row.get("CultureID")), "en-US"),
+                            "linguisticMetadata": {"content": content},
+                        }
+                    )
+            extras["cultures"] = cultures
+
+        return extras
+
     def _is_confirmed_empty_semantic_model(self) -> bool:
         """Independently confirm a PBIX's semantic model has zero tables,
         columns, and measures, by querying its embedded metadata catalog
@@ -1010,17 +1422,44 @@ class LocalPBIXConnector(BaseConnector):
                 }
                 if col.get("is_hidden"):
                     col_def["isHidden"] = bool(col.get("is_hidden"))
-                if col.get("source_column"):
-                    col_def["sourceColumn"] = str(col.get("source_column"))
+                col_kind = str(col.get("type") or "data")
+                if col_kind == "calculated":
+                    # Calculated column: carry the DAX, never a sourceColumn.
+                    col_def["type"] = "calculated"
+                    col_def["expression"] = str(col.get("expression") or "")
+                else:
+                    if col_kind == "calculatedTableColumn":
+                        col_def["type"] = "calculatedTableColumn"
+                    if col.get("source_column"):
+                        col_def["sourceColumn"] = str(col.get("source_column"))
+                for src_key, tmsl_key in (
+                    ("description", "description"),
+                    ("format_string", "formatString"),
+                    ("display_folder", "displayFolder"),
+                    ("data_category", "dataCategory"),
+                    ("sort_by_column", "sortByColumn"),
+                ):
+                    if col.get(src_key):
+                        col_def[tmsl_key] = str(col.get(src_key))
                 table_def["columns"].append(col_def)
 
             for partition in table.get("partitions", []) or []:
                 p_name = str(partition.get("name", "") or "").strip() or f"{table_name}_Partition"
                 source_type = str(partition.get("source_type", "") or "m").strip() or "m"
+                source: Dict[str, Any] = {"type": source_type}
+                if partition.get("expression"):
+                    source["expression"] = str(partition.get("expression"))
                 table_def["partitions"].append({
                     "name": p_name,
-                    "source": {"type": source_type},
+                    "source": source,
                 })
+
+            hierarchies = (fallback_result.get("hierarchies") or {}).get(table_name)
+            if hierarchies:
+                table_def["hierarchies"] = hierarchies
+            calc_group = (fallback_result.get("calculation_groups") or {}).get(table_name)
+            if calc_group is not None:
+                table_def["calculationGroup"] = calc_group
 
             tables_by_name[table_name] = table_def
 
@@ -1047,6 +1486,8 @@ class LocalPBIXConnector(BaseConnector):
                 measure_def["displayFolder"] = str(measure.get("display_folder", ""))
             if measure.get("is_hidden"):
                 measure_def["isHidden"] = bool(measure.get("is_hidden"))
+            if isinstance(measure.get("kpi"), dict):
+                measure_def["kpi"] = dict(measure["kpi"])
 
             table_def.setdefault("measures", []).append(measure_def)
 
@@ -1099,6 +1540,9 @@ class LocalPBIXConnector(BaseConnector):
             model_payload["compatibilityLevel"] = model_meta.get("compatibility_level")
         if model_meta.get("culture"):
             model_payload["culture"] = str(model_meta.get("culture", "en-US"))
+        for key in ("roles", "perspectives", "cultures"):
+            if fallback_result.get(key):
+                model_payload[key] = fallback_result[key]
 
         logger.info(
             "pbixray fallback TMSL assembled: %s tables, %s relationships",

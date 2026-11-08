@@ -73,6 +73,10 @@ def _convert_fabric_to_sml(
         "display_name": sf.dataset_name or None,
         "project_id": context.project_id,
     }
+    # Name-based relationship inference invents joins the source never
+    # declared — strictly opt-in via options.infer_relationships.
+    options_ns = getattr(getattr(context, "config", None), "options", None)
+    source_data["infer_relationships"] = getattr(options_ns, "infer_relationships", None)
     osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model  # Store on context for step-7 persistence
 
@@ -96,7 +100,7 @@ def _convert_fabric_to_sml(
     )
 
     # Phase 2: OSI → SML
-    sml_model = OSIToSMLConverter().from_osi(
+    sml_model = OSIToSMLConverter(drop_ledger=context.drop_ledger).from_osi(
         osi_model,
         row_counts=sf.row_counts,
     )

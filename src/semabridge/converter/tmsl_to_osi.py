@@ -44,6 +44,156 @@ from semabridge.connectors.business_field_type_hints import infer_business_field
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Shared TMSL semantics helpers (also used by the legacy tmsl_to_sml path)
+# ---------------------------------------------------------------------------
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def join_tmsl_expression(value: Any) -> str:
+    """TMSL/model.bim may store expressions as a list of lines."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "\n".join(str(x) for x in value)
+    return str(value)
+
+
+def _norm_token(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+
+
+_CARDINALITY_PAIR = {
+    ("many", "one"): OSICardinality.MANY_TO_ONE,
+    ("one", "one"): OSICardinality.ONE_TO_ONE,
+    ("one", "many"): OSICardinality.ONE_TO_MANY,
+    ("many", "many"): OSICardinality.MANY_TO_MANY,
+}
+
+_CARDINALITY_STRING = {
+    "manytoone": OSICardinality.MANY_TO_ONE,
+    "m:1": OSICardinality.MANY_TO_ONE,
+    "*:1": OSICardinality.MANY_TO_ONE,
+    "onetoone": OSICardinality.ONE_TO_ONE,
+    "1:1": OSICardinality.ONE_TO_ONE,
+    "onetomany": OSICardinality.ONE_TO_MANY,
+    "1:m": OSICardinality.ONE_TO_MANY,
+    "1:*": OSICardinality.ONE_TO_MANY,
+    "manytomany": OSICardinality.MANY_TO_MANY,
+    "m:m": OSICardinality.MANY_TO_MANY,
+    "*:*": OSICardinality.MANY_TO_MANY,
+}
+
+
+def _rel_get(rel_def: Dict[str, Any], *names: str) -> Any:
+    lowered = {str(k).lower(): v for k, v in rel_def.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def tmsl_relationship_cardinality(rel_def: Dict[str, Any]) -> OSICardinality:
+    """Resolve a TMSL relationship's cardinality.
+
+    Real TMSL / model.bim / Fabric definitions express cardinality as two
+    per-end properties, ``fromCardinality`` (default "many") and
+    ``toCardinality`` (default "one"). Some internal producers (the pbixray
+    fallback, older fixtures) emit a combined ``cardinality`` string instead.
+    Both forms are honoured; the per-end form wins when present.
+    """
+    from_card = _rel_get(rel_def, "fromCardinality", "from_cardinality")
+    to_card = _rel_get(rel_def, "toCardinality", "to_cardinality")
+    combined = _rel_get(rel_def, "cardinality")
+    if from_card is not None or to_card is not None or combined is None:
+        pair = (
+            _norm_token(from_card) if from_card is not None else "many",
+            _norm_token(to_card) if to_card is not None else "one",
+        )
+        if pair in _CARDINALITY_PAIR:
+            return _CARDINALITY_PAIR[pair]
+        if combined is None:
+            return OSICardinality.MANY_TO_ONE
+    raw = str(combined).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    return _CARDINALITY_STRING.get(raw, OSICardinality.MANY_TO_ONE)
+
+
+def tmsl_relationship_cross_filter(rel_def: Dict[str, Any]) -> OSICrossFilterDirection:
+    """Map TMSL crossFilteringBehavior (oneDirection|bothDirections|automatic)."""
+    raw = _norm_token(_rel_get(rel_def, "crossFilteringBehavior", "cross_filtering_behavior") or "oneDirection")
+    if raw in {"both", "bothdirections", "2"}:
+        return OSICrossFilterDirection.BOTH
+    # "automatic" resolves to single-direction for regular relationships.
+    return OSICrossFilterDirection.SINGLE
+
+
+def tmsl_relationship_is_active(rel_def: Dict[str, Any]) -> bool:
+    value = _rel_get(rel_def, "isActive", "is_active")
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no"}
+    return bool(value)
+
+
+def classify_tmsl_table(table_def: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Return (dataset_kind, defining DAX) for a TMSL table.
+
+    Kinds: 'calculation_group', 'field_parameter', 'calculated_table', 'table'.
+    """
+    partitions = table_def.get("partitions") or []
+    if table_def.get("calculationGroup"):
+        return "calculation_group", None
+    calc_expr: Optional[str] = None
+    is_calculated = False
+    for part in partitions:
+        if not isinstance(part, dict):
+            continue
+        source = part.get("source") or {}
+        if not isinstance(source, dict):
+            source = {}
+        p_type = _norm_token(source.get("type") or part.get("source_type") or part.get("type"))
+        if p_type == "calculationgroup":
+            return "calculation_group", None
+        if p_type == "calculated":
+            is_calculated = True
+            calc_expr = join_tmsl_expression(source.get("expression") or part.get("expression")) or calc_expr
+    if not is_calculated:
+        return "table", None
+
+    def _has_param_metadata(obj: Dict[str, Any]) -> bool:
+        for prop in obj.get("extendedProperties") or []:
+            if isinstance(prop, dict) and str(prop.get("name") or "") == "ParameterMetadata":
+                return True
+        return False
+
+    if _has_param_metadata(table_def) or any(
+        isinstance(c, dict) and _has_param_metadata(c) for c in table_def.get("columns") or []
+    ) or re.search(r"\bNAMEOF\s*\(", calc_expr or "", re.IGNORECASE):
+        return "field_parameter", calc_expr
+    return "calculated_table", calc_expr
+
+
+def infer_relationships_enabled(explicit: Optional[bool] = None) -> bool:
+    """Name-based relationship inference is OFF unless explicitly enabled
+    (options.infer_relationships / SEMABRIDGE_INFER_RELATIONSHIPS=1)."""
+    if isinstance(explicit, bool):
+        return explicit
+    if isinstance(explicit, str):
+        return explicit.strip().lower() in _TRUTHY
+    import os
+
+    return str(os.getenv("SEMABRIDGE_INFER_RELATIONSHIPS", "")).strip().lower() in _TRUTHY
+
+
+INFERRED_RELATIONSHIP_REASON = (
+    "inferred, not in source — added by name-based relationship inference "
+    "(options.infer_relationships is enabled); verify it before relying on it"
+)
+
+
 class TMSLToOSIConverter(BaseConverter):
     """
     Transforms Fabric TMSL JSON into OSI Model.
@@ -56,7 +206,15 @@ class TMSLToOSIConverter(BaseConverter):
         "ClusterMapping",
     )
 
-    def __init__(self, drop_ledger: Optional[DropLedger] = None) -> None:
+    def __init__(
+        self,
+        drop_ledger: Optional[DropLedger] = None,
+        infer_relationships: Optional[bool] = None,
+    ) -> None:
+        # None -> resolved per run from source_data / environment (default OFF).
+        self._infer_relationships_opt = infer_relationships
+        self._excluded_tables: Dict[str, Tuple[str, str, bool]] = {}
+        self._linguistic_terms: Dict[Tuple[str, Optional[str]], Tuple[List[str], List[str]]] = {}
         self._synonym_overrides: Dict[tuple[str, str, str], List[str]] = {}
         self._synonym_model_names: List[str] = []
         self._field_alias_lookup: Optional[Dict[Tuple[str, str, Optional[str]], List[str]]] = None
@@ -172,6 +330,14 @@ class TMSLToOSIConverter(BaseConverter):
                 }
             )
 
+            self._excluded_tables = {}
+            self._linguistic_terms = self._collect_linguistic_terms(model_obj)
+            infer_rels = infer_relationships_enabled(
+                self._infer_relationships_opt
+                if self._infer_relationships_opt is not None
+                else source_data.get("infer_relationships")
+            )
+
             # Process Datasets (Tables)
             if "tables" in model_obj:
                 for table in model_obj["tables"]:
@@ -198,17 +364,28 @@ class TMSLToOSIConverter(BaseConverter):
                             reason,
                             by_design=True,
                         )
+                        self._excluded_tables[str(t_name).casefold()] = (t_name, reason, True)
                         continue
-                    dataset = self._parse_dataset(table)
+
+                    kind, table_expr = classify_tmsl_table(table)
+                    if kind == "calculation_group":
+                        self._record_calculation_group(table, osi_model)
+                        continue
+
+                    dataset = self._parse_dataset(table, kind=kind, expression=table_expr)
                     osi_model.datasets.append(dataset)
+                    self._record_non_physical_dataset(dataset)
+                    self._record_sort_by_columns(dataset)
 
                     for metric in self._create_metrics_from_aggregation_columns(dataset):
                         osi_model.metrics.append(metric)
 
                     # Create corresponding Dimension for each Dataset
                     # In TMSL/Power BI, every table is potentially a dimension
+                    hierarchies = self._parse_hierarchies(table, dataset)
                     dim = self._create_dimension_from_dataset(dataset)
                     if dim:
+                        dim.hierarchies = hierarchies
                         osi_model.dimensions.append(dim)
 
                     # Process Measures (Metrics)
@@ -216,103 +393,59 @@ class TMSLToOSIConverter(BaseConverter):
                         metric = self._parse_metric(measure, dataset.unique_name)
                         osi_model.metrics.append(metric)
 
+            self._dedupe_metric_names_across_model(osi_model)
+
             # Process Relationships
             # Build case-insensitive map of valid datasets so relationship
             # endpoints can be canonicalized before filtering.
             valid_dataset_map = {
                 str(ds.unique_name).casefold(): ds.unique_name for ds in osi_model.datasets
             }
-            
+
             if "relationships" in model_obj:
-                for rel in model_obj["relationships"]:
+                for rel in model_obj["relationships"] or []:
+                    if not isinstance(rel, dict):
+                        continue
                     osi_rel = self._parse_relationship(rel)
-                    if osi_rel:
-                        from_dataset = valid_dataset_map.get(str(osi_rel.from_dataset).casefold())
-                        to_dataset = valid_dataset_map.get(str(osi_rel.to_dataset).casefold())
-                        # Only add relationship if both referenced tables exist
-                        if from_dataset and to_dataset:
-                            osi_rel.from_dataset = from_dataset
-                            osi_rel.to_dataset = to_dataset
-                            osi_model.relationships.append(osi_rel)
-                        else:
-                            # Skip only relationships that reference truly missing datasets.
-                            logger.debug(
-                                f"Skipping relationship '{osi_rel.unique_name}': "
-                                f"references unavailable table(s) "
-                                f"({osi_rel.from_dataset} -> {osi_rel.to_dataset})"
-                            )
-
-            # Fallback: infer relationships when source metadata exposes none.
-            if not osi_model.relationships and osi_model.datasets:
-                try:
-                    from semabridge.connectors.relationship_detector import RelationshipDetector
-
-                    tables_meta: Dict[str, Dict[str, Any]] = {
-                        ds.unique_name: {"row_count": 0} for ds in osi_model.datasets
-                    }
-                    columns_meta: Dict[str, List[Dict[str, Any]]] = {
-                        ds.unique_name: [
-                            {
-                                "name": c.unique_name,
-                                "data_type": (
-                                    c.data_type.value if hasattr(c.data_type, "value") else str(c.data_type)
-                                ),
-                            }
-                            for c in ds.columns
-                        ]
-                        for ds in osi_model.datasets
-                    }
-                    pks_meta: Dict[str, List[str]] = {
-                        ds.unique_name: [c.unique_name for c in ds.columns if c.is_key]
-                        for ds in osi_model.datasets
-                    }
-
-                    detector = RelationshipDetector(tables_meta, columns_meta, pks_meta)
-                    inferred_rels = detector.detect_all()
-                    if inferred_rels:
-                        seen_signatures = {
-                            (
-                                r.from_dataset.casefold(),
-                                (r.from_columns[0] if r.from_columns else "").casefold(),
-                                r.to_dataset.casefold(),
-                                (r.to_columns[0] if r.to_columns else "").casefold(),
-                            )
-                            for r in osi_model.relationships
-                        }
-                        for rel in inferred_rels:
-                            sig = (
-                                str(rel.get("from_table", "")).casefold(),
-                                str(rel.get("from_column", "")).casefold(),
-                                str(rel.get("to_table", "")).casefold(),
-                                str(rel.get("to_column", "")).casefold(),
-                            )
-                            if sig in seen_signatures:
-                                continue
-                            from_ds = valid_dataset_map.get(str(rel.get("from_table", "")).casefold())
-                            to_ds = valid_dataset_map.get(str(rel.get("to_table", "")).casefold())
-                            from_col = str(rel.get("from_column", "")).strip()
-                            to_col = str(rel.get("to_column", "")).strip()
-                            if not (from_ds and to_ds and from_col and to_col):
-                                continue
-                            osi_model.relationships.append(
-                                OSIRelationship(
-                                    unique_name=generate_relationship_name(from_ds, from_col, to_ds, to_col),
-                                    from_dataset=from_ds,
-                                    from_columns=[from_col],
-                                    to_dataset=to_ds,
-                                    to_columns=[to_col],
-                                    cardinality=OSICardinality.MANY_TO_ONE,
-                                    cross_filter_direction=OSICrossFilterDirection.SINGLE,
-                                    is_active=True,
-                                )
-                            )
-                            seen_signatures.add(sig)
-                        logger.info(
-                            "Inferred %s fallback relationship(s) from table metadata",
-                            len(osi_model.relationships),
+                    if not osi_rel:
+                        self.drop_ledger.record(
+                            "relationship",
+                            self._describe_raw_relationship(rel),
+                            DropStage.EXTRACTION,
+                            "relationship could not be parsed (missing or malformed endpoints) — dropped",
+                            detail=json.dumps(rel, default=str)[:500],
+                            by_design=False,
                         )
-                except Exception as exc:
-                    logger.warning("Relationship inference fallback failed: %s", exc)
+                        continue
+                    from_dataset = valid_dataset_map.get(str(osi_rel.from_dataset).casefold())
+                    to_dataset = valid_dataset_map.get(str(osi_rel.to_dataset).casefold())
+                    # Only add relationship if both referenced tables exist
+                    if from_dataset and to_dataset:
+                        osi_rel.from_dataset = from_dataset
+                        osi_rel.to_dataset = to_dataset
+                        osi_model.relationships.append(osi_rel)
+                    else:
+                        self._record_relationship_to_missing_table(
+                            osi_rel,
+                            [
+                                name
+                                for name, resolved in (
+                                    (osi_rel.from_dataset, from_dataset),
+                                    (osi_rel.to_dataset, to_dataset),
+                                )
+                                if not resolved
+                            ],
+                        )
+
+            # Optional fallback: infer relationships when source metadata
+            # exposes none. OFF by default — inferred joins are semantics the
+            # source model never declared.
+            if not osi_model.relationships and osi_model.datasets and infer_rels:
+                self._infer_fallback_relationships(osi_model, valid_dataset_map)
+
+            # Model-level objects Snowflake semantic views cannot represent.
+            self._record_roles(model_obj, osi_model)
+            self._record_perspectives(model_obj, osi_model)
 
             return osi_model
 
@@ -324,6 +457,497 @@ class TMSLToOSIConverter(BaseConverter):
                 target_format="osi",
                 details={"error": str(e)}
             )
+
+    # ------------------------------------------------------------------
+    # Source-fidelity helpers: carry or ledger every source construct
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _truncate(text: Any, limit: int = 300) -> str:
+        flat = " ".join(str(text or "").split())
+        return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+    @staticmethod
+    def _describe_raw_relationship(rel: Dict[str, Any]) -> str:
+        def g(*keys: str) -> str:
+            for k in keys:
+                if rel.get(k):
+                    return str(rel.get(k))
+            return "?"
+
+        return (
+            f"{g('fromTable', 'from_table')}[{g('fromColumn', 'from_column')}] -> "
+            f"{g('toTable', 'to_table')}[{g('toColumn', 'to_column')}]"
+        )
+
+    def _record_non_physical_dataset(self, dataset: OSIDataset) -> None:
+        kind = dataset.dataset_kind
+        if kind == "table":
+            return
+        expr = self._truncate(dataset.expression or "", 500)
+        if kind == "field_parameter":
+            reason = (
+                "field parameter — Power BI report-time field switcher defined in DAX; "
+                "Snowflake semantic views have no field parameters, so it is not migrated"
+            )
+        else:
+            reason = (
+                "calculated table — not materialized in Snowflake; "
+                "materialize it as a table/view to include it"
+            )
+        logger.info("Dataset '%s' is a %s: %s", dataset.unique_name, kind, reason)
+        self.drop_ledger.record(
+            "table",
+            dataset.unique_name,
+            DropStage.EXTRACTION,
+            reason,
+            dataset=dataset.unique_name,
+            detail=f"DAX: {expr}" if expr else None,
+            by_design=True,
+        )
+
+    def _record_calculation_group(self, table: Dict[str, Any], osi_model: OSIModel) -> None:
+        name = str(table.get("name") or "<unnamed>")
+        cg = table.get("calculationGroup") or {}
+        items = [i for i in (cg.get("calculationItems") or []) if isinstance(i, dict)]
+        item_names = [str(i.get("name") or "") for i in items]
+        reason = (
+            "calculation group — Snowflake semantic views have no calculation groups; "
+            f"{len(items)} calculation item(s) not migrated"
+            + (f" ({', '.join(item_names)})" if item_names else "")
+        )
+        detail = "; ".join(
+            f"{i.get('name')}: {self._truncate(join_tmsl_expression(i.get('expression')), 200)}"
+            for i in items
+        )
+        logger.info("Calculation group '%s' not migrated: %s", name, reason)
+        self.drop_ledger.record(
+            "table", name, DropStage.EXTRACTION, reason,
+            dataset=name, detail=detail or None, by_design=True,
+        )
+        self._excluded_tables[name.casefold()] = (name, reason, True)
+        osi_model.metadata.setdefault("calculation_groups", []).append(
+            {
+                "name": name,
+                "precedence": cg.get("precedence"),
+                "description": table.get("description"),
+                "items": [
+                    {
+                        "name": i.get("name"),
+                        "expression": join_tmsl_expression(i.get("expression")),
+                        "ordinal": i.get("ordinal"),
+                        "format_string_expression": join_tmsl_expression(
+                            (i.get("formatStringDefinition") or {}).get("expression")
+                        )
+                        or None,
+                    }
+                    for i in items
+                ],
+            }
+        )
+        for measure in self._iter_table_measures(table):
+            m_name = str(measure.get("name") or "<unnamed>")
+            self.drop_ledger.record(
+                "metric", m_name, DropStage.EXTRACTION,
+                f"measure is defined on calculation group table '{name}', which is not migrated",
+                dataset=name,
+                detail=self._truncate(join_tmsl_expression(self._extract_measure_expression(measure)), 300),
+                by_design=False,
+            )
+
+    def _record_sort_by_columns(self, dataset: OSIDataset) -> None:
+        for col in dataset.columns:
+            if not col.sort_by_column:
+                continue
+            self.drop_ledger.record(
+                "column_property",
+                f"{col.unique_name} sortByColumn",
+                DropStage.EXTRACTION,
+                f"sort order of '{col.unique_name}' by '{col.sort_by_column}' not carried — "
+                "Snowflake semantic views have no sort-by-column; order by "
+                f"'{col.sort_by_column}' explicitly in queries",
+                dataset=dataset.unique_name,
+                by_design=True,
+            )
+
+    def _parse_hierarchies(self, table: Dict[str, Any], dataset: OSIDataset) -> List[OSIHierarchy]:
+        hierarchies: List[OSIHierarchy] = []
+        for h in table.get("hierarchies") or []:
+            if not isinstance(h, dict) or not str(h.get("name") or "").strip():
+                continue
+            h_name = str(h["name"]).strip()
+            levels_raw = [lv for lv in (h.get("levels") or []) if isinstance(lv, dict)]
+            levels_raw.sort(key=lambda lv: (lv.get("ordinal") is None, lv.get("ordinal") or 0))
+            levels: List[OSILevel] = []
+            for lv in levels_raw:
+                col = str(lv.get("column") or "").strip()
+                lv_name = str(lv.get("name") or col).strip()
+                if not col or not lv_name:
+                    continue
+                levels.append(OSILevel(unique_name=lv_name, attribute=col))
+            hierarchy = OSIHierarchy(
+                unique_name=h_name,
+                levels=levels,
+                description=h.get("description"),
+                is_hidden=bool(h.get("isHidden", False)),
+                folder=h.get("displayFolder") or None,
+            )
+            hierarchies.append(hierarchy)
+            path = " > ".join(f"{lv.unique_name} [{lv.attribute}]" for lv in levels) or "no levels"
+            self.drop_ledger.record(
+                "hierarchy",
+                h_name,
+                DropStage.EXTRACTION,
+                f"hierarchy '{h_name}' ({path}) not migrated as a drill path — Snowflake semantic "
+                "views have no hierarchy object; its level columns are still emitted as "
+                "individual dimensions",
+                dataset=dataset.unique_name,
+                by_design=True,
+            )
+        return hierarchies
+
+    def _record_relationship_to_missing_table(
+        self, osi_rel: OSIRelationship, missing: List[str]
+    ) -> None:
+        excluded = [self._excluded_tables.get(str(m).casefold()) for m in missing]
+        by_design = bool(missing) and all(e is not None and e[2] for e in excluded)
+        parts = []
+        for name, info in zip(missing, excluded):
+            if info is not None:
+                parts.append(f"'{name}' (excluded: {info[1]})")
+            else:
+                parts.append(f"'{name}' (not found in the source model)")
+        reason = (
+            "relationship references table(s) not in the semantic model — dropped: "
+            + ", ".join(parts)
+        )
+        logger.info("Dropping relationship %s: %s", osi_rel.unique_name, reason)
+        self.drop_ledger.record(
+            "relationship",
+            f"{osi_rel.from_dataset}[{osi_rel.from_columns[0]}] -> "
+            f"{osi_rel.to_dataset}[{osi_rel.to_columns[0]}]",
+            DropStage.EXTRACTION,
+            reason,
+            by_design=by_design,
+        )
+
+    def _infer_fallback_relationships(
+        self, osi_model: OSIModel, valid_dataset_map: Dict[str, str]
+    ) -> None:
+        try:
+            from semabridge.connectors.relationship_detector import RelationshipDetector
+
+            tables_meta: Dict[str, Dict[str, Any]] = {
+                ds.unique_name: {"row_count": 0} for ds in osi_model.datasets
+            }
+            columns_meta: Dict[str, List[Dict[str, Any]]] = {
+                ds.unique_name: [
+                    {
+                        "name": c.unique_name,
+                        "data_type": (
+                            c.data_type.value if hasattr(c.data_type, "value") else str(c.data_type)
+                        ),
+                    }
+                    for c in ds.columns
+                ]
+                for ds in osi_model.datasets
+            }
+            pks_meta: Dict[str, List[str]] = {
+                ds.unique_name: [c.unique_name for c in ds.columns if c.is_key]
+                for ds in osi_model.datasets
+            }
+            inferred_rels = RelationshipDetector(tables_meta, columns_meta, pks_meta).detect_all()
+            seen_signatures: set = set()
+            added = 0
+            for rel in inferred_rels or []:
+                sig = (
+                    str(rel.get("from_table", "")).casefold(),
+                    str(rel.get("from_column", "")).casefold(),
+                    str(rel.get("to_table", "")).casefold(),
+                    str(rel.get("to_column", "")).casefold(),
+                )
+                if sig in seen_signatures:
+                    continue
+                from_ds = valid_dataset_map.get(str(rel.get("from_table", "")).casefold())
+                to_ds = valid_dataset_map.get(str(rel.get("to_table", "")).casefold())
+                from_col = str(rel.get("from_column", "")).strip()
+                to_col = str(rel.get("to_column", "")).strip()
+                if not (from_ds and to_ds and from_col and to_col):
+                    continue
+                osi_rel = OSIRelationship(
+                    unique_name=generate_relationship_name(from_ds, from_col, to_ds, to_col),
+                    from_dataset=from_ds,
+                    from_columns=[from_col],
+                    to_dataset=to_ds,
+                    to_columns=[to_col],
+                    cardinality=OSICardinality.MANY_TO_ONE,
+                    cross_filter_direction=OSICrossFilterDirection.SINGLE,
+                    is_active=True,
+                    is_inferred=True,
+                )
+                osi_model.relationships.append(osi_rel)
+                seen_signatures.add(sig)
+                added += 1
+                self.drop_ledger.record(
+                    "relationship",
+                    f"{from_ds}[{from_col}] -> {to_ds}[{to_col}]",
+                    DropStage.EXTRACTION,
+                    INFERRED_RELATIONSHIP_REASON,
+                    by_design=True,
+                )
+            logger.info("Inferred %s fallback relationship(s) from column names", added)
+        except Exception as exc:
+            logger.warning("Relationship inference fallback failed: %s", exc)
+
+    def _record_roles(self, model_obj: Dict[str, Any], osi_model: OSIModel) -> None:
+        roles = [r for r in (model_obj.get("roles") or []) if isinstance(r, dict)]
+        carried: List[Dict[str, Any]] = []
+        for role in roles:
+            r_name = str(role.get("name") or "<unnamed>")
+            filters: List[str] = []
+            ols: List[str] = []
+            table_perms = []
+            for tp in role.get("tablePermissions") or []:
+                if not isinstance(tp, dict):
+                    continue
+                t_name = str(tp.get("name") or tp.get("table") or "?")
+                f_expr = join_tmsl_expression(tp.get("filterExpression")).strip()
+                if f_expr:
+                    filters.append(f"{t_name}: {f_expr}")
+                if str(tp.get("metadataPermission") or "").lower() == "none":
+                    ols.append(f"table '{t_name}' hidden")
+                col_perms = []
+                for cp in tp.get("columnPermissions") or []:
+                    if not isinstance(cp, dict):
+                        continue
+                    col_perms.append(
+                        {"column": cp.get("name"), "metadata_permission": cp.get("metadataPermission")}
+                    )
+                    if str(cp.get("metadataPermission") or "").lower() == "none":
+                        ols.append(f"column '{t_name}'[{cp.get('name')}] hidden")
+                table_perms.append(
+                    {
+                        "table": t_name,
+                        "filter_expression": f_expr or None,
+                        "metadata_permission": tp.get("metadataPermission"),
+                        "column_permissions": col_perms,
+                    }
+                )
+            carried.append(
+                {
+                    "name": r_name,
+                    "model_permission": role.get("modelPermission"),
+                    "description": role.get("description"),
+                    "table_permissions": table_perms,
+                }
+            )
+            filter_text = "; ".join(filters) if filters else "(no row filters defined)"
+            reason = (
+                f"row-level security role '{r_name}' not migrated — Snowflake semantic views do "
+                "not carry RLS; implement with a Snowflake row access policy. "
+                f"Filter: {filter_text}"
+            )
+            if ols:
+                reason += (
+                    ". Object-level security not migrated: " + ", ".join(ols)
+                    + " — implement with Snowflake masking policies/grants"
+                )
+            logger.warning("SECURITY: %s", reason)
+            # Deliberately NOT by_design: an unmigrated security role means the
+            # deployed view exposes rows/columns the source model restricted —
+            # it must surface as an actionable item, never be de-emphasized.
+            self.drop_ledger.record(
+                "security_role", r_name, DropStage.EXTRACTION, reason, by_design=False,
+            )
+        if carried:
+            osi_model.metadata["security_roles"] = carried
+
+    def _record_perspectives(self, model_obj: Dict[str, Any], osi_model: OSIModel) -> None:
+        carried: List[Dict[str, Any]] = []
+        for p in model_obj.get("perspectives") or []:
+            if not isinstance(p, dict):
+                continue
+            p_name = str(p.get("name") or "<unnamed>")
+            tables = [
+                {
+                    "name": t.get("name"),
+                    "columns": [c.get("name") for c in t.get("columns") or [] if isinstance(c, dict)],
+                    "measures": [m.get("name") for m in t.get("measures") or [] if isinstance(m, dict)],
+                    "hierarchies": [h.get("name") for h in t.get("hierarchies") or [] if isinstance(h, dict)],
+                }
+                for t in p.get("tables") or []
+                if isinstance(t, dict)
+            ]
+            carried.append({"name": p_name, "description": p.get("description"), "tables": tables})
+            self.drop_ledger.record(
+                "perspective",
+                p_name,
+                DropStage.EXTRACTION,
+                f"perspective '{p_name}' not migrated — Snowflake semantic views have no "
+                "perspectives; all migrated objects are exposed in a single view",
+                detail=(
+                    f"{len(tables)} table(s): " + ", ".join(str(t["name"]) for t in tables)
+                    if tables else None
+                ),
+                by_design=True,
+            )
+        if carried:
+            osi_model.metadata["perspectives"] = carried
+
+    def _record_kpi(
+        self, measure_def: Dict[str, Any], metric_name: str, dataset_name: str
+    ) -> Optional[Dict[str, str]]:
+        kpi = measure_def.get("kpi")
+        if not isinstance(kpi, dict) or not kpi:
+            return None
+        key_map = {
+            "targetExpression": "target_expression",
+            "statusExpression": "status_expression",
+            "trendExpression": "trend_expression",
+            "targetFormatString": "target_format_string",
+            "targetDescription": "target_description",
+            "statusGraphic": "status_graphic",
+            "statusDescription": "status_description",
+            "trendGraphic": "trend_graphic",
+            "trendDescription": "trend_description",
+            "description": "description",
+        }
+        carried: Dict[str, str] = {}
+        for src_key, dst_key in key_map.items():
+            value = join_tmsl_expression(kpi.get(src_key)).strip()
+            if value:
+                carried[dst_key] = value
+        parts = [
+            f"{label}: {self._truncate(carried[key], 150)}"
+            for label, key in (
+                ("Target", "target_expression"),
+                ("Status", "status_expression"),
+                ("Trend", "trend_expression"),
+            )
+            if key in carried
+        ]
+        self.drop_ledger.record(
+            "kpi",
+            metric_name,
+            DropStage.EXTRACTION,
+            f"KPI on measure '{metric_name}' not migrated — Snowflake semantic views have no KPI "
+            "object; the base measure is migrated"
+            + (". " + "; ".join(parts) if parts else ""),
+            dataset=dataset_name,
+            by_design=True,
+        )
+        return carried
+
+    def _collect_linguistic_terms(
+        self, model_obj: Dict[str, Any]
+    ) -> Dict[Tuple[str, Optional[str]], Tuple[List[str], List[str]]]:
+        """Read Q&A linguistic-schema synonyms (cultures[].linguisticMetadata).
+
+        Returns {(table_cf, property_cf|None): (authored_terms, generated_terms)}.
+        Terms in state 'Suggested' (unaccepted suggestions, e.g. from visual
+        renames — already covered by report aliases) or 'Deleted' are ignored.
+        """
+        out: Dict[Tuple[str, Optional[str]], Tuple[List[str], List[str]]] = {}
+        for culture in model_obj.get("cultures") or []:
+            if not isinstance(culture, dict):
+                continue
+            lm = culture.get("linguisticMetadata")
+            if not isinstance(lm, dict):
+                continue
+            content = lm.get("content")
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except Exception:
+                    logger.debug("Unparseable linguistic metadata for culture %s", culture.get("name"))
+                    continue
+            if not isinstance(content, dict):
+                continue
+            for entity in (content.get("Entities") or {}).values():
+                if not isinstance(entity, dict):
+                    continue
+                binding = (entity.get("Definition") or {}).get("Binding") or {}
+                table = binding.get("ConceptualEntity")
+                if not table:
+                    continue
+                prop = binding.get("ConceptualProperty")
+                key = (str(table).casefold(), str(prop).casefold() if prop else None)
+                authored, generated = out.setdefault(key, ([], []))
+                for term_entry in entity.get("Terms") or []:
+                    if not isinstance(term_entry, dict):
+                        continue
+                    for term, meta in term_entry.items():
+                        state = (
+                            str(meta.get("State") or "").strip().lower()
+                            if isinstance(meta, dict)
+                            else ""
+                        )
+                        if state in {"suggested", "deleted"}:
+                            continue
+                        text = str(term or "").strip()
+                        if not text:
+                            continue
+                        target = generated if state == "generated" else authored
+                        if text not in target:
+                            target.append(text)
+        return out
+
+    def _linguistic_synonyms_for(self, table_name: str, field_name: str) -> Tuple[List[str], List[str]]:
+        found = self._linguistic_terms.get((str(table_name).casefold(), str(field_name).casefold()))
+        return (list(found[0]), list(found[1])) if found else ([], [])
+
+    def _dedupe_metric_names_across_model(self, osi_model: OSIModel) -> None:
+        """Make metric names unique across the whole model, deterministically.
+
+        Two tables may each define e.g. 'Total Sales' (or names that collapse
+        to the same Snowflake identifier). The first occurrence in source
+        order keeps its name; later ones become '<name> (<table>)' (+ ' 2',
+        ' 3' if still taken). Every rename is ledgered.
+        """
+        from semabridge.utils.identifiers import IdentifierSanitizer
+
+        sanitizer = IdentifierSanitizer()
+
+        def key(name: str) -> str:
+            try:
+                return sanitizer.sanitize_column(name).casefold()
+            except Exception:
+                return self._normalize_measure_name_key(name)
+
+        groups: Dict[str, List[OSIMetric]] = {}
+        for metric in osi_model.metrics:
+            groups.setdefault(key(metric.unique_name), []).append(metric)
+        taken = set(groups.keys())
+        for metrics in groups.values():
+            if len(metrics) < 2:
+                continue
+            datasets = sorted({m.dataset for m in metrics})
+            originals = sorted({m.unique_name for m in metrics})
+            for metric in metrics[1:]:
+                base = f"{metric.unique_name} ({metric.dataset})"
+                candidate, n = base, 2
+                while key(candidate) in taken:
+                    candidate = f"{base} {n}"
+                    n += 1
+                taken.add(key(candidate))
+                old_name = metric.unique_name
+                metric.unique_name = candidate
+                if not metric.original_name:
+                    metric.original_name = old_name
+                self.drop_ledger.record(
+                    "metric",
+                    old_name,
+                    DropStage.EXTRACTION,
+                    f"renamed to '{candidate}' — metric name "
+                    f"{' / '.join(repr(o) for o in originals)} is defined more than once "
+                    f"(tables: {', '.join(datasets)}); Snowflake semantic view metric names "
+                    "must be unique",
+                    dataset=metric.dataset,
+                    by_design=True,
+                )
+                logger.info(
+                    "Renamed duplicate metric '%s' on '%s' to '%s'", old_name, metric.dataset, candidate
+                )
 
     def from_osi(self, osi_model: OSIModel) -> Any:
         # Implementing simple TMSL generation or raising NotImplemented
@@ -393,15 +1017,22 @@ class TMSLToOSIConverter(BaseConverter):
             )
         return metrics
 
-    def _parse_dataset(self, table_def: Dict[str, Any]) -> OSIDataset:
+    def _parse_dataset(
+        self,
+        table_def: Dict[str, Any],
+        kind: Optional[str] = None,
+        expression: Optional[str] = None,
+    ) -> OSIDataset:
         """Parse a TMSL table into OSIDataset."""
         name = table_def["name"]
-        
+        if kind is None:
+            kind, expression = classify_tmsl_table(table_def)
+
         columns = []
         if "columns" in table_def:
             for col in table_def["columns"]:
                 columns.append(self._parse_column(col, name))
-        
+
         source_table = name
 
         return OSIDataset(
@@ -410,7 +1041,9 @@ class TMSLToOSIConverter(BaseConverter):
             description=table_def.get("description"),
             is_hidden=table_def.get("isHidden", False),
             columns=columns,
-            source_table=source_table
+            source_table=source_table,
+            dataset_kind=kind,
+            expression=expression or None,
         )
 
     @classmethod
@@ -491,6 +1124,7 @@ class TMSLToOSIConverter(BaseConverter):
                 col_name,
                 len(user_synonyms),
             )
+        ling_authored, ling_generated = self._linguistic_synonyms_for(table_name, col_name)
         existing_synonyms, synonym_sources = merge_synonyms_with_sources(
             ui_overrides=lookup_synonym_override(
                 self._synonym_overrides,
@@ -498,7 +1132,8 @@ class TMSLToOSIConverter(BaseConverter):
                 table_name,
                 col_name,
             ),
-            user_defined=user_synonyms,
+            user_defined=list(user_synonyms) + ling_authored,
+            auto_generated=ling_generated or None,
         )
         # Columns have no separate display-name heuristic distinct from
         # col_name (unlike measures), so the same name is used for both
@@ -519,15 +1154,19 @@ class TMSLToOSIConverter(BaseConverter):
         default_aggregation = self._map_summarize_by(summarize_by)
         is_measure_candidate = default_aggregation is not None
 
-        # Fabric may emit calculated column expressions as a list of lines.
-        # OSIColumn.source_expression expects a string.
-        source_expr = col_def.get("sourceColumn") or col_def.get("expression") or ""
-        if isinstance(source_expr, list):
-            source_expr = "\n".join(str(x) for x in source_expr)
-        elif source_expr is None:
-            source_expr = ""
-        else:
-            source_expr = str(source_expr)
+        # Physical source column and calculated-column DAX are carried in
+        # separate fields. ``source_expression`` keeps its historical combined
+        # value (sourceColumn, else DAX) for existing downstream consumers.
+        col_type = _norm_token(col_def.get("type"))
+        raw_source_column = join_tmsl_expression(col_def.get("sourceColumn")).strip()
+        dax_expr = join_tmsl_expression(col_def.get("expression")).strip()
+        is_calculated = col_type == "calculated" or (bool(dax_expr) and not raw_source_column)
+        source_expr = raw_source_column or dax_expr or ""
+
+        sort_by = col_def.get("sortByColumn")
+        if isinstance(sort_by, dict):
+            sort_by = sort_by.get("name") or sort_by.get("column")
+        sort_by = str(sort_by).strip() if sort_by else None
 
         return OSIColumn(
             unique_name=col_name,
@@ -545,6 +1184,12 @@ class TMSLToOSIConverter(BaseConverter):
             has_report_alias=has_report_alias,
             source_file=self._source_file,
             is_enum=is_enum,
+            folder=(str(col_def.get("displayFolder")).strip() or None) if col_def.get("displayFolder") else None,
+            source_column=None if is_calculated else (raw_source_column or None),
+            is_calculated=is_calculated,
+            expression=(dax_expr or None) if is_calculated else None,
+            data_category=(str(col_def.get("dataCategory")).strip() or None) if col_def.get("dataCategory") else None,
+            sort_by_column=sort_by or None,
         )
 
     def _resolve_report_aliases(
@@ -768,6 +1413,9 @@ class TMSLToOSIConverter(BaseConverter):
                 name,
                 len(user_synonyms),
             )
+        ling_authored, ling_generated = self._linguistic_synonyms_for(dataset_name, name)
+        if not (ling_authored or ling_generated) and display_name != name:
+            ling_authored, ling_generated = self._linguistic_synonyms_for(dataset_name, display_name)
         existing_synonyms, synonym_sources = merge_synonyms_with_sources(
             ui_overrides=lookup_synonym_override(
                 self._synonym_overrides,
@@ -775,7 +1423,8 @@ class TMSLToOSIConverter(BaseConverter):
                 dataset_name,
                 name,
             ),
-            user_defined=user_synonyms,
+            user_defined=list(user_synonyms) + ling_authored,
+            auto_generated=ling_generated or None,
         )
 
         synonyms, has_report_alias, matched_aliases = self._resolve_report_aliases(
@@ -805,6 +1454,10 @@ class TMSLToOSIConverter(BaseConverter):
             synonym_sources=synonym_sources,
             has_report_alias=has_report_alias,
             source_file=self._source_file,
+            folder=(str(measure_def.get("displayFolder")).strip() or None)
+            if measure_def.get("displayFolder")
+            else None,
+            kpi=self._record_kpi(measure_def, name, dataset_name),
         )
 
     @staticmethod
@@ -967,6 +1620,17 @@ class TMSLToOSIConverter(BaseConverter):
                 name_seen[key] = idx
                 cloned["name"] = f"{raw_name}_{idx}"
                 cloned.setdefault("displayName", raw_name)
+                self.drop_ledger.record(
+                    "metric",
+                    raw_name,
+                    DropStage.EXTRACTION,
+                    f"renamed to '{cloned['name']}' — measure name '{raw_name}' is defined "
+                    f"{total} times on table '{table_def.get('name', '<unnamed>')}'; "
+                    "Snowflake semantic view metric names must be unique",
+                    dataset=str(table_def.get("name") or "") or None,
+                    detail=f"occurrence {idx} of {total}",
+                    by_design=True,
+                )
             output.append(cloned)
 
         display_dup_count = sum(1 for c in display_totals.values() if c > 1)
@@ -1026,35 +1690,15 @@ class TMSLToOSIConverter(BaseConverter):
                  to_column,
              )
              
-             card_map = {
-                 "manytoone": OSICardinality.MANY_TO_ONE,
-                 "m:1": OSICardinality.MANY_TO_ONE,
-                 "onetoone": OSICardinality.ONE_TO_ONE,
-                 "1:1": OSICardinality.ONE_TO_ONE,
-                 "onetomany": OSICardinality.ONE_TO_MANY,
-                 "1:m": OSICardinality.ONE_TO_MANY,
-                 "manytomany": OSICardinality.MANY_TO_MANY,
-                 "m:m": OSICardinality.MANY_TO_MANY,
-             }
-             raw_card = str(rel_def.get("cardinality", "ManyToOne") or "ManyToOne").strip().lower().replace("-", "").replace("_", "")
-             
-             cf_map = {
-                 "single": OSICrossFilterDirection.SINGLE,
-                 "onedirection": OSICrossFilterDirection.SINGLE,
-                 "both": OSICrossFilterDirection.BOTH,
-                 "bothdirections": OSICrossFilterDirection.BOTH,
-             }
-             raw_cf = str(rel_def.get("crossFilteringBehavior", "Single") or "Single").strip().lower().replace("-", "").replace("_", "")
-
              return OSIRelationship(
                  unique_name=name,
                  from_dataset=from_table,
                  from_columns=[from_column],
                  to_dataset=to_table,
                  to_columns=[to_column],
-                 cardinality=card_map.get(raw_card, OSICardinality.MANY_TO_ONE),
-                 cross_filter_direction=cf_map.get(raw_cf, OSICrossFilterDirection.SINGLE),
-                 is_active=rel_def.get("isActive", True)
+                 cardinality=tmsl_relationship_cardinality(rel_def),
+                 cross_filter_direction=tmsl_relationship_cross_filter(rel_def),
+                 is_active=tmsl_relationship_is_active(rel_def),
              )
         except Exception as e:
             logger.warning(f"Failed to parse relationship '{rel_def.get('name')}': {e}")

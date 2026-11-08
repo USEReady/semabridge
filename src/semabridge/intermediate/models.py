@@ -179,6 +179,28 @@ class OSIColumn(OSIBaseModel):
     sample_values: List[str] = Field(default_factory=list, description="Representative sample values")
     source_type: Optional[str] = None             # Original platform type string (e.g. "NUMERIC(10,2)")
     folder: Optional[str] = None                   # Display folder (Fabric organizes measures in folders)
+    # --- Source-fidelity fields (additive; all optional) -------------------
+    # ``source_expression`` historically carried EITHER the physical
+    # sourceColumn OR a calculated column's DAX. It is kept unchanged for
+    # backward compatibility; new consumers should use the split fields below.
+    source_column: Optional[str] = Field(
+        default=None,
+        description="Physical source column name (TMSL sourceColumn); None for calculated columns",
+    )
+    is_calculated: bool = Field(
+        default=False,
+        description="True for a DAX calculated column (TMSL type 'calculated') — no physical source column exists",
+    )
+    expression: Optional[str] = Field(
+        default=None,
+        description="DAX expression of a calculated column (only set when is_calculated=True)",
+    )
+    data_category: Optional[str] = Field(
+        default=None, description="Source dataCategory (e.g. 'City', 'Years', 'ImageUrl')"
+    )
+    sort_by_column: Optional[str] = Field(
+        default=None, description="Column (same table) this column is sorted by in the source model"
+    )
 
     @field_validator("unique_name")
     @classmethod
@@ -233,6 +255,25 @@ class OSIDataset(OSIBaseModel):
     is_hidden: bool = Field(default=False, description="Hidden from end users")
     source_database: Optional[str] = None         # Database name (Snowflake-specific)
     row_count: Optional[int] = None               # Approx row count for fact/dim hinting
+    # --- Source-fidelity fields (additive; all optional) -------------------
+    dataset_kind: str = Field(
+        default="table",
+        description=(
+            "Source table kind: 'table' (physical/imported), 'calculated_table' "
+            "(DAX-defined, e.g. CALENDAR(...)), 'field_parameter' (Power BI field "
+            "parameter). Non-'table' kinds have no physical source table and must "
+            "not be emitted as physical tables unless materialized in the target."
+        ),
+    )
+    expression: Optional[str] = Field(
+        default=None,
+        description="Defining DAX expression for calculated tables / field parameters",
+    )
+
+    @property
+    def is_physical(self) -> bool:
+        """True when the dataset is backed by a physical source table."""
+        return self.dataset_kind == "table"
 
     @field_validator("columns")
     @classmethod
@@ -342,6 +383,12 @@ class OSIMetric(OSIBaseModel):
     is_placeholder: bool = Field(default=False, description="Flag indicating if metric is emitted as NULL placeholder")
     complexity_tier: int = 0                       # 0=unknown, 1-5 from DAX analysis
     depends_on_measures: List[str] = Field(default_factory=list)  # Dependency graph
+    folder: Optional[str] = Field(default=None, description="Source display folder")
+    kpi: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Source KPI definition attached to this measure "
+        "(keys: target_expression, status_expression, trend_expression, ...)",
+    )
 
     @field_validator("unique_name")
     @classmethod
@@ -412,6 +459,10 @@ class OSIRelationship(OSIBaseModel):
         default=OSICrossFilterDirection.SINGLE, description="Cross-filter direction"
     )
     is_active: bool = Field(default=True, description="Active relationship indicator")
+    is_inferred: bool = Field(
+        default=False,
+        description="True when the relationship was inferred by name heuristics and is NOT in the source model",
+    )
 
     @field_validator("unique_name")
     @classmethod
@@ -469,6 +520,9 @@ class OSIHierarchy(OSIBaseModel):
     levels: List[OSILevel] = Field(
         default_factory=list, description="Hierarchy levels (ordered)"
     )
+    description: Optional[str] = Field(default=None, description="Hierarchy description")
+    is_hidden: bool = Field(default=False, description="Hidden from end users")
+    folder: Optional[str] = Field(default=None, description="Source display folder")
 
     def model_post_init(self, __context: Any) -> None:
         """Set label from unique_name if not provided."""

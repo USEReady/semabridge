@@ -93,6 +93,10 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
         # doesn't set every SourceFormat attribute.
         "source_file": getattr(sf, "pbix_path", None),
     }
+    # Name-based relationship inference invents joins the source never
+    # declared — strictly opt-in via options.infer_relationships.
+    options_ns = getattr(getattr(context, "config", None), "options", None)
+    source_data["infer_relationships"] = getattr(options_ns, "infer_relationships", None)
     osi_model = TMSLToOSIConverter(drop_ledger=context.drop_ledger).to_osi(source_data)
     context.osi_model = osi_model
 
@@ -124,7 +128,7 @@ def _convert_pbix_to_sml(self, context: RunContext) -> SMLModel:
     )
 
     # Phase 2: OSI → SML
-    sml_model = OSIToSMLConverter().from_osi(
+    sml_model = OSIToSMLConverter(drop_ledger=context.drop_ledger).from_osi(
         osi_model,
         row_counts=sf.row_counts,
     )
