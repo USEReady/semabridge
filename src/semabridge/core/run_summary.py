@@ -118,6 +118,10 @@ class RunSummary(BaseModel):
         default_factory=list,
         description="Cortex Analyst built-in safety validation results",
     )
+    ontology_report: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Ontology application result: applied counts, matched/unmatched/ambiguous entries, warnings",
+    )
 
     # UPSERT runs only: added/modified/removed/unchanged per kind against the
     # last deployed snapshot (see core/upsert_delta.py). None for COPY runs.

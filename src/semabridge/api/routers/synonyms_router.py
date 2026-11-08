@@ -15,13 +15,19 @@ router = APIRouter(prefix="/api/synonyms", tags=["synonyms"])
 
 
 class SynonymOverrideRequest(BaseModel):
+    """PATCH-style upsert: only fields present in the request body change.
+
+    An explicit empty string / empty list / null clears that field; an omitted
+    field keeps its stored value.
+    """
+
     project_id: str
     model_name: str
     table_name: str
     column_name: str
-    synonyms: List[str] = Field(default_factory=list)
+    synonyms: Optional[List[str]] = None
     description: Optional[str] = None
-    business_rules: List[str] = Field(default_factory=list)
+    business_rules: Optional[List[str]] = None
     data_steward: Optional[str] = None
 
 
@@ -104,9 +110,10 @@ def get_synonym_override(
 
 
 @router.post("/")
+@router.patch("/")
 def upsert_synonym_override(req: SynonymOverrideRequest, db: Session = Depends(get_db)):
     try:
-        synonyms = _clean_synonyms(req.synonyms)
+        provided = req.model_fields_set
         row = _find_row(db, req.project_id, req.model_name, req.table_name, req.column_name)
         if row is None:
             row = SynonymOverride(
@@ -115,14 +122,17 @@ def upsert_synonym_override(req: SynonymOverrideRequest, db: Session = Depends(g
                 table_name=req.table_name,
                 column_name=req.column_name,
             )
+            row.synonyms = []
+            row.business_rules = []
             db.add(row)
-        row.synonyms = synonyms
-        if req.description is not None:
-            row.description = req.description.strip() or None
-        if req.business_rules is not None:
-            row.business_rules = [r.strip() for r in req.business_rules if r and r.strip()]
-        if req.data_steward is not None:
-            row.data_steward = req.data_steward.strip() or None
+        if "synonyms" in provided:
+            row.synonyms = _clean_synonyms(req.synonyms or [])
+        if "description" in provided:
+            row.description = (req.description or "").strip() or None
+        if "business_rules" in provided:
+            row.business_rules = _clean_synonyms(req.business_rules or [])
+        if "data_steward" in provided:
+            row.data_steward = (req.data_steward or "").strip() or None
         db.commit()
         db.refresh(row)
         return {

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { api } from '../utils/api';
 import StatusBadge from '../components/common/StatusBadge';
+import ProjectOntologyDomains from '../components/ProjectOntologyDomains';
 import PageHeader from '../components/common/PageHeader';
 import { useUIStore } from '../store/uiStore';
 
@@ -269,6 +270,7 @@ export default function ProjectDetailPage() {
             </div>
           </div>
 
+          <ProjectOntologyDomains projectId={id} />
         </div>
       </div>
     </div>

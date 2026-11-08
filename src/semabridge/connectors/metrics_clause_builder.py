@@ -15,7 +15,7 @@ from semabridge.connectors.ddl_helpers import (
     extract_expr_key_osi,
 )
 from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metric_sql
-from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.connectors.synonym_clause import element_description, synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 from semabridge.utils.null_sentinel import is_null_cast_sql
 
@@ -808,7 +808,7 @@ class MetricsClauseBuilder:
             lhs_target = f'"{safe_metric_name}"' if is_referencing_non_additive else f'{metric_entity_alias}."{safe_metric_name}"'
             metrics_lines.append(
                 f'  {priv_prefix}{lhs_target}{non_additive_clause} AS {expr}'
-                f'{synonyms_clause(syns_to_emit)}{comment_clause}'
+                f'{synonyms_clause(syns_to_emit, None if comment_clause else element_description(metric))}{comment_clause}'
             )
             metric_to_alias[self.identifier_sanitizer.to_alias(metric.unique_name)] = metric_entity_alias
             emittable_metric_name_set.add(self.identifier_sanitizer.to_alias(metric.unique_name))

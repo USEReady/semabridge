@@ -362,6 +362,11 @@ class ExecutionEngine:
                 self._apply_mapping_overrides_from_config(sml_model, Path(config_path), config_payload=config_dict)
             context.sml_model = sml_model
 
+            # Step 6-ontology: per-element user overrides > attached domain
+            # ontologies > BI metadata, so synonyms / descriptions / business
+            # rules reach the target DDL and Cortex YAML. Never fails the run.
+            self._apply_project_ontology(context)
+
             # Step 6a: UPSERT delta against the last deployed snapshot of
             # this model; replaces context.sml_model with the merged model.
             if context.sync_mode == "upsert":
@@ -554,6 +559,9 @@ ExecutionEngine._select_strongest_relationship      = _conv_base._select_stronge
 ExecutionEngine._convert_snowflake_to_sml           = _conv_sf._convert_snowflake_to_sml
 ExecutionEngine._convert_fabric_to_sml              = _conv_fab._convert_fabric_to_sml
 ExecutionEngine._convert_pbix_to_sml                = _conv_pbix._convert_pbix_to_sml
+
+from semabridge.ontology.apply import apply_ontology_for_run as _apply_ontology_for_run
+ExecutionEngine._apply_project_ontology             = _apply_ontology_for_run
 
 from semabridge.core.engine.targets import base as _tgt_base
 from semabridge.core.engine.targets import fabric as _tgt_fab

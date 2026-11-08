@@ -82,6 +82,8 @@ class RunContext:
     # against the last deployed snapshot of this model, set in Step 6a.
     # None for COPY runs. upsert_delta["has_changes"] False skips Step 9.
     upsert_delta: Optional[Dict[str, Any]] = None
+    # Result of applying the project's ontology (see ontology/apply.py).
+    ontology_report: Optional[Dict[str, Any]] = None
     # Dry run only (Snowflake target): {"tables": [{dataset, action
     # "bind"|"create", table, matched_by, tie}], "error"} — see
     # SnowflakeSchemaManager.plan_source_tables.

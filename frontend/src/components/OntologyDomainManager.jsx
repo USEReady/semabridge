@@ -7,6 +7,21 @@ import {
   HelpCircle, X, Info, ChevronDown, ChevronUp, ExternalLink,
   BookOpen, Compass, Cpu, Tag, ArrowRight
 } from 'lucide-react';
+import { authFetch } from '../utils/api';
+
+// Turn a FastAPI error body into readable text (detail may be a string,
+// {message, errors[]} or a pydantic error list).
+function describeApiError(data, fallback) {
+  const detail = data && data.detail !== undefined ? data.detail : data;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
+  if (Array.isArray(detail.file_errors) && detail.file_errors.length) {
+    return detail.file_errors.map((e) => `${e.file}: ${e.error}`).join('\n');
+  }
+  if (Array.isArray(detail.errors) && detail.errors.length) return detail.errors.join('\n');
+  return detail.message || fallback;
+}
 
 export default function OntologyDomainManager() {
   // Main Tab Navigation: 'mesh' | 'ai'
@@ -23,6 +38,7 @@ export default function OntologyDomainManager() {
     total_relationships: 0,
     collisions: [],
     unresolved_references: [],
+    load_errors: [],
   });
 
   // Domain Glossary Inspector Drawer State
@@ -70,7 +86,7 @@ export default function OntologyDomainManager() {
   const fetchDomains = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ontology/domains');
+      const res = await authFetch('/api/ontology/domains');
       if (res.ok) {
         const data = await res.json();
         setDomainData(data);
@@ -84,7 +100,7 @@ export default function OntologyDomainManager() {
 
   const fetchAiStatus = async () => {
     try {
-      const res = await fetch('/api/ai/status');
+      const res = await authFetch('/api/ai/status');
       if (res.ok) {
         const data = await res.json();
         setAiStatus(data);
@@ -96,7 +112,7 @@ export default function OntologyDomainManager() {
 
   const fetchProjects = async () => {
     try {
-      const res = await fetch('/api/projects?limit=50');
+      const res = await authFetch('/api/projects?limit=50');
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : data.projects || [];
@@ -116,7 +132,7 @@ export default function OntologyDomainManager() {
     setInspectingDomainData(null);
     setValidationResult(null);
     try {
-      const res = await fetch(`/api/ontology/domains/${encodeURIComponent(domainName)}`);
+      const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(domainName)}`);
       if (res.ok) {
         const data = await res.json();
         setInspectingDomainData(data);
@@ -129,10 +145,10 @@ export default function OntologyDomainManager() {
 
   const handleValidateYaml = async () => {
     try {
-      const res = await fetch('/api/ontology/domains/validate', {
+      const res = await authFetch('/api/ontology/domains/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ yaml_content: editorYaml, domain_override: inspectingDomain }),
+        body: JSON.stringify({ yaml_content: editorYaml, original_domain: inspectingDomain }),
       });
       const data = await res.json();
       setValidationResult(data);
@@ -144,19 +160,25 @@ export default function OntologyDomainManager() {
   const handleSaveDomain = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ontology/domains', {
-        method: 'POST',
+      const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(inspectingDomain)}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ yaml_content: editorYaml }),
+        body: JSON.stringify({ yaml_content: editorYaml, original_domain: inspectingDomain }),
       });
       const data = await res.json();
       if (res.ok) {
-        setStatusMessage({ type: 'success', text: `Domain '${inspectingDomain}' saved and synchronized!` });
+        const savedName = data.domain || inspectingDomain;
+        setStatusMessage({
+          type: 'success',
+          text: savedName !== inspectingDomain
+            ? `Domain '${inspectingDomain}' renamed to '${savedName}' and saved.`
+            : `Domain '${savedName}' saved and synchronized!`,
+        });
         fetchDomains();
         fetchAiStatus();
-        handleOpenDomainInspector(inspectingDomain, 'metrics');
+        handleOpenDomainInspector(savedName, 'metrics');
       } else {
-        setStatusMessage({ type: 'error', text: data.detail || 'Save failed.' });
+        setStatusMessage({ type: 'error', text: describeApiError(data, 'Save failed.') });
       }
     } catch (err) {
       setStatusMessage({ type: 'error', text: String(err) });
@@ -177,29 +199,31 @@ export default function OntologyDomainManager() {
     files.forEach((f) => formData.append('files', f));
 
     try {
-      const res = await fetch('/api/ontology/domains/upload', {
+      const res = await authFetch('/api/ontology/domains/upload', {
         method: 'POST',
         body: formData,
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && (data.uploaded_domains || []).length > 0) {
+        const fileErrors = data.file_errors || [];
         setStatusMessage({
-          type: 'success',
-          text: `Successfully ingested ${data.uploaded_domains.length} domain ontologies into the mesh!`,
+          type: fileErrors.length ? 'error' : 'success',
+          text: `Ingested ${data.uploaded_domains.length} domain ontolog${data.uploaded_domains.length === 1 ? 'y' : 'ies'} (${data.uploaded_domains.join(', ')}).`
+            + (fileErrors.length ? `\nRejected ${fileErrors.length} file(s):\n${fileErrors.map((e) => `${e.file}: ${e.error}`).join('\n')}` : ''),
         });
         setSelectedFiles([]);
         setUploadModalOpen(false);
         fetchDomains();
         fetchAiStatus();
       } else {
-        setStatusMessage({ type: 'error', text: data.detail || 'Upload failed.' });
+        setStatusMessage({ type: 'error', text: describeApiError(data, 'Upload failed: no file was ingested.') });
       }
     } catch (err) {
       setStatusMessage({ type: 'error', text: String(err) });
     } finally {
       setLoading(false);
       setUploadProgress(null);
-      setTimeout(() => setStatusMessage(null), 4000);
+      setTimeout(() => setStatusMessage(null), 12000);
     }
   };
 
@@ -207,7 +231,7 @@ export default function OntologyDomainManager() {
     if (!bootstrapProject) return;
     setBootstrapping(true);
     try {
-      const res = await fetch('/api/ontology/domains/from-osi', {
+      const res = await authFetch('/api/ontology/domains/from-osi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -227,7 +251,7 @@ export default function OntologyDomainManager() {
         fetchAiStatus();
         handleOpenDomainInspector(data.domain, 'metrics');
       } else {
-        setStatusMessage({ type: 'error', text: data.detail || 'Failed to generate ontology from OSI.' });
+        setStatusMessage({ type: 'error', text: describeApiError(data, 'Failed to generate ontology from OSI.') });
       }
     } catch (err) {
       setStatusMessage({ type: 'error', text: String(err) });
@@ -240,7 +264,7 @@ export default function OntologyDomainManager() {
   const handleSyncWithOsi = async (domainName) => {
     setLoading(true);
     try {
-      const res = await fetch('/api/ontology/domains/from-osi', {
+      const res = await authFetch('/api/ontology/domains/from-osi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -259,7 +283,7 @@ export default function OntologyDomainManager() {
         fetchAiStatus();
         handleOpenDomainInspector(domainName, 'metrics');
       } else {
-        setStatusMessage({ type: 'error', text: data.detail || 'OSI sync failed.' });
+        setStatusMessage({ type: 'error', text: describeApiError(data, 'OSI sync failed.') });
       }
     } catch (err) {
       setStatusMessage({ type: 'error', text: String(err) });
@@ -275,7 +299,7 @@ export default function OntologyDomainManager() {
     setExecutionResult(null);
     setVerifiedSuccessMsg(null);
     try {
-      const res = await fetch('/api/ai/nl-query', {
+      const res = await authFetch('/api/ai/nl-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -303,7 +327,7 @@ export default function OntologyDomainManager() {
     setExecutingQuery(true);
     setExecutionResult(null);
     try {
-      const res = await fetch('/api/ai/execute-query', {
+      const res = await authFetch('/api/ai/execute-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -344,7 +368,7 @@ export default function OntologyDomainManager() {
     if (!sqlToSave || !nlPrompt) return;
     setSavingVerified(true);
     try {
-      const res = await fetch('/api/ai/save-verified-query', {
+      const res = await authFetch('/api/ai/save-verified-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -464,7 +488,7 @@ export default function OntologyDomainManager() {
           }`}
         >
           {statusMessage.type === 'success' ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-          <span>{statusMessage.text}</span>
+          <span style={{ whiteSpace: 'pre-line' }}>{statusMessage.text}</span>
         </div>
       )}
 
@@ -561,6 +585,24 @@ export default function OntologyDomainManager() {
         {activeTab === 'mesh' && (
           <div className="max-w-6xl mx-auto space-y-6">
             {/* Executive Governance Status Card */}
+            {(domainData.load_errors || []).length > 0 && (
+              <div
+                role="alert"
+                style={{
+                  marginBottom: 12, padding: '10px 14px', borderRadius: 8,
+                  border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.08)', fontSize: 12,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  {domainData.load_errors.length} ontology file(s) could not be loaded
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {domainData.load_errors.map((e, i) => (
+                    <li key={i}><code>{e.file}</code>: {e.error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {domainData.collisions.length > 0 ? (
               <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
                 <div className="flex items-center justify-between mb-2">
