@@ -562,7 +562,17 @@ class DAXTranslator:
         elif kwargs.get("datasets"):
             self._dataset_col_lookup, self._dataset_aliases = self.build_schema_lookup(kwargs.get("datasets"))
         measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
-        from semabridge.converter.dax_ast_parser import DaxAstParser, classify_dax_ast_not_applicable
+        self._ast_render_errors: List[str] = []
+        self._ast_advisories: List[str] = []
+        self._current_datasets = kwargs.get("datasets")
+        from semabridge.converter.dax_ast_parser import (
+            ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS,
+            ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE,
+            DaxAstParser,
+            classify_dax_ast_not_applicable,
+            dax_has_overriding_calculate_filter,
+            dax_semantic_fidelity_failure_reason,
+        )
         parsed_ast = DaxAstParser().parse(clean_dax)
         if parsed_ast:
             na_reason = classify_dax_ast_not_applicable(
@@ -578,28 +588,45 @@ class DAXTranslator:
                     failure_reason=na_reason,
                     sync_enabled=False,
                 )
+            fidelity_reason = dax_semantic_fidelity_failure_reason(parsed_ast, primary_table_name=dataset_name)
+            if fidelity_reason:
+                return DAXTranslationResult(
+                    None, 4, clean_dax,
+                    failure_reason=fidelity_reason,
+                    sync_enabled=False,
+                )
+        else:
+            self._ast_render_errors.append(
+                "DAX expression could not be parsed by the deterministic translator"
+            )
 
         def _wrap_res(result: Optional[DAXTranslationResult]) -> DAXTranslationResult:
-
             if result and result.is_success and result.sql:
-
                 if not validate_emitted_sql(result.sql):
-
                     logger.warning(
-
                         "Translated SQL failed DAX validation gate: %s | DAX: %s",
-
                         result.sql,
-
                         clean_dax,
-
                     )
-
-                    return DAXTranslationResult(None, 4, clean_dax)
-
+                    return DAXTranslationResult(
+                        None, 4, clean_dax,
+                        failure_reason="DAX translation failed: emitted SQL still contains untranslated DAX syntax",
+                    )
+                cats = list(result.advisory_categories or [])
+                for cat in self._ast_advisories:
+                    if cat not in cats:
+                        cats.append(cat)
+                if parsed_ast is not None and dax_has_overriding_calculate_filter(parsed_ast):
+                    if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in cats:
+                        cats.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
+                if "CURRENT_DATE()" in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
+                    if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in cats:
+                        cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                result.advisory_categories = cats
                 return result
-
-            return result or DAXTranslationResult(None, 4, clean_dax)
+            if result is not None and result.failure_reason:
+                return result
+            return self._failure_result(clean_dax)
 
 
 
@@ -801,7 +828,7 @@ class DAXTranslator:
 
             measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
 
-            ast_sql = try_ast_translate(
+            ast_sql = self._ast_translate(
 
                 clean_dax,
 
@@ -875,7 +902,7 @@ class DAXTranslator:
 
             measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
 
-            ast_sql = try_ast_translate(
+            ast_sql = self._ast_translate(
 
                 clean_dax,
 
@@ -943,7 +970,7 @@ class DAXTranslator:
 
             measure_non_additive_map = self._build_measure_non_additive_map(metrics_context)
 
-            general_ast_sql = try_ast_translate(
+            general_ast_sql = self._ast_translate(
 
                 clean_dax,
 
@@ -1002,8 +1029,7 @@ class DAXTranslator:
             # metric's one Tier-5 attempt right now -- the caller collects
 
             # it for a single batched call instead (see docstring above).
-
-            return DAXTranslationResult(None, 4, clean_dax)
+            return self._failure_result(clean_dax)
 
 
 
@@ -1024,10 +1050,8 @@ class DAXTranslator:
             or dax_has_zero_data_dependencies(clean_dax)
 
             or dax_root_is_string_producing(clean_dax)
-
         ):
-
-            return DAXTranslationResult(None, 4, clean_dax)
+            return self._failure_result(clean_dax)
 
 
 
@@ -1057,11 +1081,58 @@ class DAXTranslator:
 
 
 
-        # No translation possible — return None (all tiers exhausted)
+        # No translation possible -- all tiers exhausted; carry the reason.
+        return self._failure_result(clean_dax)
 
-        return DAXTranslationResult(None, 4, clean_dax)
 
 
+    def _ast_translate(self, dax: str, **kwargs: Any) -> Optional[str]:
+        """try_ast_translate with this translate() call's collectors attached:
+        advisories of successful renders and every renderer failure message
+        are accumulated so the final result can carry them."""
+        from semabridge.converter.dax_ast_parser import try_ast_translate
+        errors = getattr(self, "_ast_render_errors", None)
+        advisories = getattr(self, "_ast_advisories", None)
+        caller_adv = kwargs.pop("advisory_categories", None)
+        local_adv: List[str] = []
+        if "datasets" not in kwargs and getattr(self, "_current_datasets", None) is not None:
+            kwargs["datasets"] = self._current_datasets
+        sql = try_ast_translate(dax, advisory_categories=local_adv, render_errors=errors, **kwargs)
+        if sql:
+            for cat in local_adv:
+                if caller_adv is not None and cat not in caller_adv:
+                    caller_adv.append(cat)
+                if advisories is not None and cat not in advisories:
+                    advisories.append(cat)
+        return sql
+
+    def _failure_result(self, clean_dax: str, tier: int = 4) -> DAXTranslationResult:
+        """A failed result that always carries a specific failure_reason."""
+        errors = [e for e in (getattr(self, "_ast_render_errors", None) or []) if e]
+        reason = None
+        sync_enabled = True
+        for e in errors:
+            low = e.lower()
+            if low.startswith("not applicable") or low.startswith("by_design_excluded"):
+                reason = e
+                sync_enabled = False
+                break
+        if reason is None:
+            unresolved = [e for e in errors if "unresolved measure reference" in e.lower()]
+            if unresolved:
+                reason = (
+                    "DAX translation unavailable: no SQL expression produced yet for a referenced measure ("
+                    + unresolved[-1] + ")"
+                )
+            elif errors:
+                meaningful = [e for e in errors if "could not be parsed" not in e] or errors
+                reason = f"DAX translation failed: {meaningful[-1]}"
+            else:
+                reason = (
+                    "DAX translation unavailable: unsupported DAX pattern "
+                    "(no deterministic translation rule matched this expression)"
+                )
+        return DAXTranslationResult(None, tier, clean_dax, failure_reason=reason, sync_enabled=sync_enabled)
 
     def _try_tiered_translation(
 
@@ -1167,7 +1238,7 @@ class DAXTranslator:
 
 
 
-            ast_sql = try_ast_translate(
+            ast_sql = self._ast_translate(
 
                 clean_dax,
 
@@ -1221,7 +1292,7 @@ class DAXTranslator:
 
 
 
-            ast_sql = try_ast_translate(
+            ast_sql = self._ast_translate(
 
                 clean_dax,
 
@@ -1624,7 +1695,7 @@ class DAXTranslator:
 
             from semabridge.converter.dax_ast_parser import try_ast_translate
 
-            ast_res = try_ast_translate(
+            ast_res = self._ast_translate(
 
                 clean_dax,
 
@@ -1808,27 +1879,38 @@ class DAXTranslator:
 
 
 
+    _ANY_AGG_CALL = re.compile(r"\b(SUM|AVG|COUNT|MIN|MAX|MEDIAN|STDDEV|VARIANCE|LISTAGG)\s*\(", re.IGNORECASE)
+
     def _parse_sql_aggregation(self, sql: str) -> Optional[Tuple[str, str]]:
-
-        """Return the aggregate function and inner expression for simple SQL."""
-
+        """Return the aggregate function and inner expression for SQL that is
+        EXACTLY one aggregate call (its closing paren ends the expression and
+        its argument holds no other aggregate). Anything else -- e.g. a
+        multi-aggregate measure like SUM(a) - SUM(b) -- returns None."""
         clean = self._strip_outer_parens(sql)
-
-        distinct_match = re.match(r"^COUNT\s*\(\s*DISTINCT\s+(.+?)\s*\)$", clean, re.IGNORECASE)
-
-        if distinct_match:
-
-            return ("COUNT_DISTINCT", distinct_match.group(1).strip())
-
-
-
-        match = re.match(r"^(SUM|AVG|COUNT|MIN|MAX)\s*\(\s*(.+?)\s*\)$", clean, re.IGNORECASE)
-
-        if match:
-
-            return (match.group(1).upper(), match.group(2).strip())
-
-        return None
+        m = re.match(r"^(SUM|AVG|COUNT|MIN|MAX)\s*\(", clean, re.IGNORECASE)
+        if not m:
+            return None
+        depth, in_str, close = 0, False, None
+        for i in range(m.end() - 1, len(clean)):
+            ch = clean[i]
+            if ch == "'":
+                in_str = not in_str
+            elif not in_str and ch == "(":
+                depth += 1
+            elif not in_str and ch == ")":
+                depth -= 1
+                if depth == 0:
+                    close = i
+                    break
+        if close is None or close != len(clean) - 1:
+            return None
+        inner = clean[m.end():close].strip()
+        if not inner or self._ANY_AGG_CALL.search(inner) or re.search(r"\bOVER\s*\(", clean, re.IGNORECASE):
+            return None
+        func = m.group(1).upper()
+        if func == "COUNT" and re.match(r"^DISTINCT\s+", inner, re.IGNORECASE):
+            return ("COUNT_DISTINCT", re.sub(r"^DISTINCT\s+", "", inner, flags=re.IGNORECASE).strip())
+        return (func, inner)
 
 
 
@@ -2267,19 +2349,17 @@ class DAXTranslator:
 
 
             if re.fullmatch(r'"(?:[^"\\]|\\.)*"', value_text):
-
                 literal = "'" + value_text[1:-1].replace("'", "''") + "'"
-
             elif re.fullmatch(r"'(?:[^'\\]|\\.)*'", value_text):
-
                 literal = value_text
-
             elif re.fullmatch(r"-?\d+(?:\.\d+)?", value_text):
-
                 literal = value_text
-
             else:
-
+                return None
+            # DAX: BLANK = 0 and BLANK = "" are TRUE -- a filter on a
+            # blank-equivalent literal must also match blank rows. Leave that
+            # to the AST tier, which implements DAX BLANK comparison rules.
+            if literal in ("''",) or re.fullmatch(r"-?0+(?:\.0+)?", literal):
                 return None
 
 
@@ -2293,8 +2373,8 @@ class DAXTranslator:
 
 
             if agg_func == "SUM":
-
-                return f"SUM(CASE WHEN {condition_sql} THEN {value_expr} ELSE 0 END)"
+                # No ELSE: a group with no matching rows is BLANK in DAX, not 0.
+                return f"SUM(CASE WHEN {condition_sql} THEN {value_expr} END)"
 
             if agg_func == "COUNT":
 
@@ -3132,7 +3212,7 @@ class DAXTranslator:
 
                 from semabridge.converter.dax_ast_parser import try_ast_translate
 
-                ast_res = try_ast_translate(
+                ast_res = self._ast_translate(
 
                     clean_expr,
 

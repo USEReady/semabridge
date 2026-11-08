@@ -93,6 +93,33 @@ CURRENT_UNITS: Dict[str, str] = {
 }
 
 
+def _period_to_date_component(fn_node: FunctionCallNode) -> str:
+    """Canonical period-to-date component, honoring a fiscal year end
+    (TOTALYTD/DATESYTD year_end_date at a month end -> "FYTDmm")."""
+    from semabridge.converter.dax_ast_parser import (
+        LiteralNode as _Lit,
+        fiscal_ytd_component,
+        parse_fiscal_year_end,
+        period_to_date_year_end_node,
+    )
+    func = fn_node.func.upper()
+    comp = PERIOD_TO_DATE_FUNCS[func]
+    ye = period_to_date_year_end_node(fn_node)
+    if ye is not None and isinstance(ye, _Lit) and isinstance(ye.value, str):
+        try:
+            month = parse_fiscal_year_end(ye.value)
+        except ValueError:
+            return comp  # the translator declines this metric anyway
+        if month:
+            return fiscal_ytd_component(month)
+    return comp
+
+
+_FYTD_RE = re.compile(r"^FYTD(\d\d)$")
+_PREV_N_RE = re.compile(r"^PREV_(\d+)_([A-Z]+)$")
+_SPLY_N_RE = re.compile(r"^SPLY_(\d+)_([A-Z]+)$")
+
+
 def flag_column_name(shape: Shape) -> str:
     """Canonical, deterministic flag-column name for a shape, e.g.
     ("YTD",) -> "IS_YTD", ("YTD", "SPLY_YEAR") -> "IS_YTD_SPLY_YEAR". Both
@@ -193,7 +220,7 @@ def _resolve_node_shape(
     func = node.func.upper()
 
     if func in PERIOD_TO_DATE_FUNCS:
-        return (PERIOD_TO_DATE_FUNCS[func],)
+        return (_period_to_date_component(node),)
 
     if func in LAG_FUNCS:
         arg0 = node.args[0] if node.args else None
@@ -268,12 +295,28 @@ def _resolve_node_shape(
                     p2d_modifier = modifier
                 elif m_fn in LAG_FUNCS or m_fn in ("DATEADD", "PARALLELPERIOD"):
                     lag_modifier = modifier
+                elif m_fn == "DATESINPERIOD" and len(modifier.args) == 4:
+                    # DATESINPERIOD(dates, MAX/LASTDATE(dates), -n, MONTH): a
+                    # rolling n-month window ending at the context's last
+                    # date -- the same rows as the R{n}M flag.
+                    start, n_node, unit_node = modifier.args[1], modifier.args[2], modifier.args[3]
+                    unit = str(getattr(unit_node, "name", getattr(unit_node, "value", "")) or "").upper()
+                    n_val = None
+                    if isinstance(n_node, UnaryOpNode) and n_node.op == "-":
+                        n_val = -int(getattr(n_node.operand, "value", 0) or 0)
+                    elif isinstance(getattr(n_node, "value", None), int):
+                        n_val = n_node.value
+                    if (
+                        unit == "MONTH" and n_val is not None and n_val < 0
+                        and isinstance(start, FunctionCallNode) and start.func.upper() in ("MAX", "LASTDATE")
+                    ):
+                        return (f"R{abs(n_val)}M",)
 
         arg0 = node.args[0] if node.args else None
         inner = _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
 
         if p2d_modifier is not None and lag_modifier is not None:
-            p2d_shape = PERIOD_TO_DATE_FUNCS[p2d_modifier.func.upper()]
+            p2d_shape = _period_to_date_component(p2d_modifier)
             lag_shape = _get_lag_shape(lag_modifier)
             return (p2d_shape, lag_shape)
 
@@ -282,7 +325,7 @@ def _resolve_node_shape(
             return (inner + (outer,)) if inner else (outer,)
 
         if p2d_modifier is not None:
-            outer = PERIOD_TO_DATE_FUNCS[p2d_modifier.func.upper()]
+            outer = _period_to_date_component(p2d_modifier)
             return (inner + (outer,)) if inner else (outer,)
 
         return _resolve_arg0_shape(arg0, dax_by_name, memo, visiting)
@@ -591,12 +634,14 @@ def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) ->
     effective_anchor = anchor_sql
     lag_components = [
         c for c in shape
-        if c in LAG_UNITS or bool(re.match(r"^SPLY_\d+_[A-Z]+$", c))
+        if c in LAG_UNITS or bool(_SPLY_N_RE.match(c)) or bool(_PREV_N_RE.match(c))
     ]
-    period_components = [c for c in shape if c in PERIOD_UNITS]
+    period_components = [c for c in shape if c in PERIOD_UNITS or _FYTD_RE.match(c)]
+    if not lag_components and not period_components:
+        raise ValueError(f"build_shape_boolean_sql: unsupported shape {shape!r}")
 
     for component in lag_components:
-        m_amt = re.match(r"^SPLY_(\d+)_([A-Z]+)$", component)
+        m_amt = _SPLY_N_RE.match(component) or _PREV_N_RE.match(component)
         if m_amt:
             amt = int(m_amt.group(1))
             unit = m_amt.group(2)
@@ -604,9 +649,19 @@ def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) ->
             amt = 1
             unit = LAG_UNITS.get(component, "YEAR")
         effective_anchor = f"DATEADD({unit}, -{amt}, {effective_anchor})"
+        if component.startswith("PREV_") and unit in ("YEAR", "QUARTER", "MONTH"):
+            # PREVIOUSx / PARALLELPERIOD return the WHOLE shifted period: an
+            # inner period-to-date window is evaluated as of its last day.
+            effective_anchor = f"LAST_DAY({effective_anchor}, '{unit}')"
 
     if period_components:
-        unit = PERIOD_UNITS[period_components[0]]
+        comp = period_components[0]
+        m_fy = _FYTD_RE.match(comp)
+        if m_fy:
+            k = int(m_fy.group(1))
+            start = f"DATEADD(MONTH, {k}, DATE_TRUNC('YEAR', DATEADD(MONTH, -{k}, {effective_anchor})))"
+            return f"{date_col_sql} >= {start} AND {date_col_sql} <= {effective_anchor}"
+        unit = PERIOD_UNITS[comp]
         return (
             f"{date_col_sql} >= DATE_TRUNC('{unit}', {effective_anchor}) "
             f"AND {date_col_sql} <= {effective_anchor}"
@@ -614,7 +669,7 @@ def build_shape_boolean_sql(shape: Shape, date_col_sql: str, anchor_sql: str) ->
 
     # Lag-only shape (no period-to-date component): whole-prior-unit bound.
     last_comp = lag_components[-1]
-    m_amt = re.match(r"^SPLY_(\d+)_([A-Z]+)$", last_comp)
+    m_amt = _SPLY_N_RE.match(last_comp) or _PREV_N_RE.match(last_comp)
     if m_amt:
         amt = int(m_amt.group(1))
         unit = m_amt.group(2)

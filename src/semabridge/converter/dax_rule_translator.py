@@ -787,7 +787,8 @@ def translate_time_intelligence_with_anchors(
         max_date_ref = "CURRENT_DATE()"
         condition = f"{date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) AND {date_col_ref} <= {max_date_ref}"
 
-    else_val = "NULL" if func in ("AVG", "MIN", "MAX") else "0"
+    # Empty window -> BLANK in DAX for every aggregate (never 0).
+    else_val = "NULL"
 
     if func == "DISTINCTCOUNT":
         result = f"COUNT(DISTINCT CASE WHEN {condition} THEN {measure_col_ref} ELSE NULL END)"
@@ -849,7 +850,7 @@ def translate_rolling_12_months(
 
     flag_name = (anchor_flag_map or {}).get((f"R{months}M",)) or (anchor_flag_map or {}).get(("R12M",))
     if flag_name:
-        return f"SUM(CASE WHEN {table_alias}.\"{flag_name}\" THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
+        return f"SUM(CASE WHEN {table_alias}.\"{flag_name}\" THEN {table_alias}.{_quote_identifier(col)}::FLOAT END)"
 
     date_alias = _date_alias()
     # Generically data-independent: use the enriched view anchor _CURRENT_FISCAL_PERIOD, never CURRENT_DATE()
@@ -857,7 +858,7 @@ def translate_rolling_12_months(
         f"SUM(CASE WHEN {table_alias}.\"_CURRENT_FISCAL_PERIOD\" IS NOT NULL "
         f"AND {date_alias}.MONTHINDEX <= {table_alias}.\"_CURRENT_FISCAL_PERIOD\" "
         f"AND {date_alias}.MONTHINDEX > {table_alias}.\"_CURRENT_FISCAL_PERIOD\" - {months} "
-        f"THEN {table_alias}.{_quote_identifier(col)}::FLOAT ELSE 0 END)"
+        f"THEN {table_alias}.{_quote_identifier(col)}::FLOAT END)"
     )
 
 
@@ -953,9 +954,25 @@ def _parse_simple_predicate_conditions(filter_expr: str, table_alias: str) -> Op
         column = pred_match.group(3).strip()
         op = pred_match.group(4)
         value = pred_match.group(5).strip()
+        is_text = value[:1] in ('"', "'")
         if value.startswith('"') and value.endswith('"'):
             value = "'" + value[1:-1].replace("'", "''") + "'"
-        conditions.append(f"{_column_ref(table, column, table_alias)} {op} {value}")
+        col_sql = _column_ref(table, column, table_alias)
+        # DAX BLANK rules: a blank cell compares as 0 (numbers) or "" (text).
+        # When that blank-equivalent satisfies the comparison, blank (NULL)
+        # rows must be included too.
+        lit_val = value[1:-1].replace("''", "'") if is_text else float(value)
+        beq = "" if is_text else 0.0
+        if is_text:
+            lit_val, beq = str(lit_val).casefold(), ""
+        blank_matches = {
+            "=": beq == lit_val, "<>": beq != lit_val, "<": beq < lit_val,
+            ">": beq > lit_val, "<=": beq <= lit_val, ">=": beq >= lit_val,
+        }[op]
+        if blank_matches:
+            conditions.append(f"({col_sql} {op} {value} OR {col_sql} IS NULL)")
+        else:
+            conditions.append(f"{col_sql} {op} {value}")
     return conditions or None
 
 
@@ -1013,6 +1030,13 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
             iterator_arg = keep_match.group(1).strip()
         iterator_table = iterator_arg.strip().strip("'\"") or table_alias
 
+    # The iterated table must be a plain table: VALUES/DISTINCT/SUMMARIZE/
+    # ALL(col)/... iterate GROUPS (with context transition per group), which a
+    # single row-level aggregate cannot reproduce.
+    if "(" in iterator_table or ")" in iterator_table or "[" in iterator_table:
+        return None
+
+
     def repl_col(col_match: re.Match) -> str:
         tbl = (col_match.group(1) or col_match.group(2) or iterator_table).strip()
         col = col_match.group(3).strip()
@@ -1040,9 +1064,9 @@ def translate_iterator(dax: str, table_alias: str) -> Optional[str]:
     if where_conditions is not None:
         where = " AND ".join(where_conditions)
         cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
-        if sql_func in ("COUNT", "AVG"):
-            return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} END)"
-        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} ELSE 0 END)"
+        # No ELSE: rows outside the filter must not contribute (MIN/MAX would
+        # otherwise see a spurious 0, and an empty group must stay BLANK).
+        return f"{sql_func}(CASE WHEN {where} THEN {expr_sql}{cast} END)"
 
     cast = "::FLOAT" if sql_func in ("SUM", "AVG") else ""
     return f"{sql_func}({expr_sql}{cast})"

@@ -102,7 +102,9 @@ def test_advisory_note_recorded_without_disabling_the_metric():
 
     # The advisory fired, with a specific, well-explained reason.
     assert my_kpi.advisory_notes, "expected an advisory note on MyKpi"
-    reason = my_kpi.advisory_notes[0]
+    # CALCULATE boolean filters also carry the generic override advisory;
+    # locate the unreachable-dimension note rather than assuming position 0.
+    reason = next((n for n in my_kpi.advisory_notes if "Selector" in n), my_kpi.advisory_notes[0])
     assert "Selector" in reason
     assert "Dim" in reason
     assert "TotalVolume" in reason

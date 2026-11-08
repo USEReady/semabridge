@@ -1141,7 +1141,7 @@ class TestIteratorGeneralizesToFilteredRowSet:
         dax = 'SUMX(FILTER(SomeTable, SomeTable[SomeFlag] = "SomeValue"), [SomeColumn])'
         sql = translate_iterator(dax, "sometable")
         assert sql is not None
-        assert sql == 'SUM(CASE WHEN SOMETABLE."SOMEFLAG" = \'SomeValue\' THEN SOMETABLE."SOMECOLUMN"::FLOAT ELSE 0 END)'
+        assert sql == 'SUM(CASE WHEN SOMETABLE."SOMEFLAG" = \'SomeValue\' THEN SOMETABLE."SOMECOLUMN"::FLOAT END)'
 
     def test_averagex_of_filtered_table_uses_avg_not_sum(self):
         from semabridge.converter.dax_rule_translator import translate_iterator
@@ -1640,7 +1640,9 @@ class TestTimeIntelligenceCarriesADateRangeFilter:
         assert 'SUM(AVG(sometable."SOMECOLUMN"))' in result.sql
         assert "CASE WHEN" not in result.sql.upper()
         from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK
-        assert result.advisory_categories == [ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK]
+        # SAMEPERIODLASTYEAR is a CALCULATE filter override, so the generic
+        # override advisory is attached too; the fallback advisory must be first.
+        assert result.advisory_categories[0] == ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK
 
 
 class TestGetRequiredDimensionsNeverHardcodesOrSubstringMatches:
