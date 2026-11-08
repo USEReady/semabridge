@@ -52,6 +52,9 @@ export default function OntologyDomainManager() {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState(null);
+  // Validation errors for the files in the open upload modal. Shown inside the
+  // modal (the page banner sits behind the modal backdrop and is unreadable).
+  const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
 
   // Bootstrap from OSI Modal State
@@ -193,6 +196,7 @@ export default function OntologyDomainManager() {
     if (!files.length) return;
 
     setLoading(true);
+    setUploadError(null);
     setUploadProgress('Ingesting and parsing domain ontologies…');
 
     const formData = new FormData();
@@ -216,10 +220,10 @@ export default function OntologyDomainManager() {
         fetchDomains();
         fetchAiStatus();
       } else {
-        setStatusMessage({ type: 'error', text: describeApiError(data, 'Upload failed: no file was ingested.') });
+        setUploadError(describeApiError(data, 'Upload failed: no file was ingested.'));
       }
     } catch (err) {
-      setStatusMessage({ type: 'error', text: String(err) });
+      setUploadError(String(err));
     } finally {
       setLoading(false);
       setUploadProgress(null);
@@ -1242,9 +1246,15 @@ export default function OntologyDomainManager() {
                           </span>
                         </div>
                         <p className="text-secondary text-[11px] m-0">{m.description || 'No description provided.'}</p>
-                        <div className="p-2 rounded bg-surface border border-main font-mono text-[11px] text-emerald-400">
-                          {m.sql_expression}
-                        </div>
+                        {m.sql_expression ? (
+                          <div className="p-2 rounded bg-surface border border-main font-mono text-[11px] text-emerald-400">
+                            {m.sql_expression}
+                          </div>
+                        ) : (
+                          <p className="text-tertiary text-[11px] italic m-0">
+                            No formula in the ontology — the SQL comes from the mapped BI measure.
+                          </p>
+                        )}
                         {m.synonyms?.length > 0 && (
                           <div className="flex flex-wrap items-center gap-1 pt-1">
                             <span className="text-[10px] text-tertiary font-semibold mr-1">Synonyms:</span>
@@ -1389,7 +1399,10 @@ export default function OntologyDomainManager() {
               </div>
               <button
                 type="button"
-                onClick={() => setUploadModalOpen(false)}
+                onClick={() => {
+                  setUploadError(null);
+                  setUploadModalOpen(false);
+                }}
                 className="p-1 rounded-lg text-tertiary hover:text-primary transition-colors"
               >
                 <X size={16} />
@@ -1405,7 +1418,10 @@ export default function OntologyDomainManager() {
                 type="file"
                 multiple
                 accept=".yaml,.yml"
-                onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))}
+                onChange={(e) => {
+                  setSelectedFiles(Array.from(e.target.files || []));
+                  setUploadError(null);
+                }}
                 className="hidden"
               />
               <FileCode size={32} className="text-accent-blue mb-2" />
@@ -1427,11 +1443,25 @@ export default function OntologyDomainManager() {
               </div>
             )}
 
+            {uploadError && (
+              <div
+                role="alert"
+                className="p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-xs text-red-500 flex items-start gap-2 max-h-48 overflow-y-auto"
+              >
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block mb-1">The file was rejected. Fix it and upload again:</span>
+                  <span style={{ whiteSpace: 'pre-line' }}>{uploadError}</span>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-3 border-t border-main">
               <button
                 type="button"
                 onClick={() => {
                   setSelectedFiles([]);
+                  setUploadError(null);
                   setUploadModalOpen(false);
                 }}
                 className="px-4 py-2 rounded-lg border border-main text-xs font-semibold text-secondary hover:text-primary transition-colors"
