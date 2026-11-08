@@ -33,7 +33,14 @@ from semabridge.sml.models import (
     SMLModel,
 )
 
-client = TestClient(app)
+import os
+
+from semabridge.auth.tokens import create_access_token
+
+os.environ.setdefault("JWT_SECRET_KEY", "pytest-only-secret")
+
+# Send a real signed token so the tests pass whether or not AUTH_ENABLED is set.
+client = TestClient(app, headers={"Authorization": "Bearer " + create_access_token({"sub": "1", "role": "admin"})})
 
 FINANCE_YAML = """
 domain: Finance Ops
