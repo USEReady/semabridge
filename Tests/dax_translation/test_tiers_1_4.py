@@ -59,7 +59,14 @@ def test_tier2_branching_arithmetic_between_measures():
     result = translate_tiers_1_4(_request("[Measure_A] - [Measure_B]", metrics_context=metrics_ctx))
     assert result is not None
     assert result.tier == 2
-    assert result.sql == '(SUM(sometable."SOMECOLUMN")) - (SUM(sometable."OTHERCOLUMN"))'
+    # DAX BLANK arithmetic: BLANK - BLANK = BLANK, BLANK - x = -x. A bare
+    # SQL subtraction would turn either-side NULL into NULL, so the
+    # renderer emits the blank-safe form.
+    a, b = '(SUM(sometable."SOMECOLUMN"))', '(SUM(sometable."OTHERCOLUMN"))'
+    assert result.sql == (
+        f"CASE WHEN {a} IS NULL AND {b} IS NULL THEN NULL "
+        f"ELSE COALESCE({a}, 0) - COALESCE({b}, 0) END"
+    )
 
 
 def test_tier3_time_intelligence_via_ast_renderer():
@@ -73,15 +80,20 @@ def test_tier3_time_intelligence_via_ast_renderer():
     assert " OVER " not in f" {result.sql} "
 
 
-def test_tier4_allexcept_fails_closed_instead_of_emitting_window_function():
-    """ALLEXCEPT/ALL context-transition has no SQL equivalent inside a
-    Snowflake semantic-view METRICS clause (no window functions allowed) —
-    Tiers 1-4 must decline (None) rather than "succeed" with an OVER(...)
-    clause that deploys fine but silently returns NULL at query time. See
-    dax_ast_parser.py's DaxSqlRenderer._render_calculate."""
+def test_tier4_allexcept_decomposes_into_a_window_over_a_helper_metric():
+    """ALLEXCEPT(T, T[k]) is decomposed (fix/relationship-direction) into a
+    semantic-view window metric over a synthesized additive helper metric
+    (<col>_SUM, registered by MetricsClauseBuilder), partitioned by the
+    kept column -- never a window over a raw physical column, which is the
+    shape that deployed but returned NULL at query time. Whether the
+    emission layer accepts this plain PARTITION BY form is decided (and
+    recorded with a reason when rejected) by MetricsClauseBuilder's
+    scalar-SQL gate, not here."""
     dax = "CALCULATE(SUM('SomeTable'[SomeColumn]), ALLEXCEPT('SomeTable', 'SomeTable'[OtherColumn]))"
     result = translate_tiers_1_4(_request(dax))
-    assert result is None
+    assert result is not None
+    assert result.sql == 'SUM(SOMETABLE."SOMECOLUMN_SUM"::FLOAT) OVER (PARTITION BY SOMETABLE."OTHERCOLUMN")'
+    assert 'SUM(SOMETABLE."SOMECOLUMN")' not in result.sql.upper()
 
 
 def test_unsupported_dax_falls_through_to_none():

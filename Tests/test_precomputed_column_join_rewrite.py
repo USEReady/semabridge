@@ -182,6 +182,32 @@ def _run_create_enriched_view(emitter, model, precompute_details, fact_table):
     return next(sql for sql in executed_sql if "CREATE OR REPLACE VIEW" in sql.upper())
 
 
+def _assert_unsafe_column_dropped_by_design(emitter, model, details, fact_table, column):
+    """A precomputed column over a non-unique target key has no single
+    related row, so no pre-aggregate (AVG/MODE/override) is a faithful
+    RELATED() stand-in -- it is dropped by design, recorded in the
+    DropLedger with a specific reason (never silently), and with nothing
+    else to project no enriched view is created at all."""
+    executed_sql: list[str] = []
+    fake_cursor = _fake_cursor()
+    fake_cursor.execute.side_effect = lambda sql, *a, **k: executed_sql.append(sql)
+    from unittest.mock import patch
+
+    with patch.object(emitter, "_find_date_table", return_value=None), \
+         patch.object(emitter.semantic_view_builder, "_precompute_suggestions", return_value={}), \
+         patch.object(emitter.semantic_view_builder, "get_precompute_details", return_value=details):
+        result = emitter._create_enriched_view(model, fake_cursor, fact_table=fact_table)
+
+    assert result is None  # nothing left to add -> no enriched view
+    assert not any("CREATE OR REPLACE VIEW" in sql.upper() for sql in executed_sql)
+    assert not any(column in sql for sql in executed_sql)
+    drops = [r for r in emitter.drop_ledger.records if r.entity_kind == "column" and r.entity_name == column]
+    assert len(drops) == 1
+    assert drops[0].dataset == fact_table
+    assert drops[0].by_design is True
+    assert "fan-out" in drops[0].reason and "not PK-safe" in drops[0].reason
+
+
 def test_precomputed_column_becomes_a_left_join_when_target_key_is_confirmed_unique():
     """PRODUCT_ISVANARSDEL's real shape: a fact table with an FK column
     joining a dimension whose matching column is that dimension's own
@@ -377,12 +403,7 @@ def test_precomputed_column_uses_avg_pre_aggregated_join_for_a_numeric_unsafe_ke
     ]
 
     emitter = _build_emitter()
-    sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
-
-    assert "(SELECT" not in sql
-    assert "LIMIT 1" not in sql
-    assert "LEFT JOIN" not in sql
-    assert "REGION_SCORE" not in sql
+    _assert_unsafe_column_dropped_by_design(emitter, model, details, "OrdersFact", "REGION_SCORE")
 
 
 def test_precomputed_column_uses_mode_pre_aggregated_join_for_a_non_numeric_unsafe_key():
@@ -398,12 +419,7 @@ def test_precomputed_column_uses_mode_pre_aggregated_join_for_a_non_numeric_unsa
     ]
 
     emitter = _build_emitter()
-    sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
-
-    assert "(SELECT" not in sql
-    assert "LIMIT 1" not in sql
-    assert "LEFT JOIN" not in sql
-    assert "REGION_SCORE" not in sql
+    _assert_unsafe_column_dropped_by_design(emitter, model, details, "OrdersFact", "REGION_SCORE")
 
 
 def test_precomputed_column_honors_a_per_column_aggregation_override():
@@ -421,10 +437,7 @@ def test_precomputed_column_honors_a_per_column_aggregation_override():
     ]
 
     emitter = _build_emitter()
-    sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
-
-    assert "LEFT JOIN" not in sql
-    assert "REGION_SCORE" not in sql
+    _assert_unsafe_column_dropped_by_design(emitter, model, details, "OrdersFact", "REGION_SCORE")
 
 
 def test_precomputed_column_ignores_an_unrecognized_aggregation_override():
@@ -442,10 +455,7 @@ def test_precomputed_column_ignores_an_unrecognized_aggregation_override():
     ]
 
     emitter = _build_emitter()
-    sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
-
-    assert "LEFT JOIN" not in sql
-    assert "REGION_SCORE" not in sql
+    _assert_unsafe_column_dropped_by_design(emitter, model, details, "OrdersFact", "REGION_SCORE")
 
 
 def test_precomputed_column_pre_aggregated_join_generalizes_across_multi_hop_paths():
@@ -506,8 +516,4 @@ def test_precomputed_column_pre_aggregated_join_generalizes_across_multi_hop_pat
     ]
 
     emitter = _build_emitter()
-    sql = _run_create_enriched_view(emitter, model, details, "OrdersFact")
-
-    assert "(SELECT" not in sql
-    assert "LEFT JOIN" not in sql
-    assert "REGION_SCORE" not in sql
+    _assert_unsafe_column_dropped_by_design(emitter, model, details, "OrdersFact", "REGION_SCORE")

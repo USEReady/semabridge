@@ -73,6 +73,29 @@ def _model() -> SMLModel:
     )
 
 
+def _calendar_dataset():
+    # A separate date dimension: _create_enriched_view never anchors a fact
+    # table on itself-as-date-table (a calendar's own MAX(date) usually runs
+    # past the data and would mis-anchor every period flag).
+    return SMLDataset(
+        unique_name="Calendar",
+        source_table="Calendar",
+        columns=[SMLColumn(unique_name="Date", data_type=DataType.DATE, is_key=True)],
+    )
+
+
+def _fact_to_calendar(fact_name):
+    from semabridge.sml.models import SMLRelationship
+    return SMLRelationship(
+        unique_name=f"{fact_name}_OrderDate_Calendar_Date",
+        from_dataset=fact_name,
+        from_columns=["OrderDate"],
+        to_dataset="Calendar",
+        to_columns=["Date"],
+        is_active=True,
+    )
+
+
 class _SentinelReached(RuntimeError):
     """Raised by the stubbed DDL-generation step to halt the pipeline
     cleanly right after the part under test (Steps 1/1.5/enrichment) has
@@ -88,6 +111,10 @@ def _wire_stubs(emitter, monkeypatch, call_order, table_exists_flag, fact_table=
         emitter.semantic_view_builder, "_precompute_duplicate_mappings", lambda *a, **k: None
     )
     monkeypatch.setattr(emitter, "_drop_deprecated_views", lambda *a, **k: None)
+    # The pipeline now stops up front when the target schema is missing
+    # (SHOW SCHEMAS LIKE ...); the fake cursor has no rows, so stub it the
+    # same way every other pipeline-level test does.
+    monkeypatch.setattr(emitter.schema_manager, "_ensure_schema_exists", lambda cur: None)
 
     def _fake_ensure_tables(cur, model):
         call_order.append("ensure_tables")
@@ -95,7 +122,7 @@ def _wire_stubs(emitter, monkeypatch, call_order, table_exists_flag, fact_table=
 
     monkeypatch.setattr(emitter.schema_manager, "_ensure_source_tables_exist", _fake_ensure_tables)
     monkeypatch.setattr(emitter.schema_manager, "refresh_schema_cache", lambda: None)
-    monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {})
+    monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {"DUMMY": set()})  # non-empty: an empty live schema now aborts the deploy up front
     monkeypatch.setattr(emitter.schema_manager, "_fetch_model_table_metadata", lambda cur, datasets: {})
 
     def _fake_precompute_suggestions(model, cur):
@@ -210,7 +237,7 @@ def test_max_date_anchor_only_queried_against_table_that_owns_it(monkeypatch):
                 unique_name="FactWithDate",
                 source_table="FactWithDate",
                 columns=[
-                    SMLColumn(unique_name="OrderDate", data_type=DataType.STRING),
+                    SMLColumn(unique_name="OrderDate", data_type=DataType.DATE),
                     SMLColumn(unique_name="Amount", data_type=DataType.DECIMAL),
                 ],
             ),
@@ -219,20 +246,31 @@ def test_max_date_anchor_only_queried_against_table_that_owns_it(monkeypatch):
                 source_table="FactWithoutDate",
                 columns=[SMLColumn(unique_name="Quantity", data_type=DataType.DECIMAL)],
             ),
+            _calendar_dataset(),
         ],
-        metrics=[],
+        relationships=[_fact_to_calendar("FactWithDate")],
+        # MAX_DATE is only projected when something needs it (a
+        # time-intelligence shape here).
+        metrics=[
+            SMLMetric(
+                unique_name="AMOUNT_YTD",
+                dataset="FactWithDate",
+                expression="TOTALYTD(SUM('FactWithDate'[Amount]), 'Calendar'[Date])",
+            ),
+        ],
     )
 
     # Fix the date anchor deterministically instead of depending on
     # Config/date_resolution.yaml pattern matching — _find_date_table itself
     # isn't what's under test here.
-    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("FactWithDate", "OrderDate", "OrderDate"))
+    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("Calendar", "Date", "Date"))
     monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_suggestions", lambda m: {})
     monkeypatch.setattr(emitter.semantic_view_builder, "get_precompute_details", lambda: [])
 
     # FactWithDate genuinely has ORDERDATE; FactWithoutDate genuinely does not.
     emitter._live_schema_metadata["FACTWITHDATE"] = {"ORDERDATE", "AMOUNT"}
     emitter._live_schema_metadata["FACTWITHOUTDATE"] = {"QUANTITY"}
+    emitter._live_schema_metadata["CALENDAR"] = {"DATE"}
 
     executed_sql: list[str] = []
 
@@ -246,8 +284,9 @@ def test_max_date_anchor_only_queried_against_table_that_owns_it(monkeypatch):
     result_with_date = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
     result_without_date = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithoutDate")
 
-    assert result_with_date == "FactWithDate_ENRICHED"
-    assert result_without_date == "FactWithoutDate_ENRICHED"
+    assert (result_with_date or "").upper() == "FACTWITHDATE_ENRICHED"
+    # Nothing to add for the table without a date link -> no enriched view.
+    assert result_without_date is None
 
     # The core fix: no anchor query was ever fired against the table that
     # doesn't own the column — not "fired and gracefully failed", never fired.
@@ -370,11 +409,13 @@ def test_create_enriched_view_emits_flag_columns_for_discovered_shapes(monkeypat
                 unique_name="FactWithDate",
                 source_table="FactWithDate",
                 columns=[
-                    SMLColumn(unique_name="OrderDate", data_type=DataType.STRING),
+                    SMLColumn(unique_name="OrderDate", data_type=DataType.DATE),
                     SMLColumn(unique_name="Amount", data_type=DataType.DECIMAL),
                 ],
             ),
+            _calendar_dataset(),
         ],
+        relationships=[_fact_to_calendar("FactWithDate")],
         metrics=[
             SMLMetric(
                 unique_name="TOTAL_AMOUNT_YTD",
@@ -389,11 +430,12 @@ def test_create_enriched_view_emits_flag_columns_for_discovered_shapes(monkeypat
         ],
     )
 
-    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("FactWithDate", "OrderDate", "OrderDate"))
+    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("Calendar", "Date", "Date"))
     monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_suggestions", lambda m: {})
     monkeypatch.setattr(emitter.semantic_view_builder, "get_precompute_details", lambda: [])
 
     emitter._live_schema_metadata["FACTWITHDATE"] = {"ORDERDATE", "AMOUNT"}
+    emitter._live_schema_metadata["CALENDAR"] = {"DATE"}
 
     executed_sql: list[str] = []
     fake_cursor = MagicMock()
@@ -402,7 +444,7 @@ def test_create_enriched_view_emits_flag_columns_for_discovered_shapes(monkeypat
 
     result = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
 
-    assert result == "FactWithDate_ENRICHED"
+    assert (result or "").upper() == "FACTWITHDATE_ENRICHED"
     create_view_sql = next(sql for sql in executed_sql if "CREATE OR REPLACE VIEW" in sql.upper())
 
     # Discovered shapes: direct YTD, and the nested YTD-then-SPLY composition
@@ -434,26 +476,35 @@ def test_create_enriched_view_emits_no_flag_columns_when_model_has_no_time_intel
                 unique_name="FactWithDate",
                 source_table="FactWithDate",
                 columns=[
-                    SMLColumn(unique_name="OrderDate", data_type=DataType.STRING),
+                    SMLColumn(unique_name="OrderDate", data_type=DataType.DATE),
                     SMLColumn(unique_name="Amount", data_type=DataType.DECIMAL),
                 ],
             ),
+            _calendar_dataset(),
         ],
+        relationships=[_fact_to_calendar("FactWithDate")],
         metrics=[
             SMLMetric(unique_name="TOTAL_AMOUNT", dataset="FactWithDate", expression="SUM([Amount])"),
         ],
     )
 
-    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("FactWithDate", "OrderDate", "OrderDate"))
+    monkeypatch.setattr(emitter, "_find_date_table", lambda m: ("Calendar", "Date", "Date"))
     monkeypatch.setattr(emitter.semantic_view_builder, "_precompute_suggestions", lambda m: {})
     monkeypatch.setattr(emitter.semantic_view_builder, "get_precompute_details", lambda: [])
     emitter._live_schema_metadata["FACTWITHDATE"] = {"ORDERDATE", "AMOUNT"}
+    emitter._live_schema_metadata["CALENDAR"] = {"DATE"}
 
     fake_cursor = MagicMock()
     fake_cursor.fetchone.return_value = ("2026-01-01",)
 
-    emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
+    result = emitter._create_enriched_view(model, fake_cursor, fact_table="FactWithDate")
 
+    # Nothing in the model needs an anchor or a flag: no MAX_DATE, no IS_*
+    # columns, and therefore no enriched view at all (it would add nothing).
+    assert result is None
     enriched_cols = emitter._live_schema_metadata.get("FACTWITHDATE_ENRICHED", set())
-    assert "MAX_DATE" in enriched_cols  # unaffected, still added as before
+    assert "MAX_DATE" not in enriched_cols
     assert not any(c.startswith("IS_") for c in enriched_cols)
+    assert not any(
+        "CREATE OR REPLACE VIEW" in str(c.args[0]).upper() for c in fake_cursor.execute.call_args_list
+    )

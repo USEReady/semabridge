@@ -24,10 +24,13 @@ there's nothing for that shortcut to get wrong.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Set
 
 from semabridge.converter.dax_translator import DAXTranslator
-from semabridge.converter.time_intelligence_shapes import metrics_with_time_intelligence_shapes
+from semabridge.converter.time_intelligence_shapes import (
+    enrichment_flag_column_if_referenced,
+    metrics_with_time_intelligence_shapes,
+)
 from semabridge.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -147,8 +150,16 @@ def rerender_anchor_dependent_metrics(
             continue
 
         if not flag_map_for_dataset:
-            # When no flag map is available, do not fall back to CURRENT_DATE()
-            continue
+            # No confirmed flag map: leave the metric's existing rendering
+            # alone (no re-render to CURRENT_DATE() just because a map is
+            # missing) -- UNLESS that rendering cites this metric's own flag
+            # column (an earlier predicted pass upgraded it), which will never
+            # exist. Then retranslate with the empty map to restore the same
+            # rendering a never-enriched fact table gets, instead of leaving a
+            # dangling column reference.
+            current_sql = getattr(metric, "sql_expression", None)
+            if not enrichment_flag_column_if_referenced(shaped.get(name), current_sql):
+                continue
 
         # If metric belongs to a virtual measure table, resolve table_alias to the fact table where flags reside
         table_alias = (

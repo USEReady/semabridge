@@ -2855,6 +2855,16 @@ class DaxSqlRenderer:
         if self.primary_table_name and name_cf == self.primary_table_name.strip().strip("'\"").casefold():
             return self.table_alias
 
+        # No primary-table context, but the referenced table's own alias IS the
+        # metric's alias (differing only in case): reuse the caller's exact
+        # alias spelling so one metric never mixes `sales.` and `SALES.`.
+        if (
+            not self.primary_table_name
+            and self.table_alias
+            and to_alias(name_clean).casefold() == str(self.table_alias).casefold()
+        ):
+            return self.table_alias
+
         if hasattr(self, "_table_aliases_cf") and name_cf in self._table_aliases_cf:
             if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in self._advisory_categories:
                 self._advisory_categories.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)

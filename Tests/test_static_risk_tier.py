@@ -226,6 +226,9 @@ def test_build_entity_mappings_wires_static_risk_tier_for_ordinary_metrics():
                 "unique_name": "CleanMetric",
                 "dataset": "Fact",
                 "expression": "SUM(Fact[Amount])",
+                # Translated: a metric with DAX but no SQL is now (correctly)
+                # a certain static failure, never "no known risk".
+                "sql_expression": 'SUM(FACT."AMOUNT")',
                 "sync_enabled": True,
                 "complexity_tier": 1,
             },
@@ -233,6 +236,7 @@ def test_build_entity_mappings_wires_static_risk_tier_for_ordinary_metrics():
                 "unique_name": "RiskyTier5Metric",
                 "dataset": "Fact",
                 "expression": "CALCULATE(SUM(Fact[Amount]), PREVIOUSMONTH(Cal[Date]))",
+                "sql_expression": "SUM(CASE WHEN 1 = 1 THEN FACT.\"AMOUNT\" END)",
                 "sync_enabled": True,
                 "complexity_tier": 5,
                 "validation_notes": ["anthropic: confidence 0.40 below min_confidence 0.55"],
@@ -278,6 +282,7 @@ def test_reconcile_predicted_failures_keeps_static_risk_tier_in_sync():
                 "unique_name": "DroppedAtDdlTime",
                 "dataset": "Fact",
                 "expression": "SUM(Fact[Amount])",
+                "sql_expression": 'SUM(FACT."AMOUNT")',
                 "sync_enabled": True,
                 "complexity_tier": 1,
             },
@@ -398,3 +403,34 @@ def test_reconcile_enrichment_unverifiable_advisories_handles_empty_inputs_witho
     reconcile_enrichment_unverifiable_advisories([], None)
     reconcile_enrichment_unverifiable_advisories([{"entity_kind": "metric", "source_name": "X"}], [])
     reconcile_enrichment_unverifiable_advisories(None, None)  # must not raise even on None mappings
+
+
+def test_untranslated_metric_is_a_predicted_failure_not_no_known_risk():
+    """A metric with DAX but no SQL at all was never migrated -- it must
+    surface as a static failure with a reason, never as 'no known risk'."""
+    model = {
+        "unique_name": "SyntheticModel",
+        "datasets": [
+            {"unique_name": "Fact", "columns": [{"unique_name": "Amount", "data_type": "double"}]},
+        ],
+        "metrics": [
+            {
+                "unique_name": "NeverTranslated",
+                "dataset": "Fact",
+                "expression": "SUM(Fact[Amount])",
+                "sync_enabled": True,
+                "complexity_tier": 1,
+            },
+        ],
+    }
+    built = build_entity_mappings(
+        project_id="synthetic-proj",
+        model=model,
+        existing_mappings={},
+        session_key="synthetic-session",
+        target_connector="snowflake",
+    )
+    row = next(r for r in built["mappings"] if r["source_name"] == "NeverTranslated")
+    assert row["static_risk_tier"] == STATIC_RISK_PREDICTED_FAILURE
+    assert row["sync_enabled"] is False
+    assert row["sync_failure_reason"]

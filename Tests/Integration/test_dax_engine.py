@@ -96,18 +96,24 @@ class TestCalculate:
 class TestTimeIntelligence:
     """Test time intelligence functions."""
     
+    # Period-to-date needs a resolvable date table/column (to anchor the
+    # bounded CASE WHEN or a precomputed IS_YTD/IS_MTD flag). With a bare
+    # [Date] and no model context the engine must decline (LLM fallback)
+    # rather than emit a window function, which Snowflake's semantic-view
+    # METRICS clause rejects (see test_calculate_with_all).
     def test_totalytd(self):
         engine = DaxTranslationEngine()
         dax = "TOTALYTD(SUM([Amount]), [Date])"
         sql, metrics = engine.translate(dax, "sales", date_alias="dates")
-        assert sql is not None
-        assert "OVER" in sql.upper() or "WINDOW" in sql.upper()
-    
+        assert sql is None
+        assert metrics.strategy == TranslationStrategy.LLM_FALLBACK
+
     def test_totalmtd(self):
         engine = DaxTranslationEngine()
         dax = "TOTALMTD(SUM([Amount]), [Date])"
         sql, metrics = engine.translate(dax, "sales", date_alias="dates")
-        assert sql is not None
+        assert sql is None
+        assert metrics.strategy == TranslationStrategy.LLM_FALLBACK
     
     def test_previousyear(self):
         engine = DaxTranslationEngine()

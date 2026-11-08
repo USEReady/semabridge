@@ -944,8 +944,15 @@ class OSIToSMLConverter(BaseConverter):
                         metric.sync_failure_reason = classified_reason
                     elif ast_node and _calculate_has_direct_all_or_allexcept_modifier(ast_node):
                         metric.sync_failure_reason = "BY_DESIGN_EXCLUDED: not applicable: not decomposable for a window"
-                    else:
-                        metric.sync_failure_reason = "not applicable: complex multi-pass or iteration calculation requires window metric"
+                    elif self._STALE_TIER5_DEFERRED_MARKER in reason or "tier-5" in reason.lower() or not reason:
+                        # Nothing structural explains the miss: say what
+                        # actually happened rather than asserting a
+                        # window/iteration shape the DAX may not have.
+                        metric.sync_failure_reason = (
+                            "Tier-5 (LLM) batch translation was attempted for this metric and "
+                            "did not produce a usable result."
+                        )
+                    # else: keep the existing (already non-stale) reason.
 
     def _decompose_disconnected_selector_metrics(
         self,

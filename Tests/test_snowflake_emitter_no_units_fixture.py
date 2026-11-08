@@ -44,17 +44,44 @@ def _model_with_units_column() -> SMLModel:
     )
 
 
+def _create_view_sql(cursor):
+    return [
+        str(call[0][0]) for call in cursor.execute.call_args_list
+        if "CREATE OR REPLACE VIEW" in str(call[0][0]).upper()
+    ]
+
+
 def test_create_enriched_view_never_injects_a_units_specific_total_column():
-    # _create_enriched_view runs post-creation fan-out checks on cursor, so assert on the CREATE VIEW call specifically.
+    """Nothing in this model needs enrichment, so no view is created at all
+    -- and in particular no phantom SUM(UNITS) column is ever emitted."""
     emitter = _build_emitter()
     cursor = MagicMock()
     model = _model_with_units_column()
 
-    emitter._create_enriched_view(model, cursor, fact_table="SalesFact")
+    result = emitter._create_enriched_view(model, cursor, fact_table="SalesFact")
 
-    create_view_sql = next(
-        call[0][0] for call in cursor.execute.call_args_list
-        if "CREATE OR REPLACE VIEW" in str(call[0][0]).upper()
-    )
-    assert "TOTAL_UNITS_ALL" not in create_view_sql
-    assert 'SUM("UNITS")' not in create_view_sql
+    assert result is None
+    for sql in _create_view_sql(cursor):  # none expected; guard either way
+        assert "TOTAL_UNITS_ALL" not in sql
+        assert 'SUM("UNITS")' not in sql
+
+
+def test_enriched_view_built_for_a_real_need_still_has_no_units_specific_total_column():
+    """Same fact table, but with a genuine reason to build the view (a
+    metric/column name clash -> _COL_UNITS projection): the view is created
+    and still carries no hardcoded UNITS total."""
+    from semabridge.sml.models import SMLMetric
+
+    emitter = _build_emitter()
+    cursor = MagicMock()
+    model = _model_with_units_column()
+    model.metrics.append(SMLMetric(unique_name="Units", dataset="SalesFact", expression="SUM([Units])"))
+
+    result = emitter._create_enriched_view(model, cursor, fact_table="SalesFact")
+
+    assert result is not None
+    create_view_sql = _create_view_sql(cursor)
+    assert len(create_view_sql) == 1
+    assert '"_COL_UNITS"' in create_view_sql[0]
+    assert "TOTAL_UNITS_ALL" not in create_view_sql[0]
+    assert 'SUM("UNITS")' not in create_view_sql[0]
