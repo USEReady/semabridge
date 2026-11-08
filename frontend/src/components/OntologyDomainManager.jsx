@@ -1358,9 +1358,10 @@ export default function OntologyDomainManager() {
                         type="button"
                         disabled={loading}
                         onClick={handleSaveDomain}
+                        title="Saves the domain. Projects that attach it pick up the change on their next run."
                         className="px-3.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-1 transition-colors disabled:opacity-50"
                       >
-                        {loading ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />} Save & Deploy
+                        {loading ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />} Save domain
                       </button>
                     </div>
                   </div>
