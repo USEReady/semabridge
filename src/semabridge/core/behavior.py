@@ -66,6 +66,14 @@ class SnowflakeBehavior(BaseModel):
         default_factory=dict,
         description="Map fact table name to enriched view name"
     )
+    emit_ddl_synonyms: bool = Field(
+        default=True,
+        description="Emit WITH SYNONYMS clauses (BI + ontology synonyms) in CREATE SEMANTIC VIEW DDL"
+    )
+    emit_ddl_comments: bool = Field(
+        default=True,
+        description="Emit COMMENT clauses (BI + ontology descriptions/business rules) in CREATE SEMANTIC VIEW DDL"
+    )
 
 class FabricBehavior(BaseModel):
     """Fabric/PowerBI behavior controls."""

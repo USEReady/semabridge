@@ -29,8 +29,9 @@ logger = logging.getLogger("semabridge.connectors.ontology_emitter")
 def _escape_sql_str(val: str | None) -> str:
     if val is None:
         return "NULL"
-    escaped = val.replace("'", "''")
-    return f"'{escaped}'"
+    from semabridge.connectors.synonym_clause import escape_sql_string_literal
+
+    return f"'{escape_sql_string_literal(val)}'"
 
 
 def _format_sql_array(items: List[str] | None) -> str:
@@ -70,6 +71,16 @@ class OntologyEmitter:
         """Generate complete SQL script creating ontology tables, inserting concepts, and building Cortex Search."""
         overrides = ontology_overrides or {}
         model_name = _sanitize_identifier(model.unique_name or "SEMANTIC_MODEL")
+        # Override keys are casefolded (model, table, element) names as stored by
+        # the synonyms API; accept the model's raw name as well as the sanitized one.
+        overrides = {
+            **overrides,
+            **{
+                (model_name.casefold(), k[1], k[2]): v
+                for k, v in overrides.items()
+                if k[0] == str(model.unique_name or "").casefold()
+            },
+        }
         lines: List[str] = []
 
         # 1. Header & Schema Setup
@@ -133,7 +144,7 @@ class OntologyEmitter:
 
             desc = ds_override.get("description") or ds.description or f"Business entity {ds.label or ds_name}"
             steward = ds_override.get("data_steward")
-            syns = ds_override.get("synonyms") or []
+            syns = list(ds_override.get("synonyms") or getattr(ds, "synonyms", None) or [])
             rules = ds_override.get("business_rules") or []
             phys_table = ds.source_table or ds_name
 
@@ -214,7 +225,7 @@ WHEN NOT MATCHED THEN INSERT (
 
             desc = m_override.get("description") or m.description or f"Metric {m.label or m_name}"
             steward = m_override.get("data_steward") or m.business_owner
-            syns = list(set(list(m_override.get("synonyms") or []) + list(m.synonyms or [])))
+            syns = list(dict.fromkeys(list(m_override.get("synonyms") or []) + list(m.synonyms or [])))
             rules = m_override.get("business_rules") or []
             calc = m.expression or m.source_column or ""
             agg = m.aggregation.value if hasattr(m.aggregation, "value") else str(m.aggregation)

@@ -73,11 +73,11 @@ export default function SynonymEditModal({
       api.getSynonymOverride(identity)
         .then((res) => {
           if (res) {
-            if (res.synonyms && res.synonyms.length > 0) {
+            if (Array.isArray(res.synonyms) && res.synonyms.length > 0) {
               setSynonyms(normalizeSynonyms(res.synonyms));
             }
             if (res.description) setDescription(res.description);
-            if (res.business_rules && res.business_rules.length > 0) {
+            if (Array.isArray(res.business_rules) && res.business_rules.length > 0) {
               setBusinessRules(res.business_rules);
             }
             if (res.data_steward) setDataSteward(res.data_steward);
@@ -131,9 +131,10 @@ export default function SynonymEditModal({
         table_name: tableName,
         column_name: columnName,
         synonyms,
-        description: description.trim() || null,
+        // '' (not null) so clearing the field actually clears it server-side.
+        description: description.trim(),
         business_rules: businessRules,
-        data_steward: dataSteward.trim() || null,
+        data_steward: dataSteward.trim(),
       });
       onSave?.(response?.synonyms || synonyms, {
         description: response?.description || description,

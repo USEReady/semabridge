@@ -531,7 +531,7 @@ async function handleResponse(res) {
  * Wrapper around fetch that automatically injects the JWT
  * Authorization header when a token is stored.
  */
-async function authFetch(url, options = {}) {
+export async function authFetch(url, options = {}) {
     const { timeoutMs = API_REQUEST_TIMEOUT_MS, ...restOptions } = options;
     const method = String(restOptions.method || 'GET').toUpperCase();
     const maxAttempts = method === 'GET' || method === 'HEAD' ? 2 : 1;
@@ -760,6 +760,25 @@ export const api = {
             .map((part) => encodeURIComponent(String(part || '')))
             .join('/');
         const res = await authFetch(`${API_BASE_URL}/synonyms/${path}`);
+        return handleResponse(res);
+    },
+
+    async getProjectOntologyDomains(projectId) {
+        const res = await authFetch(`${API_BASE_URL}/ontology/projects/${encodeURIComponent(projectId)}/domains`);
+        return handleResponse(res);
+    },
+
+    async setProjectOntologyDomains(projectId, domains) {
+        const res = await authFetch(`${API_BASE_URL}/ontology/projects/${encodeURIComponent(projectId)}/domains`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domains }),
+        });
+        return handleResponse(res);
+    },
+
+    async listOntologyDomains() {
+        const res = await authFetch(`${API_BASE_URL}/ontology/domains`);
         return handleResponse(res);
     },
 

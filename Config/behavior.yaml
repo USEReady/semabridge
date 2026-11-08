@@ -20,6 +20,10 @@ snowflake:
   auto_execute_precompute: false     # Do not execute ALTER TABLE (forbidden by guard)
   auto_create_enriched_view: true    # Create _ENRICHED view with anchors
   use_enriched_view_for_metrics: true # Point semantic model to enriched view
+
+  # Ontology / business metadata in CREATE SEMANTIC VIEW DDL
+  emit_ddl_synonyms: true   # WITH SYNONYMS = (...) on tables, dimensions, metrics
+  emit_ddl_comments: true   # COMMENT = '...' from BI + ontology descriptions
   
   # Source table mapping (empty dict allows dynamic schema-aware resolution)
   source_table_mapping: {}

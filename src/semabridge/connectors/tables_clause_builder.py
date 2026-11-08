@@ -1,6 +1,7 @@
 """Tables clause builder for Snowflake semantic views."""
 
 from __future__ import annotations
+from semabridge.connectors.synonym_clause import table_annotation_clause
 from semabridge.utils.naming import to_alias
 from semabridge.utils.logger import get_logger
 
@@ -594,7 +595,7 @@ class TablesClauseBuilder:
             if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or is_fact_like_name(dataset.unique_name)):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
-            tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}')
+            tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}{table_annotation_clause(dataset)}')
 
         # Emit alias tables for inactive relationships
         for rel in relationships:

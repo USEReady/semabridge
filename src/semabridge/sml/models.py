@@ -197,6 +197,7 @@ class SMLDataset(BaseModel):
     is_hidden: bool = Field(default=False, description="Whether dataset is hidden")
     is_fact: bool = Field(default=False, description="Whether this is a fact table")
     row_count: Optional[int] = Field(default=None, description="Approximate row count")
+    synonyms: list[str] = Field(default_factory=list, description="Business synonyms for the table (ontology / user overrides); emitted as WITH SYNONYMS on the TABLES entry")
     
     def model_post_init(self, __context: Any) -> None:
         """Set defaults after initialization."""

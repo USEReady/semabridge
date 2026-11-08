@@ -40,7 +40,7 @@ concepts:
     physical_table: FACT_ORDERS
     attributes:
       - {name: order_id, is_primary_key: true, data_type: NUMBER}
-      - {name: amount, data_type: DECIMAL(10,2)}
+      - {name: amount, data_type: "DECIMAL(10,2)"}  # quoted: unquoted, YAML flow syntax splits it into a bogus "2)" key
       - {name: order_date, data_type: DATE}
   - name: Customer
     physical_table: DIM_CUSTOMER

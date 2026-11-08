@@ -8,7 +8,7 @@ import re
 from semabridge.utils.logger import get_logger
 from semabridge.utils.identifiers import IdentifierSanitizer
 from semabridge.utils.naming import to_alias
-from semabridge.connectors.synonym_clause import synonyms_clause
+from semabridge.connectors.synonym_clause import column_of, element_description, synonyms_clause
 from semabridge.core.drop_ledger import DropLedger, DropStage
 
 logger = get_logger(__name__)
@@ -179,7 +179,7 @@ class DimensionsClauseBuilder:
                     dims_lines.append(
                         f'  {alias}."{emitted_name}" AS '
                         f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                        f'{synonyms_clause(col_synonyms)}'
+                        f'{synonyms_clause(col_synonyms, element_description(attr, column_of(dataset_obj, raw_col)))}'
                     )
                     added_dimensions.add(dim_key)
                     added_physical_dimensions.add(physical_dim_key)
@@ -292,7 +292,7 @@ class DimensionsClauseBuilder:
                 dims_lines.append(
                     f'  {alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
-                    f'{synonyms_clause(col_syns)}'
+                    f'{synonyms_clause(col_syns, element_description(col))}'
                 )
                 added_dimensions.add((alias, emitted_name, phys_col))
                 added_physical_dimensions.add((alias, phys_col))

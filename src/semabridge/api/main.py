@@ -34,6 +34,7 @@ from semabridge.api.routers.diagnostics_router import router as diagnostics_rout
 from semabridge.api.routers.mapping_router import router as mapping_router
 from semabridge.api.routers.synonyms_router import router as synonyms_router
 from semabridge.api.routers.domain_ontology_router import router as domain_ontology_router
+from semabridge.api.routers.domain_ontology_router import project_router as ontology_project_router
 from semabridge.api.routers.ai_router import router as ai_router
 from semabridge.api.routers.reconciliation_router import router as reconciliation_router
 from semabridge.api.routers.governance_router import router as governance_router
@@ -89,6 +90,7 @@ for router in [
     mapping_router,
     synonyms_router,
     domain_ontology_router,
+    ontology_project_router,
     ai_router,
     reconciliation_router,
     governance_router,
