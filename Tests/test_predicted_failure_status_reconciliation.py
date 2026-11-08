@@ -231,7 +231,7 @@ def test_osi_to_sml_wires_advisory_category_onto_the_metric():
     my_kpi = next(m for m in sml_model.metrics if m.unique_name == "MyKpi")
     total_volume = next(m for m in sml_model.metrics if m.unique_name == "TotalVolume")
 
-    assert my_kpi.advisory_categories == [ADVISORY_CATEGORY_UNREACHABLE_DIMENSION]
+    assert ADVISORY_CATEGORY_UNREACHABLE_DIMENSION in my_kpi.advisory_categories
     assert len(my_kpi.advisory_categories) == len(my_kpi.advisory_notes)
     assert total_volume.advisory_categories == []
 

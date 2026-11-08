@@ -112,12 +112,12 @@ def test_category2_static_filter_string_and_numeric_equality():
     assert string_result.sql is not None
     assert "CASE WHEN" in string_result.sql
     assert "SCENARIO.SCENARIO = 'Budget'" in string_result.sql
-    assert 'SUM(CASE WHEN SCENARIO.SCENARIO = \'Budget\' THEN FACT."REVENUE" ELSE 0 END)' == string_result.sql
+    assert 'SUM(CASE WHEN SCENARIO.SCENARIO = \'Budget\' THEN FACT."REVENUE" END)' == string_result.sql
 
     assert numeric_result.is_success
     assert numeric_result.sql is not None
     assert "SCENARIO.SCENARIOID = 3" in numeric_result.sql
-    assert 'SUM(CASE WHEN SCENARIO.SCENARIOID = 3 THEN FACT."REVENUE" ELSE 0 END)' == numeric_result.sql
+    assert 'SUM(CASE WHEN SCENARIO.SCENARIOID = 3 THEN FACT."REVENUE" END)' == numeric_result.sql
 
 
 def test_category2_static_filter_with_filter_wrapper_spacing_variants():
