@@ -223,7 +223,9 @@ class TablesClauseBuilder:
         # 0. Live KEY UNIQUENESS query
         if hasattr(self.schema_manager, "check_key_uniqueness"):
             live_result = self.schema_manager.check_key_uniqueness(unqualified_table, target_cols, cursor=self.cursor)
-            if live_result is not None:
+            # Only a real yes/no answer counts; anything else (None, an
+            # unconfigured stub) means "unknown" and falls through.
+            if isinstance(live_result, bool):
                 return live_result
 
         # 1. Column metadata
@@ -392,6 +394,18 @@ class TablesClauseBuilder:
                 col_list = [c for c in rel.to_columns]
                 if col_list not in target_keys_by_dataset[rel.to_dataset]:
                     target_keys_by_dataset[rel.to_dataset].append(col_list)
+        # A 1:1 relationship proves uniqueness on BOTH ends, so its from-side
+        # columns are key candidates too (the orientation above may have put
+        # a table's real key on the from side). Appended after the to-side
+        # targets; the key-column-first ordering in _build picks among them.
+        for rel in relationships:
+            card = getattr(rel, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "").lower().replace("_", "-")
+            if card_str in ("1:1", "one-to-one", "onetoone") and rel.from_dataset and rel.from_columns:
+                col_list = [c for c in rel.from_columns]
+                bucket = target_keys_by_dataset.setdefault(rel.from_dataset, [])
+                if col_list not in bucket:
+                    bucket.append(col_list)
 
         dataset_col_lookup: dict[str, set[str]] = {}
         # live_col_lookup contains ONLY confirmed-live columns from Snowflake schema
@@ -505,7 +519,19 @@ class TablesClauseBuilder:
             if is_measure_only:
                 pk_cols = []
             elif resolved_target_keys:
-                # Find the first target key whose uniqueness is guaranteed
+                # Find the first target key whose uniqueness is guaranteed.
+                # Keys made only of the model's own key columns (is_key) are
+                # tried first, so a non-key column that some relationship
+                # happens to target (e.g. a measure column) is never chosen
+                # as PRIMARY KEY over the table's real key.
+                _key_names = {
+                    _physical(c.unique_name).upper()
+                    for c in (dataset.columns or []) if getattr(c, "is_key", False)
+                }
+                resolved_target_keys = sorted(
+                    resolved_target_keys,
+                    key=lambda k: 0 if k and all(c.upper() in _key_names for c in k) else 1,
+                )
                 for tkey in resolved_target_keys:
                     if self._is_uniqueness_guaranteed(dataset, tkey, relationships, unqualified_table):
                         pk_cols = [f'"{c}"' for c in tkey]

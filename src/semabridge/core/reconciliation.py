@@ -66,7 +66,13 @@ logger = get_logger(__name__)
 # quotes identifiers that actually need it (alias.name as ...) — reconcile_run
 # parses GET_DDL output directly (see _fetch_live_deployed_ddl), so both
 # shapes have to match here.
-_METRIC_DEF_RE = re.compile(r'^\s*\w+\."?(\w+)"?\s+AS\s+(.+?)\s*,?\s*$', re.IGNORECASE)
+# Every metric syntax: optional PRIVATE/PUBLIC, optional table alias
+# (derived metrics are declared as a bare "NAME"), optional NON ADDITIVE BY.
+_METRIC_DEF_RE = re.compile(
+    r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?(?:"?\w+"?\s*\.\s*)?"?(\w+)"?'
+    r'(?:\s+NON\s+ADDITIVE\s+BY\s*\((?:[^()]|\([^()]*\))*\))?\s+AS\s+(.+?)\s*,?\s*$',
+    re.IGNORECASE,
+)
 _CLAUSE_CLOSE_RE = re.compile(r'^\s*\)\s*;?\s*$')
 _NULL_CAST_RE = re.compile(r'^\s*CAST\s*\(\s*NULL\s+AS\s+DOUBLE\s*\)\s*$', re.IGNORECASE)
 # Same GET_DDL-vs-our-DDL spacing/casing mismatch for the trailing synonyms
@@ -250,6 +256,17 @@ def _extract_deployed_metric_names(ddl_text: str) -> tuple[set[str], set[str]]:
     real bug (a mechanism dropped it without recording why), not a
     by-design bucket to fold in for free.
     """
+    try:
+        from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import SemanticViewDDL
+
+        view = SemanticViewDDL(ddl_text or "")
+        if view.parsed and "METRICS" in view.clauses:
+            return view.metric_names()
+    except Exception:  # noqa: BLE001 - fall back to the line scanner below
+        logger.debug("Structured METRICS parse failed; using line scanner", exc_info=True)
+
+    from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import is_null_placeholder_expr
+
     live: set[str] = set()
     dead: set[str] = set()
     in_metrics = False
@@ -267,12 +284,10 @@ def _extract_deployed_metric_names(ddl_text: str) -> tuple[set[str], set[str]]:
         if not m:
             continue
         name, expr = m.groups()
-        expr_clean = expr.strip().rstrip(",")
-        # Strip trailing COMMENT = '...' and WITH SYNONYMS(...) clause before checking
-        # for the NULL-cast shape, same split used in metrics_clause_builder.py.
-        expr_clean = re.sub(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", "", expr_clean, flags=re.IGNORECASE).rstrip()
-        expr_clean = _SYNONYMS_SUFFIX_RE.sub("", expr_clean).rstrip()
-        if _NULL_CAST_RE.match(expr_clean):
+        # Comment/synonym/whitespace/case tolerant NULL-placeholder check
+        # (a trailing /* ... */ or COMMENT = '...' must not turn a dead
+        # metric into a "converted" one).
+        if is_null_placeholder_expr(expr):
             dead.add(name.upper())
         else:
             live.add(name.upper())
@@ -285,6 +300,15 @@ def _extract_deployed_dimension_names(ddl_text: str) -> set[str]:
     clause (``ALIAS."NAME" AS <expr>,``), so this reuses the same
     definition/close regexes with the clause header swapped.
     """
+    try:
+        from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import SemanticViewDDL
+
+        view = SemanticViewDDL(ddl_text or "")
+        if view.parsed and "DIMENSIONS" in view.clauses:
+            return {it.name.upper() for it in view.items("DIMENSIONS") if it.name}
+    except Exception:  # noqa: BLE001
+        logger.debug("Structured DIMENSIONS parse failed; using line scanner", exc_info=True)
+
     names: set[str] = set()
     in_dims = False
     for line in (ddl_text or "").splitlines():

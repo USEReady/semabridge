@@ -68,6 +68,7 @@ class RelationshipsClauseBuilder:
         is_osi: bool
     ) -> List[str]:
         rel_lines = []
+        rel_meta: List[Tuple[str, str, bool, Any]] = []
         for rel in relationships:
             if not rel.is_active:
                 logger.info(
@@ -166,6 +167,9 @@ class RelationshipsClauseBuilder:
                         DropStage.DDL_EMISSION,
                         f"Target column(s) {to_cols} not declared as PRIMARY KEY or UNIQUE on {to_alias} (uniqueness not proven).",
                         dataset=rel.from_dataset,
+                        # Snowflake limitation: a relationship must reference a
+                        # PRIMARY KEY/UNIQUE key -- expected, not a bug.
+                        by_design=True,
                     )
                     continue
 
@@ -179,5 +183,32 @@ class RelationshipsClauseBuilder:
                 rel_lines.append(f'  {rel_name} AS {from_alias} ({from_ref}) REFERENCES {ref_clause}')
             else:
                 rel_lines.append(f'  {from_alias} ({from_ref}) REFERENCES {ref_clause}')
-        
+            rel_meta.append((from_alias, to_alias, bool(getattr(rel, "is_active", True)), rel))
+
+        # Snowflake rejects relationship cycles and multiple join paths
+        # between the same pair of tables. Drop the lowest-priority edge of
+        # each conflict (inactive relationships first, then later ones) with a
+        # by-design reason instead of letting the whole view fail.
+        from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import (
+            select_conflicting_relationships,
+        )
+        conflicts = select_conflicting_relationships(
+            [(f, t) for f, t, _a, _r in rel_meta],
+            [0 if active else 1 for _f, _t, active, _r in rel_meta],
+        )
+        if conflicts:
+            kept = []
+            for i, line in enumerate(rel_lines):
+                if i not in conflicts:
+                    kept.append(line)
+                    continue
+                _f, _t, _active, rel = rel_meta[i]
+                logger.warning("Dropping relationship '%s' -> '%s': %s", rel.from_dataset, rel.to_dataset, conflicts[i])
+                self.drop_ledger.record(
+                    "relationship", f"{rel.from_dataset} -> {rel.to_dataset}", DropStage.DDL_EMISSION,
+                    conflicts[i] + ("" if _active else " (inactive relationship dropped first)"),
+                    dataset=rel.from_dataset,
+                    by_design=True,
+                )
+            rel_lines = kept
         return rel_lines

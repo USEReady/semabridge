@@ -16,7 +16,7 @@ from semabridge.connectors.ddl_helpers import (
 )
 from semabridge.connectors.snowflake_metric_sql import normalize_snowflake_metric_sql
 from semabridge.connectors.synonym_clause import element_description, synonyms_clause
-from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.core.drop_ledger import DropLedger, DropStage, classify_drop_reason
 from semabridge.utils.null_sentinel import is_null_cast_sql
 
 NULL_PLACEHOLDER_SQL = "CAST(NULL AS DOUBLE)"
@@ -106,8 +106,11 @@ class MetricsClauseBuilder:
                         if cand and ("OVER (" in cand.upper() or "OVER(" in cand.upper()):
                             expr = cand
                             m.sql_expression = cand
-                    except Exception:
-                        pass
+                    except Exception as _win_exc:
+                        logger.warning(
+                            "Window-metric AST translation failed for '%s': %s",
+                            getattr(m, "unique_name", "?"), _win_exc,
+                        )
             if not expr:
                 continue
             if "OVER (" in expr.upper() or "OVER(" in expr.upper():
@@ -175,8 +178,11 @@ class MetricsClauseBuilder:
                                         rendered = renderer.render(target_node)
                                         if rendered and rendered.count("(") == rendered.count(")"):
                                             helper_sql = rendered
-                                except Exception:
-                                    pass
+                                except Exception as _helper_exc:
+                                    logger.warning(
+                                        "Could not derive helper metric '%s' from DAX AST: %s",
+                                        ref_name, _helper_exc,
+                                    )
 
                             if not helper_sql and base_m:
                                 b_sql = getattr(base_m, "sql_expression", None)
@@ -291,6 +297,9 @@ class MetricsClauseBuilder:
         self.dataset_col_lookup = dataset_col_lookup
         self.dataset_by_name = dataset_by_name
         self._current_model = model
+        # DDL metric name (upper) -> (specific reason, by_design) for every
+        # metric emitted as a NULL placeholder in this build.
+        self._placeholder_reasons: Dict[str, Tuple[str, bool]] = {}
         metrics_lines = []
         used_metric_names: Set[str] = set()
         skipped_metric_names: Set[str] = set()
@@ -615,12 +624,7 @@ class MetricsClauseBuilder:
                     "Emitting metric '%s' on '%s' as NULL placeholder (not translatable): %s",
                     metric.unique_name, alias, reason,
                 )
-                self.drop_ledger.record(
-                    "metric", metric.unique_name, DropStage.DAX_TRANSLATION,
-                    PLACEHOLDER_NOT_TRANSLATABLE,
-                    dataset=getattr(metric, "dataset", None),
-                    detail=f"{reason}" + (f" | {detail}" if detail else ""),
-                )
+                self._record_placeholder(metric, metric_name, reason, detail, DropStage.DAX_TRANSLATION)
                 expr = NULL_PLACEHOLDER_SQL
                 skipped_metric_names.discard(metric.unique_name)
 
@@ -656,9 +660,26 @@ class MetricsClauseBuilder:
                                 non_add_dim = (carg.table, carg.column)
                             elif isinstance(carg, IdentifierNode):
                                 non_add_dim = (None, carg.name)
-                except Exception:
-                    pass
+                except Exception as _nab_exc:
+                    # Semi-additivity could not be determined. If the DAX looks
+                    # like a closing/opening balance, never ship it as a plain
+                    # (fully additive) aggregate -- null it with the reason.
+                    logger.warning(
+                        "Could not analyse DAX of metric '%s' for a NON ADDITIVE BY dimension: %s",
+                        metric.unique_name, _nab_exc,
+                    )
+                    if re.search(r"\b(LASTDATE|LASTNONBLANK|FIRSTDATE|FIRSTNONBLANK|CLOSINGBALANCE\w*|OPENINGBALANCE\w*)\s*\(",
+                                 str(metric.expression or ""), re.IGNORECASE):
+                        failure = (
+                            "not applicable: semi-additive (balance) metric whose non-additive dimension could "
+                            f"not be determined (DAX analysis failed: {_nab_exc})",
+                            None,
+                        )
+                        self._record_placeholder(metric, metric_name, failure[0], None, DropStage.DDL_EMISSION)
+                        expr = NULL_PLACEHOLDER_SQL
+                        syns_to_emit = []
 
+            nab_resolution_error: Optional[str] = None
             if non_add_dim and expr != NULL_PLACEHOLDER_SQL:
                 dim_table, dim_col = non_add_dim
                 dim_alias = None
@@ -708,8 +729,12 @@ class MetricsClauseBuilder:
                                         if name.upper() == resolved_phys.upper():
                                             matched_dim_col = name
                                             break
-                            except Exception:
-                                pass
+                            except Exception as _res_exc:
+                                logger.warning(
+                                    "Could not resolve NON ADDITIVE BY column '%s.%s' for metric '%s': %s",
+                                    dim_table, dim_col, metric.unique_name, _res_exc,
+                                )
+                                nab_resolution_error = str(_res_exc)
 
                 if matched_dim_col:
                     non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{matched_dim_col}" ASC NULLS LAST )'
@@ -717,15 +742,20 @@ class MetricsClauseBuilder:
                     # Standalone/mock execution without emitted_dimensions map
                     non_additive_clause = f' NON ADDITIVE BY ( {dim_alias}."{safe_dim_col}" ASC NULLS LAST )'
                 else:
-                    logger.warning(
-                        "Dropping NON ADDITIVE BY for metric '%s': '%s.%s' is not an emitted dimension in DIMENSIONS",
-                        metric.unique_name, dim_alias, dim_col,
+                    # Never ship a semi-additive metric as a plain additive
+                    # aggregate: without its NON ADDITIVE BY dimension the
+                    # result would be silently wrong (e.g. balances summed
+                    # over time). Null it with a by-design reason instead.
+                    nab_reason = (
+                        f"not applicable: semi-additive metric needs NON ADDITIVE BY dimension "
+                        f"'{dim_alias}.{dim_col}', which is not emitted in DIMENSIONS"
+                        + (f" (resolution error: {nab_resolution_error})" if nab_resolution_error else "")
                     )
-                    self.drop_ledger.record(
-                        "metric", metric.unique_name, DropStage.DDL_EMISSION,
-                        f"NON ADDITIVE BY dimension '{dim_alias}.{dim_col}' is not a declared dimension in the semantic view.",
-                        dataset=getattr(metric, "dataset", None),
-                    )
+                    logger.warning("Nulling metric '%s': %s", metric.unique_name, nab_reason)
+                    failure = (nab_reason, None)
+                    self._record_placeholder(metric, metric_name, nab_reason, None, DropStage.DDL_EMISSION)
+                    expr = NULL_PLACEHOLDER_SQL
+                    syns_to_emit = []
 
             if expr != NULL_PLACEHOLDER_SQL and "PARTITION BY EXCLUDING" in expr.upper():
                 expr = self._align_partition_by_excluding(expr)
@@ -744,31 +774,7 @@ class MetricsClauseBuilder:
 
             comment_clause = ""
             if expr == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr:
-                reason_text = ""
-                if failure is not None:
-                    reason_text = failure[0]
-                elif getattr(metric, "sync_failure_reason", None):
-                    reason_text = str(metric.sync_failure_reason)
-                if not reason_text:
-                    reason_text = "not applicable: not translatable"
-                
-                reason_clean = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", reason_text, flags=re.I).strip()
-                if "Snowflake's semantic-view METRICS clause does not support window functions" in reason_clean:
-                    reason_clean = "not applicable: needs window metric"
-                elif "could not be translated to SQL at DDL-emission time" in reason_clean:
-                    dax_upper = str(getattr(metric, "expression", "") or "").upper()
-                    if "ALLSELECTED" in dax_upper:
-                        reason_clean = "not applicable: depends on report selection (ALLSELECTED)"
-                    elif "ISINSCOPE" in dax_upper:
-                        reason_clean = "not applicable: depends on hierarchy scope (ISINSCOPE)"
-                    elif "SELECTEDVALUE" in dax_upper:
-                        reason_clean = "not applicable: depends on slicer selection (SELECTEDVALUE)"
-                    elif "RANKX" in dax_upper:
-                        reason_clean = "not applicable: rank function not supported in view (RANKX)"
-                    elif "USERELATIONSHIP" in dax_upper:
-                        reason_clean = "not applicable: dynamic relationship (USERELATIONSHIP)"
-                    else:
-                        reason_clean = "not applicable: DAX expression unsupported"
+                reason_clean, _ = self._placeholder_reason(metric, failure[0] if failure is not None else None)
                 safe_comment = self._clean_comment(reason_clean)
                 comment_clause = f" COMMENT = '{safe_comment}'"
 
@@ -791,10 +797,14 @@ class MetricsClauseBuilder:
                         comment_clause = f" COMMENT = '{safe_comment}'"
                         break
 
+            # PRIVATE comes only from an explicit flag set where the metric
+            # was created (SemaBridge-generated helpers are created with
+            # access_modifier="private_access"; see
+            # _ensure_window_helper_metrics) -- never from the metric's name,
+            # which would hide user metrics that merely end in _SUM/_CNT/...
             is_priv = (
                 getattr(metric, "access_modifier", None) == "private_access"
                 or getattr(metric, "is_private", False)
-                or safe_metric_name.endswith(("_SUM", "_CNT", "_NUM", "_DEN"))
             )
             priv_prefix = "PRIVATE " if is_priv else ""
 
@@ -829,6 +839,8 @@ class MetricsClauseBuilder:
             ddl_name_to_dataset[_safe] = getattr(_owner, "dataset", None) if _owner else None
 
         # Pruning and Fallbacks...
+        self._ddl_name_to_unique = ddl_name_to_unique
+        self._ddl_name_to_dataset = ddl_name_to_dataset
         self._null_propagated = {}
         pre_prune_lines = list(metrics_lines)
         metrics_lines = self._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
@@ -849,12 +861,18 @@ class MetricsClauseBuilder:
         )
 
         for ddl_name, ref_name in sorted(self._null_propagated.items()):
+            root_reason, root_by_design = self._placeholder_reasons.get(
+                str(ref_name).upper(), (str(ref_name), False)
+            )
+            reason = f"placeholder: depends on [{ref_name}]: {root_reason}"
             self.drop_ledger.record(
                 "metric", ddl_name_to_unique.get(ddl_name, ddl_name), DropStage.DAX_TRANSLATION,
-                PLACEHOLDER_NOT_TRANSLATABLE,
+                reason[:500],
                 dataset=ddl_name_to_dataset.get(ddl_name),
                 detail=f"depends on placeholder metric {ref_name}",
+                by_design=root_by_design,
             )
+            self._placeholder_reasons[str(ddl_name).upper()] = (reason, root_by_design)
 
         # OSI Fallback Loop
         if is_osi:
@@ -882,6 +900,99 @@ class MetricsClauseBuilder:
 
         return final_metrics_lines
 
+    _DAX_BY_DESIGN_FUNCS: Tuple[Tuple[str, str], ...] = (
+        ("ALLSELECTED", "not applicable: depends on report selection (ALLSELECTED)"),
+        ("ISINSCOPE", "not applicable: depends on hierarchy scope (ISINSCOPE)"),
+        ("SELECTEDVALUE", "not applicable: depends on slicer selection (SELECTEDVALUE)"),
+        ("RANKX", "not applicable: rank function not supported in view (RANKX)"),
+        ("USERELATIONSHIP", "not applicable: dynamic relationship (USERELATIONSHIP)"),
+    )
+    _GENERIC_FAILURE_MARKERS: Tuple[str, ...] = (
+        "could not be translated to sql at ddl-emission time",
+        "not translatable",
+        "produced no sql",
+        "dax expression unsupported",
+    )
+
+    def _placeholder_reason(self, metric: Any, failure_reason: Optional[str]) -> Tuple[str, bool]:
+        """(specific reason, by_design) for a metric emitted as a NULL
+        placeholder. Uses the actual failure / ``sync_failure_reason``
+        rather than a generic label, and classifies Snowflake-limitation
+        categories as by design (see core/drop_ledger.classify_drop_reason)."""
+        sync_reason = str(getattr(metric, "sync_failure_reason", None) or "").strip()
+        reason_text = str(failure_reason or "").strip() or sync_reason
+        if not reason_text:
+            reason_text = "not translatable: DAX translation produced no SQL"
+        # A generic failure label hides a more specific sync_failure_reason.
+        if sync_reason and sync_reason not in reason_text and any(
+            g in reason_text.lower() for g in self._GENERIC_FAILURE_MARKERS
+        ):
+            reason_text = f"{reason_text} ({sync_reason})"
+        by_design_src = reason_text
+        reason_clean = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", reason_text, flags=re.I).strip()
+        if reason_text.upper().startswith("BY_DESIGN_EXCLUDED") and not reason_clean.lower().startswith("not applicable"):
+            reason_clean = f"not applicable: {reason_clean}"
+        if "Snowflake's semantic-view METRICS clause does not support window functions" in reason_clean:
+            reason_clean = "not applicable: needs window metric"
+        elif any(g in reason_clean.lower() for g in self._GENERIC_FAILURE_MARKERS):
+            dax_upper = str(getattr(metric, "expression", "") or "").upper()
+            for func, label in self._DAX_BY_DESIGN_FUNCS:
+                if re.search(rf"\b{func}\s*\(", dax_upper):
+                    reason_clean = label
+                    break
+        by_design = classify_drop_reason(reason_clean) or classify_drop_reason(by_design_src)
+        return reason_clean, by_design
+
+    def _record_placeholder(
+        self,
+        metric: Any,
+        ddl_name: str,
+        reason: Optional[str],
+        detail: Optional[str],
+        stage: DropStage,
+    ) -> None:
+        reason_clean, by_design = self._placeholder_reason(metric, reason)
+        full_detail = " | ".join(x for x in (str(reason or ""), str(detail or "")) if x) or None
+        self.drop_ledger.record(
+            "metric", metric.unique_name, stage,
+            f"placeholder: {reason_clean}"[:500],
+            dataset=getattr(metric, "dataset", None),
+            detail=full_detail[:800] if full_detail else None,
+            by_design=by_design,
+        )
+        try:
+            key = self.identifier_sanitizer.sanitize_column(ddl_name).upper()
+        except Exception:  # noqa: BLE001
+            key = str(ddl_name).upper()
+        self._placeholder_reasons = getattr(self, "_placeholder_reasons", {}) or {}
+        self._placeholder_reasons[key] = (reason_clean, by_design)
+
+    @staticmethod
+    def _final_pass_reason(predeploy_reason: str) -> str:
+        r = str(predeploy_reason or "").strip()
+        if r.upper().startswith("BY_DESIGN_EXCLUDED"):
+            r = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", r, flags=re.I)
+            return r if r.lower().startswith("not applicable") else f"not applicable: {r}"
+        # Unresolved columns / composite nulls are unexpected (data issue or
+        # translation bug), so they are NOT relabelled "not applicable".
+        return r
+
+    def _record_final_pass_null(self, ddl_name: str, reason: str, expr: str) -> None:
+        """Ledger a metric nulled by the final validation pass (nested
+        aggregate, 010220, fan-out, unresolved column, ...)."""
+        name_map = getattr(self, "_ddl_name_to_unique", {}) or {}
+        ds_map = getattr(self, "_ddl_name_to_dataset", {}) or {}
+        by_design = classify_drop_reason(reason)
+        self.drop_ledger.record(
+            "metric", name_map.get(ddl_name, ddl_name), DropStage.DDL_EMISSION,
+            f"placeholder: {reason}"[:500],
+            dataset=ds_map.get(ddl_name),
+            detail=f"Final validation nulled the emitted SQL: {str(expr)[:300]}",
+            by_design=by_design,
+        )
+        self._placeholder_reasons = getattr(self, "_placeholder_reasons", {}) or {}
+        self._placeholder_reasons[str(ddl_name).upper()] = (reason, by_design)
+
     def _take_translation_failure(self, metric: Any, ledger_mark: int) -> Optional[Tuple[str, Optional[str]]]:
         """Why this metric produced no SQL, taken back out of the drop ledger.
 
@@ -907,7 +1018,11 @@ class MetricsClauseBuilder:
         silently removed."""
         names: Set[str] = set()
         for line in lines:
-            m = re.search(r'\."([^"]+)"(?:\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+', line)
+            m = re.search(
+                r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?(?:[A-Za-z0-9_]+\.)?"([^"]+)"'
+                r'(?:\s+NON\s+ADDITIVE\s+BY\s*\((?:[^()]|\([^()]*\))*\))?\s+AS\s+',
+                line, re.IGNORECASE,
+            )
             if m:
                 names.add(m.group(1))
         return names
@@ -1950,10 +2065,13 @@ class MetricsClauseBuilder:
     @staticmethod
     def _escape_comment(text: str) -> str:
         """Escape single quotes in COMMENT literals exactly once (never produce '''' sequences)."""
+        # Backslashes first (Snowflake string literals treat a backslash as an
+        # escape), then quotes; /* */ neutralised so the text stays harmless.
         clean = str(text or "")
         while "''" in clean:
             clean = clean.replace("''", "'")
-        return clean.replace("'", "''")
+        clean = clean.replace("/*", "/ *").replace("*/", "* /")
+        return clean.replace("\\", "\\\\").replace("'", "''")
 
     @classmethod
     def _clean_comment(cls, text: str) -> str:
@@ -2112,6 +2230,7 @@ class MetricsClauseBuilder:
                     comment_text = m_comm.group(1)
                     while "''" in comment_text:
                         comment_text = comment_text.replace("''", "'")
+                    comment_text = comment_text.replace("\\\\", "\\")
                     expr = expr[:m_comm.start()].strip()
                 elif "/*" in expr:
                     m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr)
@@ -2299,6 +2418,7 @@ class MetricsClauseBuilder:
             nested_reason = detect_nested_aggregate(m_expr)
             if nested_reason:
                 logger.warning("Final metric '%s' rejected by nested aggregate check: %s", m_name, nested_reason)
+                self._record_final_pass_null(m_name, f"not applicable: {nested_reason}", m_expr)
                 safe_comm = self._clean_comment(f"not applicable: {nested_reason}")
                 final_validated.append(f'  {priv}{alias}."{m_name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                 continue
@@ -2317,7 +2437,9 @@ class MetricsClauseBuilder:
             )
             if predeploy_reason:
                 logger.warning("Final metric '%s' rejected by pre-deploy check: %s", m_name, predeploy_reason)
-                safe_comm = self._clean_comment(f"not applicable: {predeploy_reason}")
+                final_reason = self._final_pass_reason(predeploy_reason)
+                self._record_final_pass_null(m_name, final_reason, m_expr)
+                safe_comm = self._clean_comment(final_reason)
                 final_validated.append(f'  {priv}{alias}."' + m_name + f'" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                 continue
             final_validated.append(f'  {priv}{alias}."{m_name}"{non_add or ""} AS {m_expr}{syn}')
@@ -2394,21 +2516,40 @@ class MetricsClauseBuilder:
                 curr += 1
 
             agg_body = m_expr[m.end():curr - 1]
-            def _replace_col(col_match):
-                tbl = col_match.group(1)
-                col = col_match.group(2)
-                key = (tbl.upper(), col.upper())
-                if key in fk_map:
-                    fk = fk_map[key]
-                    return f'{alias}."{fk}"'
-                return col_match.group(0)
-
-            rewritten_body = re.sub(
-                r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?',
-                _replace_col,
-                agg_body
+            agg_fn = m.group(1).upper()
+            is_distinct = bool(re.match(r'\s*DISTINCT\b', agg_body, re.IGNORECASE))
+            body_ref = re.fullmatch(
+                r'\s*(?:DISTINCT\s+)?([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?\s*',
+                agg_body, re.IGNORECASE,
             )
-            result.append(rewritten_body)
+            # Only rewrites that keep the aggregate's meaning are allowed:
+            #   COUNT([DISTINCT] parent.pk) -> COUNT(DISTINCT anchor.fk)
+            #     (a plain COUNT(anchor.fk) would count anchor ROWS, not
+            #     parent entities -- a silent fan-out bug);
+            #   MIN/MAX(parent.pk)          -> MIN/MAX(anchor.fk).
+            # SUM/AVG of a parent column is left untouched so the fan-out
+            # check in _run_predeploy_checks nulls it with a reason.
+            if body_ref and (body_ref.group(1).upper(), body_ref.group(2).upper()) in fk_map:
+                fk = fk_map[(body_ref.group(1).upper(), body_ref.group(2).upper())]
+                if agg_fn == "COUNT":
+                    result.append(f'DISTINCT {alias}."{fk}"')
+                elif agg_fn in ("MIN", "MAX") or is_distinct:
+                    result.append(f'{"DISTINCT " if is_distinct else ""}{alias}."{fk}"')
+                else:
+                    result.append(agg_body)
+            else:
+                # PK references used inside a larger body (e.g. a CASE WHEN
+                # predicate on the join key) are equivalent to the anchor's
+                # FK, so they are rewritten as before.
+                def _replace_col(col_match):
+                    key = (col_match.group(1).upper(), col_match.group(2).upper())
+                    if key in fk_map:
+                        return f'{alias}."{fk_map[key]}"'
+                    return col_match.group(0)
+
+                result.append(re.sub(
+                    r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', _replace_col, agg_body
+                ))
             if depth == 0:
                 result.append(')')
             pos = curr
@@ -2500,6 +2641,11 @@ class MetricsClauseBuilder:
         # Check (g): no CAST(NULL) inside a larger expression (composite null)
         if "CAST(NULL" in clean_expr:
             return "CAST(NULL) detected inside larger expression (composite null)"
+
+        # Nested aggregates (e.g. MAX(SUM(x))) are rejected by Snowflake.
+        nested = detect_nested_aggregate(m_expr)
+        if nested:
+            return f"BY_DESIGN_EXCLUDED: {nested}"
 
         # Check (a): every TABLE.COLUMN exists in that table (live schema)
         if dataset_col_lookup:
@@ -2651,6 +2797,44 @@ class MetricsClauseBuilder:
                             else:
                                 if is_dim_prefix:
                                     return f"BY_DESIGN_EXCLUDED: aggregating dimension column with {agg_fn} on fact table causes fan-out duplication (measure should aggregate on dimension table directly)"
+
+        # Check (d2): direct aggregate of a column that lives on a related
+        # 'one'-side table, e.g. SUM(CUSTOMERS."CREDIT") on a metric anchored
+        # on ORDERS -- every customer value would be repeated once per order.
+        # COUNT(DISTINCT ...)/MIN/MAX are grain-safe and allowed.
+        if relationships and alias:
+            anchor_u = alias.upper()
+            one_side: Dict[str, Set[str]] = {}
+            for rel in relationships:
+                from_ds = str(getattr(rel, "from_dataset", "") or getattr(rel, "from_table", "") or "")
+                to_ds = str(getattr(rel, "to_dataset", "") or getattr(rel, "to_table", "") or "")
+                from_al = ((dataset_aliases or {}).get(from_ds) or from_ds).upper()
+                to_al = ((dataset_aliases or {}).get(to_ds) or to_ds).upper()
+                if from_al and to_al and from_al != to_al:
+                    one_side.setdefault(from_al, set()).add(to_al)
+            reach_one: Set[str] = set()
+            stack = [anchor_u]
+            while stack:
+                cur_al = stack.pop()
+                for nxt in one_side.get(cur_al, ()):
+                    if nxt not in reach_one and nxt != anchor_u:
+                        reach_one.add(nxt)
+                        stack.append(nxt)
+            if reach_one:
+                for m_fan in re.finditer(
+                    r'\b(SUM|AVG|AVERAGE|COUNT)\s*\(\s*(?!DISTINCT\b)([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?\s*\)',
+                    m_expr, re.IGNORECASE,
+                ):
+                    if re.match(r'^\s*OVER\s*\(', m_expr[m_fan.end():], re.IGNORECASE):
+                        continue
+                    t_ref = m_fan.group(2).upper()
+                    if t_ref in reach_one:
+                        return (
+                            f"BY_DESIGN_EXCLUDED: {m_fan.group(1).upper()} of '{m_fan.group(2)}.{m_fan.group(3)}' "
+                            f"on a metric anchored on '{alias}' causes fan-out duplication ('{m_fan.group(2)}' is the "
+                            "'one' side of a relationship from the anchor table); the measure must aggregate on "
+                            f"'{m_fan.group(2)}' directly or use COUNT(DISTINCT ...)"
+                        )
 
         # DAX-based checks if dax_expr is available
         if dax_expr:

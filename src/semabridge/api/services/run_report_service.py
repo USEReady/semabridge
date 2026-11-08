@@ -272,6 +272,142 @@ def humanize_drop_reason(record: Dict[str, Any]) -> str:
     )
 
 
+def specific_drop_reason(record: Dict[str, Any]) -> str:
+    """The record's own specific reason, plus its ``detail`` when that adds
+    information -- never just a generic label."""
+    reason = str(record.get("reason") or "").strip()
+    detail = str(record.get("detail") or "").strip()
+    if detail and detail.lower() not in reason.lower():
+        return f"{reason} — {detail}" if reason else detail
+    return reason or humanize_drop_reason(record)
+
+
+def _record_is_expected(record: Dict[str, Any]) -> bool:
+    """by_design flag, falling back to the shared taxonomy for records
+    written before the flag was populated consistently."""
+    if record.get("by_design"):
+        return True
+    from semabridge.core.drop_ledger import classify_drop_reason
+
+    return classify_drop_reason(record.get("reason"), record.get("detail"))
+
+
+def _metric_outcome_summary(
+    model_dropped: List[Dict[str, Any]],
+    ddl_text: str,
+    snapshot_metric_names: Optional[List[str]] = None,
+    prefix: str = "",
+) -> Dict[str, Any]:
+    """Per-model metric outcome split:
+
+    * converted -- metrics with REAL SQL in the deployed DDL (NULL
+      placeholders never count; SemaBridge-generated helpers that are not
+      source metrics are excluded when the snapshot is known);
+    * expected -- by-design failures (Snowflake limitations), with reason;
+    * unexpected -- bugs / data issues, with reason. A NULL placeholder in
+      the DDL with no ledger record is itself an unexpected failure.
+    """
+    from semabridge.core.reconciliation import _extract_deployed_metric_names
+
+    live: set = set()
+    dead: set = set()
+    if ddl_text:
+        live, dead = _extract_deployed_metric_names(ddl_text)
+    snapshot_aliases = {to_alias(n).upper() for n in (snapshot_metric_names or []) if n}
+    if snapshot_aliases:
+        converted_names = {n for n in live if n in snapshot_aliases}
+    else:
+        converted_names = set(live)
+
+    expected: List[Dict[str, Any]] = []
+    unexpected: List[Dict[str, Any]] = []
+    seen: set = set()
+    for record in model_dropped:
+        if record.get("entity_kind") != "metric" or not record.get("entity_name"):
+            continue
+        name = str(record["entity_name"])
+        key = to_alias(name).upper()
+        if key in converted_names or key in seen:
+            continue
+        seen.add(key)
+        item = {
+            "name": f"{prefix}{name}",
+            "reason": specific_drop_reason(record),
+            "stage": record.get("stage"),
+        }
+        (expected if _record_is_expected(record) else unexpected).append(item)
+    for dead_name in sorted(dead):
+        if dead_name not in seen:
+            unexpected.append({
+                "name": f"{prefix}{dead_name}",
+                "reason": "Deployed as a NULL placeholder but no reason was recorded (unexpected — please report).",
+                "stage": "reconciliation",
+            })
+    return {
+        "converted": len(converted_names) if ddl_text else None,
+        "expected": expected,
+        "unexpected": unexpected,
+    }
+
+
+def _merge_metric_outcomes(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    converted_vals = [p["converted"] for p in parts if p.get("converted") is not None]
+    expected = [i for p in parts for i in p.get("expected", [])]
+    unexpected = [i for p in parts for i in p.get("unexpected", [])]
+    grouped = [
+        {"reason": reason, "items": [i["name"] for i in items]}
+        for reason, items in _group_by_first_seen(expected, lambda i: _reason_group_key(i["reason"]))
+    ]
+    return {
+        "converted": sum(converted_vals) if converted_vals else None,
+        "expected_count": len(expected),
+        "unexpected_count": len(unexpected),
+        "expected": expected,
+        "expected_by_reason": grouped,
+        "unexpected": unexpected,
+    }
+
+
+def _reason_group_key(reason: str) -> str:
+    """Group expected failures by their reason category (the text before the
+    first ' — ' detail separator, without the 'placeholder: ' prefix)."""
+    r = str(reason or "").split(" — ", 1)[0]
+    r = re.sub(r"^placeholder:\s*", "", r, flags=re.IGNORECASE)
+    r = re.sub(r"^depends on \[[^\]]*\]:\s*", "depends on another excluded metric: ", r, flags=re.IGNORECASE)
+    return r.strip() or "unspecified"
+
+
+def _metric_outcomes_markdown(outcomes: Dict[str, Any]) -> List[str]:
+    lines: List[str] = ["## Metric Outcomes", ""]
+    converted = outcomes.get("converted")
+    lines.append("| Outcome | Count |")
+    lines.append("|---|---:|")
+    lines.append(f"| ✅ Converted (real SQL in the deployed view) | {converted if converted is not None else 'n/a'} |")
+    lines.append(f"| ⏸️ Expected failures (by design — Snowflake limitation) | {outcomes.get('expected_count', 0)} |")
+    lines.append(f"| ❌ Unexpected failures (bug / data issue) | {outcomes.get('unexpected_count', 0)} |")
+    lines.append("")
+    if outcomes.get("expected"):
+        lines.append("### Expected failures, by reason")
+        lines.append("")
+        for group in outcomes.get("expected_by_reason") or []:
+            lines.append(f"- **{group['reason']}** ({len(group['items'])}): {_names_cell(group['items'])}")
+        lines.append("")
+        lines.append("| Calculation | Specific reason |")
+        lines.append("|---|---|")
+        for item in outcomes["expected"]:
+            lines.append(f"| {_names_cell([item['name']])} | {str(item['reason']).replace('|', chr(92) + '|')} |")
+        lines.append("")
+    if outcomes.get("unexpected"):
+        lines.append("### Unexpected failures")
+        lines.append("")
+        lines.append("| Calculation | Specific reason |")
+        lines.append("|---|---|")
+        for item in outcomes["unexpected"]:
+            lines.append(f"| {_names_cell([item['name']])} | {str(item['reason']).replace('|', chr(92) + '|')} |")
+        lines.append("")
+    return lines
+
+
 def stage_group_label(stage: str, target_label: str = "the destination") -> str:
     template = _STAGE_GROUP_LABELS.get(stage, "During conversion")
     return template.format(target=target_label) if "{target}" in template else template
@@ -660,6 +796,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
     excluded_by_design_by_stage: Dict[str, List[Dict[str, Any]]] = {}
     data_backfill_results: List[Dict[str, Any]] = []
     cortex_validation_results: List[Dict[str, Any]] = []
+    metric_outcome_parts: List[Dict[str, Any]] = []
     target_type = ""
 
     for result in model_results:
@@ -678,6 +815,12 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
                 cortex_validation_results.append({**cortex_entry, "model": model_label})
 
         snap_data = _load_snapshot_data(summary.get("sml_snapshot_id"))
+        metric_outcome_parts.append(_metric_outcome_summary(
+            model_dropped,
+            _extract_ddl_for_result(result, summary),
+            [m.get("unique_name") or m.get("label") for m in (snap_data or {}).get("metrics", [])],
+            prefix=f"{model_label}: " if multi_model and model_label else "",
+        ))
         if snap_data:
             extraction_table_drops = sum(
                 1 for d in model_dropped
@@ -741,6 +884,7 @@ def _gather_run_report_data(run: Dict[str, Any]) -> Dict[str, Any]:
         "data_backfill_results": data_backfill_results,
         "cortex_validation_results": cortex_validation_results,
         "upsert_deltas": _collect_upsert_deltas(model_results),
+        "metric_outcomes": _merge_metric_outcomes(metric_outcome_parts),
     }
 
 
@@ -799,6 +943,9 @@ def build_run_report_data(
                         "name": record.get("entity_name") or "(unnamed)",
                         "entity_kind": record.get("entity_kind"),
                         "reason": humanize_drop_reason(record),
+                        "specific_reason": specific_drop_reason(record),
+                        "detail": record.get("detail"),
+                        "by_design": bool(record.get("by_design")),
                     }
                     for record in records
                 ],
@@ -832,6 +979,10 @@ def build_run_report_data(
             "data_backfill_skipped": backfill_skipped,
             "data_backfill_failed": backfill_failed,
             "data_backfill_ambiguous": backfill_ambiguous,
+            # Converted == metrics with real SQL in the deployed DDL.
+            "metrics_converted": (data.get("metric_outcomes") or {}).get("converted"),
+            "expected_failures": (data.get("metric_outcomes") or {}).get("expected_count", 0),
+            "unexpected_failures": (data.get("metric_outcomes") or {}).get("unexpected_count", 0),
         },
         "sections": {
             "standard": standard,
@@ -839,6 +990,9 @@ def build_run_report_data(
             "needs_review": needs_review,
             "dropped": _stage_sections(dropped_by_stage),
             "excluded_by_design": _stage_sections(excluded_by_design_by_stage),
+            "expected_failures": (data.get("metric_outcomes") or {}).get("expected_by_reason", []),
+            "expected_failure_items": (data.get("metric_outcomes") or {}).get("expected", []),
+            "unexpected_failures": (data.get("metric_outcomes") or {}).get("unexpected", []),
         },
         # Only populated for a run where options.load_source_data was
         # enabled -- empty list (and all three counts 0 above) for every
@@ -1042,6 +1196,15 @@ def generate_run_report_markdown(
             lines.append(f"| ❌ Not included | {not_included_calcs} |")
         lines.append("")
 
+    # --- Metric outcomes: converted / expected / unexpected --------------
+    try:
+        _outcomes = _gather_run_report_data(run).get("metric_outcomes")
+    except Exception:  # noqa: BLE001 - never fail the report over this section
+        logger.debug("Run report: metric outcome summary unavailable", exc_info=True)
+        _outcomes = None
+    if _outcomes and (_outcomes.get("converted") is not None or _outcomes.get("expected") or _outcomes.get("unexpected")):
+        lines.extend(_metric_outcomes_markdown(_outcomes))
+
     # --- Converted calculations ----------------------------------------
     lines.append("## Converted Calculations")
     lines.append("")
@@ -1140,7 +1303,11 @@ def generate_run_report_markdown(
             lines.append("")
             for record in records:
                 name = record.get("entity_name") or "(unnamed)"
-                lines.append(f"- **{name}** — {humanize_drop_reason(record)}")
+                detail = str(record.get("detail") or "").strip()
+                lines.append(
+                    f"- **{name}** — {humanize_drop_reason(record)}"
+                    + (f" ({detail})" if detail else "")
+                )
             lines.append("")
 
     upsert_deltas = _collect_upsert_deltas(model_results)

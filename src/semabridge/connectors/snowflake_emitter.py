@@ -35,8 +35,9 @@ from semabridge.connectors.measure_sync import MeasureSynchronizer
 from semabridge.connectors.ddl_builder import SemanticViewBuilder
 from semabridge.connectors.tables_clause_builder import resolve_source_table_mapping
 from semabridge.connectors.translator import MetricExpressionTranslator
-from semabridge.core.drop_ledger import DropLedger, DropStage
+from semabridge.core.drop_ledger import DropLedger, DropStage, classify_drop_reason
 from semabridge.connectors.snowflake_emitter_parts import renderers as _renderers
+from semabridge.connectors.snowflake_emitter_parts.deploy_isolation import DeployIsolationMixin
 
 if TYPE_CHECKING:
     from semabridge.intermediate.models import OSIModel
@@ -80,7 +81,7 @@ class _NamespacedPbixTableReader:
         return getattr(self._inner, attr)
 
 
-class SnowflakeEmitter(BaseEmitter):
+class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
     """
     Orchestrates the emission of SML models to Snowflake artifacts.
     Acts as a Facade delegating to specialized domain managers.
@@ -330,6 +331,9 @@ class SnowflakeEmitter(BaseEmitter):
             self._dropped_metrics = []
             self._smoke_test_warnings = []
             self.cortex_validation_results = []
+            # Post-create problems on an already-live view (see
+            # DeployIsolationMixin._run_cortex_safety_validation).
+            self.deployment_warnings = []
             # Same reset reasoning as the two lists above -- a reused emitter
             # instance must not carry a PREVIOUS deploy's backfill outcomes
             # into this one's result (see engine/deployment/snowflake.py's
@@ -672,18 +676,6 @@ class SnowflakeEmitter(BaseEmitter):
                             "auto_add_missing_dims is disabled: SemaBridge is strictly prohibited "
                             "from executing ALTER TABLE or modifying physical data tables."
                         )
-                        if _added_any:
-                            # Refresh live schema so the re-generated DDL picks up the new columns
-                            logger.info("Refreshing live schema after adding missing dimension columns")
-                            _fresh_meta = self.schema_manager._fetch_schema_metadata(cur)
-                            self.semantic_view_builder.live_schema_metadata.update(_fresh_meta or {})
-                            self.semantic_view_builder.missing_dims.clear()
-                            # Regenerate DDLs with the updated schema
-                            if is_osi:
-                                ddls = self.semantic_view_builder.generate_ddls_from_osi(model)
-                            else:
-                                ddls = self.semantic_view_builder.generate_ddls(model)
-                            logger.info("Regenerated %d DDL statement(s) after schema update", len(ddls))
 
                 # Step 2c: UPSERT preserve only skips existing base-table DDLs.
                 if preserve_existing and existing_tables:
@@ -804,7 +796,10 @@ class SnowflakeEmitter(BaseEmitter):
                 # single transaction here, so a failure after idx>0 can
                 # leave real, already-committed objects behind.
                 # Static pre-deploy check: assert every column reference in the DDL exists in INFORMATION_SCHEMA.COLUMNS
-                self._validate_ddl_against_information_schema(cur, ddls)
+                # Unresolved references are isolated per item (metric nulled
+                # with a COMMENT, others removed) and ledgered -- never a
+                # whole-deploy failure.
+                ddls = self._validate_ddl_against_information_schema(cur, ddls)
 
                 _ddls_with_sql_total = sum(1 for _s in ddls if _s)
                 _ddls_executed_count = 0
@@ -812,7 +807,10 @@ class SnowflakeEmitter(BaseEmitter):
                     if not sql:
                         continue
                     try:
-                        self.connection_manager._execute_sql(cur, sql, context=f"DDL[{idx}]")
+                        # Bounded remediation: a Snowflake rejection is mapped
+                        # to the offending item(s), which are isolated with
+                        # the Snowflake error as the reason, then retried.
+                        ddls[idx] = self._execute_with_isolation(cur, sql, f"DDL[{idx}]")
                         _ddls_executed_count += 1
                     except Exception as ddl_exc:
                         if _ddls_executed_count > 0:
@@ -848,8 +846,15 @@ class SnowflakeEmitter(BaseEmitter):
                     _qualified_name = _m.group(1)
                     _last_qualified_view_name = _qualified_name
                     # Run built-in Cortex Analyst safety validation (4a YAML verify-only & 4b element compilation)
-                    _remediated_ddl = self._run_cortex_safety_validation(cur, _qualified_name, _ddl_sql, path_type)
-                    ddls[_idx] = _remediated_ddl
+                    # The view is already live here: a post-create check
+                    # problem must never turn this into a FAILED run.
+                    try:
+                        ddls[_idx] = self._run_cortex_safety_validation(cur, _qualified_name, _ddl_sql, path_type)
+                    except Exception as _cortex_exc:  # noqa: BLE001
+                        self._add_deploy_warning(
+                            f"{_qualified_name}: post-create Cortex Analyst checks could not complete: "
+                            f"{' '.join(str(_cortex_exc).split())[:300]}"
+                        )
 
                 # Step 6b: Capture the just-deployed DDL via GET_DDL, on the
                 # SAME live connection/cursor Step 3 already executed DDL
@@ -1029,10 +1034,11 @@ class SnowflakeEmitter(BaseEmitter):
         error_text = " ".join(str(exc).split())
         for dropped_metric_name in nulled_metric_names:
             self._dropped_metrics.append({"metric": dropped_metric_name, "reason": str(exc)})
+            reason = f"placeholder: rejected by Snowflake: {error_text[:240]}"
+            detail = f"Emitted as CAST(NULL AS DOUBLE) after Snowflake rejected '{invalid_id}'."
             self.drop_ledger.record(
                 "metric", dropped_metric_name, DropStage.DDL_DEPLOYMENT,
-                f"placeholder: rejected by Snowflake: {error_text[:240]}",
-                detail=f"Emitted as CAST(NULL AS DOUBLE) after Snowflake rejected '{invalid_id}'.",
+                reason, detail=detail, by_design=classify_drop_reason(reason, detail),
             )
 
     def _log_dropped_metrics_summary(self, path_type: str, model_name: str) -> None:
@@ -1098,197 +1104,7 @@ class SnowflakeEmitter(BaseEmitter):
                 path_type, model_name, summary_exc,
             )
 
-    @staticmethod
-    def _extract_semantic_view_elements(ddl: str) -> Tuple[List[str], List[str]]:
-        """Extract dimension and metric identifiers ('alias.name') from CREATE SEMANTIC VIEW DDL."""
-        dim_identifiers: List[str] = []
-        metric_identifiers: List[str] = []
-
-        in_dims, in_metrics = False, False
-        for raw_line in ddl.splitlines():
-            line = raw_line.strip()
-            upper = line.upper()
-            if upper.startswith("DIMENSIONS (") or upper == "DIMENSIONS(":
-                in_dims, in_metrics = True, False
-                continue
-            elif upper.startswith("METRICS (") or upper == "METRICS(":
-                in_metrics, in_dims = True, False
-                continue
-            elif in_dims and upper.startswith(")"):
-                in_dims = False
-                continue
-            elif in_metrics and upper.startswith(")"):
-                in_metrics = False
-                continue
-
-            if not line or line.startswith("--") or line.startswith("/*"):
-                continue
-            m = re.match(r'([A-Za-z0-9_"]+)\.([A-Za-z0-9_"]+)\s+AS\s+', line, re.IGNORECASE)
-            if m:
-                ident = f"{m.group(1)}.{m.group(2)}"
-                if in_dims:
-                    dim_identifiers.append(ident)
-                elif in_metrics:
-                    metric_identifiers.append(ident)
-
-        return dim_identifiers, metric_identifiers
-
-    @staticmethod
-    def _null_metric_in_ddl(ddl: str, metric_ident: str, reason: str) -> str:
-        parts = metric_ident.split(".", 1)
-        if len(parts) != 2:
-            return ddl
-        alias_clean = parts[0].strip().strip('"')
-        col_clean = parts[1].strip().strip('"')
-
-        lines = ddl.splitlines()
-        in_metrics = False
-        new_lines = []
-
-        pattern = re.compile(
-            rf'^\s*"?{re.escape(alias_clean)}"?\."?{re.escape(col_clean)}"?\s+AS\s+',
-            re.IGNORECASE
-        )
-
-        for line in lines:
-            stripped = line.strip().upper()
-            if stripped.startswith('METRICS (') or stripped == 'METRICS(':
-                in_metrics = True
-            elif in_metrics and stripped.startswith(')'):
-                in_metrics = False
-
-            if in_metrics and pattern.match(line):
-                prefix_match = re.match(r'^(\s*"?[A-Za-z0-9_]+"??\."?.*?"?\s+AS\s+)', line, re.IGNORECASE)
-                prefix = prefix_match.group(1) if prefix_match else f'  {alias_clean}."{col_clean}" AS '
-                trailing_comma = ',' if line.rstrip().endswith(',') else ''
-                syn_match = re.search(r'\b(WITH\s+SYNONYMS\s*=\s*\(.*?\))', line, re.IGNORECASE)
-                syn_clause = f" {syn_match.group(1)}" if syn_match else ""
-                new_lines.append(f'{prefix}CAST(NULL AS DOUBLE) /* rejected by Cortex validation: {reason} */{syn_clause}{trailing_comma}')
-            else:
-                new_lines.append(line)
-
-        return '\n'.join(new_lines)
-
-    def _run_cortex_safety_validation(
-        self,
-        cursor: Any,
-        qualified_view_name: str,
-        ddl_sql: str,
-        path_type: str,
-    ) -> str:
-        """Run Cortex Analyst safety checks on deployed semantic view (read-only, no table data).
-
-        4a: YAML round trip + verify-only validation of the deployed view.
-        4b: Zero-row compile check per element (dimensions and metrics).
-        Remediation:
-            - If a metric fails: turn just that metric into a NULL placeholder and redeploy.
-            - If a dimension/relationship/key fails: stop sync with exact error.
-        """
-        view_name = qualified_view_name.split(".")[-1].strip().strip('"')
-        fq_view = f'"{self.config.database}"."{self.config.schema_name}"."{view_name}"'
-
-        dim_identifiers, metric_identifiers = self._extract_semantic_view_elements(ddl_sql)
-        logger.info(
-            "[%s] Starting Cortex Analyst safety check for %s (%d dimensions, %d metrics)",
-            path_type, fq_view, len(dim_identifiers), len(metric_identifiers)
-        )
-
-        # 4b: Dimension compile checks (zero-row)
-        for dim in dim_identifiers:
-            check_sql = f"SELECT * FROM SEMANTIC_VIEW({fq_view} DIMENSIONS {dim}) LIMIT 0"
-            try:
-                self.connection_manager._execute_sql(cursor, check_sql, context=f"cortex_safety:dim:{dim}")
-            except Exception as exc:
-                logger.error("[%s] Cortex Analyst validation rejected dimension '%s' in %s: %s", path_type, dim, fq_view, exc)
-                raise ConnectorError(f"Cortex Analyst validation failed for dimension '{dim}': {exc}") from exc
-
-        # 4b: Metric compile checks (zero-row)
-        failed_metrics: List[Tuple[str, str]] = []
-        for metric in metric_identifiers:
-            check_sql = f"SELECT * FROM SEMANTIC_VIEW({fq_view} METRICS {metric}) LIMIT 0"
-            try:
-                self.connection_manager._execute_sql(cursor, check_sql, context=f"cortex_safety:metric:{metric}", expected_failure=True)
-            except Exception as exc:
-                err_msg = str(exc)
-                if "010277" in err_msg or "Required dimensions" in err_msg:
-                    m = re.search(r"Required dimensions\s*\[(.*?)\]", err_msg)
-                    if m:
-                        req_dims_raw = m.group(1).strip()
-                        dims_clause = ", ".join(d.strip() for d in req_dims_raw.split(","))
-                        retry_sql = f"SELECT * FROM SEMANTIC_VIEW({fq_view} DIMENSIONS {dims_clause} METRICS {metric}) LIMIT 0"
-                        try:
-                            self.connection_manager._execute_sql(
-                                cursor, retry_sql, context=f"cortex_safety:metric_with_dims:{metric}", expected_failure=True
-                            )
-                            continue  # Window metric compiles cleanly with its required dimensions!
-                        except Exception as retry_exc:
-                            failed_metrics.append((metric, str(retry_exc)))
-                            continue
-                failed_metrics.append((metric, str(exc)))
-
-        # If any metric failed, remediate by setting to NULL placeholder and redeploying
-        if failed_metrics:
-            logger.warning(
-                "[%s] %d metric(s) failed Cortex Analyst compile check in %s. Remediating with NULL placeholder...",
-                path_type, len(failed_metrics), fq_view
-            )
-            for m_ident, m_err in failed_metrics:
-                clean_name = m_ident.split(".")[-1].strip('"')
-                reason_clean = " ".join(str(m_err).split())[:240]
-                self.drop_ledger.record(
-                    "metric",
-                    clean_name,
-                    DropStage.DDL_DEPLOYMENT,
-                    f"placeholder: rejected by Cortex validation: {reason_clean}",
-                    detail=f"Emitted as CAST(NULL AS DOUBLE) after Cortex validation rejected '{m_ident}'.",
-                )
-                self._dropped_metrics.append({"metric": clean_name, "reason": f"rejected by Cortex validation: {m_err}"})
-                ddl_sql = self._null_metric_in_ddl(ddl_sql, m_ident, reason_clean)
-
-            # Redeploy updated DDL
-            self.connection_manager._execute_sql(cursor, ddl_sql, context=f"cortex_safety:remediation_deploy:{view_name}")
-
-            # Re-verify remediated metrics
-            for m_ident, _ in failed_metrics:
-                check_sql = f"SELECT * FROM SEMANTIC_VIEW({fq_view} METRICS {m_ident}) LIMIT 0"
-                self.connection_manager._execute_sql(cursor, check_sql, context=f"cortex_safety:verify_remediated:{m_ident}")
-
-        # 4a: YAML round trip + verify-only validation
-        read_yaml_sql = f"SELECT SYSTEM$READ_YAML_FROM_SEMANTIC_VIEW('{fq_view}')"
-        self.connection_manager._execute_sql(cursor, read_yaml_sql, context=f"cortex_safety:read_yaml:{view_name}")
-        yaml_row = cursor.fetchone()
-        if not yaml_row or not yaml_row[0]:
-            raise ConnectorError(f"Cortex Analyst validation failed: could not read YAML from '{fq_view}'")
-        yaml_str = yaml_row[0]
-
-        schema_target = f'"{self.config.database}"."{self.config.schema_name}"'
-        verify_sql = "CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(%s, %s, TRUE)"
-        try:
-            self.connection_manager._execute_sql(
-                cursor, verify_sql, params=(schema_target, yaml_str), context=f"cortex_safety:verify_yaml:{view_name}"
-            )
-        except Exception as exc:
-            logger.error("[%s] Cortex Analyst verify-only YAML validation rejected %s: %s", path_type, fq_view, exc)
-            raise ConnectorError(f"Cortex Analyst YAML verification failed for semantic view '{fq_view}': {exc}") from exc
-
-        # Validation passed! Record summary
-        summary = {
-            "view_name": view_name,
-            "qualified_name": fq_view,
-            "yaml_verified": True,
-            "dimensions_checked": len(dim_identifiers),
-            "dimensions_passed": len(dim_identifiers),
-            "metrics_checked": len(metric_identifiers),
-            "metrics_passed": len(metric_identifiers) - len(failed_metrics),
-            "remediated_metrics": [m.split(".")[-1].strip('"') for m, _ in failed_metrics],
-        }
-        self.cortex_validation_results.append(summary)
-        logger.info(
-            "[%s] Cortex Analyst safety check PASSED for %s (YAML: valid, %d dims valid, %d metrics valid, %d remediated)",
-            path_type, fq_view, len(dim_identifiers), len(metric_identifiers) - len(failed_metrics), len(failed_metrics)
-        )
-        return ddl_sql
-
+    # (moved to snowflake_emitter_parts/deploy_isolation.py: DeployIsolationMixin)
     def _smoke_test_semantic_view(self, cursor: Any, view_name: str, ddl: str = "") -> Optional[str]:
         """Run a lightweight query against the semantic view to catch runtime errors.
 
@@ -2240,215 +2056,7 @@ class SnowflakeEmitter(BaseEmitter):
             # point this exception was raised.
             return [f"Validation error: {str(exc)}"], []
 
-    def _validate_ddl_against_information_schema(self, cur: Any, ddls: List[str]) -> None:
-        """Static pre-deploy check: assert every column reference in the DDL exists in INFORMATION_SCHEMA.COLUMNS.
-        
-        Any unresolved reference = fail, naming the element.
-        """
-        table_columns: Dict[str, Set[str]] = {}
-        target_db = str(self.config.database or "").strip().upper()
-        target_schema = str(self.config.schema_name or "").strip().upper()
-        try:
-            # Query the user-selected schema for this project (supporting cross-schema if configured)
-            if target_db and target_schema:
-                cur.execute(
-                    "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                    "WHERE UPPER(TABLE_CATALOG) = %s AND UPPER(TABLE_SCHEMA) = %s",
-                    (target_db, target_schema)
-                )
-            elif target_schema:
-                cur.execute(
-                    "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                    "WHERE UPPER(TABLE_SCHEMA) = %s",
-                    (target_schema,)
-                )
-            else:
-                cur.execute(
-                    "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = CURRENT_DATABASE()"
-                )
-            for s, t, c in cur.fetchall():
-                table_columns.setdefault(t.upper(), set()).add(c.upper())
-                table_columns.setdefault(f"{s.upper()}.{t.upper()}", set()).add(c.upper())
-        except Exception as e:
-            try:
-                cur.execute(
-                    "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = %s",
-                    (target_schema or "PUBLIC",)
-                )
-                for t, c in cur.fetchall():
-                    table_columns.setdefault(t.upper(), set()).add(c.upper())
-            except Exception as inner_e:
-                logger.warning("Could not query INFORMATION_SCHEMA.COLUMNS for static pre-deploy check: %s", inner_e)
-                return
-
-        all_errors: List[str] = []
-        for ddl in ddls:
-            if not ddl or "SEMANTIC VIEW" not in ddl.upper():
-                continue
-
-            # 1. Parse TABLES clause
-            tables_match = re.search(r'TABLES\s*\((.*?)\)\s*(?:RELATIONSHIPS|DIMENSIONS|METRICS)', ddl, re.DOTALL | re.IGNORECASE)
-            if not tables_match:
-                continue
-                
-            tables_clause = tables_match.group(1)
-            table_map: Dict[str, str] = {}
-            for line in tables_clause.split('\n'):
-                line_clean = line.strip().rstrip(',')
-                if not line_clean:
-                    continue
-                    
-                pk_cols: List[str] = []
-                pk_match = re.search(r'PRIMARY\s+KEY\s*\((.*?)\)', line_clean, re.IGNORECASE)
-                if pk_match:
-                    pk_cols = [c.strip().strip('"').upper() for c in pk_match.group(1).split(',') if c.strip()]
-                    line_no_pk = line_clean[:pk_match.start()].strip()
-                else:
-                    line_no_pk = line_clean
-                    
-                as_match = re.search(r'^\s*([A-Za-z0-9_]+)\s+AS\s+([^\s]+)', line_no_pk, re.IGNORECASE)
-                if as_match:
-                    alias = as_match.group(1).upper()
-                    target = as_match.group(2).split('.')[-1].strip('"').upper()
-                    table_map[alias] = target
-                else:
-                    first_token = line_no_pk.split()[0].split('.')[-1].strip('"').upper()
-                    alias = first_token
-                    table_map[alias] = first_token
-
-                phys_table = table_map[alias]
-                valid_cols = table_columns.get(phys_table, set())
-                for pk_col in pk_cols:
-                    if valid_cols and pk_col not in valid_cols:
-                        all_errors.append(f"Primary key '{alias}.{pk_col}' does not exist in bound physical table '{phys_table}'")
-
-            # 2. Parse RELATIONSHIPS clause
-            reach_graph: Dict[str, Set[str]] = {}
-            rels_match = re.search(r'RELATIONSHIPS\s*\((.*?)\)\s*(?:DIMENSIONS|METRICS)', ddl, re.DOTALL | re.IGNORECASE)
-            if rels_match:
-                rels_clause = rels_match.group(1)
-                for line in rels_clause.split('\n'):
-                    line_clean = line.strip().rstrip(',')
-                    if not line_clean:
-                        continue
-                    m = re.search(r'([A-Za-z0-9_]+)\s+AS\s+([A-Za-z0-9_]+)\s*\((.*?)\)\s+REFERENCES\s+([A-Za-z0-9_]+)\s*\((.*?)\)', line_clean, re.IGNORECASE)
-                    if m:
-                        rel_name, from_alias, from_cols, to_alias, to_cols = m.groups()
-                        from_alias = from_alias.upper()
-                        to_alias = to_alias.upper()
-                        reach_graph.setdefault(from_alias, set()).add(to_alias)
-                        from_phys = table_map.get(from_alias, from_alias)
-                        to_phys = table_map.get(to_alias, to_alias)
-                        
-                        from_valid = table_columns.get(from_phys, set())
-                        to_valid = table_columns.get(to_phys, set())
-                        
-                        for c in [x.strip().strip('"').upper() for x in from_cols.split(',') if x.strip()]:
-                            if from_valid and c not in from_valid:
-                                all_errors.append(f"Relationship '{rel_name}' (from): column '{from_alias}.{c}' does not exist in bound physical table '{from_phys}'")
-                        for c in [x.strip().strip('"').upper() for x in to_cols.split(',') if x.strip()]:
-                            if to_valid and c not in to_valid:
-                                all_errors.append(f"Relationship '{rel_name}' (to): column '{to_alias}.{c}' does not exist in bound physical table '{to_phys}'")
-
-            # 3. Parse DIMENSIONS clause & record declared dimensions
-            declared_dims: Set[Tuple[str, str]] = set()
-            dims_match = re.search(r'DIMENSIONS\s*\((.*?)\)\s*METRICS', ddl, re.DOTALL | re.IGNORECASE)
-            if dims_match:
-                dims_clause = dims_match.group(1)
-                for line in dims_clause.split('\n'):
-                    line_clean = line.strip().rstrip(',')
-                    if not line_clean:
-                        continue
-                    m = re.search(r'([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))\s+AS\s+([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))', line_clean, re.IGNORECASE)
-                    if m:
-                        alias = m.group(1).upper()
-                        dim_name = m.group(2) or m.group(3)
-                        declared_dims.add((alias, dim_name.upper()))
-                        expr_alias = m.group(4).upper()
-                        phys_col = (m.group(5) or m.group(6)).upper()
-                        
-                        bound_tbl = table_map.get(expr_alias, expr_alias)
-                        valid_cols = table_columns.get(bound_tbl, set())
-                        if valid_cols and phys_col not in valid_cols:
-                            all_errors.append(f"Dimension '{alias}.{dim_name}': referenced physical column '{expr_alias}.{phys_col}' does not exist in bound physical table '{bound_tbl}'")
-
-            # 4. Parse METRICS clause (including NON ADDITIVE BY dimension checks)
-            declared_metrics: Set[Tuple[str, str]] = set()
-            mets_match = re.search(r'METRICS\s*\((.*)\)', ddl, re.DOTALL | re.IGNORECASE)
-            if mets_match:
-                mets_clause = mets_match.group(1)
-                metric_entries = []
-                for line in mets_clause.split('\n'):
-                    line_clean = line.strip().rstrip(',')
-                    if not line_clean:
-                        continue
-                    m = re.search(r'([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))(?:\s+NON\s+ADDITIVE\s+BY\s*\((.*?)\))?\s+AS\s+(.*)', line_clean, re.IGNORECASE)
-                    if m:
-                        alias = m.group(1).upper()
-                        metric_name = m.group(2) or m.group(3)
-                        declared_metrics.add((alias, metric_name.upper()))
-                        metric_entries.append((alias, metric_name, m.group(4), m.group(5)))
-
-                for alias, metric_name, non_additive_part, expr in metric_entries:
-                    # Check NON ADDITIVE BY references a declared dimension
-                    if non_additive_part and declared_dims:
-                        nad_m = re.search(r'([A-Za-z0-9_]+)\.(?:"([^"]+)"|([A-Za-z0-9_]+))', non_additive_part)
-                        if nad_m:
-                            nad_alias = nad_m.group(1).upper()
-                            nad_col = (nad_m.group(2) or nad_m.group(3)).upper()
-                            if (nad_alias, nad_col) not in declared_dims:
-                                all_errors.append(
-                                    f"Metric '{alias}.{metric_name}': NON ADDITIVE BY references '{nad_alias}.{nad_col}' which is not a declared dimension in DIMENSIONS"
-                                )
-
-                    # Check granularity reachability (Snowflake 010219):
-                    # Metric's anchor table must reach (many -> one) every table whose columns it aggregates
-                    agg_tables = set()
-                    for agg_m in re.finditer(r'\b(?:SUM|AVG|COUNT|MIN|MAX|MEDIAN)\s*\((.*?)\)', expr, re.IGNORECASE):
-                        agg_body = agg_m.group(1)
-                        for t_match in re.findall(r'([A-Za-z0-9_]+)\."?[A-Za-z0-9_]+"?', agg_body):
-                            t_upper = t_match.upper()
-                            if t_upper in table_map and t_upper != alias:
-                                agg_tables.add(t_upper)
-                    if agg_tables:
-                        reachable = {alias}
-                        stack = [alias]
-                        while stack:
-                            curr = stack.pop()
-                            for nxt in reach_graph.get(curr, ()):
-                                if nxt not in reachable:
-                                    reachable.add(nxt)
-                                    stack.append(nxt)
-                        unreachable = sorted(t for t in agg_tables if t not in reachable)
-                        if unreachable:
-                            all_errors.append(
-                                f"Metric '{alias}.{metric_name}': aggregates {unreachable}, not reachable (many -> one) from '{alias}'. "
-                                f"Snowflake 010219: metric must sit on the 'many' side table that reaches all aggregated tables."
-                            )
-
-                    expr = _sb_strip_semantic_refs(expr, ddl, all_errors, f"{alias}.{metric_name}")  # >>> SB_PREDEPLOY_SEMANTIC_REFS
-                    for talias, phys_tbl in table_map.items():
-                        col_refs = re.findall(rf'\b{re.escape(talias)}\."([^"]+)"', expr, re.IGNORECASE)
-                        valid_cols = table_columns.get(phys_tbl, set())
-                        for cr in col_refs:
-                            cr_u = cr.upper()
-                            # In Snowflake semantic views (e.g. B1 window metrics), a metric expression
-                            # can validly reference another declared metric of the view (e.g. CASES."CASE_COUNT")
-                            # or a declared dimension of the view (e.g. PRODUCTS."PRODUCTS_PRODUCTSEQ" in PARTITION BY EXCLUDING).
-                            if (talias.upper(), cr_u) in declared_metrics or any(m_name == cr_u for _, m_name in declared_metrics):
-                                continue
-                            if (talias.upper(), cr_u) in declared_dims or any(d_name == cr_u for _, d_name in declared_dims):
-                                continue
-                            if valid_cols and cr_u not in valid_cols:
-                                all_errors.append(f"Metric '{alias}.{metric_name}': referenced column '{talias}.{cr}' does not exist in bound physical table '{phys_tbl}'")
-
-        if all_errors:
-            raise ConnectorError(
-                f"Static pre-deploy check failed with {len(all_errors)} unresolved reference(s):\n"
-                + "\n".join(f"  - {err}" for err in all_errors)
-            )
-        logger.info("✅ Static pre-deploy check PASSED: all referenced columns exist in INFORMATION_SCHEMA.COLUMNS")
-
+    # (moved to snowflake_emitter_parts/deploy_isolation.py: DeployIsolationMixin)
     def _filter_ddls_for_existing_tables(self, ddls: list, existing_tables: dict) -> list:
         """
         Filter DDLs to skip CREATE TABLE statements for tables that already exist.
