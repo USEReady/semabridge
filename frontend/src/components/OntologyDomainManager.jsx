@@ -1296,9 +1296,14 @@ export default function OntologyDomainManager() {
                             <Table size={14} className="text-accent-blue" />
                             {c.name}
                           </span>
-                          <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-surface border border-main text-secondary">
-                            {c.physical_table}
-                          </span>
+                          {(c.physical_table || c.maps_to?.length > 0) && (
+                            <span
+                              className="font-mono text-[11px] px-2 py-0.5 rounded bg-surface border border-main text-secondary"
+                              title="Model table this concept is bound to"
+                            >
+                              {c.physical_table || c.maps_to.join(', ')}
+                            </span>
+                          )}
                         </div>
                         <p className="text-secondary text-[11px] m-0">{c.description || 'Core physical concept'}</p>
                         {c.attributes?.length > 0 && (
@@ -1308,7 +1313,12 @@ export default function OntologyDomainManager() {
                               {c.attributes.map((attr, aIdx) => (
                                 <div key={aIdx} className="p-1.5 rounded bg-surface border border-main flex items-center justify-between">
                                   <span className="text-primary">{attr.name}</span>
-                                  <span className="text-tertiary text-[10px]">{attr.data_type}</span>
+                                  {/* The column binding is what decides where the ontology lands;
+                                      data_type defaults to VARCHAR when the YAML omits it, so it
+                                      is only shown when there is no binding. */}
+                                  <span className="text-tertiary text-[10px]" title={attr.maps_to?.length ? 'Bound model column' : 'Declared type'}>
+                                    {attr.maps_to?.length ? `→ ${attr.maps_to.join(', ')}` : attr.data_type}
+                                  </span>
                                 </div>
                               ))}
                             </div>
