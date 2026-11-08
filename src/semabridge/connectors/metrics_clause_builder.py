@@ -564,11 +564,25 @@ class MetricsClauseBuilder:
                         reason = getattr(metric, "sync_failure_reason", None) or "not applicable: not translatable"
                         failure = (reason, None)
                 elif not self._is_scalar_metric_sql(expr):
-                    failure = (
-                        "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
-                        "which Snowflake's semantic-view METRICS clause does not support.",
-                        expr[:200],
-                    )
+                    _up = f" {expr.upper()} "
+                    if (" OVER " in _up or " OVER(" in _up or "PARTITION BY" in _up) and not any(
+                        t in _up for t in (" SELECT ", " FROM ", " JOIN ", " WITH ", " UNION ")
+                    ):
+                        # e.g. ALLEXCEPT -> SUM(x) OVER (PARTITION BY col): DAX keeps
+                        # only some filters, which a semantic-view metric can only
+                        # express as OVER (PARTITION BY EXCLUDING <dimensions>).
+                        failure = (
+                            "not applicable: window calculation that keeps only some filters "
+                            "(e.g. ALLEXCEPT) — Snowflake semantic-view metrics only support "
+                            "window metrics of the form OVER (PARTITION BY EXCLUDING <dimensions>)",
+                            expr[:200],
+                        )
+                    else:
+                        failure = (
+                            "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
+                            "which Snowflake's semantic-view METRICS clause does not support.",
+                            expr[:200],
+                        )
                 else:
                     reason = (
                         self._detect_untranslated_dax_syntax(expr)
