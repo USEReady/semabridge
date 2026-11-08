@@ -3035,12 +3035,21 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         # Requirement: If a join would duplicate fact rows (e.g. Sentiment onto SalesFact),
         # don't include that column; drop it with a reason.
         if join_state is not None:
+            # By design (never invent a value Power BI wouldn't compute): a
+            # non-unique target key has no single related row, so no
+            # pre-aggregate (AVG/MODE/...) is a faithful RELATED() stand-in.
+            drop_reason = (
+                f"Join from '{target_dataset}' to '{source_dataset}' is not PK-safe "
+                f"(target key uniqueness not proven) and would duplicate fact rows (fan-out); "
+                f"dropped column '{precomputed_column}'"
+            )
             self.drop_ledger.record(
                 "column",
                 precomputed_column,
                 DropStage.SCHEMA_VALIDATION,
-                f"Join from '{target_dataset}' to '{source_dataset}' is not PK-safe and would duplicate fact rows (fan-out); dropped column '{precomputed_column}'",
+                drop_reason,
                 dataset=target_dataset,
+                by_design=classify_drop_reason(drop_reason),
             )
             logger.info(
                 "Dropped precomputed column '%s' on '%s': join to '%s' is not PK-safe and would fan out fact rows",
@@ -3376,9 +3385,22 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
             )
 
             shapes = discover_time_intelligence_shapes(getattr(model, "metrics", []) or [])
-            if shapes and fact_date_col:
+            # MAX_DATE is needed when flag columns are built from it (shapes)
+            # OR when an already-translated metric on this fact table cites the
+            # anchor directly (e.g. an inline `MAX_DATE` rendering from a later
+            # translation tier) -- dropping the view in that case would leave
+            # the metric referencing a column that never exists.
+            metric_cites_max_date = any(
+                re.search(r'\bMAX_DATE\b', str(getattr(m, "sql_expression", "") or ""), re.IGNORECASE)
+                for m in getattr(model, "metrics", []) or []
+                if not getattr(m, "dataset", None)
+                or str(getattr(m, "dataset", "")).casefold() == str(fact_table).casefold()
+            )
+            if (shapes or metric_cites_max_date) and fact_date_col:
+                # COALESCE: an empty / all-NULL date column anchors at
+                # CURRENT_DATE() at query time instead of a NULL anchor.
                 anchor_joins.append(
-                    f'CROSS JOIN (SELECT MAX("{fact_date_col}") AS "MAX_DATE" '
+                    f'CROSS JOIN (SELECT COALESCE(MAX("{fact_date_col}"), CURRENT_DATE()) AS "MAX_DATE" '
                     f'FROM {fact_source_ref}) anchor_max'
                 )
                 max_date_sql = 'anchor_max."MAX_DATE"'

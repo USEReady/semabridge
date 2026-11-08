@@ -119,6 +119,41 @@ def test_metric_inlining_prevents_infinite_loop_on_table_column_same_as_metric_n
 
     pruned = builder._prune_unresolved_metric_lines(metrics_lines, metric_name_set)
     assert len(pruned) == 4
-    at05_line = [l for l in pruned if "ATINDICATOR05" in l][0]
-    assert 'AVG(SENTIMENT."SENTIMENT")' in at05_line
+    at05_line = [l for l in pruned if '"ATINDICATOR05"' in l][0]
+    # Inlining AVG(SENTIMENT."SENTIMENT") into another metric is invalid in
+    # Snowflake: inside an aggregate, T."SENTIMENT" resolves to the METRIC of
+    # that name, not the physical column (error 010220). Without schema
+    # context the pruner cannot see the clash up front, so the metric must
+    # fail closed with that specific reason -- never ship the inlined form.
+    assert 'AVG(SENTIMENT."SENTIMENT")' not in at05_line
+    assert "CAST(NULL AS DOUBLE)" in at05_line
+    assert "010220" in at05_line
+
+
+def test_metric_reference_is_kept_not_inlined_when_metric_name_clashes_with_a_column():
+    """With schema context (as in a real build), the metric/column name clash
+    is detected up front: the referencing metric keeps a plain metric
+    reference (valid in Snowflake) instead of inlining the clashing
+    aggregate -- so it still deploys instead of becoming a placeholder."""
+    id_sanitizer = IdentifierSanitizer()
+    builder = MetricsClauseBuilder(
+        id_sanitizer,
+        _DummySchema(),
+        SemanticDDLSanitizer(id_sanitizer),
+        translator=None,
+        config=None,
+        drop_ledger=DropLedger(),
+    )
+    builder._dataset_col_lookup = {"Sentiment": {"SENTIMENT"}}
+
+    metrics_lines = [
+        '  SENTIMENT."SENTIMENT" AS AVG(SENTIMENT."SENTIMENT")',
+        '  SENTIMENT."ATINDICATOR05" AS CASE WHEN SENTIMENT."SENTIMENT" < 65 THEN 1 ELSE 3 END',
+    ]
+    pruned = builder._prune_unresolved_metric_lines(metrics_lines, {"SENTIMENT", "ATINDICATOR05"})
+
+    assert len(pruned) == 2
+    at05_line = [l for l in pruned if '"ATINDICATOR05"' in l][0]
+    assert 'CASE WHEN SENTIMENT."SENTIMENT" < 65' in at05_line
+    assert "CAST(NULL AS DOUBLE)" not in at05_line
 

@@ -386,10 +386,15 @@ def test_identify_fact_table_ignores_substring_false_positives():
     from semabridge.core.settings import SnowflakeConfig
 
     model = SimpleNamespace(
+        # Real columns: a dataset with no columns is treated as a virtual
+        # (measures-only) table and is never an enrichment target.
         datasets=[
-            SimpleNamespace(unique_name="Manufacturer"),
-            SimpleNamespace(unique_name="Artifact"),
-            SimpleNamespace(unique_name="Orders"),
+            SimpleNamespace(unique_name="Manufacturer", columns=[SimpleNamespace(unique_name="MfgKey")]),
+            SimpleNamespace(unique_name="Artifact", columns=[SimpleNamespace(unique_name="ArtifactKey")]),
+            SimpleNamespace(
+                unique_name="Orders",
+                columns=[SimpleNamespace(unique_name="OrderId"), SimpleNamespace(unique_name="Amount")],
+            ),
         ],
         relationships=[
             SimpleNamespace(from_dataset="Orders", to_dataset="Manufacturer"),

@@ -52,12 +52,12 @@ def test_lag_period_of_unresolved_measure_defers_instead_of_faking_same_period_s
     assert not result.is_success
 
 
-def test_lag_period_of_unresolved_measure_still_falls_back_when_metrics_context_present_but_genuinely_unshiftable():
-    """Positive control: allow_unshifted_fallback must still fire when
-    metrics_context IS present but the referenced measure genuinely can't be
-    date-shifted by this renderer (e.g. it isn't in the model at all) --
-    this preserves the original safety-net behavior, just no longer
-    triggered by the absence of any context whatsoever."""
+def test_lag_period_of_genuinely_unshiftable_measure_declines_by_default_even_with_metrics_context():
+    """The unshifted fallback ships the CURRENT period's value under a
+    prior-period name (a wrong number), so it is now opt-in
+    (allow_unshifted_fallback=True); no production caller opts in. With
+    full metrics_context but a genuinely unshiftable reference, the default
+    must decline -- the metric then gets a recorded failure reason."""
     t = DAXTranslator()
     metrics = [_metric("TOTAL_UNITS_YTD_SPLY", "SalesFact",
                         "CALCULATE([NOT_A_REAL_MEASURE], SAMEPERIODLASTYEAR('Date'[Date]))")]
@@ -66,8 +66,25 @@ def test_lag_period_of_unresolved_measure_still_falls_back_when_metrics_context_
     result = t.translate(dax, "SALESFACT", "SalesFact", metric_name="TOTAL_UNITS_YTD_SPLY",
                           metrics_context=metrics, skip_tier5=True)
 
+    assert not result.is_success
+
+
+def test_lag_period_unshifted_fallback_still_available_when_explicitly_opted_in():
+    """Positive control: the safety net itself still works for a caller that
+    explicitly opts in -- and is never silent (advisory category set)."""
+    from semabridge.converter.dax_ast_parser import ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK
+
+    t = DAXTranslator()
+    metrics = [_metric("TOTAL_UNITS_YTD_SPLY", "SalesFact",
+                        "CALCULATE([NOT_A_REAL_MEASURE], SAMEPERIODLASTYEAR('Date'[Date]))")]
+    dax = metrics[0].expression
+
+    result = t.translate(dax, "SALESFACT", "SalesFact", metric_name="TOTAL_UNITS_YTD_SPLY",
+                          metrics_context=metrics, skip_tier5=True, allow_unshifted_fallback=True)
+
     assert result.is_success
-    assert 'SALESFACT."NOT_A_REAL_MEASURE"' in result.sql.upper() or "NOT_A_REAL_MEASURE" in result.sql.upper()
+    assert "NOT_A_REAL_MEASURE" in result.sql.upper()
+    assert ADVISORY_CATEGORY_LAG_PERIOD_UNSHIFTED_FALLBACK in (result.advisory_categories or [])
 
 
 def test_full_pipeline_two_stage_resolution_produces_correctly_shifted_sply_not_a_self_reference():
