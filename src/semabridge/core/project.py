@@ -86,7 +86,22 @@ class SourceConfig(BaseModel):
     
     class Config:
         populate_by_name = True
-    
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _reject_unsupported_bi_sources(cls, value: Any) -> Any:
+        """Give a clear 'not supported yet' error for known-but-unsupported sources."""
+        normalized = str(getattr(value, "value", value) or "").strip().lower()
+        if normalized in {"tableau", "tableau_datasource", "tds", "twb"}:
+            from semabridge.connectors.tableau_connector import TABLEAU_UNSUPPORTED_REASON
+
+            raise ValueError(f"Source type '{value}' is not supported yet: {TABLEAU_UNSUPPORTED_REASON}")
+        if normalized in {"dbt", "dbt_semantic_layer", "metricflow"}:
+            from semabridge.connectors.dbt_connector import DBT_UNSUPPORTED_REASON
+
+            raise ValueError(f"Source type '{value}' is not supported yet: {DBT_UNSUPPORTED_REASON}")
+        return value
+
     @model_validator(mode='after')
     def validate_source_config(self) -> 'SourceConfig':
         """Ensure required fields are present based on source type."""

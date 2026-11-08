@@ -86,8 +86,11 @@ class OSIToSMLConverter(BaseConverter):
     Transforms OSI Model into SML Model with semantic enrichment.
     """
 
-    def __init__(self):
+    def __init__(self, drop_ledger: Optional["DropLedger"] = None):
+        from semabridge.core.drop_ledger import DropLedger
+
         self.dax_translator = DAXTranslator()
+        self.drop_ledger = drop_ledger if drop_ledger is not None else DropLedger()
 
     def to_osi(self, sml_model: SMLModel) -> OSIModel:
         """
@@ -130,13 +133,27 @@ class OSIToSMLConverter(BaseConverter):
                 version=osi_model.version
             )
 
-            # 1. Convert Datasets
+            # 1. Convert Datasets (with deterministic, ledgered disambiguation
+            # of column names that collide once sanitized to Snowflake
+            # identifiers, e.g. "Sales Amount" vs "Sales_Amount").
+            column_renames: Dict[str, Dict[str, str]] = {}
             for osi_ds in osi_model.datasets:
-                sml.datasets.append(self._convert_dataset(osi_ds))
+                sml_ds, renames = self._convert_dataset_with_renames(osi_ds)
+                sml.datasets.append(sml_ds)
+                if renames:
+                    column_renames[osi_ds.unique_name] = renames
 
             # 2. Convert Dimensions
             for osi_dim in osi_model.dimensions:
-                sml.dimensions.append(self._convert_dimension(osi_dim))
+                sml_dim = self._convert_dimension(osi_dim)
+                renames = column_renames.get(osi_dim.dataset) or {}
+                if renames:
+                    for attr in sml_dim.attributes:
+                        new_name = renames.get(attr.dataset_column)
+                        if new_name and attr.dataset == osi_dim.dataset:
+                            attr.dataset_column = new_name
+                            attr.unique_name = new_name
+                sml.dimensions.append(sml_dim)
 
             # Source-schema lookup for Tier 5's semantic validator (Step 3 of
             # the DAX translation consolidation). Built once here, from the
@@ -197,6 +214,11 @@ class OSIToSMLConverter(BaseConverter):
                     table_key_map=table_key_map,
                     known_measure_names=known_measure_names,
                 )
+                if getattr(osi_metric, "folder", None) and not getattr(sml_metric, "folder", None):
+                    sml_metric.folder = osi_metric.folder
+                metric_renames = column_renames.get(sml_metric.dataset) or {}
+                if metric_renames and sml_metric.source_column in metric_renames:
+                    sml_metric.source_column = metric_renames[sml_metric.source_column]
                 sml.metrics.append(sml_metric)
 
             # Step 3b: Resolve inter-measure dependencies now that all metrics are loaded.
@@ -311,6 +333,12 @@ class OSIToSMLConverter(BaseConverter):
             for osi_rel in osi_model.relationships:
                 sml_rel = self._convert_relationship(osi_rel)
                 if sml_rel:
+                    from_renames = column_renames.get(sml_rel.from_dataset) or {}
+                    to_renames = column_renames.get(sml_rel.to_dataset) or {}
+                    if from_renames:
+                        sml_rel.from_columns = [from_renames.get(c, c) for c in sml_rel.from_columns]
+                    if to_renames:
+                        sml_rel.to_columns = [to_renames.get(c, c) for c in sml_rel.to_columns]
                     sml.relationships.append(sml_rel)
 
             # 4a. Advisory-only: flag metrics whose DAX will fail Snowflake's
@@ -371,8 +399,56 @@ class OSIToSMLConverter(BaseConverter):
             )
 
     def _convert_dataset(self, osi_ds: OSIDataset) -> SMLDataset:
+        return self._convert_dataset_with_renames(osi_ds)[0]
+
+    def _convert_dataset_with_renames(self, osi_ds: OSIDataset) -> "tuple[SMLDataset, Dict[str, str]]":
+        from semabridge.core.drop_ledger import DropStage
+        from semabridge.utils.identifiers import IdentifierSanitizer
+
+        sanitizer = IdentifierSanitizer()
         columns = [self._convert_column(c) for c in osi_ds.columns]
-        
+
+        def ident(name: str) -> str:
+            try:
+                return sanitizer.sanitize_column(name).casefold()
+            except Exception:
+                return str(name).casefold()
+
+        # First occurrence (source order) keeps its name; later colliding
+        # columns get a deterministic "_2", "_3", ... suffix.
+        renames: Dict[str, str] = {}
+        taken: Dict[str, str] = {}
+        all_idents = {ident(c.unique_name) for c in columns}
+        for col in columns:
+            key = ident(col.unique_name)
+            if key not in taken:
+                taken[key] = col.unique_name
+                continue
+            n = 2
+            candidate = f"{col.unique_name}_{n}"
+            while ident(candidate) in taken or ident(candidate) in all_idents:
+                n += 1
+                candidate = f"{col.unique_name}_{n}"
+            taken[ident(candidate)] = candidate
+            original = col.unique_name
+            col.unique_name = candidate
+            if original not in renames and original != taken[key]:
+                renames[original] = candidate
+            self.drop_ledger.record(
+                "column",
+                original,
+                DropStage.EXTRACTION,
+                f"renamed to '{candidate}' — column name collides with '{taken[key]}' once "
+                f"converted to a Snowflake identifier ({sanitizer.sanitize_column(original)}); "
+                "Snowflake identifiers must be unique per table",
+                dataset=osi_ds.unique_name,
+                by_design=True,
+            )
+            logger.info(
+                "Column '%s' on '%s' collides with '%s' after sanitization; renamed to '%s'",
+                original, osi_ds.unique_name, taken[key], candidate,
+            )
+
         return SMLDataset(
             unique_name=osi_ds.unique_name,
             label=osi_ds.label,
@@ -382,7 +458,9 @@ class OSIToSMLConverter(BaseConverter):
             columns=columns,
             is_hidden=osi_ds.is_hidden,
             is_fact=osi_ds.is_fact,
-        )
+            dataset_kind=getattr(osi_ds, "dataset_kind", "table") or "table",
+            expression=getattr(osi_ds, "expression", None),
+        ), renames
 
     def _convert_column(self, osi_col: OSIColumn) -> SMLColumn:
         # Dynamic lookup using name matching (e.g. INTEGER -> INTEGER)
@@ -405,6 +483,11 @@ class OSIToSMLConverter(BaseConverter):
             is_enum=osi_col.is_enum,
             cortex_search_service=osi_col.cortex_search_service,
             sample_values=list(osi_col.sample_values),
+            folder=getattr(osi_col, "folder", None),
+            is_calculated=bool(getattr(osi_col, "is_calculated", False)),
+            expression=getattr(osi_col, "expression", None),
+            data_category=getattr(osi_col, "data_category", None),
+            sort_by_column=getattr(osi_col, "sort_by_column", None),
         )
 
     def _convert_dimension(self, osi_dim: OSIDimension) -> SMLDimension:
@@ -418,12 +501,24 @@ class OSIToSMLConverter(BaseConverter):
                 is_hidden=attr.is_hidden
             ))
             
+        hierarchies = [
+            SMLHierarchy(
+                unique_name=h.unique_name,
+                label=h.label,
+                levels=[
+                    SMLLevel(unique_name=lv.unique_name, label=lv.label, attribute=lv.attribute)
+                    for lv in h.levels
+                ],
+            )
+            for h in (osi_dim.hierarchies or [])
+        ]
         return SMLDimension(
             unique_name=osi_dim.unique_name,
             label=osi_dim.label,
             description=osi_dim.description or "",
             dataset=osi_dim.dataset,
             attributes=attributes,
+            hierarchies=hierarchies,
             is_hidden=osi_dim.is_hidden
         )
 
@@ -1153,7 +1248,8 @@ class OSIToSMLConverter(BaseConverter):
                  to_columns=osi_rel.to_columns,
                  cardinality=sml_card,
                  cross_filter=sml_cf,
-                 is_active=osi_rel.is_active
+                 is_active=osi_rel.is_active,
+                 is_inferred=bool(getattr(osi_rel, "is_inferred", False)),
              )
         except Exception as e:
             logger.warning(f"Failed to convert relationship {osi_rel.unique_name}: {e}")

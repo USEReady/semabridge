@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from semabridge.sml.models import (
     SMLModel, SMLDataset, SMLColumn, SMLMetric, SMLRelationship, SMLDimension, SMLAttribute,
-    DataType, AggregationType, Cardinality, SourcePlatform
+    DataType, AggregationType, Cardinality, CrossFilterDirection, SourcePlatform
 )
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.core.behavior import ConnectorBehavior
@@ -120,6 +120,7 @@ class TMSLTransformer:
         project_id: Optional[str] = None,
         synonym_overrides: Optional[Dict[tuple[str, str, str], List[str]]] = None,
         precompute_aggregation_overrides: Optional[Dict[tuple[str, str, str], str]] = None,
+        infer_relationships: Optional[bool] = None,
     ) -> SMLModel:
         """
         Transform TMSL dictionary to SML object.
@@ -346,6 +347,28 @@ class TMSLTransformer:
                                 f"references excluded table(s) "
                                 f"({sml_rel.from_dataset} -> {sml_rel.to_dataset})"
                             )
+                            missing = [
+                                n for n, r in ((sml_rel.from_dataset, from_dataset), (sml_rel.to_dataset, to_dataset))
+                                if not r
+                            ]
+                            auto_excluded = all(
+                                self._is_auto_hidden_table_name(n)
+                                or any(
+                                    str(t.get("name", "")).casefold() == str(n).casefold()
+                                    and t.get("calculationGroup")
+                                    for t in model_obj.get("tables", []) or []
+                                )
+                                for n in missing
+                            )
+                            self.drop_ledger.record(
+                                "relationship",
+                                f"{sml_rel.from_dataset}[{sml_rel.from_columns[0]}] -> "
+                                f"{sml_rel.to_dataset}[{sml_rel.to_columns[0]}]",
+                                DropStage.EXTRACTION,
+                                "relationship references table(s) not in the semantic model — dropped: "
+                                + ", ".join(f"'{n}'" for n in missing),
+                                by_design=auto_excluded,
+                            )
             
             # --- Auto-Detect Relationships (for implicit models) ---
             # Create a simplified metadata structure for the detector
@@ -359,9 +382,20 @@ class TMSLTransformer:
                 # Assume columns ending in ID matching the table name are PKs
                 pks_meta[ds.unique_name] = [c.unique_name for c in ds.columns if c.is_key]
             
-            from semabridge.connectors.relationship_detector import RelationshipDetector
-            rel_detector = RelationshipDetector(tables_meta, columns_meta, pks_meta)
-            inferred_rels = rel_detector.detect_all()
+            # Name-based inference invents joins the source never declared:
+            # strictly opt-in (options.infer_relationships /
+            # SEMABRIDGE_INFER_RELATIONSHIPS), and every inferred join is
+            # flagged + ledgered.
+            from semabridge.converter.tmsl_to_osi import (
+                INFERRED_RELATIONSHIP_REASON,
+                infer_relationships_enabled,
+            )
+
+            inferred_rels = []
+            if infer_relationships_enabled(infer_relationships):
+                from semabridge.connectors.relationship_detector import RelationshipDetector
+                rel_detector = RelationshipDetector(tables_meta, columns_meta, pks_meta)
+                inferred_rels = rel_detector.detect_all()
             
             # Add implicit relationships if not exists
             # Enhanced Check: Check for structural existence (From-To pair), not just name
@@ -382,9 +416,17 @@ class TMSLTransformer:
                         to_dataset=rel["to_table"],
                         to_columns=[rel["to_column"]],
                         cardinality=Cardinality.MANY_TO_ONE,
-                        is_active=True
+                        is_active=True,
+                        is_inferred=True,
                     ))
                     existing_rel_signatures.add(sig)
+                    self.drop_ledger.record(
+                        "relationship",
+                        f"{rel['from_table']}[{rel['from_column']}] -> {rel['to_table']}[{rel['to_column']}]",
+                        DropStage.EXTRACTION,
+                        INFERRED_RELATIONSHIP_REASON,
+                        by_design=True,
+                    )
 
             # 4. Refine Model Structure (Star Schema)
             # Pass relationships for better classification
@@ -1332,22 +1374,25 @@ class TMSLTransformer:
                  to_column,
              )
              
-             card_map = {
-                 "manytoone": Cardinality.MANY_TO_ONE,
-                 "onetoone": Cardinality.ONE_TO_ONE,
-                 "onetomany": Cardinality.ONE_TO_MANY,
-                 "manytomany": Cardinality.MANY_TO_MANY
-             }
-             raw_card = rel_def.get("cardinality", "ManyToOne").lower()
-             
+             # Shared with the OSI path: honours fromCardinality/toCardinality
+             # (real TMSL/model.bim) as well as a combined "cardinality".
+             from semabridge.converter.tmsl_to_osi import (
+                 tmsl_relationship_cardinality,
+                 tmsl_relationship_cross_filter,
+                 tmsl_relationship_is_active,
+             )
+
+             osi_card = tmsl_relationship_cardinality(rel_def)
+             osi_cf = tmsl_relationship_cross_filter(rel_def)
              return SMLRelationship(
                  unique_name=name,
                  from_dataset=from_table,
                  from_columns=[from_column],
                  to_dataset=to_table,
                  to_columns=[to_column],
-                 cardinality=card_map.get(raw_card, Cardinality.MANY_TO_ONE),
-                 is_active=rel_def.get("isActive", True)
+                 cardinality=getattr(Cardinality, osi_card.name, Cardinality.MANY_TO_ONE),
+                 cross_filter=getattr(CrossFilterDirection, osi_cf.name, CrossFilterDirection.SINGLE),
+                 is_active=tmsl_relationship_is_active(rel_def),
              )
         except Exception as e:
             logger.warning(f"Failed to parse relationship: {e}")

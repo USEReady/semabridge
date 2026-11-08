@@ -160,6 +160,11 @@ class SMLColumn(BaseModel):
     is_enum: bool = Field(default=False, description="True when the column has a small, exhaustive set of values")
     cortex_search_service: Optional[str] = Field(default=None, description="Snowflake Cortex Search Service name linked to this text dimension")
     sample_values: list[str] = Field(default_factory=list, description="Representative sample values for NLP context")
+    # Source-fidelity fields propagated from OSIColumn (additive).
+    is_calculated: bool = Field(default=False, description="DAX calculated column — no physical source column exists")
+    expression: Optional[str] = Field(default=None, description="DAX expression of a calculated column")
+    data_category: Optional[str] = Field(default=None, description="Source dataCategory (e.g. 'City', 'Years')")
+    sort_by_column: Optional[str] = Field(default=None, description="Column this column is sorted by in the source model")
     precompute_aggregation: Optional[str] = Field(
         default=None,
         description=(
@@ -197,6 +202,12 @@ class SMLDataset(BaseModel):
     is_hidden: bool = Field(default=False, description="Whether dataset is hidden")
     is_fact: bool = Field(default=False, description="Whether this is a fact table")
     row_count: Optional[int] = Field(default=None, description="Approximate row count")
+    # Source-fidelity fields propagated from OSIDataset (additive).
+    dataset_kind: str = Field(
+        default="table",
+        description="'table' | 'calculated_table' | 'field_parameter' — non-'table' kinds have no physical source table",
+    )
+    expression: Optional[str] = Field(default=None, description="Defining DAX of a calculated table / field parameter")
     
     def model_post_init(self, __context: Any) -> None:
         """Set defaults after initialization."""
@@ -453,6 +464,10 @@ class SMLRelationship(BaseModel):
     cardinality: Cardinality = Field(default=Cardinality.MANY_TO_ONE, description="Relationship cardinality")
     cross_filter: CrossFilterDirection = Field(default=CrossFilterDirection.SINGLE, description="Cross-filter direction")
     is_active: bool = Field(default=True, description="Whether relationship is active")
+    is_inferred: bool = Field(
+        default=False,
+        description="True when inferred by name heuristics (not present in the source model)",
+    )
     
     @property
     def from_column(self) -> str:
