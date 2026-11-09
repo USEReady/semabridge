@@ -127,6 +127,26 @@ def export_unified_yaml() -> str:
     return "\n".join(lines)
 
 
+@router.get("/graph", response_model=Dict[str, Any])
+def ontology_graph(project_id: Optional[str] = None) -> Dict[str, Any]:
+    """Connection graph for the UI: projects -> domains -> concepts / metrics ->
+    bound BI objects, plus concept relationships. Collisions, stale entries,
+    unbound entries and unresolved references are flagged on the nodes.
+
+    ``project_id`` limits the graph to the domains that project attaches.
+    Declared before ``/{domain_name}`` so "graph" is not read as a domain name.
+    """
+    from semabridge.ontology.graph import build_ontology_graph
+
+    fed = ontology_store.get_federated_ontology()
+    return build_ontology_graph(
+        fed.domains.values(),
+        attachments=ontology_store._read_attachments(),
+        collisions=fed.collisions,
+        project_id=project_id,
+    )
+
+
 @router.get("/{domain_name}", response_model=Dict[str, Any])
 def get_domain(domain_name: str) -> Dict[str, Any]:
     """Retrieve full details and raw YAML for a specific domain (by name or id)."""

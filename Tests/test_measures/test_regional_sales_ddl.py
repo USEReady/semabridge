@@ -5,7 +5,16 @@ from semabridge.converter.osi_to_sml import OSIToSMLConverter
 from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 from semabridge.core.settings import SnowflakeConfig
 
-pbix_path = r"C:\Users\manoj.s\Downloads\PBIX Files\Regional Sales Sample.pbix"
+import pytest
+
+# Local debug script: needs the Regional Sales Sample .pbix. Point
+# SEMABRIDGE_REGIONAL_SALES_PBIX at it; otherwise the module is skipped.
+pbix_path = os.environ.get(
+    "SEMABRIDGE_REGIONAL_SALES_PBIX",
+    r"C:\Users\manoj.s\Downloads\PBIX Files\Regional Sales Sample.pbix",
+)
+if not os.path.isfile(pbix_path):
+    pytest.skip(f"Regional Sales Sample .pbix not found at {pbix_path}", allow_module_level=True)
 conn = LocalPBIXConnector({"pbix_path": pbix_path})
 discovery = conn.discover()
 raw_tmsl = discovery.get("raw_tmsl") or {}

@@ -8,6 +8,7 @@ import {
   BookOpen, Compass, Cpu, Tag, ArrowRight
 } from 'lucide-react';
 import { authFetch } from '../utils/api';
+import OntologyGraph from './OntologyGraph';
 
 // Turn a FastAPI error body into readable text (detail may be a string,
 // {message, errors[]} or a pydantic error list).
@@ -517,6 +518,19 @@ export default function OntologyDomainManager() {
 
           <button
             type="button"
+            onClick={() => setActiveTab('graph')}
+            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
+              activeTab === 'graph'
+                ? 'border-accent-blue text-accent-blue'
+                : 'border-transparent text-secondary hover:text-primary'
+            }`}
+          >
+            <Network size={15} />
+            <span>Connection Map</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('ai')}
             className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
               activeTab === 'ai'
@@ -763,6 +777,13 @@ export default function OntologyDomainManager() {
                 </div>
               </button>
             </div>
+          </div>
+        )}
+
+        {/* CONNECTION MAP: projects -> domains -> concepts / metrics -> BI objects */}
+        {activeTab === 'graph' && (
+          <div className="max-w-7xl mx-auto pb-6">
+            <OntologyGraph projects={projectsList} />
           </div>
         )}
 
