@@ -129,7 +129,7 @@ def test_totalytd_measure_ref_uses_flag_column_when_provided():
 def test_sply_year_direct_aggregate_with_no_flag_map_uses_current_date_not_max_date():
     sql = _render("CALCULATE(SUM('SalesFact'[Units]), SAMEPERIODLASTYEAR('Date'[Date]))")
     assert sql == (
-        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(CURRENT_DATE()) - 1 '
+        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) '
         'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
         'AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"::FLOAT END)'
     )
@@ -173,7 +173,7 @@ def test_sply_year_wrapping_plain_measure_ref_with_no_flag_map_uses_current_date
         measure_sql_map={"TOTAL_UNITS": 'SUM(SALESFACT."UNITS"::FLOAT)'},
     )
     assert sql == (
-        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(CURRENT_DATE()) - 1 '
+        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) '
         'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
         'AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"::FLOAT ELSE NULL END)'
     )
