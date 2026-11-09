@@ -1,0 +1,71 @@
+domain: Market Intelligence
+id: market_intelligence
+owner: Product Marketing
+version: 1.0.0
+description: Product, manufacturer and sentiment vocabulary for competitive analysis.
+concepts:
+- name: Product
+  concept_type: ENTITY
+  domain: Market Intelligence
+  description: Products sold, with category and segment.
+  synonyms:
+  - Item
+  - SKU
+  business_rules: []
+  attributes: []
+  tags: []
+  maps_to:
+  - Product
+- name: Manufacturer
+  concept_type: ENTITY
+  domain: Market Intelligence
+  description: Company that makes the product.
+  synonyms:
+  - Brand
+  - Maker
+  business_rules: []
+  attributes: []
+  tags: []
+  maps_to:
+  - Manufacturer
+- name: Sentiment
+  concept_type: ENTITY
+  domain: Market Intelligence
+  description: Social sentiment score by manufacturer and day.
+  synonyms:
+  - Social Score
+  business_rules: []
+  attributes: []
+  tags: []
+metrics:
+- name: Total Units
+  description: Units including returns (market view).
+  sql_expression: SUM(Units) * 1
+  aggregation_type: SUM
+  grain: []
+  synonyms: []
+  business_rules: []
+  domain: Market Intelligence
+  concept: Product
+  tags: []
+- name: Market Share
+  description: VanArsdel units as a share of category units.
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - Share of Units
+  business_rules: []
+  domain: Market Intelligence
+  concept: Manufacturer
+  tags: []
+  maps_to:
+  - '% Units Market Share'
+relationships:
+- from_concept: Product
+  to_concept: Manufacturer
+  cardinality: N:1
+  predicate_label: made by
+- from_concept: Sales
+  to_concept: Product
+  cardinality: N:1
+  predicate_label: sells
