@@ -167,9 +167,6 @@ export default function OntologyGraph({ projects = [] }) {
     let flagged = null;
     if (onlyIssues) {
       flagged = new Set(visible.filter((n) => issuesOf(n).length > 0).map((n) => n.id));
-      visEdges.forEach((e) => {
-        if (flagged.has(e.source) || flagged.has(e.target)) { flagged.add(e.source); flagged.add(e.target); }
-      });
     }
     const rfNodes = visible.map((n) => ({
       id: n.id,
@@ -188,7 +185,7 @@ export default function OntologyGraph({ projects = [] }) {
       kind: e.kind,
       label: e.kind === 'defines' ? undefined : e.label || undefined,
       type: e.kind === 'relates' ? 'default' : 'smoothstep',
-      style: { ...(EDGE_STYLE[e.kind] || {}), opacity: flagged && !(flagged.has(e.source) && flagged.has(e.target)) ? 0.15 : 1 },
+      style: { ...(EDGE_STYLE[e.kind] || {}), opacity: flagged && !(flagged.has(e.source) || flagged.has(e.target)) ? 0.15 : 1 },
       labelStyle: { fontSize: 10, fill: 'var(--text-secondary, #475569)' },
       labelBgStyle: { fill: 'var(--bg-surface, #fff)' },
       markerEnd: { type: MarkerType.ArrowClosed, color: (EDGE_STYLE[e.kind] || {}).stroke },
@@ -288,7 +285,9 @@ export default function OntologyGraph({ projects = [] }) {
             >
               <Background gap={18} size={1} />
               <Controls showInteractive={false} />
-              <MiniMap position="top-right" pannable zoomable nodeColor={(n) => (KIND[n.data?.type] || KIND.bi).color} />
+              {!selected && (
+                <MiniMap position="top-right" style={{ width: 130, height: 80 }} pannable zoomable nodeColor={(n) => (KIND[n.data?.type] || KIND.bi).color} />
+              )}
             </ReactFlow>
           )}
           <div className="absolute left-3 top-3 p-2 rounded-lg bg-surface/90 border border-main text-[10px] text-secondary space-y-1 pointer-events-none">
