@@ -90,3 +90,68 @@ def test_ontology_emitter_generation():
     assert "stewards@company.com" in ddl
     assert "Currency normalized to USD" in ddl
     assert "Gross Revenue" in ddl
+    # Point 5: Verify column-level ATTRIBUTE concepts are emitted
+    assert "'DIM_CUSTOMER.CUSTOMER_ID' AS CONCEPT_ID" in ddl
+    assert "'DIM_CUSTOMER.CUSTOMER_NAME' AS CONCEPT_ID" in ddl
+    assert "'FACT_SALES.AMOUNT' AS CONCEPT_ID" in ddl
+    assert "'ATTRIBUTE' AS CONCEPT_TYPE" in ddl
+
+
+def test_ontology_emitter_attributes_lineage_and_filters():
+    dataset = OSIDataset(
+        unique_name="FACT_ORDERS",
+        label="Orders",
+        source_table="RAW_ORDERS",
+        columns=[
+            OSIColumn(
+                unique_name="CUST_SEG_CD",
+                label="Customer Segment Code",
+                data_type=OSIDataType.STRING,
+                description="Segment code for customer tier",
+                synonyms=["Customer Tier", "Segment"],
+            )
+        ],
+    )
+    metric_gross = OSIMetric(
+        unique_name="GROSS_REV",
+        label="Gross Revenue",
+        dataset="FACT_ORDERS",
+        expression="SUM(AMOUNT)",
+        aggregation=OSIAggregationType.SUM,
+    )
+    metric_net = OSIMetric(
+        unique_name="NET_REV",
+        label="Net Revenue",
+        dataset="FACT_ORDERS",
+        expression="SUM(AMOUNT) - SUM(DISCOUNT)",
+        aggregation=OSIAggregationType.SUM,
+    )
+    model = OSIModel(
+        unique_name="FIN_MODEL",
+        datasets=[dataset],
+        metrics=[metric_gross, metric_net],
+    )
+    emitter = OntologyEmitter(target_database="DW", ontology_schema="ONTO")
+    ddl = emitter.emit_ontology_ddl(
+        model,
+        ontology_overrides={
+            ("fin_model", "fact_orders", "cust_seg_cd"): {
+                "synonyms": ["Tier Code"],
+                "data_steward": "revops@corp.com",
+            },
+            ("fin_model", "fact_orders", "net_rev"): {
+                "derives_from": ["GROSS_REV"],
+                "filter_expression": "order_status = 'COMPLETED'",
+            },
+        },
+    )
+    # Column-level attribute emitted with override synonyms and steward
+    assert "'FACT_ORDERS.CUST_SEG_CD' AS CONCEPT_ID" in ddl
+    assert "'Tier Code'" in ddl
+    assert "'Customer Tier'" in ddl
+    assert "'revops@corp.com' AS DATA_STEWARD" in ddl
+    # Metric lineage emitted in ONTOLOGY_METRIC_BINDINGS and ONTOLOGY_RELATIONSHIPS
+    assert "ARRAY_CONSTRUCT('GROSS_REV') AS DERIVES_FROM" in ddl
+    assert "'order_status = ''COMPLETED''' AS FILTER_EXPRESSION" in ddl
+    assert "'DERIVES_FROM' AS RELATIONSHIP_TYPE" in ddl
+    assert "'DERIVES_NET_REV__GROSS_REV' AS RELATIONSHIP_ID" in ddl

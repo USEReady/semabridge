@@ -92,7 +92,7 @@ class OntologyEmitter:
         lines.append("")
 
         # 2. Table Definitions
-        lines.append(f"-- 1. Concepts Table (Entities, Business Terms, Dimensions)")
+        lines.append(f"-- 1. Concepts Table (Entities, Business Terms, Dimensions & Attributes)")
         lines.append(f"""CREATE TABLE IF NOT EXISTS {self.target_database}.{self.ontology_schema}.ONTOLOGY_CONCEPTS (
     CONCEPT_ID VARCHAR(255) PRIMARY KEY,
     CONCEPT_NAME VARCHAR(255) NOT NULL,
@@ -101,6 +101,7 @@ class OntologyEmitter:
     DESCRIPTION TEXT,
     SYNONYMS ARRAY,
     BUSINESS_RULES ARRAY,
+    FILTER_EXPRESSION TEXT,
     DATA_STEWARD VARCHAR(255),
     SOURCE_DATASET VARCHAR(255),
     PHYSICAL_TABLE VARCHAR(255),
@@ -108,11 +109,12 @@ class OntologyEmitter:
 );""")
         lines.append("")
 
-        lines.append(f"-- 2. Relationships Table (Concept Links & Joins)")
+        lines.append(f"-- 2. Relationships Table (Concept Links, Joins & Metric Lineage)")
         lines.append(f"""CREATE TABLE IF NOT EXISTS {self.target_database}.{self.ontology_schema}.ONTOLOGY_RELATIONSHIPS (
     RELATIONSHIP_ID VARCHAR(255) PRIMARY KEY,
     FROM_CONCEPT VARCHAR(255) NOT NULL,
     TO_CONCEPT VARCHAR(255) NOT NULL,
+    RELATIONSHIP_TYPE VARCHAR(50) DEFAULT 'JOIN', -- 'JOIN', 'DERIVES_FROM', 'IS_A', 'APPLIES_TO', 'GOVERNED_BY'
     CARDINALITY VARCHAR(50),
     JOIN_EXPRESSION TEXT,
     PREDICATE_LABEL VARCHAR(255),
@@ -120,7 +122,7 @@ class OntologyEmitter:
 );""")
         lines.append("")
 
-        lines.append(f"-- 3. Metric Bindings Table (Calculations, Grain & Ownership)")
+        lines.append(f"-- 3. Metric Bindings Table (Calculations, Lineage, Policies & Ownership)")
         lines.append(f"""CREATE TABLE IF NOT EXISTS {self.target_database}.{self.ontology_schema}.ONTOLOGY_METRIC_BINDINGS (
     METRIC_NAME VARCHAR(255) PRIMARY KEY,
     CONCEPT_ID VARCHAR(255) NOT NULL,
@@ -129,6 +131,8 @@ class OntologyEmitter:
     AGGREGATION_TYPE VARCHAR(50),
     SYNONYMS ARRAY,
     BUSINESS_RULES ARRAY,
+    FILTER_EXPRESSION TEXT,
+    DERIVES_FROM ARRAY,
     DATA_STEWARD VARCHAR(255),
     SEMANTIC_VIEW_NAME VARCHAR(255),
     UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -136,7 +140,7 @@ class OntologyEmitter:
         lines.append("")
 
         # 3. Insert / Merge Concepts (Datasets & Attributes)
-        lines.append(f"-- 4. Populate / Refresh Concepts")
+        lines.append(f"-- 4. Populate / Refresh Concepts (Entities & Attributes)")
         for ds in model.datasets:
             ds_name = ds.unique_name
             ds_key = (model_name.casefold(), ds_name.casefold(), ds_name.casefold())
@@ -146,6 +150,7 @@ class OntologyEmitter:
             steward = ds_override.get("data_steward")
             syns = list(ds_override.get("synonyms") or getattr(ds, "synonyms", None) or [])
             rules = ds_override.get("business_rules") or []
+            filter_expr = ds_override.get("filter_expression") or getattr(ds, "filter_expression", None)
             phys_table = ds.source_table or ds_name
 
             lines.append(f"""MERGE INTO {self.target_database}.{self.ontology_schema}.ONTOLOGY_CONCEPTS AS target
@@ -157,9 +162,64 @@ USING (SELECT
     {_escape_sql_str(desc)} AS DESCRIPTION,
     {_format_sql_array(syns)} AS SYNONYMS,
     {_format_sql_array(rules)} AS BUSINESS_RULES,
+    {_escape_sql_str(filter_expr)} AS FILTER_EXPRESSION,
     {_escape_sql_str(steward)} AS DATA_STEWARD,
     {_escape_sql_str(ds_name)} AS SOURCE_DATASET,
     {_escape_sql_str(phys_table)} AS PHYSICAL_TABLE
+) AS src
+ON target.CONCEPT_ID = src.CONCEPT_ID
+WHEN MATCHED THEN UPDATE SET
+    CONCEPT_NAME = src.CONCEPT_NAME,
+    DESCRIPTION = src.DESCRIPTION,
+    SYNONYMS = src.SYNONYMS,
+    BUSINESS_RULES = src.BUSINESS_RULES,
+    FILTER_EXPRESSION = src.FILTER_EXPRESSION,
+    DATA_STEWARD = src.DATA_STEWARD,
+    PHYSICAL_TABLE = src.PHYSICAL_TABLE,
+    UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+    CONCEPT_ID, CONCEPT_NAME, CONCEPT_TYPE, DOMAIN, DESCRIPTION, 
+    SYNONYMS, BUSINESS_RULES, FILTER_EXPRESSION, DATA_STEWARD, SOURCE_DATASET, PHYSICAL_TABLE, UPDATED_AT
+) VALUES (
+    src.CONCEPT_ID, src.CONCEPT_NAME, src.CONCEPT_TYPE, src.DOMAIN, src.DESCRIPTION,
+    src.SYNONYMS, src.BUSINESS_RULES, src.FILTER_EXPRESSION, src.DATA_STEWARD, src.SOURCE_DATASET, src.PHYSICAL_TABLE, CURRENT_TIMESTAMP()
+);""")
+
+            # Emit ATTRIBUTE rows for each column in the dataset
+            for col in getattr(ds, "columns", None) or []:
+                col_name = col.unique_name
+                col_id = f"{ds_name}.{col_name}"
+                col_key = (model_name.casefold(), ds_name.casefold(), col_name.casefold())
+                col_override = overrides.get(col_key, {})
+
+                col_desc = (
+                    col_override.get("description")
+                    or col.description
+                    or f"Attribute {col.label or col_name} of {ds.label or ds_name}"
+                )
+                col_steward = col_override.get("data_steward") or steward
+                col_syns = list(
+                    dict.fromkeys(
+                        list(col_override.get("synonyms") or [])
+                        + list(getattr(col, "synonyms", None) or [])
+                    )
+                )
+                col_rules = col_override.get("business_rules") or []
+                col_phys = f"{phys_table}.{col.source_column or col_name}"
+
+                lines.append(f"""MERGE INTO {self.target_database}.{self.ontology_schema}.ONTOLOGY_CONCEPTS AS target
+USING (SELECT 
+    {_escape_sql_str(col_id)} AS CONCEPT_ID,
+    {_escape_sql_str(col.label or col_name)} AS CONCEPT_NAME,
+    'ATTRIBUTE' AS CONCEPT_TYPE,
+    {_escape_sql_str(model_name)} AS DOMAIN,
+    {_escape_sql_str(col_desc)} AS DESCRIPTION,
+    {_format_sql_array(col_syns)} AS SYNONYMS,
+    {_format_sql_array(col_rules)} AS BUSINESS_RULES,
+    NULL AS FILTER_EXPRESSION,
+    {_escape_sql_str(col_steward)} AS DATA_STEWARD,
+    {_escape_sql_str(ds_name)} AS SOURCE_DATASET,
+    {_escape_sql_str(col_phys)} AS PHYSICAL_TABLE
 ) AS src
 ON target.CONCEPT_ID = src.CONCEPT_ID
 WHEN MATCHED THEN UPDATE SET
@@ -172,10 +232,10 @@ WHEN MATCHED THEN UPDATE SET
     UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
     CONCEPT_ID, CONCEPT_NAME, CONCEPT_TYPE, DOMAIN, DESCRIPTION, 
-    SYNONYMS, BUSINESS_RULES, DATA_STEWARD, SOURCE_DATASET, PHYSICAL_TABLE, UPDATED_AT
+    SYNONYMS, BUSINESS_RULES, FILTER_EXPRESSION, DATA_STEWARD, SOURCE_DATASET, PHYSICAL_TABLE, UPDATED_AT
 ) VALUES (
     src.CONCEPT_ID, src.CONCEPT_NAME, src.CONCEPT_TYPE, src.DOMAIN, src.DESCRIPTION,
-    src.SYNONYMS, src.BUSINESS_RULES, src.DATA_STEWARD, src.SOURCE_DATASET, src.PHYSICAL_TABLE, CURRENT_TIMESTAMP()
+    src.SYNONYMS, src.BUSINESS_RULES, src.FILTER_EXPRESSION, src.DATA_STEWARD, src.SOURCE_DATASET, src.PHYSICAL_TABLE, CURRENT_TIMESTAMP()
 );""")
 
         lines.append("")
@@ -197,20 +257,57 @@ USING (SELECT
     {_escape_sql_str(rel_id)} AS RELATIONSHIP_ID,
     {_escape_sql_str(from_c)} AS FROM_CONCEPT,
     {_escape_sql_str(to_c)} AS TO_CONCEPT,
+    'JOIN' AS RELATIONSHIP_TYPE,
     {_escape_sql_str(card)} AS CARDINALITY,
     {_escape_sql_str(join_expr)} AS JOIN_EXPRESSION,
     {_escape_sql_str(predicate)} AS PREDICATE_LABEL
 ) AS src
 ON target.RELATIONSHIP_ID = src.RELATIONSHIP_ID
 WHEN MATCHED THEN UPDATE SET
+    RELATIONSHIP_TYPE = src.RELATIONSHIP_TYPE,
     CARDINALITY = src.CARDINALITY,
     JOIN_EXPRESSION = src.JOIN_EXPRESSION,
     PREDICATE_LABEL = src.PREDICATE_LABEL,
     UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
-    RELATIONSHIP_ID, FROM_CONCEPT, TO_CONCEPT, CARDINALITY, JOIN_EXPRESSION, PREDICATE_LABEL, UPDATED_AT
+    RELATIONSHIP_ID, FROM_CONCEPT, TO_CONCEPT, RELATIONSHIP_TYPE, CARDINALITY, JOIN_EXPRESSION, PREDICATE_LABEL, UPDATED_AT
 ) VALUES (
-    src.RELATIONSHIP_ID, src.FROM_CONCEPT, src.TO_CONCEPT, src.CARDINALITY, src.JOIN_EXPRESSION, src.PREDICATE_LABEL, CURRENT_TIMESTAMP()
+    src.RELATIONSHIP_ID, src.FROM_CONCEPT, src.TO_CONCEPT, src.RELATIONSHIP_TYPE, src.CARDINALITY, src.JOIN_EXPRESSION, src.PREDICATE_LABEL, CURRENT_TIMESTAMP()
+);""")
+
+        # Emit metric-to-metric DERIVES_FROM lineage relationships if present
+        for m in model.metrics:
+            m_name = m.unique_name
+            m_key = (model_name.casefold(), m.dataset.casefold(), m_name.casefold())
+            m_override = overrides.get(m_key, {})
+            derives = list(
+                dict.fromkeys(
+                    list(m_override.get("derives_from") or [])
+                    + list(getattr(m, "derives_from", None) or [])
+                )
+            )
+            for dep in derives:
+                dep_rel_id = f"DERIVES_{_sanitize_identifier(m_name)}__{_sanitize_identifier(dep)}"
+                predicate = f"{m_name} derives from {dep}"
+                lines.append(f"""MERGE INTO {self.target_database}.{self.ontology_schema}.ONTOLOGY_RELATIONSHIPS AS target
+USING (SELECT 
+    {_escape_sql_str(dep_rel_id)} AS RELATIONSHIP_ID,
+    {_escape_sql_str(m_name)} AS FROM_CONCEPT,
+    {_escape_sql_str(dep)} AS TO_CONCEPT,
+    'DERIVES_FROM' AS RELATIONSHIP_TYPE,
+    'N:1' AS CARDINALITY,
+    NULL AS JOIN_EXPRESSION,
+    {_escape_sql_str(predicate)} AS PREDICATE_LABEL
+) AS src
+ON target.RELATIONSHIP_ID = src.RELATIONSHIP_ID
+WHEN MATCHED THEN UPDATE SET
+    RELATIONSHIP_TYPE = src.RELATIONSHIP_TYPE,
+    PREDICATE_LABEL = src.PREDICATE_LABEL,
+    UPDATED_AT = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (
+    RELATIONSHIP_ID, FROM_CONCEPT, TO_CONCEPT, RELATIONSHIP_TYPE, CARDINALITY, JOIN_EXPRESSION, PREDICATE_LABEL, UPDATED_AT
+) VALUES (
+    src.RELATIONSHIP_ID, src.FROM_CONCEPT, src.TO_CONCEPT, src.RELATIONSHIP_TYPE, src.CARDINALITY, src.JOIN_EXPRESSION, src.PREDICATE_LABEL, CURRENT_TIMESTAMP()
 );""")
 
         lines.append("")
@@ -227,6 +324,13 @@ WHEN NOT MATCHED THEN INSERT (
             steward = m_override.get("data_steward") or m.business_owner
             syns = list(dict.fromkeys(list(m_override.get("synonyms") or []) + list(m.synonyms or [])))
             rules = m_override.get("business_rules") or []
+            filter_expr = m_override.get("filter_expression") or getattr(m, "filter_expression", None)
+            derives = list(
+                dict.fromkeys(
+                    list(m_override.get("derives_from") or [])
+                    + list(getattr(m, "derives_from", None) or [])
+                )
+            )
             calc = m.expression or m.source_column or ""
             agg = m.aggregation.value if hasattr(m.aggregation, "value") else str(m.aggregation)
 
@@ -239,6 +343,8 @@ USING (SELECT
     {_escape_sql_str(agg)} AS AGGREGATION_TYPE,
     {_format_sql_array(syns)} AS SYNONYMS,
     {_format_sql_array(rules)} AS BUSINESS_RULES,
+    {_escape_sql_str(filter_expr)} AS FILTER_EXPRESSION,
+    {_format_sql_array(derives)} AS DERIVES_FROM,
     {_escape_sql_str(steward)} AS DATA_STEWARD,
     {_escape_sql_str(sem_view)} AS SEMANTIC_VIEW_NAME
 ) AS src
@@ -250,15 +356,17 @@ WHEN MATCHED THEN UPDATE SET
     AGGREGATION_TYPE = src.AGGREGATION_TYPE,
     SYNONYMS = src.SYNONYMS,
     BUSINESS_RULES = src.BUSINESS_RULES,
+    FILTER_EXPRESSION = src.FILTER_EXPRESSION,
+    DERIVES_FROM = src.DERIVES_FROM,
     DATA_STEWARD = src.DATA_STEWARD,
     SEMANTIC_VIEW_NAME = src.SEMANTIC_VIEW_NAME,
     UPDATED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (
     METRIC_NAME, CONCEPT_ID, DESCRIPTION, CALCULATION_EXPRESSION, AGGREGATION_TYPE,
-    SYNONYMS, BUSINESS_RULES, DATA_STEWARD, SEMANTIC_VIEW_NAME, UPDATED_AT
+    SYNONYMS, BUSINESS_RULES, FILTER_EXPRESSION, DERIVES_FROM, DATA_STEWARD, SEMANTIC_VIEW_NAME, UPDATED_AT
 ) VALUES (
     src.METRIC_NAME, src.CONCEPT_ID, src.DESCRIPTION, src.CALCULATION_EXPRESSION, src.AGGREGATION_TYPE,
-    src.SYNONYMS, src.BUSINESS_RULES, src.DATA_STEWARD, src.SEMANTIC_VIEW_NAME, CURRENT_TIMESTAMP()
+    src.SYNONYMS, src.BUSINESS_RULES, src.FILTER_EXPRESSION, src.DERIVES_FROM, src.DATA_STEWARD, src.SEMANTIC_VIEW_NAME, CURRENT_TIMESTAMP()
 );""")
 
         lines.append("")

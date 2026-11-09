@@ -29,6 +29,14 @@ class CardinalityType(str, Enum):
     MANY_TO_MANY = "N:N"
 
 
+class RelationshipType(str, Enum):
+    JOIN = "JOIN"
+    DERIVES_FROM = "DERIVES_FROM"
+    IS_A = "IS_A"
+    APPLIES_TO = "APPLIES_TO"
+    GOVERNED_BY = "GOVERNED_BY"
+
+
 # "bi"   -> item derived from the BI source by a (re-)sync; refreshed on re-sync.
 # "user" -> item authored by a person (YAML upload / editor); never touched by re-sync.
 Origin = Literal["bi", "user"]
@@ -93,6 +101,8 @@ class DomainConcept(_StrictModel):
     description: Optional[str] = None
     synonyms: CleanList = Field(default_factory=list)
     business_rules: CleanList = Field(default_factory=list)
+    # Optional SQL predicate enforced when querying this concept (e.g. "is_deleted = FALSE").
+    filter_expression: Optional[str] = None
     data_steward: Optional[str] = None
     source_dataset: Optional[str] = None
     physical_table: Optional[str] = None
@@ -121,6 +131,10 @@ class DomainMetric(_StrictModel):
     grain: List[str] = Field(default_factory=list)
     synonyms: CleanList = Field(default_factory=list)
     business_rules: CleanList = Field(default_factory=list)
+    # Optional SQL WHERE predicate enforced when calculating this metric (e.g. "order_status = 'COMPLETED'").
+    filter_expression: Optional[str] = None
+    # Upstream metric names this composite metric is derived from (e.g. [gross_revenue, discounts]).
+    derives_from: CleanList = Field(default_factory=list)
     data_steward: Optional[str] = None
     domain: Optional[str] = None
     # Optional explicit binding to the concept (dataset) this metric is computed over.
@@ -140,10 +154,22 @@ class DomainRelationship(_StrictModel):
     from_concept: str = Field(..., min_length=1)
     to_concept: str = Field(..., min_length=1)
     cardinality: CardinalityType = CardinalityType.MANY_TO_ONE
+    relationship_type: RelationshipType = RelationshipType.JOIN
     join_expression: Optional[str] = None
     predicate_label: Optional[str] = None
     origin: Optional[Origin] = None
     stale: bool = False
+
+
+class DomainPolicy(_StrictModel):
+    """First-class governance policy with an enforceable SQL filter predicate."""
+    name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    filter_expression: str = Field(..., min_length=1)
+    # Names of concepts or metrics this policy governs; empty or ["*"] means domain-wide.
+    applies_to: CleanList = Field(default_factory=list)
+    data_steward: Optional[str] = None
+    domain: Optional[str] = None
 
 
 class DomainOntology(_StrictModel):
@@ -163,6 +189,7 @@ class DomainOntology(_StrictModel):
     concepts: List[DomainConcept] = Field(default_factory=list)
     metrics: List[DomainMetric] = Field(default_factory=list)
     relationships: List[DomainRelationship] = Field(default_factory=list)
+    policies: List[DomainPolicy] = Field(default_factory=list)
 
     @field_validator("domain")
     @classmethod
@@ -191,6 +218,7 @@ class DomainOntology(_StrictModel):
     def _unique_and_ids(self) -> "DomainOntology":
         _dedupe_names(self.concepts, "concept", f"domain '{self.domain}'")
         _dedupe_names(self.metrics, "metric", f"domain '{self.domain}'")
+        _dedupe_names(self.policies, "policy", f"domain '{self.domain}'")
         named_rels = [r for r in self.relationships if r.name]
         _dedupe_names(named_rels, "relationship", f"domain '{self.domain}'")
         if not self.id:
@@ -215,5 +243,6 @@ class FederatedEnterpriseOntology(BaseModel):
     concepts: Dict[str, DomainConcept] = Field(default_factory=dict)
     metrics: Dict[str, DomainMetric] = Field(default_factory=dict)
     relationships: List[DomainRelationship] = Field(default_factory=list)
+    policies: Dict[str, DomainPolicy] = Field(default_factory=dict)
     collisions: List[OntologyCollision] = Field(default_factory=list)
     unresolved_references: List[str] = Field(default_factory=list)

@@ -133,3 +133,50 @@ def test_graph_endpoint_is_not_shadowed_by_domain_route(store):
     assert body["summary"]["domains"] == 1 and body["summary"]["projects"] == 1
     res = client.get("/api/ontology/domains/graph", params={"project_id": "nobody"})
     assert res.status_code == 200 and res.json()["nodes"] == []
+
+
+def test_metric_lineage_and_policies_in_graph():
+    yaml_text = """
+domain: Finance
+policies:
+  - name: no_intercompany
+    description: Exclude intercompany transfers
+    filter_expression: "is_intercompany = FALSE"
+    applies_to: [Ledger, net_revenue]
+concepts:
+  - name: Ledger
+    physical_table: FACT_LEDGER
+    filter_expression: "is_deleted = FALSE"
+    attributes:
+      - {name: gross_amt, data_type: DECIMAL}
+      - {name: disc_amt, data_type: DECIMAL}
+metrics:
+  - name: gross_revenue
+    concept: Ledger
+    sql_expression: "SUM(gross_amt)"
+  - name: discounts
+    concept: Ledger
+    sql_expression: "SUM(disc_amt)"
+  - name: net_revenue
+    concept: Ledger
+    sql_expression: "gross_revenue - discounts"
+    filter_expression: "posted = TRUE"
+"""
+    dom = L.parse_yaml_string(yaml_text)
+    # Auto-inferred derives_from from expression
+    net_m = next(m for m in dom.metrics if m.name == "net_revenue")
+    assert set(net_m.derives_from) == {"gross_revenue", "discounts"}
+
+    g = build_ontology_graph([dom])
+    gross_node = _node(g, "metric", "gross_revenue")
+    disc_node = _node(g, "metric", "discounts")
+    net_node = _node(g, "metric", "net_revenue")
+
+    assert _has_edge(g, "derives", net_node["id"], gross_node["id"])
+    assert _has_edge(g, "derives", net_node["id"], disc_node["id"])
+    assert "net_revenue" in gross_node["impacted_metrics"]
+    assert "net_revenue" in disc_node["impacted_metrics"]
+    assert net_node["filter_expression"] == "posted = TRUE"
+    assert net_node["policies"][0]["name"] == "no_intercompany"
+    assert g["summary"]["metric_dependencies"] == 2
+    assert g["summary"]["policies"] == 1

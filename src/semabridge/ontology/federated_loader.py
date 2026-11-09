@@ -30,9 +30,11 @@ from semabridge.ontology.models import (
     DomainConcept,
     DomainMetric,
     DomainOntology,
+    DomainPolicy,
     DomainRelationship,
     FederatedEnterpriseOntology,
     OntologyCollision,
+    RelationshipType,
 )
 
 logger = logging.getLogger("semabridge.ontology.federated_loader")
@@ -185,7 +187,7 @@ class FederatedOntologyLoader:
                 raise OntologyValidationError(["Missing required key 'domain' at top level"])
         domain_name = str(data["domain"]).strip()
 
-        for section in ("concepts", "metrics", "relationships"):
+        for section in ("concepts", "metrics", "relationships", "policies"):
             if section in data and data[section] is None:
                 data[section] = []
             if section in data and not isinstance(data[section], list):
@@ -198,16 +200,64 @@ class FederatedOntologyLoader:
         for metric in data.get("metrics", []):
             if isinstance(metric, dict) and "domain" not in metric:
                 metric["domain"] = domain_name
+        for policy in data.get("policies", []):
+            if isinstance(policy, dict) and "domain" not in policy:
+                policy["domain"] = domain_name
 
         try:
             dom = DomainOntology(**data)
         except ValidationError as e:
             raise OntologyValidationError(format_validation_error(e, data)) from e
 
+        FederatedOntologyLoader._auto_infer_metric_dependencies(dom)
         errors = FederatedOntologyLoader.validate_references(dom, [], require_external=False)
         if errors:
             raise OntologyValidationError(errors)
         return dom
+
+    @staticmethod
+    def _auto_infer_metric_dependencies(dom: DomainOntology) -> None:
+        """Auto-populate ``derives_from`` when a metric's SQL expression references another metric in the domain."""
+        if len(dom.metrics) < 2:
+            return
+        metric_by_key: Dict[str, str] = {m.name.casefold(): m.name for m in dom.metrics}
+        label_by_key: Dict[str, str] = {
+            m.label.casefold(): m.name for m in dom.metrics if m.label
+        }
+        all_attr_keys = {
+            a.name.casefold()
+            for c in dom.concepts
+            for a in (c.attributes or [])
+        }
+        bracket_re = re.compile(r"\[([^\[\]]+)\]")
+        for m in dom.metrics:
+            expr = (m.sql_expression or "").strip()
+            if not expr:
+                continue
+            self_key = m.name.casefold()
+            inferred: List[str] = list(m.derives_from or [])
+            seen = {d.casefold() for d in inferred}
+
+            # 1. Bracketed references: [gross_revenue] or [Gross Revenue]
+            for br in bracket_re.findall(expr):
+                bk = br.strip().casefold()
+                target = metric_by_key.get(bk) or label_by_key.get(bk)
+                if target and target.casefold() != self_key and target.casefold() not in seen:
+                    seen.add(target.casefold())
+                    inferred.append(target)
+
+            # 2. Identifier tokens that match another metric name and are NOT physical attributes
+            for tok in _IDENT.findall(expr):
+                tk = tok.casefold()
+                if tk == self_key or tk in seen or tk in all_attr_keys:
+                    continue
+                target = metric_by_key.get(tk)
+                if target:
+                    seen.add(tk)
+                    inferred.append(target)
+
+            if len(inferred) > len(m.derives_from or []):
+                m.derives_from = inferred
 
     @staticmethod
     def validate_references(
@@ -215,21 +265,26 @@ class FederatedOntologyLoader:
         other_domains: List[DomainOntology],
         require_external: bool = True,
     ) -> List[str]:
-        """Return one error per reference to an undefined concept / attribute.
+        """Return one error per reference to an undefined concept / attribute / metric / policy target.
 
         Rules:
         * a metric's ``concept`` must name a concept declared in the SAME domain
           (a domain owns the metrics computed over its concepts);
         * a metric's ``grain`` entries must be attributes of that concept (when
           the concept declares attributes);
-        * relationship endpoints may cross domains, so they are checked against
-          this domain plus ``other_domains`` -- only when ``require_external`` is
-          True (federation-level check done by the store), since a single file
-          cannot know the rest of the mesh.
+        * a metric's ``derives_from`` cannot reference itself or form a cycle;
+        * relationship endpoints and cross-domain ``derives_from`` may cross domains,
+          so they are checked against this domain plus ``other_domains`` when
+          ``require_external`` is True.
         """
         errors: List[str] = []
         local = {c.name.casefold(): c for c in dom.concepts}
+        local_metrics = {m.name.casefold(): m for m in dom.metrics}
+
         for m in dom.metrics:
+            if m.name.casefold() in {d.casefold() for d in m.derives_from}:
+                errors.append(f"Metric '{m.name}' cannot derive from itself")
+
             if not m.concept:
                 continue
             concept = local.get(m.concept.casefold())
@@ -245,17 +300,67 @@ class FederatedOntologyLoader:
                     errors.append(
                         f"Metric '{m.name}' grain '{g}' is not an attribute of concept '{concept.name}'"
                     )
+
+        # Detect metric dependency cycles across local (+ external if available) metrics
+        all_metrics_map: Dict[str, DomainMetric] = dict(local_metrics)
+        for other in other_domains:
+            if other is dom or (other.id and other.id == dom.id):
+                continue
+            for om in other.metrics:
+                all_metrics_map.setdefault(om.name.casefold(), om)
+
+        for m in dom.metrics:
+            visited: List[str] = [m.name.casefold()]
+            stack = [(d.casefold(), [m.name, d]) for d in m.derives_from]
+            while stack:
+                curr_key, path = stack.pop()
+                if curr_key == m.name.casefold() and len(path) > 2:
+                    errors.append(f"Circular metric dependency detected: {' -> '.join(path)}")
+                    break
+                if curr_key in visited:
+                    continue
+                visited.append(curr_key)
+                curr_m = all_metrics_map.get(curr_key)
+                if curr_m:
+                    for nxt in curr_m.derives_from:
+                        stack.append((nxt.casefold(), path + [nxt]))
+
+        # Validate policy targets within the domain (or across domains when require_external=True)
+        known_policy_targets = set(local) | set(local_metrics)
+        if require_external:
+            for other in other_domains:
+                if other is dom or (other.id and other.id == dom.id):
+                    continue
+                known_policy_targets.update(c.name.casefold() for c in other.concepts)
+                known_policy_targets.update(m.name.casefold() for m in other.metrics)
+        for pol in dom.policies:
+            for target in pol.applies_to:
+                if target == "*":
+                    continue
+                if target.casefold() not in known_policy_targets:
+                    errors.append(
+                        f"Policy '{pol.name}' references undefined concept or metric '{target}'"
+                    )
+
         if require_external:
             known = set(local)
+            known_metrics = set(local_metrics)
             for other in other_domains:
                 if other is dom or (other.id and other.id == dom.id):
                     continue
                 known.update(c.name.casefold() for c in other.concepts)
+                known_metrics.update(m.name.casefold() for m in other.metrics)
             for r in dom.relationships:
                 label = r.name or f"{r.from_concept}->{r.to_concept}"
                 for end in (r.from_concept, r.to_concept):
                     if end.casefold() not in known:
                         errors.append(f"Relationship '{label}' references undefined concept '{end}'")
+            for m in dom.metrics:
+                for dep in m.derives_from:
+                    if dep.casefold() not in known_metrics:
+                        errors.append(
+                            f"Metric '{m.name}' derives_from undefined metric '{dep}'"
+                        )
         return errors
 
     @classmethod
@@ -334,6 +439,13 @@ class FederatedOntologyLoader:
             for rel in dom.relationships:
                 fed.relationships.append(rel)
 
+            # Register Policies (first occurrence wins by case-insensitive name)
+            existing_pol_keys = {k.casefold() for k in fed.policies}
+            for pol in dom.policies:
+                if pol.name.casefold() not in existing_pol_keys:
+                    fed.policies[pol.name] = pol
+                    existing_pol_keys.add(pol.name.casefold())
+
         # 1. Check Metric Collisions
         for m_key, occurrences in metric_sources.items():
             if len(occurrences) > 1:
@@ -395,8 +507,9 @@ class FederatedOntologyLoader:
                     )
                 )
 
-        # 3. Check for Unresolved Relationships
+        # 3. Check for Unresolved Relationships and Metric Dependencies
         known_concepts = {c.casefold() for c in fed.concepts.keys()}
+        known_metrics = {m.casefold() for m in fed.metrics.keys()}
         for rel in fed.relationships:
             if rel.from_concept.casefold() not in known_concepts:
                 fed.unresolved_references.append(
@@ -408,6 +521,12 @@ class FederatedOntologyLoader:
                     f"Relationship '{rel.name or (rel.from_concept + '->' + rel.to_concept)}' "
                     f"references unknown target concept: '{rel.to_concept}'"
                 )
+        for m in fed.metrics.values():
+            for dep in m.derives_from:
+                if dep.casefold() not in known_metrics:
+                    fed.unresolved_references.append(
+                        f"Metric '{m.name}' derives_from unknown metric: '{dep}'"
+                    )
 
         return fed
 
@@ -566,6 +685,8 @@ class FederatedOntologyLoader:
         }
         used_names: Dict[str, int] = {}
         for rel in federated.relationships:
+            if rel.relationship_type != RelationshipType.JOIN and not (rel.join_expression or "").strip():
+                continue
             from_c = by_key.get(rel.from_concept.casefold())
             to_c = by_key.get(rel.to_concept.casefold())
             label = rel.name or f"{rel.from_concept}->{rel.to_concept}"
@@ -751,6 +872,7 @@ class FederatedOntologyLoader:
                 description=desc,
                 synonyms=union(exist_c.synonyms if exist_c else [], bi_syns),
                 business_rules=exist_c.business_rules if exist_c else [],
+                filter_expression=exist_c.filter_expression if exist_c else None,
                 data_steward=exist_c.data_steward if exist_c else None,
                 source_dataset=exist_c.source_dataset if exist_c else None,
                 physical_table=ds.source_table or ds.unique_name,
@@ -802,6 +924,8 @@ class FederatedOntologyLoader:
                 grain=exist_m.grain if exist_m else [],
                 synonyms=union(exist_m.synonyms if exist_m else [], m.synonyms),
                 business_rules=exist_m.business_rules if exist_m else [],
+                filter_expression=exist_m.filter_expression if exist_m else None,
+                derives_from=exist_m.derives_from if exist_m else [],
                 data_steward=(exist_m.data_steward if (exist_m and exist_m.data_steward) else (m.business_owner or None)),
                 domain=domain,
                 concept=m.dataset or (exist_m.concept if exist_m else None),
@@ -866,6 +990,7 @@ class FederatedOntologyLoader:
                 from_concept=rel.from_dataset,
                 to_concept=rel.to_dataset,
                 cardinality=exist_r.cardinality if user_r else card,
+                relationship_type=exist_r.relationship_type if exist_r else RelationshipType.JOIN,
                 join_expression=(exist_r.join_expression if (user_r and exist_r.join_expression) else join_expr),
                 predicate_label=exist_r.predicate_label if exist_r else None,
                 origin="bi",
@@ -896,7 +1021,7 @@ class FederatedOntologyLoader:
                 used_rel_names.add(r.name.casefold())
             deduped.append(r)
 
-        return DomainOntology(
+        result = DomainOntology(
             domain=domain,
             id=existing_ontology.id if existing_ontology else None,
             owner=existing_ontology.owner if existing_ontology else None,
@@ -909,7 +1034,10 @@ class FederatedOntologyLoader:
             concepts=concepts,
             metrics=metrics,
             relationships=deduped,
+            policies=list(existing_ontology.policies) if existing_ontology else [],
         )
+        cls._auto_infer_metric_dependencies(result)
+        return result
 
     @staticmethod
     def dump_domain_yaml(domain_ontology: DomainOntology) -> str:
@@ -917,11 +1045,15 @@ class FederatedOntologyLoader:
         raw_dict = domain_ontology.model_dump(mode="json", exclude_none=True)
 
         def _prune(node: Any) -> Any:
-            # Drop bookkeeping noise (stale: false, empty maps_to) to keep files readable.
+            # Drop bookkeeping noise (stale: false, empty maps_to/derives_from/policies, default JOIN type) to keep files readable.
             if isinstance(node, dict):
                 return {
                     k: _prune(v) for k, v in node.items()
-                    if not (k == "stale" and v is False) and not (k == "maps_to" and not v)
+                    if not (k == "stale" and v is False)
+                    and not (k == "maps_to" and not v)
+                    and not (k == "derives_from" and not v)
+                    and not (k == "policies" and not v)
+                    and not (k == "relationship_type" and v == "JOIN")
                 }
             if isinstance(node, list):
                 return [_prune(v) for v in node]

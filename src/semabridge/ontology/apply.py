@@ -38,6 +38,8 @@ class _Annot:
     description: Optional[str] = None
     business_rules: List[str] = field(default_factory=list)
     data_steward: Optional[str] = None
+    filter_expression: Optional[str] = None
+    derives_from: List[str] = field(default_factory=list)
     sources: List[str] = field(default_factory=list)
 
 
@@ -197,17 +199,46 @@ class OntologyApplier:
             self.matched.append(label)
 
     # ---------------------------------------------------- domain ontology
+    @staticmethod
+    def _effective_rules_and_filter(
+        dom: Any,
+        item: Any,
+    ) -> Tuple[List[str], Optional[str]]:
+        rules = list(getattr(item, "business_rules", None) or [])
+        filters: List[str] = []
+        inline_f = (getattr(item, "filter_expression", None) or "").strip()
+        if inline_f:
+            filters.append(inline_f)
+            rule_txt = f"Filter: {inline_f}"
+            if rule_txt.casefold() not in {r.casefold() for r in rules}:
+                rules.append(rule_txt)
+        item_key = _cf(getattr(item, "name", ""))
+        for pol in getattr(dom, "policies", None) or []:
+            applies = [_cf(x) for x in (getattr(pol, "applies_to", None) or [])]
+            if not applies or "*" in applies or item_key in applies:
+                pf = (getattr(pol, "filter_expression", None) or "").strip()
+                if pf and pf.casefold() not in {f.casefold() for f in filters}:
+                    filters.append(pf)
+                pol_desc = (getattr(pol, "description", None) or pol.name).strip()
+                pol_rule = f"{pol_desc} (SQL: {pf})" if pf else pol_desc
+                if pol_rule and pol_rule.casefold() not in {r.casefold() for r in rules}:
+                    rules.append(pol_rule)
+        combined_filter = " AND ".join(filters) if filters else None
+        return rules, combined_filter
+
     def add_domain(self, dom: Any) -> None:
         dname = dom.domain
         for concept in dom.concepts:
             if getattr(concept, "stale", False):
                 continue
             label = f"domain '{dname}' concept '{concept.name}'"
+            c_rules, c_filter = self._effective_rules_and_filter(dom, concept)
             annot = _Annot(
                 synonyms=list(concept.synonyms),
                 description=concept.description,
-                business_rules=list(concept.business_rules),
+                business_rules=c_rules,
                 data_steward=concept.data_steward,
+                filter_expression=c_filter,
                 sources=[f"domain:{dname}"],
             )
             datasets = self._match_concept(concept)
@@ -256,6 +287,7 @@ class OntologyApplier:
             if getattr(metric, "stale", False):
                 continue
             label = f"domain '{dname}' metric '{metric.name}'"
+            m_rules, m_filter = self._effective_rules_and_filter(dom, metric)
             cands = self._match_metric(metric)
             if len(cands) == 1:
                 self._add(
@@ -264,8 +296,10 @@ class OntologyApplier:
                     _Annot(
                         synonyms=list(metric.synonyms),
                         description=metric.description,
-                        business_rules=list(metric.business_rules),
+                        business_rules=m_rules,
                         data_steward=metric.data_steward,
+                        filter_expression=m_filter,
+                        derives_from=list(getattr(metric, "derives_from", None) or []),
                         sources=[f"domain:{dname}"],
                     ),
                 )
@@ -351,11 +385,21 @@ class OntologyApplier:
         description = next((a.description for a in layers if a.description and a.description.strip()), None)
         rules = next((a.business_rules for a in layers if a.business_rules), [])
         steward = next((a.data_steward for a in layers if a.data_steward and a.data_steward.strip()), None)
+        filter_expr = next((a.filter_expression for a in layers if a.filter_expression and a.filter_expression.strip()), None)
+        derives_from = _union(*[a.derives_from for a in layers], list(getattr(obj, "derives_from", None) or []))
         bi_desc = str(getattr(obj, "description", "") or "")
         base = description.strip() if description else bi_desc
         final_desc = compose_description(base, rules, steward)
         synonyms = _union(*[a.synonyms for a in layers], list(getattr(obj, "synonyms", None) or []))
-        return {"description": final_desc, "synonyms": synonyms, "sources": [s for a in layers for s in a.sources]}
+        return {
+            "description": final_desc,
+            "synonyms": synonyms,
+            "business_rules": rules,
+            "data_steward": steward,
+            "filter_expression": filter_expr,
+            "derives_from": derives_from,
+            "sources": [s for a in layers for s in a.sources],
+        }
 
     def apply(self) -> Dict[str, int]:
         counts = {"tables": 0, "columns": 0, "metrics": 0}
@@ -364,6 +408,12 @@ class OntologyApplier:
                 obj = self._objs[oid]
                 resolved = self._resolve(obj, layers)
                 _set(obj, "description", resolved["description"])
+                if resolved.get("data_steward") and hasattr(obj, "business_owner") and not getattr(obj, "business_owner", None):
+                    _set(obj, "business_owner", resolved["data_steward"])
+                if resolved.get("filter_expression") and hasattr(obj, "filter_expression"):
+                    _set(obj, "filter_expression", resolved["filter_expression"])
+                if resolved.get("derives_from") and hasattr(obj, "derives_from"):
+                    _set(obj, "derives_from", resolved["derives_from"])
                 if hasattr(obj, "synonyms"):
                     _set(obj, "synonyms", resolved["synonyms"])
                     sources = getattr(obj, "synonym_sources", None)

@@ -194,3 +194,63 @@ def test_from_osi_model_conversion_and_enrichment_merge():
     assert rev_m.concept == "Orders"
     assert new_dom.owner == "steward@enterprise.com"
 
+
+# ---------------- Point 2 & Point 4: Metric Lineage, Cycle Validation & Enforceable Policies ----------------
+
+def test_metric_cycle_and_self_dependency_rejected():
+    import pytest
+    from semabridge.ontology.federated_loader import OntologyValidationError
+
+    with pytest.raises(OntologyValidationError, match="cannot derive from itself"):
+        _dom("domain: D\nmetrics:\n  - name: m1\n    derives_from: [m1]\n")
+
+    with pytest.raises(OntologyValidationError, match="Circular metric dependency"):
+        _dom(
+            "domain: D\nmetrics:\n"
+            "  - name: m1\n    derives_from: [m2]\n"
+            "  - name: m2\n    derives_from: [m1]\n"
+        )
+
+
+def test_nl_query_enforces_policies_and_expands_derived_metrics():
+    yaml_text = """
+domain: Finance
+policies:
+  - name: exclude_intercompany
+    description: Exclude intercompany eliminations
+    filter_expression: "is_intercompany = FALSE"
+    applies_to: [Sales, net_margin]
+concepts:
+  - name: Sales
+    physical_table: FACT_SALES
+    filter_expression: "is_deleted = FALSE"
+    attributes:
+      - {name: revenue, data_type: DECIMAL}
+      - {name: cogs, data_type: DECIMAL}
+      - {name: sale_date, data_type: DATE}
+metrics:
+  - name: total_revenue
+    concept: Sales
+    sql_expression: "SUM(revenue)"
+  - name: total_cogs
+    concept: Sales
+    sql_expression: "SUM(cogs)"
+  - name: net_margin
+    concept: Sales
+    sql_expression: "total_revenue - total_cogs"
+    filter_expression: "order_status = 'COMPLETED'"
+"""
+    eng = _engine(yaml_text)
+    plan = eng.resolve_query("net margin by Sales in 2024")
+    # 1. Composite metric expression is expanded from upstream metrics
+    assert "(SUM(revenue)) - (SUM(cogs)) AS net_margin" in plan.generated_sql
+    assert set(plan.derived_from_metrics) == {"total_revenue", "total_cogs"}
+    # 2. Concept filter, metric filter, and domain policy filter are all enforced in WHERE clause
+    assert "YEAR(sale_date) = 2024" in plan.filters
+    assert "is_deleted = FALSE" in plan.filters
+    assert "order_status = 'COMPLETED'" in plan.filters
+    assert "is_intercompany = FALSE" in plan.filters
+    assert "WHERE YEAR(sale_date) = 2024 AND is_deleted = FALSE AND order_status = 'COMPLETED' AND is_intercompany = FALSE" in plan.generated_sql
+    assert "exclude_intercompany" in plan.applied_policies
+
+

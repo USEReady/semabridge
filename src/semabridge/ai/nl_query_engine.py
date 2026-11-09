@@ -29,6 +29,8 @@ class QueryResolutionPlan(BaseModel):
     detected_metrics: List[str]
     detected_dimensions: List[str]
     filters: List[str] = Field(default_factory=list)
+    applied_policies: List[str] = Field(default_factory=list)
+    derived_from_metrics: List[str] = Field(default_factory=list)
     resolved_tables: List[str]
     join_clauses: List[str] = Field(default_factory=list)
     generated_sql: str
@@ -94,6 +96,8 @@ class NLQueryEngine:
 
         # Extract potential time filters from prompt (e.g. 2024, 2023, Q1, Q2)
         filters: List[str] = []
+        applied_policies: List[str] = []
+        derived_from_metrics: List[str] = []
         warnings: List[str] = []
         year_match = re.search(r"\b(20[12][0-9])\b", clean_prompt)
         quarter_match = re.search(r"\bQ([1-4])\b", clean_prompt, re.IGNORECASE)
@@ -109,6 +113,25 @@ class NLQueryEngine:
             if quarter_match:
                 # QUARTER() returns an integer 1-4, so compare against a number, not 'Q1'.
                 filters.append(f"QUARTER({date_col}) = {quarter_match.group(1)}")
+
+        # Resolve upstream derived metrics and collect enforceable SQL policies & filter expressions
+        metrics_by_key: Dict[str, DomainMetric] = {
+            k.casefold(): v for k, v in self.ontology.metrics.items()
+        }
+        for m in detected_metrics:
+            for dep in getattr(m, "derives_from", None) or []:
+                dep_m = metrics_by_key.get(dep.casefold())
+                dep_name = dep_m.name if dep_m else dep
+                if dep_name not in derived_from_metrics:
+                    derived_from_metrics.append(dep_name)
+
+        self._collect_policy_filters(
+            detected_concepts=detected_concepts,
+            detected_metrics=detected_metrics,
+            metrics_by_key=metrics_by_key,
+            filters=filters,
+            applied_policies=applied_policies,
+        )
 
         # Determine target tables and relationships
         tables: Set[str] = set()
@@ -147,7 +170,7 @@ class NLQueryEngine:
         metric_names = []
         for m in detected_metrics:
             metric_names.append(m.name)
-            expr = m.sql_expression or f"SUM({m.name})"
+            expr = self._expand_metric_expression(m, metrics_by_key)
             select_parts.append(f"    {expr} AS {m.name}")
 
         if not select_parts:
@@ -188,8 +211,12 @@ class NLQueryEngine:
         explanation_parts = []
         if detected_metrics:
             explanation_parts.append(f"Calculated metrics: {', '.join(m.name for m in detected_metrics)}")
+        if derived_from_metrics:
+            explanation_parts.append(f"Derived from upstream metrics: {', '.join(derived_from_metrics)}")
         if detected_concepts:
             explanation_parts.append(f"Grouped by dimensions: {', '.join(c.name for c in detected_concepts)}")
+        if applied_policies:
+            explanation_parts.append(f"Enforced policies: {', '.join(applied_policies)}")
         if filters:
             explanation_parts.append(f"Applied filters: {', '.join(filters)}")
         for w in warnings:
@@ -201,6 +228,8 @@ class NLQueryEngine:
             detected_metrics=[m.name for m in detected_metrics],
             detected_dimensions=[c.name for c in detected_concepts],
             filters=filters,
+            applied_policies=applied_policies,
+            derived_from_metrics=derived_from_metrics,
             resolved_tables=resolved_tables_list,
             join_clauses=join_clauses,
             generated_sql=generated_sql,
@@ -208,6 +237,119 @@ class NLQueryEngine:
             explanation=explanation,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _expand_metric_expression(
+        metric: DomainMetric,
+        metrics_by_key: Dict[str, DomainMetric],
+        _seen: Optional[Set[str]] = None,
+    ) -> str:
+        """Expand composite metric references (``derives_from``) into executable SQL."""
+        expr = (metric.sql_expression or "").strip()
+        if not expr:
+            return f"SUM({metric.name})"
+        deps = list(getattr(metric, "derives_from", None) or [])
+        if not deps:
+            return expr
+        seen = set(_seen or set())
+        seen.add(metric.name.casefold())
+
+        expanded = expr
+        for dep_name in deps:
+            dep_key = dep_name.casefold()
+            if dep_key in seen:
+                continue
+            dep_m = metrics_by_key.get(dep_key)
+            if not dep_m or not (dep_m.sql_expression or "").strip():
+                continue
+            dep_sql = NLQueryEngine._expand_metric_expression(dep_m, metrics_by_key, seen)
+            # Replace bracketed [dep_name] / [dep_label] first, then bare word boundary matches
+            for token in filter(None, [dep_m.name, dep_m.label, dep_name]):
+                expanded = re.sub(
+                    r"\[" + re.escape(token) + r"\]",
+                    f"({dep_sql})",
+                    expanded,
+                    flags=re.IGNORECASE,
+                )
+            expanded = re.sub(
+                r"\b" + re.escape(dep_m.name) + r"\b",
+                f"({dep_sql})",
+                expanded,
+                flags=re.IGNORECASE,
+            )
+        return expanded
+
+    def _collect_policy_filters(
+        self,
+        detected_concepts: List[DomainConcept],
+        detected_metrics: List[DomainMetric],
+        metrics_by_key: Dict[str, DomainMetric],
+        filters: List[str],
+        applied_policies: List[str],
+    ) -> None:
+        """Append enforceable SQL filter expressions from concepts, metrics, and domain policies."""
+        seen_filters = {f.strip().casefold() for f in filters if f.strip()}
+        seen_policies = {p.casefold() for p in applied_policies}
+
+        def add_filter(sql_pred: Optional[str], policy_label: Optional[str] = None) -> None:
+            pred = (sql_pred or "").strip()
+            if not pred:
+                return
+            if pred.casefold() not in seen_filters:
+                seen_filters.add(pred.casefold())
+                filters.append(pred)
+            if policy_label and policy_label.casefold() not in seen_policies:
+                seen_policies.add(policy_label.casefold())
+                applied_policies.append(policy_label)
+
+        def extract_inline_sql_rules(rules: List[str], owner_name: str) -> None:
+            for rule in rules or []:
+                m = re.match(r"^(?:SQL|FILTER)\s*:\s*(.+)$", str(rule or "").strip(), flags=re.IGNORECASE)
+                if m:
+                    add_filter(m.group(1), f"{owner_name} rule")
+
+        active_names: Set[str] = set()
+        active_domains: Set[str] = set()
+
+        for c in detected_concepts:
+            active_names.add(c.name.casefold())
+            if c.domain:
+                active_domains.add(c.domain.casefold())
+            if getattr(c, "filter_expression", None):
+                add_filter(c.filter_expression, f"{c.name} filter")
+            extract_inline_sql_rules(c.business_rules, c.name)
+
+        # Include detected metrics plus any upstream derived metrics
+        all_involved_metrics: List[DomainMetric] = list(detected_metrics)
+        for m in detected_metrics:
+            for dep in getattr(m, "derives_from", None) or []:
+                dep_m = metrics_by_key.get(dep.casefold())
+                if dep_m and dep_m not in all_involved_metrics:
+                    all_involved_metrics.append(dep_m)
+
+        for m in all_involved_metrics:
+            active_names.add(m.name.casefold())
+            if m.domain:
+                active_domains.add(m.domain.casefold())
+            if getattr(m, "filter_expression", None):
+                add_filter(m.filter_expression, f"{m.name} filter")
+            extract_inline_sql_rules(m.business_rules, m.name)
+
+        # Check domain-level and federated policies
+        all_policies = list(getattr(self.ontology, "policies", {}).values())
+        for dom in self.ontology.domains.values():
+            for pol in getattr(dom, "policies", None) or []:
+                if pol not in all_policies:
+                    all_policies.append(pol)
+
+        for pol in all_policies:
+            applies = [a.strip().casefold() for a in (getattr(pol, "applies_to", None) or []) if a.strip()]
+            pol_dom = (getattr(pol, "domain", None) or "").strip().casefold()
+            if not applies or "*" in applies:
+                if not pol_dom or pol_dom in active_domains or not active_domains:
+                    add_filter(pol.filter_expression, pol.name)
+            elif any(a in active_names for a in applies):
+                add_filter(pol.filter_expression, pol.name)
 
     _DATE_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"}
 

@@ -80,15 +80,40 @@ def build_ontology_graph(
         add_node(node_id, type="bi", label=text, bi_kind=kind)
         return node_id
 
-    # Concept lookup across all shown domains (relationships and metric.concept
-    # may point at a concept another domain defines).
+    # Concept & metric lookup across all shown domains (relationships, metric.concept,
+    # and metric.derives_from may point at an item another domain defines).
     concept_ids: Dict[str, str] = {}
+    metric_ids: Dict[str, str] = {}
     domain_ids: Dict[str, str] = {}
+
+    def _policies_for(dom: Any, item_name: str) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        target_key = _key(item_name)
+        for pol in getattr(dom, "policies", None) or []:
+            applies = [_key(x) for x in (getattr(pol, "applies_to", None) or [])]
+            if not applies or "*" in applies or target_key in applies:
+                out.append(
+                    {
+                        "name": pol.name,
+                        "description": getattr(pol, "description", None),
+                        "filter_expression": pol.filter_expression,
+                    }
+                )
+        return out
 
     for dom in domains:
         did = str(getattr(dom, "id", None) or _key(dom.domain))
         dnode = f"domain:{did}"
         domain_ids[did] = dnode
+        dom_policies = [
+            {
+                "name": p.name,
+                "description": getattr(p, "description", None),
+                "filter_expression": p.filter_expression,
+                "applies_to": list(getattr(p, "applies_to", None) or []),
+            }
+            for p in (getattr(dom, "policies", None) or [])
+        ]
         add_node(
             dnode,
             type="domain",
@@ -99,6 +124,8 @@ def build_ontology_graph(
             source_project_id=getattr(dom, "source_project_id", None),
             concept_count=len(dom.concepts),
             metric_count=len(dom.metrics),
+            policy_count=len(dom_policies),
+            policies=dom_policies,
         )
         for c in dom.concepts:
             cnode = f"concept:{did}:{_key(c.name)}"
@@ -123,6 +150,8 @@ def build_ontology_graph(
                 description=c.description,
                 synonyms=list(c.synonyms or []),
                 business_rules=list(c.business_rules or []),
+                filter_expression=getattr(c, "filter_expression", None),
+                policies=_policies_for(dom, c.name),
                 data_steward=c.data_steward,
                 maps_to=list(c.maps_to or []),
                 attributes=attrs,
@@ -133,6 +162,11 @@ def build_ontology_graph(
             add_edge(dnode, cnode, "defines")
             for target in list(c.maps_to or []) or [t for t in (c.physical_table, c.source_dataset) if t][:1]:
                 add_edge(cnode, bi_node(target), "binds", "maps to")
+        for m in dom.metrics:
+            mnode = f"metric:{did}:{_key(m.name)}"
+            metric_ids.setdefault(_key(m.name), mnode)
+            for syn in m.synonyms or []:
+                metric_ids.setdefault(_key(syn), mnode)
 
     for dom in domains:
         did = str(getattr(dom, "id", None) or _key(dom.domain))
@@ -140,6 +174,13 @@ def build_ontology_graph(
         for m in dom.metrics:
             mnode = f"metric:{did}:{_key(m.name)}"
             target_concept = concept_ids.get(_key(m.concept)) if m.concept else None
+            derives_from = list(getattr(m, "derives_from", None) or [])
+            missing_deps = [dep for dep in derives_from if not metric_ids.get(_key(dep))]
+            unresolved_msgs = []
+            if m.concept and not target_concept:
+                unresolved_msgs.append(f"concept '{m.concept}' is not defined")
+            for dep in missing_deps:
+                unresolved_msgs.append(f"upstream metric '{dep}' is not defined")
             add_node(
                 mnode,
                 type="metric",
@@ -148,13 +189,17 @@ def build_ontology_graph(
                 description=m.description,
                 synonyms=list(m.synonyms or []),
                 business_rules=list(m.business_rules or []),
+                filter_expression=getattr(m, "filter_expression", None),
+                policies=_policies_for(dom, m.name),
+                derives_from=derives_from,
+                impacted_metrics=[],
                 data_steward=m.data_steward,
                 maps_to=list(m.maps_to or []),
                 sql_expression=m.sql_expression,
                 aggregation_type=m.aggregation_type,
                 stale=bool(m.stale),
-                unbound=not m.maps_to,
-                unresolved=(f"concept '{m.concept}' is not defined" if m.concept and not target_concept else None),
+                unbound=not (m.maps_to or derives_from),
+                unresolved="; ".join(unresolved_msgs) if unresolved_msgs else None,
                 collision=collided.get(("metric", _key(m.name))),
             )
             add_edge(dnode, mnode, "defines")
@@ -162,13 +207,30 @@ def build_ontology_graph(
                 add_edge(mnode, target_concept, "measures", "measures")
             for target in m.maps_to or []:
                 add_edge(mnode, bi_node(target), "binds", "maps to")
+
+    # Second pass for metric-to-metric lineage edges (derives_from) and downstream impact tracking
+    for dom in domains:
+        did = str(getattr(dom, "id", None) or _key(dom.domain))
+        for m in dom.metrics:
+            mnode = f"metric:{did}:{_key(m.name)}"
+            for dep in getattr(m, "derives_from", None) or []:
+                base_mnode = metric_ids.get(_key(dep))
+                if base_mnode and base_mnode in nodes:
+                    add_edge(mnode, base_mnode, "derives", "derives from")
+                    impacted = nodes[base_mnode].setdefault("impacted_metrics", [])
+                    if (m.label or m.name) not in impacted:
+                        impacted.append(m.label or m.name)
+
+    for dom in domains:
         for r in dom.relationships:
             src = concept_ids.get(_key(r.from_concept))
             dst = concept_ids.get(_key(r.to_concept))
             card = getattr(r.cardinality, "value", r.cardinality)
-            label = r.predicate_label or str(card or "")
+            rel_type = getattr(getattr(r, "relationship_type", None), "value", getattr(r, "relationship_type", "JOIN"))
+            default_label = str(card or "") if rel_type == "JOIN" else str(rel_type)
+            label = r.predicate_label or default_label
             if src and dst:
-                add_edge(src, dst, "relates", label, stale=bool(r.stale))
+                add_edge(src, dst, "relates", label, stale=bool(r.stale), relationship_type=rel_type)
             else:
                 missing = [n for n, ok in ((r.from_concept, src), (r.to_concept, dst)) if not ok]
                 for node_id in (src, dst):
@@ -195,6 +257,8 @@ def build_ontology_graph(
         "bi_objects": sum(1 for n in node_list if n["type"] == "bi"),
         "projects": sum(1 for n in node_list if n["type"] == "project"),
         "relationships": sum(1 for e in edges if e["kind"] == "relates"),
+        "metric_dependencies": sum(1 for e in edges if e["kind"] == "derives"),
+        "policies": sum(n.get("policy_count", 0) for n in node_list if n["type"] == "domain"),
         "collisions": sum(1 for n in node_list if n.get("collision")),
         "stale": sum(1 for n in node_list if n.get("stale")),
         "unbound": sum(1 for n in node_list if n.get("unbound")),

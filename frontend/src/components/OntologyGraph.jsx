@@ -31,6 +31,7 @@ const EDGE_STYLE = {
   defines: { stroke: '#94a3b8' },
   measures: { stroke: '#059669' },
   relates: { stroke: '#0d9488', strokeWidth: 2 },
+  derives: { stroke: '#7c3aed', strokeDasharray: '4 2', strokeWidth: 1.75 },
   binds: { stroke: '#94a3b8', strokeDasharray: '3 3' },
 };
 
@@ -93,11 +94,11 @@ function layout(nodes, edges) {
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 28, ranksep: 110 });
   nodes.forEach((n) => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
-  // "relates" edges are concept-to-concept; leaving them out of the layout keeps
-  // concepts in one column instead of pushing related ones a rank further right.
+  // "relates" and "derives" edges connect peers in the same rank; leaving them out
+  // of the layout keeps concepts/metrics in one column instead of pushing related ones right.
   // Metrics sit in the same column as concepts, so their BI bindings span two
   // ranks; that keeps every BI object in the right-most column.
-  edges.filter((e) => e.kind !== 'relates').forEach((e) => g.setEdge(e.source, e.target, {
+  edges.filter((e) => e.kind !== 'relates' && e.kind !== 'derives').forEach((e) => g.setEdge(e.source, e.target, {
     minlen: e.kind === 'binds' && e.source.startsWith('metric:') ? 2 : 1,
   }));
   dagre.layout(g);
@@ -332,8 +333,28 @@ export default function OntologyGraph({ projects = [] }) {
               </p>
             )}
             <DetailList title="Bound to (maps_to)" items={selected.maps_to} />
+            <DetailList title="Derives from (upstream metrics)" items={selected.derives_from} />
+            <DetailList title="Impacted KPIs (downstream)" items={selected.impacted_metrics} />
             <DetailList title="Synonyms" items={selected.synonyms} />
             <DetailList title="Business rules" items={selected.business_rules} />
+            {selected.filter_expression && (
+              <div className="space-y-1">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-tertiary">Enforced SQL filter</div>
+                <pre className="p-2 rounded bg-surface-raised border border-amber-500/40 text-[11px] text-amber-500 whitespace-pre-wrap m-0">{selected.filter_expression}</pre>
+              </div>
+            )}
+            {(selected.policies || []).length > 0 && (
+              <div className="space-y-1">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-tertiary">Active policies</div>
+                {selected.policies.map((pol, i) => (
+                  <div key={i} className="p-1.5 rounded border border-main bg-surface-raised text-[11px] space-y-0.5">
+                    <div className="font-semibold text-primary">{pol.name}</div>
+                    {pol.description && <div className="text-secondary text-[10px]">{pol.description}</div>}
+                    <div className="font-mono text-[10px] text-amber-500">{pol.filter_expression}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             {selected.data_steward && <p className="text-[11px] text-secondary m-0">Data steward: <b className="text-primary">{selected.data_steward}</b></p>}
             {selected.sql_expression && (
               <pre className="p-2 rounded bg-surface-raised border border-main text-[11px] text-emerald-500 whitespace-pre-wrap m-0">{selected.sql_expression}</pre>

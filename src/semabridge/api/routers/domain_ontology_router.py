@@ -90,6 +90,7 @@ def _summary(dom: Any) -> Dict[str, Any]:
         "concept_count": len(dom.concepts),
         "metric_count": len(dom.metrics),
         "relationship_count": len(dom.relationships),
+        "policy_count": len(getattr(dom, "policies", None) or []),
         "stale_count": sum(1 for c in dom.concepts if c.stale) + sum(1 for m in dom.metrics if m.stale),
     }
 
@@ -103,6 +104,7 @@ def list_domains() -> Dict[str, Any]:
         "total_concepts": len(fed.concepts),
         "total_metrics": len(fed.metrics),
         "total_relationships": len(fed.relationships),
+        "total_policies": len(getattr(fed, "policies", {}) or {}),
         "collisions": [c.model_dump() for c in fed.collisions],
         "unresolved_references": fed.unresolved_references,
         "load_errors": list(ontology_store.load_errors),

@@ -80,6 +80,40 @@ export default function OntologyDomainManager() {
   const [savingVerified, setSavingVerified] = useState(false);
   const [verifiedSuccessMsg, setVerifiedSuccessMsg] = useState(null);
 
+  // ── Governance, Blast Radius, Reconciliation & RLS State ──
+  // 1. Blast Radius Simulator
+  const [blastTarget, setBlastTarget] = useState('revenue');
+  const [blastType, setBlastType] = useState('METRIC');
+  const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
+  const [blastReport, setBlastReport] = useState(null);
+  const [runningBlast, setRunningBlast] = useState(false);
+
+  // 2. Semantic Quality Linter
+  const [lintRequireSteward, setLintRequireSteward] = useState(true);
+  const [lintRequireDesc, setLintRequireDesc] = useState(true);
+  const [lintSnakeCase, setLintSnakeCase] = useState(true);
+  const [lintReport, setLintReport] = useState(null);
+  const [runningLint, setRunningLint] = useState(false);
+
+  // 3. Golden Data Reconciliation (DAX vs. SQL Parity)
+  const [reconMetric, setReconMetric] = useState('Gross Margin');
+  const [reconExpr, setReconExpr] = useState('SUM(REVENUE) - SUM(COGS)');
+  const [reconTable, setReconTable] = useState('FACT_FINANCIALS');
+  const [reconDims, setReconDims] = useState('Customer_Tier, Fiscal_Year');
+  const [reconScenario, setReconScenario] = useState('certified'); // 'certified' | 'drift'
+  const [reconQueries, setReconQueries] = useState(null);
+  const [reconResult, setReconResult] = useState(null);
+  const [runningRecon, setRunningRecon] = useState(false);
+
+  // 4. Bidirectional RLS Policy Translator
+  const [rlsRoleName, setRlsRoleName] = useState('EMEA_Regional_Managers');
+  const [rlsTableName, setRlsTableName] = useState('DIM_CUSTOMER');
+  const [rlsDaxExpr, setRlsDaxExpr] = useState('[Region] = "EMEA" && [Status] = "ACTIVE"');
+  const [rlsTargetDb, setRlsTargetDb] = useState('ANALYTICS_DB');
+  const [rlsTargetSchema, setRlsTargetSchema] = useState('SEMANTIC');
+  const [rlsDdl, setRlsDdl] = useState('');
+  const [runningRls, setRunningRls] = useState(false);
+
   // Initial Load
   useEffect(() => {
     fetchDomains();
@@ -408,6 +442,166 @@ export default function OntologyDomainManager() {
     setExecutionResult(null);
   };
 
+  // ── Governance, Blast Radius, Reconciliation & RLS Handlers ──
+  const handleRunBlastRadius = async () => {
+    if (!blastTarget.trim()) return;
+    setRunningBlast(true);
+    try {
+      const res = await authFetch('/api/governance/blast-radius', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_name: blastTarget.trim(),
+          target_type: blastType,
+          change_type: blastChangeType,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBlastReport(data);
+      } else {
+        const err = await res.json();
+        setStatusMessage({ type: 'error', text: describeApiError(err, 'Blast radius simulation failed.') });
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setRunningBlast(false);
+    }
+  };
+
+  const handleRunLinter = async () => {
+    setRunningLint(true);
+    try {
+      const res = await authFetch('/api/governance/lint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          require_steward: lintRequireSteward,
+          require_description: lintRequireDesc,
+          enforce_snake_case_metrics: lintSnakeCase,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLintReport(data);
+      } else {
+        const err = await res.json();
+        setStatusMessage({ type: 'error', text: describeApiError(err, 'Semantic linter failed.') });
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setRunningLint(false);
+    }
+  };
+
+  const handleRunReconciliation = async (scenarioOverride) => {
+    const activeScenario = scenarioOverride || reconScenario;
+    setRunningRecon(true);
+    try {
+      const dimList = reconDims
+        .split(',')
+        .map((d) => d.trim())
+        .filter(Boolean);
+      const qRes = await authFetch('/api/reconciliation/generate-queries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metric_name: reconMetric,
+          metric_sql_expression: reconExpr,
+          target_table_or_view: reconTable,
+          dimensions: dimList.length ? dimList : ['Customer_Tier'],
+          filters: [],
+        }),
+      });
+      let generated = { dax_query: '', sql_query: '' };
+      if (qRes.ok) {
+        generated = await qRes.json();
+        setReconQueries(generated);
+      }
+
+      const primaryDim = dimList[0] || 'Customer_Tier';
+      const daxRows = [
+        { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
+        { [primaryDim]: 'Mid-Market', metric_value: 820400.0 },
+        { [primaryDim]: 'SMB', metric_value: 312900.25 },
+        { [primaryDim]: 'Strategic', metric_value: 2190000.0 },
+      ];
+      const sqlRows =
+        activeScenario === 'certified'
+          ? [
+              { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
+              { [primaryDim]: 'Mid-Market', metric_value: 820400.0 },
+              { [primaryDim]: 'SMB', metric_value: 312900.25 },
+              { [primaryDim]: 'Strategic', metric_value: 2190000.0 },
+            ]
+          : [
+              { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
+              { [primaryDim]: 'Mid-Market', metric_value: 794150.0 }, // Intentional filter/rounding drift
+              { [primaryDim]: 'SMB', metric_value: 312900.25 },
+              { [primaryDim]: 'Strategic', metric_value: 2105400.0 }, // Intentional drift
+            ];
+
+      const vRes = await authFetch('/api/reconciliation/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metric_name: reconMetric,
+          dax_results: daxRows,
+          sql_results: sqlRows,
+          dimension_keys: [primaryDim],
+          dax_query: generated.dax_query,
+          sql_query: generated.sql_query,
+        }),
+      });
+      if (vRes.ok) {
+        const vData = await vRes.json();
+        setReconResult(vData);
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setRunningRecon(false);
+    }
+  };
+
+  const handleTranslateRls = async () => {
+    setRunningRls(true);
+    try {
+      const res = await authFetch('/api/security/rls/tmdl-to-snowflake', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: {
+            name: rlsRoleName,
+            description: `Governed RLS policy for ${rlsRoleName}`,
+            table_permissions: [
+              {
+                table_name: rlsTableName,
+                dax_filter_expression: rlsDaxExpr,
+              },
+            ],
+            members: ['analyst_emea@company.com'],
+          },
+          target_database: rlsTargetDb,
+          target_schema: rlsTargetSchema,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRlsDdl(data.ddl || '');
+      } else {
+        const err = await res.json();
+        setStatusMessage({ type: 'error', text: describeApiError(err, 'RLS translation failed.') });
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setRunningRls(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-app text-primary overflow-hidden">
       {/* ── Top Header Banner ── */}
@@ -542,6 +736,22 @@ export default function OntologyDomainManager() {
             <span>AI/BI Conversational Studio</span>
             <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
               Cortex & Genie
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('governance')}
+            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
+              activeTab === 'governance'
+                ? 'border-accent-blue text-accent-blue'
+                : 'border-transparent text-secondary hover:text-primary'
+            }`}
+          >
+            <ShieldCheck size={15} className="text-emerald-400" />
+            <span>Governance, Blast Radius & Reconciliation</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+              CI/CD & Parity
             </span>
           </button>
         </div>
@@ -1012,6 +1222,26 @@ export default function OntologyDomainManager() {
                       <span className="text-tertiary italic text-[11px]">None detected</span>
                     )}
                   </div>
+                  {nlResolutionPlan.derived_from_metrics?.length > 0 && (
+                    <div>
+                      <span className="text-tertiary mr-1.5 font-medium">Derived From:</span>
+                      {nlResolutionPlan.derived_from_metrics.map((dm) => (
+                        <span key={dm} className="px-2 py-0.5 rounded bg-violet-500/10 text-violet-400 font-mono text-[11px] mr-1.5 border border-violet-500/20 font-semibold">
+                          {dm}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {nlResolutionPlan.applied_policies?.length > 0 && (
+                    <div>
+                      <span className="text-tertiary mr-1.5 font-medium">Enforced Policies:</span>
+                      {nlResolutionPlan.applied_policies.map((pol) => (
+                        <span key={pol} className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono text-[11px] mr-1.5 border border-amber-500/20 font-semibold">
+                          {pol}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {nlResolutionPlan.filters?.length > 0 && (
                     <div>
                       <span className="text-tertiary mr-1.5 font-medium">Filters:</span>
@@ -1177,6 +1407,563 @@ export default function OntologyDomainManager() {
             )}
           </div>
         )}
+
+        {/* ════════════════════════════════════════════════════════════════════════
+            TAB 4: GOVERNANCE, BLAST RADIUS, RECONCILIATION & RLS SYNC
+           ════════════════════════════════════════════════════════════════════════ */}
+        {activeTab === 'governance' && (
+          <div className="max-w-7xl mx-auto p-6 space-y-6">
+            {/* Top Overview Banner */}
+            <div className="p-4 rounded-xl bg-surface border border-main flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-bold text-primary m-0 flex items-center gap-2">
+                  <ShieldCheck size={17} className="text-emerald-400" />
+                  Enterprise Governance, Impact Simulation & Data Parity Suite
+                </h2>
+                <p className="text-xs text-secondary mt-1 m-0">
+                  Simulate schema & metric breaking changes before deployment, audit ontology quality, mathematically certify Power BI DAX vs. Warehouse SQL parity, and compile row-level security policies.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleRunBlastRadius();
+                    handleRunLinter();
+                    handleRunReconciliation('certified');
+                    handleTranslateRls();
+                  }}
+                  className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                >
+                  <Play size={13} />
+                  Run All Governance Checks
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* ── 1. BLAST RADIUS & CHANGE IMPACT SIMULATOR ── */}
+              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                        Pre-Deployment Impact Analysis
+                      </span>
+                      <h3 className="text-sm font-bold text-primary mt-2 m-0">
+                        1. Blast Radius Simulator
+                      </h3>
+                      <p className="text-xs text-secondary mt-0.5 m-0">
+                        Predict which downstream KPIs, Power BI reports, and AI Cortex/Genie agents break if a column, table, or metric changes.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Quick Preset Targets */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className="text-tertiary font-medium">Quick Presets:</span>
+                    {[
+                      { label: 'Metric: revenue', name: 'revenue', type: 'METRIC', change: 'MODIFY_EXPRESSION' },
+                      { label: 'Metric: gross_margin', name: 'gross_margin', type: 'METRIC', change: 'DROP' },
+                      { label: 'Column: AMOUNT', name: 'AMOUNT', type: 'COLUMN', change: 'RENAME' },
+                    ].map((preset, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          setBlastTarget(preset.name);
+                          setBlastType(preset.type);
+                          setBlastChangeType(preset.change);
+                        }}
+                        className="px-2 py-0.5 rounded bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary transition-colors"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Target Object
+                      </label>
+                      <input
+                        type="text"
+                        value={blastTarget}
+                        onChange={(e) => setBlastTarget(e.target.value)}
+                        placeholder="e.g. revenue or AMOUNT"
+                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Object Type
+                      </label>
+                      <select
+                        value={blastType}
+                        onChange={(e) => setBlastType(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary"
+                      >
+                        <option value="METRIC">METRIC</option>
+                        <option value="COLUMN">COLUMN</option>
+                        <option value="TABLE">TABLE</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Simulated Change
+                      </label>
+                      <select
+                        value={blastChangeType}
+                        onChange={(e) => setBlastChangeType(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary"
+                      >
+                        <option value="MODIFY_EXPRESSION">MODIFY_EXPRESSION</option>
+                        <option value="RENAME">RENAME</option>
+                        <option value="DROP">DROP</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={runningBlast}
+                    onClick={handleRunBlastRadius}
+                    className="w-full py-2 px-4 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                    {runningBlast ? <RefreshCw size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
+                    Simulate Downstream Blast Radius
+                  </button>
+
+                  {blastReport && (
+                    <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
+                      <div className="flex items-center justify-between border-b border-main pb-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                              blastReport.severity === 'BREAKING'
+                                ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                                : blastReport.severity === 'DEGRADED'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}
+                          >
+                            {blastReport.severity}
+                          </span>
+                          <span className="font-mono font-semibold text-primary">
+                            {blastReport.target_type}: {blastReport.target_object}
+                          </span>
+                        </div>
+                        <span className="text-secondary font-semibold">
+                          {blastReport.total_impacted_items} Impacted Asset(s)
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="p-2 rounded bg-surface border border-main">
+                          <span className="text-[10px] text-tertiary block uppercase">Metrics</span>
+                          <span className="text-sm font-bold text-amber-400">
+                            {blastReport.affected_metrics?.length || 0}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded bg-surface border border-main">
+                          <span className="text-[10px] text-tertiary block uppercase">BI Reports</span>
+                          <span className="text-sm font-bold text-rose-400">
+                            {blastReport.affected_bi_reports?.length || 0}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded bg-surface border border-main">
+                          <span className="text-[10px] text-tertiary block uppercase">AI Agents</span>
+                          <span className="text-sm font-bold text-purple-400">
+                            {blastReport.affected_ai_tools?.length || 0}
+                          </span>
+                        </div>
+                      </div>
+
+                      {blastReport.affected_metrics?.length > 0 && (
+                        <div>
+                          <span className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                            Impacted Downstream Metrics & Stewards:
+                          </span>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {blastReport.affected_metrics.map((m, idx) => (
+                              <div
+                                key={idx}
+                                className="px-2.5 py-1.5 rounded bg-surface border border-main flex items-center justify-between text-[11px]"
+                              >
+                                <span className="font-mono font-semibold text-primary">{m.name}</span>
+                                <span className="text-tertiary">{m.details}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {blastReport.remediation_steps?.length > 0 && (
+                        <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-200 text-[11px] space-y-1">
+                          <span className="font-bold block text-amber-300">Recommended Remediation Plan:</span>
+                          <ul className="list-disc pl-4 space-y-0.5 m-0">
+                            {blastReport.remediation_steps.map((step, idx) => (
+                              <li key={idx}>{step}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── 2. SEMANTIC MODEL QUALITY LINTER ── */}
+              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
+                <div className="space-y-4">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                      Automated CI/CD Quality Gate
+                    </span>
+                    <h3 className="text-sm font-bold text-primary mt-2 m-0">
+                      2. Semantic Quality & Governance Linter
+                    </h3>
+                    <p className="text-xs text-secondary mt-0.5 m-0">
+                      Audit all loaded domain ontologies for naming standards, orphan concepts, missing stewards, and circular dependencies.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4 p-3 rounded-lg bg-surface-raised border border-main text-xs">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={lintRequireSteward}
+                        onChange={(e) => setLintRequireSteward(e.target.checked)}
+                      />
+                      <span>Require Data Steward</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={lintRequireDesc}
+                        onChange={(e) => setLintRequireDesc(e.target.checked)}
+                      />
+                      <span>Require Descriptions</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={lintSnakeCase}
+                        onChange={(e) => setLintSnakeCase(e.target.checked)}
+                      />
+                      <span>Enforce snake_case IDs</span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={runningLint}
+                    onClick={handleRunLinter}
+                    className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                    {runningLint ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                    Run Semantic Quality Audit
+                  </button>
+
+                  {lintReport && (
+                    <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
+                      <div className="flex items-center justify-between border-b border-main pb-2">
+                        <span
+                          className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                            lintReport.passed
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          }`}
+                        >
+                          {lintReport.passed ? 'PASSED GATE' : 'FAILED GATE'}
+                        </span>
+                        <div className="flex items-center gap-3 text-[11px]">
+                          <span className="text-red-400 font-semibold">{lintReport.error_count} Errors</span>
+                          <span className="text-amber-400 font-semibold">{lintReport.warning_count} Warnings</span>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-secondary m-0">{lintReport.summary}</p>
+
+                      {lintReport.issues?.length > 0 && (
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                          {lintReport.issues.slice(0, 12).map((issue, idx) => (
+                            <div
+                              key={idx}
+                              className="p-2 rounded bg-surface border border-main flex flex-col gap-0.5 text-[11px]"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono font-bold text-primary">
+                                  [{issue.rule_id}] {issue.object_name}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold uppercase ${
+                                    issue.severity === 'ERROR'
+                                      ? 'text-red-400'
+                                      : issue.severity === 'WARNING'
+                                      ? 'text-amber-400'
+                                      : 'text-blue-400'
+                                  }`}
+                                >
+                                  {issue.severity}
+                                </span>
+                              </div>
+                              <span className="text-secondary">{issue.message}</span>
+                              {issue.remediation && (
+                                <span className="text-emerald-400/90 text-[10px]">
+                                  Fix: {issue.remediation}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── 3. GOLDEN DATA RECONCILIATION (DAX vs SQL PARITY) ── */}
+              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        Mathematical Parity Verifier
+                      </span>
+                      <h3 className="text-sm font-bold text-primary mt-2 m-0">
+                        3. Golden Data Reconciliation (Power BI DAX vs. SQL)
+                      </h3>
+                      <p className="text-xs text-secondary mt-0.5 m-0">
+                        Generate paired DAX `SUMMARIZECOLUMNS` and Warehouse `GROUP BY` queries and verify cell-by-cell numerical parity.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Metric Name
+                      </label>
+                      <input
+                        type="text"
+                        value={reconMetric}
+                        onChange={(e) => setReconMetric(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Target Fact Table / View
+                      </label>
+                      <input
+                        type="text"
+                        value={reconTable}
+                        onChange={(e) => setReconTable(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        SQL Formula Expression
+                      </label>
+                      <input
+                        type="text"
+                        value={reconExpr}
+                        onChange={(e) => setReconExpr(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Slice Dimensions (comma-separated)
+                      </label>
+                      <input
+                        type="text"
+                        value={reconDims}
+                        onChange={(e) => setReconDims(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={runningRecon}
+                      onClick={() => {
+                        setReconScenario('certified');
+                        handleRunReconciliation('certified');
+                      }}
+                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                    >
+                      <CheckCheck size={14} />
+                      Verify Parity (100% Match)
+                    </button>
+                    <button
+                      type="button"
+                      disabled={runningRecon}
+                      onClick={() => {
+                        setReconScenario('drift');
+                        handleRunReconciliation('drift');
+                      }}
+                      className="flex-1 py-2 px-3 rounded-lg bg-amber-600/80 hover:bg-amber-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                    >
+                      <AlertTriangle size={14} />
+                      Simulate Formula Drift
+                    </button>
+                  </div>
+
+                  {reconResult && (
+                    <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
+                      <div className="flex items-center justify-between border-b border-main pb-2">
+                        <span
+                          className={`px-2.5 py-0.5 rounded font-bold text-[10px] uppercase ${
+                            reconResult.status === 'CERTIFIED'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          }`}
+                        >
+                          {reconResult.certification_badge}
+                        </span>
+                        <span className="text-[11px] text-secondary">
+                          Matched {reconResult.matched_rows}/{reconResult.total_rows_compared} slices (Max Δ:{' '}
+                          {reconResult.max_percentage_delta}%)
+                        </span>
+                      </div>
+
+                      {reconQueries && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="p-2 rounded bg-surface border border-main">
+                            <span className="text-[10px] font-bold uppercase text-amber-400 block mb-1">
+                              Power BI DAX Query
+                            </span>
+                            <pre className="text-[10px] font-mono text-secondary overflow-x-auto whitespace-pre-wrap m-0">
+                              {reconQueries.dax_query}
+                            </pre>
+                          </div>
+                          <div className="p-2 rounded bg-surface border border-main">
+                            <span className="text-[10px] font-bold uppercase text-blue-400 block mb-1">
+                              Snowflake / Databricks SQL
+                            </span>
+                            <pre className="text-[10px] font-mono text-secondary overflow-x-auto whitespace-pre-wrap m-0">
+                              {reconQueries.sql_query}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+
+                      {reconResult.sample_mismatches?.length > 0 && (
+                        <div className="p-2.5 rounded bg-red-500/10 border border-red-500/30 space-y-1.5">
+                          <span className="text-[10px] font-bold uppercase text-red-300 block">
+                            Detected Numerical Drift Slices:
+                          </span>
+                          {reconResult.sample_mismatches.map((m, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between text-[11px] font-mono text-red-200"
+                            >
+                              <span>{m.dimension_key}</span>
+                              <span>
+                                DAX: {m.dax_value.toLocaleString()} vs SQL: {m.sql_value.toLocaleString()} (Δ{' '}
+                                {m.percentage_delta}%)
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── 4. BIDIRECTIONAL RLS SECURITY POLICY TRANSLATOR ── */}
+              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
+                <div className="space-y-4">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                      Zero-Trust Row-Level Security
+                    </span>
+                    <h3 className="text-sm font-bold text-primary mt-2 m-0">
+                      4. Bidirectional RLS Policy Compiler (TMDL ⇄ Snowflake)
+                    </h3>
+                    <p className="text-xs text-secondary mt-0.5 m-0">
+                      Translate Power BI DAX row-level security roles directly into native Snowflake `ROW ACCESS POLICY` DDL.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Security Role Name
+                      </label>
+                      <input
+                        type="text"
+                        value={rlsRoleName}
+                        onChange={(e) => setRlsRoleName(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Protected Table
+                      </label>
+                      <input
+                        type="text"
+                        value={rlsTableName}
+                        onChange={(e) => setRlsTableName(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Power BI TMDL DAX Filter Expression
+                      </label>
+                      <input
+                        type="text"
+                        value={rlsDaxExpr}
+                        onChange={(e) => setRlsDaxExpr(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-amber-300 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={runningRls}
+                    onClick={handleTranslateRls}
+                    className="w-full py-2 px-4 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                    {runningRls ? <RefreshCw size={14} className="animate-spin" /> : <Code2 size={14} />}
+                    Compile Snowflake Row Access Policy DDL
+                  </button>
+
+                  {rlsDdl && (
+                    <div className="p-3 rounded-xl bg-surface-raised border border-main space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase text-purple-300">
+                          Generated Snowflake Row Access Policy DDL
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopySql(rlsDdl)}
+                          className="text-[11px] text-secondary hover:text-primary flex items-center gap-1"
+                        >
+                          {copiedSql ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                          <span>{copiedSql ? 'Copied' : 'Copy DDL'}</span>
+                        </button>
+                      </div>
+                      <pre className="text-[11px] font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap max-h-48 m-0">
+                        {rlsDdl}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════════
@@ -1276,6 +2063,21 @@ export default function OntologyDomainManager() {
                             No formula in the ontology — the SQL comes from the mapped BI measure.
                           </p>
                         )}
+                        {m.derives_from?.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1 pt-1">
+                            <span className="text-[10px] text-tertiary font-semibold mr-1">Derives from:</span>
+                            {m.derives_from.map((dep, dIdx) => (
+                              <span key={dIdx} className="px-2 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-[10px] font-mono text-violet-400">
+                                {dep}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {m.filter_expression && (
+                          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 font-mono text-[10px] text-amber-400">
+                            Enforced Filter: {m.filter_expression}
+                          </div>
+                        )}
                         {m.synonyms?.length > 0 && (
                           <div className="flex flex-wrap items-center gap-1 pt-1">
                             <span className="text-[10px] text-tertiary font-semibold mr-1">Synonyms:</span>
@@ -1327,6 +2129,11 @@ export default function OntologyDomainManager() {
                           )}
                         </div>
                         <p className="text-secondary text-[11px] m-0">{c.description || 'Core physical concept'}</p>
+                        {c.filter_expression && (
+                          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 font-mono text-[10px] text-amber-400">
+                            Enforced Filter: {c.filter_expression}
+                          </div>
+                        )}
                         {c.attributes?.length > 0 && (
                           <div className="space-y-1 pt-1">
                             <span className="text-[10px] text-tertiary font-semibold uppercase block">Attributes & Columns</span>
