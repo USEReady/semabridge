@@ -218,10 +218,60 @@ class FederatedOntologyLoader:
             raise OntologyValidationError(format_validation_error(e, data)) from e
 
         FederatedOntologyLoader._auto_infer_metric_dependencies(dom)
+        # Strip auto-synthesized identifier title-casing whenever a genuine human label/synonym exists
+        FederatedOntologyLoader._strip_domain_synthetic_synonyms(dom)
         errors = FederatedOntologyLoader.validate_references(dom, [], require_external=False)
         if errors:
             raise OntologyValidationError(errors)
         return dom
+
+    @staticmethod
+    def _strip_synthetic_title_synonyms(
+        synonyms: List[str],
+        tech_name: str,
+        approved_texts: Optional[List[Optional[str]]] = None,
+    ) -> List[str]:
+        """Drop synthetic 'TECH_NAME'.replace('_', ' ').title() variants when a genuine human spelling exists."""
+        raw_tech = str(tech_name or "").strip()
+        if not synonyms or "_" not in raw_tech:
+            return list(synonyms)
+        synthetic = raw_tech.replace("_", " ").title().strip()
+        if not synthetic:
+            return list(synonyms)
+        candidates = list(approved_texts or []) + list(synonyms)
+        has_real_human = any(
+            str(t or "").strip()
+            and str(t).strip().casefold() != raw_tech.casefold()
+            and str(t).strip().casefold() != synthetic.casefold()
+            for t in candidates
+        )
+        if not has_real_human:
+            return list(synonyms)
+        return [s for s in synonyms if str(s or "").strip().casefold() != synthetic.casefold()]
+
+    @classmethod
+    def _strip_domain_synthetic_synonyms(cls, dom: DomainOntology) -> None:
+        """Generically normalize synthetic underscore-to-title variants on loaded BI metrics."""
+        for m in dom.metrics:
+            if m.origin == "user":
+                continue
+            raw_tech = str(m.name or "").strip()
+            if "_" not in raw_tech:
+                continue
+            synthetic = raw_tech.replace("_", " ").title().strip()
+            cleaned = cls._strip_synthetic_title_synonyms(list(m.synonyms or []), raw_tech, [m.label])
+            if cleaned != list(m.synonyms or []):
+                m.synonyms = cleaned
+            if m.label and m.label.strip().casefold() == synthetic.casefold():
+                human_alt = next(
+                    (
+                        s for s in cleaned
+                        if s.strip().casefold() not in {raw_tech.casefold(), synthetic.casefold()}
+                    ),
+                    None,
+                )
+                if human_alt:
+                    m.label = human_alt
 
     @staticmethod
     def _auto_infer_metric_dependencies(dom: DomainOntology) -> None:
@@ -1076,13 +1126,15 @@ class FederatedOntologyLoader:
             desc, bi_desc = cls._merge_description(exist_m, m.description)
 
             # Domain-agnostic metadata propagation: inherit synonyms strictly from source BI metadata
-            # without hardcoding any domain-specific business terms (e.g. close rate, escalations)
+            # without synthetic title-casing whenever genuine source labels/synonyms exist
             metric_synonyms = list(m.synonyms or [])
             orig_name = getattr(m, "original_name", None)
             if orig_name and orig_name not in metric_synonyms:
                 metric_synonyms.append(orig_name)
+            synthetic_title = m.unique_name.replace("_", " ").title() if "_" in m.unique_name else None
             if m.label and m.label not in metric_synonyms:
-                metric_synonyms.append(m.label)
+                if not synthetic_title or m.label.casefold() != synthetic_title.casefold():
+                    metric_synonyms.append(m.label)
 
             sv_m_entry = (
                 sv_meta["metrics"].get(_norm_key(m.unique_name))
@@ -1107,17 +1159,47 @@ class FederatedOntologyLoader:
                 if deployed_c:
                     m_concept = deployed_c
 
+            metric_name_ref = exist_m.name if exist_m else m.unique_name
+            merged_syns = cls._strip_synthetic_title_synonyms(
+                union(exist_m.synonyms if exist_m else [], metric_synonyms),
+                metric_name_ref,
+                [orig_name, m.label],
+            )
+            human_label = (
+                orig_name
+                or (
+                    m.label
+                    if m.label
+                    and m.label != m.unique_name
+                    and (not synthetic_title or m.label.casefold() != synthetic_title.casefold())
+                    else None
+                )
+            )
+            exist_label_is_synth = bool(
+                exist_m
+                and exist_m.label
+                and exist_m.origin != "user"
+                and synthetic_title
+                and exist_m.label.casefold() == synthetic_title.casefold()
+                and human_label
+            )
+            resolved_label = (
+                exist_m.label
+                if (exist_m and exist_m.label and not exist_label_is_synth)
+                else (human_label or m.unique_name)
+            )
+
             new_metrics[m_key] = DomainMetric(
-                name=exist_m.name if exist_m else m.unique_name,
+                name=metric_name_ref,
                 logical_name=m_logical,
-                label=exist_m.label if (exist_m and exist_m.label) else (orig_name or (m.label if m.label and m.label != m.unique_name else None) or m.unique_name.replace("_", " ").title()),
+                label=resolved_label,
                 description=desc,
                 sql_expression=exist_m.sql_expression if user_formula else calc_expr,
                 dax_expression=getattr(exist_m, "dax_expression", None) or dax_expr,
                 deploy_reason=m_deploy_reason,
                 aggregation_type=exist_m.aggregation_type if user_formula else agg_type,
                 grain=exist_m.grain if exist_m else [],
-                synonyms=union(exist_m.synonyms if exist_m else [], metric_synonyms),
+                synonyms=merged_syns,
                 business_rules=exist_m.business_rules if exist_m else [],
                 filter_expression=exist_m.filter_expression if exist_m else None,
                 derives_from=exist_m.derives_from if exist_m else [],

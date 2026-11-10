@@ -340,4 +340,40 @@ metrics:
     assert "FROM SEMANTIC_VIEW(DB.SCH.LEDGER_SV" in sv_snap.generated_sql
 
 
+def test_strip_synthetic_title_synonyms_generically():
+    yaml_text = """
+domain: Telemetry
+concepts:
+  - name: Event
+    physical_table: FACT_EVENT
+    attributes:
+      - {name: val, data_type: DECIMAL}
+metrics:
+  - name: EVENT_MOMPCT
+    label: Event MoM%
+    origin: bi
+    synonyms: ["Event MoM%", "Event Mompct", "EVENT_MOMPCT"]
+    sql_expression: "SUM(val)"
+  - name: KEEP_PCT_NAME
+    label: Keep Pct Name
+    origin: bi
+    synonyms: ["Keep Pct Name", "KEEP_PCT_NAME"]
+    sql_expression: "SUM(val)"
+  - name: MANUAL_RATE
+    label: Manual Rate
+    origin: user
+    synonyms: ["Manual Rate", "Manual Rate %", "MANUAL_RATE"]
+    sql_expression: "SUM(val)"
+"""
+    dom = _dom(yaml_text)
+    by_name = {m.name: m for m in dom.metrics}
+    # Synthetic title-casing stripped when a genuine human label ("Event MoM%") exists
+    assert by_name["EVENT_MOMPCT"].synonyms == ["Event MoM%", "EVENT_MOMPCT"]
+    # Synthetic-like name preserved when it is the only readable display label
+    assert by_name["KEEP_PCT_NAME"].synonyms == ["Keep Pct Name", "KEEP_PCT_NAME"]
+    # User-authored metrics remain untouched
+    assert by_name["MANUAL_RATE"].synonyms == ["Manual Rate", "Manual Rate %", "MANUAL_RATE"]
+
+
+
 
