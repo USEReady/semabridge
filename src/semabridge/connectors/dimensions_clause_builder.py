@@ -189,6 +189,21 @@ class DimensionsClauseBuilder:
         for dataset in datasets:
             if str(dataset.unique_name or "").startswith(("LocalDateTable_", "DateTableTemplate_")):
                 continue
+            cols = getattr(dataset, "columns", []) or []
+            is_measure_table = getattr(dataset, "is_measure_table", False)
+            non_dummy_cols = [
+                c for c in cols
+                if getattr(c, "unique_name", "").upper() not in (
+                    "ID", "NAME", "DESCRIPTION", "_ID", "COLUMN1", "VALUE", "DUMMY", "ROWNUMBER", "1", "{1}"
+                )
+            ]
+            related_ds_names = {
+                r.from_dataset for r in getattr(model, "relationships", []) or []
+            } | {
+                r.to_dataset for r in getattr(model, "relationships", []) or []
+            }
+            if (is_measure_table or len(non_dummy_cols) == 0) and str(dataset.unique_name).casefold() not in {r.casefold() for r in related_ds_names}:
+                continue
             alias = dataset_aliases.get(dataset.unique_name)
             if not alias:
                 continue
@@ -446,10 +461,12 @@ class DimensionsClauseBuilder:
             ds_used = used_dimension_aliases_by_dataset.setdefault(fallback_alias, set())
             self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, ds_used, dims_lines, model_name, is_osi)
 
-        # 4. Duplicate dimensions for inactive-relationship alias tables
+        # 4. Duplicate dimensions for inactive-relationship alias tables ONLY if used by USERELATIONSHIP
         seen_inact_aliases = set()
         for rel in relationships or ():
             if not getattr(rel, "is_active", True):
+                if not self._is_relationship_used_by_userelationship(rel, model):
+                    continue
                 to_ds = getattr(rel, "to_dataset", None)
                 from_cols = getattr(rel, "from_columns", None) or []
                 fk_col = from_cols[0] if from_cols else ""
@@ -570,3 +587,25 @@ class DimensionsClauseBuilder:
                 f'{self.sanitizer.format_physical_column_ref(alias, phys, model_name=model_name)}'
                 f'{synonyms_clause(list(getattr(col, "synonyms", []) or []))}'
             )
+
+    @staticmethod
+    def _is_relationship_used_by_userelationship(rel: Any, model: Any) -> bool:
+        """True only if a measure in model uses USERELATIONSHIP referencing this relationship."""
+        if getattr(rel, "is_active", True):
+            return True
+        if not model:
+            return False
+        from_cols = [str(c).upper() for c in (getattr(rel, "from_columns", []) or [])]
+        to_cols = [str(c).upper() for c in (getattr(rel, "to_columns", []) or [])]
+        from_ds = str(getattr(rel, "from_dataset", "") or "").upper()
+        to_ds = str(getattr(rel, "to_dataset", "") or "").upper()
+
+        for m in getattr(model, "metrics", []) or []:
+            expr = f"{getattr(m, 'expression', '') or ''} {getattr(m, 'sql_expression', '') or ''}".upper()
+            if "USERELATIONSHIP" not in expr:
+                continue
+            if any(c in expr for c in from_cols) and any(c in expr for c in to_cols):
+                return True
+            if from_ds and to_ds and from_ds in expr and to_ds in expr:
+                return True
+        return False

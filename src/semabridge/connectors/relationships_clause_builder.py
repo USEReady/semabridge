@@ -39,7 +39,7 @@ class RelationshipsClauseBuilder:
         """Build RELATIONSHIPS clause for SML model."""
         return self._build_relationships(
             sml.relationships, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=False
+            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=False, model=sml
         )
 
     def build_for_osi(
@@ -54,8 +54,30 @@ class RelationshipsClauseBuilder:
         """Build RELATIONSHIPS clause for OSI model."""
         return self._build_relationships(
             osi.relationships, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=True
+            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=True, model=osi
         )
+
+    @staticmethod
+    def _is_relationship_used_by_userelationship(rel: Any, model: Any) -> bool:
+        """True only if a measure in model uses USERELATIONSHIP referencing this relationship."""
+        if getattr(rel, "is_active", True):
+            return True
+        if not model:
+            return False
+        from_cols = [str(c).upper() for c in (getattr(rel, "from_columns", []) or [])]
+        to_cols = [str(c).upper() for c in (getattr(rel, "to_columns", []) or [])]
+        from_ds = str(getattr(rel, "from_dataset", "") or "").upper()
+        to_ds = str(getattr(rel, "to_dataset", "") or "").upper()
+
+        for m in getattr(model, "metrics", []) or []:
+            expr = f"{getattr(m, 'expression', '') or ''} {getattr(m, 'sql_expression', '') or ''}".upper()
+            if "USERELATIONSHIP" not in expr:
+                continue
+            if any(c in expr for c in from_cols) and any(c in expr for c in to_cols):
+                return True
+            if from_ds and to_ds and from_ds in expr and to_ds in expr:
+                return True
+        return False
 
     def _build_relationships(
         self,
@@ -65,14 +87,34 @@ class RelationshipsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         declared_pk_by_alias: Dict[str, List[str]],
         relationship_target_alias: Dict[Tuple[str, str], str],
-        is_osi: bool
+        is_osi: bool,
+        model: Any = None,
     ) -> List[str]:
+        # Orient 1:1 relationships: emit from the table that holds the metrics to the other one
+        if model:
+            metric_counts: Dict[str, int] = {}
+            for m in getattr(model, "metrics", []) or []:
+                ds = getattr(m, "dataset", None)
+                if ds:
+                    metric_counts[ds] = metric_counts.get(ds, 0) + 1
+            for r in relationships:
+                card = getattr(r, "cardinality", None)
+                card_str = str(getattr(card, "value", card) or "").lower().replace("_", "-")
+                if card_str in ("1:1", "one-to-one", "onetoone"):
+                    from_cnt = metric_counts.get(r.from_dataset, 0)
+                    to_cnt = metric_counts.get(r.to_dataset, 0)
+                    if to_cnt > from_cnt:
+                        r.from_dataset, r.to_dataset = r.to_dataset, r.from_dataset
+                        r.from_columns, r.to_columns = r.to_columns, r.from_columns
+
         rel_lines = []
         rel_meta: List[Tuple[str, str, bool, Any]] = []
         for rel in relationships:
-            if not rel.is_active:
+            if not getattr(rel, "is_active", True):
+                if not self._is_relationship_used_by_userelationship(rel, model):
+                    continue
                 logger.info(
-                    "Including inactive Fabric relationship '%s' -> '%s' for Snowflake metadata parity.",
+                    "Including inactive Fabric relationship '%s' -> '%s' used by USERELATIONSHIP.",
                     rel.from_dataset,
                     rel.to_dataset,
                 )

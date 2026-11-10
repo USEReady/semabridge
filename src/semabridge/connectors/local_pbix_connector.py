@@ -784,6 +784,7 @@ class LocalPBIXConnector(BaseConnector):
                     _opt("c", "DataCategory", col_schema, "ColumnDataCategory"),
                     _opt("c", "SortByColumnID", col_schema, "ColumnSortByColumnID"),
                     _opt("c", "SourceColumn", col_schema, "ColumnSourceColumn"),
+                    _opt("c", "SummarizeBy", col_schema, "ColumnSummarizeBy"),
                     _opt("t", "CalculationGroupID", tbl_schema, "TableCalculationGroupID"),
                 ]
             )
@@ -850,6 +851,9 @@ class LocalPBIXConnector(BaseConnector):
                         "is_hidden": bool(row.get("ColumnIsHidden", False)),
                         "type": col_kind,
                     }
+                    sum_by_val = row.get("ColumnSummarizeBy")
+                    if sum_by_val is not None and str(sum_by_val).strip():
+                        col_def["summarizeBy"] = str(sum_by_val).strip()
                     if col_kind == "calculated":
                         # DAX calculated column: no physical source column.
                         col_def["expression"] = col_expr
@@ -1420,8 +1424,12 @@ class LocalPBIXConnector(BaseConnector):
                     "name": col_name,
                     "dataType": self._normalize_pbixray_data_type(col.get("data_type", "string")),
                 }
-                if col.get("is_hidden"):
+                if col.get("is_hidden") is not None:
                     col_def["isHidden"] = bool(col.get("is_hidden"))
+                if col.get("summarizeBy"):
+                    col_def["summarizeBy"] = str(col.get("summarizeBy"))
+                elif col.get("summarize_by"):
+                    col_def["summarizeBy"] = str(col.get("summarize_by"))
                 col_kind = str(col.get("type") or "data")
                 if col_kind == "calculated":
                     # Calculated column: carry the DAX, never a sourceColumn.

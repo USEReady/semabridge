@@ -377,9 +377,6 @@ class TMSLToOSIConverter(BaseConverter):
                     self._record_non_physical_dataset(dataset)
                     self._record_sort_by_columns(dataset)
 
-                    for metric in self._create_metrics_from_aggregation_columns(dataset):
-                        osi_model.metrics.append(metric)
-
                     # Create corresponding Dimension for each Dataset
                     # In TMSL/Power BI, every table is potentially a dimension
                     hierarchies = self._parse_hierarchies(table, dataset)
@@ -442,6 +439,46 @@ class TMSLToOSIConverter(BaseConverter):
             # source model never declared.
             if not osi_model.relationships and osi_model.datasets and infer_rels:
                 self._infer_fallback_relationships(osi_model, valid_dataset_map)
+
+            # Determine fact tables: every table on the many side of a relationship
+            fact_datasets: Set[str] = set()
+            for r in osi_model.relationships:
+                card = getattr(r, "cardinality", None)
+                card_val = str(getattr(card, "value", card) or "").lower()
+                if "one_to_many" in card_val or "one-to-many" in card_val:
+                    if r.to_dataset:
+                        fact_datasets.add(r.to_dataset)
+                else:
+                    if r.from_dataset:
+                        fact_datasets.add(r.from_dataset)
+
+            # Build set of columns already covered by DAX measures with the same aggregation
+            covered_measure_keys: Set[Tuple[str, str]] = set()
+            for m in osi_model.metrics:
+                m_agg = getattr(m, "aggregation", None)
+                agg_str = str(getattr(m_agg, "value", m_agg) or "").upper()
+                if agg_str == "NONE":
+                    agg_str = ""
+                expr = getattr(m, "expression", "") or ""
+                m_match = re.search(r'^(SUM|AVG|AVERAGE|MIN|MAX|COUNT)\s*\(\s*(?:[\'"][^\'"]+[\'"]\[|\[)?([^\s\]]+)\]?\s*\)$', expr, re.IGNORECASE)
+                if m_match:
+                    if not agg_str:
+                        agg_fn = m_match.group(1).upper()
+                        agg_str = "AVG" if agg_fn == "AVERAGE" else agg_fn
+                    col_ref = m_match.group(2).upper()
+                    covered_measure_keys.add((col_ref, agg_str))
+                    if m.dataset:
+                        covered_measure_keys.add((m.dataset.upper(), col_ref, agg_str))
+                elif agg_str and m.source_column:
+                    covered_measure_keys.add((m.source_column.upper(), agg_str))
+                    if m.dataset:
+                        covered_measure_keys.add((m.dataset.upper(), m.source_column.upper(), agg_str))
+
+            # Populate implicit metrics for visible numeric columns on fact tables
+            for dataset in osi_model.datasets:
+                is_fact = dataset.unique_name in fact_datasets or getattr(dataset, "is_fact", False)
+                for metric in self._create_metrics_from_aggregation_columns(dataset, is_fact=is_fact, covered=covered_measure_keys):
+                    osi_model.metrics.append(metric)
 
             # Model-level objects Snowflake semantic views cannot represent.
             self._record_roles(model_obj, osi_model)
@@ -986,14 +1023,44 @@ class TMSLToOSIConverter(BaseConverter):
             is_hidden=dataset.is_hidden
         )
 
-    def _create_metrics_from_aggregation_columns(self, dataset: OSIDataset) -> List[OSIMetric]:
+    def _create_metrics_from_aggregation_columns(
+        self,
+        dataset: OSIDataset,
+        is_fact: bool = False,
+        covered: Optional[Set[Tuple[str, str]]] = None,
+    ) -> List[OSIMetric]:
         """Create OSI metrics for Fabric columns with summarizeBy aggregation."""
+        if not is_fact or getattr(dataset, "is_hidden", False):
+            return []
+
         metrics: List[OSIMetric] = []
         seen: set[str] = set()
+        covered_set = covered or set()
+
         for col in dataset.columns:
-            if col.is_hidden or not getattr(col, "is_measure_candidate", False):
+            if col.is_hidden or getattr(col, "is_key", False):
                 continue
-            aggregation = getattr(col, "default_aggregation", None) or OSIAggregationType.SUM
+
+            dtype = getattr(col, "data_type", None)
+            dtype_val = getattr(dtype, "value", dtype) if dtype is not None else ""
+            if dtype_val not in (
+                OSIDataType.INTEGER.value,
+                OSIDataType.DECIMAL.value,
+                OSIDataType.FLOAT.value,
+                "integer", "decimal", "float", "double", "int64"
+            ):
+                continue
+
+            aggregation = getattr(col, "default_aggregation", None)
+            if aggregation is None:
+                continue
+
+            agg_str = str(getattr(aggregation, "value", aggregation) or "").upper()
+            col_key = (dataset.unique_name.upper(), col.unique_name.upper(), agg_str)
+            col_key_bare = (col.unique_name.upper(), agg_str)
+            if col_key in covered_set or col_key_bare in covered_set:
+                continue
+
             metric_name = col.unique_name
             metric_key = metric_name.casefold()
             if metric_key in seen:
@@ -1009,7 +1076,7 @@ class TMSLToOSIConverter(BaseConverter):
                     aggregation=aggregation,
                     description=col.description,
                     format_string=col.format_string,
-                    is_hidden=col.is_hidden,
+                    is_hidden=False,
                     access_modifier="public_access",
                     synonyms=list(getattr(col, "synonyms", []) or []),
                     source_file=getattr(col, "source_file", None),
@@ -1274,11 +1341,18 @@ class TMSLToOSIConverter(BaseConverter):
         return merged, bool(report_aliases), matched_aliases
 
     @staticmethod
-    def _map_summarize_by(summarize_by: str) -> Optional[OSIAggregationType]:
+    def _map_summarize_by(summarize_by: Any) -> Optional[OSIAggregationType]:
         """Map Fabric summarizeBy to OSI aggregation; none/blank means dimension."""
         normalized = str(summarize_by or "").strip().lower()
-        if not normalized or normalized == "none":
+        if not normalized or normalized in ("none", "default"):
             return None
+        int_map = {
+            "0": None, "1": None, "2": OSIAggregationType.SUM, "3": OSIAggregationType.MIN,
+            "4": OSIAggregationType.MAX, "5": OSIAggregationType.COUNT, "6": OSIAggregationType.AVG,
+            "7": OSIAggregationType.COUNT_DISTINCT,
+        }
+        if normalized in int_map:
+            return int_map[normalized]
         mapping = {
             "sum": OSIAggregationType.SUM,
             "average": OSIAggregationType.AVG,

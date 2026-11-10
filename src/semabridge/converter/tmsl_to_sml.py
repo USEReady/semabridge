@@ -439,7 +439,7 @@ class TMSLTransformer:
                 })
                 
             self._classify_tables(sml, engine_rels, row_counts or {})
-            self._inject_calendar_dimension(sml)
+            # Calendar injection removed: If the PBIX has no date table, the view has none.
 
             # --- NEW: Populate SML Dimensions from Datasets ---
             # SML Dimensions are required for proper Snowflake/Cortex generation.
@@ -594,37 +594,8 @@ class TMSLTransformer:
                     ds.is_fact = False
 
     def _inject_calendar_dimension(self, sml: SMLModel) -> None:
-        """
-        Ensure a Calendar/Date dimension exists.
-        If missing, inject a standard one.
-        """
-        # Check if any date dimension exists
-        if any(is_calendar_like_name(ds.unique_name) for ds in sml.datasets):
-            return
-            
-        logger.info("Injecting missing Calendar/Date dimension")
-        
-        # Create standard Date column definitions
-        cols = [
-            SMLColumn(unique_name="Date", data_type=DataType.DATE, is_key=True),
-            SMLColumn(unique_name="Year", data_type=DataType.INTEGER),
-            SMLColumn(unique_name="Quarter", data_type=DataType.INTEGER),
-            SMLColumn(unique_name="Month", data_type=DataType.INTEGER),
-            SMLColumn(unique_name="MonthName", data_type=DataType.STRING),
-            SMLColumn(unique_name="DayOfWeek", data_type=DataType.INTEGER),
-            SMLColumn(unique_name="DayName", data_type=DataType.STRING),
-        ]
-        
-        date_ds = SMLDataset(
-            unique_name="Date",
-            label="Date",
-            description="Auto-generated Calendar Dimension",
-            source_table="DIM_DATE", # Will be auto-generated in Snowflake
-            columns=cols,
-            is_fact=False
-        )
-        
-        sml.datasets.append(date_ds)
+        """Never invent a calendar table."""
+        return
     
     def _parse_table(self, table_def: Dict[str, Any]) -> SMLDataset:
         """Parse a TMSL table into SMLDataset."""
@@ -751,34 +722,13 @@ class TMSLTransformer:
         
         is_measure_candidate = False
         
-        # 1. Explicit TMSL Override: Check summarizeBy property
-        #    summarizeBy = "sum" | "avg" | "count" | "max" | "min" | "none"
+        # Explicit TMSL: Check summarizeBy property
         summarize_by = col_def.get("summarizeBy", "").lower()
-        if summarize_by and summarize_by != "none":
+        if summarize_by and summarize_by not in ("none", "default"):
             is_measure_candidate = True
             logger.debug(f"Column '{col_name}' marked as measure via summarizeBy={summarize_by}")
         
-        # 2. Format String Detection (currency/percent = measure)
         format_string = col_def.get("formatString", "")
-        if format_string:
-            for pattern in MEASURE_FORMAT_PATTERNS:
-                if re.search(pattern, format_string):
-                    is_measure_candidate = True
-                    logger.debug(f"Column '{col_name}' marked as measure via format string")
-                    break
-        
-        # 3. Name Pattern Heuristics (if numeric type)
-        if mapped_type in (DataType.INTEGER, DataType.FLOAT, DataType.DECIMAL):
-            # First check if it's a Key/ID column
-            is_key_column = any(re.search(p, name_upper, re.IGNORECASE) for p in KEY_PATTERNS)
-            
-            if not is_key_column:
-                # Check if it matches measure name patterns
-                for pattern in MEASURE_NAME_PATTERNS:
-                    if re.search(pattern, name_upper, re.IGNORECASE):
-                        is_measure_candidate = True
-                        logger.debug(f"Column '{col_name}' marked as measure via name pattern")
-                        break
         
         # HEURISTIC: If everything is string (common in some sources), try to infer from name
         if mapped_type == DataType.STRING:

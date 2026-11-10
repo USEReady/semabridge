@@ -2128,50 +2128,29 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
 
     def _identify_fact_table(self, model):
         """
-        Automatically identify the fact table in the model.
-        Strategy: Table with most relationships OR most metrics OR contains 'FACT' keyword.
+        Identify fact tables in the model: every table on the many side of a relationship.
+        Several allowed; returns primary fact table.
         """
         datasets = getattr(model, 'datasets', [])
         if not datasets:
             return None
 
-        # Strategy 1: Look for a table whose name contains 'FACT'/'SALES'/'TRANSACTION'
-        # as a whole word — not merely as a substring (e.g. "Manufacturer", "Artifact",
-        # and "Satisfaction" all contain "fact" mid-word but aren't fact tables).
-        for dataset in datasets:
-            tokens = set(self._tokenize_dataset_name(dataset.unique_name))
-            if tokens & self._FACT_KEYWORDS:
-                logger.info(f"✅ Identified fact table: {dataset.unique_name} (token match)")
-                return dataset.unique_name
-        
-        # Strategy 2: Table with most relationships
-        relationships = getattr(model, 'relationships', [])
-        from_counts = {}
+        relationships = getattr(model, 'relationships', []) or []
+        fact_tables = set()
         for rel in relationships:
-            from_ds = getattr(rel, 'from_dataset', None)
-            if from_ds:
-                from_counts[from_ds] = from_counts.get(from_ds, 0) + 1
-        
-        if from_counts:
-            max_from = max(from_counts, key=from_counts.get)
-            logger.info(f"✅ Identified fact table: {max_from} (most relationships: {from_counts[max_from]})")
-            return max_from
-        
-        # Strategy 3: Table with most metrics
-        metrics = getattr(model, 'metrics', [])
-        metric_counts = {}
-        for metric in metrics:
-            ds = getattr(metric, 'dataset', None)
-            if ds:
-                metric_counts[ds] = metric_counts.get(ds, 0) + 1
-        
-        if metric_counts:
-            max_metrics = max(metric_counts, key=metric_counts.get)
-            logger.info(f"✅ Identified fact table: {max_metrics} (most metrics: {metric_counts[max_metrics]})")
-            return max_metrics
-        
-        # Fallback: first dataset
-        logger.warning(f"⚠️ Using first dataset as fact table: {datasets[0].unique_name}")
+            card = getattr(rel, 'cardinality', None)
+            card_str = str(getattr(card, 'value', card) or '').lower()
+            if 'one_to_many' in card_str or 'one-to-many' in card_str:
+                if getattr(rel, 'to_dataset', None):
+                    fact_tables.add(rel.to_dataset)
+            else:
+                if getattr(rel, 'from_dataset', None):
+                    fact_tables.add(rel.from_dataset)
+        for ds in datasets:
+            if getattr(ds, 'is_fact', False):
+                fact_tables.add(ds.unique_name)
+        if fact_tables:
+            return sorted(fact_tables)[0]
         return datasets[0].unique_name
 
     def _get_fact_tables_needing_enrichment(self, model) -> list[str]:
@@ -2257,8 +2236,7 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         if fact_tables:
             return fact_tables
 
-        fallback = self._identify_fact_table(model)
-        return [fallback] if fallback and not _is_virtual_dataset(fallback) else []
+        return []
 
     def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
         """Resolve the date column a fact table's time-intelligence anchor

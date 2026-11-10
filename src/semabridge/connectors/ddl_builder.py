@@ -1041,11 +1041,11 @@ class SemanticViewBuilder:
                     self.missing_dims[_ds].append(_c)
 
         dimensions_block_idx = None
-
+        facts_lines, dims_lines = self._partition_facts_and_dimensions(sml, dims_lines, registry.dataset_aliases)
+        if facts_lines:
+            definitions.append("FACTS (\n" + ",\n".join(facts_lines) + "\n)")
         if dims_lines:
-
             dimensions_block_idx = len(definitions)
-
             definitions.append("DIMENSIONS (\n" + ",\n".join(dims_lines) + "\n)")
 
 
@@ -1210,11 +1210,11 @@ class SemanticViewBuilder:
                     self.missing_dims[_ds].append(_c)
 
         dimensions_block_idx = None
-
+        facts_lines, dims_lines = self._partition_facts_and_dimensions(osi, dims_lines, registry.dataset_aliases)
+        if facts_lines:
+            definitions.append("FACTS (\n" + ",\n".join(facts_lines) + "\n)")
         if dims_lines:
-
             dimensions_block_idx = len(definitions)
-
             definitions.append("DIMENSIONS (\n" + ",\n".join(dims_lines) + "\n)")
 
 
@@ -1274,7 +1274,7 @@ class SemanticViewBuilder:
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
         # AI_VERIFIED_QUERIES
-        vqueries = list(getattr(sml, "verified_queries", []) or [])
+        vqueries = list(getattr(osi, "verified_queries", []) or [])
         if not vqueries and getattr(self, "project_id", None):
             try:
                 from semabridge.ai.verified_queries_service import list_verified_queries_for_project
@@ -1351,6 +1351,51 @@ class SemanticViewBuilder:
             dims_block = "DIMENSIONS (\n" + ",\n".join(filtered_dims) + "\n)" if filtered_dims else ""
 
         return metrics_lines, dims_block
+
+    def _partition_facts_and_dimensions(
+        self,
+        model: Any,
+        dims_lines: List[str],
+        dataset_aliases: Dict[str, str],
+    ) -> Tuple[List[str], List[str]]:
+        """Split dimensions into FACTS (for numeric columns on fact tables) and DIMENSIONS."""
+        fact_ds_names = set()
+        for r in getattr(model, "relationships", []) or []:
+            card = getattr(r, "cardinality", None)
+            card_val = str(getattr(card, "value", card) or "").lower()
+            if "one_to_many" in card_val or "one-to-many" in card_val:
+                if getattr(r, "to_dataset", None):
+                    fact_ds_names.add(r.to_dataset)
+            else:
+                if getattr(r, "from_dataset", None):
+                    fact_ds_names.add(r.from_dataset)
+        for d in getattr(model, "datasets", []) or []:
+            if getattr(d, "is_fact", False):
+                fact_ds_names.add(d.unique_name)
+
+        numeric_fact_cols: Set[Tuple[str, str]] = set()
+        for d in getattr(model, "datasets", []) or []:
+            if d.unique_name in fact_ds_names:
+                alias = dataset_aliases.get(d.unique_name, d.unique_name).upper()
+                for c in getattr(d, "columns", []) or []:
+                    dtype_val = str(getattr(getattr(c, "data_type", ""), "value", getattr(c, "data_type", ""))).lower()
+                    if any(t in dtype_val for t in ("int", "float", "decimal", "double", "numeric", "number")):
+                        numeric_fact_cols.add((alias, str(c.unique_name).upper()))
+                        safe_col = self.identifier_sanitizer.sanitize_column(c.unique_name)
+                        numeric_fact_cols.add((alias, safe_col.upper()))
+
+        facts_lines: List[str] = []
+        remaining_dims: List[str] = []
+        for line in dims_lines:
+            m_dim = re.search(r'^\s*(?:PRIVATE\s+)?([A-Z0-9_]+)\."?([A-Z0-9_]+)"?\s+AS\s+', line, re.IGNORECASE)
+            if m_dim:
+                tbl_a = m_dim.group(1).upper()
+                col_a = m_dim.group(2).upper()
+                if (tbl_a, col_a) in numeric_fact_cols:
+                    facts_lines.append(line)
+                    continue
+            remaining_dims.append(line)
+        return facts_lines, remaining_dims
 
     def _build_ai_verified_queries_clause(
         self,

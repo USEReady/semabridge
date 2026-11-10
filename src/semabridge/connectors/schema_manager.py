@@ -325,8 +325,11 @@ class SnowflakeSchemaManager:
                     "tie": logged.get("tie") or [],
                 })
             elif safe_target_name.upper() in all_existing:
-                # Same sanitized name already taken (e.g. by a view): never
-                # create a duplicate next to it.
+                live_cols = (self._live_schema_metadata or {}).get(safe_target_name.upper(), set())
+                compat = compute_column_compatibility(modeled_cols, live_cols)
+                if compat < 0.8:
+                    from semabridge.connectors.table_binding_resolver import TableBindingIncompatibleColumnsError
+                    raise TableBindingIncompatibleColumnsError(ds_name, safe_target_name, compat)
                 plan.append({
                     "dataset": ds_name,
                     "action": "bind",
@@ -364,13 +367,7 @@ class SnowflakeSchemaManager:
         datasets_by_name = {d.unique_name: d for d in sml.datasets}
         for entry in self.plan_source_tables(cursor, sml):
             if entry["action"] == "bind":
-                if entry["matched_by"] == "name":
-                    logger.warning(
-                        "Dataset '%s' bound to existing table '%s' by name only (columns differ); not creating a duplicate.",
-                        entry["dataset"], entry["table"],
-                    )
-                else:
-                    logger.debug("Dataset '%s' is bound to existing table '%s' — leaving untouched.", entry["dataset"], entry["table"])
+                logger.debug("Dataset '%s' is bound to existing table '%s' — leaving untouched.", entry["dataset"], entry["table"])
                 self._verified_tables.add(self._safe_table_name(entry["table"]))
             else:
                 absent_tables_to_create.append((datasets_by_name[entry["dataset"]], entry["table"]))

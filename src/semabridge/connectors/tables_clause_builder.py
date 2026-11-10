@@ -392,7 +392,12 @@ class TablesClauseBuilder:
             # Omit unlinked measure-only tables (containers with no physical data columns and no relationships)
             cols = getattr(d, "columns", []) or []
             is_measure_table = getattr(d, "is_measure_table", False)
-            non_dummy_cols = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            non_dummy_cols = [
+                c for c in cols
+                if getattr(c, "unique_name", "").upper() not in (
+                    "ID", "NAME", "DESCRIPTION", "_ID", "COLUMN1", "VALUE", "DUMMY", "ROWNUMBER", "1", "{1}"
+                )
+            ]
             if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
                 logger.info("Omitting unlinked measure-only table '%s' from semantic view TABLES clause", d_name)
                 if self.drop_ledger is not None:
@@ -415,9 +420,7 @@ class TablesClauseBuilder:
             if card_str in ("1:1", "one-to-one", "onetoone"):
                 from_cnt = metric_counts_by_dataset.get(r.from_dataset, 0)
                 to_cnt = metric_counts_by_dataset.get(r.to_dataset, 0)
-                from_is_fact = is_fact_like_name(r.from_dataset)
-                to_is_fact = is_fact_like_name(r.to_dataset)
-                if to_cnt > from_cnt or (to_cnt == from_cnt and to_is_fact and not from_is_fact):
+                if to_cnt > from_cnt:
                     r.from_dataset, r.to_dataset = r.to_dataset, r.from_dataset
                     r.from_columns, r.to_columns = r.to_columns, r.from_columns
 
@@ -542,26 +545,24 @@ class TablesClauseBuilder:
             # model's relationships (or flagged/named as one). A key is the
             # one-side column of a relationship, else the PBIX key column,
             # else a primary key declared in Snowflake, else the first column.
-            is_on_many_side = (dataset.unique_name in many_side_datasets and dataset.unique_name not in one_side_datasets)
+            is_on_many_side = (dataset.unique_name in many_side_datasets)
 
             is_fact_table = (
                 getattr(dataset, "is_fact", False)
-                or is_fact_like_name(dataset.unique_name)
                 or getattr(dataset, "table_type", "").upper() == "FACT"
                 or is_on_many_side
             )
 
-            # Resolve primary key
+            # Resolve primary key: only from relationship targets or keys declared in PBIX
             pk_cols: list[str] = []
 
-            if is_measure_only:
+            if (
+                dataset.unique_name not in related_datasets
+                or is_measure_only
+                or (dataset.unique_name in many_side_datasets and dataset.unique_name not in one_side_datasets)
+            ):
                 pk_cols = []
             elif resolved_target_keys:
-                # Find the first target key whose uniqueness is guaranteed.
-                # Keys made only of the model's own key columns (is_key) are
-                # tried first, so a non-key column that some relationship
-                # happens to target (e.g. a measure column) is never chosen
-                # as PRIMARY KEY over the table's real key.
                 _key_names = {
                     _physical(c.unique_name).upper()
                     for c in (dataset.columns or []) if getattr(c, "is_key", False)
@@ -576,40 +577,15 @@ class TablesClauseBuilder:
                         break
 
                 if not pk_cols:
-                    if is_fact_table:
-                        # Safeguard: unreferenced or unverified fact table keys are never guessed
-                        pk_cols = []
-                    else:
-                        # Dimension table fallback
-                        key_cols = [c for c in dataset.columns if c.is_key]
-                        declared = []
-                        if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
-                            declared = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
-                                str(unqualified_table).strip('"').upper(), []
-                            )
-                        if key_cols:
-                            pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
-                        elif declared:
-                            pk_cols = [f'"{c}"' for c in declared]
-                        elif dataset.columns:
-                            pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
-            else:
-                if is_fact_table:
-                    # Safeguard: fact table not targeted by any relationship has PK suppressed
-                    pk_cols = []
-                else:
-                    key_cols = [c for c in dataset.columns if c.is_key]
-                    declared = []
-                    if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
-                        declared = self.schema_manager.declared_primary_keys(cursor=self.cursor).get(
-                            str(unqualified_table).strip('"').upper(), []
-                        )
+                    key_cols = [c for c in dataset.columns if getattr(c, "is_key", False)]
                     if key_cols:
                         pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
-                    elif declared:
-                        pk_cols = [f'"{c}"' for c in declared]
-                    elif dataset.columns:
-                        pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
+            else:
+                key_cols = [c for c in dataset.columns if getattr(c, "is_key", False)]
+                if key_cols:
+                    pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
+                else:
+                    pk_cols = []
 
             # Verification: only retain columns that actually exist in the physical table
             verified_pk = [p for p in pk_cols if p.strip('"') in known_phys] if known_phys else pk_cols
@@ -661,9 +637,11 @@ class TablesClauseBuilder:
 
             tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}{table_annotation_clause(dataset)}')
 
-        # Emit alias tables for inactive relationships
+        # Emit alias tables for inactive relationships ONLY if used by USERELATIONSHIP
         for rel in relationships:
             if not getattr(rel, "is_active", True):
+                if not self._is_relationship_used_by_userelationship(rel, self._current_model):
+                    continue
                 dim_ds_name = getattr(rel, "to_dataset", None)
                 dim_dataset = dataset_by_name.get(dim_ds_name)
                 from_cols = getattr(rel, "from_columns", None) or []
@@ -718,6 +696,28 @@ class TablesClauseBuilder:
                         dataset_col_lookup[inact_alias.lower()] = set(dim_cols)
 
         return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
+
+    @staticmethod
+    def _is_relationship_used_by_userelationship(rel: Any, model: Any) -> bool:
+        """True only if a measure in model uses USERELATIONSHIP referencing this relationship."""
+        if getattr(rel, "is_active", True):
+            return True
+        if not model:
+            return False
+        from_cols = [str(c).upper() for c in (getattr(rel, "from_columns", []) or [])]
+        to_cols = [str(c).upper() for c in (getattr(rel, "to_columns", []) or [])]
+        from_ds = str(getattr(rel, "from_dataset", "") or "").upper()
+        to_ds = str(getattr(rel, "to_dataset", "") or "").upper()
+
+        for m in getattr(model, "metrics", []) or []:
+            expr = f"{getattr(m, 'expression', '') or ''} {getattr(m, 'sql_expression', '') or ''}".upper()
+            if "USERELATIONSHIP" not in expr:
+                continue
+            if any(c in expr for c in from_cols) and any(c in expr for c in to_cols):
+                return True
+            if from_ds and to_ds and from_ds in expr and to_ds in expr:
+                return True
+        return False
 
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)

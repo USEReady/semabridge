@@ -377,8 +377,7 @@ class OSIToSMLConverter(BaseConverter):
             # publishers still have simple metrics to materialize.
             self._auto_detect_metrics(sml, row_counts=row_counts)
 
-            # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
-            self._inject_calendar_dimension(sml)
+            # 5. Calendar injection removed: If the PBIX has no date table, the view has none.
 
             # 6. Ensure status consistency: any metric with a source expression but no
             # sql_expression must never be left as sync_enabled=True.
@@ -1266,30 +1265,8 @@ class OSIToSMLConverter(BaseConverter):
             return None
 
     def _inject_calendar_dimension(self, sml: SMLModel) -> None:
-        # Same logic as TMSLTransformer
-        if any(is_calendar_like_name(ds.unique_name) for ds in sml.datasets):
-            return
-            
-        # Create standard Date column definitions
-        cols = [
-            SMLColumn(unique_name="Date", data_type=SMLDataType.DATE, is_key=True),
-            SMLColumn(unique_name="Year", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="Quarter", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="Month", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="MonthName", data_type=SMLDataType.STRING),
-            SMLColumn(unique_name="DayOfWeek", data_type=SMLDataType.INTEGER),
-            SMLColumn(unique_name="DayName", data_type=SMLDataType.STRING),
-        ]
-        
-        date_ds = SMLDataset(
-            unique_name="Date",
-            label="Date",
-            description="Auto-generated Calendar Dimension",
-            source_table="DIM_DATE",
-            columns=cols,
-            is_fact=False
-        )
-        sml.datasets.append(date_ds)
+        """Never invent a calendar table."""
+        return
 
     def _auto_detect_metrics(
         self,
