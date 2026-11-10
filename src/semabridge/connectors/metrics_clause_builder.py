@@ -787,8 +787,17 @@ class MetricsClauseBuilder:
                         expr = re.sub(rf'\b[A-Za-z0-9_]+\."?{re.escape(c_clean)}"?', f'{alias}."{c_clean}"', expr, flags=re.IGNORECASE)
 
             comment_clause = ""
-            if expr == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr:
+            is_partial_or_placeholder = (
+                expr == NULL_PLACEHOLDER_SQL
+                or "CAST(NULL AS" in expr.upper()
+                or bool(re.search(r'\b(CASE\s+WHEN\s+NULL|COALESCE\s*\(\s*NULL|NULL\s*[-+*/]\s*NULL)\b', expr, re.IGNORECASE))
+                or bool(re.search(r'\b(CASE\s+WHEN\s+1\s*=\s*1|SUM\s*\(\s*CASE\s+WHEN\s+1\s*=\s*1)\b', expr, re.IGNORECASE))
+            )
+            if is_partial_or_placeholder:
+                expr = NULL_PLACEHOLDER_SQL
                 reason_clean, _ = self._placeholder_reason(metric, failure[0] if failure is not None else None)
+                if not reason_clean or reason_clean == "not translatable":
+                    reason_clean = "depends on untranslatable part"
                 safe_comment = self._clean_comment(reason_clean)
                 comment_clause = f" COMMENT = '{safe_comment}'"
 
@@ -819,6 +828,8 @@ class MetricsClauseBuilder:
             is_priv = (
                 getattr(metric, "access_modifier", None) == "private_access"
                 or getattr(metric, "is_private", False)
+                or getattr(metric, "is_hidden", False)
+                or bool(re.search(r"(_NUM|_DEN|_SUM|_CNT)$", safe_metric_name))
             )
             priv_prefix = "PRIVATE " if is_priv else ""
 
@@ -2283,7 +2294,7 @@ class MetricsClauseBuilder:
 
                 if unresolved_or_invalid:
                     missing_ref = next((r for r in metric_refs if r not in defined), "unknown")
-                    reason = f"depends on [{missing_ref}]: missing/unresolved dependency"
+                    reason = f"depends on untranslatable part: [{missing_ref}]"
                     safe_comm = self._clean_comment(reason)
                     self.__dict__.setdefault("_null_propagated", {})[name] = "missing/unresolved dependency"
                     next_lines.append(f'  {priv}{alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
@@ -2297,7 +2308,7 @@ class MetricsClauseBuilder:
                     if not ref_reason:
                         m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr_by_name.get(null_ref, ""))
                         ref_reason = m_blk.group(1).strip() if m_blk else "not translatable"
-                    reason = f"depends on [{null_ref}]: {ref_reason}"
+                    reason = f"depends on untranslatable part: [{null_ref}]"
                     safe_comm = self._clean_comment(reason)
                     next_lines.append(f'  {priv}{alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason

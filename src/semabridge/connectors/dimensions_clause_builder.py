@@ -199,6 +199,17 @@ class DimensionsClauseBuilder:
             }
             _LIVE_ONLY_COLS = {"MONTHINDEX", "YEARINDEX", "QUARTERINDEX", "WEEKINDEX"}
             _has_live = dataset.unique_name in (live_col_lookup or {})
+            is_enriched_target = bool(
+                (
+                    self.enriched_view_mapping
+                    and (
+                        self.enriched_view_mapping.get(dataset.unique_name)
+                        or self.enriched_view_mapping.get(str(dataset.unique_name or "").casefold())
+                        or self.enriched_view_mapping.get(str(dataset.unique_name or "").upper())
+                    )
+                )
+                or (getattr(dataset, "source_table", None) and "_ENRICHED" in str(dataset.source_table).upper())
+            )
 
             for col in dataset.columns:
                 if col.unique_name.startswith("RowNumber") or col.unique_name.startswith("_"):
@@ -306,8 +317,18 @@ class DimensionsClauseBuilder:
                 if semantic_source_name and semantic_source_name.strip().upper() != emitted_name.strip().upper():
                     if semantic_source_name not in col_syns:
                         col_syns.append(semantic_source_name)
+                is_helper = bool(
+                    getattr(col, "is_helper", False)
+                    or (is_enriched_target and (
+                        phys_col.startswith("IS_")
+                        or phys_col.startswith(("_CURRENT_", "_ALL_", "_COL_"))
+                        or phys_col in _SYNTHETIC_COLS
+                    ))
+                )
+                is_priv = bool(getattr(col, "is_hidden", False) or getattr(dataset, "is_hidden", False) or is_helper)
+                priv_prefix = "PRIVATE " if is_priv else ""
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS '
+                    f'  {priv_prefix}{alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                     f'{synonyms_clause(col_syns, element_description(col))}'
                 )
@@ -408,6 +429,8 @@ class DimensionsClauseBuilder:
                         and semantic_name.upper() not in ds_orig_cols
                         and emitted_name.upper() not in ds_orig_cols
                     )
+                    or bool(is_enriched_target and phys_col not in ds_orig_cols)
+                    or bool(getattr(dataset, "is_hidden", False))
                 )
                 priv_prefix = "PRIVATE " if is_helper else ""
                 dims_lines.append(

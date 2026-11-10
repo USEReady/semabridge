@@ -1113,6 +1113,10 @@ class DAXTranslator:
         sync_enabled = True
         for e in errors:
             low = e.lower()
+            if low.startswith("depends on untranslatable part"):
+                reason = e
+                sync_enabled = False
+                break
             if low.startswith("not applicable") or low.startswith("by_design_excluded"):
                 reason = e
                 sync_enabled = False
@@ -1540,6 +1544,8 @@ class DAXTranslator:
             existing_sql = (getattr(metric, "sql_expression", None) or "").strip()
 
             if existing_sql:
+                if "CAST(NULL AS" in existing_sql.upper() or existing_sql.strip().upper() == "NULL":
+                    return None
 
                 return self._strip_outer_parens(existing_sql)
 
@@ -1687,7 +1693,7 @@ class DAXTranslator:
 
                 dep_sql = resolve_measure(ref)
 
-                if not dep_sql:
+                if not dep_sql or "CAST(NULL AS" in dep_sql.upper() or dep_sql.strip().upper() == "NULL":
 
                     return None
 
@@ -1728,6 +1734,10 @@ class DAXTranslator:
                 upper_replaced = replaced.upper()
 
                 if any(keyword in upper_replaced for keyword in ("CALCULATE", "SAMEPERIODLASTYEAR", "DATEADD", "DATESYTD", "TOTALYTD", "IF(", "BLANK(")):
+
+                    return None
+
+                if "CAST(NULL AS" in upper_replaced or "NULL" in upper_replaced:
 
                     return None
 
@@ -3089,6 +3099,8 @@ class DAXTranslator:
             existing_sql = (getattr(metric, "sql_expression", None) or "").strip()
 
             if existing_sql:
+                if "CAST(NULL AS" in existing_sql.upper() or existing_sql.strip().upper() == "NULL":
+                    return None
 
                 cache[key] = existing_sql
 
@@ -3204,8 +3216,8 @@ class DAXTranslator:
 
                     dep_sql = resolve_measure_sql(ref, visiting)
 
-                    if not dep_sql:
-
+                    if not dep_sql or "CAST(NULL AS" in dep_sql.upper() or dep_sql.strip().upper() == "NULL":
+                        self._ast_render_errors.append(f"depends on untranslatable part: [{ref}]")
                         return None
 
                     measure_map[ref] = dep_sql

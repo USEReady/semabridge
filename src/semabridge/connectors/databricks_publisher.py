@@ -3336,7 +3336,7 @@ class DatabricksPublisher:
                         if agg_func == "DISTINCTCOUNT":
                             agg_sql = f"COUNT(DISTINCT `{column_sql}`)"
                         else:
-                            agg_sql = f"{agg_func}(CASE WHEN 1=1 THEN `{column_sql}` ELSE NULL END)" if agg_func in {"AVERAGE", "COUNT", "MIN", "MAX"} else f"SUM(`{column_sql}`)"
+                            agg_sql = f"{agg_func}(`{column_sql}`)"
                         return (
                             f"(SELECT {agg_sql} FROM {foreign_source} AS `{alias_by_dataset[foreign_dataset_name]}`)"
                             ,

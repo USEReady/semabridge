@@ -2806,25 +2806,27 @@ class DaxSqlRenderer:
                 return var_sql
             if col_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[col_cf]
-                if val.strip().upper() == "NULL":
-                    return "NULL"
+                if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                    raise self.DaxRenderError(f"depends on untranslatable part: [{col_clean}]")
                 if self.row_context_stack:
                     return self._row_level_measure_sql(col_clean, val)
                 return f"({val})"
             if col_cf in self._known_measure_names_casefold:
-                raise self.DaxRenderError(
-                    f"Unresolved measure reference [{col_clean}]: known measure with no resolved SQL yet"
-                )
+                if not self.row_context_stack:
+                    raise self.DaxRenderError(
+                        f"Unresolved measure reference [{col_clean}]: known measure with no resolved SQL yet"
+                    )
         elif qualified_cf:
             if qualified_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[qualified_cf]
-                if val.strip().upper() == "NULL":
-                    return "NULL"
+                if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                    raise self.DaxRenderError(f"depends on untranslatable part: [{node.raw}]")
                 return f"({val})"
             if qualified_cf in self._known_measure_names_casefold:
-                raise self.DaxRenderError(
-                    f"Unresolved measure reference [{node.raw}]: known measure with no resolved SQL yet"
-                )
+                if not self.row_context_stack:
+                    raise self.DaxRenderError(
+                        f"Unresolved measure reference [{node.raw}]: known measure with no resolved SQL yet"
+                    )
 
         col = sanitize_column(node.column)
         if tbl_clean:
@@ -3120,8 +3122,8 @@ class DaxSqlRenderer:
         name_cf = node.name.casefold()
         if name_cf in self._measure_sql_map_by_casefold:
             val = self._measure_sql_map_by_casefold[name_cf]
-            if val.strip().upper() == "NULL":
-                return "NULL"
+            if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                raise self.DaxRenderError(f"depends on untranslatable part: [{node.name}]")
             if self.row_context_stack:
                 return self._row_level_measure_sql(node.name, val)
             if (
@@ -3139,24 +3141,10 @@ class DaxSqlRenderer:
             return f"({val})"
 
         if name_cf in self._known_measure_names_casefold:
-
-            # The caller's model tracks this as a real measure name, so
-
-            # rendering it as a column would reference a physical column
-
-            # that doesn't exist (Bug: measure-references-measure leaking
-
-            # as a column reference). Fail closed so the caller can defer
-
-            # to a later pass with fuller measure context, instead of
-
-            # "succeeding" with wrong SQL.
-
-            raise self.DaxRenderError(
-
-                f"Unresolved measure reference [{node.name}]: known measure with no resolved SQL yet"
-
-            )
+            if not self.row_context_stack:
+                raise self.DaxRenderError(
+                    f"Unresolved measure reference [{node.name}]: known measure with no resolved SQL yet"
+                )
 
         # The caller has no measure-registry knowledge of this name at all —
 
@@ -3203,11 +3191,13 @@ class DaxSqlRenderer:
                     matching_col = kc
                     break
             if not matching_col:
-                raise self.DaxRenderError(
-                    f"Unresolved column or measure reference [{node.name}] in table '{alias}'"
-                )
-            col = sanitize_column(matching_col)
-            return f'{alias}."{col}"'
+                if not self.row_context_stack:
+                    raise self.DaxRenderError(
+                        f"Unresolved column or measure reference [{node.name}] in table '{alias}'"
+                    )
+            else:
+                col = sanitize_column(matching_col)
+                return f'{alias}."{col}"'
 
         col = sanitize_column(node.name)
         return f'{alias}."{col}"'
@@ -3459,6 +3449,10 @@ class DaxSqlRenderer:
             return self._render_comparison(node)
         left = self._render_node(node.left)
         right = self._render_node(node.right)
+        if "CAST(NULL AS" in left.upper() or "CAST(NULL AS" in right.upper():
+            raise self.DaxRenderError(f"depends on untranslatable part: binary operation {node.op} contains placeholder")
+        if left.strip().upper() == "NULL" and right.strip().upper() == "NULL":
+            raise self.DaxRenderError(f"depends on untranslatable part: both operands of {node.op} are NULL")
 
         op_clean = node.op.upper()
 
@@ -3795,7 +3789,12 @@ class DaxSqlRenderer:
         if func == "COALESCE":
             if len(node.args) < 2:
                 raise self.DaxRenderError("COALESCE requires at least 2 arguments")
-            return "COALESCE(" + ", ".join(self._render_node(a) for a in node.args) + ")"
+            rendered_args = [self._render_node(a) for a in node.args]
+            if any("CAST(NULL AS" in a.upper() for a in rendered_args):
+                raise self.DaxRenderError("depends on untranslatable part: COALESCE contains placeholder")
+            if rendered_args and rendered_args[0].strip().upper() == "NULL":
+                raise self.DaxRenderError("depends on untranslatable part: COALESCE first argument is NULL")
+            return "COALESCE(" + ", ".join(rendered_args) + ")"
         if func == "RELATED":
             return self._render_related(node)
         if func == "COUNTBLANK":
@@ -4138,6 +4137,8 @@ class DaxSqlRenderer:
                 iter_tbl = self._extract_table_name(arg0.args[0])
                 with self._row_context(iter_tbl):
                     cond_sql = self._render_node(arg0.args[1])
+                if not cond_sql or cond_sql.strip() in ("1=1", "TRUE", "1 = 1", "(1=1)", "(TRUE)"):
+                    raise self.DaxRenderError("declined: vacuous or dropped filter predicate in FILTER")
                 return f"COUNT(CASE WHEN {cond_sql} THEN 1 END)"
 
             # 3. VALUES(T[c]) or DISTINCT(T[c]): COUNT(DISTINCT c)
@@ -4313,6 +4314,8 @@ class DaxSqlRenderer:
             raise self.DaxRenderError(HASONEVALUE_GUARD_REASON)
 
         cond = self._render_node(cond_node)
+        if "CAST(NULL AS" in cond.upper() or cond.strip().upper() == "NULL":
+            raise self.DaxRenderError("depends on untranslatable part: IF condition contains placeholder")
 
         if self._is_numeric_truthiness_condition(cond_node):
 
@@ -4324,15 +4327,23 @@ class DaxSqlRenderer:
         # Rule A: IF(cond, <numeric>, "") or IF(cond, <numeric>, BLANK()) -> CASE WHEN cond THEN <numeric> END
         if _is_empty_branch(else_node):
             true_val = self._render_node(then_node)
+            if "CAST(NULL AS" in true_val.upper():
+                raise self.DaxRenderError("depends on untranslatable part: IF true branch contains placeholder")
             return f"CASE WHEN {cond} THEN {true_val} END"
 
         if _is_empty_branch(then_node) and else_node is not None:
             false_val = self._render_node(else_node)
+            if "CAST(NULL AS" in false_val.upper():
+                raise self.DaxRenderError("depends on untranslatable part: IF false branch contains placeholder")
             return f"CASE WHEN {self._negate(f'({cond})')} THEN {false_val} END"
 
         true_val = self._render_node(then_node)
+        if "CAST(NULL AS" in true_val.upper():
+            raise self.DaxRenderError("depends on untranslatable part: IF true branch contains placeholder")
 
         false_val = self._render_node(else_node) if else_node is not None else "NULL"
+        if "CAST(NULL AS" in false_val.upper():
+            raise self.DaxRenderError("depends on untranslatable part: IF false branch contains placeholder")
 
         return f"CASE WHEN {cond} THEN {true_val} ELSE {false_val} END"
 
@@ -4460,9 +4471,9 @@ class DaxSqlRenderer:
         
 
         if func == "COUNTROWS":
-            if condition_sql and condition_sql.strip() not in ("1=1", "TRUE", "1 = 1", "(1=1)", "(TRUE)"):
-                return f"COUNT(CASE WHEN {condition_sql} THEN 1 END)"
-            return "COUNT(*)"
+            if not condition_sql or condition_sql.strip() in ("1=1", "TRUE", "1 = 1", "(1=1)", "(TRUE)"):
+                raise self.DaxRenderError("declined: vacuous or dropped filter predicate in filtered aggregate")
+            return f"COUNT(CASE WHEN {condition_sql} THEN 1 END)"
 
 
 
@@ -5034,6 +5045,8 @@ class DaxSqlRenderer:
 
         try:
             agg_expr = self._render_node(filtered_args[0])
+            if not agg_expr or agg_expr.strip().upper() == "NULL" or "CAST(NULL AS" in agg_expr.upper():
+                raise self.DaxRenderError("depends on untranslatable part: base aggregation is untranslatable")
 
             filter_clauses: List[str] = []
 
