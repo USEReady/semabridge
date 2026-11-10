@@ -148,6 +148,11 @@ class OntologyApplier:
         self.unmatched: List[str] = []
         self.ambiguous: List[str] = []
         self.matched: List[str] = []
+        self.changes: Dict[str, List[Dict[str, Any]]] = {
+            "descriptions": [],
+            "synonyms": [],
+            "verified_queries": [],
+        }
 
     # -------------------------------------------------------------- layers
     def _add(self, layers: Dict[int, List[_Annot]], obj: Any, annot: _Annot) -> None:
@@ -406,7 +411,25 @@ class OntologyApplier:
         for kind, layers_map in (("tables", self.table_layers), ("columns", self.column_layers), ("metrics", self.metric_layers)):
             for oid, layers in layers_map.items():
                 obj = self._objs[oid]
+                old_desc = getattr(obj, "description", "") or ""
+                old_syns = set(getattr(obj, "synonyms", []) or [])
                 resolved = self._resolve(obj, layers)
+                obj_name = getattr(obj, "unique_name", None) or getattr(obj, "name", str(obj))
+                if resolved["description"] and resolved["description"] != old_desc:
+                    self.changes["descriptions"].append({
+                        "target": obj_name,
+                        "kind": kind,
+                        "from": old_desc,
+                        "to": resolved["description"],
+                    })
+                if resolved.get("synonyms") and set(resolved["synonyms"]) != old_syns:
+                    new_syns = [s for s in resolved["synonyms"] if s not in old_syns]
+                    if new_syns:
+                        self.changes["synonyms"].append({
+                            "target": obj_name,
+                            "kind": kind,
+                            "added": new_syns,
+                        })
                 _set(obj, "description", resolved["description"])
                 if resolved.get("data_steward") and hasattr(obj, "business_owner") and not getattr(obj, "business_owner", None):
                     _set(obj, "business_owner", resolved["data_steward"])
@@ -480,6 +503,7 @@ def apply_ontology_to_model(
         "ambiguous": applier.ambiguous,
         "warnings": warnings,
         "domains": [getattr(d, "domain", str(d)) for d in (domains or [])],
+        "ontology_changes": applier.changes,
     }
 
 
@@ -513,6 +537,18 @@ def apply_project_ontology(
             logger.warning("Ontology apply to secondary model failed: %s", exc)
     for missing in attach_info.get("missing_domain_ids", []):
         report["warnings"].append(f"Attached domain id '{missing}' no longer exists")
+    try:
+        from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+        if project_id:
+            vqs = list_verified_queries_for_project(project_id)
+            for vq in vqs:
+                report.setdefault("ontology_changes", {}).setdefault("verified_queries", []).append({
+                    "question": getattr(vq, "question", vq.get("question") if isinstance(vq, dict) else ""),
+                    "sql": getattr(vq, "sql", vq.get("sql") if isinstance(vq, dict) else ""),
+                    "name": getattr(vq, "name", vq.get("name") if isinstance(vq, dict) else ""),
+                })
+    except Exception:
+        pass
     report["project_id"] = project_id
     return report
 

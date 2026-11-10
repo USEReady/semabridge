@@ -407,11 +407,14 @@ async def _run_dry_run_pipeline(
     ambiguous_report_aliases: List[Dict[str, Any]] = []
     upsert_delta: Optional[Dict[str, Any]] = None
     table_binding_plan: Optional[Dict[str, Any]] = None
+    ontology_changes: Optional[Dict[str, Any]] = None
     # Step 8 of the engine dry run built the target DDL against the live
     # schema; its drops/placeholders are what the sync would report.
     target_ddl_drops: List[Dict[str, Any]] = []
     for r in results:
         summary = r.get("summary") or {}
+        if ontology_changes is None:
+            ontology_changes = summary.get("ontology_report", {}).get("ontology_changes") or summary.get("ontology_changes")
         live_schema_error = next(
             (
                 str(e.get("message") or "")
@@ -660,6 +663,7 @@ async def _run_dry_run_pipeline(
         "sync_mode": sync_mode,
         "upsert_delta": upsert_delta,
         "table_binding_plan": table_binding_plan,
+        "ontology_changes": ontology_changes or {"descriptions": [], "synonyms": [], "verified_queries": []},
         "summary": {
             "total_fields": len(filtered_mappings),
             "auto_mapped": auto_count,

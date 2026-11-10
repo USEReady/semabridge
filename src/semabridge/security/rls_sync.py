@@ -116,9 +116,9 @@ class SecurityPolicyTranslator:
 
         clean_role = role.name.upper().replace(" ", "_")
         lines = [
-            f"-- =============================================================================",
+            "-- =============================================================================",
             f"-- Snowflake Row Access Policy for Power BI Role: {role.name}",
-            f"-- =============================================================================",
+            "-- =============================================================================",
         ]
 
         for perm in role.table_permissions:
@@ -157,7 +157,7 @@ AS ({col_name} VARCHAR) RETURNS BOOLEAN ->
 
         lines = [
             f"role '{role_name}'",
-            f"\tmodelPermission: read",
+            "\tmodelPermission: read",
             "",
             f"\ttablePermission '{policy.target_table}' = {dax_filter}",
             "",

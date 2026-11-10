@@ -5,10 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
-import os
-import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import requests
 from cryptography.hazmat.backends import default_backend

@@ -4,11 +4,8 @@ Provides zero-credit local semantic search and Natural Language to Governed SQL
 without dependency on Snowflake Cortex or external credits.
 """
 
-import json
 import logging
 import re
-import time
-import yaml
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -184,30 +181,16 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
     #    so the engine targets SEMANTIC_VIEW(...) rather than physical tables.
     if req.project_id:
         model_name: Optional[str] = None
-        if not resolved_semantic_view:
-            try:
-                from semabridge.repository.model_repository import ModelRepository
-                from semabridge.repository.orm.project_models import Project
-                from semabridge.utils.name_translator import get_target_deployment_name
-                repo = ModelRepository()
-                snap = repo.get_head(req.project_id)
-                with repo._session() as session:
-                    proj = session.get(Project, req.project_id)
-                    if proj:
-                        target_db = proj.database
-                        target_schema = proj.schema
-                if snap:
-                    if getattr(snap, "view_name", None):
-                        resolved_semantic_view = snap.view_name
-                    if snap.sml_blob:
-                        import yaml as _yaml
-                        raw_data = _yaml.safe_load(snap.sml_blob) if isinstance(snap.sml_blob, (str, bytes)) else snap.sml_blob
-                        if isinstance(raw_data, dict):
-                            model_name = raw_data.get("unique_name") or req.project_id
-                            if not resolved_semantic_view:
-                                resolved_semantic_view = get_target_deployment_name(model_name, "snowflake")
-            except Exception as e:
-                logger.debug("Could not resolve semantic view name from project '%s': %s", req.project_id, e)
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            dep_info = ModelRepository().get_project_deployment_info(req.project_id)
+            target_db = dep_info.get("database") or target_db
+            target_schema = dep_info.get("schema") or target_schema
+            model_name = dep_info.get("model_name") or model_name
+            if not resolved_semantic_view:
+                resolved_semantic_view = dep_info.get("semantic_view")
+        except Exception as e:
+            logger.debug("Could not resolve deployment info for project '%s': %s", req.project_id, e)
 
         p_domains = ontology_store.get_project_domains(req.project_id)
         if p_domains:
@@ -365,16 +348,62 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
 
     # 1. SNOWFLAKE EXECUTION
     if target_upper == "SNOWFLAKE":
+        import os
         import time
+        from pathlib import Path
+        from sqlalchemy import select
+        from semabridge.repository.credential_manager import CredentialManager
+        from semabridge.repository.orm.models import Credential
+
         t0 = time.perf_counter()
         try:
             from semabridge.core.settings import reload_settings
             from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
             import snowflake.connector
 
+            cm = CredentialManager()
+            candidate_uids = [0, 1]
+            try:
+                with cm._session() as sess:
+                    rows_uid = sess.scalars(
+                        select(Credential.owner_id).where(Credential.service == "snowflake").distinct()
+                    ).all()
+                    for r_uid in sorted(rows_uid):
+                        if r_uid not in candidate_uids:
+                            candidate_uids.append(r_uid)
+            except Exception:
+                pass
+            for uid in candidate_uids:
+                try:
+                    creds = cm.get_credentials("snowflake", user_id=uid)
+                    if creds and (
+                        uid == 0
+                        or creds.get("private_key")
+                        or creds.get("password")
+                        or creds.get("oauth_client_secret")
+                        or creds.get("authenticator")
+                    ):
+                        cm.inject_credentials_to_env("snowflake", user_id=uid)
+                except Exception:
+                    pass
+            pk_path = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH", "").strip()
+            if pk_path and not os.environ.get("SNOWFLAKE_PRIVATE_KEY"):
+                p = Path(pk_path)
+                if p.is_file():
+                    try:
+                        os.environ["SNOWFLAKE_PRIVATE_KEY"] = p.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
+
             cfg = reload_settings()
             connect_kwargs = get_snowflake_connect_kwargs(cfg.snowflake)
-            if not connect_kwargs.get("account") or not connect_kwargs.get("user") or not connect_kwargs.get("password"):
+            has_auth = bool(
+                connect_kwargs.get("password")
+                or connect_kwargs.get("private_key")
+                or connect_kwargs.get("token")
+                or connect_kwargs.get("authenticator")
+            )
+            if not connect_kwargs.get("account") or not connect_kwargs.get("user") or not has_auth:
                 return ExecuteQueryResponse(
                     success=False,
                     target="SNOWFLAKE",

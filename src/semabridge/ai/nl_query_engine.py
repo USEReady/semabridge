@@ -12,11 +12,10 @@ import re
 from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, Field
 
-from semabridge.ai.semantic_search import SearchHit, SemanticSearchIndex
+from semabridge.ai.semantic_search import SemanticSearchIndex
 from semabridge.ontology.models import (
     DomainConcept,
     DomainMetric,
-    DomainRelationship,
     FederatedEnterpriseOntology,
 )
 
@@ -226,6 +225,34 @@ class NLQueryEngine:
                             detected_metrics.append(m)
                             if len(detected_metrics) >= 3:
                                 break
+                    # When specific conditional/filtered metrics are detected for a concept,
+                    # remove redundant unfiltered concept-level counts (e.g. 'Opportunity Count' when 'Count of Won' and 'Count of Lost' exist)
+                    concept_specific_filtered = set()
+                    for m in detected_metrics:
+                        m_name_lower = f"{m.name} {m.label or ''}".casefold()
+                        has_subset_keyword = any(kw in m_name_lower for kw in ("won", "lost", "closed", "active", "churn", "escalat", "open", "new", "resolved", "pending"))
+                        sx = (m.sql_expression or "").upper()
+                        dax = (getattr(m, "dax_expression", None) or "").upper()
+                        has_filter = "WHERE" in sx or "CASE WHEN" in sx or "IFF" in sx or "FILTER(" in dax or "CALCULATE(" in dax
+                        if m.concept and (has_filter or has_subset_keyword):
+                            concept_specific_filtered.add(m.concept.casefold())
+
+                    if concept_specific_filtered and len(detected_metrics) > 1:
+                        detected_metrics = [
+                            m for m in detected_metrics
+                            if not (
+                                m.concept
+                                and m.concept.casefold() in concept_specific_filtered
+                                and not (
+                                    "WHERE" in (m.sql_expression or "").upper()
+                                    or "CASE WHEN" in (m.sql_expression or "").upper()
+                                    or "IFF" in (m.sql_expression or "").upper()
+                                    or "FILTER(" in (getattr(m, "dax_expression", None) or "").upper()
+                                    or "CALCULATE(" in (getattr(m, "dax_expression", None) or "").upper()
+                                    or any(kw in f"{m.name} {m.label or ''}".casefold() for kw in ("won", "lost", "closed", "active", "churn", "escalat", "open", "new", "resolved", "pending"))
+                                )
+                            )
+                        ]
                 else:
                     seen_m.add(top_m.name)
                     detected_metrics.append(top_m)
@@ -327,8 +354,6 @@ class NLQueryEngine:
                 detected_concepts.append(c)
 
         # Modifiers
-        is_unique = bool(re.search(r"\b(unique|distinct|how many distinct|number of unique)\b", clean_prompt, re.I))
-        is_average = bool(re.search(r"\b(average|avg|mean)\b", clean_prompt, re.I))
         top_n_match = re.search(r"\btop\s+(\d+)\b", clean_prompt, re.I)
         limit_val = int(top_n_match.group(1)) if top_n_match else 100
 
@@ -578,11 +603,6 @@ class NLQueryEngine:
                         break
                 if dim_names:
                     break
-            # Fallback to concept name if no attribute matched and concept name is in prompt
-            if not dim_names:
-                for c in detected_concepts:
-                    if c.name.casefold() in clean_prompt.casefold() or (c.label and c.label.casefold() in clean_prompt.casefold()):
-                        dim_names.append(c.name)
 
         needed_concepts: Set[str] = set()
         dim_to_concept: Dict[str, str] = {}
@@ -750,7 +770,7 @@ class NLQueryEngine:
 
         target_engine = "Snowflake Cortex Analyst & Semantic View" if dialect.upper() == "SNOWFLAKE" else "Databricks AI/BI Genie & Unity Catalog Metric View" if dialect.upper() == "DATABRICKS" else "SemaBridge Local Engine"
         sql_lines: List[str] = []
-        sql_lines.append(f"-- SemaBridge AI Generated Governed Semantic Query")
+        sql_lines.append("-- SemaBridge AI Generated Governed Semantic Query")
         sql_lines.append(f"-- Target Engine: {target_engine}")
         sql_lines.append(f"-- Question: \"{clean_prompt}\"")
         sql_lines.append(f"-- Dialect: {dialect.upper()}")
@@ -767,7 +787,7 @@ class NLQueryEngine:
         if filters:
             sql_lines.append(f"WHERE {' AND '.join(filters)}")
 
-        if group_by_parts:
+        if not semantic_view and group_by_parts:
             sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
 
         sql_lines.append("ORDER BY 1 DESC")

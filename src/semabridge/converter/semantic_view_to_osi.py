@@ -579,9 +579,9 @@ class SemanticViewToOSIConverter(BaseConverter):
 
             alias, col, expr = m.group(1), m.group(2), m.group(3).strip()
             table_name = table_map.get(alias, {}).get("table_name", alias)
-            # If expression is a quoted string without parens, treat as label alias
+            # Preserve explicit label aliases; otherwise keep the column identifier without synthetic title-casing
             is_label_alias = re.match(r'^"[^"]+"$', expr)
-            label = _strip_quotes(expr) if is_label_alias else col.replace("_", " ").title()
+            label = _strip_quotes(expr) if is_label_alias else col
             sql_expr = None if is_label_alias else expr
 
             # Convert common Snowflake SQL metric patterns into Fabric-safe DAX.

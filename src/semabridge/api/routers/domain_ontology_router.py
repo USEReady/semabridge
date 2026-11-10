@@ -21,7 +21,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -161,9 +161,39 @@ def ontology_graph(project_id: Optional[str] = None) -> Dict[str, Any]:
     )
 
 
+def _check_domain_permission(domain_obj: Any, request: Optional[Request]) -> None:
+    if not request:
+        return
+    try:
+        from semabridge.api.deps import get_current_user_optional
+        user = get_current_user_optional(request)
+    except Exception:
+        user = None
+    if not user:
+        return
+    is_admin = getattr(user, "is_admin", False) or getattr(user, "role", None) == "admin"
+    if is_admin:
+        return
+    owner = (getattr(domain_obj, "owner", None) or "").strip().casefold()
+    if not owner:
+        return
+    user_identifiers = {
+        str(getattr(user, "id", "")).casefold(),
+        str(getattr(user, "username", "")).casefold(),
+        str(getattr(user, "email", "")).casefold(),
+    }
+    if owner not in user_identifiers:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Forbidden: only domain owner ('{domain_obj.owner}') or an admin can modify or delete domain '{domain_obj.domain}'."
+        )
+
+
 @router.get("/{domain_name}", response_model=Dict[str, Any])
 def get_domain(domain_name: str) -> Dict[str, Any]:
     """Retrieve full details and raw YAML for a specific domain (by name or id)."""
+    if not domain_name or not domain_name.strip():
+        raise HTTPException(status_code=400, detail="Domain name cannot be empty.")
     dom = ontology_store.get_domain(domain_name)
     if dom is None:
         raise HTTPException(status_code=404, detail=f"Domain '{domain_name}' not found.")
@@ -177,6 +207,8 @@ def get_domain(domain_name: str) -> Dict[str, Any]:
 @router.post("/validate", response_model=Dict[str, Any])
 def validate_domain_yaml(req: ValidateYamlRequest) -> Dict[str, Any]:
     """Dry-run validation of domain YAML content (schema + federation references)."""
+    if not req.yaml_content or not req.yaml_content.strip():
+        raise HTTPException(status_code=400, detail="YAML content cannot be empty.")
     try:
         dom = FederatedOntologyLoader.parse_yaml_string(req.yaml_content, req.domain_override)
         errors = ontology_store.validate_domain(dom, original=req.original_domain)
@@ -201,6 +233,8 @@ def validate_domain_yaml(req: ValidateYamlRequest) -> Dict[str, Any]:
 
 
 def _save(yaml_content: str, original: Optional[str]) -> Dict[str, Any]:
+    if not yaml_content or not yaml_content.strip():
+        raise HTTPException(status_code=400, detail="YAML content cannot be empty.")
     try:
         dom = FederatedOntologyLoader.parse_yaml_string(yaml_content)
 
@@ -236,22 +270,40 @@ def _save(yaml_content: str, original: Optional[str]) -> Dict[str, Any]:
 
 
 @router.post("", response_model=Dict[str, Any])
-def create_or_save_domain(req: SaveDomainRequest) -> Dict[str, Any]:
+def create_or_save_domain(req: SaveDomainRequest, request: Request) -> Dict[str, Any]:
     """Create a domain (or, with ``original_domain``, update/rename that domain)."""
+    if not req.yaml_content or not req.yaml_content.strip():
+        raise HTTPException(status_code=400, detail="YAML content cannot be empty.")
+    if req.original_domain:
+        existing = ontology_store.get_domain(req.original_domain)
+        if existing:
+            _check_domain_permission(existing, request)
     return _save(req.yaml_content, req.original_domain)
 
 
 @router.put("/{domain_name}", response_model=Dict[str, Any])
-def save_domain(domain_name: str, req: SaveDomainRequest) -> Dict[str, Any]:
+def save_domain(domain_name: str, req: SaveDomainRequest, request: Request) -> Dict[str, Any]:
     """Update the domain currently named (or with id) ``domain_name``; a new YAML name renames it."""
-    if ontology_store.get_domain(domain_name) is None:
+    if not domain_name or not domain_name.strip():
+        raise HTTPException(status_code=400, detail="Domain name cannot be empty.")
+    if not req.yaml_content or not req.yaml_content.strip():
+        raise HTTPException(status_code=400, detail="YAML content cannot be empty.")
+    existing = ontology_store.get_domain(domain_name)
+    if existing is None:
         raise HTTPException(status_code=404, detail=f"Domain '{domain_name}' not found.")
+    _check_domain_permission(existing, request)
     return _save(req.yaml_content, domain_name)
 
 
 @router.delete("/{domain_name}", response_model=Dict[str, Any])
-def delete_domain(domain_name: str) -> Dict[str, Any]:
+def delete_domain(domain_name: str, request: Request) -> Dict[str, Any]:
     """Delete a domain ontology."""
+    if not domain_name or not domain_name.strip():
+        raise HTTPException(status_code=400, detail="Domain name cannot be empty.")
+    existing = ontology_store.get_domain(domain_name)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Domain '{domain_name}' not found.")
+    _check_domain_permission(existing, request)
     deleted = ontology_store.delete_domain(domain_name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Domain '{domain_name}' not found.")
@@ -381,6 +433,14 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
                     target_domain = d.domain
                 break
 
+    dep_info: Dict[str, Optional[str]] = {}
+    if project_id:
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            dep_info = ModelRepository().get_project_deployment_info(project_id)
+        except Exception:
+            dep_info = {}
+
     sync_report: Dict[str, List[str]] = {}
     try:
         domain_ontology = FederatedOntologyLoader.from_osi_model(
@@ -388,6 +448,9 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
             domain_name=target_domain,
             existing_ontology=existing_domain_obj,
             report=sync_report,
+            semantic_view_ddl=dep_info.get("ddl"),
+            semantic_view_name=dep_info.get("semantic_view"),
+            deployment_error=dep_info.get("deploy_error"),
         )
         if project_id:
             domain_ontology.source_project_id = project_id

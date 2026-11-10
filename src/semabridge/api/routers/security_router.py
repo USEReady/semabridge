@@ -37,6 +37,11 @@ class SnowflakeToTMDLRequest(BaseModel):
 @router.post("/tmdl-to-snowflake", response_model=Dict[str, Any])
 def convert_tmdl_role_to_snowflake(req: TMDLToSnowflakeRequest) -> Dict[str, Any]:
     """Convert Power BI / Fabric TMDL DAX role into Snowflake ROW ACCESS POLICY DDL."""
+    if not req.role.name or not req.role.name.strip():
+        raise HTTPException(status_code=400, detail="role name cannot be empty.")
+    if not req.role.table_permissions:
+        raise HTTPException(status_code=400, detail="table_permissions cannot be empty.")
+
     target_db = req.target_database
     if not target_db:
         try:
@@ -60,6 +65,11 @@ def convert_tmdl_role_to_snowflake(req: TMDLToSnowflakeRequest) -> Dict[str, Any
 @router.post("/snowflake-to-tmdl", response_model=Dict[str, str])
 def convert_snowflake_policy_to_tmdl(req: SnowflakeToTMDLRequest) -> Dict[str, str]:
     """Convert Snowflake ROW ACCESS POLICY into Microsoft Fabric TMDL role syntax."""
+    if not req.policy.policy_name or not req.policy.policy_name.strip():
+        raise HTTPException(status_code=400, detail="policy_name cannot be empty.")
+    if not req.policy.target_table or not req.policy.target_table.strip():
+        raise HTTPException(status_code=400, detail="target_table cannot be empty.")
+
     translator = SecurityPolicyTranslator()
     tmdl = translator.snowflake_policy_to_tmdl(req.policy)
     return {"tmdl_content": tmdl}

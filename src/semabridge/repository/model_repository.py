@@ -845,6 +845,99 @@ class ModelRepository:
 
         return None
 
+    def get_project_deployment_info(self, project_id: str) -> Dict[str, Optional[str]]:
+        """Resolve fully qualified db.schema.view, deployment status/error, and DDL path from deployment records."""
+        import re
+        from pathlib import Path
+        from sqlalchemy import text
+
+        info: Dict[str, Optional[str]] = {
+            "semantic_view": None,
+            "view_name": None,
+            "database": None,
+            "schema": None,
+            "deploy_error": None,
+            "ddl": None,
+            "model_name": None,
+        }
+        if not project_id:
+            return info
+
+        def _q_part(part: str) -> str:
+            p = str(part or "").strip().strip('"')
+            return f'"{p}"' if re.search(r"[^A-Za-z0-9_]", p) else p
+
+        with self._session() as session:
+            rows = session.execute(
+                select(SnapshotRow, Project.database, Project.schema, Project.name)
+                .outerjoin(Project, Project.project_id == SnapshotRow.project_id)
+                .where(
+                    and_(
+                        SnapshotRow.project_id == project_id,
+                        SnapshotRow.deleted_at.is_(None),
+                    )
+                )
+                .order_by(SnapshotRow.timestamp.desc())
+                .limit(25)
+            ).all()
+
+            for row, proj_db, proj_schema, proj_name in rows:
+                if not info["model_name"]:
+                    if row.sml_blob:
+                        blob = _deserialize_sml_blob(row.sml_blob)
+                        if isinstance(blob, dict):
+                            info["model_name"] = blob.get("unique_name") or blob.get("label") or proj_name
+                    elif proj_name:
+                        info["model_name"] = proj_name
+                if not info["deploy_error"] and row.status == "failed" and row.error_message:
+                    info["deploy_error"] = row.error_message
+
+                if row.deployed_at is not None and row.status == "success" and row.view_name:
+                    db = row.target_database or proj_db
+                    schema = row.target_schema or proj_schema
+                    view = row.view_name.strip().strip('"')
+                    info["database"] = db
+                    info["schema"] = schema
+                    info["view_name"] = view
+                    parts = [_q_part(p) for p in (db, schema, view) if p]
+                    info["semantic_view"] = ".".join(parts) if parts else None
+                    break
+
+            try:
+                rmr = session.execute(
+                    text(
+                        "SELECT status, view_name, physical_namespace, error_message, model "
+                        "FROM run_model_results WHERE project_id = :pid "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"pid": project_id},
+                ).fetchone()
+                if rmr:
+                    r_status, r_view, r_ns, r_err, r_model = rmr
+                    if not info["model_name"] and r_model:
+                        info["model_name"] = r_model
+                    if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
+                        info["deploy_error"] = r_err
+                    if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
+                        ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
+                        parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
+                        info["semantic_view"] = ".".join(parts) if parts else None
+            except Exception:
+                pass
+
+        for candidate in (
+            Path("output") / "reverse" / project_id / "semantic_view.sql",
+            Path("output") / "reverse" / ".staging" / project_id / "semantic_view.sql",
+        ):
+            if candidate.is_file():
+                try:
+                    info["ddl"] = candidate.read_text(encoding="utf-8")
+                    break
+                except Exception:
+                    pass
+
+        return info
+
     def rollback(
         self,
         project_id: str,

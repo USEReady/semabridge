@@ -14,7 +14,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
-from semabridge.ontology.models import DomainConcept, DomainMetric, FederatedEnterpriseOntology
+from semabridge.ontology.models import FederatedEnterpriseOntology
 
 logger = logging.getLogger("semabridge.ai.semantic_search")
 
@@ -38,9 +38,11 @@ class SearchHit(BaseModel):
 
 
 def _stem_token(tok: str) -> str:
-    """Lightweight plural-to-singular normalization so 'cases' matches 'case' and 'opportunities' matches 'opportunity'."""
+    """Lightweight generic plural-to-singular token normalizer."""
     if len(tok) > 4 and tok.endswith("ies"):
         return tok[:-3] + "y"
+    if len(tok) > 4 and tok.endswith(("ches", "shes", "xes", "zzes", "sses", "tuses", "nuses", "puses")):
+        return tok[:-2]
     if len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is")):
         return tok[:-1]
     return tok
@@ -61,9 +63,9 @@ def _tokenize(text: str) -> List[str]:
     cleaned = re.sub(r"\bprevious\s+quarter\b", " pq ", cleaned, flags=re.I)
     cleaned = re.sub(r"\bsame\s+period\s+last\s+year\b", " sply ", cleaned, flags=re.I)
     cleaned = re.sub(r"\bmoving\s+annual\s+total\b", " mat ", cleaned, flags=re.I)
-    cleaned = re.sub(r"\bmonth[- ]?over[- ]?month\b", " mom ", cleaned, flags=re.I)
-    cleaned = re.sub(r"\byear[- ]?over[- ]?year\b", " yoy ", cleaned, flags=re.I)
-    cleaned = re.sub(r"\bquarter[- ]?over[- ]?quarter\b", " qoq ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bmonth(?:[-\s]+over[-\s]+month)\b", " mom ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\byear(?:[-\s]+over[-\s]+year)\b", " yoy ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bquarter(?:[-\s]+over[-\s]+quarter)\b", " qoq ", cleaned, flags=re.I)
     # Normalize mixed-case YoY/MoM/QoQ before camelCase splitting so 'YoY' doesn't become 'Yo Y'
     cleaned = re.sub(r"\b(YoY|MoM|QoQ|YTD|QTD|MTD|SPLY|MAT)\b", lambda m: m.group(1).lower(), cleaned)
     # Split camelCase boundaries

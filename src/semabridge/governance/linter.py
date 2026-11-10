@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, Field
 
-from semabridge.intermediate.models import OSIModel
 from semabridge.ontology.models import FederatedEnterpriseOntology
 
 logger = logging.getLogger("semabridge.governance.linter")
