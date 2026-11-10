@@ -1,0 +1,47 @@
+domain: Sales Analytics
+id: sales_analytics
+owner: Revenue Ops
+version: 1.0.0
+description: Business vocabulary for sales and market-share reporting.
+concepts:
+- name: Sales
+  concept_type: ENTITY
+  domain: Sales Analytics
+  description: Daily unit sales by product, region and manufacturer.
+  synonyms:
+  - Orders
+  - Transactions
+  business_rules:
+  - Excludes returns
+  - Units are shipped units
+  data_steward: Revenue Ops
+  attributes:
+  - name: Units
+    data_type: VARCHAR
+    description: Number of units sold.
+    is_primary_key: false
+    synonyms:
+    - Quantity
+    - Volume
+    maps_to:
+    - SalesFact.Units
+  tags: []
+  maps_to:
+  - SalesFact
+metrics:
+- name: Total Units
+  description: Sum of units sold.
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - Unit Sales
+  - Volume Sold
+  business_rules:
+  - Shipped units only
+  data_steward: Revenue Ops
+  domain: Sales Analytics
+  concept: Sales
+  tags: []
+  maps_to:
+  - Total Units
+relationships: []

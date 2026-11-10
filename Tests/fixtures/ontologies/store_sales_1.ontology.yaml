@@ -1,0 +1,1015 @@
+domain: Store Sales 1
+id: store_sales_1
+version: 1.0.0
+source_project_id: proj-store-sales
+concepts:
+- name: District
+  label: District
+  concept_type: DIMENSION
+  domain: Store Sales 1
+  synonyms: []
+  business_rules: []
+  physical_table: District
+  attributes:
+  - name: DistrictID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: District
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DM
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DM_Pic_fl
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DM_Pic
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: BusinessUnitID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: DMImage
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Item
+  label: Item
+  concept_type: DIMENSION
+  domain: Store Sales 1
+  synonyms: []
+  business_rules: []
+  physical_table: Item
+  attributes:
+  - name: ItemID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Segment
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Category
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Buyer
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: FamilyNane
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Category (clusters) 2
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Sales
+  label: Sales
+  concept_type: DIMENSION
+  domain: Store Sales 1
+  synonyms: []
+  business_rules: []
+  physical_table: Sales
+  attributes:
+  - name: MonthID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: ItemID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: LocationID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Sum_GrossMarginAmount
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sum_Regular_Sales_Dollars
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sum_Markdown_Sales_Dollars
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: ScenarioID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: ReportingPeriodID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Sum_Regular_Sales_Units
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sum_Markdown_Sales_Units
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Store
+  label: Store
+  concept_type: DIMENSION
+  domain: Store Sales 1
+  synonyms: []
+  business_rules: []
+  physical_table: Store
+  attributes:
+  - name: LocationID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: City Name
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Territory
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: PostalCode
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: OpenDate
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: SellingAreaSize
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DistrictName
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Name
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: StoreNumberName
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: StoreNumber
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: City
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Chain
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DM
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DM_Pic
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DistrictID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Open Year
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Store Type
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Open Month No
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Open Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Time
+  label: Time
+  concept_type: DIMENSION
+  domain: Store Sales 1
+  synonyms: []
+  business_rules: []
+  physical_table: Time
+  attributes:
+  - name: ReportingPeriodID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Period
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: FiscalYear
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: FiscalMonth
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    data_type: TIMESTAMP_NTZ
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Date
+  label: Date
+  concept_type: DIMENSION
+  domain: Store Sales 1
+  description: Auto-generated Calendar Dimension
+  synonyms: []
+  business_rules: []
+  physical_table: DIM_DATE
+  attributes:
+  - name: Date
+    data_type: DATE
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Year
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Quarter
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: MonthName
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DayOfWeek
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DayName
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+  bi_description: Auto-generated Calendar Dimension
+metrics:
+- name: REGULAR_SALES_DOLLARS
+  label: Regular Sales Dollars
+  sql_expression: SUM(SALES."SUM_REGULAR_SALES_DOLLARS")
+  dax_expression: SUM([Sum_Regular_Sales_Dollars])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - REGULAR_SALES_DOLLARS
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: MARKDOWN_SALES_DOLLARS
+  label: Markdown Sales Dollars
+  sql_expression: SUM(SALES."SUM_MARKDOWN_SALES_DOLLARS")
+  dax_expression: SUM([Sum_Markdown_Sales_Dollars])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - MARKDOWN_SALES_DOLLARS
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTALSALES
+  label: Totalsales
+  sql_expression: CASE WHEN ((SUM(SALES."SUM_REGULAR_SALES_DOLLARS"))) IS NULL AND
+    ((SUM(SALES."SUM_MARKDOWN_SALES_DOLLARS"))) IS NULL THEN NULL ELSE COALESCE((SUM(SALES."SUM_REGULAR_SALES_DOLLARS")),
+    0) + COALESCE((SUM(SALES."SUM_MARKDOWN_SALES_DOLLARS")), 0) END
+  dax_expression: '[REGULAR_SALES_DOLLARS]+[MARKDOWN_SALES_DOLLARS]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTALSALES
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTALSALESLY
+  label: Totalsalesly
+  sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END
+  dax_expression: CALCULATE([TOTALSALES], Sales[ScenarioID]=2)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTALSALESLY
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: GROSS_MARGIN_THIS_YEAR
+  label: Gross Margin This Year
+  sql_expression: SUM(CASE WHEN SALES.SCENARIOID = 1 THEN SALES."SUM_GROSSMARGINAMOUNT"
+    ELSE 0 END)
+  dax_expression: CALCULATE(SUM([Sum_GrossMarginAmount]), Sales[ScenarioID]=1)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GROSS_MARGIN_THIS_YEAR
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: GROSS_MARGIN_THIS_YEAR_PCT
+  label: Gross Margin This Year Pct
+  sql_expression: (SUM(CASE WHEN SALES.SCENARIOID = 1 THEN SALES."SUM_GROSSMARGINAMOUNT"
+    ELSE 0 END)) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END, 0)
+  dax_expression: '[GROSS_MARGIN_THIS_YEAR]/[TOTALSALESTY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GROSS_MARGIN_THIS_YEAR_PCT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: GROSS_MARGIN_LAST_YEAR
+  label: Gross Margin Last Year
+  sql_expression: SUM(CASE WHEN SALES.SCENARIOID = 2 THEN SALES."SUM_GROSSMARGINAMOUNT"
+    ELSE 0 END)
+  dax_expression: CALCULATE(SUM([Sum_GrossMarginAmount]), Sales[ScenarioID]=2)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GROSS_MARGIN_LAST_YEAR
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: GROSS_MARGIN_LAST_YEAR_PCT
+  label: Gross Margin Last Year Pct
+  sql_expression: (SUM(CASE WHEN SALES.SCENARIOID = 2 THEN SALES."SUM_GROSSMARGINAMOUNT"
+    ELSE 0 END)) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END, 0)
+  dax_expression: '[GROSS_MARGIN_LAST_YEAR]/[TOTALSALESLY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - GROSS_MARGIN_LAST_YEAR_PCT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: REGULAR_SALES_UNITS
+  label: Regular Sales Units
+  sql_expression: SUM(SALES."SUM_REGULAR_SALES_UNITS")
+  dax_expression: SUM([Sum_Regular_Sales_Units])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - REGULAR_SALES_UNITS
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: MARKDOWN_SALES_UNITS
+  label: Markdown Sales Units
+  sql_expression: SUM(SALES."SUM_MARKDOWN_SALES_UNITS")
+  dax_expression: SUM([Sum_Markdown_Sales_Units])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - MARKDOWN_SALES_UNITS
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTALUNITS
+  label: Totalunits
+  sql_expression: CASE WHEN ((SUM(SALES."SUM_REGULAR_SALES_UNITS"))) IS NULL AND ((SUM(SALES."SUM_MARKDOWN_SALES_UNITS")))
+    IS NULL THEN NULL ELSE COALESCE((SUM(SALES."SUM_REGULAR_SALES_UNITS")), 0) + COALESCE((SUM(SALES."SUM_MARKDOWN_SALES_UNITS")),
+    0) END
+  dax_expression: '[REGULAR_SALES_UNITS]+[MARKDOWN_SALES_UNITS]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTALUNITS
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_LAST_YEAR
+  label: Total Units Last Year
+  sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END)),
+    0) END
+  dax_expression: CALCULATE([TOTALUNITS], Sales[ScenarioID]=2)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_UNITS_LAST_YEAR
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTAL_UNITS_THIS_YEAR
+  label: Total Units This Year
+  sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END)),
+    0) END
+  dax_expression: CALCULATE([TOTALUNITS], Sales[ScenarioID]=1)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_UNITS_THIS_YEAR
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: AVG_DOL_UNIT_TY
+  label: Avg Dol Unit Ty
+  sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END))) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END)), 0) END) <> 0 THEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END)),
+    0) END, 0) ELSE NULL END
+  dax_expression: IF([TOTAL_UNITS_THIS_YEAR]<>0, [TOTALSALESTY]/[TOTAL_UNITS_THIS_YEAR],
+    BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG_DOL_UNIT_TY
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: AVG_DOL_UNIT_LY
+  label: Avg Dol Unit Ly
+  sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END))) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END)), 0) END) <> 0 THEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END)),
+    0) END, 0) ELSE NULL END
+  dax_expression: IF([TOTAL_UNITS_LAST_YEAR]<>0, [TOTALSALESLY]/[TOTAL_UNITS_LAST_YEAR],
+    BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG_DOL_UNIT_LY
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTAL_SALES_VAR
+  label: Total Sales Var
+  sql_expression: CASE WHEN ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END)) IS NULL AND ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END)) IS NULL THEN NULL ELSE COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END), 0) - COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END), 0) END
+  dax_expression: '[TOTALSALESTY]-[TOTALSALESLY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_SALES_VAR
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTAL_SALES_VAR_PCT
+  label: Total Sales Var Pct
+  sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END) <> 0 THEN (CASE WHEN ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END)) IS NULL AND ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END)) IS NULL THEN NULL ELSE COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END), 0) - COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END), 0) END) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END, 0) ELSE NULL END
+  dax_expression: IF([TOTALSALESLY]<>0, [TOTAL_SALES_VAR]/[TOTALSALESLY], BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_SALES_VAR_PCT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: SALES_PER_SQ_FT
+  label: Sales Per Sq Ft
+  sql_expression: (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END) / NULLIF(COUNT(DISTINCT SALES."MONTHID") * SUM(STORE."SELLINGAREASIZE"::FLOAT),
+    0) * 12
+  dax_expression: ([TOTALSALESTY]/(DISTINCTCOUNT([MonthID])*SUM(Store[SellingAreaSize])))*12
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - SALES_PER_SQ_FT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: LAST_YEAR_SALES
+  label: Last Year Sales
+  sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END
+  dax_expression: '[TOTALSALESLY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LAST_YEAR_SALES
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTAL_SALES_VARIANCE
+  label: Total Sales Variance
+  sql_expression: CASE WHEN ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END)) IS NULL AND ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END)) IS NULL THEN NULL ELSE COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END), 0) - COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END), 0) END
+  dax_expression: '[TOTAL_SALES_VAR]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_SALES_VARIANCE
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTAL_SALES_VARIANCE_PCT
+  label: Total Sales Variance Pct
+  sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END) <> 0 THEN (CASE WHEN ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END)) IS NULL AND ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END)) IS NULL THEN NULL ELSE COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END), 0) - COALESCE((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END)), 0) END), 0) END) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END, 0) ELSE NULL END
+  dax_expression: '[TOTAL_SALES_VAR_PCT]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_SALES_VARIANCE_PCT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: STORE_COUNT
+  label: Store Count
+  sql_expression: COUNT(DISTINCT SALES."LOCATIONID")
+  dax_expression: DISTINCTCOUNT([LocationID])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - STORE_COUNT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: AVERAGE_UNIT_PRICE
+  label: Average Unit Price
+  sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END))) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END)), 0) END) <> 0 THEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END)),
+    0) END, 0) ELSE NULL END
+  dax_expression: '[AVG_DOL_UNIT_TY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVERAGE_UNIT_PRICE
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: AVERAGE_UNIT_PRICE_LAST_YEAR
+  label: Average Unit Price Last Year
+  sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END))) IS NULL THEN NULL ELSE
+    COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END)), 0) END) <> 0 THEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
+    SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE WHEN
+    SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL END)),
+    0) END) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_UNITS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 2 THEN SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS" ELSE NULL END)),
+    0) END, 0) ELSE NULL END
+  dax_expression: '[AVG_DOL_UNIT_LY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVERAGE_UNIT_PRICE_LAST_YEAR
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: TOTALSALESTY
+  label: Totalsalesty
+  sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END
+  dax_expression: CALCULATE([TOTALSALES], Sales[ScenarioID]=1)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTALSALESTY
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: THIS_YEAR_SALES
+  label: This Year Sales
+  sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
+    ELSE NULL END))) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES."SCENARIOID"
+    = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END)), 0) + COALESCE((SUM(CASE
+    WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS" ELSE NULL
+    END)), 0) END
+  dax_expression: '[TOTALSALESTY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - THIS_YEAR_SALES
+  business_rules: []
+  domain: Store Sales 1
+  concept: Sales
+  tags: []
+  origin: bi
+- name: AVERAGE_SELLING_AREA_SIZE
+  label: Average Selling Area Size
+  sql_expression: AVG(STORE."SELLINGAREASIZE")
+  dax_expression: AVERAGE([SellingAreaSize])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVERAGE_SELLING_AREA_SIZE
+  business_rules: []
+  domain: Store Sales 1
+  concept: Store
+  tags: []
+  origin: bi
+- name: NEW_STORES
+  label: New Stores
+  sql_expression: COUNT(CASE WHEN STORE."STORE_TYPE" = 'New Store' THEN STORE."STORE_TYPE"
+    END)
+  dax_expression: CALCULATE(COUNTA([Store Type]), FILTER(ALL(Store), [Store Type]="New
+    Store"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - NEW_STORES
+  business_rules: []
+  domain: Store Sales 1
+  concept: Store
+  tags: []
+  origin: bi
+- name: NEW_STORES_TARGET
+  label: New Stores Target
+  sql_expression: MAX(14)
+  dax_expression: '14'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - NEW_STORES_TARGET
+  business_rules: []
+  domain: Store Sales 1
+  concept: Store
+  tags: []
+  origin: bi
+- name: TOTAL_STORES
+  label: Total Stores
+  sql_expression: COUNT(STORE."STORENUMBERNAME")
+  dax_expression: COUNTA([StoreNumberName])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TOTAL_STORES
+  business_rules: []
+  domain: Store Sales 1
+  concept: Store
+  tags: []
+  origin: bi
+- name: OPEN_STORE_COUNT
+  label: Open Store Count
+  sql_expression: COUNT(STORE."OPENDATE")
+  dax_expression: COUNTA([OpenDate])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - OPEN_STORE_COUNT
+  business_rules: []
+  domain: Store Sales 1
+  concept: Store
+  tags: []
+  origin: bi
+- name: COUNT_OF_OPENDATE
+  label: Count Of Opendate
+  sql_expression: COUNT(STORE."OPENDATE")
+  dax_expression: COUNTA('Store'[OpenDate])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - COUNT_OF_OPENDATE
+  business_rules: []
+  domain: Store Sales 1
+  concept: Store
+  tags: []
+  origin: bi
+relationships:
+- name: REL_STORE_DISTRICTID__DISTRICT_DISTRICTID
+  from_concept: Store
+  to_concept: District
+  cardinality: N:1
+  join_expression: Store.DistrictID = District.DistrictID
+  is_active: true
+  origin: bi
+- name: REL_SALES_LOCATIONID__STORE_LOCATIONID
+  from_concept: Sales
+  to_concept: Store
+  cardinality: N:1
+  join_expression: Sales.LocationID = Store.LocationID
+  is_active: true
+  origin: bi
+- name: REL_SALES_ITEMID__ITEM_ITEMID
+  from_concept: Sales
+  to_concept: Item
+  cardinality: N:1
+  join_expression: Sales.ItemID = Item.ItemID
+  is_active: true
+  origin: bi
+- name: REL_SALES_REPORTINGPERIODID__TIME_REPORTINGPERIODID
+  from_concept: Sales
+  to_concept: Time
+  cardinality: N:1
+  join_expression: Sales.ReportingPeriodID = Time.ReportingPeriodID
+  is_active: true
+  origin: bi

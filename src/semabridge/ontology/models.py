@@ -126,7 +126,10 @@ class DomainMetric(_StrictModel):
     label: Optional[str] = None
     description: Optional[str] = None
     # Optional: an ontology entry may only annotate an existing BI measure.
+    # sql_expression: Compiled target SQL (Snowflake/Databricks) used by the query engine.
     sql_expression: Optional[str] = None
+    # dax_expression: Preserves the original Power BI DAX formula separately so DAX syntax does not leak into SQL.
+    dax_expression: Optional[str] = None
     aggregation_type: str = "SUM"
     grain: List[str] = Field(default_factory=list)
     synonyms: CleanList = Field(default_factory=list)
@@ -157,6 +160,9 @@ class DomainRelationship(_StrictModel):
     relationship_type: RelationshipType = RelationshipType.JOIN
     join_expression: Optional[str] = None
     predicate_label: Optional[str] = None
+    # is_active: Preserves whether the relationship is active in the source BI model.
+    # Inactive relationships are skipped during automated join generation to prevent phantom/cycle joins.
+    is_active: bool = True
     origin: Optional[Origin] = None
     stale: bool = False
 

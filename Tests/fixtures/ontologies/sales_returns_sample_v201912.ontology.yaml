@@ -1,0 +1,2446 @@
+domain: Sales & Returns Sample v201912
+id: sales_returns_sample_v201912
+version: 1.0.0
+source_project_id: proj-sales-and-returns
+concepts:
+- name: '% Return Rate'
+  label: '% Return Rate'
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: '% Return Rate'
+  attributes:
+  - name: '% Return Rate'
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Age
+  label: Age
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Age
+  attributes:
+  - name: Age
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Age Bucket
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Associated Product
+  label: Associated Product
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Associated Product
+  attributes:
+  - name: ProductID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Product Image
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Product
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Segmented by
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Association
+  label: Association
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Association
+  attributes:
+  - name: RuleID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: LeftItemSetId
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: RightItemSetId
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Probability
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Importance
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Support
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Calendar
+  label: Calendar
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Calendar
+  attributes:
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: MonthSort
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Week
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Empty
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Customer
+  label: Customer
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Customer
+  attributes:
+  - name: ID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Unit
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Gender
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Product
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Category
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Segment
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Store
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Type
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Issue
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Promotion
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Amount
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Age
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Price Range
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Details
+  label: Details
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Details
+  attributes:
+  - name: Design Factor
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DFSort
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Topic
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: TSort
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Issues and Promotions
+  label: Issues and Promotions
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Issues and Promotions
+  attributes:
+  - name: ID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Issue
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Promotion
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Product
+  label: Product
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Product
+  attributes:
+  - name: Product
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: ProductID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Category
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: CategoryID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Segment
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: SegmentID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Product Image
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Category Image
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Segement Color
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Segment image
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Price
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Price Range
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: STable
+  label: STable
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: STable
+  attributes:
+  - name: Metric
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sort
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Sales
+  label: Sales
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Sales
+  attributes:
+  - name: ProductID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: StoreID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Status
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: ID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Unit
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Amount
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Store
+  label: Store
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Store
+  attributes:
+  - name: StoreID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Store
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Type
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Longitude
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Latitude
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: image
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Tooltip Info
+  label: Tooltip Info
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Tooltip Info
+  attributes:
+  - name: nombre
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: URL
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DLINK
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Empty
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Tooltip Info2
+  label: Tooltip Info2
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Tooltip Info2
+  attributes:
+  - name: Nombre
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: URL
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DLINK
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Analysis DAX
+  label: Analysis DAX
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Analysis DAX
+  attributes: []
+  tags: []
+  origin: bi
+- name: Design DAX
+  label: Design DAX
+  concept_type: DIMENSION
+  domain: Sales & Returns Sample v201912
+  synonyms: []
+  business_rules: []
+  physical_table: Design DAX
+  attributes: []
+  tags: []
+  origin: bi
+metrics:
+- name: PCT_RETURN_RATE_VALUE
+  label: '% Return Rate Value'
+  sql_expression: IFF(COUNT(DISTINCT PCT_RETURN_RATE."PCT_RETURN_RATE") + MAX(IFF(PCT_RETURN_RATE."PCT_RETURN_RATE"
+    IS NULL, 1, 0)) = 1, MAX(PCT_RETURN_RATE."PCT_RETURN_RATE"), NULL) / 100
+  dax_expression: SELECTEDVALUE('% Return Rate'[% Return Rate])/100
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - '% Return Rate Value'
+  - PCT_RETURN_RATE_VALUE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: '% Return Rate'
+  tags: []
+  origin: bi
+- name: INFO_TOOLTIP
+  label: Info Tooltip
+  sql_expression: '''https://imagizer.imageshack.com/img923/4052/lLHy3U.gif'''
+  dax_expression: '"https://imagizer.imageshack.com/img923/4052/lLHy3U.gif"'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Info Tooltip
+  - INFO_TOOLTIP
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Details
+  tags: []
+  origin: bi
+- name: INFO_TOOLTIP_2
+  label: Info Tooltip 2
+  sql_expression: '''https://imagizer.imageshack.com/img921/2483/uMs9ZQ.gif'''
+  dax_expression: '"https://imagizer.imageshack.com/img921/2483/uMs9ZQ.gif"'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Info Tooltip 2
+  - INFO_TOOLTIP_2
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Details
+  tags: []
+  origin: bi
+- name: NET_SALES
+  label: Net Sales
+  sql_expression: SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)
+  dax_expression: CALCULATE(SUM(Sales[Amount]),Sales[Status]="Sold")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Net Sales
+  - NET_SALES
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: NET_SALES_PM
+  label: Net Sales PM
+  sql_expression: SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)
+  dax_expression: CALCULATE([NET_SALES],PREVIOUSMONTH('Calendar'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Net Sales PM
+  - NET_SALES_PM
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: LAST_2_MONTHS_NET_SALES
+  label: Last 2 Months Net Sales
+  sql_expression: CASE WHEN (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) IS NULL AND (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)) IS NULL
+    THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) + COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)), 0)
+    END
+  dax_expression: '[NET_SALES]+[NET_SALES_PM]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Last 2 Months Net Sales
+  - LAST_2_MONTHS_NET_SALES
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: NET_SALES_VARIANCE
+  label: Net Sales Variance
+  sql_expression: CASE WHEN (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) IS NULL AND (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)) IS NULL
+    THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) - COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)), 0)
+    END
+  dax_expression: '[NET_SALES]-[NET_SALES_PM]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Net Sales Variance
+  - NET_SALES_VARIANCE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: NET_SALES_VARIANCE_PCT
+  label: Net Sales Variance %
+  sql_expression: CASE WHEN (IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)))) IS NULL AND (1) IS NULL
+    THEN NULL ELSE COALESCE(IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END))), 0) - 1 END
+  dax_expression: DIVIDE([NET_SALES],[NET_SALES_PM],0)-1
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Net Sales Variance %
+  - NET_SALES_VARIANCE_PCT
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: UNITS_SOLD
+  label: Units Sold
+  sql_expression: SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)
+  dax_expression: CALCULATE(SUM(Sales[Unit]),Sales[Status]="Sold")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Sold
+  - UNITS_SOLD
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: UNITS_SOLD_PM
+  label: Units Sold PM
+  sql_expression: SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END ELSE NULL END)
+  dax_expression: CALCULATE([UNITS_SOLD],PREVIOUSMONTH('Calendar'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Sold PM
+  - UNITS_SOLD_PM
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: UNITS_SOLD_VARIANCE_PCT
+  label: Units Sold Variance %
+  sql_expression: CASE WHEN (IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END ELSE NULL END)),
+    0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END))
+    / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END ELSE NULL END)))) IS NULL AND (1) IS NULL THEN NULL
+    ELSE COALESCE(IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END ELSE NULL END)), 0) =
+    0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)) / (SUM(CASE
+    WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END ELSE NULL END))), 0) - 1 END
+  dax_expression: DIVIDE([UNITS_SOLD],[UNITS_SOLD_PM],0)-1
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Sold Variance %
+  - UNITS_SOLD_VARIANCE_PCT
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: RETURNS
+  label: Returns
+  sql_expression: SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE
+    0 END)
+  dax_expression: CALCULATE(SUM(Sales[Amount]),Sales[Status]="Returned")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Returns
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: RETURNS_PM
+  label: Returns PM
+  sql_expression: SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)
+  dax_expression: CALCULATE([RETURNS],PREVIOUSMONTH('Calendar'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Returns PM
+  - RETURNS_PM
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: LAST_2_MONTHS_RETURNS
+  label: Last 2 Months Returns
+  sql_expression: CASE WHEN (SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT"
+    ELSE 0 END)) IS NULL AND (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES.STATUS = 'Returned' THEN
+    SALES."AMOUNT" ELSE 0 END)), 0) + COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL
+    END)), 0) END
+  dax_expression: '[RETURNS]+[RETURNS_PM]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Last 2 Months Returns
+  - LAST_2_MONTHS_RETURNS
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: RETURNS_VARIANCE
+  label: Returns Variance
+  sql_expression: CASE WHEN (SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT"
+    ELSE 0 END)) IS NULL AND (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE
+    WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END))
+    IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN SALES.STATUS = 'Returned' THEN
+    SALES."AMOUNT" ELSE 0 END)), 0) - COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL
+    END)), 0) END
+  dax_expression: '[RETURNS]-[RETURNS_PM]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Returns Variance
+  - RETURNS_VARIANCE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: RETURNS_VARIANCE_PCT
+  label: Returns Variance %
+  sql_expression: CASE WHEN (IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END)))) IS NULL AND (1)
+    IS NULL THEN NULL ELSE COALESCE(IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Returned' THEN SALES."AMOUNT" ELSE 0 END ELSE NULL END))), 0) - 1 END
+  dax_expression: (DIVIDE([RETURNS],[RETURNS_PM],0)-1)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Returns Variance %
+  - RETURNS_VARIANCE_PCT
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: UNITS_RETURNED
+  label: Units Returned
+  sql_expression: SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."UNIT" ELSE 0
+    END)
+  dax_expression: CALCULATE(SUM(Sales[Unit]),Sales[Status]="Returned")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Returned
+  - UNITS_RETURNED
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: UNITS_RETURNED_PM
+  label: Units Returned PM
+  sql_expression: SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Returned' THEN SALES."UNIT" ELSE 0 END ELSE NULL END)
+  dax_expression: CALCULATE([UNITS_RETURNED],PREVIOUSMONTH('Calendar'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Returned PM
+  - UNITS_RETURNED_PM
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: UNITS_RETURNED_VARIANCE_PCT
+  label: Units Returned Variance %
+  sql_expression: CASE WHEN (IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Returned' THEN SALES."UNIT" ELSE 0 END ELSE NULL
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."UNIT" ELSE
+    0 END)) / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Returned' THEN SALES."UNIT" ELSE 0 END ELSE NULL END)))) IS NULL AND (1) IS
+    NULL THEN NULL ELSE COALESCE(IFF(COALESCE((SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH"
+    THEN CASE WHEN SALES.STATUS = 'Returned' THEN SALES."UNIT" ELSE 0 END ELSE NULL
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Returned' THEN SALES."UNIT" ELSE
+    0 END)) / (SUM(CASE WHEN ANALYSIS_DAX."IS_PREV_MONTH" THEN CASE WHEN SALES.STATUS
+    = 'Returned' THEN SALES."UNIT" ELSE 0 END ELSE NULL END))), 0) - 1 END
+  dax_expression: DIVIDE([UNITS_RETURNED],[UNITS_RETURNED_PM],0)-1
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Returned Variance %
+  - UNITS_RETURNED_VARIANCE_PCT
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: RETURN_RATE
+  label: Return Rate
+  sql_expression: ROUND(IFF(COALESCE(SUM(SALES."AMOUNT"::FLOAT), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Returned' THEN SALES."AMOUNT" ELSE 0 END)) / SUM(SALES."AMOUNT"::FLOAT))
+    * 100, 0) / 100
+  dax_expression: DIVIDE((ROUND(((DIVIDE([RETURNS],SUM(Sales[Amount]),0))*100),0)),100,0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Return Rate
+  - RETURN_RATE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_UNITS_RETURNED
+  label: WIF Units Returned
+  sql_expression: CASE WHEN CASE WHEN (Analysis DAX."UNITS_RETURNED") IS NULL AND
+    (Analysis DAX."WIF_UNITS_RETURNED_AVERAGE") IS NULL THEN NULL ELSE COALESCE(Analysis
+    DAX."UNITS_RETURNED", 0) - COALESCE(Analysis DAX."WIF_UNITS_RETURNED_AVERAGE",
+    0) END < 0 THEN 0 ELSE CASE WHEN (Analysis DAX."UNITS_RETURNED") IS NULL AND (Analysis
+    DAX."WIF_UNITS_RETURNED_AVERAGE") IS NULL THEN NULL ELSE COALESCE(Analysis DAX."UNITS_RETURNED",
+    0) - COALESCE(Analysis DAX."WIF_UNITS_RETURNED_AVERAGE", 0) END END
+  dax_expression: IF([UNITS_RETURNED]-[WIF_UNITS_RETURNED_AVERAGE]<0,0,[UNITS_RETURNED]-[WIF_UNITS_RETURNED_AVERAGE])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Units Returned
+  - WIF_UNITS_RETURNED
+  business_rules: []
+  derives_from:
+  - UNITS_RETURNED
+  - WIF_UNITS_RETURNED_AVERAGE
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_UNITS_RETURNED_AVERAGE
+  label: WIF Units Returned Average
+  dax_expression: DIVIDE([WIF_UNITS_RETURNED_DIFFERENCE],CALCULATE(DISTINCTCOUNT('Calendar'[Date]),
+    ALL('Calendar')),0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Units Returned Average
+  - WIF_UNITS_RETURNED_AVERAGE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_UNITS_RETURNED_DIFFERENCE
+  label: WIF Units Returned Difference
+  sql_expression: CASE WHEN (Analysis DAX."WIF_UNITS_RETURNED_1") IS NULL AND (Analysis
+    DAX."WIF_UNITS_RETURNED_2") IS NULL THEN NULL ELSE COALESCE(Analysis DAX."WIF_UNITS_RETURNED_1",
+    0) - COALESCE(Analysis DAX."WIF_UNITS_RETURNED_2", 0) END
+  dax_expression: '[WIF_UNITS_RETURNED_1]-[WIF_UNITS_RETURNED_2]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Units Returned Difference
+  - WIF_UNITS_RETURNED_DIFFERENCE
+  business_rules: []
+  derives_from:
+  - WIF_UNITS_RETURNED_1
+  - WIF_UNITS_RETURNED_2
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_UNITS_RETURNED_1
+  label: WIF Units Returned_1
+  dax_expression: CALCULATE([UNITS_RETURNED], ALLSELECTED('Calendar'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Units Returned_1
+  - WIF_UNITS_RETURNED_1
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_UNITS_RETURNED_2
+  label: WIF Units Returned_2
+  dax_expression: CALCULATE([WIF_ADJUSTED_UNITS_RETURNED], ALLSELECTED('Calendar'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Units Returned_2
+  - WIF_UNITS_RETURNED_2
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_ADJUSTED_UNITS_RETURNED
+  label: WIF Adjusted Units Returned
+  sql_expression: SUM(SALES."UNIT"::FLOAT) * NULL / 1
+  dax_expression: DIVIDE((SUM(Sales[Unit])*'% Return Rate'[PCT_RETURN_RATE_VALUE]),1,0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Adjusted Units Returned
+  - WIF_ADJUSTED_UNITS_RETURNED
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_ADJUSTED_NET_SALES
+  label: WIF Adjusted Net Sales
+  sql_expression: CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END
+  dax_expression: (SUM(Sales[Unit])*[WIF_PRICE_PER_UNIT])-DIVIDE((SUM(Sales[Unit])*'%
+    Return Rate'[PCT_RETURN_RATE_VALUE]),1,0)*[WIF_PRICE_PER_UNIT]
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Adjusted Net Sales
+  - WIF_ADJUSTED_NET_SALES
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_PRICE_PER_UNIT
+  label: WIF Price per Unit
+  sql_expression: IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))
+  dax_expression: DIVIDE([NET_SALES],[UNITS_SOLD],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Price per Unit
+  - WIF_PRICE_PER_UNIT
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_PROFIT
+  label: WIF Profit
+  sql_expression: CASE WHEN (CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END
+  dax_expression: IF([WIF_SAME]=0,0,IF(ROUNDDOWN([WIF_ADJUSTED_NET_SALES]-[NET_SALES],0)<0,0,ROUNDDOWN([WIF_ADJUSTED_NET_SALES]-[NET_SALES],0)))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Profit
+  - WIF_PROFIT
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: PROFIT_DIFFERENCE
+  label: Profit Difference
+  sql_expression: CASE WHEN (IFF(COALESCE(Analysis DAX."NET_SALES", 0) = 0, 0, Analysis
+    DAX."WIF_ADJUSTED_SALES" / Analysis DAX."NET_SALES")) IS NULL AND (1) IS NULL
+    THEN NULL ELSE COALESCE(IFF(COALESCE(Analysis DAX."NET_SALES", 0) = 0, 0, Analysis
+    DAX."WIF_ADJUSTED_SALES" / Analysis DAX."NET_SALES"), 0) - 1 END
+  dax_expression: DIVIDE([WIF_ADJUSTED_SALES],[NET_SALES],0)-1
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Profit Difference
+  - PROFIT_DIFFERENCE
+  business_rules: []
+  derives_from:
+  - NET_SALES
+  - WIF_ADJUSTED_SALES
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_ADJUSTED_SALES
+  label: WIF Adjusted Sales
+  sql_expression: Analysis DAX."WIF_UNITS_RETURNED_1" * Analysis DAX."WIF_PRICE_PER_UNIT"
+  dax_expression: '[WIF_UNITS_RETURNED_1]*[WIF_PRICE_PER_UNIT]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Adjusted Sales
+  - WIF_ADJUSTED_SALES
+  business_rules: []
+  derives_from:
+  - WIF_UNITS_RETURNED_1
+  - WIF_PRICE_PER_UNIT
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_SALES
+  label: WIF Sales
+  sql_expression: SUM(ANALYSIS_DAX."NET_SALES"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CALENDAR."MONTH")
+  dax_expression: CALCULATE([NET_SALES],ALL('Calendar'[Date].[Month]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Sales
+  - WIF_SALES
+  business_rules: []
+  derives_from:
+  - NET_SALES
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_SAME
+  label: WIF Same
+  sql_expression: CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END
+  dax_expression: IF([PCT_RETURN_RATE_VALUE]>=CALCULATE([RETURN_RATE],ALL(Store[Type]),ALL(Store[Store])),0,1)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Same
+  - WIF_SAME
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_FORECAST
+  label: WIF Forecast
+  sql_expression: CASE WHEN (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) IS NULL AND (CASE WHEN (CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)), 0) + COALESCE((CASE WHEN
+    (CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END), 0) END
+  dax_expression: '[NET_SALES]+[WIF_PROFIT]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Forecast
+  - WIF_FORECAST
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_TOTAL_FORECAST
+  label: WIF Total Forecast
+  sql_expression: SUM(ANALYSIS DAX."WIF_FORECAST"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CALENDAR."MONTH")
+  dax_expression: CALCULATE([WIF_FORECAST],ALL('Calendar'[Date].[Month]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Total Forecast
+  - WIF_TOTAL_FORECAST
+  business_rules: []
+  derives_from:
+  - WIF_FORECAST
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_TOTAL_PROFIT
+  label: WIF Total Profit
+  sql_expression: SUM(ANALYSIS DAX."WIF_PROFIT"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CALENDAR."MONTH")
+  dax_expression: CALCULATE([WIF_PROFIT],ALL('Calendar'[Date].[Month]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Total Profit
+  - WIF_TOTAL_PROFIT
+  business_rules: []
+  derives_from:
+  - WIF_PROFIT
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: WIF_PROFIT_DIFFERENCE
+  label: WIF Profit Difference
+  sql_expression: CASE WHEN (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN
+    SALES."AMOUNT" ELSE 0 END)), 0) = 0, 0, (CASE WHEN (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL AND (CASE WHEN (CASE WHEN COALESCE(NULL,
+    0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT) OVER (PARTITION BY EXCLUDING
+    STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)), 0) + COALESCE((CASE WHEN
+    (CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END), 0) END) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)))) IS NULL AND (1) IS NULL THEN NULL ELSE COALESCE(IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)), 0) = 0, 0, (CASE
+    WHEN (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS
+    NULL AND (CASE WHEN (CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)), 0) + COALESCE((CASE WHEN
+    (CASE WHEN COALESCE(NULL, 0) >= ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING STORE."TYPE", STORE."STORE"), 0)) * 100, 0) / 100
+    THEN 0 ELSE 1 END) = 0 THEN 0 ELSE CASE WHEN COALESCE(SIGN(CASE WHEN (CASE WHEN
+    (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0), 0) < 0 THEN 0 ELSE SIGN(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END) * FLOOR(ABS(CASE WHEN (CASE WHEN (SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END))))) IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0
+    END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) - COALESCE(SUM(SALES."UNIT"::FLOAT) * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) END) IS NULL AND (SUM(CASE WHEN
+    SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) IS NULL THEN NULL ELSE
+    COALESCE((CASE WHEN (SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."UNIT" ELSE 0 END))))) IS NULL AND (SUM(SALES."UNIT"::FLOAT) * NULL
+    / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE
+    0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE
+    0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))))
+    IS NULL THEN NULL ELSE COALESCE(SUM(SALES."UNIT"::FLOAT) * (IFF(COALESCE((SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)), 0) = 0, 0, (SUM(CASE
+    WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT" ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS
+    = 'Sold' THEN SALES."UNIT" ELSE 0 END)))), 0) - COALESCE(SUM(SALES."UNIT"::FLOAT)
+    * NULL / 1 * (IFF(COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT"
+    ELSE 0 END)), 0) = 0, 0, (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)) / (SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."UNIT" ELSE 0 END)))),
+    0) END), 0) - COALESCE((SUM(CASE WHEN SALES.STATUS = 'Sold' THEN SALES."AMOUNT"
+    ELSE 0 END)), 0) END), 0) END END), 0) END) / (SUM(CASE WHEN SALES.STATUS = 'Sold'
+    THEN SALES."AMOUNT" ELSE 0 END))), 0) - 1 END
+  dax_expression: DIVIDE([WIF_FORECAST],[NET_SALES],0)-1
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - WIF Profit Difference
+  - WIF_PROFIT_DIFFERENCE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: TOTAL_RETURN_RATE
+  label: Total Return Rate
+  sql_expression: ROUND((SUM(ANALYSIS_DAX."RETURN_RATE_NUM"::FLOAT) OVER (PARTITION
+    BY EXCLUDING CALENDAR."MONTH") / NULLIF(SUM(ANALYSIS_DAX."RETURN_RATE_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CALENDAR."MONTH"), 0)) * 100, 0) / 100
+  dax_expression: CALCULATE([RETURN_RATE],ALL('Calendar'[Date].[Month]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Total Return Rate
+  - TOTAL_RETURN_RATE
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Analysis DAX
+  tags: []
+  origin: bi
+- name: PRODUCT_TOP_N
+  label: Product Top N
+  dax_expression: "\nSWITCH(\n    TRUE(),\n    ISINSCOPE('Product'[Product]),\n  \
+    \  RANKX(ALL('Product'[Product]),[NET_SALES],,DESC),\n    ISINSCOPE('Product'[Segment]),\n\
+    \    RANKX(ALL('Product'[Segment]),[NET_SALES],,DESC),\n    RANKX(ALL('Product'[Category]),[NET_SALES],,DESC)\n\
+    )"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Product Top N
+  - PRODUCT_TOP_N
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: PRODUCT_SALES_TOP_3
+  label: Product Sales Top 3
+  sql_expression: CASE WHEN COALESCE(Design DAX."PRODUCT_TOP_N", 0) < 4 THEN Design
+    DAX."NET_SALES" ELSE 0 END
+  dax_expression: IF([PRODUCT_TOP_N]<4,[NET_SALES],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Product Sales Top 3
+  - PRODUCT_SALES_TOP_3
+  business_rules: []
+  derives_from:
+  - PRODUCT_TOP_N
+  - NET_SALES
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: PRODUCT_SALES_OTHER
+  label: Product Sales Other
+  sql_expression: CASE WHEN Design DAX."PRODUCT_TOP_N" > 3 THEN Design DAX."NET_SALES"
+    ELSE 0 END
+  dax_expression: IF([PRODUCT_TOP_N]>3,[NET_SALES],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Product Sales Other
+  - PRODUCT_SALES_OTHER
+  business_rules: []
+  derives_from:
+  - PRODUCT_TOP_N
+  - NET_SALES
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: STORE_TOP_N
+  label: Store Top N
+  dax_expression: RANKX(ALL('Store'[Store]),[NET_SALES],,DESC)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Store Top N
+  - STORE_TOP_N
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: STORE_SALES_OTHER
+  label: Store Sales Other
+  sql_expression: CASE WHEN Design DAX."STORE_TOP_N" > 3 THEN Design DAX."NET_SALES"
+    ELSE 0 END
+  dax_expression: IF([STORE_TOP_N]>3,[NET_SALES],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Store Sales Other
+  - STORE_SALES_OTHER
+  business_rules: []
+  derives_from:
+  - STORE_TOP_N
+  - NET_SALES
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: STORE_SALES_TOP_3
+  label: Store Sales Top 3
+  sql_expression: CASE WHEN COALESCE(Design DAX."STORE_TOP_N", 0) < 4 THEN Design
+    DAX."NET_SALES" ELSE 0 END
+  dax_expression: IF([STORE_TOP_N]<4,[NET_SALES],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Store Sales Top 3
+  - STORE_SALES_TOP_3
+  business_rules: []
+  derives_from:
+  - STORE_TOP_N
+  - NET_SALES
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: NET_SALES_INDICATOR
+  label: Net Sales Indicator
+  dax_expression: CONCATENATE(IF([NET_SALES_VARIANCE_PCT]<=0,"","+"),FORMAT([NET_SALES_VARIANCE_PCT],"0.0%"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Net Sales Indicator
+  - NET_SALES_INDICATOR
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: UNITS_SOLD_INDICATOR
+  label: Units Sold Indicator
+  dax_expression: CONCATENATE(IF([UNITS_SOLD_VARIANCE_PCT]<=0,"","+"),FORMAT([UNITS_SOLD_VARIANCE_PCT],"0.0%"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Sold Indicator
+  - UNITS_SOLD_INDICATOR
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: RETURNS_INDICATOR
+  label: Returns Indicator
+  dax_expression: CONCATENATE(IF([RETURNS_VARIANCE_PCT]<=0,"","+"),FORMAT([RETURNS_VARIANCE_PCT],"0.0%"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Returns Indicator
+  - RETURNS_INDICATOR
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: PRODUCTR_TOP_N
+  label: ProductR Top N
+  dax_expression: "\nSWITCH(\n    TRUE(),\n    ISINSCOPE('Product'[Product]),\n  \
+    \  RANKX(ALL('Product'[Product]),[RETURNS],,DESC),\n    ISINSCOPE('Product'[Segment]),\n\
+    \    RANKX(ALL('Product'[Segment]),[RETURNS],,DESC),\n    RANKX(ALL('Product'[Category]),[RETURNS],,DESC)\n\
+    )"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - ProductR Top N
+  - PRODUCTR_TOP_N
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: PRODUCT_RETURNS_OTHER
+  label: Product Returns Other
+  sql_expression: CASE WHEN Design DAX."PRODUCTR_TOP_N" > 3 THEN Design DAX."RETURNS"
+    ELSE 0 END
+  dax_expression: IF([PRODUCTR_TOP_N]>3,[RETURNS],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Product Returns Other
+  - PRODUCT_RETURNS_OTHER
+  business_rules: []
+  derives_from:
+  - PRODUCTR_TOP_N
+  - RETURNS
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: PRODUCT_RETURNS_TOP_3
+  label: Product Returns Top 3
+  sql_expression: CASE WHEN COALESCE(Design DAX."PRODUCTR_TOP_N", 0) < 4 THEN Design
+    DAX."RETURNS" ELSE 0 END
+  dax_expression: IF([PRODUCTR_TOP_N]<4,[RETURNS],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Product Returns Top 3
+  - PRODUCT_RETURNS_TOP_3
+  business_rules: []
+  derives_from:
+  - PRODUCTR_TOP_N
+  - RETURNS
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: STORER_TOP_N
+  label: StoreR Top N
+  dax_expression: RANKX(ALL('Store'[Store]),[RETURNS],,DESC)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - StoreR Top N
+  - STORER_TOP_N
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: STORE_RETURNS_OTHER
+  label: Store Returns Other
+  sql_expression: CASE WHEN Design DAX."STORER_TOP_N" > 3 THEN Design DAX."RETURNS"
+    ELSE 0 END
+  dax_expression: IF([STORER_TOP_N]>3,[RETURNS],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Store Returns Other
+  - STORE_RETURNS_OTHER
+  business_rules: []
+  derives_from:
+  - STORER_TOP_N
+  - RETURNS
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: RETURNS_SALES_TOP_3
+  label: Returns Sales Top 3
+  sql_expression: CASE WHEN COALESCE(Design DAX."STORER_TOP_N", 0) < 4 THEN Design
+    DAX."RETURNS" ELSE 0 END
+  dax_expression: IF([STORER_TOP_N]<4,[RETURNS],0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Returns Sales Top 3
+  - RETURNS_SALES_TOP_3
+  business_rules: []
+  derives_from:
+  - STORER_TOP_N
+  - RETURNS
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: UNITS_RETURNED_INDICATOR
+  label: Units Returned Indicator
+  dax_expression: CONCATENATE(IF([RETURNS_VARIANCE_PCT]<=0,"","+"),FORMAT([RETURNS_VARIANCE_PCT],"0.0%"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Units Returned Indicator
+  - UNITS_RETURNED_INDICATOR
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: NET_SALES_LABEL
+  label: Net Sales Label
+  dax_expression: CONCATENATE("",FORMAT([NET_SALES],"$0,000"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Net Sales Label
+  - NET_SALES_LABEL
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: PROFIT_INDICATOR
+  label: Profit Indicator
+  dax_expression: CONCATENATE(IF([WIF_PROFIT_DIFFERENCE]<=0,"","+"),FORMAT([WIF_PROFIT_DIFFERENCE],"0.0%"))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Profit Indicator
+  - PROFIT_INDICATOR
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: ASSOCIATION
+  label: Association
+  sql_expression: TRY_TO_NUMBER(CONCAT(Design DAX."PRODUCT_TOP_N", SUM(ASSOCIATION."IMPORTANCE"::FLOAT)))
+  dax_expression: VALUE(CONCATENATE([PRODUCT_TOP_N],(SUM(Association[Importance]))))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Association
+  business_rules: []
+  derives_from:
+  - PRODUCT_TOP_N
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+- name: LIFT_LABEL
+  label: Lift Label
+  dax_expression: CONCATENATE(FORMAT(SUM(Association[Importance]),"0.0"),"x")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Lift Label
+  - LIFT_LABEL
+  business_rules: []
+  domain: Sales & Returns Sample v201912
+  concept: Design DAX
+  tags: []
+  origin: bi
+relationships:
+- name: REL_ASSOCIATION_RIGHTITEMSETID__ASSOCIATED_PRODUCT_PRODUCTID
+  from_concept: Association
+  to_concept: Associated Product
+  cardinality: N:1
+  join_expression: Association.RightItemSetId = Associated Product.ProductID
+  is_active: true
+  origin: bi
+- name: REL_SALES_STOREID__STORE_STOREID
+  from_concept: Sales
+  to_concept: Store
+  cardinality: N:1
+  join_expression: Sales.StoreID = Store.StoreID
+  is_active: true
+  origin: bi
+- name: REL_SALES_PRODUCTID__PRODUCT_PRODUCTID
+  from_concept: Sales
+  to_concept: Product
+  cardinality: N:1
+  join_expression: Sales.ProductID = Product.ProductID
+  is_active: true
+  origin: bi
+- name: REL_SALES_DATE__CALENDAR_DATE
+  from_concept: Sales
+  to_concept: Calendar
+  cardinality: N:1
+  join_expression: Sales.Date = Calendar.Date
+  is_active: true
+  origin: bi
+- name: REL_CUSTOMER_ID__SALES_ID
+  from_concept: Customer
+  to_concept: Sales
+  cardinality: '1:1'
+  join_expression: Customer.ID = Sales.ID
+  is_active: true
+  origin: bi
+- name: REL_ASSOCIATION_LEFTITEMSETID__PRODUCT_PRODUCTID
+  from_concept: Association
+  to_concept: Product
+  cardinality: N:1
+  join_expression: Association.LeftItemSetId = Product.ProductID
+  is_active: true
+  origin: bi
+- name: REL_CUSTOMER_PRODUCT__ASSOCIATED_PRODUCT_PRODUCT
+  from_concept: Customer
+  to_concept: Associated Product
+  cardinality: N:1
+  join_expression: Customer.Product = Associated Product.Product
+  is_active: true
+  origin: bi
+- name: REL_PRODUCT_PRODUCT__ASSOCIATED_PRODUCT_PRODUCT
+  from_concept: Product
+  to_concept: Associated Product
+  cardinality: '1:1'
+  join_expression: Product.Product = Associated Product.Product
+  is_active: false
+  origin: bi

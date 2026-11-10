@@ -2669,7 +2669,11 @@ class MetricsClauseBuilder:
                 alias_to_cols[al] = {c.upper() for c in cols}
                 alias_to_cols[ds.upper()] = {c.upper() for c in cols}
 
-            col_refs = re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', m_expr)
+            # Snowflake Semantic View window exclusion validation:
+            # PARTITION BY EXCLUDING <dim> references declared dimensions in the semantic view,
+            # not physical columns on the underlying table. Strip the exclusion clause before verifying schema columns.
+            schema_check_expr = re.sub(r'\bPARTITION\s+BY\s+EXCLUDING\s+[^)]+\)', '', m_expr, flags=re.IGNORECASE)
+            col_refs = re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\."?([A-Za-z_][A-Za-z0-9_]*)"?', schema_check_expr)
             for tbl_ref, col_ref in col_refs:
                 tbl_u = tbl_ref.upper()
                 col_u = col_ref.upper()
@@ -2688,6 +2692,20 @@ class MetricsClauseBuilder:
                     matched = any(c == col_u or re.sub(r'[^A-Z0-9]', '', c) == clean_col_u for c in known_cols)
                     if not matched:
                         if defined_metric_names and col_u in defined_metric_names:
+                            continue
+                        # Allow declared semantic dimensions and table-prefixed dimension identifiers:
+                        emitted_dims = getattr(self, "emitted_dimensions", {})
+                        emitted_map = getattr(self, "emitted_dim_by_phys", {})
+                        is_declared_dim = (
+                            (tbl_u in emitted_dims and col_u in {d.upper() for d in emitted_dims[tbl_u]}) or
+                            col_u in {d.upper() for (t, _), d in emitted_map.items() if t == tbl_u}
+                        )
+                        prefix = f"{tbl_u}_"
+                        is_prefixed_phys = col_u.startswith(prefix) and any(
+                            c == col_u[len(prefix):] or re.sub(r'[^A-Z0-9]', '', c) == re.sub(r'[^A-Z0-9]', '', col_u[len(prefix):])
+                            for c in known_cols
+                        )
+                        if is_declared_dim or is_prefixed_phys:
                             continue
                         return f"TABLE.COLUMN '{tbl_ref}.{col_ref}' does not exist in schema"
 

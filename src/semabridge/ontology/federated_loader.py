@@ -184,6 +184,14 @@ class FederatedOntologyLoader:
             if domain_override and str(domain_override).strip():
                 data["domain"] = str(domain_override).strip()
             else:
+                # User guidance guard: Detect when a user accidentally uploads a raw Semantic Model
+                # (SML/OSI) file instead of a Domain Ontology YAML, providing an actionable error message.
+                if "unique_name" in data or "datasets" in data:
+                    raise OntologyValidationError([
+                        "Missing required key 'domain' at top level. This file appears to be a Semantic Model (SML/OSI) "
+                        "rather than a Domain Ontology YAML. To convert a semantic model into an ontology, please select "
+                        "the project and use 'Generate from OSI' instead."
+                    ])
                 raise OntologyValidationError(["Missing required key 'domain' at top level"])
         domain_name = str(data["domain"]).strip()
 
@@ -454,9 +462,12 @@ class FederatedOntologyLoader:
                 exprs = {occ[0]: occ[1].sql_expression for occ in occurrences}
                 descs = {occ[0]: occ[1].description for occ in occurrences}
 
-                # Check if formulas differ
+                # Collision detection logic:
+                # - ERROR: When two domains define truly conflicting, non-empty formulas for the same metric.
+                # - WARNING: When one domain provides the calculation formula and another declares a binding-only entry.
                 unique_exprs = {(occ[1].sql_expression or "").strip().casefold() for occ in occurrences}
-                if len(unique_exprs) > 1:
+                non_empty_exprs = {e for e in unique_exprs if e}
+                if len(non_empty_exprs) > 1:
                     fed.collisions.append(
                         OntologyCollision(
                             item_type="metric",
@@ -471,7 +482,7 @@ class FederatedOntologyLoader:
                             ),
                         )
                     )
-                else:
+                elif len(non_empty_exprs) == 1 and len(unique_exprs) > 1:
                     fed.collisions.append(
                         OntologyCollision(
                             item_type="metric",
@@ -481,8 +492,8 @@ class FederatedOntologyLoader:
                             expressions=exprs,
                             severity="WARNING",
                             message=(
-                                f"Shared metric: '{metrics[0].name}' declared identically in multiple "
-                                f"domains ({', '.join(domains)}). Suggest consolidating ownership."
+                                f"Metric partial definition: '{metrics[0].name}' has a formula in some "
+                                f"domains ({', '.join(domains)}) and binding-only in others."
                             ),
                         )
                     )
@@ -906,23 +917,54 @@ class FederatedOntologyLoader:
                 continue
             exist_m = existing_metrics.get(m_key)
 
-            calc_expr = m.expression
+            # Separate compiled SQL expression from raw DAX formula:
+            # - sql_expr: snowflake/databricks SQL generated during model compilation
+            # - dax_expr: original Power BI DAX formula preserved for lineage / inspection
+            sql_expr = getattr(m, "sql_expression", None)
+            dax_expr = getattr(m, "expression", None)
             agg_fn = (m.aggregation.value if hasattr(m.aggregation, "value") else str(m.aggregation)).upper()
+            calc_expr = sql_expr
+
+            # Fallback AST translation: if the snapshot has no pre-compiled sql_expression,
+            # translate the DAX formula to Snowflake SQL via AST parser so the ontology gets valid SQL instead of DAX.
+            if not calc_expr and dax_expr:
+                try:
+                    from semabridge.converter.dax_ast_parser import try_ast_translate
+                    ast_sql = try_ast_translate(dax_expr, m.dataset or "")
+                    if ast_sql:
+                        calc_expr = ast_sql
+                except Exception:
+                    pass
+
             if not calc_expr and m.source_column:
-                calc_expr = m.source_column if agg_fn == "NONE" else f"{agg_fn}({m.source_column})"
+                # Raw columns get their aggregation function applied, complex calculations remain NONE/CUSTOM
+                calc_expr = m.source_column if agg_fn in ("NONE", "CUSTOM") else f"{agg_fn}({m.source_column})"
             calc_expr = calc_expr or getattr(m, "sql_expression", None) or "COUNT(*)"
-            agg_type = "SUM" if agg_fn == "NONE" else agg_fn
+
+            # CUSTOM aggregation stays CUSTOM (not NONE); NONE stays NONE.
+            agg_type = agg_fn
+
             user_formula = bool(exist_m and exist_m.origin != "bi" and exist_m.sql_expression)
             desc, bi_desc = cls._merge_description(exist_m, m.description)
 
+            # Domain-agnostic metadata propagation: inherit synonyms strictly from source BI metadata
+            # without generating arbitrary rule-based synonyms or broad business terms
+            metric_synonyms = list(m.synonyms or [])
+            orig_name = getattr(m, "original_name", None)
+            if orig_name and orig_name not in metric_synonyms:
+                metric_synonyms.append(orig_name)
+            if m.label and m.label not in metric_synonyms:
+                metric_synonyms.append(m.label)
+
             new_metrics[m_key] = DomainMetric(
                 name=exist_m.name if exist_m else m.unique_name,
-                label=exist_m.label if (exist_m and exist_m.label) else (m.label or m.unique_name),
+                label=exist_m.label if (exist_m and exist_m.label) else (orig_name or (m.label if m.label and m.label != m.unique_name else None) or m.unique_name.replace("_", " ").title()),
                 description=desc,
                 sql_expression=exist_m.sql_expression if user_formula else calc_expr,
+                dax_expression=getattr(exist_m, "dax_expression", None) or dax_expr,
                 aggregation_type=exist_m.aggregation_type if user_formula else agg_type,
                 grain=exist_m.grain if exist_m else [],
-                synonyms=union(exist_m.synonyms if exist_m else [], m.synonyms),
+                synonyms=union(exist_m.synonyms if exist_m else [], metric_synonyms),
                 business_rules=exist_m.business_rules if exist_m else [],
                 filter_expression=exist_m.filter_expression if exist_m else None,
                 derives_from=exist_m.derives_from if exist_m else [],
@@ -968,22 +1010,43 @@ class FederatedOntologyLoader:
             OSICardinality.MANY_TO_MANY: CardinalityType.MANY_TO_MANY,
         }
 
-        def _rkey(a: str, b: str) -> str:
+        # Disambiguate relationships between identical tables (e.g., role-playing or active vs inactive keys)
+        # by including normalized join expression and relationship unique name in the composite lookup key.
+        def _rkey(a: str, b: str, join_expr: Optional[str] = None, name: Optional[str] = None) -> str:
+            norm_expr = (join_expr or "").replace(" ", "").casefold()
+            if norm_expr:
+                return f"{a.casefold()}->{b.casefold()}[{norm_expr}]"
+            if name:
+                return f"{a.casefold()}->{b.casefold()}#{name.casefold()}"
             return f"{a.casefold()}->{b.casefold()}"
 
         first_existing: Dict[str, DomainRelationship] = {}
         for r in existing_rels:
-            first_existing.setdefault(_rkey(r.from_concept, r.to_concept), r)
+            k = _rkey(r.from_concept, r.to_concept, r.join_expression, r.name)
+            first_existing.setdefault(k, r)
+            first_existing.setdefault(f"{r.from_concept.casefold()}->{r.to_concept.casefold()}", r)
 
         new_rels: Dict[str, DomainRelationship] = {}
+        matched_existing_to_rkey: Dict[int, str] = {}
         for rel in model.relationships:
-            r_key = _rkey(rel.from_dataset, rel.to_dataset)
+            # Quote column identifiers that contain whitespace (e.g. Cases."Case Created On")
+            def _qcol(c: str) -> str:
+                return f'"{c}"' if " " in c and not c.startswith('"') else c
+
+            pairs = [f"{rel.from_dataset}.{_qcol(fc)} = {rel.to_dataset}.{_qcol(tc)}" for fc, tc in zip(rel.from_columns, rel.to_columns)]
+            join_expr = " AND ".join(pairs) if pairs else None
+            r_key = _rkey(rel.from_dataset, rel.to_dataset, join_expr, rel.unique_name)
             if r_key in new_rels:
                 continue
             exist_r = first_existing.get(r_key)
+            if not exist_r:
+                # Only fall back to endpoint-only matching if that existing relationship hasn't already been claimed
+                cand = first_existing.get(f"{rel.from_dataset.casefold()}->{rel.to_dataset.casefold()}")
+                if cand and id(cand) not in matched_existing_to_rkey:
+                    exist_r = cand
+            if exist_r and id(exist_r) not in matched_existing_to_rkey:
+                matched_existing_to_rkey[id(exist_r)] = r_key
             user_r = bool(exist_r and exist_r.origin != "bi")
-            pairs = [f"{rel.from_dataset}.{fc} = {rel.to_dataset}.{tc}" for fc, tc in zip(rel.from_columns, rel.to_columns)]
-            join_expr = " AND ".join(pairs) if pairs else None
             card = card_rev_map.get(rel.cardinality, CardinalityType.MANY_TO_ONE)
             new_rels[r_key] = DomainRelationship(
                 name=exist_r.name if (exist_r and exist_r.name) else rel.unique_name,
@@ -993,17 +1056,21 @@ class FederatedOntologyLoader:
                 relationship_type=exist_r.relationship_type if exist_r else RelationshipType.JOIN,
                 join_expression=(exist_r.join_expression if (user_r and exist_r.join_expression) else join_expr),
                 predicate_label=exist_r.predicate_label if exist_r else None,
+                is_active=getattr(exist_r, "is_active", None) if user_r else getattr(rel, "is_active", True),
                 origin="bi",
             )
 
         relationships: List[DomainRelationship] = []
         for r in existing_rels:
-            r_key = _rkey(r.from_concept, r.to_concept)
-            if first_existing.get(r_key) is r and r_key in new_rels:
-                relationships.append(new_rels.pop(r_key))
-            elif r.origin == "bi" and first_existing.get(r_key) is r:
+            k = _rkey(r.from_concept, r.to_concept, r.join_expression, r.name)
+            matched_rkey = matched_existing_to_rkey.get(id(r))
+            if matched_rkey and matched_rkey in new_rels:
+                relationships.append(new_rels.pop(matched_rkey))
+            elif k in new_rels and first_existing.get(k) is r:
+                relationships.append(new_rels.pop(k))
+            elif r.origin == "bi":
                 if not r.stale:
-                    rep["stale"].append(f"relationship {r.name or r_key}")
+                    rep["stale"].append(f"relationship {r.name or k}")
                 relationships.append(r.model_copy(update={"stale": True}))
             else:
                 relationships.append(r)
