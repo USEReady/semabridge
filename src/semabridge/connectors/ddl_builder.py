@@ -1375,14 +1375,14 @@ class SemanticViewBuilder:
                 sql = str(item.get("sql") or "").strip()
                 verified_at = int(item.get("verified_at") or time.time())
                 is_onboarding = "TRUE" if bool(item.get("is_onboarding", False)) else "FALSE"
-                steward = str(item.get("verified_by") or "Data Steward")
+                steward = str(item.get("verified_by") or "")
             else:
                 q_name = getattr(item, "name", None) or getattr(item, "unique_name", None) or "query"
                 question = str(getattr(item, "question", "") or "").strip()
                 sql = str(getattr(item, "sql", "") or "").strip()
                 verified_at = int(getattr(item, "verified_at", 0) or time.time())
                 is_onboarding = "TRUE" if bool(getattr(item, "is_onboarding", False)) else "FALSE"
-                steward = str(getattr(item, "verified_by", "Data Steward") or "Data Steward")
+                steward = str(getattr(item, "verified_by", "") or "")
 
             q_alias = re.sub(r"[^A-Za-z0-9_]", "_", q_name).strip("_") or "verified_query"
             steward_clean = steward.replace("'", "''")
@@ -1436,12 +1436,13 @@ class SemanticViewBuilder:
             escaped_q = question.replace("\\", "\\\\").replace("'", "''")
             escaped_sql = sql.replace("\\", "\\\\").replace("'", "''")
 
+            steward_val = steward_clean or "session_user"
             entry = (
                 f"    {q_alias} AS (\n"
                 f"      QUESTION '{escaped_q}'\n"
                 f"      VERIFIED_AT {verified_at}\n"
                 f"      ONBOARDING_QUESTION {is_onboarding}\n"
-                f"      VERIFIED_BY '(STEWARD = {steward_clean})'\n"
+                f"      VERIFIED_BY '(STEWARD = {steward_val})'\n"
                 f"      SQL '{escaped_sql}'\n"
                 f"    )"
             )

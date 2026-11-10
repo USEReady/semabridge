@@ -125,8 +125,8 @@ class SemanticLinter:
                 )
 
             if self.enforce_snake_case_metrics:
-                # Check for spaces or irregular characters in identifier
-                if " " in m.name or not re.match(r"^[A-Za-z0-9_]+$", m.name):
+                # Check for strict snake_case: ^[a-z0-9_]+$
+                if not re.match(r"^[a-z0-9_]+$", m.name):
                     issues.append(
                         LintIssue(
                             rule_id="RULE_NAMING_CONVENTION",
@@ -134,12 +134,54 @@ class SemanticLinter:
                             object_type="METRIC",
                             object_name=m.name,
                             domain=m.domain,
-                            message=f"Metric name '{m.name}' contains spaces or non-standard characters.",
-                            remediation="Use snake_case or standard alphanumeric identifiers (e.g. 'gross_margin').",
+                            message=f"Metric name '{m.name}' violates snake_case convention (must match ^[a-z0-9_]+$).",
+                            remediation="Use snake_case with lowercase alphanumeric characters and underscores (e.g. 'gross_margin').",
                         )
                     )
 
-        # 4. Rule: Circular Joins in Relationships
+        # 4. Rule: Concept and Attribute Data Stewards & Descriptions
+        for c in ontology.concepts.values():
+            if self.require_steward and not c.data_steward:
+                issues.append(
+                    LintIssue(
+                        rule_id="RULE_MISSING_STEWARD",
+                        severity="ERROR",
+                        object_type="CONCEPT",
+                        object_name=c.name,
+                        domain=c.domain,
+                        message=f"Concept '{c.name}' has no data steward assigned.",
+                        remediation="Add 'data_steward: \"user@enterprise.com\"' to the concept definition.",
+                    )
+                )
+
+            if self.require_description and (not c.description or len(c.description.strip()) < 5):
+                issues.append(
+                    LintIssue(
+                        rule_id="RULE_MISSING_DESCRIPTION",
+                        severity="WARNING",
+                        object_type="CONCEPT",
+                        object_name=c.name,
+                        domain=c.domain,
+                        message=f"Concept '{c.name}' lacks a comprehensive business description.",
+                        remediation="Provide an unambiguous description explaining the concept.",
+                    )
+                )
+
+            for attr in c.attributes:
+                if self.require_description and (not attr.description or len(attr.description.strip()) < 5):
+                    issues.append(
+                        LintIssue(
+                            rule_id="RULE_MISSING_DESCRIPTION",
+                            severity="WARNING",
+                            object_type="ATTRIBUTE",
+                            object_name=f"{c.name}.{attr.name}",
+                            domain=c.domain,
+                            message=f"Attribute '{c.name}.{attr.name}' lacks a comprehensive description.",
+                            remediation="Provide an unambiguous description for the attribute.",
+                        )
+                    )
+
+        # 5. Rule: Circular Joins in Relationships (report all cycles)
         graph: Dict[str, List[str]] = {}
         for rel in ontology.relationships:
             if rel.from_concept not in graph:
@@ -147,34 +189,35 @@ class SemanticLinter:
             graph[rel.from_concept].append(rel.to_concept)
 
         visited: Set[str] = set()
-        rec_stack: Set[str] = set()
+        cycles_reported: Set[Any] = set()
 
-        def is_cyclic(v: str) -> bool:
-            visited.add(v)
-            rec_stack.add(v)
-            for neighbor in graph.get(v, []):
-                if neighbor not in visited:
-                    if is_cyclic(neighbor):
-                        return True
-                elif neighbor in rec_stack:
-                    return True
-            rec_stack.remove(v)
-            return False
+        def find_cycles(node: str, path: List[str]):
+            visited.add(node)
+            path.append(node)
+            for neighbor in graph.get(node, []):
+                if neighbor in path:
+                    cycle_start = path.index(neighbor)
+                    cycle = path[cycle_start:] + [neighbor]
+                    cycle_key = tuple(sorted(set(cycle)))
+                    if cycle_key not in cycles_reported:
+                        cycles_reported.add(cycle_key)
+                        issues.append(
+                            LintIssue(
+                                rule_id="RULE_CIRCULAR_JOIN",
+                                severity="ERROR",
+                                object_type="RELATIONSHIP",
+                                object_name=neighbor,
+                                message=f"Circular relationship cycle detected: {' -> '.join(cycle)}.",
+                                remediation="Break the circular dependency in the relationship graph.",
+                            )
+                        )
+                elif neighbor not in visited:
+                    find_cycles(neighbor, path)
+            path.pop()
 
         for node in list(graph.keys()):
             if node not in visited:
-                if is_cyclic(node):
-                    issues.append(
-                        LintIssue(
-                            rule_id="RULE_CIRCULAR_JOIN",
-                            severity="ERROR",
-                            object_type="RELATIONSHIP",
-                            object_name=node,
-                            message=f"Circular relationship cycle detected beginning at concept '{node}'.",
-                            remediation="Break the circular dependency in the relationship graph.",
-                        )
-                    )
-                    break
+                find_cycles(node, [])
 
         error_count = sum(1 for i in issues if i.severity == "ERROR")
         warning_count = sum(1 for i in issues if i.severity == "WARNING")

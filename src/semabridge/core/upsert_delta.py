@@ -77,12 +77,20 @@ def _display_name(item: Any) -> str:
     return str(_get(item, "label") or _get(item, "unique_name") or _get(item, "name") or _get(item, "question") or "")
 
 
+def _syn_list(item: Any) -> List[str]:
+    raw = _get(item, "synonyms") or []
+    if isinstance(raw, str):
+        raw = [s.strip() for s in raw.split(",") if s.strip()]
+    return sorted({normalize_name(s) for s in raw if s})
+
+
 def _signature(kind: str, item: Any) -> Dict[str, Any]:
     """Definition fields that decide whether an item changed.
 
-    Only source-defined fields take part. Derived/deploy-time fields
-    (sql_expression, synonyms, confidence, advisory notes, ...) are left
-    out so a re-extraction of an unchanged PBIX compares equal.
+    Source-defined calculation fields, descriptions, and synonyms take part
+    so description and synonym changes trigger a 'metadata changed' delta and
+    are deployed. Derived/deploy-time fields (sql_expression, confidence,
+    advisory notes, ...) are left out so a re-extraction of an unchanged PBIX compares equal.
     """
     if kind == "verified_queries":
         return {
@@ -98,6 +106,8 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
             "source_column": normalize_name(_get(item, "source_column")),
             "format_string": _get(item, "format_string") or "",
             "is_hidden": bool(_get(item, "is_hidden", False)),
+            "description": _ws(_get(item, "description")),
+            "synonyms": _syn_list(item),
         }
     if kind == "dimensions":
         attributes = sorted(
@@ -106,6 +116,8 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
                 normalize_name(_get(a, "dataset")),
                 normalize_name(_get(a, "dataset_column")),
                 bool(_get(a, "is_hidden", False)),
+                _ws(_get(a, "description")),
+                tuple(_syn_list(a)),
             )
             for a in (_get(item, "attributes") or [])
         )
@@ -113,6 +125,8 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
             "dataset": normalize_name(_get(item, "dataset")),
             "attributes": [list(a) for a in attributes],
             "is_hidden": bool(_get(item, "is_hidden", False)),
+            "description": _ws(_get(item, "description")),
+            "synonyms": _syn_list(item),
         }
     if kind == "relationships":
         return {
@@ -130,6 +144,8 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
             normalize_name(_get(c, "unique_name")),
             _enum_text(_get(c, "data_type")),
             bool(_get(c, "is_hidden", False)),
+            _ws(_get(c, "description")),
+            tuple(_syn_list(c)),
         )
         for c in (_get(item, "columns") or [])
     )
@@ -137,6 +153,8 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
         "source_table": normalize_name(_get(item, "source_table")),
         "columns": [list(c) for c in columns],
         "is_hidden": bool(_get(item, "is_hidden", False)),
+        "description": _ws(_get(item, "description")),
+        "synonyms": _syn_list(item),
     }
 
 
@@ -169,9 +187,12 @@ def _item_entry(kind: str, item: Any) -> Dict[str, Any]:
 
 
 def _modified_entry(kind: str, old: Any, new: Any, old_sig: Dict[str, Any], new_sig: Dict[str, Any]) -> Dict[str, Any]:
+    changed_fields = sorted(k for k in new_sig if new_sig.get(k) != old_sig.get(k))
+    is_meta = bool(changed_fields) and set(changed_fields).issubset({"description", "synonyms"})
     entry: Dict[str, Any] = {
         **_item_entry(kind, new),
-        "changed_fields": sorted(k for k in new_sig if new_sig.get(k) != old_sig.get(k)),
+        "changed_fields": changed_fields,
+        "change_category": "metadata changed" if is_meta else "definition changed",
     }
     if kind == "metrics":
         entry["old_expression"] = str(_get(old, "expression") or "")

@@ -124,6 +124,7 @@ def test_build_config_yaml_from_request_preserves_fabric_identity_id():
 #      Validates: Requirements 1.1
 # ===========================================================================
 
+pytest.importorskip("hypothesis")
 from hypothesis import given, settings
 from hypothesis import strategies as st
 

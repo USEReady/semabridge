@@ -84,6 +84,7 @@ class DomainAttribute(_StrictModel):
     data_type: str = "VARCHAR"
     description: Optional[str] = None
     is_primary_key: bool = False
+    is_hidden: bool = False
     synonyms: CleanList = Field(default_factory=list)
     # Explicit binding to model column names ("Column" or "Table.Column").
     maps_to: CleanList = Field(default_factory=list)
@@ -240,6 +241,8 @@ class OntologyCollision(BaseModel):
     descriptions: Dict[str, Optional[str]] = Field(default_factory=dict)
     expressions: Dict[str, Optional[str]] = Field(default_factory=dict)
     severity: str = "WARNING"  # 'WARNING' or 'ERROR'
+    is_blocker: bool = False
+    resolution_choices: List[str] = Field(default_factory=list)
     message: str
 
 

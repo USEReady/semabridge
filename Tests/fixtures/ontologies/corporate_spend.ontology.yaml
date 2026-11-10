@@ -1,0 +1,555 @@
+domain: Corporate Spend
+id: corporate_spend
+version: 1.0.0
+source_project_id: Corporate Spend
+concepts:
+- name: Business Area
+  label: Business Area
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Business Area
+  attributes:
+  - name: Business Area
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Business Area ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Cost Element
+  label: Cost Element
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Cost Element
+  attributes:
+  - name: Cost element name
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Cost Element Group
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Cost Element Sub Group
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Cost Element ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Country Region
+  label: Country Region
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Country Region
+  attributes:
+  - name: Sales Region
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Country/Region
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Country/Region ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Date
+  label: Date
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Period
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Department
+  label: Department
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Department
+  attributes:
+  - name: VP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Department
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Fact
+  label: Fact
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Fact
+  attributes:
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Value
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Department
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Cost Element ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Country/Region ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Business Area ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: IT Sub Area ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Scenario ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: IT Area
+  label: IT Area
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: IT Area
+  attributes:
+  - name: IT Area
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: IT Sub Area
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: IT Sub Area ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Range
+  label: Range
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Range
+  attributes:
+  - name: www.obvience.com
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Scenario
+  label: Scenario
+  concept_type: DIMENSION
+  domain: Corporate Spend
+  synonyms: []
+  business_rules: []
+  physical_table: Scenario
+  attributes:
+  - name: Scenario
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Scenario ID
+    data_type: FLOAT
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: ScenarioDescription
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+metrics:
+- name: AMOUNT
+  label: Amount
+  sql_expression: SUM(CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END) * 0.3
+  dax_expression: TOTALYTD(SUM([Value]), 'Date'[Date])*.3
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AMOUNT
+  business_rules: []
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: ACTUAL
+  label: Actual
+  sql_expression: SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3
+  dax_expression: CALCULATE([AMOUNT], Scenario[ScenarioDescription]="Actual")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - ACTUAL
+  business_rules: []
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: LE1
+  label: Le1
+  sql_expression: SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate
+    1' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) *
+    0.3
+  dax_expression: CALCULATE([AMOUNT], Scenario[ScenarioDescription]="Latest Estimate
+    1")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LE1
+  business_rules: []
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: LE2
+  label: Le2
+  sql_expression: SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate
+    2' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) *
+    0.3
+  dax_expression: CALCULATE([AMOUNT], Scenario[ScenarioDescription]="Latest Estimate
+    2")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LE2
+  business_rules: []
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: LE3
+  label: Le3
+  sql_expression: SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate
+    3' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) *
+    0.3
+  dax_expression: CALCULATE([AMOUNT], Scenario[ScenarioDescription]="Latest Estimate
+    3")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - LE3
+  business_rules: []
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: PLAN
+  label: Plan
+  sql_expression: SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Plan' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3
+  dax_expression: CALCULATE([AMOUNT], Scenario[ScenarioDescription]="Plan")
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - PLAN
+  business_rules: []
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_LE1
+  label: Var Le1
+  sql_expression: (SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate 1' THEN CASE WHEN fact."IS_YTD"
+    THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)
+  dax_expression: '[ACTUAL]-[LE1]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_LE1
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_LE2
+  label: Var Le2
+  sql_expression: (SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate 2' THEN CASE WHEN fact."IS_YTD"
+    THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)
+  dax_expression: '[ACTUAL]-[LE2]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_LE2
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_LE3
+  label: Var Le3
+  sql_expression: (SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate 3' THEN CASE WHEN fact."IS_YTD"
+    THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)
+  dax_expression: '[ACTUAL]-[LE3]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_LE3
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_PLAN
+  label: Var Plan
+  sql_expression: (SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Plan' THEN CASE WHEN fact."IS_YTD" THEN
+    fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)
+  dax_expression: '[ACTUAL]-[PLAN]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_PLAN
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  - PLAN
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_LE1_PCT
+  label: Var Le1 Pct
+  sql_expression: ((SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate 1' THEN CASE WHEN fact."IS_YTD"
+    THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)) / NULLIF((SUM(CASE WHEN scenario."SCENARIODESCRIPTION"
+    = 'Latest Estimate 1' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END
+    ELSE NULL END) * 0.3), 0)
+  dax_expression: DIVIDE([VAR_LE1],[LE1], BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_LE1_PCT
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_LE2_PCT
+  label: Var Le2 Pct
+  sql_expression: ((SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate 2' THEN CASE WHEN fact."IS_YTD"
+    THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)) / NULLIF((SUM(CASE WHEN scenario."SCENARIODESCRIPTION"
+    = 'Latest Estimate 2' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END
+    ELSE NULL END) * 0.3), 0)
+  dax_expression: DIVIDE([VAR_LE2],[LE2], BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_LE2_PCT
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_LE3_PCT
+  label: Var Le3 Pct
+  sql_expression: ((SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Latest Estimate 3' THEN CASE WHEN fact."IS_YTD"
+    THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)) / NULLIF((SUM(CASE WHEN scenario."SCENARIODESCRIPTION"
+    = 'Latest Estimate 3' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END
+    ELSE NULL END) * 0.3), 0)
+  dax_expression: DIVIDE([VAR_LE3],[LE3], BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_LE3_PCT
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: VAR_PLAN_PCT
+  label: Var Plan Pct
+  sql_expression: ((SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)-(SUM(CASE
+    WHEN scenario."SCENARIODESCRIPTION" = 'Plan' THEN CASE WHEN fact."IS_YTD" THEN
+    fact."VALUE"::FLOAT END ELSE NULL END) * 0.3)) / NULLIF((SUM(CASE WHEN scenario."SCENARIODESCRIPTION"
+    = 'Plan' THEN CASE WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END)
+    * 0.3), 0)
+  dax_expression: DIVIDE([VAR_PLAN],[PLAN], BLANK())
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - VAR_PLAN_PCT
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  - PLAN
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+- name: ACTUAL_PLAN
+  label: Actual Plan
+  sql_expression: SUM(CASE WHEN scenario."SCENARIODESCRIPTION" = 'Actual' THEN CASE
+    WHEN fact."IS_YTD" THEN fact."VALUE"::FLOAT END ELSE NULL END) * 0.3
+  dax_expression: '[ACTUAL]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - ACTUAL_PLAN
+  business_rules: []
+  derives_from:
+  - ACTUAL
+  domain: Corporate Spend
+  concept: Fact
+  tags: []
+  origin: bi
+relationships:
+- name: REL_FACT_SCENARIO_ID__SCENARIO_SCENARIO_ID
+  from_concept: Fact
+  to_concept: Scenario
+  cardinality: N:1
+  join_expression: Fact."Scenario ID" = Scenario."Scenario ID"
+  is_active: true
+  origin: bi
+- name: REL_FACT_IT_SUB_AREA_ID__IT_AREA_IT_SUB_AREA_ID
+  from_concept: Fact
+  to_concept: IT Area
+  cardinality: N:1
+  join_expression: Fact."IT Sub Area ID" = IT Area."IT Sub Area ID"
+  is_active: true
+  origin: bi
+- name: REL_FACT_BUSINESS_AREA_ID__BUSINESS_AREA_BUSINESS_AREA_ID
+  from_concept: Fact
+  to_concept: Business Area
+  cardinality: N:1
+  join_expression: Fact."Business Area ID" = Business Area."Business Area ID"
+  is_active: true
+  origin: bi
+- name: REL_FACT_COUNTRY_REGION_ID__COUNTRY_REGION_COUNTRY_REGION_ID
+  from_concept: Fact
+  to_concept: Country Region
+  cardinality: N:1
+  join_expression: Fact."Country/Region ID" = Country Region."Country/Region ID"
+  is_active: true
+  origin: bi
+- name: REL_FACT_COST_ELEMENT_ID__COST_ELEMENT_COST_ELEMENT_ID
+  from_concept: Fact
+  to_concept: Cost Element
+  cardinality: N:1
+  join_expression: Fact."Cost Element ID" = Cost Element."Cost Element ID"
+  is_active: true
+  origin: bi
+- name: REL_FACT_DEPARTMENT__DEPARTMENT_DEPARTMENT
+  from_concept: Fact
+  to_concept: Department
+  cardinality: N:1
+  join_expression: Fact.Department = Department.Department
+  is_active: true
+  origin: bi
+- name: REL_FACT_DATE__DATE_DATE
+  from_concept: Fact
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Fact.Date = Date.Date
+  is_active: true
+  origin: bi

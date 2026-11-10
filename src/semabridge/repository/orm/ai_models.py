@@ -47,7 +47,7 @@ class AIVerifiedQueryRow(Base):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     sql: Mapped[str] = mapped_column(Text, nullable=False)
     view_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    verified_by: Mapped[str] = mapped_column(String(255), nullable=False, default="Data Steward")
+    verified_by: Mapped[str] = mapped_column(String(255), nullable=False, default="session_user")
     verified_at: Mapped[int] = mapped_column(Integer, nullable=False)  # Unix epoch seconds
     is_onboarding: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(_UTC_DT, server_default=func.now(), nullable=False)

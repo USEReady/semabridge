@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict
-from fastapi import APIRouter
+from typing import Any, Dict, Optional
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from semabridge.security.rls_sync import (
@@ -20,24 +20,41 @@ router = APIRouter(prefix="/api/security/rls", tags=["security_rls"])
 
 class TMDLToSnowflakeRequest(BaseModel):
     role: TMDLSecurityRole
-    target_database: str = "PROD_DWH"
+    target_database: Optional[str] = None
     target_schema: str = "ANALYTICS"
+
+
+class TMDLToSnowflakeResponse(BaseModel):
+    status: str = "translated"
+    reason: Optional[str] = None
+    ddl: str = ""
 
 
 class SnowflakeToTMDLRequest(BaseModel):
     policy: SnowflakeRowAccessPolicy
 
 
-@router.post("/tmdl-to-snowflake", response_model=Dict[str, str])
-def convert_tmdl_role_to_snowflake(req: TMDLToSnowflakeRequest) -> Dict[str, str]:
+@router.post("/tmdl-to-snowflake", response_model=Dict[str, Any])
+def convert_tmdl_role_to_snowflake(req: TMDLToSnowflakeRequest) -> Dict[str, Any]:
     """Convert Power BI / Fabric TMDL DAX role into Snowflake ROW ACCESS POLICY DDL."""
-    translator = SecurityPolicyTranslator()
-    ddl = translator.tmdl_role_to_snowflake_ddl(
+    target_db = req.target_database
+    if not target_db:
+        try:
+            from semabridge.core.settings import reload_settings
+            sf_cfg = reload_settings().snowflake
+            target_db = sf_cfg.database
+        except Exception:
+            target_db = None
+
+    if not target_db:
+        raise HTTPException(status_code=400, detail="target_database is required; no default database configured.")
+
+    res = SecurityPolicyTranslator.translate_tmdl_role(
         req.role,
-        target_database=req.target_database,
+        target_database=target_db,
         target_schema=req.target_schema,
     )
-    return {"ddl": ddl}
+    return res
 
 
 @router.post("/snowflake-to-tmdl", response_model=Dict[str, str])

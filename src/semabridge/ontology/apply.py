@@ -541,11 +541,11 @@ def apply_ontology_for_run(engine: Any, context: Any) -> None:
         report = {"warnings": [f"Ontology application failed: {exc}"]}
     try:
         context.ontology_report = report
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not record ontology report on context: %s", exc)
     summary = getattr(engine, "_summary", None)
     if summary is not None:
         try:
             summary.ontology_report = report
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not record ontology report on summary: %s", exc)

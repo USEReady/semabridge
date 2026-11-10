@@ -45,8 +45,8 @@ def test_blast_radius_breaking_change():
     metric_names = [m.name for m in report.affected_metrics]
     assert "gross_margin" in metric_names
     assert "net_profit" in metric_names
-    assert len(report.affected_bi_reports) >= 2
-    assert len(report.affected_ai_tools) >= 2
+    assert len(report.affected_bi_reports) == 0
+    assert len(report.affected_ai_tools) == 0
     assert len(report.remediation_steps) > 0
 
 

@@ -51,16 +51,28 @@ class OntologyEmitter:
 
     def __init__(
         self,
-        target_database: str = "PROD_DWH",
-        target_schema: str = "ANALYTICS",
+        target_database: Optional[str] = None,
+        target_schema: Optional[str] = None,
         ontology_schema: str = "_SEMABRIDGE_ONTOLOGY",
-        warehouse: str = "COMPUTE_WH",
+        warehouse: Optional[str] = None,
         target_lag: str = "1 hour",
     ):
-        self.target_database = _sanitize_identifier(target_database)
-        self.target_schema = _sanitize_identifier(target_schema)
+        db = target_database
+        sch = target_schema
+        wh = warehouse
+        if not db or not wh:
+            try:
+                from semabridge.core.settings import reload_settings
+                sf = reload_settings().snowflake
+                db = db or sf.database
+                sch = sch or sf.schema_name
+                wh = wh or sf.warehouse
+            except Exception:
+                pass
+        self.target_database = _sanitize_identifier(db or "")
+        self.target_schema = _sanitize_identifier(sch or "")
         self.ontology_schema = _sanitize_identifier(ontology_schema)
-        self.warehouse = _sanitize_identifier(warehouse)
+        self.warehouse = _sanitize_identifier(wh or "")
         self.target_lag = target_lag
 
     def emit_ontology_ddl(

@@ -61,8 +61,12 @@ def test_escape_comment_escapes_single_quotes_exactly_once():
 def test_loo_decomposes_all_fact_table_to_window_total():
     """Leave-one-out calculation decomposing ALL(table) to window total without introducing raw MAX(...) aggregate."""
     from semabridge.converter.dax_translator import DAXTranslator
+    from semabridge.dax_translation.tier5.service import Tier5Service
+    from semabridge.dax_translation.tier5.cache import Tier5TranslationCache
 
+    # Use isolated cache so prior run cache artifacts cannot pollute this unit test
     translator = DAXTranslator()
+    translator._tier5_service = Tier5Service(cache=Tier5TranslationCache(cache_file=None))
     dax = """VAR FactorAvg = AVERAGE('Cases'[CSAT])
 VAR AllAvg = CALCULATE(AVERAGE('Cases'[CSAT]), ALL('Cases'))
 VAR AllAvgExcept =

@@ -10,7 +10,7 @@ import re
 import time
 import yaml
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from semabridge.ai.nl_query_engine import QueryResolutionPlan
@@ -177,6 +177,9 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
     # Project context scoping:
     # 1. When project_id is provided, restrict candidate domains to those attached to the project
     #    to prevent cross-domain pollution or metric name collisions.
+    target_db: Optional[str] = None
+    target_schema: Optional[str] = None
+
     # 2. Automatically resolve the deployed Snowflake Semantic View name from the project snapshot
     #    so the engine targets SEMANTIC_VIEW(...) rather than physical tables.
     if req.project_id:
@@ -184,8 +187,15 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
         if not resolved_semantic_view:
             try:
                 from semabridge.repository.model_repository import ModelRepository
+                from semabridge.repository.orm.project_models import Project
                 from semabridge.utils.name_translator import get_target_deployment_name
-                snap = ModelRepository().get_head(req.project_id)
+                repo = ModelRepository()
+                snap = repo.get_head(req.project_id)
+                with repo._session() as session:
+                    proj = session.get(Project, req.project_id)
+                    if proj:
+                        target_db = proj.database
+                        target_schema = proj.schema
                 if snap:
                     if getattr(snap, "view_name", None):
                         resolved_semantic_view = snap.view_name
@@ -235,7 +245,29 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
             if not sf.private_key:
                 cortex_error = "Snowflake key-pair private key is not configured."
             else:
-                view_name = resolved_semantic_view or req.view_name or f'"{sf.database}"."{sf.schema_name}"."SEMANTIC_VIEW"'
+                raw_vn = (resolved_semantic_view or req.view_name or "").strip()
+                if not raw_vn:
+                    return QueryResolutionPlan(
+                        original_prompt=req.prompt,
+                        detected_metrics=[],
+                        detected_dimensions=[],
+                        resolved_tables=[],
+                        generated_sql=None,
+                        confidence_score=0.0,
+                        explanation="No semantic view specified or resolved for query.",
+                        warnings=["Semantic view name is required for Cortex Analyst routing."],
+                    )
+
+                effective_db = target_db or sf.database
+                effective_schema = target_schema or sf.schema_name
+                parts = [p.strip('"') for p in raw_vn.split(".") if p.strip('"')]
+                if len(parts) == 1:
+                    view_name = f'"{effective_db}"."{effective_schema}"."{parts[0]}"'
+                elif len(parts) == 2:
+                    view_name = f'"{effective_db}"."{parts[0]}"."{parts[1]}"'
+                else:
+                    view_name = f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
+
                 cortex_resp = call_cortex_analyst(
                     prompt=req.prompt,
                     semantic_view=view_name,
@@ -538,7 +570,7 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
 
 
 @router.post("/save-verified-query", response_model=SaveVerifiedQueryResponse)
-def save_verified_query(req: SaveVerifiedQueryRequest) -> SaveVerifiedQueryResponse:
+def save_verified_query(req: SaveVerifiedQueryRequest, request: Request) -> SaveVerifiedQueryResponse:
     """Save a verified query in the project database after live execution verification and explicit user confirmation."""
     if not req.question or not req.sql:
         raise HTTPException(status_code=400, detail="Question and SQL are required.")
@@ -551,6 +583,17 @@ def save_verified_query(req: SaveVerifiedQueryRequest) -> SaveVerifiedQueryRespo
 
     project_id = req.project_id or "default"
 
+    session_user = None
+    try:
+        from semabridge.api.deps import get_current_user_optional
+        user_obj = get_current_user_optional(request)
+        if user_obj:
+            session_user = getattr(user_obj, "email", None) or getattr(user_obj, "username", None) or str(user_obj.id)
+    except Exception as exc:
+        logger.debug("Could not resolve session user: %s", exc)
+
+    effective_user = req.user_id or session_user or "session_user"
+
     # Persist in PostgreSQL/DuckDB database via service layer
     try:
         from semabridge.ai.verified_queries_service import save_verified_query as db_save_verified_query
@@ -559,7 +602,7 @@ def save_verified_query(req: SaveVerifiedQueryRequest) -> SaveVerifiedQueryRespo
             question=req.question,
             sql=req.sql,
             confirmed=req.confirmed,
-            user_id=req.user_id or "Data Steward",
+            user_id=effective_user,
             name=req.name,
             view_name=req.view_name,
             is_onboarding=req.is_onboarding,

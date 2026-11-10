@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from semabridge.governance.blast_radius import BlastRadiusReport, BlastRadiusSimulator
+from semabridge.governance.blast_radius import BlastRadiusReport, BlastRadiusSimulator, TargetType
 from semabridge.governance.linter import LintReport, SemanticLinter
 from semabridge.ontology.store import ontology_store
 
@@ -32,14 +32,27 @@ class LintOptions(BaseModel):
 @router.post("/blast-radius", response_model=BlastRadiusReport)
 def simulate_blast_radius(req: BlastRadiusRequest) -> BlastRadiusReport:
     """Calculate the downstream impact of changing a data layer column, table, or metric."""
+    if not req.target_name or not req.target_name.strip():
+        raise HTTPException(status_code=400, detail="Target name cannot be empty.")
+
+    valid_types = {e.value for e in TargetType}
+    if req.target_type.upper() not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid target_type '{req.target_type}'. Must be one of {sorted(valid_types)}",
+        )
+
     fed = ontology_store.get_federated_ontology()
     simulator = BlastRadiusSimulator(ontology=fed)
-    report = simulator.simulate_impact(
-        target_name=req.target_name,
-        target_type=req.target_type,
-        change_type=req.change_type,
-        table_context=req.table_context,
-    )
+    try:
+        report = simulator.simulate_impact(
+            target_name=req.target_name,
+            target_type=req.target_type,
+            change_type=req.change_type,
+            table_context=req.table_context,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     return report
 
 

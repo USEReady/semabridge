@@ -68,7 +68,7 @@ export default function OntologyDomainManager() {
   const [selectedTarget, setSelectedTarget] = useState('SNOWFLAKE'); // 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
   const [projectsList, setProjectsList] = useState([]);
   const [selectedProjectSlug, setSelectedProjectSlug] = useState('');
-  const [nlPrompt, setNlPrompt] = useState('What is the gross margin and ARR by Customer in 2024?');
+  const [nlPrompt, setNlPrompt] = useState('');
   const [nlResolutionPlan, setNlResolutionPlan] = useState(null);
   const [customSql, setCustomSql] = useState('');
   const [copiedSql, setCopiedSql] = useState(false);
@@ -82,7 +82,7 @@ export default function OntologyDomainManager() {
 
   // ── Governance, Blast Radius, Reconciliation & RLS State ──
   // 1. Blast Radius Simulator
-  const [blastTarget, setBlastTarget] = useState('revenue');
+  const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
   const [blastReport, setBlastReport] = useState(null);
@@ -1124,20 +1124,28 @@ export default function OntologyDomainManager() {
                 </span>
               </div>
 
-              {/* Dynamic Preset Prompt Chips */}
+              {/* Dynamic Preset Prompt Chips built from loaded model */}
               <div className="flex flex-wrap gap-2 text-xs">
-                {(selectedTarget === 'DATABRICKS'
-                  ? [
-                      'Compare monthly MRR and customer churn rate by tier in 2024',
-                      'Show top 10 customers by annual sales in Unity Catalog',
-                      'Calculate net profit margin and COGS by product category',
-                    ]
-                  : [
-                      'What is the gross margin and ARR by Customer in 2024?',
-                      'Show me ebitda and revenue by region',
-                      'Calculate total gross margin for all customers',
-                    ]
-                ).map((chip, idx) => (
+                {(() => {
+                  const mList = inspectingDomainData?.metrics || [];
+                  const cList = inspectingDomainData?.concepts || [];
+                  const chips = [];
+                  if (mList.length > 0) {
+                    const m0 = mList[0]?.label || mList[0]?.name;
+                    chips.push(`What is the total ${m0}?`);
+                    if (cList.length > 0) {
+                      const c0 = cList[0]?.label || cList[0]?.name;
+                      chips.push(`Show ${m0} by ${c0}`);
+                    }
+                    if (mList.length > 1) {
+                      const m1 = mList[1]?.label || mList[1]?.name;
+                      chips.push(`Compare ${m0} and ${m1}`);
+                    }
+                  } else {
+                    chips.push('What is the total revenue by dimension?', 'Show me metrics by category', 'Calculate totals for all items');
+                  }
+                  return chips;
+                })().map((chip, idx) => (
                   <button
                     key={idx}
                     type="button"

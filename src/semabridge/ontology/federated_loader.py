@@ -103,8 +103,8 @@ def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, d
             )
         try:
             seen.add(key)
-        except TypeError:
-            pass
+        except TypeError as exc:
+            logger.debug("Unhashable key in YAML mapping: %s", exc)
     return loader.construct_mapping(node, deep=deep)
 
 
@@ -476,13 +476,15 @@ class FederatedOntologyLoader:
                             descriptions=descs,
                             expressions=exprs,
                             severity="ERROR",
+                            is_blocker=True,
+                            resolution_choices=["namespace", "priority"],
                             message=(
                                 f"Metric collision: '{metrics[0].name}' defined with conflicting "
                                 f"formulas across domains: {', '.join(domains)}."
                             ),
                         )
                     )
-                elif len(non_empty_exprs) == 1 and len(unique_exprs) > 1:
+                else:
                     fed.collisions.append(
                         OntologyCollision(
                             item_type="metric",
@@ -491,9 +493,11 @@ class FederatedOntologyLoader:
                             descriptions=descs,
                             expressions=exprs,
                             severity="WARNING",
+                            is_blocker=False,
+                            resolution_choices=[],
                             message=(
-                                f"Metric partial definition: '{metrics[0].name}' has a formula in some "
-                                f"domains ({', '.join(domains)}) and binding-only in others."
+                                f"Metric collision: '{metrics[0].name}' defined across multiple domains "
+                                f"({', '.join(domains)}) with identical formula or partial definition."
                             ),
                         )
                     )
@@ -648,6 +652,7 @@ class FederatedOntologyLoader:
                         data_type=mapped_type,
                         description=attr.description,
                         is_key=attr.is_primary_key,
+                        is_hidden=getattr(attr, "is_hidden", False),
                         synonyms=attr.synonyms,
                     )
                 )
@@ -851,6 +856,7 @@ class FederatedOntologyLoader:
                         data_type=osi_to_sql_type.get(col.data_type, "VARCHAR"),
                         description=desc,
                         is_primary_key=exist_a.is_primary_key if exist_a else col.is_key,
+                        is_hidden=getattr(exist_a, "is_hidden", False) if exist_a else getattr(col, "is_hidden", False),
                         synonyms=union(exist_a.synonyms if exist_a else [], col.synonyms),
                         maps_to=exist_a.maps_to if exist_a else [],
                         origin="bi",
@@ -933,8 +939,8 @@ class FederatedOntologyLoader:
                     ast_sql = try_ast_translate(dax_expr, m.dataset or "")
                     if ast_sql:
                         calc_expr = ast_sql
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("AST fallback translation skipped for metric '%s': %s", m.unique_name, exc)
 
             if not calc_expr and m.source_column:
                 # Raw columns get their aggregation function applied, complex calculations remain NONE/CUSTOM
@@ -1117,6 +1123,7 @@ class FederatedOntologyLoader:
                 return {
                     k: _prune(v) for k, v in node.items()
                     if not (k == "stale" and v is False)
+                    and not (k == "is_hidden" and v is False)
                     and not (k == "maps_to" and not v)
                     and not (k == "derives_from" and not v)
                     and not (k == "policies" and not v)

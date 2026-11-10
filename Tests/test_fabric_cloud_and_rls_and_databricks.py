@@ -113,7 +113,8 @@ def test_api_security_rls_endpoints():
             "table_permissions": [
                 {"table_name": "Sales", "dax_filter_expression": '[Country] = "US"'}
             ],
-        }
+        },
+        "target_database": "TEST_DWH",
     }
     resp = client.post("/api/security/rls/tmdl-to-snowflake", json=role_payload)
     assert resp.status_code == 200

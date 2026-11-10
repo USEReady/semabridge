@@ -1,0 +1,224 @@
+domain: Revenue Opportunities
+id: revenue_opportunities
+version: 1.0.0
+source_project_id: Revenue Opportunities
+concepts:
+- name: Accounts
+  label: Accounts
+  concept_type: DIMENSION
+  domain: Revenue Opportunities
+  synonyms: []
+  business_rules: []
+  physical_table: ACCOUNTS
+  attributes:
+  - name: Account_ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Col_Account
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms:
+    - Account
+    origin: bi
+  - name: Region
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: State
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Segment
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: SalesStages
+  label: Sales Stages
+  concept_type: DIMENSION
+  domain: Revenue Opportunities
+  synonyms:
+  - Sales Stages
+  business_rules: []
+  physical_table: SALESSTAGES
+  attributes:
+  - name: Sales_Stage_ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Sales_Stage
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms:
+    - Sales Stage
+    - Stage
+    origin: bi
+  - name: Probability
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Partners
+  label: Partners
+  concept_type: DIMENSION
+  domain: Revenue Opportunities
+  synonyms: []
+  business_rules: []
+  physical_table: PARTNERS
+  attributes:
+  - name: Partner_ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Partner
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms:
+    - Partner
+    origin: bi
+  tags: []
+  origin: bi
+- name: Products
+  label: Products
+  concept_type: DIMENSION
+  domain: Revenue Opportunities
+  synonyms: []
+  business_rules: []
+  physical_table: PRODUCTS
+  attributes:
+  - name: Product_ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Product_Code
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms:
+    - Product
+    - Product Code
+    origin: bi
+  tags: []
+  origin: bi
+- name: Opportunities
+  label: Opportunities
+  concept_type: DIMENSION
+  domain: Revenue Opportunities
+  synonyms: []
+  business_rules: []
+  physical_table: OPPORTUNITIES
+  attributes:
+  - name: Opportunity_ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Name
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms:
+    - Opportunity
+    - Deal
+    origin: bi
+  tags: []
+  origin: bi
+- name: Sales
+  label: Sales
+  concept_type: DIMENSION
+  domain: Revenue Opportunities
+  synonyms: []
+  business_rules: []
+  physical_table: SALES
+  attributes:
+  - name: Opportunity_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Account_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Partner_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Product_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sales_Stage_ID
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: ProductRevenue
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+metrics:
+- name: Total_Revenue
+  label: Total Revenue
+  sql_expression: SUM("PRODUCTREVENUE"::FLOAT)
+  dax_expression: SUM(ProductRevenue)
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - Revenue
+  - Pipeline Value
+  - Total Pipeline Value
+  - Total Revenue
+  business_rules: []
+  domain: Revenue Opportunities
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Average_Revenue
+  label: Average Revenue
+  sql_expression: AVG(ProductRevenue)
+  dax_expression: AVG(ProductRevenue)
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - Average Revenue
+  - Average Deal Size
+  - Deal Size
+  business_rules: []
+  domain: Revenue Opportunities
+  concept: Sales
+  tags: []
+  origin: bi
+- name: Total_Opportunity_Count
+  label: Total Opportunity Count
+  sql_expression: COUNT("OPPORTUNITY_ID")
+  dax_expression: COUNT(Opportunity_ID)
+  aggregation_type: COUNT
+  grain: []
+  synonyms:
+  - Count
+  - Deals
+  - Deal Count
+  - Opportunity Count
+  - Total Opportunity Count
+  business_rules: []
+  domain: Revenue Opportunities
+  concept: Sales
+  tags: []
+  origin: bi
+relationships: []

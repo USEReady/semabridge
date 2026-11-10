@@ -129,6 +129,18 @@ def export_unified_yaml() -> str:
     return "\n".join(lines)
 
 
+@router.get("/{domain_name}/export", response_class=PlainTextResponse)
+@router.get("/{domain_name}/export/yaml", response_class=PlainTextResponse)
+@router.get("/export/{domain_name}", response_class=PlainTextResponse)
+@router.get("/export/yaml/{domain_name}", response_class=PlainTextResponse)
+def export_single_domain_yaml(domain_name: str) -> str:
+    """Export a single domain ontology as clean YAML. Returns 404 if unknown domain."""
+    dom = ontology_store.get_domain(domain_name)
+    if not dom:
+        raise HTTPException(status_code=404, detail=f"Domain '{domain_name}' not found.")
+    return FederatedOntologyLoader.dump_domain_yaml(dom)
+
+
 @router.get("/graph", response_model=Dict[str, Any])
 def ontology_graph(project_id: Optional[str] = None) -> Dict[str, Any]:
     """Connection graph for the UI: projects -> domains -> concepts / metrics ->
@@ -191,6 +203,21 @@ def validate_domain_yaml(req: ValidateYamlRequest) -> Dict[str, Any]:
 def _save(yaml_content: str, original: Optional[str]) -> Dict[str, Any]:
     try:
         dom = FederatedOntologyLoader.parse_yaml_string(yaml_content)
+
+        # Check: metrics originating from BI (PBIX) have read-only sql_expression
+        existing_domain = ontology_store.get_domain(original or dom.domain)
+        if existing_domain:
+            existing_metrics = {m.name.casefold(): m for m in existing_domain.metrics}
+            for new_m in dom.metrics:
+                old_m = existing_metrics.get(new_m.name.casefold())
+                if old_m and (old_m.origin == "bi" or bool(old_m.maps_to) or bool(old_m.dax_expression)):
+                    old_sql = (old_m.sql_expression or "").strip()
+                    new_sql = (new_m.sql_expression or "").strip()
+                    if old_sql != new_sql:
+                        raise OntologyValidationError([
+                            f"Metric '{new_m.name}' comes from the PBIX: its sql_expression is read-only (shows translated SQL) and cannot be edited."
+                        ])
+
         fed = ontology_store.add_or_update_domain(dom, original=original)
     except OntologyValidationError as e:
         raise _reject(e.errors)
@@ -425,9 +452,9 @@ async def preview_project_ontology(project_id: str) -> Dict[str, Any]:
 @project_router.get("/{project_id}/knowledge-graph.sql", response_class=PlainTextResponse)
 async def export_project_knowledge_graph_sql(
     project_id: str,
-    database: str = "PROD_DWH",
+    database: Optional[str] = None,
     ontology_schema: str = "_SEMABRIDGE_ONTOLOGY",
-    warehouse: str = "COMPUTE_WH",
+    warehouse: Optional[str] = None,
 ) -> str:
     """Snowflake knowledge-graph + Cortex Search DDL for the project's ontology.
 
@@ -449,6 +476,16 @@ async def export_project_knowledge_graph_sql(
     report = apply_project_ontology(
         project_id, model, model_names=[model.unique_name, model.label], overrides=overrides
     )
-    emitter = OntologyEmitter(target_database=database, ontology_schema=ontology_schema, warehouse=warehouse)
+    effective_db = database
+    effective_wh = warehouse
+    if not effective_db or not effective_wh:
+        try:
+            from semabridge.core.settings import reload_settings
+            sf = reload_settings().snowflake
+            effective_db = effective_db or sf.database
+            effective_wh = effective_wh or sf.warehouse
+        except Exception:
+            pass
+    emitter = OntologyEmitter(target_database=effective_db, ontology_schema=ontology_schema, warehouse=effective_wh)
     header = "".join(f"-- WARNING: {w}\n" for w in report.get("warnings", []))
     return header + emitter.emit_ontology_ddl(model, ontology_overrides=overrides)
