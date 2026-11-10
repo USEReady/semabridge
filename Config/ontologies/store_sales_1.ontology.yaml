@@ -2,8 +2,10 @@ domain: Store Sales 1
 id: store_sales_1
 version: 1.0.0
 source_project_id: proj-store-sales
+semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
 concepts:
 - name: District
+  logical_name: DISTRICT
   label: District
   concept_type: DIMENSION
   domain: Store Sales 1
@@ -12,36 +14,43 @@ concepts:
   physical_table: District
   attributes:
   - name: DistrictID
+    logical_name: DISTRICTID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: District
+    logical_name: DISTRICT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DM
+    logical_name: DM
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DM_Pic_fl
+    logical_name: DM_PIC_FL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DM_Pic
+    logical_name: DM_PIC
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: BusinessUnitID
+    logical_name: BUSINESSUNITID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: DMImage
+    logical_name: DMIMAGE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -49,6 +58,7 @@ concepts:
   tags: []
   origin: bi
 - name: Item
+  logical_name: ITEM
   label: Item
   concept_type: DIMENSION
   domain: Store Sales 1
@@ -57,31 +67,37 @@ concepts:
   physical_table: Item
   attributes:
   - name: ItemID
+    logical_name: ITEM_ITEMID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Segment
+    logical_name: SEGMENT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Category
+    logical_name: CATEGORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Buyer
+    logical_name: BUYER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: FamilyNane
+    logical_name: FAMILYNANE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Category (clusters) 2
+    logical_name: CATEGORY_CLUSTERS_2
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -89,6 +105,7 @@ concepts:
   tags: []
   origin: bi
 - name: Sales
+  logical_name: SALES
   label: Sales
   concept_type: DIMENSION
   domain: Store Sales 1
@@ -97,51 +114,61 @@ concepts:
   physical_table: Sales
   attributes:
   - name: MonthID
+    logical_name: MONTHID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: ItemID
+    logical_name: SALES_ITEMID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: LocationID
+    logical_name: SALES_LOCATIONID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Sum_GrossMarginAmount
+    logical_name: SUM_GROSSMARGINAMOUNT
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Sum_Regular_Sales_Dollars
+    logical_name: SUM_REGULAR_SALES_DOLLARS
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Sum_Markdown_Sales_Dollars
+    logical_name: SUM_MARKDOWN_SALES_DOLLARS
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: ScenarioID
+    logical_name: SCENARIOID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: ReportingPeriodID
+    logical_name: SALES_REPORTINGPERIODID
     data_type: VARCHAR
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Sum_Regular_Sales_Units
+    logical_name: SUM_REGULAR_SALES_UNITS
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Sum_Markdown_Sales_Units
+    logical_name: SUM_MARKDOWN_SALES_UNITS
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
@@ -149,6 +176,7 @@ concepts:
   tags: []
   origin: bi
 - name: Store
+  logical_name: STORE
   label: Store
   concept_type: DIMENSION
   domain: Store Sales 1
@@ -157,96 +185,115 @@ concepts:
   physical_table: Store
   attributes:
   - name: LocationID
+    logical_name: STORE_LOCATIONID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: City Name
+    logical_name: CITY_NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Territory
+    logical_name: TERRITORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: PostalCode
+    logical_name: POSTALCODE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: OpenDate
+    logical_name: OPENDATE
     data_type: DATE
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: SellingAreaSize
+    logical_name: SELLINGAREASIZE
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DistrictName
+    logical_name: DISTRICTNAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Name
+    logical_name: NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: StoreNumberName
+    logical_name: STORENUMBERNAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: StoreNumber
+    logical_name: STORENUMBER
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: City
+    logical_name: CITY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Chain
+    logical_name: CHAIN
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DM
+    logical_name: DM
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DM_Pic
+    logical_name: DM_PIC
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DistrictID
+    logical_name: DISTRICTID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Open Year
+    logical_name: OPEN_YEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Store Type
+    logical_name: STORE_TYPE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Open Month No
+    logical_name: OPEN_MONTH_NO
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Open Month
+    logical_name: OPEN_MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
@@ -254,6 +301,7 @@ concepts:
   tags: []
   origin: bi
 - name: Time
+  logical_name: TIME
   label: Time
   concept_type: DIMENSION
   domain: Store Sales 1
@@ -262,26 +310,31 @@ concepts:
   physical_table: Time
   attributes:
   - name: ReportingPeriodID
+    logical_name: TIME_REPORTINGPERIODID
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Period
+    logical_name: PERIOD
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: FiscalYear
+    logical_name: FISCALYEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: FiscalMonth
+    logical_name: FISCALMONTH
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Month
+    logical_name: MONTH
     data_type: TIMESTAMP_NTZ
     is_primary_key: false
     synonyms: []
@@ -289,6 +342,7 @@ concepts:
   tags: []
   origin: bi
 - name: Date
+  logical_name: COL_DATE
   label: Date
   concept_type: DIMENSION
   domain: Store Sales 1
@@ -298,36 +352,43 @@ concepts:
   physical_table: DIM_DATE
   attributes:
   - name: Date
+    logical_name: COL_DATE
     data_type: DATE
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Year
+    logical_name: YEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Quarter
+    logical_name: QUARTER
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Month
+    logical_name: MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: MonthName
+    logical_name: MONTHNAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DayOfWeek
+    logical_name: DAYOFWEEK
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: DayName
+    logical_name: DAYNAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -337,6 +398,7 @@ concepts:
   bi_description: Auto-generated Calendar Dimension
 metrics:
 - name: REGULAR_SALES_DOLLARS
+  logical_name: REGULAR_SALES_DOLLARS
   label: Regular Sales Dollars
   sql_expression: SUM(SALES."SUM_REGULAR_SALES_DOLLARS")
   dax_expression: SUM([Sum_Regular_Sales_Dollars])
@@ -347,9 +409,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: MARKDOWN_SALES_DOLLARS
+  logical_name: MARKDOWN_SALES_DOLLARS
   label: Markdown Sales Dollars
   sql_expression: SUM(SALES."SUM_MARKDOWN_SALES_DOLLARS")
   dax_expression: SUM([Sum_Markdown_Sales_Dollars])
@@ -360,9 +424,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTALSALES
+  logical_name: TOTALSALES
   label: Totalsales
   sql_expression: CASE WHEN ((SUM(SALES."SUM_REGULAR_SALES_DOLLARS"))) IS NULL AND
     ((SUM(SALES."SUM_MARKDOWN_SALES_DOLLARS"))) IS NULL THEN NULL ELSE COALESCE((SUM(SALES."SUM_REGULAR_SALES_DOLLARS")),
@@ -375,9 +441,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTALSALESLY
+  logical_name: TOTALSALESLY
   label: Totalsalesly
   sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
@@ -393,9 +461,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: GROSS_MARGIN_THIS_YEAR
+  logical_name: GROSS_MARGIN_THIS_YEAR
   label: Gross Margin This Year
   sql_expression: SUM(CASE WHEN SALES.SCENARIOID = 1 THEN SALES."SUM_GROSSMARGINAMOUNT"
     ELSE 0 END)
@@ -407,9 +477,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: GROSS_MARGIN_THIS_YEAR_PCT
+  logical_name: GROSS_MARGIN_THIS_YEAR_PCT
   label: Gross Margin This Year Pct
   sql_expression: (SUM(CASE WHEN SALES.SCENARIOID = 1 THEN SALES."SUM_GROSSMARGINAMOUNT"
     ELSE 0 END)) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
@@ -426,9 +498,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: GROSS_MARGIN_LAST_YEAR
+  logical_name: GROSS_MARGIN_LAST_YEAR
   label: Gross Margin Last Year
   sql_expression: SUM(CASE WHEN SALES.SCENARIOID = 2 THEN SALES."SUM_GROSSMARGINAMOUNT"
     ELSE 0 END)
@@ -440,9 +514,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: GROSS_MARGIN_LAST_YEAR_PCT
+  logical_name: GROSS_MARGIN_LAST_YEAR_PCT
   label: Gross Margin Last Year Pct
   sql_expression: (SUM(CASE WHEN SALES.SCENARIOID = 2 THEN SALES."SUM_GROSSMARGINAMOUNT"
     ELSE 0 END)) / NULLIF(CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
@@ -459,9 +535,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: REGULAR_SALES_UNITS
+  logical_name: REGULAR_SALES_UNITS
   label: Regular Sales Units
   sql_expression: SUM(SALES."SUM_REGULAR_SALES_UNITS")
   dax_expression: SUM([Sum_Regular_Sales_Units])
@@ -472,9 +550,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: MARKDOWN_SALES_UNITS
+  logical_name: MARKDOWN_SALES_UNITS
   label: Markdown Sales Units
   sql_expression: SUM(SALES."SUM_MARKDOWN_SALES_UNITS")
   dax_expression: SUM([Sum_Markdown_Sales_Units])
@@ -485,9 +565,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTALUNITS
+  logical_name: TOTALUNITS
   label: Totalunits
   sql_expression: CASE WHEN ((SUM(SALES."SUM_REGULAR_SALES_UNITS"))) IS NULL AND ((SUM(SALES."SUM_MARKDOWN_SALES_UNITS")))
     IS NULL THEN NULL ELSE COALESCE((SUM(SALES."SUM_REGULAR_SALES_UNITS")), 0) + COALESCE((SUM(SALES."SUM_MARKDOWN_SALES_UNITS")),
@@ -500,9 +582,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_UNITS_LAST_YEAR
+  logical_name: TOTAL_UNITS_LAST_YEAR
   label: Total Units Last Year
   sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_UNITS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
@@ -518,9 +602,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_UNITS_THIS_YEAR
+  logical_name: TOTAL_UNITS_THIS_YEAR
   label: Total Units This Year
   sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_UNITS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_UNITS"
@@ -536,9 +622,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: AVG_DOL_UNIT_TY
+  logical_name: AVG_DOL_UNIT_TY
   label: Avg Dol Unit Ty
   sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
     SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
@@ -566,9 +654,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: AVG_DOL_UNIT_LY
+  logical_name: AVG_DOL_UNIT_LY
   label: Avg Dol Unit Ly
   sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
     SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
@@ -596,9 +686,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_SALES_VAR
+  logical_name: TOTAL_SALES_VAR
   label: Total Sales Var
   sql_expression: CASE WHEN ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
     SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
@@ -631,9 +723,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_SALES_VAR_PCT
+  logical_name: TOTAL_SALES_VAR_PCT
   label: Total Sales Var Pct
   sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
     SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
@@ -677,9 +771,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: SALES_PER_SQ_FT
+  logical_name: SALES_PER_SQ_FT
   label: Sales Per Sq Ft
   sql_expression: (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
@@ -696,9 +792,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: LAST_YEAR_SALES
+  logical_name: LAST_YEAR_SALES
   label: Last Year Sales
   sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
@@ -714,9 +812,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_SALES_VARIANCE
+  logical_name: TOTAL_SALES_VARIANCE
   label: Total Sales Variance
   sql_expression: CASE WHEN ((CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
     SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
@@ -749,9 +849,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_SALES_VARIANCE_PCT
+  logical_name: TOTAL_SALES_VARIANCE_PCT
   label: Total Sales Variance Pct
   sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
     SALES."SUM_REGULAR_SALES_DOLLARS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN
@@ -795,9 +897,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: STORE_COUNT
+  logical_name: STORE_COUNT
   label: Store Count
   sql_expression: COUNT(DISTINCT SALES."LOCATIONID")
   dax_expression: DISTINCTCOUNT([LocationID])
@@ -808,9 +912,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: AVERAGE_UNIT_PRICE
+  logical_name: AVERAGE_UNIT_PRICE
   label: Average Unit Price
   sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN
     SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
@@ -837,9 +943,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: AVERAGE_UNIT_PRICE_LAST_YEAR
+  logical_name: AVERAGE_UNIT_PRICE_LAST_YEAR
   label: Average Unit Price Last Year
   sql_expression: CASE WHEN (CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 2 THEN
     SALES."SUM_REGULAR_SALES_UNITS" ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID"
@@ -866,9 +974,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTALSALESTY
+  logical_name: TOTALSALESTY
   label: Totalsalesty
   sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
@@ -884,9 +994,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: THIS_YEAR_SALES
+  logical_name: THIS_YEAR_SALES
   label: This Year Sales
   sql_expression: CASE WHEN ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_REGULAR_SALES_DOLLARS"
     ELSE NULL END))) IS NULL AND ((SUM(CASE WHEN SALES."SCENARIOID" = 1 THEN SALES."SUM_MARKDOWN_SALES_DOLLARS"
@@ -902,9 +1014,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: AVERAGE_SELLING_AREA_SIZE
+  logical_name: AVERAGE_SELLING_AREA_SIZE
   label: Average Selling Area Size
   sql_expression: AVG(STORE."SELLINGAREASIZE")
   dax_expression: AVERAGE([SellingAreaSize])
@@ -915,9 +1029,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Store
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: NEW_STORES
+  logical_name: NEW_STORES
   label: New Stores
   sql_expression: COUNT(CASE WHEN STORE."STORE_TYPE" = 'New Store' THEN STORE."STORE_TYPE"
     END)
@@ -930,22 +1046,27 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Store
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: NEW_STORES_TARGET
+  logical_name: NEW_STORES_TARGET
   label: New Stores Target
-  sql_expression: MAX(14)
   dax_expression: '14'
+  deploy_reason: expression has no column/measure/table reference (a compile-time
+    constant) — there is nothing to aggregate, so this is not a DAX translation failure.
   aggregation_type: NONE
   grain: []
   synonyms:
   - NEW_STORES_TARGET
   business_rules: []
   domain: Store Sales 1
-  concept: Store
+  concept: Sales
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: TOTAL_STORES
+  logical_name: TOTAL_STORES
   label: Total Stores
   sql_expression: COUNT(STORE."STORENUMBERNAME")
   dax_expression: COUNTA([StoreNumberName])
@@ -956,9 +1077,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Store
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: OPEN_STORE_COUNT
+  logical_name: OPEN_STORE_COUNT
   label: Open Store Count
   sql_expression: COUNT(STORE."OPENDATE")
   dax_expression: COUNTA([OpenDate])
@@ -969,9 +1092,11 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Store
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 - name: COUNT_OF_OPENDATE
+  logical_name: COUNT_OF_OPENDATE
   label: Count Of Opendate
   sql_expression: COUNT(STORE."OPENDATE")
   dax_expression: COUNTA('Store'[OpenDate])
@@ -982,6 +1107,7 @@ metrics:
   business_rules: []
   domain: Store Sales 1
   concept: Store
+  semantic_view_name: SEMABRIDGE.STORE_SALES.STORE_SALES_1_SEMANTIC
   tags: []
   origin: bi
 relationships:

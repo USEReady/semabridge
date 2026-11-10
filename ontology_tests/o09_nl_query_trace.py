@@ -115,7 +115,12 @@ for dim in a.expect_dim:
     if stolen:
         detail.append(f"word matched metric(s) instead: {stolen[:3]}")
     rep.check(ok, f"RC3 dimension '{dim}' detected and grouped", "; ".join(detail) or "not found anywhere in the ontology")
-rep.check(not a.expect_dim or re.search(r"GROUP\s+BY", body, re.I) is not None, "RC3 SQL has GROUP BY")
+uses_sv = re.search(r"SEMANTIC_VIEW\s*\(", body, re.I) is not None
+if uses_sv:
+    rep.check(not re.search(r"\bGROUP\s+BY\b", body, re.I), "RC3 SEMANTIC_VIEW SQL omits GROUP BY", body)
+    rep.check(not a.expect_dim or re.search(r"\bDIMENSIONS\b", body, re.I) is not None, "RC3 SEMANTIC_VIEW SQL has DIMENSIONS")
+else:
+    rep.check(not a.expect_dim or re.search(r"GROUP\s+BY", body, re.I) is not None, "RC3 SQL has GROUP BY")
 
 # ---------------------------------------------------------------- RC4 duplicate domains
 dups = {k: v for k, v in metrics_by_norm.items() if len({x[0] for x in v}) > 1}

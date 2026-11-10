@@ -67,6 +67,7 @@ export default function OntologyDomainManager() {
   // Multi-Target AI/BI Playground State
   const [selectedTarget, setSelectedTarget] = useState('SNOWFLAKE'); // 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
   const [projectsList, setProjectsList] = useState([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [selectedProjectSlug, setSelectedProjectSlug] = useState('');
   const [nlPrompt, setNlPrompt] = useState('What is the gross margin and ARR by Customer in 2024?');
   const [nlResolutionPlan, setNlResolutionPlan] = useState(null);
@@ -148,9 +149,14 @@ export default function OntologyDomainManager() {
     }
   };
 
+  // Fetch lightweight project discovery list first (server-cached) so the OSI modal opens promptly
   const fetchProjects = async () => {
+    setProjectsLoading(true);
     try {
-      const res = await authFetch('/api/projects?limit=50');
+      let res = await authFetch('/api/projects/discovery');
+      if (!res.ok) {
+        res = await authFetch('/api/projects?limit=100');
+      }
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : data.projects || [];
@@ -161,6 +167,8 @@ export default function OntologyDomainManager() {
       }
     } catch (err) {
       console.warn('Could not load projects for AI playground:', err);
+    } finally {
+      setProjectsLoading(false);
     }
   };
 
@@ -2353,17 +2361,32 @@ export default function OntologyDomainManager() {
                 <label className="font-bold text-secondary uppercase tracking-wider block text-[11px] mb-1">
                   Source BI Project / Model
                 </label>
+                {/* Show loading indicator while fetching and disambiguate duplicate project names with their ID */}
                 <select
                   value={bootstrapProject}
                   onChange={(e) => setBootstrapProject(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-surface-raised border border-main text-primary text-xs font-medium focus:outline-none focus:border-accent-blue"
+                  disabled={projectsLoading}
+                  className="w-full p-2.5 rounded-xl bg-surface-raised border border-main text-primary text-xs font-medium focus:outline-none focus:border-accent-blue disabled:opacity-60"
                 >
-                  <option value="">Select a translated BI project...</option>
-                  {projectsList.map((p) => (
-                    <option key={p.id || p.name} value={p.id || p.name}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
+                  <option value="">
+                    {projectsLoading ? 'Loading translated BI projects...' : 'Select a translated BI project...'}
+                  </option>
+                  {(() => {
+                    const nameCounts = {};
+                    projectsList.forEach((p) => {
+                      const nm = p.name || p.id;
+                      nameCounts[nm] = (nameCounts[nm] || 0) + 1;
+                    });
+                    return projectsList.map((p) => {
+                      const nm = p.name || p.id;
+                      const label = nameCounts[nm] > 1 && p.id ? `${nm} (${p.id})` : nm;
+                      return (
+                        <option key={p.id || p.name} value={p.id || p.name}>
+                          {label}
+                        </option>
+                      );
+                    });
+                  })()}
                 </select>
                 <span className="text-[11px] text-tertiary block mt-1">
                   Uses the latest OSI intermediate snapshot compiled from Power BI, Fabric, or Snowflake.

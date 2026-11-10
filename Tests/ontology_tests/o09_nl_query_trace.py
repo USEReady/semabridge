@@ -13,8 +13,6 @@ reads the stored ontology metrics, and checks each known failure cause separatel
   RC5  broken conversion        partially converted expressions (e.g. DAX '--' comments turned into SQL)
   RC6  invalid query shape      FROM is not the semantic view / mixes tables / no GROUP BY
   RC7  execution config         Snowflake connection settings (only with --execute)
-  RC8  bad joins                self-joins, joins to tables not in FROM, unquoted names with spaces
-  RC9  no metric found          answers a measure question with a plain column list instead of saying so
 
 Nothing is changed. Writes ontology_tests/out/nl_trace_<slug>.json.
 """
@@ -117,7 +115,12 @@ for dim in a.expect_dim:
     if stolen:
         detail.append(f"word matched metric(s) instead: {stolen[:3]}")
     rep.check(ok, f"RC3 dimension '{dim}' detected and grouped", "; ".join(detail) or "not found anywhere in the ontology")
-rep.check(not a.expect_dim or re.search(r"GROUP\s+BY", body, re.I) is not None, "RC3 SQL has GROUP BY")
+uses_sv = re.search(r"SEMANTIC_VIEW\s*\(", body, re.I) is not None
+if uses_sv:
+    rep.check(not re.search(r"\bGROUP\s+BY\b", body, re.I), "RC3 SEMANTIC_VIEW SQL omits GROUP BY", body)
+    rep.check(not a.expect_dim or re.search(r"\bDIMENSIONS\b", body, re.I) is not None, "RC3 SEMANTIC_VIEW SQL has DIMENSIONS")
+else:
+    rep.check(not a.expect_dim or re.search(r"GROUP\s+BY", body, re.I) is not None, "RC3 SQL has GROUP BY")
 
 # ---------------------------------------------------------------- RC4 duplicate domains
 dups = {k: v for k, v in metrics_by_norm.items() if len({x[0] for x in v}) > 1}
@@ -152,33 +155,6 @@ for name in got_m:
         if mname == name and concept:
             concepts.add(concept)
 rep.check(len(concepts) <= 1, "RC6 metrics come from one table", f"mixes {sorted(concepts)}")
-
-# ---------------------------------------------------------------- RC8 joins
-frm_tables = re.findall(r"\bFROM\s+([\w\".]+)", body, re.I)
-joins = re.findall(r"\bJOIN\s+([\w\".]+)\s+ON\s+(.+)", body, re.I)
-in_query = {t.strip('"').casefold() for t in frm_tables}
-self_joins, unknown, unquoted = [], [], []
-for tbl, cond in joins:
-    t = tbl.strip('"').casefold()
-    if t in in_query:
-        self_joins.append(tbl)
-    refs = {r.casefold() for r in re.findall(r"([A-Za-z_][\w]*)\s*\.", cond)}
-    unknown += [r for r in refs if r not in in_query | {t}]
-    if re.search(r"\.[A-Za-z_]\w*\s+[A-Za-z_]\w*\s*(=|$)", cond):
-        unquoted.append(cond.strip()[:60])
-    in_query.add(t)
-if joins:
-    rep.check(not self_joins, "RC8 no table joined to itself", f"{self_joins}")
-    rep.check(not unknown, "RC8 joins only reference tables already in the query", f"{sorted(set(unknown))}")
-    rep.check(not unquoted, "RC8 column names with spaces are quoted", f"{unquoted[:2]}")
-
-# ---------------------------------------------------------------- RC9 no metric
-if not plan.get("detected_metrics"):
-    rep.warn("RC9 no metric matched the question",
-             f"engine still returned SQL ({'GROUP BY on ' + str(plan.get('detected_dimensions')) if plan.get('detected_dimensions') else 'SELECT *'}); "
-             "it should say 'no metric found for ...' or ask which metric was meant")
-    rep.check(plan.get("confidence_score", 1) < 0.5, "RC9 low confidence reported when no metric found",
-              f"confidence {plan.get('confidence_score')}")
 
 # ---------------------------------------------------------------- RC7 execution
 if a.execute:

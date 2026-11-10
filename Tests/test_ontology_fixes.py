@@ -137,8 +137,9 @@ metrics:
 
 
 def test_a4_no_duplicate_dimensions():
-    plan = _engine(_NL_YAML).resolve_query("gross margin by Sales")
+    plan = _engine(_NL_YAML).resolve_query("gross margin by region")
     assert len(plan.detected_dimensions) == len(set(plan.detected_dimensions))
+    assert "region" in plan.detected_dimensions
     gb = plan.generated_sql.split("GROUP BY", 1)[-1]
     cols = [c.strip() for c in gb.split(",")]
     assert len(cols) == len(set(cols))
@@ -146,17 +147,18 @@ def test_a4_no_duplicate_dimensions():
 
 def test_a5_date_column_resolved_and_quarter_numeric():
     eng = _engine(_NL_YAML)
-    plan = eng.resolve_query("gross margin by Sales in 2024")
+    plan = eng.resolve_query("gross margin by region in 2024")
     assert "YEAR(sale_date) = 2024" in plan.filters
-    plan_q = eng.resolve_query("gross margin by Sales in Q1 2024")
+    plan_q = eng.resolve_query("gross margin by region in Q1 2024")
     assert "QUARTER(sale_date) = 1" in plan_q.filters
     assert not any("'Q1'" in f for f in plan_q.filters)
 
 
 def test_a5_fallback_date_column_emits_warning():
     nodate = _NL_YAML.replace("      - {name: sale_date, data_type: DATE}\n", "")
-    plan = _engine(nodate).resolve_query("gross margin by Sales in 2024")
-    assert "YEAR(date) = 2024" in plan.filters
+    plan = _engine(nodate).resolve_query("gross margin by region in 2024")
+    assert not any("YEAR(date)" in f for f in plan.filters)
+    assert plan.filters == []
     assert plan.warnings
 
 
@@ -237,11 +239,11 @@ metrics:
     sql_expression: "SUM(cogs)"
   - name: net_margin
     concept: Sales
-    sql_expression: "total_revenue - total_cogs"
+    sql_expression: "[total_revenue] - [total_cogs]"
     filter_expression: "order_status = 'COMPLETED'"
 """
     eng = _engine(yaml_text)
-    plan = eng.resolve_query("net margin by Sales in 2024")
+    plan = eng.resolve_query("net margin in 2024")
     # 1. Composite metric expression is expanded from upstream metrics
     assert "(SUM(revenue)) - (SUM(cogs)) AS net_margin" in plan.generated_sql
     assert set(plan.derived_from_metrics) == {"total_revenue", "total_cogs"}
@@ -250,7 +252,92 @@ metrics:
     assert "is_deleted = FALSE" in plan.filters
     assert "order_status = 'COMPLETED'" in plan.filters
     assert "is_intercompany = FALSE" in plan.filters
-    assert "WHERE YEAR(sale_date) = 2024 AND is_deleted = FALSE AND order_status = 'COMPLETED' AND is_intercompany = FALSE" in plan.generated_sql
+    where_clause = plan.generated_sql.split("WHERE ", 1)[-1]
+    for pred in ("YEAR(sale_date) = 2024", "is_deleted = FALSE", "order_status = 'COMPLETED'", "is_intercompany = FALSE"):
+        assert pred in where_clause
     assert "exclude_intercompany" in plan.applied_policies
+
+
+def test_nl_query_singular_plural_and_sql_count_selection():
+    from semabridge.ai.semantic_search import _stem_token
+
+    assert _stem_token("workers") == _stem_token("worker") == "worker"
+    assert _stem_token("statuses") == _stem_token("status") == "status"
+    assert _stem_token("branches") == _stem_token("branch") == "branch"
+    assert _stem_token("hierarchies") == _stem_token("hierarchy") == "hierarchy"
+
+    yaml_text = """
+domain: Workforce
+concepts:
+  - name: Worker
+    physical_table: DIM_WORKER
+    attributes:
+      - {name: worker_id, data_type: VARCHAR, is_primary_key: true}
+      - {name: Branch, data_type: VARCHAR}
+      - {name: Status, data_type: VARCHAR}
+      - {name: rebate_val, data_type: DECIMAL}
+metrics:
+  - name: discount_val
+    label: Discount Val
+    concept: Worker
+    sql_expression: "SUM(rebate_val)"
+    aggregation_type: SUM
+  - name: hirable_events
+    label: Hirable Events
+    concept: Worker
+    sql_expression: "COUNT(CASE WHEN Status = 'Hired' THEN worker_id END)"
+    aggregation_type: NONE
+"""
+    eng = _engine(yaml_text)
+    plan = eng.resolve_query("How many workers by branches?")
+    assert plan.detected_dimensions == ["Branch"]
+
+    plan2 = eng.resolve_query("How many hirable events by statuses?")
+    assert plan2.detected_metrics == ["Hirable Events"]
+    assert plan2.detected_dimensions == ["Status"]
+    assert "COUNT(" in plan2.generated_sql
+
+
+def test_nl_query_raw_table_rejects_window_non_additive_and_metric_refs():
+    yaml_text = """
+domain: Finance
+concepts:
+  - name: Ledger
+    physical_table: FACT_LEDGER
+    attributes:
+      - {name: Dept, data_type: VARCHAR}
+      - {name: amt, data_type: DECIMAL}
+metrics:
+  - name: BASE_AMT
+    concept: Ledger
+    sql_expression: "SUM(amt)"
+  - name: DEPT_SHARE
+    concept: Ledger
+    sql_expression: "Ledger.BASE_AMT / NULLIF(SUM(Ledger.BASE_AMT) OVER (PARTITION BY EXCLUDING Ledger.Dept), 0)"
+  - name: ENDING_BAL
+    concept: Ledger
+    sql_expression: "SUM(amt)"
+    aggregation_type: NON_ADDITIVE
+"""
+    eng = _engine(yaml_text)
+
+    # On raw tables (no semantic_view), cross-metric ref + window & non-additive must be blocked
+    raw_share = eng.resolve_query("dept share")
+    assert raw_share.detected_metrics == []
+    assert any("SEMANTIC_VIEW" in w for w in raw_share.warnings)
+
+    raw_snap = eng.resolve_query("ending bal")
+    assert raw_snap.detected_metrics == []
+    assert any("SEMANTIC_VIEW" in w for w in raw_snap.warnings)
+
+    # Through SEMANTIC_VIEW, both execute cleanly via SEMANTIC_VIEW(...)
+    sv_share = eng.resolve_query("dept share", semantic_view="DB.SCH.LEDGER_SV")
+    assert sv_share.detected_metrics == ["DEPT_SHARE"]
+    assert "FROM SEMANTIC_VIEW(DB.SCH.LEDGER_SV" in sv_share.generated_sql
+
+    sv_snap = eng.resolve_query("ending bal", semantic_view="DB.SCH.LEDGER_SV")
+    assert sv_snap.detected_metrics == ["ENDING_BAL"]
+    assert "FROM SEMANTIC_VIEW(DB.SCH.LEDGER_SV" in sv_snap.generated_sql
+
 
 

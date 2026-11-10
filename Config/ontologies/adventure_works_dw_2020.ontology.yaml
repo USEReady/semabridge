@@ -2,8 +2,10 @@ domain: Adventure Works DW 2020
 id: adventure_works_dw_2020
 version: 1.0.0
 source_project_id: proj-adventure-works-dw-2020
+semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
 concepts:
 - name: Currency
+  logical_name: CURRENCY
   label: Currency
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -12,21 +14,25 @@ concepts:
   physical_table: Currency
   attributes:
   - name: CurrencyKey
+    logical_name: CURRENCY_CURRENCYKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Code
+    logical_name: CODE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Currency
+    logical_name: CURRENCY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Format String
+    logical_name: FORMAT_STRING
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -34,6 +40,7 @@ concepts:
   tags: []
   origin: bi
 - name: Currency Rate
+  logical_name: CURRENCY_RATE
   label: Currency Rate
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -42,21 +49,25 @@ concepts:
   physical_table: Currency Rate
   attributes:
   - name: CurrencyKey
+    logical_name: CURRENCY_RATE_CURRENCYKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: DateKey
+    logical_name: CURRENCY_RATE_DATEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Average Rate
+    logical_name: AVERAGE_RATE
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: End Of Day Rate
+    logical_name: END_OF_DAY_RATE
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
@@ -64,6 +75,7 @@ concepts:
   tags: []
   origin: bi
 - name: Customer
+  logical_name: CUSTOMER
   label: Customer
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -72,36 +84,43 @@ concepts:
   physical_table: Customer
   attributes:
   - name: CustomerKey
+    logical_name: CUSTOMER_CUSTOMERKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Customer ID
+    logical_name: CUSTOMER_ID
     data_type: VARCHAR
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Customer
+    logical_name: CUSTOMER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: City
+    logical_name: CITY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: State-Province
+    logical_name: STATE_PROVINCE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Country-Region
+    logical_name: COUNTRY_REGION
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Postal Code
+    logical_name: POSTAL_CODE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -109,6 +128,7 @@ concepts:
   tags: []
   origin: bi
 - name: Date
+  logical_name: COL_DATE
   label: Date
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -118,41 +138,49 @@ concepts:
   physical_table: Date
   attributes:
   - name: DateKey
+    logical_name: DATE_DATEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Date
+    logical_name: COL_DATE
     data_type: DATE
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Fiscal Year
+    logical_name: FISCAL_YEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Fiscal Quarter
+    logical_name: FISCAL_QUARTER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Month
+    logical_name: MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: MonthKey
+    logical_name: MONTHKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Full Date
+    logical_name: FULL_DATE
     data_type: DATE
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Month Number Of Year
+    logical_name: MONTH_NUMBER_OF_YEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
@@ -161,6 +189,7 @@ concepts:
   origin: bi
   bi_description: Filters the Sales table using sales order date
 - name: Product
+  logical_name: PRODUCT
   label: Product
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -169,61 +198,73 @@ concepts:
   physical_table: Product
   attributes:
   - name: ProductKey
+    logical_name: PRODUCT_PRODUCTKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Product
+    logical_name: PRODUCT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Standard Cost
+    logical_name: STANDARD_COST
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Color
+    logical_name: COLOR
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: List Price
+    logical_name: LIST_PRICE
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Model
+    logical_name: MODEL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Subcategory
+    logical_name: SUBCATEGORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Category
+    logical_name: CATEGORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: SKU
+    logical_name: SKU
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Safety Stock Level
+    logical_name: SAFETY_STOCK_LEVEL
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Reorder Point
+    logical_name: REORDER_POINT
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Class
+    logical_name: CLASS
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -231,6 +272,7 @@ concepts:
   tags: []
   origin: bi
 - name: Reseller
+  logical_name: RESELLER
   label: Reseller
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -239,41 +281,49 @@ concepts:
   physical_table: Reseller
   attributes:
   - name: ResellerKey
+    logical_name: RESELLER_RESELLERKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Business Type
+    logical_name: BUSINESS_TYPE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Reseller
+    logical_name: RESELLER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: City
+    logical_name: CITY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: State-Province
+    logical_name: STATE_PROVINCE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Country-Region
+    logical_name: COUNTRY_REGION
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Postal Code
+    logical_name: POSTAL_CODE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Reseller ID
+    logical_name: RESELLER_ID
     data_type: VARCHAR
     is_primary_key: true
     synonyms: []
@@ -281,6 +331,7 @@ concepts:
   tags: []
   origin: bi
 - name: Sales
+  logical_name: SALES
   label: Sales
   concept_type: ENTITY
   domain: Adventure Works DW 2020
@@ -289,81 +340,97 @@ concepts:
   physical_table: Sales
   attributes:
   - name: SalesOrderLineKey
+    logical_name: SALES_SALESORDERLINEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: ResellerKey
+    logical_name: SALES_RESELLERKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: CustomerKey
+    logical_name: SALES_CUSTOMERKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: ProductKey
+    logical_name: SALES_PRODUCTKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: OrderDateKey
+    logical_name: ORDERDATEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: DueDateKey
+    logical_name: DUEDATEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: ShipDateKey
+    logical_name: SHIPDATEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: SalesTerritoryKey
+    logical_name: SALES_SALESTERRITORYKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Order Quantity
+    logical_name: ORDER_QUANTITY
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Unit Price
+    logical_name: UNIT_PRICE
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Extended Amount
+    logical_name: EXTENDED_AMOUNT
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Product Standard Cost
+    logical_name: PRODUCT_STANDARD_COST
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Total Product Cost
+    logical_name: TOTAL_PRODUCT_COST
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Sales Amount
+    logical_name: SALES_AMOUNT
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Unit Price Discount Pct
+    logical_name: UNIT_PRICE_DISCOUNT_PCT
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: CurrencyKey
+    logical_name: SALES_CURRENCYKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
@@ -371,6 +438,7 @@ concepts:
   tags: []
   origin: bi
 - name: Sales Order
+  logical_name: SALES_ORDER
   label: Sales Order
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -379,21 +447,25 @@ concepts:
   physical_table: Sales Order
   attributes:
   - name: SalesOrderLineKey
+    logical_name: SALES_ORDER_SALESORDERLINEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Sales Order
+    logical_name: SALES_ORDER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Sales Order Line
+    logical_name: SALES_ORDER_LINE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Channel
+    logical_name: CHANNEL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -401,6 +473,7 @@ concepts:
   tags: []
   origin: bi
 - name: Sales Reason
+  logical_name: SALES_REASON
   label: Sales Reason
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -409,16 +482,19 @@ concepts:
   physical_table: Sales Reason
   attributes:
   - name: SalesReasonKey
+    logical_name: SALES_REASON_SALESREASONKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Sales Reason
+    logical_name: SALES_REASON
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Reason Type
+    logical_name: REASON_TYPE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -426,6 +502,7 @@ concepts:
   tags: []
   origin: bi
 - name: Sales Reason Bridge
+  logical_name: SALES_REASON_BRIDGE
   label: Sales Reason Bridge
   concept_type: ENTITY
   domain: Adventure Works DW 2020
@@ -434,11 +511,13 @@ concepts:
   physical_table: Sales Reason Bridge
   attributes:
   - name: SalesOrderLineKey
+    logical_name: SALES_REASON_BRIDGE_SALESORDERLINEKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: SalesReasonKey
+    logical_name: SALES_REASON_BRIDGE_SALESREASONKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
@@ -446,6 +525,7 @@ concepts:
   tags: []
   origin: bi
 - name: Sales Territory
+  logical_name: SALES_TERRITORY
   label: Sales Territory
   concept_type: DIMENSION
   domain: Adventure Works DW 2020
@@ -454,21 +534,25 @@ concepts:
   physical_table: Sales Territory
   attributes:
   - name: SalesTerritoryKey
+    logical_name: SALES_TERRITORY_SALESTERRITORYKEY
     data_type: INTEGER
     is_primary_key: true
     synonyms: []
     origin: bi
   - name: Region
+    logical_name: REGION
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Country
+    logical_name: COUNTRY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
     origin: bi
   - name: Group
+    logical_name: COL_GROUP
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
@@ -477,195 +561,243 @@ concepts:
   origin: bi
 metrics:
 - name: Product - Sum of Standard Cost
+  logical_name: PRODUCT_SUM_OF_STANDARD_COST
   label: Product - Sum Of Standard Cost
   sql_expression: SUM(product."Standard Cost")
   dax_expression: SUM([Standard Cost])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Product - Sum of Standard Cost
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Product
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Product - Sum of List Price
+  logical_name: PRODUCT_SUM_OF_LIST_PRICE
   label: Product - Sum Of List Price
   sql_expression: SUM(product."List Price")
   dax_expression: SUM([List Price])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Product - Sum of List Price
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Product
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Salesorderlinekey
+  logical_name: SALES_SUM_OF_SALESORDERLINEKEY
   label: Sales - Sum Of Salesorderlinekey
   sql_expression: SUM(sales."SalesOrderLineKey")
   dax_expression: SUM([SalesOrderLineKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Salesorderlinekey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Salesterritorykey
+  logical_name: SALES_SUM_OF_SALESTERRITORYKEY
   label: Sales - Sum Of Salesterritorykey
   sql_expression: SUM(sales."SalesTerritoryKey")
   dax_expression: SUM([SalesTerritoryKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Salesterritorykey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Order Quantity
+  logical_name: SALES_SUM_OF_ORDER_QUANTITY
   label: Sales - Sum Of Order Quantity
   sql_expression: SUM(sales."Order Quantity")
   dax_expression: SUM([Order Quantity])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Order Quantity
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Unit Price
+  logical_name: SALES_SUM_OF_UNIT_PRICE
   label: Sales - Sum Of Unit Price
   sql_expression: SUM(sales."Unit Price")
   dax_expression: SUM([Unit Price])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Unit Price
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Extended Amount
+  logical_name: SALES_SUM_OF_EXTENDED_AMOUNT
   label: Sales - Sum Of Extended Amount
   sql_expression: SUM(sales."Extended Amount")
   dax_expression: SUM([Extended Amount])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Extended Amount
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Product Standard Cost
+  logical_name: SALES_SUM_OF_PRODUCT_STANDARD_COST
   label: Sales - Sum Of Product Standard Cost
   sql_expression: SUM(sales."Product Standard Cost")
   dax_expression: SUM([Product Standard Cost])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Product Standard Cost
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Total Product Cost
+  logical_name: SALES_SUM_OF_TOTAL_PRODUCT_COST
   label: Sales - Sum Of Total Product Cost
   sql_expression: SUM(sales."Total Product Cost")
   dax_expression: SUM([Total Product Cost])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Total Product Cost
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Sales Amount
+  logical_name: SALES_SUM_OF_SALES_AMOUNT
   label: Sales - Sum Of Sales Amount
   sql_expression: SUM(sales."Sales Amount")
   dax_expression: SUM([Sales Amount])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Sales Amount
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales - Sum of Unit Price Discount Pct
+  logical_name: SALES_SUM_OF_UNIT_PRICE_DISCOUNT_PCT
   label: Sales - Sum Of Unit Price Discount Pct
   sql_expression: SUM(sales."Unit Price Discount Pct")
   dax_expression: SUM([Unit Price Discount Pct])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales - Sum of Unit Price Discount Pct
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales Order - Sum of Salesorderlinekey
+  logical_name: SALES_ORDER_SUM_OF_SALESORDERLINEKEY
   label: Sales Order - Sum Of Salesorderlinekey
   sql_expression: SUM(salesorder."SalesOrderLineKey")
   dax_expression: SUM([SalesOrderLineKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales Order - Sum of Salesorderlinekey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales Order
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales Reason - Sum of Salesreasonkey
+  logical_name: SALES_REASON_SUM_OF_SALESREASONKEY
   label: Sales Reason - Sum Of Salesreasonkey
   sql_expression: SUM(salesreason."SalesReasonKey")
   dax_expression: SUM([SalesReasonKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales Reason - Sum of Salesreasonkey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales Reason
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales Reason Bridge - Sum of Salesorderlinekey
+  logical_name: SALES_REASON_BRIDGE_SUM_OF_SALESORDERLINEKEY
   label: Sales Reason Bridge - Sum Of Salesorderlinekey
   sql_expression: SUM(salesreasonbridge."SalesOrderLineKey")
   dax_expression: SUM([SalesOrderLineKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales Reason Bridge - Sum of Salesorderlinekey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales Reason Bridge
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales Reason Bridge - Sum of Salesreasonkey
+  logical_name: SALES_REASON_BRIDGE_SUM_OF_SALESREASONKEY
   label: Sales Reason Bridge - Sum Of Salesreasonkey
   sql_expression: SUM(salesreasonbridge."SalesReasonKey")
   dax_expression: SUM([SalesReasonKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales Reason Bridge - Sum of Salesreasonkey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales Reason Bridge
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 - name: Sales Territory - Sum of Salesterritorykey
+  logical_name: SALES_TERRITORY_SUM_OF_SALESTERRITORYKEY
   label: Sales Territory - Sum Of Salesterritorykey
   sql_expression: SUM(salesterritory."SalesTerritoryKey")
   dax_expression: SUM([SalesTerritoryKey])
   aggregation_type: SUM
   grain: []
-  synonyms: []
+  synonyms:
+  - Sales Territory - Sum of Salesterritorykey
   business_rules: []
   domain: Adventure Works DW 2020
   concept: Sales Territory
+  semantic_view_name: SEMABRIDGE.ADVENTURE_WORKS_DW_2020.ADVENTURE_WORKS_DW_2020_SEMANTIC
   tags: []
   origin: bi
 relationships:

@@ -773,6 +773,111 @@ class FederatedOntologyLoader:
                     out.append(t)
         return out
 
+    @staticmethod
+    def _to_logical_id(raw: str) -> str:
+        """Compute deterministic Snowflake logical identifier matching IdentifierSanitizer rules."""
+        from semabridge.utils.identifiers import IdentifierSanitizer
+        return IdentifierSanitizer().to_alias(str(raw or "").strip() or "COL")
+
+    @classmethod
+    def _extract_semantic_view_metadata(cls, ddl: Optional[str]) -> Dict[str, Any]:
+        """Extract deployed view name, table aliases, logical dim/metric names, and NULL reasons from DDL."""
+        meta: Dict[str, Any] = {
+            "view_name": None,
+            "tables": {},      # norm_key -> table_alias
+            "dims": {},        # (table_alias_upper, norm_col_key) -> logical_dim_name
+            "metrics": {},     # norm_metric_key -> (table_alias, logical_metric_name, null_reason)
+        }
+        if not ddl or not isinstance(ddl, str):
+            return meta
+
+        hdr = re.search(r"CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+([^\s(]+)", ddl, re.I)
+        if hdr:
+            raw_vn = hdr.group(1).strip()
+            parts = [p.strip().strip('"') for p in raw_vn.split(".") if p.strip()]
+            meta["view_name"] = ".".join(parts) if parts else raw_vn
+
+        def _norm(val: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(val or "").casefold())
+
+        def _extract_block(keyword: str) -> str:
+            m = re.search(rf"\b{keyword}\s*\(", ddl, re.I)
+            if not m:
+                return ""
+            start = m.end()
+            depth = 1
+            in_sq = False
+            i = start
+            n = len(ddl)
+            while i < n and depth > 0:
+                ch = ddl[i]
+                if in_sq:
+                    if ch == "'":
+                        if i + 1 < n and ddl[i + 1] == "'":
+                            i += 2
+                            continue
+                        in_sq = False
+                else:
+                    if ch == "'":
+                        in_sq = True
+                    elif ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            return ddl[start:i]
+                i += 1
+            return ""
+
+        for line in _extract_block("TABLES").splitlines():
+            tm = re.match(r"^\s*([A-Za-z0-9_]+)\s+AS\s+([^\s,(]+)", line, re.I)
+            if tm:
+                t_alias = tm.group(1).strip()
+                phys_parts = [p.strip().strip('"') for p in tm.group(2).split(".") if p.strip()]
+                phys_tbl = phys_parts[-1] if phys_parts else t_alias
+                meta["tables"][_norm(t_alias)] = t_alias
+                meta["tables"][_norm(phys_tbl)] = t_alias
+
+        for line in _extract_block("DIMENSIONS").splitlines():
+            dm = re.match(
+                r'^\s*(PRIVATE\s+)?([A-Za-z0-9_]+)\."?([^"\s]+)"?\s+AS\s+([A-Za-z0-9_]+)\."?([^"\s,)]+)"?',
+                line,
+                re.I,
+            )
+            if dm and not dm.group(1):
+                t_alias = dm.group(2).strip()
+                logical_col = dm.group(3).strip()
+                phys_col = dm.group(5).strip()
+                tu = t_alias.upper()
+                meta["dims"][(tu, _norm(phys_col))] = logical_col
+                meta["dims"][(tu, _norm(logical_col))] = logical_col
+                syn_m = re.search(r"WITH\s+SYNONYMS\s*=\s*\(([^)]+)\)", line, re.I)
+                if syn_m:
+                    for s in re.findall(r"'((?:[^']|'')*)'", syn_m.group(1)):
+                        meta["dims"].setdefault((tu, _norm(s.replace("''", "'"))), logical_col)
+
+        for line in _extract_block("METRICS").splitlines():
+            mm = re.match(r'^\s*(PRIVATE\s+)?([A-Za-z0-9_]+)\."?([^"\s]+)"?\s+AS\s+(.+?)\s*,?\s*$', line, re.I)
+            if not mm:
+                continue
+            is_priv = bool(mm.group(1))
+            t_alias = mm.group(2).strip()
+            logical_m = mm.group(3).strip()
+            rhs = mm.group(4).strip()
+            null_reason: Optional[str] = None
+            if is_priv:
+                null_reason = "Marked PRIVATE in deployed semantic view"
+            elif re.match(r"^(?:CAST\s*\(\s*NULL\b|NULL\b)", rhs, re.I):
+                cm = re.search(r"\bCOMMENT\s*=\s*'((?:[^']|'')*)'", rhs, re.I)
+                null_reason = (cm.group(1).replace("''", "'") if cm else "Compiled as NULL placeholder during deployment")
+            meta["metrics"][_norm(logical_m)] = (t_alias, logical_m, null_reason)
+            syn_m = re.search(r"WITH\s+SYNONYMS\s*=\s*\(([^)]+)\)", line, re.I)
+            if syn_m:
+                for s in re.findall(r"'((?:[^']|'')*)'", syn_m.group(1)):
+                    meta["metrics"].setdefault(_norm(s.replace("''", "'")), (t_alias, logical_m, null_reason))
+
+        return meta
+
     @classmethod
     def from_osi_model(
         cls,
@@ -780,6 +885,9 @@ class FederatedOntologyLoader:
         domain_name: Optional[str] = None,
         existing_ontology: Optional[DomainOntology] = None,
         report: Optional[Dict[str, List[str]]] = None,
+        semantic_view_ddl: Optional[str] = None,
+        semantic_view_name: Optional[str] = None,
+        deployment_error: Optional[str] = None,
     ) -> DomainOntology:
         """Convert an OSIModel into a DomainOntology, MERGING into ``existing_ontology``.
 
@@ -800,6 +908,15 @@ class FederatedOntologyLoader:
         for k in ("added", "updated", "stale", "kept_user"):
             rep.setdefault(k, [])
         union = cls._union
+        sv_meta = cls._extract_semantic_view_metadata(semantic_view_ddl)
+        resolved_sv_name = (
+            semantic_view_name
+            or sv_meta.get("view_name")
+            or (existing_ontology.semantic_view_name if existing_ontology else None)
+        )
+
+        def _norm_key(val: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(val or "").casefold())
 
         domain = (
             (existing_ontology.domain if existing_ontology else None)
@@ -834,6 +951,12 @@ class FederatedOntologyLoader:
             if c_key in new_concepts:
                 continue
             exist_c = existing_concepts.get(c_key)
+            ds_logical = (
+                sv_meta["tables"].get(_norm_key(ds.unique_name))
+                or sv_meta["tables"].get(_norm_key(ds.source_table or ""))
+                or (exist_c.logical_name if exist_c and exist_c.logical_name else None)
+                or cls._to_logical_id(ds.unique_name)
+            )
 
             existing_attrs = {a.name.casefold(): a for a in (exist_c.attributes if exist_c else [])}
             attrs: List[DomainAttribute] = []
@@ -845,9 +968,16 @@ class FederatedOntologyLoader:
                 bi_attr_keys.add(a_key)
                 exist_a = existing_attrs.get(a_key)
                 desc, bi_desc = cls._merge_description(exist_a, col.description)
+                col_logical = (
+                    sv_meta["dims"].get((ds_logical.upper(), _norm_key(col.source_column or col.unique_name)))
+                    or sv_meta["dims"].get((ds_logical.upper(), _norm_key(col.unique_name)))
+                    or (exist_a.logical_name if exist_a and exist_a.logical_name else None)
+                    or cls._to_logical_id(col.unique_name)
+                )
                 attrs.append(
                     DomainAttribute(
                         name=exist_a.name if exist_a else col.unique_name,
+                        logical_name=col_logical,
                         data_type=osi_to_sql_type.get(col.data_type, "VARCHAR"),
                         description=desc,
                         is_primary_key=exist_a.is_primary_key if exist_a else col.is_key,
@@ -877,6 +1007,7 @@ class FederatedOntologyLoader:
 
             new_concepts[c_key] = DomainConcept(
                 name=exist_c.name if exist_c else ds.unique_name,
+                logical_name=ds_logical,
                 label=exist_c.label if (exist_c and exist_c.label) else (ds.label or ds.unique_name),
                 concept_type=exist_c.concept_type if exist_c else inferred_type,
                 domain=domain,
@@ -953,12 +1084,37 @@ class FederatedOntologyLoader:
             if m.label and m.label not in metric_synonyms:
                 metric_synonyms.append(m.label)
 
+            sv_m_entry = (
+                sv_meta["metrics"].get(_norm_key(m.unique_name))
+                or sv_meta["metrics"].get(_norm_key(orig_name or ""))
+                or sv_meta["metrics"].get(_norm_key(m.label or ""))
+            )
+            m_logical = (
+                sv_m_entry[1]
+                if sv_m_entry
+                else (exist_m.logical_name if exist_m and exist_m.logical_name else cls._to_logical_id(m.unique_name))
+            )
+            m_deploy_reason = sv_m_entry[2] if sv_m_entry else (exist_m.deploy_reason if exist_m else None)
+            if sv_m_entry and sv_m_entry[2] and not user_formula:
+                # Metric compiled to NULL placeholder or PRIVATE in deployed DDL: mark unanswerable with reason
+                calc_expr = None
+            m_concept = m.dataset or (exist_m.concept if exist_m else None)
+            if sv_m_entry:
+                deployed_c = next(
+                    (c_obj.name for c_obj in concepts if (c_obj.logical_name or "").upper() == sv_m_entry[0].upper()),
+                    None,
+                )
+                if deployed_c:
+                    m_concept = deployed_c
+
             new_metrics[m_key] = DomainMetric(
                 name=exist_m.name if exist_m else m.unique_name,
+                logical_name=m_logical,
                 label=exist_m.label if (exist_m and exist_m.label) else (orig_name or (m.label if m.label and m.label != m.unique_name else None) or m.unique_name.replace("_", " ").title()),
                 description=desc,
                 sql_expression=exist_m.sql_expression if user_formula else calc_expr,
                 dax_expression=getattr(exist_m, "dax_expression", None) or dax_expr,
+                deploy_reason=m_deploy_reason,
                 aggregation_type=exist_m.aggregation_type if user_formula else agg_type,
                 grain=exist_m.grain if exist_m else [],
                 synonyms=union(exist_m.synonyms if exist_m else [], metric_synonyms),
@@ -967,8 +1123,8 @@ class FederatedOntologyLoader:
                 derives_from=exist_m.derives_from if exist_m else [],
                 data_steward=(exist_m.data_steward if (exist_m and exist_m.data_steward) else (m.business_owner or None)),
                 domain=domain,
-                concept=m.dataset or (exist_m.concept if exist_m else None),
-                semantic_view_name=exist_m.semantic_view_name if exist_m else None,
+                concept=m_concept,
+                semantic_view_name=resolved_sv_name or (exist_m.semantic_view_name if exist_m else None),
                 tags=exist_m.tags if exist_m else [],
                 maps_to=exist_m.maps_to if exist_m else [],
                 origin="bi",
@@ -1096,6 +1252,8 @@ class FederatedOntologyLoader:
                 if (existing_ontology and existing_ontology.description)
                 else model.description
             ),
+            semantic_view_name=resolved_sv_name,
+            deployment_error=deployment_error or (existing_ontology.deployment_error if existing_ontology else None),
             concepts=concepts,
             metrics=metrics,
             relationships=deduped,

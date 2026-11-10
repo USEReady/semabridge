@@ -81,6 +81,7 @@ CleanList = Annotated[List[str], AfterValidator(_clean_list)]
 
 class DomainAttribute(_StrictModel):
     name: str = Field(..., min_length=1)
+    logical_name: Optional[str] = None
     data_type: str = "VARCHAR"
     description: Optional[str] = None
     is_primary_key: bool = False
@@ -95,6 +96,7 @@ class DomainAttribute(_StrictModel):
 
 class DomainConcept(_StrictModel):
     name: str = Field(..., min_length=1)
+    logical_name: Optional[str] = None
     label: Optional[str] = None
     concept_type: ConceptType = ConceptType.ENTITY
     domain: Optional[str] = None
@@ -123,6 +125,7 @@ class DomainConcept(_StrictModel):
 
 class DomainMetric(_StrictModel):
     name: str = Field(..., min_length=1)
+    logical_name: Optional[str] = None
     label: Optional[str] = None
     description: Optional[str] = None
     # Optional: an ontology entry may only annotate an existing BI measure.
@@ -130,6 +133,7 @@ class DomainMetric(_StrictModel):
     sql_expression: Optional[str] = None
     # dax_expression: Preserves the original Power BI DAX formula separately so DAX syntax does not leak into SQL.
     dax_expression: Optional[str] = None
+    deploy_reason: Optional[str] = None
     aggregation_type: str = "SUM"
     grain: List[str] = Field(default_factory=list)
     synonyms: CleanList = Field(default_factory=list)
@@ -192,6 +196,8 @@ class DomainOntology(_StrictModel):
     # Project whose BI model this domain was bootstrapped from; used by
     # "sync with OSI" to re-merge the latest model into this domain.
     source_project_id: Optional[str] = None
+    semantic_view_name: Optional[str] = None
+    deployment_error: Optional[str] = None
     concepts: List[DomainConcept] = Field(default_factory=list)
     metrics: List[DomainMetric] = Field(default_factory=list)
     relationships: List[DomainRelationship] = Field(default_factory=list)

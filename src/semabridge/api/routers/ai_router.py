@@ -130,31 +130,24 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
 
     allowed_domains: Optional[List[str]] = None
     resolved_semantic_view: Optional[str] = req.semantic_view
+    deploy_error: Optional[str] = None
 
     # Project context scoping:
     # 1. When project_id is provided, restrict candidate domains to those attached to the project
     #    to prevent cross-domain pollution or metric name collisions.
-    # 2. Automatically resolve the deployed Snowflake Semantic View name from the project snapshot
-    #    so the engine targets SEMANTIC_VIEW(...) rather than physical tables.
+    # 2. Resolve the deployed fully qualified db.schema.view from the project's deployment record
+    #    (never derived from the domain name).
     if req.project_id:
         model_name: Optional[str] = None
-        if not resolved_semantic_view:
-            try:
-                from semabridge.repository.model_repository import ModelRepository
-                from semabridge.utils.name_translator import get_target_deployment_name
-                snap = ModelRepository().get_head(req.project_id)
-                if snap:
-                    if getattr(snap, "view_name", None):
-                        resolved_semantic_view = snap.view_name
-                    if snap.sml_blob:
-                        import yaml as _yaml
-                        raw_data = _yaml.safe_load(snap.sml_blob) if isinstance(snap.sml_blob, (str, bytes)) else snap.sml_blob
-                        if isinstance(raw_data, dict):
-                            model_name = raw_data.get("unique_name") or req.project_id
-                            if not resolved_semantic_view:
-                                resolved_semantic_view = get_target_deployment_name(model_name, "snowflake")
-            except Exception as e:
-                logger.debug("Could not resolve semantic view name from project '%s': %s", req.project_id, e)
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            dep_info = ModelRepository().get_project_deployment_info(req.project_id)
+            model_name = dep_info.get("model_name")
+            deploy_error = dep_info.get("deploy_error")
+            if not resolved_semantic_view:
+                resolved_semantic_view = dep_info.get("semantic_view")
+        except Exception as e:
+            logger.debug("Could not resolve deployment info for project '%s': %s", req.project_id, e)
 
         p_domains = ontology_store.get_project_domains(req.project_id)
         if p_domains:
@@ -173,6 +166,7 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
         dialect=effective_dialect,
         semantic_view=resolved_semantic_view,
         allowed_domains=allowed_domains,
+        deployment_error=deploy_error,
     )
     return plan
 
@@ -246,10 +240,49 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
         import time
         t0 = time.perf_counter()
         try:
+            import os
+            from pathlib import Path
+            from sqlalchemy import select
             from semabridge.core.settings import reload_settings
             from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
+            from semabridge.repository.credential_manager import CredentialManager
+            from semabridge.repository.orm.models import Credential
             import snowflake.connector
 
+            cm = CredentialManager()
+            # Inject global (uid=0) Snowflake settings first, then user-scoped credentials containing auth secrets (keypair/password/OAuth)
+            candidate_uids = [0, 1]
+            try:
+                with cm._session() as sess:
+                    rows_uid = sess.scalars(
+                        select(Credential.owner_id).where(Credential.service == "snowflake").distinct()
+                    ).all()
+                    for r_uid in sorted(rows_uid):
+                        if r_uid not in candidate_uids:
+                            candidate_uids.append(r_uid)
+            except Exception:
+                pass
+            for uid in candidate_uids:
+                try:
+                    creds = cm.get_credentials("snowflake", user_id=uid)
+                    if creds and (
+                        uid == 0
+                        or creds.get("private_key")
+                        or creds.get("password")
+                        or creds.get("oauth_client_secret")
+                        or creds.get("authenticator")
+                    ):
+                        cm.inject_credentials_to_env("snowflake", user_id=uid)
+                except Exception:
+                    pass
+            # Support passwordless env keypair setup via SNOWFLAKE_PRIVATE_KEY_PATH when inline PEM is absent
+            pk_path = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH", "").strip()
+            if pk_path and not os.environ.get("SNOWFLAKE_PRIVATE_KEY"):
+                p = Path(pk_path).expanduser()
+                if p.is_file():
+                    os.environ["SNOWFLAKE_PRIVATE_KEY"] = p.read_text(encoding="utf-8")
+                    if not os.environ.get("SNOWFLAKE_AUTH_TYPE"):
+                        os.environ["SNOWFLAKE_AUTH_TYPE"] = "keypair"
             cfg = reload_settings()
             connect_kwargs = get_snowflake_connect_kwargs(cfg.snowflake)
             if not connect_kwargs.get("account") or not connect_kwargs.get("user"):

@@ -355,6 +355,14 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
                     target_domain = d.domain
                 break
 
+    dep_info: Dict[str, Optional[str]] = {}
+    if project_id:
+        try:
+            from semabridge.repository.model_repository import ModelRepository
+            dep_info = ModelRepository().get_project_deployment_info(project_id)
+        except Exception:
+            dep_info = {}
+
     sync_report: Dict[str, List[str]] = {}
     try:
         domain_ontology = FederatedOntologyLoader.from_osi_model(
@@ -362,6 +370,9 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
             domain_name=target_domain,
             existing_ontology=existing_domain_obj,
             report=sync_report,
+            semantic_view_ddl=dep_info.get("ddl"),
+            semantic_view_name=dep_info.get("semantic_view"),
+            deployment_error=dep_info.get("deploy_error"),
         )
         if project_id:
             domain_ontology.source_project_id = project_id
