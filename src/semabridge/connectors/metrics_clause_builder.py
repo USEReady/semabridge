@@ -820,6 +820,19 @@ class MetricsClauseBuilder:
                         comment_clause = f" COMMENT = '{safe_comment}'"
                         break
 
+            whatif_match = re.search(
+                r"SELECTEDVALUE\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))\[([^\]]+)\]\s*,\s*([^\)]+)\)",
+                str(getattr(metric, "expression", "") or ""),
+                re.IGNORECASE,
+            )
+            if whatif_match and not comment_clause:
+                p_tbl = whatif_match.group(1) or whatif_match.group(2)
+                p_col = whatif_match.group(3)
+                p_def = whatif_match.group(4).strip().strip("'\"")
+                p_name = p_tbl or p_col or "Parameter"
+                safe_comment = self._clean_comment(f"What-if parameter: {p_name}, default: {p_def}")
+                comment_clause = f" COMMENT = '{safe_comment}'"
+
             # PRIVATE comes only from an explicit flag set where the metric
             # was created (SemaBridge-generated helpers are created with
             # access_modifier="private_access"; see
@@ -840,7 +853,28 @@ class MetricsClauseBuilder:
                         is_referencing_non_additive = True
                         break
 
-            lhs_target = f'"{safe_metric_name}"' if is_referencing_non_additive else f'{metric_entity_alias}."{safe_metric_name}"'
+            # Metrics built from other metrics reference them by name without table qualifier on LHS:
+            # e.g. TO_PCT AS SEPS / NULLIF(ACTIVES, 0)
+            is_referencing_metrics = False
+            for cand_m in emittable_metric_name_set | set(metric_to_alias.keys()):
+                if cand_m.upper() != safe_metric_name.upper() and re.search(r'\b' + re.escape(cand_m) + r'\b', expr, re.IGNORECASE):
+                    is_referencing_metrics = True
+                    break
+
+            if is_referencing_metrics or is_referencing_non_additive:
+                lhs_target = safe_metric_name if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', safe_metric_name) else f'"{safe_metric_name}"'
+                all_known_metric_names = emittable_metric_name_set | set(metric_to_alias.keys()) | metric_name_set
+                for cand_m in all_known_metric_names:
+                    if cand_m.upper() != safe_metric_name.upper():
+                        cand_ref = cand_m if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', cand_m) else f'"{cand_m}"'
+                        expr = re.sub(
+                            rf'(?:"?[A-Za-z_][A-Za-z0-9_$]*"?\.)+(?:"{re.escape(cand_m)}"|\b{re.escape(cand_m)}\b)',
+                            cand_ref,
+                            expr,
+                            flags=re.IGNORECASE,
+                        )
+            else:
+                lhs_target = f'{metric_entity_alias}."{safe_metric_name}"'
             metrics_lines.append(
                 f'  {priv_prefix}{lhs_target}{non_additive_clause} AS {expr}'
                 f'{synonyms_clause(syns_to_emit, None if comment_clause else metric_comment_text(metric))}{comment_clause}'
@@ -2240,7 +2274,7 @@ class MetricsClauseBuilder:
             expr_by_name = {}
             comment_by_name: Dict[str, str] = {}
             for line in current:
-                m = re.search(r'^\s*(PRIVATE\s+)?([A-Z_][A-Z0-9_]*)\."([^\"]+)"(\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
+                m = re.search(r'^\s*(PRIVATE\s+)?(?:([A-Z_][A-Z0-9_]*)\.)?"?([A-Za-z0-9_]+)"?(\s+NON\s+ADDITIVE\s+BY\s*\([^)]+\))?\s+AS\s+(.+?)\s*$', line.strip().rstrip(','))
                 if not m:
                     parsed.append((line, "", None, None, "", "", "", ""))
                     continue
@@ -2277,8 +2311,11 @@ class MetricsClauseBuilder:
                     next_lines.append(line)
                     continue
 
-                refs = set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
-                metric_refs = [r for r in refs if r in metric_name_set and r != name]
+                lhs_alias = f'{alias}.' if alias else ""
+                lhs = f'{priv}{lhs_alias}"{name}"' if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name) or alias else f'{priv}{name}'
+
+                tokens = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr)) | set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
+                metric_refs = [r for r in tokens if r in metric_name_set and r != name]
 
                 # 1. Fail-closed: a reference to an undefined metric emits NULL placeholder;
                 # a reference to a NULL placeholder makes this metric a NULL placeholder too (NULL propagates).
@@ -2297,7 +2334,7 @@ class MetricsClauseBuilder:
                     reason = f"depends on untranslatable part: [{missing_ref}]"
                     safe_comm = self._clean_comment(reason)
                     self.__dict__.setdefault("_null_propagated", {})[name] = "missing/unresolved dependency"
-                    next_lines.append(f'  {priv}{alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                    next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason
                     rewritten = True
                     continue
@@ -2310,7 +2347,7 @@ class MetricsClauseBuilder:
                         ref_reason = m_blk.group(1).strip() if m_blk else "not translatable"
                     reason = f"depends on untranslatable part: [{null_ref}]"
                     safe_comm = self._clean_comment(reason)
-                    next_lines.append(f'  {priv}{alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                    next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason
                     rewritten = True
                     continue
@@ -2319,51 +2356,11 @@ class MetricsClauseBuilder:
                     if not comment_text:
                         comment_text = "not applicable: not translatable"
                     safe_comm = self._clean_comment(comment_text)
-                    next_lines.append(f'  {priv}{alias}."{name}" AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                    next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     continue
 
-                # 2. Inline valid referenced metrics that haven't been inlined into this line yet
-                if "OVER (" in expr.upper() or "OVER(" in expr.upper():
-                    next_lines.append(line)
-                    continue
-                already_inlined = inlined_by_metric.setdefault(name, set())
-                uninlined_metric_refs = [r for r in metric_refs if r not in already_inlined]
-
-                if uninlined_metric_refs:
-                    logger.info("PRUNER MATCH: metric '%s' inlining metrics: %s", name, uninlined_metric_refs)
-                    expanded_expr = expr
-                    substituted = False
-                    for ref_name in sorted(set(uninlined_metric_refs)):
-                        if getattr(self, "_dataset_col_lookup", None):
-                            clean_ref = self.identifier_sanitizer.sanitize_column(ref_name).upper()
-                            is_clash = any(
-                                any(self.identifier_sanitizer.sanitize_column(c).upper() == clean_ref for c in cols)
-                                for cols in self._dataset_col_lookup.values()
-                            )
-                            if is_clash:
-                                already_inlined.add(ref_name)
-                                continue
-
-                        ref_expr = expr_by_name.get(ref_name)
-                        if ref_expr:
-                            clean_ref_expr = re.sub(
-                                r"\s+WITH\s+SYNONYMS\s*=\s*\((?:[^()']|'(?:''|[^'])*')*\)",
-                                "",
-                                ref_expr,
-                                flags=re.IGNORECASE
-                            )
-                            pattern = rf'(?:[A-Z0-9_]+\.)?"{re.escape(ref_name)}"'
-                            expanded_expr = re.sub(pattern, f'({clean_ref_expr.strip()})', expanded_expr)
-                            already_inlined.add(ref_name)
-                            substituted = True
-
-                    if substituted:
-                        if "PARTITION BY EXCLUDING" in expanded_expr.upper():
-                            expanded_expr = self._align_partition_by_excluding(expanded_expr)
-                        next_lines.append(f'  {priv}{alias}."{name}"{non_additive_clause} AS {expanded_expr}{synonym_suffix}')
-                        rewritten = True
-                        continue
-
+                # 2. Metrics built from other metrics reference them by name instead of copying their formulas.
+                # This keeps non-additive behavior (NON ADDITIVE BY) of the referenced metric.
                 next_lines.append(line)
 
             if not removed and not rewritten:

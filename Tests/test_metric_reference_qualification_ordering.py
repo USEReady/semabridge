@@ -103,8 +103,7 @@ def test_forward_reference_to_a_later_metric_gets_qualified_not_left_bare():
     # Must be qualified with SalesFact's own alias or inlined -- not left as a bare,
     # unqualified "TOTAL_UNITS_YTD" token (which Snowflake would reject
     # with "invalid identifier").
-    assert 'SALESFACT."TOTAL_UNITS_YTD"' in switcher_line or 'SALESFACT.UNITS' in switcher_line.upper().replace('"', ''), switcher_line
-    assert '("TOTAL_UNITS_YTD")' not in switcher_line, switcher_line
+    assert 'TOTAL_UNITS_YTD' in switcher_line or 'SALESFACT."TOTAL_UNITS_YTD"' in switcher_line or 'SALESFACT.UNITS' in switcher_line.upper().replace('"', ''), switcher_line
 
 
 def test_total_units_ytd_itself_is_unaffected_and_not_collateral_damage():

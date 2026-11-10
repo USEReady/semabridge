@@ -927,8 +927,8 @@ class DAXTranslator:
                 non_additive_dimensions=cb_dims,
 
                 table_key_map=table_key_map,
-                datasets=kwargs.get("datasets"),
-                dataset_col_lookup=dataset_col_lookup,
+                datasets=getattr(self, "_datasets", None),
+                dataset_col_lookup=getattr(self, "_dataset_col_lookup", None),
 
             )
 
@@ -3060,9 +3060,11 @@ class DAXTranslator:
 
                     return None
 
+                ref_alias = to_alias(ref).upper()
+
                 token_pattern = re.compile(rf"\[{re.escape(ref)}\]", re.IGNORECASE)
 
-                replaced = token_pattern.sub(f"({dep_sql})", replaced)
+                replaced = token_pattern.sub(ref_alias, replaced)
 
             return replaced
 
@@ -3237,8 +3239,8 @@ class DAXTranslator:
                     known_measure_names=set(measure_map.keys()),
 
                     allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
-                datasets=kwargs.get("datasets"),
-                dataset_col_lookup=dataset_col_lookup,
+                datasets=getattr(self, "_datasets", None),
+                dataset_col_lookup=getattr(self, "_dataset_col_lookup", None),
 
                 )
 

@@ -2019,21 +2019,26 @@ class DaxSqlRenderer:
 
     def _ti_date_column_sql(self, args: List[DaxNode]) -> str:
         """The dates column exactly as written in the DAX, on its own table's alias."""
+        def _extract_date_node(node: DaxNode) -> Optional[DaxNode]:
+            if isinstance(node, (ColumnRefNode, IdentifierNode)):
+                return node
+            if isinstance(node, FunctionCallNode) and node.args:
+                for sub in node.args:
+                    found = _extract_date_node(sub)
+                    if found:
+                        return found
+            return None
+
         search_args = args[1:] if len(args) > 1 else args
-        for arg in search_args:
-            if isinstance(arg, ColumnRefNode) and arg.column:
-                alias = self._resolve_table_alias(arg.table) if arg.table else self.date_alias
-                return f'{alias}."{sanitize_column(arg.column)}"'
-            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
+        candidates = list(search_args) + list(args)
+        for arg in candidates:
+            date_node = _extract_date_node(arg)
+            if isinstance(date_node, ColumnRefNode) and date_node.column:
+                alias = self._resolve_table_alias(date_node.table) if date_node.table else self.date_alias
+                return f'{alias}."{sanitize_column(date_node.column)}"'
+            if isinstance(date_node, IdentifierNode) and getattr(date_node, "name", None):
                 alias = self.date_alias
-                return f'{alias}."{sanitize_column(arg.name)}"'
-        for arg in args:
-            if isinstance(arg, ColumnRefNode) and arg.column:
-                alias = self._resolve_table_alias(arg.table) if arg.table else self.date_alias
-                return f'{alias}."{sanitize_column(arg.column)}"'
-            if isinstance(arg, IdentifierNode) and getattr(arg, "name", None):
-                alias = self.date_alias
-                return f'{alias}."{sanitize_column(arg.name)}"'
+                return f'{alias}."{sanitize_column(date_node.name)}"'
         raise self.DaxRenderError("no date column found for time-intelligence function")
 
 
@@ -3138,13 +3143,13 @@ class DaxSqlRenderer:
                 )
                 if filtered:
                     return f"({filtered})"
-            return f"({val})"
+            ref_name = to_alias(node.name).upper()
+            return f'"{ref_name}"' if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', ref_name) else ref_name
 
         if name_cf in self._known_measure_names_casefold:
             if not self.row_context_stack:
-                raise self.DaxRenderError(
-                    f"Unresolved measure reference [{node.name}]: known measure with no resolved SQL yet"
-                )
+                ref_name = to_alias(node.name).upper()
+                return f'"{ref_name}"' if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', ref_name) else ref_name
 
         # The caller has no measure-registry knowledge of this name at all —
 
@@ -3865,6 +3870,34 @@ class DaxSqlRenderer:
         if func == "IF":
             return self._render_if(node.args)
 
+
+
+        # RANKX(table, expr, [val], [order], [ties])
+        if func == "RANKX":
+            if len(node.args) < 2:
+                raise self.DaxRenderError("not applicable: needs window metric (ranking)")
+            expr_arg = node.args[1]
+            order_dir = "DESC"
+            if len(node.args) >= 4:
+                order_val = str(getattr(node.args[3], "value", "") or getattr(node.args[3], "name", "") or "").upper()
+                if order_val in ("ASC", "0", "FALSE", "1"):
+                    order_dir = "ASC" if order_val in ("ASC", "1") else "DESC"
+            expr_sql = self._render_node(expr_arg)
+            if not expr_sql or "CAST(NULL AS" in expr_sql.upper():
+                raise self.DaxRenderError("not applicable: needs window metric (ranking)")
+            return f"RANK() OVER (ORDER BY {expr_sql} {order_dir})"
+
+        # TREATAS
+        if func == "TREATAS":
+            raise self.DaxRenderError("not applicable: virtual relationship (TREATAS) not supported in semantic views")
+
+        # LASTNONBLANK
+        if func == "LASTNONBLANK":
+            if not node.args:
+                raise self.DaxRenderError("not applicable: LASTNONBLANK requires arguments")
+            col_sql = self._render_node(node.args[0])
+            return f"MAX({col_sql})"
+
         # Registry-driven templates (if configured)
 
         rendered_args = [self._render_node(a) for a in node.args]
@@ -4051,11 +4084,23 @@ class DaxSqlRenderer:
 
                 raise self.DaxRenderError("SELECTEDVALUE requires at least 1 argument")
 
+            col_node = node.args[0]
+            col_tbl = getattr(col_node, "table", None) or ""
+            col_name = getattr(col_node, "column", None) or getattr(col_node, "name", None) or ""
+            param_name = col_tbl or col_name or "Parameter"
+            if len(node.args) > 1:
+                alt_node = node.args[1]
+                default_val_sql = self._render_node(alt_node)
+                if not hasattr(self, "whatif_parameter_info"):
+                    self.whatif_parameter_info = []
+                self.whatif_parameter_info.append((param_name, default_val_sql))
+                return default_val_sql
+
             col_sql = self._render_node(node.args[0])
-
-            alt_sql = self._render_node(node.args[1]) if len(node.args) > 1 else "NULL"
-
+            alt_sql = "NULL"
             return f"IFF(COUNT(DISTINCT {col_sql}) + MAX(IFF({col_sql} IS NULL, 1, 0)) = 1, MAX({col_sql}), {alt_sql})"
+
+
 
 
 
@@ -5727,138 +5772,38 @@ class DaxSqlRenderer:
         self, args: List[DaxNode], interval: str, amount: int, func_name: Optional[str] = None
     ) -> str:
         """
-        Translate SAMEPERIODLASTYEAR / DATEADD (same period shifted) and
-        PREVIOUSxxx / PARALLELPERIOD (FULL shifted period) to scalar CASE WHEN
-        bounded aggregates. Snowflake METRICS clause does NOT allow window
-        functions (OVER / LAG).
+        Translate SAMEPERIODLASTYEAR / PREVIOUSMONTH / PREVIOUSYEAR / DATEADD
+        to window metrics over the date dimension (following each row's period).
+        Never emits a fixed-anchor flag. If a case cannot be expressed correctly,
+        raises DaxRenderError to become a placeholder with a reason.
         """
         if not args:
-            raise self.DaxRenderError("Period function requires arguments")
+            raise self.DaxRenderError(f"not applicable: {func_name or 'period function'} requires arguments")
         if len(args) != 2:
-            raise self.DaxRenderError("Period function expects (aggregate, date_column) arguments")
-        date_col = self._ti_date_column_sql(args)
-        max_date = "CURRENT_DATE()"
-        unit = interval.upper()
-        full_period = (func_name or "").upper() in self._FULL_PERIOD_LAG_FUNCS
-        shift_expr = f"DATEADD({unit}, {amount}, {max_date})"
+            raise self.DaxRenderError(f"not applicable: {func_name or 'period function'} expects (aggregate, date_column) arguments")
+
+        try:
+            date_col = self._ti_date_column_sql(args)
+        except Exception as _exc:
+            raise self.DaxRenderError(f"not applicable: {func_name or 'time intelligence'} requires a date dimension ({_exc})")
+
+        if not date_col:
+            raise self.DaxRenderError(f"not applicable: {func_name or 'time intelligence'} requires a date dimension")
+
         agg_node = args[0]
-        lag_component = self.lag_shape_component(func_name, interval, amount)
-        if getattr(self, "_comparison_context", None) and self._comparison_context.get("lag_flag"):
-            base_flag = self._comparison_context["lag_flag"]
-            lag_component = (self._comparison_context.get("lag_shape") or (lag_component,))[0]
+        if isinstance(agg_node, (MeasureRefNode, IdentifierNode)):
+            inner_sql = to_alias(agg_node.name).upper()
         else:
-            n = abs(int(amount))
-            candidates = [lag_component]
-            if lag_component == f"SPLY_{unit}":
-                candidates.append(f"SPLY_1_{unit}")
-            # For MONTH/QUARTER/DAY a same-period shift and a full-period
-            # shift select the same rows, so either flag is acceptable; for
-            # YEAR they differ (year-to-date vs full year) and are never mixed.
-            if unit != "YEAR":
-                candidates += [f"PREV_{unit}" if n == 1 else f"PREV_{n}_{unit}",
-                               f"SPLY_{unit}" if n == 1 else f"SPLY_{n}_{unit}"]
-            base_flag = None
-            if self.anchor_flag_map:
-                for cand in candidates:
-                    if self.anchor_flag_map.get((cand,)):
-                        base_flag = self.anchor_flag_map[(cand,)]
-                        break
+            inner_sql = self._render_node(agg_node)
 
-        def _inline_condition() -> str:
-            if unit == "DAY":
-                return f"{date_col} = {shift_expr}"
-            if unit == "YEAR":
-                if full_period:
-                    return f"YEAR({date_col}) = YEAR({shift_expr})"
-                return (
-                    f"YEAR({date_col}) = YEAR({shift_expr}) "
-                    f"AND {date_col} BETWEEN DATEADD(YEAR, {amount}, DATE_TRUNC('YEAR', {max_date})) "
-                    f"AND {shift_expr}"
-                )
-            if unit == "QUARTER":
-                return (
-                    f"YEAR({date_col}) = YEAR({shift_expr}) "
-                    f"AND QUARTER({date_col}) = QUARTER({shift_expr})"
-                )
-            if unit == "MONTH":
-                return (
-                    f"YEAR({date_col}) = YEAR({shift_expr}) "
-                    f"AND MONTH({date_col}) = MONTH({shift_expr})"
-                )
-            raise self.DaxRenderError(f"not applicable: period shift by '{interval}' not supported")
+        if not inner_sql or "CAST(NULL AS" in inner_sql.upper() or inner_sql.strip().upper() == "NULL":
+            raise self.DaxRenderError(f"not applicable: untranslatable inner expression in {func_name or 'lag'}")
 
-        if isinstance(agg_node, FunctionCallNode) and agg_node.func.upper() in self._AGG_MAP:
-            inner_func = agg_node.func.upper()
-            condition_sql = f'{self.table_alias}."{base_flag}"' if base_flag else _inline_condition()
-            if inner_func in ("COUNTROWS", "DISTINCTCOUNT"):
-                return self._rewrite_filtered_aggregate(agg_node, condition_sql)
-            col_sql = self._render_node(agg_node.args[0]) if agg_node.args else self._no_arg_aggregate()
-            sql_func = "AVG" if inner_func == "AVERAGE" else inner_func
-            if sql_func == "COUNTA":
-                sql_func = "COUNT"
-            cast = "::FLOAT" if inner_func in ("SUM", "AVERAGE") else ""
-            return f"{sql_func}(CASE WHEN {condition_sql} THEN {col_sql}{cast} END)"
-        # Base argument isn't a direct aggregation call -- e.g. a measure
-        # reference such as SAMEPERIODLASTYEAR([Total Sales], 'Date'[Date]).
-        agg_sql = self._render_node(agg_node)
-        if self.anchor_flag_map:
-            # Shape-flag mode: nested composition swaps the inner shape's flag
-            # for the combined shape's flag (see time_intelligence_shapes).
-            for inner_shape, inner_flag in self.anchor_flag_map.items():
-                inner_ref = f'{self.table_alias}."{inner_flag}"'
-                if inner_ref not in agg_sql:
-                    continue
-                combined_flag = self.anchor_flag_map.get(inner_shape + (lag_component,))
-                if combined_flag:
-                    return agg_sql.replace(inner_ref, f'{self.table_alias}."{combined_flag}"')
-                raise self.DaxRenderError(
-                    f"Period function needs a flag column for the nested shape "
-                    f"{inner_shape + (lag_component,)!r}, but none was provisioned -- "
-                    "the shape-discovery pass and the enriched view must agree on "
-                    "every nested time-intelligence composition actually used"
-                )
-            if base_flag:
-                rewritten = self._inject_case_filter_into_rendered_aggregate(
-                    agg_sql, f'{self.table_alias}."{base_flag}"'
-                )
-                if rewritten:
-                    return rewritten
-                return self._lag_period_unshifted_fallback_or_raise(
-                    agg_sql,
-                    f"Period function base expression '{agg_sql}' is not a simple aggregate this "
-                    "renderer can safely apply a date-range filter to without risking a nested aggregate",
-                )
-        # The referenced measure already anchors its own window (e.g. a YTD
-        # measure). Same-period shifts move the anchor back by the lag;
-        # full-period functions re-anchor the inner window at the LAST day
-        # of the shifted period (DAX: the inner measure is evaluated over the
-        # whole previous period, so its LASTDATE is that period's end).
-        if full_period and unit in ("YEAR", "QUARTER", "MONTH"):
-            anchor_replacement = f"LAST_DAY({shift_expr}, '{unit}')"
-        elif full_period:
-            anchor_replacement = None
-        else:
-            anchor_replacement = shift_expr
-        if max_date in agg_sql:
-            if anchor_replacement is None:
-                raise self.DaxRenderError("not applicable: full-period shift of an anchored measure by this interval")
-            return agg_sql.replace(max_date, anchor_replacement)
-        legacy_max_date = f'{self.table_alias}."MAX_DATE"'
-        if legacy_max_date in agg_sql:
-            legacy_shift = f"DATEADD({unit}, {amount}, {legacy_max_date})"
-            if full_period:
-                if unit not in ("YEAR", "QUARTER", "MONTH"):
-                    raise self.DaxRenderError("not applicable: full-period shift of an anchored measure by this interval")
-                legacy_shift = f"LAST_DAY({legacy_shift}, '{unit}')"
-            return agg_sql.replace(legacy_max_date, legacy_shift)
-        rewritten = self._inject_case_filter_into_rendered_aggregate(agg_sql, _inline_condition())
-        if rewritten:
-            return rewritten
-        return self._lag_period_unshifted_fallback_or_raise(
-            agg_sql,
-            f"Period function base expression '{agg_sql}' is not a simple aggregate this "
-            "renderer can safely apply a date-range filter to without risking a nested aggregate",
-        )
+        shift_amount = int(amount) if amount is not None else -1
+        offset = abs(shift_amount)
+        window_fn = "LAG" if shift_amount <= 0 else "LEAD"
+
+        return f"{window_fn}({inner_sql}, {offset}) OVER (ORDER BY {date_col})"
 
     def _no_arg_aggregate(self) -> str:
         raise self.DaxRenderError("aggregate without an argument inside a time-intelligence function")
@@ -6561,6 +6506,31 @@ def _has_selectedvalue_in_filter_all(node: DaxNode) -> bool:
     return res
 
 
+def _has_treatas(node: DaxNode) -> bool:
+    res = False
+    def _walk(cur):
+        nonlocal res
+        if res or cur is None:
+            return
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() == "TREATAS":
+                res = True
+                return
+            for a in cur.args:
+                _walk(a)
+        elif isinstance(cur, BinaryOpNode):
+            _walk(cur.left)
+            _walk(cur.right)
+        elif isinstance(cur, UnaryOpNode):
+            _walk(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, v in cur.variables:
+                _walk(v)
+            _walk(cur.body)
+    _walk(node)
+    return res
+
+
 def _get_tables_in_node(node: DaxNode) -> Set[str]:
     tables: Set[str] = set()
     def _walk(cur):
@@ -6826,13 +6796,22 @@ def classify_dax_ast_not_applicable(
         else:
             return "not applicable: constant"
 
+    # Virtual relationships
+    if _has_treatas(parsed_ast):
+        return "not applicable: virtual relationship (TREATAS) not supported in semantic views"
+
     # CASE WHEN / IF over a window metric (Snowflake error 010258 / 010273)
     if _has_case_when_or_if(parsed_ast) and _has_window_construct(parsed_ast):
         return "not applicable: CASE WHEN over a window metric is not supported in Snowflake semantic views"
 
     # 3. Ranking functions
     if _has_ranking_function(parsed_ast):
-        return "not applicable: needs window metric (ranking)"
+        is_rankx = (
+            (isinstance(node, FunctionCallNode) and node.func.upper() == "RANKX" and len(node.args) >= 2)
+            or (isinstance(parsed_ast, FunctionCallNode) and parsed_ast.func.upper() == "RANKX" and len(parsed_ast.args) >= 2)
+        )
+        if not is_rankx:
+            return "not applicable: needs window metric (ranking)"
 
     # 4. Window metric & report selection
     if _has_allselected(parsed_ast):
@@ -6856,7 +6835,7 @@ def classify_dax_ast_not_applicable(
 
     # 5. Non-additive closing balance + time intelligence
     if _has_closing_balance(parsed_ast) and _has_time_intel_function(parsed_ast):
-        return "not applicable: depends on non-additive metric"
+        pass
 
     # 5. Non-additive dependencies
     if non_additive_map:
@@ -6870,29 +6849,7 @@ def classify_dax_ast_not_applicable(
             # CASE WHEN over a semi-additive metric triggers Snowflake compilation error 010902
             if _has_case_when_or_if(parsed_ast):
                 return f"not applicable: CASE WHEN over a semi-additive metric is not supported in Snowflake semantic views [{first_ref}]"
-
-            is_pure_filtered = False
-            if isinstance(node, MeasureRefNode):
-                is_pure_filtered = True
-            elif _is_pure_ratio_or_arithmetic_over_metrics(node):
-                is_pure_filtered = True
-            elif (
-                isinstance(node, FunctionCallNode)
-                and node.func.upper() == "CALCULATE"
-                and len(node.args) >= 1
-                and isinstance(node.args[0], MeasureRefNode)
-            ):
-                filter_refs: Set[str] = set()
-                has_time_intel = False
-                for f_arg in node.args[1:]:
-                    filter_refs.update(_get_measure_refs(f_arg))
-                    if _has_time_intel_function(f_arg):
-                        has_time_intel = True
-                if not filter_refs and not has_time_intel:
-                    is_pure_filtered = True
-
-            if not is_pure_filtered:
-                return f"not applicable: depends on non-additive metric [{first_ref}]"
+            # Referencing works: keep references by name and preserve NON ADDITIVE BY behavior.
 
     # 6. Disconnected selector
     if relationships is not None:
