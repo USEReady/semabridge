@@ -224,3 +224,17 @@ def test_non_metric_drop_records_are_ignored():
     )
     assert report.dropped_metrics == set()
     assert report.is_clean()
+
+
+def test_real_metric_names_ending_in_digits_not_stripped():
+    """Item 1: Stop stripping _1/_2/_3 from real metric names (only strip suffixes
+    SemaBridge itself added for collisions)."""
+    ddl = _ddl('  FACT."REVENUE_1" AS SUM(FACT."A"),\n  FACT."TARGET_2" AS SUM(FACT."B")')
+    report = compute_reconciliation(
+        run_id="r1", project_id="p1", snapshot_id="s1",
+        snapshot_metric_names=["Revenue_1", "Target_2"],
+        deployed_ddl_text=ddl,
+        drop_records=[],
+    )
+    assert report.is_clean()
+    assert report.unaccounted == {}

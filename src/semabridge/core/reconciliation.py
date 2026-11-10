@@ -167,7 +167,15 @@ class ReconciliationReport:
         # ledger record silently read as "accounted for" purely because its
         # name still appears in the DDL text -- the same blind spot this
         # module exists to catch.
-        deployed_base_counts = Counter(_strip_dedup_suffix(n) for n in self.deployed_live_metrics)
+        def _resolve_deployed_base(n: str) -> str:
+            if n in snapshot_counts:
+                return n
+            stripped = _strip_dedup_suffix(n)
+            if stripped in snapshot_counts:
+                return stripped
+            return n
+
+        deployed_base_counts = Counter(_resolve_deployed_base(n) for n in self.deployed_live_metrics)
         dropped_base_counts = Counter(
             _normalize(r["entity_name"], self.sanitizer)
             for r in self.drop_records

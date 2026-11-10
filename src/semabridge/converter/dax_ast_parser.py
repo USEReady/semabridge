@@ -2346,6 +2346,8 @@ class DaxSqlRenderer:
             if "CURRENT_DATE()" in sql.upper() and not _ast_contains_func(node, {"TODAY", "NOW"}):
                 if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in self._advisory_categories:
                     self._advisory_categories.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+            from semabridge.utils.sql_simplifier import simplify_sql_expression
+            sql = simplify_sql_expression(sql)
             return sql
 
         except self.DaxRenderError as exc:
@@ -6804,14 +6806,9 @@ def classify_dax_ast_not_applicable(
     if _has_case_when_or_if(parsed_ast) and _has_window_construct(parsed_ast):
         return "not applicable: CASE WHEN over a window metric is not supported in Snowflake semantic views"
 
-    # 3. Ranking functions
+    # 3. Ranking functions (Snowflake error 010256: RANK() has no metric operand)
     if _has_ranking_function(parsed_ast):
-        is_rankx = (
-            (isinstance(node, FunctionCallNode) and node.func.upper() == "RANKX" and len(node.args) >= 2)
-            or (isinstance(parsed_ast, FunctionCallNode) and parsed_ast.func.upper() == "RANKX" and len(parsed_ast.args) >= 2)
-        )
-        if not is_rankx:
-            return "not applicable: needs window metric (ranking)"
+        return "not applicable: needs window metric (ranking)"
 
     # 4. Window metric & report selection
     if _has_allselected(parsed_ast):

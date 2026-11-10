@@ -875,6 +875,8 @@ class MetricsClauseBuilder:
                         )
             else:
                 lhs_target = f'{metric_entity_alias}."{safe_metric_name}"'
+            from semabridge.utils.sql_simplifier import simplify_sql_expression
+            expr = simplify_sql_expression(expr)
             metrics_lines.append(
                 f'  {priv_prefix}{lhs_target}{non_additive_clause} AS {expr}'
                 f'{synonyms_clause(syns_to_emit, None if comment_clause else metric_comment_text(metric))}{comment_clause}'
@@ -2346,6 +2348,16 @@ class MetricsClauseBuilder:
                         m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr_by_name.get(null_ref, ""))
                         ref_reason = m_blk.group(1).strip() if m_blk else "not translatable"
                     reason = f"depends on untranslatable part: [{null_ref}]"
+                    safe_comm = self._clean_comment(reason)
+                    next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                    comment_by_name[name] = reason
+                    rewritten = True
+                    continue
+
+                # Check for window metric reference in other expression definitions (Snowflake Error 010258)
+                window_ref = next((r for r in metric_refs if r in window_metrics), None)
+                if window_ref and expr.strip().upper() != NULL_PLACEHOLDER_SQL:
+                    reason = f"depends on window metric: [{window_ref}] (cannot be used in other expression definitions)"
                     safe_comm = self._clean_comment(reason)
                     next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason
