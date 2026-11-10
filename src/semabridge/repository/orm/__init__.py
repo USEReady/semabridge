@@ -57,6 +57,10 @@ from semabridge.repository.orm.infra_models import (
     Credential,
     CommandLog,
 )
+from semabridge.repository.orm.ai_models import (
+    AIQueryExecutionRow,
+    AIVerifiedQueryRow,
+)
 
 __all__ = [
     "Base",
@@ -98,4 +102,7 @@ __all__ = [
     # Infrastructure
     "Credential",
     "CommandLog",
+    # AI Query Executions & Verified Queries
+    "AIQueryExecutionRow",
+    "AIVerifiedQueryRow",
 ]

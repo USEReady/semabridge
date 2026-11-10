@@ -15,11 +15,46 @@ from pydantic import BaseModel, Field
 
 from semabridge.ai.nl_query_engine import QueryResolutionPlan
 from semabridge.ai.semantic_search import SearchHit
+from semabridge.connectors.sql_guard import (
+    SQLSecurityGuardError,
+    split_statements,
+    strip_sql_comments,
+    validate_safe_sql,
+)
 from semabridge.ontology.store import ontology_store
 
 logger = logging.getLogger("semabridge.api.ai_router")
 
 router = APIRouter(prefix="/api/ai", tags=["semabridge_ai"])
+
+# Set of normalized SQL queries that were successfully executed against a real deployed warehouse view
+_VERIFIED_EXECUTIONS: set[str] = set()
+
+
+def _norm_sql_key(sql: str) -> str:
+    """Normalize SQL query for execution verification tracking."""
+    s = re.sub(r"--[^\r\n]*", "", sql or "")
+    s = re.sub(r"/\*.*?\*/", "", s, flags=re.DOTALL)
+    # Strip trailing limit clause so saving with or without execution limit matches
+    s = re.sub(r"\bLIMIT\s+\d+\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+", " ", s).strip().rstrip(";").strip().upper()
+    return s
+
+
+def _record_verified_execution(*sql_variants: str) -> None:
+    for s in sql_variants:
+        k = _norm_sql_key(s)
+        if k:
+            _VERIFIED_EXECUTIONS.add(k)
+
+
+def is_query_verified_by_execution(sql: str) -> bool:
+    return _norm_sql_key(sql) in _VERIFIED_EXECUTIONS
+
+
+def clear_verified_executions() -> None:
+    """Clear execution cache (used in tests)."""
+    _VERIFIED_EXECUTIONS.clear()
 
 
 class AISearchRequest(BaseModel):
@@ -35,12 +70,17 @@ class NLQueryRequest(BaseModel):
     dialect: str = "SNOWFLAKE"  # 'SNOWFLAKE', 'DATABRICKS', 'DUCKDB'
     target: Optional[str] = None  # 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
     project_id: Optional[str] = None
+    view_name: Optional[str] = None
+    allow_offline_draft: bool = False
 
 
 class ExecuteQueryRequest(BaseModel):
     sql: str
     target: str = "SNOWFLAKE"  # 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
     project_id: Optional[str] = None
+    question: Optional[str] = None
+    view_name: Optional[str] = None
+    user_id: Optional[str] = None
     limit: int = 50
 
 
@@ -62,8 +102,12 @@ class SaveVerifiedQueryRequest(BaseModel):
     project_id: Optional[str] = None
     question: str
     sql: str
+    confirmed: bool = False  # Explicit user confirmation required
     name: Optional[str] = None
     target: str = "SNOWFLAKE"  # 'SNOWFLAKE' | 'DATABRICKS'
+    view_name: Optional[str] = None
+    user_id: Optional[str] = None
+    is_onboarding: bool = False
     domain: Optional[str] = None
 
 
@@ -112,7 +156,7 @@ def search_semantic_layer(req: AISearchRequest) -> List[SearchHit]:
 
 @router.post("/nl-query", response_model=QueryResolutionPlan)
 def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
-    """Translate a natural language question into governed SQL using the enterprise ontology knowledge graph."""
+    """Translate a natural language question into governed SQL using Cortex Analyst or the local engine."""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
@@ -126,59 +170,62 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
     elif effective_dialect in ("GENIE", "UNITY_CATALOG"):
         effective_dialect = "DATABRICKS"
 
+    # 1. Target Snowflake → Cortex Analyst REST API with Key-Pair Auth
+    if effective_dialect == "SNOWFLAKE" and (req.target or "").upper() != "LOCAL":
+        cortex_error = None
+        try:
+            from semabridge.core.settings import reload_settings
+            from semabridge.ai.cortex_analyst_client import call_cortex_analyst
+
+            cfg = reload_settings()
+            sf = cfg.snowflake
+            if not sf.private_key:
+                cortex_error = "Snowflake key-pair private key is not configured."
+            else:
+                view_name = req.view_name or f'"{sf.database}"."{sf.schema_name}"."SEMANTIC_VIEW"'
+                cortex_resp = call_cortex_analyst(
+                    prompt=req.prompt,
+                    semantic_view=view_name,
+                    config=sf,
+                )
+                generated_sql = cortex_resp.get("generated_sql", "")
+                if generated_sql:
+                    # Validate through read-only SQL guard
+                    validate_safe_sql(generated_sql)
+                    return QueryResolutionPlan(
+                        original_prompt=req.prompt,
+                        detected_metrics=[],
+                        detected_dimensions=[],
+                        resolved_tables=[view_name],
+                        generated_sql=generated_sql,
+                        confidence_score=0.95,
+                        explanation=f"[Snowflake Cortex Analyst] {cortex_resp.get('explanation', '')}",
+                        warnings=[],
+                    )
+                else:
+                    cortex_error = "No SQL statement generated by Cortex Analyst."
+        except Exception as exc:
+            logger.warning("Cortex Analyst live resolution unavailable: %s", exc)
+            cortex_error = str(exc)
+
+        if cortex_error:
+            if not req.allow_offline_draft:
+                return QueryResolutionPlan(
+                    original_prompt=req.prompt,
+                    detected_metrics=[],
+                    detected_dimensions=[],
+                    resolved_tables=[],
+                    generated_sql="",
+                    confidence_score=0.0,
+                    explanation="Cortex unavailable. To generate an offline draft query using the local engine, set allow_offline_draft=true or target='LOCAL'.",
+                    warnings=[f"Cortex unavailable: {cortex_error}"],
+                )
+
+    # 2. Local Engine fallback or explicit LOCAL target (clearly labeled as offline draft)
     plan = engine.resolve_query(req.prompt, dialect=effective_dialect)
+    plan.explanation = f"[Offline Draft - Local Engine] {plan.explanation}"
+    plan.warnings.append("Cortex Analyst offline or local mode selected; SQL is an offline draft generated by the local engine.")
     return plan
-
-
-def _generate_simulated_preview(sql: str, target: str) -> ExecuteQueryResponse:
-    """Generate high-fidelity semantic data preview when external warehouse is offline or unreachable."""
-    # Extract select items from SQL to derive realistic columns
-    cols = []
-    select_match = re.search(r"SELECT\s+(.*?)\s+FROM", sql, re.IGNORECASE | re.DOTALL)
-    if select_match:
-        items = select_match.group(1).split(",")
-        for it in items:
-            it = it.strip()
-            alias_match = re.search(r"(?:AS\s+)?([a-zA-Z0-9_]+)$", it, re.IGNORECASE)
-            if alias_match:
-                cols.append(alias_match.group(1).upper())
-            else:
-                cols.append(re.sub(r"[^a-zA-Z0-9_]", "", it).upper() or "COL")
-    if not cols:
-        cols = ["ENTITY", "METRIC_VALUE", "PERIOD"]
-
-    # Generate 5 realistic rows of sample data
-    sample_entities = ["Enterprise North America", "EMEA Operations", "APAC Growth", "LATAM Direct", "Global Accounts"]
-    rows = []
-    for idx, ent in enumerate(sample_entities):
-        row = []
-        for c in cols:
-            c_lower = c.lower()
-            if any(k in c_lower for k in ("margin", "rate", "percent", "pct")):
-                row.append(f"{round(42.5 + (idx * 3.4), 1)}%")
-            elif any(k in c_lower for k in ("revenue", "arr", "mrr", "amount", "sales", "cost", "cogs")):
-                row.append(f"${145000 + (idx * 68000):,}")
-            elif any(k in c_lower for k in ("date", "period", "year", "month")):
-                row.append(f"2024-Q{min(4, idx + 1)}")
-            elif any(k in c_lower for k in ("count", "qty", "quantity")):
-                row.append(120 + (idx * 45))
-            else:
-                row.append(ent)
-        rows.append(row)
-
-    target_name = "Snowflake (Cortex Analyst)" if target == "SNOWFLAKE" else "Databricks (AI/BI Genie)" if target == "DATABRICKS" else "Local Engine"
-    return ExecuteQueryResponse(
-        success=True,
-        target=target,
-        columns=cols,
-        rows=rows,
-        row_count=len(rows),
-        execution_time_ms=18,
-        executed_sql=sql,
-        is_simulated=True,
-        message=f"{target_name} warehouse offline in local environment; displaying verified semantic preview.",
-        dialect=target,
-    )
 
 
 @router.post("/execute-query", response_model=ExecuteQueryResponse)
@@ -190,6 +237,37 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
     clean_sql = req.sql.strip().rstrip(";")
     # Strip comments if present for execution
     exec_sql = re.sub(r"^--.*$", "", clean_sql, flags=re.MULTILINE).strip()
+    if not exec_sql:
+        raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
+
+    # 1. Route every statement through validate_safe_sql and allow only read-only SELECT
+    statements = split_statements(exec_sql)
+    if not statements:
+        raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
+
+    for stmt in statements:
+        stmt_clean = strip_sql_comments(stmt).strip()
+        if not stmt_clean:
+            continue
+        try:
+            validate_safe_sql(stmt_clean)
+        except SQLSecurityGuardError as sge:
+            logger.warning("SQL execution guard rejected query: %s", sge)
+            raise HTTPException(status_code=400, detail=str(sge))
+        except Exception as exc:
+            logger.warning("SQL validation error: %s", exc)
+            raise HTTPException(status_code=400, detail=f"SQL validation error: {exc}")
+
+        is_select = bool(
+            re.match(r"^\s*SELECT\b", stmt_clean, re.IGNORECASE)
+            or re.match(r"^\s*WITH\s+[a-zA-Z0-9_\"`]+\s+AS\s*\(.*?\)\s*SELECT\b", stmt_clean, re.IGNORECASE | re.DOTALL)
+        )
+        if not is_select:
+            raise HTTPException(
+                status_code=400,
+                detail="Only read-only SELECT statements are permitted."
+            )
+
     if not re.search(r"\blimit\s+\d+", exec_sql, re.IGNORECASE):
         exec_sql = f"{exec_sql} LIMIT {min(req.limit, 100)}"
 
@@ -206,8 +284,20 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
 
             cfg = reload_settings()
             connect_kwargs = get_snowflake_connect_kwargs(cfg.snowflake)
-            if not connect_kwargs.get("account") or not connect_kwargs.get("user"):
-                return _generate_simulated_preview(clean_sql, "SNOWFLAKE")
+            if not connect_kwargs.get("account") or not connect_kwargs.get("user") or not connect_kwargs.get("password"):
+                return ExecuteQueryResponse(
+                    success=False,
+                    target="SNOWFLAKE",
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=0,
+                    executed_sql=exec_sql,
+                    is_simulated=False,
+                    error="not executed: no warehouse connection: missing Snowflake credentials.",
+                    message="not executed: no warehouse connection",
+                    dialect="SNOWFLAKE",
+                )
 
             conn = snowflake.connector.connect(**connect_kwargs)
             try:
@@ -221,6 +311,22 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
                     for r in raw_rows
                 ]
                 elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                _record_verified_execution(clean_sql, exec_sql)
+                try:
+                    from semabridge.ai.verified_queries_service import record_query_execution
+                    record_query_execution(
+                        question=req.question or "Semantic View Query",
+                        sql=clean_sql,
+                        view_name=req.view_name or f"{cfg.snowflake.database}.{cfg.snowflake.schema_name}",
+                        user_id=req.user_id or "system",
+                        project_id=req.project_id,
+                        success=True,
+                        row_count=len(rows),
+                        execution_time_ms=elapsed_ms,
+                    )
+                except Exception as db_exc:
+                    logger.debug("Failed to record query execution in database: %s", db_exc)
+
                 return ExecuteQueryResponse(
                     success=True,
                     target="SNOWFLAKE",
@@ -236,10 +342,20 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
             finally:
                 conn.close()
         except Exception as exc:
-            logger.warning("Live Snowflake query execution fallback: %s", exc)
-            preview = _generate_simulated_preview(clean_sql, "SNOWFLAKE")
-            preview.message = f"Snowflake live connection unreached ({str(exc)[:120]}); showing verified semantic preview."
-            return preview
+            logger.warning("Live Snowflake query execution failed: %s", exc)
+            return ExecuteQueryResponse(
+                success=False,
+                target="SNOWFLAKE",
+                columns=[],
+                rows=[],
+                row_count=0,
+                execution_time_ms=0,
+                executed_sql=exec_sql,
+                is_simulated=False,
+                error=f"not executed: no warehouse connection: {exc}",
+                message="not executed: no warehouse connection",
+                dialect="SNOWFLAKE",
+            )
 
     # 2. DATABRICKS EXECUTION
     elif target_upper == "DATABRICKS":
@@ -252,12 +368,36 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
 
             cfg = reload_settings()
             if not cfg.databricks or not cfg.databricks.host or not cfg.databricks.warehouse_id:
-                return _generate_simulated_preview(clean_sql, "DATABRICKS")
+                return ExecuteQueryResponse(
+                    success=False,
+                    target="DATABRICKS",
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=0,
+                    executed_sql=exec_sql,
+                    is_simulated=False,
+                    error="not executed: no warehouse connection: missing Databricks credentials.",
+                    message="not executed: no warehouse connection",
+                    dialect="DATABRICKS",
+                )
 
             publisher = make_target_emitter("databricks", cfg.databricks)
             token = publisher._resolve_token()
             if not token:
-                return _generate_simulated_preview(clean_sql, "DATABRICKS")
+                return ExecuteQueryResponse(
+                    success=False,
+                    target="DATABRICKS",
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=0,
+                    executed_sql=exec_sql,
+                    is_simulated=False,
+                    error="not executed: no warehouse connection: missing Databricks token.",
+                    message="not executed: no warehouse connection",
+                    dialect="DATABRICKS",
+                )
 
             resp = _requests.post(
                 f"https://{cfg.databricks.host}/api/2.0/sql/statements",
@@ -278,6 +418,7 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
                 manifest = data.get("manifest", {})
                 schema_cols = [c.get("name") for c in manifest.get("schema", {}).get("columns", [])]
                 data_array = data.get("result", {}).get("data_array", [])
+                _record_verified_execution(clean_sql, exec_sql)
                 return ExecuteQueryResponse(
                     success=True,
                     target="DATABRICKS",
@@ -292,130 +433,113 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
                 )
             else:
                 logger.warning("Databricks Statements API error %s: %s", resp.status_code, resp.text[:200])
-                preview = _generate_simulated_preview(clean_sql, "DATABRICKS")
-                preview.message = f"Databricks API returned {resp.status_code}; showing verified semantic preview."
-                return preview
+                return ExecuteQueryResponse(
+                    success=False,
+                    target="DATABRICKS",
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=elapsed_ms,
+                    executed_sql=exec_sql,
+                    is_simulated=False,
+                    error=f"not executed: no warehouse connection: Databricks API returned HTTP {resp.status_code}",
+                    message="not executed: no warehouse connection",
+                    dialect="DATABRICKS",
+                )
         except Exception as exc:
-            logger.warning("Live Databricks query execution fallback: %s", exc)
-            preview = _generate_simulated_preview(clean_sql, "DATABRICKS")
-            preview.message = f"Databricks connection unreached ({str(exc)[:120]}); showing verified semantic preview."
-            return preview
+            logger.warning("Live Databricks query execution failed: %s", exc)
+            return ExecuteQueryResponse(
+                success=False,
+                target="DATABRICKS",
+                columns=[],
+                rows=[],
+                row_count=0,
+                execution_time_ms=0,
+                executed_sql=exec_sql,
+                is_simulated=False,
+                error=f"not executed: no warehouse connection: {exc}",
+                message="not executed: no warehouse connection",
+                dialect="DATABRICKS",
+            )
 
     # 3. LOCAL ZERO-CREDIT ENGINE
     else:
-        return _generate_simulated_preview(clean_sql, "LOCAL")
+        return ExecuteQueryResponse(
+            success=False,
+            target="LOCAL",
+            columns=[],
+            rows=[],
+            row_count=0,
+            execution_time_ms=0,
+            executed_sql=exec_sql,
+            is_simulated=False,
+            error="not executed: no warehouse connection: local engine has no external warehouse connection.",
+            message="not executed: no warehouse connection",
+            dialect="LOCAL",
+        )
 
 
 @router.post("/save-verified-query", response_model=SaveVerifiedQueryResponse)
 def save_verified_query(req: SaveVerifiedQueryRequest) -> SaveVerifiedQueryResponse:
-    """Append a human-verified natural language question & SQL pair to Cortex Analyst YAML or Databricks Genie benchmarks."""
-    import time
-    from pathlib import Path
-    import yaml
-
+    """Save a verified query in the project database after live execution verification and explicit user confirmation."""
     if not req.question or not req.sql:
         raise HTTPException(status_code=400, detail="Question and SQL are required.")
 
-    safe_name = req.name or re.sub(r"[^a-zA-Z0-9_]", "_", req.question.lower().strip())[:40].strip("_")
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if not req.confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Explicit user confirmation is required to save a verified query.",
+        )
 
-    verified_item = {
-        "name": safe_name,
-        "question": req.question.strip(),
-        "sql": req.sql.strip(),
-        "verified_at": timestamp,
-        "verified_by": "semabridge_analyst",
-    }
+    project_id = req.project_id or "default"
+
+    # Persist in PostgreSQL/DuckDB database via service layer
+    try:
+        from semabridge.ai.verified_queries_service import save_verified_query as db_save_verified_query
+        saved_row = db_save_verified_query(
+            project_id=project_id,
+            question=req.question,
+            sql=req.sql,
+            confirmed=req.confirmed,
+            user_id=req.user_id or "Data Steward",
+            name=req.name,
+            view_name=req.view_name,
+            is_onboarding=req.is_onboarding,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.error("Failed to save verified query in database: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Database error saving verified query: {exc}")
 
     target_upper = req.target.upper()
-    saved_paths = []
-
-    # 1. Update project-specific Cortex Analyst YAML if project_id is given or discoverable
-    project_slug = req.project_id
-    if not project_slug:
-        # Check output/reverse directory for latest project
-        reverse_dir = Path("output/reverse")
-        if reverse_dir.is_dir():
-            dirs = [d for d in reverse_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
-            if dirs:
-                # pick most recently modified
-                dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
-                project_slug = dirs[0].name
-
-    if project_slug and target_upper in ("SNOWFLAKE", "CORTEX"):
-        yaml_path = Path("output/reverse") / project_slug / "cortex_analyst.yaml"
-        if yaml_path.is_file():
-            try:
-                raw_content = yaml_path.read_text(encoding="utf-8")
-                parsed = yaml.safe_load(raw_content) or {}
-                # Support both top-level verified_queries and semantic_model.verified_queries
-                if "semantic_model" in parsed and isinstance(parsed["semantic_model"], dict):
-                    v_list = parsed["semantic_model"].setdefault("verified_queries", [])
-                else:
-                    v_list = parsed.setdefault("verified_queries", [])
-
-                # Deduplicate by question
-                existing_idx = next((i for i, q in enumerate(v_list) if q.get("question") == req.question.strip()), None)
-                if existing_idx is not None:
-                    v_list[existing_idx] = verified_item
-                else:
-                    v_list.append(verified_item)
-
-                yaml_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
-                saved_paths.append(str(yaml_path))
-                logger.info("Saved verified query to %s", yaml_path)
-            except Exception as exc:
-                logger.warning("Could not update cortex_analyst.yaml at %s: %s", yaml_path, exc)
-
-    # 2. For Databricks Genie benchmarks
-    if target_upper in ("DATABRICKS", "GENIE"):
-        benchmarks_dir = Path("Config/benchmarks")
-        benchmarks_dir.mkdir(parents=True, exist_ok=True)
-        bench_file = benchmarks_dir / f"databricks_genie_{project_slug or 'enterprise'}.json"
-        try:
-            current_bench = []
-            if bench_file.is_file():
-                current_bench = json.loads(bench_file.read_text(encoding="utf-8"))
-            existing_idx = next((i for i, q in enumerate(current_bench) if q.get("question") == req.question.strip()), None)
-            if existing_idx is not None:
-                current_bench[existing_idx] = verified_item
-            else:
-                current_bench.append(verified_item)
-            bench_file.write_text(json.dumps(current_bench, indent=2), encoding="utf-8")
-            saved_paths.append(str(bench_file))
-            logger.info("Saved Databricks Genie benchmark to %s", bench_file)
-        except Exception as exc:
-            logger.warning("Could not save Databricks benchmark: %s", exc)
-
-    # 3. Also append to persistent central registry in Config/benchmarks
-    central_file = Path("Config/benchmarks/verified_queries_registry.yaml")
-    try:
-        central_file.parent.mkdir(parents=True, exist_ok=True)
-        registry = []
-        if central_file.is_file():
-            registry = yaml.safe_load(central_file.read_text(encoding="utf-8")) or []
-        existing_idx = next((i for i, q in enumerate(registry) if q.get("question") == req.question.strip()), None)
-        item_with_target = {**verified_item, "target": target_upper}
-        if existing_idx is not None:
-            registry[existing_idx] = item_with_target
-        else:
-            registry.append(item_with_target)
-        central_file.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
-        if not saved_paths:
-            saved_paths.append(str(central_file))
-    except Exception as exc:
-        logger.warning("Could not update central verified queries registry: %s", exc)
-
-    destination_desc = "Cortex Analyst YAML" if target_upper in ("SNOWFLAKE", "CORTEX") else "Databricks AI/BI Genie Benchmark"
-    primary_path = saved_paths[0] if saved_paths else "Central Registry"
+    _record_verified_execution(req.sql)
 
     return SaveVerifiedQueryResponse(
         success=True,
-        message=f"Verified query successfully registered to {destination_desc} ({primary_path}). AI accuracy boosted!",
+        message=f"Verified query '{saved_row.name}' successfully registered to database for semantic view.",
         target=target_upper,
-        artifact_path=primary_path,
-        verified_query=verified_item,
+        artifact_path=f"database:ai_verified_queries/{saved_row.id}",
+        verified_query={
+            "id": saved_row.id,
+            "name": saved_row.name,
+            "question": saved_row.question,
+            "sql": saved_row.sql,
+            "verified_by": saved_row.verified_by,
+            "verified_at": saved_row.verified_at,
+            "is_onboarding": saved_row.is_onboarding,
+        },
     )
+
+
+@router.get("/verified-queries")
+def list_verified_queries(project_id: str) -> Dict[str, Any]:
+    """Retrieve all verified queries stored in the database for a project."""
+    if not project_id or not project_id.strip():
+        raise HTTPException(status_code=400, detail="project_id is required.")
+    from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+    queries = list_verified_queries_for_project(project_id.strip())
+    return {"project_id": project_id, "queries": queries, "count": len(queries)}
 
 
 @router.post("/reindex", response_model=Dict[str, Any])

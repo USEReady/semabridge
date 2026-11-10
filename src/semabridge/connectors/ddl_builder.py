@@ -177,6 +177,8 @@ class SemanticViewBuilder:
         # relationships) land in one place — see core/drop_ledger.py.
 
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.validation_advisories: List[str] = []
+        self.project_id: Optional[str] = getattr(config, "project_id", None)
 
 
 
@@ -1104,7 +1106,18 @@ class SemanticViewBuilder:
 
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
+        # AI_VERIFIED_QUERIES
+        vqueries = list(getattr(sml, "verified_queries", []) or [])
+        if not vqueries and getattr(self, "project_id", None):
+            try:
+                from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+                vqueries = list_verified_queries_for_project(self.project_id)
+            except Exception as exc:
+                logger.debug("Could not load verified queries from database: %s", exc)
 
+        vq_clause = self._build_ai_verified_queries_clause(vqueries, safe_view_name)
+        if vq_clause:
+            definitions.append(vq_clause)
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
 
@@ -1260,7 +1273,18 @@ class SemanticViewBuilder:
 
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
+        # AI_VERIFIED_QUERIES
+        vqueries = list(getattr(sml, "verified_queries", []) or [])
+        if not vqueries and getattr(self, "project_id", None):
+            try:
+                from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+                vqueries = list_verified_queries_for_project(self.project_id)
+            except Exception as exc:
+                logger.debug("Could not load verified queries from database: %s", exc)
 
+        vq_clause = self._build_ai_verified_queries_clause(vqueries, safe_view_name)
+        if vq_clause:
+            definitions.append(vq_clause)
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
 
@@ -1327,6 +1351,106 @@ class SemanticViewBuilder:
             dims_block = "DIMENSIONS (\n" + ",\n".join(filtered_dims) + "\n)" if filtered_dims else ""
 
         return metrics_lines, dims_block
+
+    def _build_ai_verified_queries_clause(
+        self,
+        queries: List[Any],
+        view_name: str,
+    ) -> Optional[str]:
+        """Validate verified queries against the semantic view and emit the AI_VERIFIED_QUERIES clause.
+
+        Invalid queries are reported and excluded (never silently dropped).
+        """
+        if not queries:
+            return None
+
+        import time
+        from semabridge.connectors.sql_guard import validate_safe_sql
+
+        valid_entries = []
+        for item in queries:
+            if isinstance(item, dict):
+                q_name = item.get("name") or item.get("unique_name") or "query"
+                question = str(item.get("question") or "").strip()
+                sql = str(item.get("sql") or "").strip()
+                verified_at = int(item.get("verified_at") or time.time())
+                is_onboarding = "TRUE" if bool(item.get("is_onboarding", False)) else "FALSE"
+                steward = str(item.get("verified_by") or "Data Steward")
+            else:
+                q_name = getattr(item, "name", None) or getattr(item, "unique_name", None) or "query"
+                question = str(getattr(item, "question", "") or "").strip()
+                sql = str(getattr(item, "sql", "") or "").strip()
+                verified_at = int(getattr(item, "verified_at", 0) or time.time())
+                is_onboarding = "TRUE" if bool(getattr(item, "is_onboarding", False)) else "FALSE"
+                steward = str(getattr(item, "verified_by", "Data Steward") or "Data Steward")
+
+            q_alias = re.sub(r"[^A-Za-z0-9_]", "_", q_name).strip("_") or "verified_query"
+            steward_clean = steward.replace("'", "''")
+
+            # 1. Syntax & security validation
+            is_valid = True
+            err_msg = ""
+            if not sql or not question:
+                is_valid = False
+                err_msg = "Question or SQL statement is empty."
+            else:
+                try:
+                    validate_safe_sql(sql)
+                    clean_sql = re.sub(r"--[^\r\n]*", "", sql)
+                    clean_sql = re.sub(r"/\*.*?\*/", "", clean_sql, flags=re.DOTALL).strip()
+                    if not re.match(r"^(SELECT|WITH)\b", clean_sql, re.IGNORECASE):
+                        is_valid = False
+                        err_msg = "Only read-only SELECT or WITH statements are allowed."
+                except Exception as exc:
+                    is_valid = False
+                    err_msg = f"SQL security guard rejected statement: {exc}"
+
+            # 2. Syntax check for unbalanced quotes / parentheses
+            if is_valid:
+                if sql.count("(") != sql.count(")"):
+                    is_valid = False
+                    err_msg = "Unbalanced parentheses in query SQL."
+                elif sql.count("'") % 2 != 0:
+                    is_valid = False
+                    err_msg = "Unclosed single quote in query SQL."
+
+            # 3. Live warehouse compilation check if cursor is available
+            if is_valid and self.cursor:
+                try:
+                    test_compile_sql = f"SELECT * FROM ({sql.rstrip(';')}) WHERE 1=0"
+                    self.cursor.execute(test_compile_sql)
+                except Exception as exc:
+                    is_valid = False
+                    err_msg = f"Warehouse compilation failed: {exc}"
+
+            if not is_valid:
+                warning_text = (
+                    f"Verified query '{q_alias}' failed validation against semantic view '{view_name}': {err_msg}. "
+                    f"Excluded from DDL."
+                )
+                logger.warning(warning_text)
+                if hasattr(self, "validation_advisories"):
+                    self.validation_advisories.append(warning_text)
+                continue
+
+            escaped_q = question.replace("\\", "\\\\").replace("'", "''")
+            escaped_sql = sql.replace("\\", "\\\\").replace("'", "''")
+
+            entry = (
+                f"    {q_alias} AS (\n"
+                f"      QUESTION '{escaped_q}'\n"
+                f"      VERIFIED_AT {verified_at}\n"
+                f"      ONBOARDING_QUESTION {is_onboarding}\n"
+                f"      VERIFIED_BY '(STEWARD = {steward_clean})'\n"
+                f"      SQL '{escaped_sql}'\n"
+                f"    )"
+            )
+            valid_entries.append(entry)
+
+        if not valid_entries:
+            return None
+
+        return "AI_VERIFIED_QUERIES (\n" + ",\n".join(valid_entries) + "\n)"
 
 
 

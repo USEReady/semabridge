@@ -1323,21 +1323,18 @@ export default function OntologyDomainManager() {
                     <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-accent-blue/10 text-accent-blue border border-accent-blue/20">
                       {executionResult.row_count} rows · {executionResult.execution_time_ms}ms
                     </span>
-                    {executionResult.is_simulated && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-surface-raised text-secondary border border-main">
-                        Verified Preview
-                      </span>
-                    )}
                   </div>
 
                   {/* Accuracy Multiplier Action Button */}
                   <button
                     type="button"
-                    disabled={savingVerified}
+                    disabled={savingVerified || !executionResult?.success || (executionResult?.rows || []).length === 0}
                     onClick={handleSaveVerifiedQuery}
                     className="px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
                     title={
-                      selectedTarget === 'DATABRICKS'
+                      !executionResult?.success
+                        ? 'Execute query against a live warehouse before saving as verified'
+                        : selectedTarget === 'DATABRICKS'
                         ? 'Save as a verified benchmark query in Databricks AI/BI Genie Space'
                         : 'Save as a verified query in Snowflake Cortex Analyst YAML'
                     }

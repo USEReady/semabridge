@@ -33,6 +33,7 @@ DELTA_KINDS: Tuple[Tuple[str, str], ...] = (
     ("dimensions", "dimensions"),
     ("relationships", "relationships"),
     ("tables", "datasets"),
+    ("verified_queries", "verified_queries"),
 )
 
 _ITEM_CLASSES = {
@@ -40,6 +41,7 @@ _ITEM_CLASSES = {
     "dimensions": SMLDimension,
     "relationships": SMLRelationship,
     "tables": SMLDataset,
+    "verified_queries": dict,
 }
 
 # Upper bound on names listed per bucket in the one-line summary.
@@ -72,7 +74,7 @@ def _enum_text(value: Any) -> str:
 
 
 def _display_name(item: Any) -> str:
-    return str(_get(item, "label") or _get(item, "unique_name") or "")
+    return str(_get(item, "label") or _get(item, "unique_name") or _get(item, "name") or _get(item, "question") or "")
 
 
 def _signature(kind: str, item: Any) -> Dict[str, Any]:
@@ -82,6 +84,12 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
     (sql_expression, synonyms, confidence, advisory notes, ...) are left
     out so a re-extraction of an unchanged PBIX compares equal.
     """
+    if kind == "verified_queries":
+        return {
+            "question": _ws(_get(item, "question")),
+            "sql": _ws(_get(item, "sql")),
+            "is_onboarding": bool(_get(item, "is_onboarding", False)),
+        }
     if kind == "metrics":
         return {
             "expression": _ws(_get(item, "expression")),
@@ -136,7 +144,7 @@ def _index(items: Iterable[Any]) -> Dict[str, Any]:
     """Normalized name -> item. First occurrence wins (never duplicates)."""
     indexed: Dict[str, Any] = {}
     for item in items or []:
-        key = normalize_name(_get(item, "unique_name"))
+        key = normalize_name(_get(item, "unique_name") or _get(item, "name") or _get(item, "question"))
         if key and key not in indexed:
             indexed[key] = item
     return indexed
@@ -148,11 +156,15 @@ def _item_entry(kind: str, item: Any) -> Dict[str, Any]:
         table = f"{_get(item, 'from_dataset')} -> {_get(item, 'to_dataset')}"
     elif kind == "tables":
         table = _get(item, "source_table") or _get(item, "unique_name")
+    elif kind == "verified_queries":
+        table = _get(item, "view_name") or "semantic_view"
     else:
         table = _get(item, "dataset")
     entry: Dict[str, Any] = {"name": _display_name(item), "table": str(table or "")}
     if kind == "metrics":
         entry["expression"] = str(_get(item, "expression") or "")
+    elif kind == "verified_queries":
+        entry["sql"] = str(_get(item, "sql") or "")
     return entry
 
 
@@ -298,13 +310,16 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
 
     for kind, attr in DELTA_KINDS:
         cls = _ITEM_CLASSES[kind]
-        current: List[Any] = getattr(merged, attr)
-        current_keys = {normalize_name(_get(i, "unique_name")) for i in current}
+        current: List[Any] = getattr(merged, attr, [])
+        current_keys = {normalize_name(_get(i, "unique_name") or _get(i, "name") or _get(i, "question")) for i in current}
         old_items = _index(baseline.get(attr) or [])
         for key, old_item in old_items.items():
             if key in current_keys:
                 continue
-            current.append(cls.model_validate(old_item))
+            if cls is dict:
+                current.append(old_item if isinstance(old_item, dict) else old_item.model_dump())
+            else:
+                current.append(cls.model_validate(old_item))
             current_keys.add(key)
 
         if kind in ("tables", "dimensions"):
