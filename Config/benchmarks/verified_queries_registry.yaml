@@ -1,0 +1,20 @@
+- name: show_me_ebitda_and_revenue_by_region
+  question: Show me ebitda and revenue by region
+  sql: "-- SemaBridge AI Generated Governed Semantic Query\n-- Target Engine: Snowflake\
+    \ Cortex Analyst & Semantic View\n-- Question: \"Show me ebitda and revenue by\
+    \ region\"\n-- Dialect: SNOWFLAKE\n-- Metric: Revenue Open (Aggregation: NONE)\n\
+    -- Metric: Revenue Won (Aggregation: NONE)\n-- Metric: Revenue In Pipeline (Aggregation:\
+    \ NONE)\nSELECT\n    Region,\n    \"Annual Revenue\",\n    \"Country-Region\"\
+    ,\n    SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Open' THEN OPPORTUNITIES.\"COL_VALUE\"\
+    \ END::FLOAT) AS REVENUE_OPEN,\n    SUM(CASE WHEN OPPORTUNITIES.\"STATUS\" = 'Won'\
+    \ THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT) AS REVENUE_WON,\n    COALESCE((SUM(CASE\
+    \ WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"\
+    PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)), 0) +\
+    \ COALESCE((SUM(CASE WHEN (OPPORTUNITIES.\"STATUS\" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES.\"\
+    PIPELINESTEP\", 1)) >= 2) THEN OPPORTUNITIES.\"COL_VALUE\" END::FLOAT)) * (0)\
+    \ / 100, 0) AS REVENUE_IN_PIPELINE\nFROM Opportunities\nLEFT JOIN Accounts ON\
+    \ Opportunities.AccountSeq = Accounts.AccountSeq\nGROUP BY 1, 2, 3\nORDER BY 1\
+    \ DESC\nLIMIT 100;"
+  verified_at: '2026-11-10T05:29:40Z'
+  verified_by: semabridge_analyst
+  target: SNOWFLAKE

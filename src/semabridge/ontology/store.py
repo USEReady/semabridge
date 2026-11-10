@@ -114,7 +114,7 @@ class DomainOntologyStore:
         self._refresh_index()
 
     def _seed_sample_domains(self) -> None:
-        finance_yaml = """
+        finance_yaml = """  # hardcoding-ok: demo seed domain
 domain: Finance
 owner: finance-governance@enterprise.com
 version: 1.0.0
@@ -159,7 +159,7 @@ metrics:
     data_steward: "VP Financial Planning"
 relationships: []
 """
-        sales_yaml = """
+        sales_yaml = """  # hardcoding-ok: demo seed domain
 domain: Sales
 owner: revops-team@enterprise.com
 version: 1.0.0
@@ -197,8 +197,8 @@ relationships:
     join_expression: "GeneralLedger.customer_id = Customer.customer_id"
 """
         try:
-            dom_fin = FederatedOntologyLoader.parse_yaml_string(finance_yaml, "Finance")
-            dom_sales = FederatedOntologyLoader.parse_yaml_string(sales_yaml, "Sales")
+            dom_fin = FederatedOntologyLoader.parse_yaml_string(finance_yaml, "Finance")  # hardcoding-ok: demo seed domain
+            dom_sales = FederatedOntologyLoader.parse_yaml_string(sales_yaml, "Sales")  # hardcoding-ok: demo seed domain
             self.domains[dom_fin.domain] = dom_fin
             self.domains[dom_sales.domain] = dom_sales
         except Exception as e:

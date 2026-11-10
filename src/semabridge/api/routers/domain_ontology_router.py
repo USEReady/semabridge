@@ -329,7 +329,9 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
 
     if req.osi_model:
         try:
-            osi_obj = OSIModel(**req.osi_model)
+            # Use Pydantic model_validate_json to safely parse nested dictionaries and date strings
+            import json as _json
+            osi_obj = OSIModel.model_validate_json(_json.dumps(req.osi_model, default=str))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid OSIModel payload: {e}")
     elif project_id:
@@ -342,6 +344,16 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
 
     target_domain = req.domain_name or osi_obj.label or osi_obj.unique_name or "Enterprise"
     existing_domain_obj = ontology_store.get_domain(target_domain)
+    # When domain display name has been renamed by the user, look up existing domain by source_project_id
+    # so we sync/update in place rather than generating a duplicate domain file.
+    if not existing_domain_obj and project_id:
+        fed = ontology_store.get_federated_ontology()
+        for d in fed.domains:
+            if getattr(d, "source_project_id", None) == project_id:
+                existing_domain_obj = d
+                if not req.domain_name:
+                    target_domain = d.domain
+                break
 
     sync_report: Dict[str, List[str]] = {}
     try:

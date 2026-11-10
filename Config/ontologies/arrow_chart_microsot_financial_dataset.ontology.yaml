@@ -1,0 +1,1101 @@
+domain: Arrow Chart - Microsot Financial Dataset
+id: arrow_chart_microsot_financial_dataset
+version: 1.0.0
+source_project_id: proj-arrow-chart-microsot-financial-dataset
+concepts:
+- name: Date
+  label: Date
+  concept_type: DIMENSION
+  domain: Arrow Chart - Microsot Financial Dataset
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Quarter Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Quarter
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Quarter
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Month Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Day of Week Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Day of Week
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DateWithTransactions
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: DateAutoTemplate
+  label: DateAutoTemplate
+  concept_type: DIMENSION
+  domain: Arrow Chart - Microsot Financial Dataset
+  synonyms: []
+  business_rules: []
+  physical_table: DateAutoTemplate
+  attributes:
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Quarter Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Quarter
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Quarter
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year Month Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Day of Week Number
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Day of Week
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: DateWithTransactions
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: financials
+  label: financials
+  concept_type: DIMENSION
+  domain: Arrow Chart - Microsot Financial Dataset
+  synonyms: []
+  business_rules: []
+  physical_table: financials
+  attributes:
+  - name: Segment
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Country
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Product
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Discount Band
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Units Sold
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Manufacturing Price
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sale Price
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Gross Sales
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Discounts
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sales
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: COGS
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Profit
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Date
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: '# Measures'
+  label: '# Measures'
+  concept_type: DIMENSION
+  domain: Arrow Chart - Microsot Financial Dataset
+  synonyms: []
+  business_rules: []
+  physical_table: '# Measures'
+  attributes: []
+  tags: []
+  origin: bi
+metrics:
+- name: SHOWVALUEFORDATES
+  label: Showvaluefordates
+  sql_expression: 'TRUE'
+  dax_expression: "\nVAR __LastDateWithData =\n    CALCULATE (\n        MAXX ( { MAX\
+    \ ( 'financials'[Date] ) }, ''[Value] ),\n        REMOVEFILTERS ()\n    )\nVAR\
+    \ __FirstDateVisible =\n    MIN ( 'Date'[Date] )\nVAR __Result =\n    __FirstDateVisible\
+    \ <= __LastDateWithData\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - SHOWVALUEFORDATES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: Date
+  tags: []
+  origin: bi
+- name: SALES
+  label: Sales
+  sql_expression: SUM(FINANCIALS."SALES")
+  dax_expression: 'SUM( financials[ Sales] ) '
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YTD_SALES
+  label: Ytd Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        DATESYTD ( 'Date'[Date] )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Ytd Sales
+  - YTD_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QTD_SALES
+  label: Qtd Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        DATESQTD ( 'Date'[Date] )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qtd Sales
+  - QTD_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MTD_SALES
+  label: Mtd Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        DATESMTD ( 'Date'[Date] )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Mtd Sales
+  - MTD_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PY_SALES
+  label: Py Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        CALCULATETABLE (\n            DATEADD ( 'Date'[Date], -1, YEAR ),\n \
+    \           'Date'[DateWithTransactions] = TRUE\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Py Sales
+  - PY_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YOY_SALES
+  label: Yoy Sales
+  sql_expression: (CASE WHEN (((# Measures."SALES") IS NOT NULL)) AND (((# Measures."PY_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."SALES") IS NULL AND (# Measures."PY_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."SALES"), 0) - COALESCE((# Measures."PY_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PY_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Yoy Sales
+  - YOY_SALES
+  business_rules: []
+  derives_from:
+  - PY_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YOY_PCT_SALES
+  label: Yoy Pct Sales
+  sql_expression: '# Measures."YOY_SALES" / NULLIF(# Measures."PY_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [YOY_SALES],\n    [PY_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Yoy Pct Sales
+  - Yoy % Sales
+  - YOY_PCT_SALES
+  business_rules: []
+  derives_from:
+  - YOY_SALES
+  - PY_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PQ_SALES
+  label: Pq Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        CALCULATETABLE (\n            DATEADD ( 'Date'[Date], -1, QUARTER ),\n\
+    \            'Date'[DateWithTransactions] = TRUE\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pq Sales
+  - PQ_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QOQ_SALES
+  label: Qoq Sales
+  sql_expression: (CASE WHEN (((# Measures."SALES") IS NOT NULL)) AND (((# Measures."PQ_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."SALES") IS NULL AND (# Measures."PQ_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."SALES"), 0) - COALESCE((# Measures."PQ_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PQ_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qoq Sales
+  - QOQ_SALES
+  business_rules: []
+  derives_from:
+  - PQ_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QOQ_PCT_SALES
+  label: Qoq Pct Sales
+  sql_expression: '# Measures."QOQ_SALES" / NULLIF(# Measures."PQ_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [QOQ_SALES],\n    [PQ_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qoq Pct Sales
+  - Qoq % Sales
+  - QOQ_PCT_SALES
+  business_rules: []
+  derives_from:
+  - QOQ_SALES
+  - PQ_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PM_SALES
+  label: Pm Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        CALCULATETABLE (\n            DATEADD ( 'Date'[Date], -1, MONTH ),\n\
+    \            'Date'[DateWithTransactions] = TRUE\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pm Sales
+  - PM_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MOM_SALES
+  label: Mom Sales
+  sql_expression: (CASE WHEN (((# Measures."SALES") IS NOT NULL)) AND (((# Measures."PM_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."SALES") IS NULL AND (# Measures."PM_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."SALES"), 0) - COALESCE((# Measures."PM_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PM_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Mom Sales
+  - MOM_SALES
+  business_rules: []
+  derives_from:
+  - PM_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MOM_PCT_SALES
+  label: Mom Pct Sales
+  sql_expression: '# Measures."MOM_SALES" / NULLIF(# Measures."PM_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [MOM_SALES],\n    [PM_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Mom Pct Sales
+  - Mom % Sales
+  - MOM_PCT_SALES
+  business_rules: []
+  derives_from:
+  - MOM_SALES
+  - PM_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PYTD_SALES
+  label: Pytd Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [YTD_SALES],\n\
+    \        CALCULATETABLE (\n            DATEADD ( 'Date'[Date], -1, YEAR ),\n \
+    \           'Date'[DateWithTransactions] = TRUE\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pytd Sales
+  - PYTD_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YOYTD_SALES
+  label: Yoytd Sales
+  sql_expression: (CASE WHEN (((# Measures."YTD_SALES") IS NOT NULL)) AND (((# Measures."PYTD_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."YTD_SALES") IS NULL AND (# Measures."PYTD_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."YTD_SALES"), 0) - COALESCE((# Measures."PYTD_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [YTD_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PYTD_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Yoytd Sales
+  - YOYTD_SALES
+  business_rules: []
+  derives_from:
+  - YTD_SALES
+  - PYTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YOYTD_PCT_SALES
+  label: Yoytd Pct Sales
+  sql_expression: '# Measures."YOYTD_SALES" / NULLIF(# Measures."PYTD_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [YOYTD_SALES],\n    [PYTD_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Yoytd Pct Sales
+  - Yoytd % Sales
+  - YOYTD_PCT_SALES
+  business_rules: []
+  derives_from:
+  - YOYTD_SALES
+  - PYTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PQTD_SALES
+  label: Pqtd Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [QTD_SALES],\n\
+    \        CALCULATETABLE (\n            DATEADD ( 'Date'[Date], -1, QUARTER ),\n\
+    \            'Date'[DateWithTransactions] = TRUE\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pqtd Sales
+  - PQTD_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QOQTD_SALES
+  label: Qoqtd Sales
+  sql_expression: (CASE WHEN (((# Measures."QTD_SALES") IS NOT NULL)) AND (((# Measures."PQTD_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."QTD_SALES") IS NULL AND (# Measures."PQTD_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."QTD_SALES"), 0) - COALESCE((# Measures."PQTD_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [QTD_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PQTD_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qoqtd Sales
+  - QOQTD_SALES
+  business_rules: []
+  derives_from:
+  - QTD_SALES
+  - PQTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QOQTD_PCT_SALES
+  label: Qoqtd Pct Sales
+  sql_expression: '# Measures."QOQTD_SALES" / NULLIF(# Measures."PQTD_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [QOQTD_SALES],\n    [PQTD_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qoqtd Pct Sales
+  - Qoqtd % Sales
+  - QOQTD_PCT_SALES
+  business_rules: []
+  derives_from:
+  - QOQTD_SALES
+  - PQTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PMTD_SALES
+  label: Pmtd Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [MTD_SALES],\n\
+    \        CALCULATETABLE (\n            DATEADD ( 'Date'[Date], -1, MONTH ),\n\
+    \            'Date'[DateWithTransactions] = TRUE\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pmtd Sales
+  - PMTD_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MOMTD_SALES
+  label: Momtd Sales
+  sql_expression: (CASE WHEN (((# Measures."MTD_SALES") IS NOT NULL)) AND (((# Measures."PMTD_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."MTD_SALES") IS NULL AND (# Measures."PMTD_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."MTD_SALES"), 0) - COALESCE((# Measures."PMTD_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [MTD_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PMTD_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Momtd Sales
+  - MOMTD_SALES
+  business_rules: []
+  derives_from:
+  - MTD_SALES
+  - PMTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MOMTD_PCT_SALES
+  label: Momtd Pct Sales
+  sql_expression: '# Measures."MOMTD_SALES" / NULLIF(# Measures."PMTD_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [MOMTD_SALES],\n    [PMTD_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Momtd Pct Sales
+  - Momtd % Sales
+  - MOMTD_PCT_SALES
+  business_rules: []
+  derives_from:
+  - MOMTD_SALES
+  - PMTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PYC_SALES
+  label: Pyc Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        PARALLELPERIOD ( 'Date'[Date], -1, YEAR )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pyc Sales
+  - PYC_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YTDOPY_SALES
+  label: Ytdopy Sales
+  sql_expression: (CASE WHEN (((# Measures."YTD_SALES") IS NOT NULL)) AND (((# Measures."PYC_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."YTD_SALES") IS NULL AND (# Measures."PYC_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."YTD_SALES"), 0) - COALESCE((# Measures."PYC_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [YTD_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PYC_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Ytdopy Sales
+  - YTDOPY_SALES
+  business_rules: []
+  derives_from:
+  - YTD_SALES
+  - PYC_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: YDTOPY_PCT_SALES
+  label: Ydtopy Pct Sales
+  sql_expression: '# Measures."YTDOPY_SALES" / NULLIF(# Measures."PYC_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [YTDOPY_SALES],\n    [PYC_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Ydtopy Pct Sales
+  - Ydtopy % Sales
+  - YDTOPY_PCT_SALES
+  business_rules: []
+  derives_from:
+  - YTDOPY_SALES
+  - PYC_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PQC_SALES
+  label: Pqc Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        PARALLELPERIOD ( 'Date'[Date], -1, QUARTER )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pqc Sales
+  - PQC_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QTDOPQ_SALES
+  label: Qtdopq Sales
+  sql_expression: (CASE WHEN (((# Measures."QTD_SALES") IS NOT NULL)) AND (((# Measures."PQC_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."QTD_SALES") IS NULL AND (# Measures."PQC_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."QTD_SALES"), 0) - COALESCE((# Measures."PQC_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [QTD_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PQC_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qtdopq Sales
+  - QTDOPQ_SALES
+  business_rules: []
+  derives_from:
+  - QTD_SALES
+  - PQC_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: QDTOPQ_PCT_SALES
+  label: Qdtopq Pct Sales
+  sql_expression: '# Measures."QTDOPQ_SALES" / NULLIF(# Measures."PQC_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [QTDOPQ_SALES],\n    [PQC_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Qdtopq Pct Sales
+  - Qdtopq % Sales
+  - QDTOPQ_PCT_SALES
+  business_rules: []
+  derives_from:
+  - QTDOPQ_SALES
+  - PQC_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PMC_SALES
+  label: Pmc Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        PARALLELPERIOD ( 'Date'[Date], -1, MONTH )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pmc Sales
+  - PMC_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MTDOPM_SALES
+  label: Mtdopm Sales
+  sql_expression: (CASE WHEN (((# Measures."MTD_SALES") IS NOT NULL)) AND (((# Measures."PMC_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."MTD_SALES") IS NULL AND (# Measures."PMC_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."MTD_SALES"), 0) - COALESCE((# Measures."PMC_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [MTD_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PMC_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Mtdopm Sales
+  - MTDOPM_SALES
+  business_rules: []
+  derives_from:
+  - MTD_SALES
+  - PMC_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MTDOPM_PCT_SALES
+  label: Mtdopm Pct Sales
+  sql_expression: '# Measures."MTDOPM_SALES" / NULLIF(# Measures."PMC_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [MTDOPM_SALES],\n    [PMC_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Mtdopm Pct Sales
+  - Mtdopm % Sales
+  - MTDOPM_PCT_SALES
+  business_rules: []
+  derives_from:
+  - MTDOPM_SALES
+  - PMC_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MAT_SALES
+  label: Mat Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [SALES],\n\
+    \        DATESINPERIOD (\n            'Date'[Date],\n            MAX ( 'Date'[Date]\
+    \ ),\n            -1,\n            YEAR\n        )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Mat Sales
+  - MAT_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: PYMAT_SALES
+  label: Pymat Sales
+  dax_expression: "\nIF (\n    [SHOWVALUEFORDATES],\n    CALCULATE (\n        [MAT_SALES],\n\
+    \        DATEADD ( 'Date'[Date], -1, YEAR )\n    )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Pymat Sales
+  - PYMAT_SALES
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MATG_SALES
+  label: Matg Sales
+  sql_expression: (CASE WHEN (((# Measures."MAT_SALES") IS NOT NULL)) AND (((# Measures."PYMAT_SALES")
+    IS NOT NULL)) THEN CASE WHEN (# Measures."MAT_SALES") IS NULL AND (# Measures."PYMAT_SALES")
+    IS NULL THEN NULL ELSE COALESCE((# Measures."MAT_SALES"), 0) - COALESCE((# Measures."PYMAT_SALES"),
+    0) END END)
+  dax_expression: "\nVAR __ValueCurrentPeriod = [MAT_SALES]\nVAR __ValuePreviousPeriod\
+    \ = [PYMAT_SALES]\nVAR __Result =\n    IF (\n        NOT ISBLANK ( __ValueCurrentPeriod\
+    \ ) && NOT ISBLANK ( __ValuePreviousPeriod ),\n        __ValueCurrentPeriod -\
+    \ __ValuePreviousPeriod\n    )\nRETURN\n    __Result"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Matg Sales
+  - MATG_SALES
+  business_rules: []
+  derives_from:
+  - MAT_SALES
+  - PYMAT_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MATG_PCT_SALES
+  label: Matg Pct Sales
+  sql_expression: '# Measures."MATG_SALES" / NULLIF(# Measures."PYMAT_SALES", 0)'
+  dax_expression: "\nDIVIDE ( \n    [MATG_SALES],\n    [PYMAT_SALES]\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Matg Pct Sales
+  - Matg % Sales
+  - MATG_PCT_SALES
+  business_rules: []
+  derives_from:
+  - MATG_SALES
+  - PYMAT_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MAX_X_AXIS_ADJUSTMENT
+  label: Max X Axis Adjustment
+  sql_expression: MAX(MAX(# Measures."MTD_SALES")) * 1.12
+  dax_expression: "\nMAXX(\n    ALLSELECTED( financials[Segment] ),\n    MAX( [MTD_SALES],\
+    \ [PMTD_SALES] )\n    ) * 1.12 "
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Max X Axis Adjustment
+  - MAX_X_AXIS_ADJUSTMENT
+  business_rules: []
+  derives_from:
+  - MTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: SALES_PM_DUMMY
+  label: Sales Pm Dummy
+  sql_expression: '# Measures."SALES_PM"'
+  dax_expression: "[SALES_PM] \n"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales Pm Dummy
+  - SALES_PM_DUMMY
+  business_rules: []
+  derives_from:
+  - SALES_PM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: NEGATIVE_ARROW
+  label: Negative Arrow
+  sql_expression: 'CASE WHEN # Measures."SALES_CM" < # Measures."SALES_PM" THEN #
+    Measures."SALES_CM" END'
+  dax_expression: "IF( [SALES_CM] < [SALES_PM],  [SALES_CM] ) \n"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Negative Arrow
+  - NEGATIVE_ARROW
+  business_rules: []
+  derives_from:
+  - SALES_CM
+  - SALES_PM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: POSITIVE_ARROW
+  label: Positive Arrow
+  sql_expression: 'CASE WHEN # Measures."SALES_CM" >= # Measures."SALES_PM" THEN #
+    Measures."SALES_CM" END'
+  dax_expression: "IF( [SALES_CM] >= [SALES_PM],  [SALES_CM] ) \n"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Positive Arrow
+  - POSITIVE_ARROW
+  business_rules: []
+  derives_from:
+  - SALES_CM
+  - SALES_PM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: POSITIVE_DATA_LABEL
+  label: Positive Data Label
+  sql_expression: 'CASE WHEN # Measures."SALES_CM" >= # Measures."SALES_PM" THEN #
+    Measures."SALES_MOM" END'
+  dax_expression: '
+
+    IF(  [SALES_CM] >= [SALES_PM], [SALES_MOM] )'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Positive Data Label
+  - POSITIVE_DATA_LABEL
+  business_rules: []
+  derives_from:
+  - SALES_CM
+  - SALES_PM
+  - SALES_MOM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: NEGATIVE_DATA_LABEL
+  label: Negative Data Label
+  sql_expression: 'CASE WHEN # Measures."SALES_CM" < # Measures."SALES_PM" THEN #
+    Measures."SALES_MOM" END'
+  dax_expression: '
+
+    IF( [SALES_CM] < [SALES_PM], [SALES_MOM] )'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Negative Data Label
+  - NEGATIVE_DATA_LABEL
+  business_rules: []
+  derives_from:
+  - SALES_CM
+  - SALES_PM
+  - SALES_MOM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: MIN_X_AXIS_ADJUSTMENT
+  label: Min X Axis Adjustment
+  sql_expression: MIN(MIN(# Measures."MTD_SALES")) * 0.25
+  dax_expression: "\nMINX(\n    ALLSELECTED( financials[Segment] ),\n    MIN( [MTD_SALES],\
+    \ [PMTD_SALES] )\n    ) * 0.25 "
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Min X Axis Adjustment
+  - MIN_X_AXIS_ADJUSTMENT
+  business_rules: []
+  derives_from:
+  - MTD_SALES
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: SALES_CM_DUMMY
+  label: Sales Cm Dummy
+  sql_expression: '# Measures."SALES_CM"'
+  dax_expression: '[SALES_CM] '
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales Cm Dummy
+  - SALES_CM_DUMMY
+  business_rules: []
+  derives_from:
+  - SALES_CM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: CURRENT_YEAR
+  label: Current Year
+  sql_expression: MAX(CASE WHEN "COL_NOT" THEN COL_DATE."YEAR" END)
+  dax_expression: "\nMAXX( \n    FILTER( ALL( 'Date'[Year] ) , NOT ISBLANK( [SALES]\
+    \ ) ),\n     'Date'[Year] )"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Current Year
+  - CURRENT_YEAR
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: CURRENT_MONTH
+  label: Current Month
+  sql_expression: MAX(CASE WHEN "COL_NOT" THEN COL_DATE."MONTH_NUMBER" END)
+  dax_expression: "\nMAXX( \n    FILTER( ALL( 'Date'[Year], 'Date'[Month Number] )\
+    \ , NOT ISBLANK( [SALES] ) && 'Date'[Year] = [CURRENT_YEAR] ),\n     'Date'[Month\
+    \ Number] )"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Current Month
+  - CURRENT_MONTH
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: SALES_CM
+  label: Sales Cm
+  dax_expression: "\nCALCULATE( \n    [SALES], \n    FILTER( \n        ALLSELECTED(\
+    \ 'Date' ), \n        'Date'[Year] = [CURRENT_YEAR]  && \n        'Date'[Month\
+    \ Number] = [CURRENT_MONTH] )\n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales Cm
+  - SALES_CM
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: SALES_PM
+  label: Sales Pm
+  dax_expression: "\nCALCULATE( \n    [SALES_CM] ,\n    DATEADD( 'Date'[Date] , -1,\
+    \ MONTH ) \n)"
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales Pm
+  - SALES_PM
+  business_rules: []
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+- name: SALES_MOM
+  label: Sales Mom
+  sql_expression: (CASE WHEN (# Measures."SALES_CM") IS NULL AND (# Measures."SALES_PM")
+    IS NULL THEN NULL ELSE COALESCE(# Measures."SALES_CM", 0) - COALESCE(# Measures."SALES_PM",
+    0) END) / NULLIF(# Measures."SALES_PM", 0)
+  dax_expression: DIVIDE( [SALES_CM] - [SALES_PM] , [SALES_PM] )
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sales Mom
+  - SALES_MOM
+  business_rules: []
+  derives_from:
+  - SALES_CM
+  - SALES_PM
+  domain: Arrow Chart - Microsot Financial Dataset
+  concept: '# Measures'
+  tags: []
+  origin: bi
+relationships:
+- name: REL_FINANCIALS_DATE__DATE_DATE
+  from_concept: financials
+  to_concept: Date
+  cardinality: N:1
+  join_expression: financials.Date = Date.Date
+  is_active: true
+  origin: bi

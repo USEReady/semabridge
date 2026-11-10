@@ -36,14 +36,47 @@ class SearchHit(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
+def _stem_token(tok: str) -> str:
+    """Lightweight plural-to-singular normalization so 'cases' matches 'case' and 'opportunities' matches 'opportunity'."""
+    if len(tok) > 4 and tok.endswith("ies"):
+        return tok[:-3] + "y"
+    if len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is")):
+        return tok[:-1]
+    return tok
+
+
 def _tokenize(text: str) -> List[str]:
     """Tokenize and normalize text into clean lower-case alphanumeric tokens."""
     if not text:
         return []
-    # Split camelCase, snake_case, spaces, and punctuation
-    cleaned = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    cleaned = re.sub(r"[^A-Za-z0-9_ ]", " ", cleaned)
-    tokens = [t.strip().casefold() for t in cleaned.split() if t.strip()]
+    # Preserve '%' as 'percent' and split snake_case underscores cleanly
+    cleaned = text.replace("%", " percent ").replace("_", " ")
+    # Normalize standard BI time-intelligence phrases to canonical short tags before splitting
+    cleaned = re.sub(r"\byear[- ]?to[- ]?date\b", " ytd ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bquarter[- ]?to[- ]?date\b", " qtd ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bmonth[- ]?to[- ]?date\b", " mtd ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bprevious\s+year\b", " py ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bprevious\s+month\b", " pm ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bprevious\s+quarter\b", " pq ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bsame\s+period\s+last\s+year\b", " sply ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bmoving\s+annual\s+total\b", " mat ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bmonth[- ]?over[- ]?month\b", " mom ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\byear[- ]?over[- ]?year\b", " yoy ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bquarter[- ]?over[- ]?quarter\b", " qoq ", cleaned, flags=re.I)
+    # Normalize mixed-case YoY/MoM/QoQ before camelCase splitting so 'YoY' doesn't become 'Yo Y'
+    cleaned = re.sub(r"\b(YoY|MoM|QoQ|YTD|QTD|MTD|SPLY|MAT)\b", lambda m: m.group(1).lower(), cleaned)
+    # Split camelCase boundaries
+    cleaned = re.sub(r"([a-z])([A-Z])", r"\1 \2", cleaned)
+    cleaned = re.sub(r"[^A-Za-z0-9 ]", " ", cleaned)
+    raw_tokens = [t.strip().casefold() for t in cleaned.split() if t.strip()]
+    tokens: List[str] = []
+    for tok in raw_tokens:
+        if tok in ("pct", "percentage"):
+            tokens.append("percent")
+        elif tok == "average":
+            tokens.append("avg")
+        else:
+            tokens.append(_stem_token(tok))
     return tokens
 
 
@@ -127,12 +160,15 @@ class SemanticSearchIndex:
             )
 
         # 2. Index Metrics
+        # Note: sql_expression is intentionally omitted from corpus_text to prevent SQL keywords
+        # (e.g. 'CASE WHEN', 'SUM', 'COUNT') or table names inside formulas from creating false positive BM25 hits.
         for metric in ontology.metrics.values():
             doc_id = f"metric:{metric.name.casefold()}"
-            corpus_text = f"{metric.name} {metric.label or ''} {metric.description or ''} {metric.sql_expression} {' '.join(metric.synonyms)} {' '.join(metric.business_rules)} {' '.join(metric.tags)}"
+            corpus_text = f"{metric.name} {metric.label or ''} {metric.concept or ''} {metric.description or ''} {' '.join(metric.synonyms)} {' '.join(metric.business_rules)} {' '.join(metric.tags)}"
+            display_name = metric.label or (metric.name.replace("_", " ").title() if "_" in metric.name else metric.name)
             self._add_document(
                 doc_id=doc_id,
-                name=metric.name,
+                name=display_name,
                 item_type="METRIC",
                 domain=metric.domain,
                 description=metric.description,
@@ -143,6 +179,23 @@ class SemanticSearchIndex:
                 data_steward=metric.data_steward,
                 tags=metric.tags,
             )
+
+        # 3. Index Attributes (Columns)
+        # Enables dimension discovery so queries like "show case count by agent" resolve "agent" as an attribute of Cases.
+        for concept in ontology.concepts.values():
+            for attr in concept.attributes:
+                doc_id = f"attribute:{concept.name.casefold()}:{attr.name.casefold()}"
+                corpus_text = f"{attr.name} {attr.description or ''} {' '.join(attr.synonyms)} {concept.name}"
+                self._add_document(
+                    doc_id=doc_id,
+                    name=attr.name,
+                    item_type="ATTRIBUTE",
+                    domain=concept.domain,
+                    description=attr.description,
+                    corpus_text=corpus_text,
+                    synonyms=attr.synonyms,
+                    tags=[concept.name],
+                )
 
         # Compute average document length
         total_len = sum(self.doc_lengths.values())
@@ -204,15 +257,32 @@ class SemanticSearchIndex:
 
         query_clean = query.strip()
         query_tokens = _tokenize(query_clean)
+        raw_alpha = [w.casefold() for w in re.findall(r"[A-Za-z0-9]+", query_clean)]
+        q_bigrams = {
+            f"{query_tokens[i]}{query_tokens[i + 1]}" for i in range(len(query_tokens) - 1)
+        } | {
+            f"{raw_alpha[i]}{raw_alpha[i + 1]}" for i in range(len(raw_alpha) - 1)
+        }
         query_vec = _compute_char_ngram_vector(query_clean, self.vector_dim)
 
         candidates: Set[str] = set()
         for tok in query_tokens:
             if tok in self.inverted_index:
                 candidates.update(self.inverted_index[tok])
+        for idx_tok, doc_ids in self.inverted_index.items():
+            if any(bg in idx_tok for bg in q_bigrams if len(bg) >= 5):
+                candidates.update(doc_ids)
 
-        # If sparse match returned few candidates, consider all documents for vector similarity
-        if len(candidates) < limit * 2:
+        # Ensure domain_filter doesn't starve sparse retrieval due to hits in unrelated domains
+        domain_cand_count = (
+            sum(
+                1 for cid in candidates
+                if self.docs[cid]["domain"] and self.docs[cid]["domain"].casefold() == domain_filter.casefold()
+            )
+            if domain_filter
+            else len(candidates)
+        )
+        if domain_cand_count < limit * 2:
             candidates.update(self.docs.keys())
 
         # BM25 Parameters
@@ -238,12 +308,30 @@ class SemanticSearchIndex:
             matched_term = None
             exact_bonus = 0.0
 
+            name_toks = _tokenize(doc["name"])
+            q_toks_set = set(query_tokens)
+            name_toks_set = set(name_toks)
+            doc_nospace = re.sub(r"[^a-z0-9]+", "", doc_name_lower)
+            bigram_match = any(len(bg) >= 5 and bg in doc_nospace for bg in q_bigrams)
+
             if doc_name_lower == query_lower or doc_name_clean == query_clean_spaced:
                 exact_bonus = 1.0
                 match_type = "EXACT"
                 matched_term = doc["name"]
-            elif doc_name_clean in query_clean_spaced or (len(query_clean_spaced) > 3 and query_clean_spaced in doc_name_clean):
-                exact_bonus = 0.8
+            elif (
+                (doc_name_clean and re.search(rf"(?<!\w){re.escape(doc_name_clean)}(?!\w)", query_clean_spaced))
+                or (len(query_clean_spaced) > 3 and query_clean_spaced in doc_name_clean)
+                or (name_toks_set and name_toks_set.issubset(q_toks_set))
+            ):
+                # Weight exact/token-subset match bonus by token coverage so multi-word matches
+                # (e.g. 'Yoy Pct Sales' for 'YoY percentage sales') outrank single-word subsets ('Sales').
+                cov = len(name_toks_set) / max(1, len(q_toks_set))
+                exact_bonus = 0.35 + 0.45 * min(1.0, cov)
+                match_type = "EXACT"
+                matched_term = doc["name"]
+            elif bigram_match:
+                cov = min(1.0, 2.0 / max(1, len(name_toks_set)))
+                exact_bonus = 0.25 + 0.35 * cov
                 match_type = "EXACT"
                 matched_term = doc["name"]
             else:
@@ -251,8 +339,14 @@ class SemanticSearchIndex:
                 for s in doc["synonyms"]:
                     s_lower = s.casefold()
                     s_clean = s_lower.replace("_", " ")
-                    if s_clean == query_clean_spaced or s_clean in query_clean_spaced:
-                        exact_bonus = 0.8
+                    s_toks = set(_tokenize(s))
+                    if (
+                        s_clean == query_clean_spaced
+                        or (s_clean and re.search(rf"(?<!\w){re.escape(s_clean)}(?!\w)", query_clean_spaced))
+                        or (s_toks and s_toks.issubset(q_toks_set))
+                    ):
+                        cov = len(s_toks) / max(1, len(q_toks_set))
+                        exact_bonus = 0.35 + 0.45 * min(1.0, cov)
                         match_type = "SYNONYM"
                         matched_term = s
                         break

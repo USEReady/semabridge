@@ -35,6 +35,7 @@ class NLQueryRequest(BaseModel):
     dialect: str = "SNOWFLAKE"  # 'SNOWFLAKE', 'DATABRICKS', 'DUCKDB'
     target: Optional[str] = None  # 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
     project_id: Optional[str] = None
+    semantic_view: Optional[str] = None
 
 
 class ExecuteQueryRequest(BaseModel):
@@ -42,6 +43,7 @@ class ExecuteQueryRequest(BaseModel):
     target: str = "SNOWFLAKE"  # 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
     project_id: Optional[str] = None
     limit: int = 50
+    allow_simulated: bool = False
 
 
 class ExecuteQueryResponse(BaseModel):
@@ -126,7 +128,52 @@ def resolve_natural_language_query(req: NLQueryRequest) -> QueryResolutionPlan:
     elif effective_dialect in ("GENIE", "UNITY_CATALOG"):
         effective_dialect = "DATABRICKS"
 
-    plan = engine.resolve_query(req.prompt, dialect=effective_dialect)
+    allowed_domains: Optional[List[str]] = None
+    resolved_semantic_view: Optional[str] = req.semantic_view
+
+    # Project context scoping:
+    # 1. When project_id is provided, restrict candidate domains to those attached to the project
+    #    to prevent cross-domain pollution or metric name collisions.
+    # 2. Automatically resolve the deployed Snowflake Semantic View name from the project snapshot
+    #    so the engine targets SEMANTIC_VIEW(...) rather than physical tables.
+    if req.project_id:
+        model_name: Optional[str] = None
+        if not resolved_semantic_view:
+            try:
+                from semabridge.repository.model_repository import ModelRepository
+                from semabridge.utils.name_translator import get_target_deployment_name
+                snap = ModelRepository().get_head(req.project_id)
+                if snap:
+                    if getattr(snap, "view_name", None):
+                        resolved_semantic_view = snap.view_name
+                    if snap.sml_blob:
+                        import yaml as _yaml
+                        raw_data = _yaml.safe_load(snap.sml_blob) if isinstance(snap.sml_blob, (str, bytes)) else snap.sml_blob
+                        if isinstance(raw_data, dict):
+                            model_name = raw_data.get("unique_name") or req.project_id
+                            if not resolved_semantic_view:
+                                resolved_semantic_view = get_target_deployment_name(model_name, "snowflake")
+            except Exception as e:
+                logger.debug("Could not resolve semantic view name from project '%s': %s", req.project_id, e)
+
+        p_domains = ontology_store.get_project_domains(req.project_id)
+        if p_domains:
+            allowed_domains = [d.domain for d in p_domains] + [d.id for d in p_domains if d.id]
+        else:
+            fed = ontology_store.get_federated_ontology()
+            matched = [d for d in fed.domains.values() if getattr(d, "source_project_id", None) == req.project_id]
+            # Fallback: if project_id is an alias (e.g. proj-ai vs proj-artificial-intelligence), match by snapshot model name
+            if not matched and model_name:
+                matched = [d for d in fed.domains.values() if d.domain.casefold() == model_name.casefold()]
+            if matched:
+                allowed_domains = [d.domain for d in matched] + [d.id for d in matched if d.id]
+
+    plan = engine.resolve_query(
+        req.prompt,
+        dialect=effective_dialect,
+        semantic_view=resolved_semantic_view,
+        allowed_domains=allowed_domains,
+    )
     return plan
 
 
@@ -145,25 +192,24 @@ def _generate_simulated_preview(sql: str, target: str) -> ExecuteQueryResponse:
             else:
                 cols.append(re.sub(r"[^a-zA-Z0-9_]", "", it).upper() or "COL")
     if not cols:
-        cols = ["ENTITY", "METRIC_VALUE", "PERIOD"]
+        cols = ["DIMENSION", "METRIC_VALUE", "TIME_PERIOD"]
 
-    # Generate 5 realistic rows of sample data
-    sample_entities = ["Enterprise North America", "EMEA Operations", "APAC Growth", "LATAM Direct", "Global Accounts"]
+    # Generate 5 rows of sample preview data
     rows = []
-    for idx, ent in enumerate(sample_entities):
+    for idx in range(5):
         row = []
         for c in cols:
             c_lower = c.lower()
-            if any(k in c_lower for k in ("margin", "rate", "percent", "pct")):
+            if any(k in c_lower for k in ("pct", "percent", "ratio", "rate")):
                 row.append(f"{round(42.5 + (idx * 3.4), 1)}%")
-            elif any(k in c_lower for k in ("revenue", "arr", "mrr", "amount", "sales", "cost", "cogs")):
-                row.append(f"${145000 + (idx * 68000):,}")
-            elif any(k in c_lower for k in ("date", "period", "year", "month")):
+            elif any(k in c_lower for k in ("val", "amount", "total", "sum")):
+                row.append(f"{145000 + (idx * 68000):,}")
+            elif any(k in c_lower for k in ("date", "time", "year", "month")):
                 row.append(f"2024-Q{min(4, idx + 1)}")
-            elif any(k in c_lower for k in ("count", "qty", "quantity")):
+            elif any(k in c_lower for k in ("cnt", "count", "num", "qty")):
                 row.append(120 + (idx * 45))
             else:
-                row.append(ent)
+                row.append(f"Sample_{c}_{idx + 1}")
         rows.append(row)
 
     target_name = "Snowflake (Cortex Analyst)" if target == "SNOWFLAKE" else "Databricks (AI/BI Genie)" if target == "DATABRICKS" else "Local Engine"
@@ -207,7 +253,21 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
             cfg = reload_settings()
             connect_kwargs = get_snowflake_connect_kwargs(cfg.snowflake)
             if not connect_kwargs.get("account") or not connect_kwargs.get("user"):
-                return _generate_simulated_preview(clean_sql, "SNOWFLAKE")
+                if req.allow_simulated:
+                    return _generate_simulated_preview(clean_sql, "SNOWFLAKE")
+                return ExecuteQueryResponse(
+                    success=False,
+                    target="SNOWFLAKE",
+                    columns=[],
+                    rows=[],
+                    row_count=0,
+                    execution_time_ms=0,
+                    executed_sql=clean_sql,
+                    error="Snowflake credentials not configured in environment.",
+                    is_simulated=False,
+                    message="Snowflake credentials missing; live execution unavailable.",
+                    dialect="SNOWFLAKE",
+                )
 
             conn = snowflake.connector.connect(**connect_kwargs)
             try:
@@ -236,10 +296,24 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
             finally:
                 conn.close()
         except Exception as exc:
-            logger.warning("Live Snowflake query execution fallback: %s", exc)
-            preview = _generate_simulated_preview(clean_sql, "SNOWFLAKE")
-            preview.message = f"Snowflake live connection unreached ({str(exc)[:120]}); showing verified semantic preview."
-            return preview
+            logger.warning("Live Snowflake query execution failure: %s", exc)
+            if req.allow_simulated:
+                preview = _generate_simulated_preview(clean_sql, "SNOWFLAKE")
+                preview.message = f"Snowflake live connection unreached ({str(exc)[:120]}); showing verified semantic preview."
+                return preview
+            return ExecuteQueryResponse(
+                success=False,
+                target="SNOWFLAKE",
+                columns=[],
+                rows=[],
+                row_count=0,
+                execution_time_ms=int((time.perf_counter() - t0) * 1000),
+                executed_sql=clean_sql,
+                error=str(exc),
+                is_simulated=False,
+                message=f"Snowflake query execution failed: {exc}",
+                dialect="SNOWFLAKE",
+            )
 
     # 2. DATABRICKS EXECUTION
     elif target_upper == "DATABRICKS":

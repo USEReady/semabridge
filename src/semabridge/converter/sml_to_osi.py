@@ -174,6 +174,8 @@ class SMLToOSIConverter(BaseConverter):
             dataset=sml_metric.dataset,
             source_column=source_col,
             expression=expression,
+            # Pass compiled SQL expression forward so downstream ontology loaders receive valid SQL instead of DAX
+            sql_expression=getattr(sml_metric, "sql_expression", None),
             aggregation=osi_agg,
             description=sml_metric.description or None,
             format_string=sml_metric.format_string,

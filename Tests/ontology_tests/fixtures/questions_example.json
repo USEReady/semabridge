@@ -1,0 +1,5 @@
+[
+  {"q": "What is the total revenue won by product?", "expect_metrics": ["Revenue Won"], "expect_in_sql": ["SUM"], "expect_group_by": ["Product"], "synonym": "Won Revenue"},
+  {"q": "How many cases were escalated by agent?", "expect_metrics": ["Escalations"], "expect_group_by": ["Agent"]},
+  {"q": "Show the close percentage by campaign", "expect_metrics": ["Close %"], "expect_group_by": ["Campaign"]}
+]
