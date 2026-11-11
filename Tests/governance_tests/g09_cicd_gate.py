@@ -139,10 +139,18 @@ if a.gate_only:
     for i in res["errors"]:
         by_rule[i["rule_id"]] = by_rule.get(i["rule_id"], 0) + 1
     failed_certs = res.get("failed_certifications") or []
+    warn_by_group = {}
+    for w in res["warnings"]:
+        gk = (w.get("rule_id") or "UNKNOWN", w.get("domain") or "Global")
+        warn_by_group[gk] = warn_by_group.get(gk, 0) + 1
     print(
         f"Governance gate: {len(res['errors'])} errors, {len(res['warnings'])} warnings, "
         f"{len(failed_certs)} failed certifications ({dt:.1f}s) {by_rule}"
     )
+    if warn_by_group:
+        print(f"  Warnings by rule & domain ({len(warn_by_group)} groups):")
+        for (wr, wd), cnt in sorted(warn_by_group.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1]))[:15]:
+            print(f"    - {wr} [{wd}]: {cnt}")
     for i in res["errors"][:20]:
         print(f"  ERROR {i['rule_id']} {i.get('domain') or ''} :: {i['object_name']} - {i['message']}")
     for fc in failed_certs[:20]:

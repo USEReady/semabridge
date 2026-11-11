@@ -100,6 +100,7 @@ export default function OntologyDomainManager() {
   const [lintSnakeCase, setLintSnakeCase] = useState(true);
   const [lintReport, setLintReport] = useState(null);
   const [runningLint, setRunningLint] = useState(false);
+  const [expandedLintGroups, setExpandedLintGroups] = useState({});
 
   // 3. Golden Data Reconciliation (DAX vs. SQL Parity)
   const [reconMetric, setReconMetric] = useState('');
@@ -128,7 +129,15 @@ export default function OntologyDomainManager() {
     fetchCertifications();
   }, []);
 
-  const fetchCertifications = async (projectId = selectedProjectSlug) => {
+  const normalizeMetricLookupKey = (val) =>
+    (val || '')
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/^[^.]+\./, '')
+      .replace(/[\s_-]+/g, '');
+
+  const fetchCertifications = async (projectId = '') => {
     try {
       const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
       const res = await authFetch(`/api/reconciliation/certifications${qs}`);
@@ -138,6 +147,13 @@ export default function OntologyDomainManager() {
         for (const rec of data.certifications || []) {
           if (rec.metric_name) {
             nextMap[rec.metric_name.toLowerCase()] = rec;
+            const norm = normalizeMetricLookupKey(rec.metric_name);
+            if (norm) nextMap[`__norm:${norm}`] = rec;
+          }
+          if (rec.view_metric) {
+            nextMap[rec.view_metric.toLowerCase()] = rec;
+            const normVm = normalizeMetricLookupKey(rec.view_metric);
+            if (normVm) nextMap[`__norm:${normVm}`] = rec;
           }
         }
         setCertificationsMap(nextMap);
@@ -208,6 +224,8 @@ export default function OntologyDomainManager() {
         const data = await res.json();
         setInspectingDomainData(data);
         setEditorYaml(data.yaml_content || '');
+        const domProjId = data?.parsed?.source_project_id || '';
+        fetchCertifications(domProjId);
       }
     } catch (err) {
       console.error('Failed to load domain detail:', err);
@@ -589,6 +607,7 @@ export default function OntologyDomainManager() {
       if (res.ok) {
         const data = await res.json();
         setLintReport(data);
+        setExpandedLintGroups({});
       } else {
         const err = await res.json();
         setStatusMessage({ type: 'error', text: describeApiError(err, 'Semantic linter failed.') });
@@ -689,14 +708,14 @@ export default function OntologyDomainManager() {
           dimension_keys: dimList,
           dax_query: generated.dax_query,
           sql_query: generated.sql_query,
-          project_id: selectedProjectSlug || undefined,
-          domain: inspectingDomain || undefined,
+          project_id: activeReconProject,
+          domain: inspectingDomain || govDomainName || undefined,
         }),
       });
       if (vRes.ok) {
         const vData = await vRes.json();
         setReconResult(vData);
-        fetchCertifications(selectedProjectSlug);
+        fetchCertifications(activeReconProject || '');
       } else {
         const errData = await vRes.json().catch(() => ({}));
         setStatusMessage({ type: 'error', text: describeApiError(errData, 'Reconciliation verification failed.') });
@@ -709,16 +728,46 @@ export default function OntologyDomainManager() {
   };
 
   const handleAutoRunDax = async () => {
-    if (!reconQueries?.dax_query) {
-      setStatusMessage({ type: 'info', text: 'Generate queries first before running automated DAX execution.' });
-      return;
+    let daxQueryToRun = reconQueries?.dax_query || '';
+    if (!daxQueryToRun) {
+      if (!reconMetric.trim() || !reconExpr.trim() || !reconTable.trim()) {
+        setStatusMessage({ type: 'info', text: 'Select a metric or enter metric name, target view/table, and SQL formula first.' });
+        return;
+      }
     }
     setRunningRecon(true);
     try {
+      if (!daxQueryToRun) {
+        const dimList = reconDims
+          .split(',')
+          .map((d) => d.trim())
+          .filter(Boolean);
+        const activeReconProject = govScopeProject || govDomainDetail?.source_project_id || selectedProjectSlug || undefined;
+        const qRes = await authFetch('/api/reconciliation/generate-queries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            metric_name: reconMetric.trim(),
+            metric_sql_expression: reconExpr.trim(),
+            target_table_or_view: reconTable.trim(),
+            dimensions: dimList,
+            filters: [],
+            project_id: activeReconProject,
+          }),
+        });
+        if (!qRes.ok) {
+          const errData = await qRes.json().catch(() => ({}));
+          setStatusMessage({ type: 'error', text: describeApiError(errData, 'Failed to generate DAX query.') });
+          return;
+        }
+        const generated = await qRes.json();
+        setReconQueries(generated);
+        daxQueryToRun = generated.dax_query || '';
+      }
       const res = await authFetch('/api/reconciliation/run-dax', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: reconQueries.dax_query }),
+        body: JSON.stringify({ query: daxQueryToRun }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -1778,37 +1827,149 @@ export default function OntologyDomainManager() {
                         </div>
                       </div>
 
-                      {blastReport.affected_metrics?.length > 0 && (
-                        <div>
-                          <span className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                            Impacted Downstream Metrics & Stewards:
-                          </span>
-                          <div className="space-y-1 max-h-32 overflow-y-auto">
-                            {blastReport.affected_metrics.map((m, idx) => (
-                              <div
-                                key={idx}
-                                className="px-2.5 py-1.5 rounded bg-surface border border-main flex items-center justify-between gap-2 text-[11px]"
-                              >
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <span
-                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
-                                      m.impact_level === 'TRANSITIVE'
-                                        ? 'bg-violet-500/20 text-violet-300'
-                                        : 'bg-rose-500/20 text-rose-300'
-                                    }`}
-                                  >
-                                    {m.impact_level}
-                                  </span>
-                                  <span className="font-mono font-semibold text-primary truncate">{m.name}</span>
+                      {(() => {
+                        const parseImpactMeta = (item, defaultSource) => {
+                          const raw = item.details || '';
+                          const m = raw.match(/\[Source:\s*([^\]]+)\]/i);
+                          const sourceLabel = m ? m[1].trim() : defaultSource;
+                          const cleanDetails = raw.replace(/\s*\[Source:\s*[^\]]+\]/gi, '').trim();
+                          return { sourceLabel, cleanDetails };
+                        };
+                        const recertStep = (blastReport.remediation_steps || []).find((s) =>
+                          s.toLowerCase().includes('re-certification needed')
+                        );
+                        const recertMetrics = new Set();
+                        if (recertStep) {
+                          const colonIdx = recertStep.indexOf(':');
+                          if (colonIdx !== -1) {
+                            recertStep
+                              .slice(colonIdx + 1)
+                              .replace(/\.$/, '')
+                              .split(',')
+                              .map((x) => x.trim().toLowerCase())
+                              .filter(Boolean)
+                              .forEach((x) => recertMetrics.add(x));
+                          }
+                        }
+                        const jumpToRecertify = (metricName) => {
+                          const matchedM = (govDomainDetail?.metrics || []).find(
+                            (x) =>
+                              (x.name || '').toLowerCase() === metricName.toLowerCase() ||
+                              (x.label || '').toLowerCase() === metricName.toLowerCase()
+                          );
+                          if (matchedM) {
+                            const conceptObj = (govDomainDetail?.concepts || []).find(
+                              (c) => (c.name || '').toLowerCase() === (matchedM.concept || '').toLowerCase()
+                            );
+                            const tblLog = (conceptObj?.logical_name || matchedM.concept || '').toString().trim();
+                            const mLog = (matchedM.logical_name || matchedM.name || '').toString().trim();
+                            const semView = matchedM.semantic_view_name || govDomainDetail?.semantic_view_name || '';
+                            setReconMetric(matchedM.label || matchedM.name);
+                            setReconTable(semView || tblLog);
+                            setReconExpr(semView && tblLog && mLog ? `${tblLog}.${mLog}` : matchedM.sql_expression || '');
+                          } else {
+                            setReconMetric(metricName);
+                          }
+                          const el = document.getElementById('gov-reconciliation-panel');
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        };
+
+                        const allImpactGroups = [
+                          { title: 'Impacted Downstream Metrics & Stewards:', items: blastReport.affected_metrics || [], defaultSource: 'Dependency' },
+                          { title: 'Impacted AI Tools & Verified Queries:', items: blastReport.affected_ai_tools || [], defaultSource: 'Verified Query' },
+                          { title: 'Impacted BI Reports:', items: blastReport.affected_bi_reports || [], defaultSource: 'BI Report' },
+                        ].filter((g) => g.items.length > 0);
+
+                        return (
+                          <>
+                            {recertStep && (
+                              <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/35 text-emerald-200 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-start gap-2">
+                                  <ShieldCheck size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                                  <div>
+                                    <span className="font-bold text-emerald-300 block">Re-certification Prompt</span>
+                                    <span>{recertStep}</span>
+                                  </div>
                                 </div>
-                                <span className="text-tertiary text-right truncate max-w-[60%]" title={m.details}>
-                                  {m.details}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const firstCert = Array.from(recertMetrics)[0];
+                                    const matchedItem = (blastReport.affected_metrics || []).find(
+                                      (it) => (it.name || '').toLowerCase() === firstCert
+                                    );
+                                    jumpToRecertify(matchedItem?.name || blastReport.affected_metrics?.[0]?.name || blastReport.target_object);
+                                  }}
+                                  className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[10px] shrink-0 transition-colors"
+                                >
+                                  Re-certify in Reconciliation
+                                </button>
+                              </div>
+                            )}
+
+                            {allImpactGroups.map((grp) => (
+                              <div key={grp.title}>
+                                <span className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                                  {grp.title}
                                 </span>
+                                <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                                  {grp.items.map((m, idx) => {
+                                    const { sourceLabel, cleanDetails } = parseImpactMeta(m, grp.defaultSource);
+                                    const needsRecert = recertMetrics.has((m.name || '').toLowerCase());
+                                    return (
+                                      <div
+                                        key={idx}
+                                        className="px-2.5 py-2 rounded bg-surface border border-main space-y-1 text-[11px]"
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                                            <span
+                                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                                m.impact_level === 'TRANSITIVE'
+                                                  ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                                  : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                              }`}
+                                              title="Connection Level"
+                                            >
+                                              {m.impact_level}
+                                            </span>
+                                            <span
+                                              className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30"
+                                              title="Impact Source"
+                                            >
+                                              Source: {sourceLabel}
+                                            </span>
+                                            <span className="font-mono font-semibold text-primary break-all">{m.name}</span>
+                                          </div>
+                                          <div className="flex items-center gap-1.5">
+                                            {m.steward && (
+                                              <span className="text-[10px] text-secondary">Steward: {m.steward}</span>
+                                            )}
+                                            {needsRecert && (
+                                              <button
+                                                type="button"
+                                                onClick={() => jumpToRecertify(m.name)}
+                                                className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors"
+                                              >
+                                                Re-certify
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {cleanDetails && (
+                                          <div className="text-[10px] text-tertiary break-words">
+                                            {cleanDetails}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             ))}
-                          </div>
-                        </div>
-                      )}
+                          </>
+                        );
+                      })()}
 
                       {blastReport.suggestions?.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
@@ -1916,45 +2077,147 @@ export default function OntologyDomainManager() {
 
                       <p className="text-[11px] text-secondary m-0">{lintReport.summary}</p>
 
-                      {lintReport.issues?.length > 0 && (
-                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                          {lintReport.issues.slice(0, 12).map((issue, idx) => (
-                            <div
-                              key={idx}
-                              className="p-2 rounded bg-surface border border-main flex flex-col gap-0.5 text-[11px]"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-mono font-bold text-primary">
-                                  [{issue.rule_id}] {issue.object_name}
+                      {(() => {
+                        const issues = lintReport.issues || [];
+                        const errorIssues = issues.filter((i) => i.severity === 'ERROR');
+                        const nonErrorIssues = issues.filter((i) => i.severity !== 'ERROR');
+                        const groupMap = {};
+                        for (const iss of nonErrorIssues) {
+                          const domLabel = iss.domain || 'Global';
+                          const gKey = `${iss.rule_id}::${domLabel}`;
+                          if (!groupMap[gKey]) {
+                            groupMap[gKey] = {
+                              key: gKey,
+                              rule_id: iss.rule_id,
+                              domain: domLabel,
+                              severity: iss.severity,
+                              items: [],
+                            };
+                          }
+                          groupMap[gKey].items.push(iss);
+                        }
+                        const warningGroups = Object.values(groupMap).sort(
+                          (a, b) => b.items.length - a.items.length
+                        );
+
+                        return (
+                          <div className="space-y-3">
+                            {errorIssues.length > 0 && (
+                              <div className="space-y-1.5">
+                                <span className="text-[10px] font-bold uppercase text-red-400 block">
+                                  Blocking Errors ({errorIssues.length})
                                 </span>
-                                <span
-                                  className={`text-[10px] font-bold uppercase ${issue.severity === 'ERROR'
-                                      ? 'text-red-400'
-                                      : issue.severity === 'WARNING'
-                                        ? 'text-amber-400'
-                                        : 'text-blue-400'
-                                    }`}
-                                >
-                                  {issue.severity}
-                                </span>
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                  {errorIssues.map((issue, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="p-2 rounded bg-surface border border-red-500/30 flex flex-col gap-0.5 text-[11px]"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-mono font-bold text-primary">
+                                          [{issue.rule_id}] {issue.object_name}
+                                          {issue.domain ? ` · ${issue.domain}` : ''}
+                                        </span>
+                                        <span className="text-[10px] font-bold uppercase text-red-400">
+                                          {issue.severity}
+                                        </span>
+                                      </div>
+                                      <span className="text-secondary">{issue.message}</span>
+                                      {issue.remediation && (
+                                        <span className="text-emerald-400/90 text-[10px]">
+                                          Fix: {issue.remediation}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                              <span className="text-secondary">{issue.message}</span>
-                              {issue.remediation && (
-                                <span className="text-emerald-400/90 text-[10px]">
-                                  Fix: {issue.remediation}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                            )}
+
+                            {warningGroups.length > 0 && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold uppercase text-amber-300">
+                                    Warnings &amp; Info Summary by Rule &amp; Domain ({warningGroups.length} groups / {nonErrorIssues.length} items)
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const anyOpen = warningGroups.some((g) => expandedLintGroups[g.key]);
+                                      if (anyOpen) {
+                                        setExpandedLintGroups({});
+                                      } else {
+                                        const allOpen = {};
+                                        warningGroups.forEach((g) => {
+                                          allOpen[g.key] = true;
+                                        });
+                                        setExpandedLintGroups(allOpen);
+                                      }
+                                    }}
+                                    className="text-[10px] font-semibold text-accent-blue hover:underline"
+                                  >
+                                    {warningGroups.some((g) => expandedLintGroups[g.key]) ? 'Collapse all' : 'Expand all'}
+                                  </button>
+                                </div>
+                                <div className="space-y-1 max-h-60 overflow-y-auto">
+                                  {warningGroups.map((grp) => {
+                                    const isOpen = Boolean(expandedLintGroups[grp.key]);
+                                    return (
+                                      <div key={grp.key} className="rounded bg-surface border border-main overflow-hidden">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExpandedLintGroups((prev) => ({
+                                              ...prev,
+                                              [grp.key]: !prev[grp.key],
+                                            }))
+                                          }
+                                          className="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 text-left hover:bg-surface-hover transition-colors text-[11px]"
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            {isOpen ? <ChevronUp size={12} className="text-tertiary shrink-0" /> : <ChevronDown size={12} className="text-tertiary shrink-0" />}
+                                            <span className="font-mono font-bold text-primary truncate">{grp.rule_id}</span>
+                                            <span className="text-tertiary truncate">· {grp.domain}</span>
+                                          </div>
+                                          <span
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                                              grp.severity === 'WARNING'
+                                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                                : 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                            }`}
+                                          >
+                                            {grp.items.length} {grp.severity}
+                                          </span>
+                                        </button>
+                                        {isOpen && (
+                                          <div className="px-2.5 pb-2 pt-1 border-t border-main space-y-1 max-h-40 overflow-y-auto bg-surface-raised">
+                                            {grp.items.map((item, idx) => (
+                                              <div key={idx} className="text-[10px] flex flex-col gap-0.5 py-0.5 border-b border-main/40 last:border-b-0">
+                                                <div className="flex items-center justify-between gap-2">
+                                                  <span className="font-mono font-semibold text-primary">{item.object_name}</span>
+                                                  <span className="text-tertiary uppercase">{item.object_type}</span>
+                                                </div>
+                                                <span className="text-secondary">{item.message}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
               </div>
 
               {/* ── 3. GOLDEN DATA RECONCILIATION (DAX vs SQL PARITY) ── */}
-              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
+              <div id="gov-reconciliation-panel" className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -2110,9 +2373,20 @@ export default function OntologyDomainManager() {
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Slice Dimensions (comma-separated)
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-bold uppercase text-tertiary">
+                          Slice Dimensions (comma-separated)
+                        </label>
+                        {reconDims.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setReconDims('')}
+                            className="text-[10px] text-accent-blue hover:underline"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
                       <input
                         type="text"
                         value={reconDims}
@@ -2138,10 +2412,10 @@ export default function OntologyDomainManager() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      disabled={runningRecon || !reconQueries?.dax_query}
+                      disabled={runningRecon || (!reconQueries?.dax_query && (!reconMetric.trim() || !reconExpr.trim() || !reconTable.trim()))}
                       onClick={() => handleAutoRunDax()}
                       className="py-2 px-3 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-primary font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
-                      title="Execute generated DAX via local Power BI Desktop, REST API, or XMLA"
+                      title="Generate & execute DAX via local Power BI Desktop, REST API, or XMLA"
                     >
                       <Play size={13} />
                       Auto-Run DAX
@@ -2405,7 +2679,10 @@ export default function OntologyDomainManager() {
                     inspectingDomainData.parsed.metrics.map((m) => {
                       const cert =
                         certificationsMap[(m.label || '').toLowerCase()] ||
-                        certificationsMap[(m.name || '').toLowerCase()];
+                        certificationsMap[(m.name || '').toLowerCase()] ||
+                        certificationsMap[(m.logical_name || '').toLowerCase()] ||
+                        certificationsMap[`__norm:${normalizeMetricLookupKey(m.label || m.name)}`] ||
+                        certificationsMap[`__norm:${normalizeMetricLookupKey(m.logical_name || m.name)}`];
                       const certStatus = cert?.status || 'NOT_CHECKED';
                       const certClass =
                         certStatus === 'CERTIFIED'
@@ -2433,7 +2710,11 @@ export default function OntologyDomainManager() {
                             <div className="flex items-center gap-1.5">
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${certClass}`}
-                                title={cert?.certified_at ? `Last checked: ${cert.certified_at}` : 'No reconciliation run recorded yet'}
+                                title={
+                                  cert
+                                    ? `Status: ${cert.status} | Matched: ${cert.matched_rows ?? 0}/${(cert.matched_rows ?? 0) + (cert.mismatched_rows ?? 0)} | Tolerance: ±${cert.absolute_tolerance ?? 0.01} | By: ${cert.certified_by || 'verifier'} | At: ${cert.certified_at || ''}`
+                                    : 'No reconciliation run recorded yet'
+                                }
                               >
                                 {certLabel}
                               </span>
@@ -2442,6 +2723,29 @@ export default function OntologyDomainManager() {
                               </span>
                             </div>
                           </div>
+                          {cert && (
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-tertiary bg-surface px-2.5 py-1 rounded border border-main/60">
+                              <span>
+                                Matched:{' '}
+                                <strong className="text-secondary">
+                                  {cert.matched_rows ?? 0}/{(cert.matched_rows ?? 0) + (cert.mismatched_rows ?? 0)}
+                                </strong>
+                              </span>
+                              <span>
+                                Tol: <strong className="text-secondary">±{cert.absolute_tolerance ?? 0.01}</strong>
+                              </span>
+                              {cert.certified_by && (
+                                <span>
+                                  By: <strong className="text-secondary">{cert.certified_by}</strong>
+                                </span>
+                              )}
+                              {cert.certified_at && (
+                                <span>
+                                  Checked: <strong className="text-secondary">{new Date(cert.certified_at).toLocaleString()}</strong>
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <p className="text-secondary text-[11px] m-0">{m.description || 'No description provided.'}</p>
                           {m.sql_expression ? (
                             <div className="p-2 rounded bg-surface border border-main font-mono text-[11px] text-emerald-400">
