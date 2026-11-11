@@ -261,7 +261,11 @@ class FederatedOntologyLoader:
             cleaned = cls._strip_synthetic_title_synonyms(list(m.synonyms or []), raw_tech, [m.label])
             if cleaned != list(m.synonyms or []):
                 m.synonyms = cleaned
-            if m.label and m.label.strip().casefold() == synthetic.casefold():
+            if (
+                m.label
+                and m.label.strip().casefold() == synthetic.casefold()
+                and re.search(r"(?:Mompct|Yoypct|Qoqpct|\bPct\b)", synthetic)
+            ):
                 human_alt = next(
                     (
                         s for s in cleaned

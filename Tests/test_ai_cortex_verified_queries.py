@@ -367,7 +367,7 @@ def test_verified_query_ddl_escaping_quotes_and_backslashes():
         schema_manager=mock_schema,
         translator=MetricExpressionTranslator(),
         identifier_sanitizer=MagicMock(to_alias=lambda x: x.upper(), sanitize_column=lambda x: x.upper()),
-        live_schema_metadata={"SALES": {"STATUS", "NAME"}},
+        live_schema_metadata={"SALES": {"UNITS", "REVENUE", "REGION", "STATUS", "NAME"}},
     )
 
     ddl = "\n".join(builder.generate_ddls(model))

@@ -1343,11 +1343,11 @@ export default function OntologyDomainManager() {
                   {/* Accuracy Multiplier Action Button */}
                   <button
                     type="button"
-                    disabled={savingVerified || !executionResult?.success || (executionResult?.rows || []).length === 0}
+                    disabled={savingVerified || !executionResult?.success || Boolean(executionResult?.is_simulated)}
                     onClick={handleSaveVerifiedQuery}
                     className="px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
                     title={
-                      !executionResult?.success
+                      !executionResult?.success || executionResult?.is_simulated
                         ? 'Execute query against a live warehouse before saving as verified'
                         : selectedTarget === 'DATABRICKS'
                         ? 'Save as a verified benchmark query in Databricks AI/BI Genie Space'

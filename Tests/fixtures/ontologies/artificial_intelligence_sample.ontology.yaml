@@ -906,6 +906,7 @@ metrics:
   grain: []
   synonyms:
   - Cases MoM%
+  - Cases Mompct
   - CASES_MOMPCT
   business_rules: []
   domain: Artificial Intelligence Sample
@@ -1118,6 +1119,7 @@ metrics:
   grain: []
   synonyms:
   - Forecast %
+  - Forecast Pct
   - FORECAST_PCT
   business_rules: []
   domain: Artificial Intelligence Sample
@@ -1222,6 +1224,7 @@ metrics:
   grain: []
   synonyms:
   - Close %
+  - Close Pct
   - Close Percentage
   - Win %
   - Win Percentage
