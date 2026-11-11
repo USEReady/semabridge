@@ -197,9 +197,11 @@ def get_domain(domain_name: str) -> Dict[str, Any]:
     dom = ontology_store.get_domain(domain_name)
     if dom is None:
         raise HTTPException(status_code=404, detail=f"Domain '{domain_name}' not found.")
+    yaml_dump = FederatedOntologyLoader.dump_domain_yaml(dom)
     return {
         **_summary(dom),
-        "yaml_content": FederatedOntologyLoader.dump_domain_yaml(dom),
+        "yaml": yaml_dump,
+        "yaml_content": yaml_dump,
         "parsed": dom.model_dump(mode="json"),
     }
 

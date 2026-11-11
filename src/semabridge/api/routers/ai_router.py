@@ -623,6 +623,17 @@ def save_verified_query(req: SaveVerifiedQueryRequest, request: Request) -> Save
 
     effective_user = req.user_id or session_user or "session_user"
 
+    # Enforce owner/admin project permissions
+    if req.project_id:
+        from semabridge.api.services.project_ownership_service import auth_is_enabled, is_project_owned_by_user
+        if auth_is_enabled():
+            req_user_id = getattr(request.state, "user_id", None) or session_user
+            if not is_project_owned_by_user(req.project_id, req_user_id, log_prefix="SaveVerifiedQueryAuth"):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Forbidden: only project owner or an admin can save verified queries for project '{req.project_id}'.",
+                )
+
     # Persist in PostgreSQL/DuckDB database via service layer
     try:
         from semabridge.ai.verified_queries_service import save_verified_query as db_save_verified_query
