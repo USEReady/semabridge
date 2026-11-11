@@ -161,7 +161,7 @@ def test_time_intelligence_patterns_follow_row_period_window():
         datasets=datasets,
     )
     assert sply_sql is not None
-    assert "LAG(" in sply_sql or "CURRENT_DATE()" in sply_sql or "IS_SPLY_YEAR" in sply_sql
+    assert "LAG(" in sply_sql or "MAX_DATE" in sply_sql or "IS_SPLY_YEAR" in sply_sql
 
     prev_month_dax = "CALCULATE(SUM(Sales[Amount]), PREVIOUSMONTH('DimDate'[Date]))"
     pm_sql = try_ast_translate(
@@ -172,7 +172,7 @@ def test_time_intelligence_patterns_follow_row_period_window():
         datasets=datasets,
     )
     assert pm_sql is not None
-    assert "LAG(" in pm_sql or "CURRENT_DATE()" in pm_sql or "MONTH" in pm_sql
+    assert "LAG(" in pm_sql or "MAX_DATE" in pm_sql or "MONTH" in pm_sql
 
     dateadd_dax = "CALCULATE(SUM(Sales[Amount]), DATEADD('DimDate'[Date], -2, YEAR))"
     da_sql = try_ast_translate(

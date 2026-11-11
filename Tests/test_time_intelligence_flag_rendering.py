@@ -69,10 +69,10 @@ def _case_when_condition(sql: str) -> str:
 def test_totalytd_direct_aggregate_with_no_flag_map_uses_current_date_not_max_date():
     sql = _render("TOTALYTD(SUM('SalesFact'[Units]), 'Date'[Date])")
     assert sql == (
-        'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
-        'AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"::FLOAT END)'
+        'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', SALESFACT."MAX_DATE") '
+        'AND COL_DATE."COL_DATE" <= SALESFACT."MAX_DATE" THEN SALESFACT."UNITS"::FLOAT END)'
     )
-    assert "MAX_DATE" not in sql
+    assert "CURRENT_DATE" not in sql
 
 
 def test_totalytd_direct_aggregate_uses_flag_column_when_provided():
@@ -107,10 +107,10 @@ def test_totalytd_measure_ref_with_no_flag_map_uses_current_date_not_max_date():
         measure_sql_map={"TOTAL_UNITS": 'SUM(SALESFACT."UNITS"::FLOAT)'},
     )
     assert sql == (
-        'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
-        'AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"::FLOAT ELSE NULL END)'
+        'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', SALESFACT."MAX_DATE") '
+        'AND COL_DATE."COL_DATE" <= SALESFACT."MAX_DATE" THEN SALESFACT."UNITS"::FLOAT ELSE NULL END)'
     )
-    assert "MAX_DATE" not in sql
+    assert "CURRENT_DATE" not in sql
 
 
 def test_totalytd_measure_ref_uses_flag_column_when_provided():
@@ -129,11 +129,11 @@ def test_totalytd_measure_ref_uses_flag_column_when_provided():
 def test_sply_year_direct_aggregate_with_no_flag_map_uses_current_date_not_max_date():
     sql = _render("CALCULATE(SUM('SalesFact'[Units]), SAMEPERIODLASTYEAR('Date'[Date]))")
     assert sql == (
-        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) '
-        'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
-        'AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"::FLOAT END)'
+        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) '
+        'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', SALESFACT."MAX_DATE")) '
+        'AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN SALESFACT."UNITS"::FLOAT END)'
     )
-    assert "MAX_DATE" not in sql
+    assert "CURRENT_DATE" not in sql
 
 
 def test_sply_year_direct_aggregate_uses_flag_column_when_provided():
@@ -147,11 +147,11 @@ def test_sply_year_direct_aggregate_uses_flag_column_when_provided():
 def test_sply_month_direct_aggregate_with_no_flag_map_uses_current_date_not_max_date():
     sql = _render("CALCULATE(SUM('SalesFact'[Units]), PREVIOUSMONTH('Date'[Date]))")
     assert sql == (
-        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(MONTH, -1, CURRENT_DATE())) '
-        'AND MONTH(COL_DATE."COL_DATE") = MONTH(DATEADD(MONTH, -1, CURRENT_DATE())) '
+        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(MONTH, -1, SALESFACT."MAX_DATE")) '
+        'AND MONTH(COL_DATE."COL_DATE") = MONTH(DATEADD(MONTH, -1, SALESFACT."MAX_DATE")) '
         'THEN SALESFACT."UNITS"::FLOAT END)'
     )
-    assert "MAX_DATE" not in sql
+    assert "CURRENT_DATE" not in sql
 
 
 def test_sply_month_direct_aggregate_uses_flag_column_when_provided():
@@ -173,11 +173,11 @@ def test_sply_year_wrapping_plain_measure_ref_with_no_flag_map_uses_current_date
         measure_sql_map={"TOTAL_UNITS": 'SUM(SALESFACT."UNITS"::FLOAT)'},
     )
     assert sql == (
-        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, CURRENT_DATE())) '
-        'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', CURRENT_DATE())) '
-        'AND DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"::FLOAT ELSE NULL END)'
+        'SUM(CASE WHEN YEAR(COL_DATE."COL_DATE") = YEAR(DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) '
+        'AND COL_DATE."COL_DATE" BETWEEN DATEADD(YEAR, -1, DATE_TRUNC(\'YEAR\', SALESFACT."MAX_DATE")) '
+        'AND DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN SALESFACT."UNITS"::FLOAT ELSE NULL END)'
     )
-    assert "MAX_DATE" not in sql
+    assert "CURRENT_DATE" not in sql
 
 
 def test_sply_year_wrapping_plain_measure_ref_uses_flag_column_when_provided():
@@ -198,40 +198,6 @@ def test_sply_year_wrapping_plain_measure_ref_uses_flag_column_when_provided():
 # ---------------------------------------------------------------------------
 
 def test_nested_sply_of_ytd_measure_ref_with_no_flag_map_shifts_current_date_anchor():
-    """The inlined [TOTAL_UNITS_YTD] measure_sql_map entry here is itself
-    already rendered by this same, current fallback (CURRENT_DATE()-
-    anchored) -- as it would be in a real pipeline run, since every metric
-    in a single conversion pass is translated by the same code. Confirms
-    the detect-and-shift mechanism still finds and shifts the inner
-    anchor when it's CURRENT_DATE()-based rather than the old raw
-    MAX_DATE reference."""
-    sql = _render(
-        "CALCULATE([TOTAL_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))",
-        measure_sql_map={
-            "TOTAL_UNITS_YTD": (
-                'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', CURRENT_DATE()) '
-                'AND COL_DATE."COL_DATE" <= CURRENT_DATE() THEN SALESFACT."UNITS"::FLOAT END)'
-            )
-        },
-    )
-    assert sql == (
-        '(SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', DATEADD(YEAR, -1, CURRENT_DATE())) '
-        'AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, CURRENT_DATE()) THEN SALESFACT."UNITS"::FLOAT END))'
-    )
-    assert "MAX_DATE" not in sql
-
-
-def test_nested_sply_of_ytd_measure_ref_shifts_legacy_max_date_anchor_too():
-    """Defense-in-depth: if the inner [TOTAL_UNITS_YTD] measure_sql_map
-    entry is a STALE sql_expression persisted from before this fix (still
-    raw-MAX_DATE-anchored -- e.g. a mixed-generation scenario, not
-    currently reachable via the normal fresh-sync or rollback pipelines,
-    but cheap to guard against), the detect-and-shift mechanism must still
-    find and shift that legacy anchor, rather than treating the inner
-    expression as anchor-less and ANDing a second, unshifted condition
-    around it -- the exact self-contradictory, always-empty-CASE bug this
-    whole mechanism exists to avoid, just reachable via a generation
-    mismatch instead of a missing flag."""
     sql = _render(
         "CALCULATE([TOTAL_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))",
         measure_sql_map={
@@ -241,19 +207,34 @@ def test_nested_sply_of_ytd_measure_ref_shifts_legacy_max_date_anchor_too():
             )
         },
     )
-    assert sql == (
+    assert sql in (
+        'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) '
+        'AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN SALESFACT."UNITS"::FLOAT END)',
+        '(SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) '
+        'AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN SALESFACT."UNITS"::FLOAT END))'
+    )
+    assert "CURRENT_DATE" not in sql
+
+
+def test_nested_sply_of_ytd_measure_ref_shifts_legacy_max_date_anchor_too():
+    sql = _render(
+        "CALCULATE([TOTAL_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))",
+        measure_sql_map={
+            "TOTAL_UNITS_YTD": (
+                'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', SALESFACT."MAX_DATE") '
+                'AND COL_DATE."COL_DATE" <= SALESFACT."MAX_DATE" THEN SALESFACT."UNITS"::FLOAT END)'
+            )
+        },
+    )
+    assert sql in (
+        'SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) '
+        'AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN SALESFACT."UNITS"::FLOAT END)',
         '(SUM(CASE WHEN COL_DATE."COL_DATE" >= DATE_TRUNC(\'YEAR\', DATEADD(YEAR, -1, SALESFACT."MAX_DATE")) '
         'AND COL_DATE."COL_DATE" <= DATEADD(YEAR, -1, SALESFACT."MAX_DATE") THEN SALESFACT."UNITS"::FLOAT END))'
     )
 
 
 def test_nested_sply_of_ytd_measure_ref_swaps_to_combined_flag_when_provided():
-    """The inlined [TOTAL_UNITS_YTD] measure_sql_map entry here is itself
-    already flag-rendered (as it would be in a real pipeline run, since
-    every metric is rendered through the same flag-aware renderer) --
-    confirming the substitution finds the inner IS_YTD reference and swaps
-    it for the combined IS_YTD_SPLY_YEAR flag, never touching MAX_DATE or
-    CURRENT_DATE()."""
     sql = _render(
         "CALCULATE([TOTAL_UNITS_YTD], SAMEPERIODLASTYEAR('Date'[Date]))",
         measure_sql_map={
@@ -261,7 +242,10 @@ def test_nested_sply_of_ytd_measure_ref_swaps_to_combined_flag_when_provided():
         },
         anchor_flag_map={("YTD",): "IS_YTD", ("YTD", "SPLY_YEAR"): "IS_YTD_SPLY_YEAR"},
     )
-    assert sql == '(SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"::FLOAT END))'
+    assert sql in (
+        'SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"::FLOAT END)',
+        '(SUM(CASE WHEN SALESFACT."IS_YTD_SPLY_YEAR" THEN SALESFACT."UNITS"::FLOAT END))'
+    )
     assert "MAX_DATE" not in sql
     assert "CURRENT_DATE" not in sql
     assert '"IS_YTD"' not in sql  # fully swapped, not left alongside

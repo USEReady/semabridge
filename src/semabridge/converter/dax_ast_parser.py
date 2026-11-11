@@ -3067,7 +3067,7 @@ class DaxSqlRenderer:
                 flag = self.anchor_flag_map.get((f"R{abs(n)}M",)) if self.anchor_flag_map else None
                 if flag:
                     return f'{self.table_alias}."{flag}"'
-            anchor = "CURRENT_DATE()"
+            anchor = f'{self.table_alias}."MAX_DATE"'
         else:
             anchor = self._render_date_bound(start, "DATESINPERIOD")
             if anchor is None:
@@ -5692,11 +5692,7 @@ class DaxSqlRenderer:
         if flag_name:
             condition_sql = f'{self.table_alias}."{flag_name}"'
         else:
-            # No flag column provisioned for this shape (schema-blind
-            # dry-run/preview, or enrichment couldn't anchor this fact
-            # table) -- anchor to CURRENT_DATE(); render() records the
-            # ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE advisory.
-            max_date = "CURRENT_DATE()"
+            max_date = f'{self.table_alias}."MAX_DATE"'
             if unit is None:
                 raise self.DaxRenderError(f"Unhandled period-to-date func: {func}")
             if fiscal_month:
@@ -5814,7 +5810,7 @@ class DaxSqlRenderer:
         if len(args) != 2:
             raise self.DaxRenderError("Period function expects (aggregate, date_column) arguments")
         date_col = self._ti_date_column_sql(args)
-        max_date = "CURRENT_DATE()"
+        max_date = f'{self.table_alias}."MAX_DATE"'
         unit = interval.upper()
         full_period = (func_name or "").upper() in self._FULL_PERIOD_LAG_FUNCS
         shift_expr = f"DATEADD({unit}, {amount}, {max_date})"

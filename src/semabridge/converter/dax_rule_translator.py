@@ -784,7 +784,7 @@ def translate_time_intelligence_with_anchors(
         # flag column was precomputed; this remains the fallback for callers
         # with no live enrichment step (e.g. the schema-blind dry-run/preview
         # path).
-        max_date_ref = "CURRENT_DATE()"
+        max_date_ref = f'{table_alias}."MAX_DATE"'
         condition = f"{date_col_ref} >= DATE_TRUNC('{period}', {max_date_ref}) AND {date_col_ref} <= {max_date_ref}"
 
     # Empty window -> BLANK in DAX for every aggregate (never 0).
