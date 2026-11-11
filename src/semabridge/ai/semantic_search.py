@@ -36,16 +36,10 @@ class SearchHit(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
-# Generic morphological stemmer so singular and plural words (e.g. active/actives, status/statuses) match without a word list
 def _stem_token(tok: str) -> str:
-    """Lightweight generic plural-to-singular token normalizer."""
-    if len(tok) > 4 and tok.endswith("ies"):
-        return tok[:-3] + "y"
-    if len(tok) > 4 and tok.endswith(("ches", "shes", "xes", "zzes", "sses", "tuses", "nuses", "puses")):
-        return tok[:-2]
-    if len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us", "is")):
-        return tok[:-1]
-    return tok
+    """Normalize a token using the shared NLTK WordNet lemmatizer."""
+    from semabridge.ai.nlp_lexicon import lemmatize_token
+    return lemmatize_token(tok)
 
 
 def _tokenize(text: str) -> List[str]:

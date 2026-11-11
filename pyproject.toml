@@ -65,6 +65,7 @@ dependencies = [
     "langchain>=0.1.0",
     "langchain-openai>=0.1.0",
     "langchain-groq>=0.1.0",
+    "nltk>=3.8",
     # ── Distributed orchestration (Temporal + Ray) ───────────────────
     "temporalio>=1.7.0",
     "ray[default]>=2.40.0",

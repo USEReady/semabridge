@@ -504,20 +504,61 @@ class FederatedOntologyLoader:
                     fed.policies[pol.name] = pol
                     existing_pol_keys.add(pol.name.casefold())
 
-        # 1. Check Metric Collisions
+        # Group domains by source_project_id so re-exported duplicates of one model are flagged once as WARNING
+        by_source_project: Dict[str, List[str]] = {}
+        domain_project_map: Dict[str, str] = {}
+        for dom in domain_list:
+            src_pid = str(getattr(dom, "source_project_id", None) or "").strip()
+            if src_pid:
+                key_pid = src_pid.casefold()
+                by_source_project.setdefault(key_pid, []).append(dom.domain)
+                domain_project_map[dom.domain.casefold()] = key_pid
+
+        for key_pid, dom_names in sorted(by_source_project.items()):
+            if len(dom_names) > 1:
+                src_label = next(
+                    (getattr(fed.domains[n], "source_project_id", None) or key_pid for n in dom_names if n in fed.domains),
+                    key_pid,
+                )
+                fed.collisions.append(
+                    OntologyCollision(
+                        item_type="domain",
+                        item_name=str(src_label),
+                        conflicting_domains=dom_names,
+                        severity="WARNING",
+                        message=(
+                            f"Duplicate domain of the same project '{src_label}' "
+                            f"({', '.join(dom_names)}) — re-sync instead of keeping duplicate domains."
+                        ),
+                    )
+                )
+
+        def _norm_formula_cmp(expr: Optional[str]) -> str:
+            txt = re.sub(r"\s+", " ", str(expr or "").strip()).casefold()
+            return re.sub(r"\s*([(),+\-*/=<>])\s*", r"\1", txt)
+
+        # 1. Check Metric Collisions across distinct projects / business domains
         for m_key, occurrences in metric_sources.items():
             if len(occurrences) > 1:
-                domains = [occ[0] for occ in occurrences]
-                metrics = [occ[1] for occ in occurrences]
-                exprs = {occ[0]: occ[1].sql_expression for occ in occurrences}
-                descs = {occ[0]: occ[1].description for occ in occurrences}
+                # Collapse occurrences belonging to the same source_project_id to one representative
+                distinct_proj_buckets: Dict[str, Tuple[str, DomainMetric]] = {}
+                for d_name, met in occurrences:
+                    bucket = domain_project_map.get(d_name.casefold(), f"dom:{d_name.casefold()}")
+                    distinct_proj_buckets.setdefault(bucket, (d_name, met))
+                if len(distinct_proj_buckets) < 2:
+                    continue
 
-                # Collision detection logic:
-                # - ERROR: When two domains define truly conflicting, non-empty formulas for the same metric.
-                # - WARNING: When one domain provides the calculation formula and another declares a binding-only entry.
-                unique_exprs = {(occ[1].sql_expression or "").strip().casefold() for occ in occurrences}
+                filtered_occ = list(distinct_proj_buckets.values())
+                domains = [occ[0] for occ in filtered_occ]
+                metrics = [occ[1] for occ in filtered_occ]
+                exprs = {occ[0]: occ[1].sql_expression for occ in filtered_occ}
+                descs = {occ[0]: occ[1].description for occ in filtered_occ}
+
+                # Compare formulas after whitespace/case normalization
+                unique_exprs = {_norm_formula_cmp(occ[1].sql_expression) for occ in filtered_occ}
                 non_empty_exprs = {e for e in unique_exprs if e}
                 if len(non_empty_exprs) > 1:
+                    diff_parts = [f"{d}: {(exprs[d] or '').strip()!r}" for d in domains]
                     fed.collisions.append(
                         OntologyCollision(
                             item_type="metric",
@@ -528,7 +569,7 @@ class FederatedOntologyLoader:
                             severity="ERROR",
                             message=(
                                 f"Metric collision: '{metrics[0].name}' defined with conflicting "
-                                f"formulas across domains: {', '.join(domains)}."
+                                f"formulas across domains ({'; '.join(diff_parts)})."
                             ),
                         )
                     )
@@ -548,12 +589,19 @@ class FederatedOntologyLoader:
                         )
                     )
 
-        # 2. Check Concept Collisions
+        # 2. Check Concept Collisions across distinct projects
         for c_key, occurrences in concept_sources.items():
             if len(occurrences) > 1:
-                domains = [occ[0] for occ in occurrences]
-                concepts = [occ[1] for occ in occurrences]
-                descs = {occ[0]: occ[1].description for occ in occurrences}
+                distinct_proj_buckets_c: Dict[str, Tuple[str, DomainConcept]] = {}
+                for d_name, con in occurrences:
+                    bucket = domain_project_map.get(d_name.casefold(), f"dom:{d_name.casefold()}")
+                    distinct_proj_buckets_c.setdefault(bucket, (d_name, con))
+                if len(distinct_proj_buckets_c) < 2:
+                    continue
+                filtered_c = list(distinct_proj_buckets_c.values())
+                domains = [occ[0] for occ in filtered_c]
+                concepts = [occ[1] for occ in filtered_c]
+                descs = {occ[0]: occ[1].description for occ in filtered_c}
                 fed.collisions.append(
                     OntologyCollision(
                         item_type="concept",
@@ -1032,6 +1080,7 @@ class FederatedOntologyLoader:
                         description=desc,
                         is_primary_key=exist_a.is_primary_key if exist_a else col.is_key,
                         synonyms=union(exist_a.synonyms if exist_a else [], col.synonyms),
+                        sample_values=union(exist_a.sample_values if exist_a else [], getattr(col, "sample_values", []) or []),
                         maps_to=exist_a.maps_to if exist_a else [],
                         origin="bi",
                         stale=False,

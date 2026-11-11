@@ -1,0 +1,227 @@
+# Gold NL-to-SQL benchmark questions per deployed semantic model.
+# Each model defines a minimum accuracy floor (`min_accuracy`) enforced in CI/PR checks.
+models:
+  - model_id: artificial_intelligence_sample
+    ontology_file: Config/ontologies/artificial_intelligence_sample.ontology.yaml
+    min_accuracy: 90.0
+    cases:
+      - id: AI-01
+        question: "How many opportunities did we win and lose?"
+        expected_metrics: ["Count of Won", "Count of Lost"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: AI-02
+        question: "How many opportunities are open?"
+        expected_metrics: ["Opportunity Count In Pipeline"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: AI-03
+        question: "How many opportunities do we have?"
+        expected_metrics: ["Opportunity Count"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: AI-04
+        question: "Revenue won by Sales owner"
+        expected_metrics: ["Revenue Won"]
+        expected_dimensions: ["Sales owner"]
+        expect_refusal: false
+      - id: AI-05
+        question: "Case count by agent"
+        expected_metrics: ["Case Count"]
+        expected_dimensions: ["Agent"]
+        expect_refusal: false
+      - id: AI-06
+        question: "SLA compliance by severity"
+        expected_metrics: ["SLA Compliance"]
+        expected_dimensions: ["Severity"]
+        expect_refusal: false
+      - id: AI-07
+        question: "Revenue in pipeline by Territory"
+        expected_metrics: ["Revenue In Pipeline"]
+        expected_dimensions: ["Territory"]
+        expect_refusal: false
+      - id: AI-08
+        question: "Case count by CaseSeq"
+        expected_metrics: ["Case Count"]
+        expected_dimensions: []
+        expect_refusal: false
+        note: "CaseSeq is numeric (INTEGER) and must never group"
+      - id: AI-09
+        question: "Revenue won by Annual Revenue"
+        expected_metrics: ["Revenue Won"]
+        expected_dimensions: []
+        expect_refusal: false
+        note: "Annual Revenue is numeric (INTEGER) and must never group"
+      - id: AI-10
+        question: "Case count by Subject"
+        expected_metrics: ["Case Count"]
+        expected_dimensions: ["Subject"]
+        expect_refusal: false
+      - id: AI-11
+        question: "What is the employee churn rate by department?"
+        expected_metrics: []
+        expected_dimensions: []
+        expect_refusal: true
+
+  - model_id: human_resources_sample_pbix
+    ontology_file: Config/ontologies/human_resources_sample_pbix.ontology.yaml
+    min_accuracy: 85.0
+    cases:
+      - id: HR-01
+        question: "How many new hires?"
+        expected_metrics: ["New Hires"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: HR-02
+        question: "Seps by region"
+        expected_metrics: ["Seps"]
+        expected_dimensions: ["Region"]
+        expect_refusal: false
+      - id: HR-03
+        question: "What is the average age?"
+        expected_metrics: ["AVG Age"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: HR-04
+        question: "Average tenure months by Gender"
+        expected_metrics: ["AVG Tenure Months"]
+        expected_dimensions: ["Gender"]
+        expect_refusal: false
+      - id: HR-05
+        question: "Bad hires by PayType"
+        expected_metrics: ["Sum of BadHires"]
+        expected_dimensions: ["PayType"]
+        expect_refusal: false
+      - id: HR-06
+        question: "New hires vs same period last year"
+        expected_metrics: ["New Hires", "New Hires SPLY"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: HR-07
+        question: "What is the average salary by department?"
+        expected_metrics: []
+        expected_dimensions: []
+        expect_refusal: true
+      - id: HR-08
+        question: "Show active employees by region"
+        expected_metrics: []
+        expected_dimensions: ["Region"]
+        expect_refusal: true
+        note: "Actives carries a deployment refusal reason for missing PeriodNumber grain"
+
+  - model_id: sales_returns_sample_v201912
+    ontology_file: Config/ontologies/sales_returns_sample_v201912.ontology.yaml
+    min_accuracy: 85.0
+    cases:
+      - id: SR-01
+        question: "What are the total net sales?"
+        expected_metrics: ["Net Sales"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: SR-02
+        question: "Units sold by Store"
+        expected_metrics: ["Units Sold"]
+        expected_dimensions: ["Store"]
+        expect_refusal: false
+      - id: SR-03
+        question: "Returns by Segment"
+        expected_metrics: ["Returns"]
+        expected_dimensions: ["Segment"]
+        expect_refusal: false
+      - id: SR-04
+        question: "Return rate by Product"
+        expected_metrics: ["Return Rate"]
+        expected_dimensions: ["Product"]
+        expect_refusal: false
+      - id: SR-05
+        question: "Net sales this month vs previous month"
+        expected_metrics: ["Net Sales", "Net Sales PM"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: SR-06
+        question: "What is the profit margin by Product?"
+        expected_metrics: []
+        expected_dimensions: ["Product"]
+        expect_refusal: true
+
+  - model_id: arrow_chart_microsot_financial_dataset
+    ontology_file: Config/ontologies/arrow_chart_microsot_financial_dataset.ontology.yaml
+    min_accuracy: 90.0
+    cases:
+      - id: AC-01
+        question: "What are total sales?"
+        expected_metrics: ["Sales"]
+        expected_dimensions: []
+        expect_refusal: false
+      - id: AC-02
+        question: "Sales by Country"
+        expected_metrics: ["Sales"]
+        expected_dimensions: ["Country"]
+        expect_refusal: false
+      - id: AC-03
+        question: "Sales by Product and Discount Band"
+        expected_metrics: ["Sales"]
+        expected_dimensions: ["Product", "Discount Band"]
+        expect_refusal: false
+      - id: AC-04
+        question: "Sales where Country = Germany"
+        expected_metrics: ["Sales"]
+        expected_dimensions: []
+        expected_filters: ["COUNTRY = 'Germany'"]
+        expect_refusal: false
+      - id: AC-05
+        question: "What is the customer churn rate?"
+        expected_metrics: []
+        expected_dimensions: []
+        expect_refusal: true
+
+  - model_id: adventure_works_dw_2020
+    ontology_file: Config/ontologies/adventure_works_dw_2020.ontology.yaml
+    min_accuracy: 85.0
+    cases:
+      - id: AW-01
+        question: "Sales amount by Country-Region"
+        expected_metrics: ["Sales - Sum Of Sales Amount"]
+        expected_dimensions: ["Country-Region"]
+        expect_refusal: false
+      - id: AW-02
+        question: "Order quantity by City"
+        expected_metrics: ["Sales - Sum Of Order Quantity"]
+        expected_dimensions: ["City"]
+        expect_refusal: false
+      - id: AW-03
+        question: "Total product cost by State-Province"
+        expected_metrics: ["Sales - Sum Of Total Product Cost"]
+        expected_dimensions: ["State-Province"]
+        expect_refusal: false
+      - id: AW-04
+        question: "What is our bitcoin revenue?"
+        expected_metrics: []
+        expected_dimensions: []
+        expect_refusal: true
+
+  - model_id: store_sales_1
+    ontology_file: Config/ontologies/store_sales_1.ontology.yaml
+    min_accuracy: 85.0
+    cases:
+      - id: SS-01
+        question: "Regular sales dollars by Territory"
+        expected_metrics: ["Regular Sales Dollars"]
+        expected_dimensions: ["Territory"]
+        expect_refusal: false
+      - id: SS-02
+        question: "Gross margin this year by City"
+        expected_metrics: ["Gross Margin This Year"]
+        expected_dimensions: ["City"]
+        expect_refusal: false
+      - id: SS-03
+        question: "Sales per sq ft by District"
+        expected_metrics: ["Sales Per Sq Ft"]
+        expected_dimensions: ["District"]
+        expect_refusal: false
+      - id: SS-04
+        question: "What is employee salary by City?"
+        expected_metrics: []
+        expected_dimensions: ["City"]
+        expect_refusal: true
+

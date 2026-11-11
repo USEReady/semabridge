@@ -72,6 +72,7 @@ class FromOsiRequest(BaseModel):
     project_id: Optional[str] = None
     domain_name: Optional[str] = None
     save_to_disk: bool = True
+    sync_existing: bool = False
 
 
 class ProjectDomainsRequest(BaseModel):
@@ -344,16 +345,34 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
 
     target_domain = req.domain_name or osi_obj.label or osi_obj.unique_name or "Enterprise"
     existing_domain_obj = ontology_store.get_domain(target_domain)
-    # When domain display name has been renamed by the user, look up existing domain by source_project_id
-    # so we sync/update in place rather than generating a duplicate domain file.
-    if not existing_domain_obj and project_id:
+    existing_for_project = None
+    if project_id:
         fed = ontology_store.get_federated_ontology()
-        for d in fed.domains:
-            if getattr(d, "source_project_id", None) == project_id:
-                existing_domain_obj = d
-                if not req.domain_name:
-                    target_domain = d.domain
+        for d in fed.domains.values():
+            if (getattr(d, "source_project_id", None) or "").strip().casefold() == project_id.strip().casefold():
+                existing_for_project = d
                 break
+
+    # Block creating a second domain with a different name when the project already has one, unless syncing
+    if (
+        existing_for_project is not None
+        and not existing_domain_obj
+        and req.domain_name
+        and req.domain_name.strip().casefold() != existing_for_project.domain.strip().casefold()
+        and not req.sync_existing
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Project '{project_id}' already has domain '{existing_for_project.domain}'. "
+                "Use Sync from OSI (sync_existing=true) to update the existing domain instead of creating a duplicate."
+            ),
+        )
+
+    # When domain display name has been renamed by the user, reuse the project's existing domain in place
+    if not existing_domain_obj and existing_for_project is not None:
+        existing_domain_obj = existing_for_project
+        target_domain = existing_for_project.domain
 
     dep_info: Dict[str, Optional[str]] = {}
     if project_id:
@@ -395,7 +414,7 @@ async def bootstrap_from_osi(req: FromOsiRequest) -> Dict[str, Any]:
         "relationship_count": len(domain_ontology.relationships),
         "total_domains": len(fed.domains),
         "collisions": [c.model_dump() for c in fed.collisions],
-        "sync_report": sync_report,
+        "sync_report": sync_report,  # hardcoding-ok: API response field
         "yaml_content": FederatedOntologyLoader.dump_domain_yaml(domain_ontology),
     }
 

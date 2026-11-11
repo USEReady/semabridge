@@ -15,6 +15,12 @@ from pydantic import BaseModel, Field
 
 from semabridge.ai.nl_query_engine import QueryResolutionPlan
 from semabridge.ai.semantic_search import SearchHit
+from semabridge.ai.verified_queries_service import (
+    has_successful_execution,
+    list_verified_queries_for_project,
+    record_query_execution,
+    save_verified_query_record,
+)
 from semabridge.ontology.store import ontology_store
 
 logger = logging.getLogger("semabridge.api.ai_router")
@@ -67,6 +73,8 @@ class SaveVerifiedQueryRequest(BaseModel):
     name: Optional[str] = None
     target: str = "SNOWFLAKE"  # 'SNOWFLAKE' | 'DATABRICKS'
     domain: Optional[str] = None
+    confirmed: bool = True
+    require_certified: bool = False
 
 
 class SaveVerifiedQueryResponse(BaseModel):
@@ -314,6 +322,14 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
                     for r in raw_rows
                 ]
                 elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                record_query_execution(
+                    sql=exec_sql,
+                    target="SNOWFLAKE",
+                    row_count=len(rows),
+                    success=True,
+                    is_simulated=False,
+                    project_id=req.project_id,
+                )
                 return ExecuteQueryResponse(
                     success=True,
                     target="SNOWFLAKE",
@@ -385,6 +401,14 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
                 manifest = data.get("manifest", {})
                 schema_cols = [c.get("name") for c in manifest.get("schema", {}).get("columns", [])]
                 data_array = data.get("result", {}).get("data_array", [])
+                record_query_execution(
+                    sql=exec_sql,
+                    target="DATABRICKS",
+                    row_count=len(data_array),
+                    success=True,
+                    is_simulated=False,
+                    project_id=req.project_id,
+                )
                 return ExecuteQueryResponse(
                     success=True,
                     target="DATABRICKS",
@@ -413,112 +437,74 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
         return _generate_simulated_preview(clean_sql, "LOCAL")
 
 
-@router.post("/save-verified-query", response_model=SaveVerifiedQueryResponse)
-def save_verified_query(req: SaveVerifiedQueryRequest) -> SaveVerifiedQueryResponse:
-    """Append a human-verified natural language question & SQL pair to Cortex Analyst YAML or Databricks Genie benchmarks."""
-    import time
-    from pathlib import Path
-    import yaml
-
-    if not req.question or not req.sql:
-        raise HTTPException(status_code=400, detail="Question and SQL are required.")
-
-    safe_name = req.name or re.sub(r"[^a-zA-Z0-9_]", "_", req.question.lower().strip())[:40].strip("_")
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-    verified_item = {
-        "name": safe_name,
-        "question": req.question.strip(),
-        "sql": req.sql.strip(),
-        "verified_at": timestamp,
-        "verified_by": "semabridge_analyst",
+@router.get("/verified-queries", response_model=Dict[str, Any])
+def get_verified_queries(project_id: Optional[str] = None) -> Dict[str, Any]:
+    """List persisted verified queries isolated to a single project_id."""
+    if not project_id or not project_id.strip():
+        raise HTTPException(status_code=400, detail="project_id query parameter is required.")
+    pid = project_id.strip()
+    queries = list_verified_queries_for_project(pid)
+    return {
+        "project_id": pid,
+        "count": len(queries),
+        "queries": queries,
     }
 
+
+@router.post("/save-verified-query", response_model=SaveVerifiedQueryResponse)
+def save_verified_query(req: SaveVerifiedQueryRequest) -> SaveVerifiedQueryResponse:
+    """Append a human-verified natural language question & SQL pair backed by live execution."""
+    if not req.question or not req.question.strip() or not req.sql or not req.sql.strip():
+        raise HTTPException(status_code=400, detail="Question and SQL are required.")
+    if not req.confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Explicit confirmation (confirmed=true) is required to save a verified query.",
+        )
+    if not has_successful_execution(req.sql, project_id=req.project_id):
+        raise HTTPException(
+            status_code=400,
+            detail="SQL query must execute cleanly (live, non-simulated) via /api/ai/execute-query before saving.",
+        )
+
+    from semabridge.reconciliation.certification_service import check_sql_certification_status
+
+    cert_status = check_sql_certification_status(req.sql, project_id=req.project_id)
+    if cert_status["failed"]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only certified metrics can become verified queries. "
+                f"Reconciliation failed for: {', '.join(cert_status['failed'])}."
+            ),
+        )
+    if cert_status["uncertified"] and (req.require_certified or cert_status["has_any_certified"]):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only certified metrics can become verified queries. "
+                f"Uncertified metric(s): {', '.join(cert_status['uncertified'])}."
+            ),
+        )
+
     target_upper = req.target.upper()
-    saved_paths = []
-
-    # 1. Update project-specific Cortex Analyst YAML if project_id is given or discoverable
-    project_slug = req.project_id
-    if not project_slug:
-        # Check output/reverse directory for latest project
-        reverse_dir = Path("output/reverse")
-        if reverse_dir.is_dir():
-            dirs = [d for d in reverse_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
-            if dirs:
-                # pick most recently modified
-                dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
-                project_slug = dirs[0].name
-
-    if project_slug and target_upper in ("SNOWFLAKE", "CORTEX"):
-        yaml_path = Path("output/reverse") / project_slug / "cortex_analyst.yaml"
-        if yaml_path.is_file():
-            try:
-                raw_content = yaml_path.read_text(encoding="utf-8")
-                parsed = yaml.safe_load(raw_content) or {}
-                # Support both top-level verified_queries and semantic_model.verified_queries
-                if "semantic_model" in parsed and isinstance(parsed["semantic_model"], dict):
-                    v_list = parsed["semantic_model"].setdefault("verified_queries", [])
-                else:
-                    v_list = parsed.setdefault("verified_queries", [])
-
-                # Deduplicate by question
-                existing_idx = next((i for i, q in enumerate(v_list) if q.get("question") == req.question.strip()), None)
-                if existing_idx is not None:
-                    v_list[existing_idx] = verified_item
-                else:
-                    v_list.append(verified_item)
-
-                yaml_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
-                saved_paths.append(str(yaml_path))
-                logger.info("Saved verified query to %s", yaml_path)
-            except Exception as exc:
-                logger.warning("Could not update cortex_analyst.yaml at %s: %s", yaml_path, exc)
-
-    # 2. For Databricks Genie benchmarks
-    if target_upper in ("DATABRICKS", "GENIE"):
-        benchmarks_dir = Path("Config/benchmarks")
-        benchmarks_dir.mkdir(parents=True, exist_ok=True)
-        bench_file = benchmarks_dir / f"databricks_genie_{project_slug or 'enterprise'}.json"
-        try:
-            current_bench = []
-            if bench_file.is_file():
-                current_bench = json.loads(bench_file.read_text(encoding="utf-8"))
-            existing_idx = next((i for i, q in enumerate(current_bench) if q.get("question") == req.question.strip()), None)
-            if existing_idx is not None:
-                current_bench[existing_idx] = verified_item
-            else:
-                current_bench.append(verified_item)
-            bench_file.write_text(json.dumps(current_bench, indent=2), encoding="utf-8")
-            saved_paths.append(str(bench_file))
-            logger.info("Saved Databricks Genie benchmark to %s", bench_file)
-        except Exception as exc:
-            logger.warning("Could not save Databricks benchmark: %s", exc)
-
-    # 3. Also append to persistent central registry in Config/benchmarks
-    central_file = Path("Config/benchmarks/verified_queries_registry.yaml")
-    try:
-        central_file.parent.mkdir(parents=True, exist_ok=True)
-        registry = []
-        if central_file.is_file():
-            registry = yaml.safe_load(central_file.read_text(encoding="utf-8")) or []
-        existing_idx = next((i for i, q in enumerate(registry) if q.get("question") == req.question.strip()), None)
-        item_with_target = {**verified_item, "target": target_upper}
-        if existing_idx is not None:
-            registry[existing_idx] = item_with_target
-        else:
-            registry.append(item_with_target)
-        central_file.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
-        if not saved_paths:
-            saved_paths.append(str(central_file))
-    except Exception as exc:
-        logger.warning("Could not update central verified queries registry: %s", exc)
-
-    destination_desc = "Cortex Analyst YAML" if target_upper in ("SNOWFLAKE", "CORTEX") else "Databricks AI/BI Genie Benchmark"
-    primary_path = saved_paths[0] if saved_paths else "Central Registry"
+    saved = save_verified_query_record(
+        question=req.question,
+        sql=req.sql,
+        target=target_upper,
+        project_id=req.project_id,
+        name=req.name,
+        domain=req.domain,
+    )
+    verified_item = saved["verified_item"]
+    primary_path = saved.get("artifact_path") or f"db:{saved.get('project_slug')}"
+    destination_desc = (
+        "Cortex Analyst YAML" if target_upper in ("SNOWFLAKE", "CORTEX") else "Databricks AI/BI Genie Benchmark"
+    )
 
     return SaveVerifiedQueryResponse(
         success=True,
-        message=f"Verified query successfully registered to {destination_desc} ({primary_path}). AI accuracy boosted!",
+        message=f"Verified query successfully registered to {destination_desc} ({primary_path}).",
         target=target_upper,
         artifact_path=primary_path,
         verified_query=verified_item,

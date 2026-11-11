@@ -69,11 +69,12 @@ export default function OntologyDomainManager() {
   const [projectsList, setProjectsList] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [selectedProjectSlug, setSelectedProjectSlug] = useState('');
-  const [nlPrompt, setNlPrompt] = useState('What is the gross margin and ARR by Customer in 2024?');
+  const [nlPrompt, setNlPrompt] = useState('');
   const [nlResolutionPlan, setNlResolutionPlan] = useState(null);
   const [customSql, setCustomSql] = useState('');
   const [copiedSql, setCopiedSql] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
+  const [certificationsMap, setCertificationsMap] = useState({});
 
   // Query Execution & Verified Queries State
   const [executingQuery, setExecutingQuery] = useState(false);
@@ -83,35 +84,39 @@ export default function OntologyDomainManager() {
 
   // ── Governance, Blast Radius, Reconciliation & RLS State ──
   // 1. Blast Radius Simulator
-  const [blastTarget, setBlastTarget] = useState('revenue');
+  const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
+  const [blastTableContext, setBlastTableContext] = useState('');
   const [blastReport, setBlastReport] = useState(null);
   const [runningBlast, setRunningBlast] = useState(false);
+  const [govScopeProject, setGovScopeProject] = useState('');
+  const [govDomainName, setGovDomainName] = useState('');
+  const [govDomainDetail, setGovDomainDetail] = useState(null);
 
   // 2. Semantic Quality Linter
-  const [lintRequireSteward, setLintRequireSteward] = useState(true);
+  const [lintStewardSeverity, setLintStewardSeverity] = useState('ERROR'); // 'ERROR' | 'WARNING' | 'OFF'
   const [lintRequireDesc, setLintRequireDesc] = useState(true);
   const [lintSnakeCase, setLintSnakeCase] = useState(true);
   const [lintReport, setLintReport] = useState(null);
   const [runningLint, setRunningLint] = useState(false);
 
   // 3. Golden Data Reconciliation (DAX vs. SQL Parity)
-  const [reconMetric, setReconMetric] = useState('Gross Margin');
-  const [reconExpr, setReconExpr] = useState('SUM(REVENUE) - SUM(COGS)');
-  const [reconTable, setReconTable] = useState('FACT_FINANCIALS');
-  const [reconDims, setReconDims] = useState('Customer_Tier, Fiscal_Year');
-  const [reconScenario, setReconScenario] = useState('certified'); // 'certified' | 'drift'
+  const [reconMetric, setReconMetric] = useState('');
+  const [reconExpr, setReconExpr] = useState('');
+  const [reconTable, setReconTable] = useState('');
+  const [reconDims, setReconDims] = useState('');
+  const [reconDaxRowsJson, setReconDaxRowsJson] = useState('');
   const [reconQueries, setReconQueries] = useState(null);
   const [reconResult, setReconResult] = useState(null);
   const [runningRecon, setRunningRecon] = useState(false);
 
   // 4. Bidirectional RLS Policy Translator
-  const [rlsRoleName, setRlsRoleName] = useState('EMEA_Regional_Managers');
-  const [rlsTableName, setRlsTableName] = useState('DIM_CUSTOMER');
-  const [rlsDaxExpr, setRlsDaxExpr] = useState('[Region] = "EMEA" && [Status] = "ACTIVE"');
-  const [rlsTargetDb, setRlsTargetDb] = useState('ANALYTICS_DB');
-  const [rlsTargetSchema, setRlsTargetSchema] = useState('SEMANTIC');
+  const [rlsRoleName, setRlsRoleName] = useState('');
+  const [rlsTableName, setRlsTableName] = useState('');
+  const [rlsDaxExpr, setRlsDaxExpr] = useState('');
+  const [rlsTargetDb, setRlsTargetDb] = useState('');
+  const [rlsTargetSchema, setRlsTargetSchema] = useState('');
   const [rlsDdl, setRlsDdl] = useState('');
   const [runningRls, setRunningRls] = useState(false);
 
@@ -120,7 +125,27 @@ export default function OntologyDomainManager() {
     fetchDomains();
     fetchAiStatus();
     fetchProjects();
+    fetchCertifications();
   }, []);
+
+  const fetchCertifications = async (projectId = selectedProjectSlug) => {
+    try {
+      const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+      const res = await authFetch(`/api/reconciliation/certifications${qs}`);
+      if (res.ok) {
+        const data = await res.json();
+        const nextMap = {};
+        for (const rec of data.certifications || []) {
+          if (rec.metric_name) {
+            nextMap[rec.metric_name.toLowerCase()] = rec;
+          }
+        }
+        setCertificationsMap(nextMap);
+      }
+    } catch (err) {
+      console.warn('Could not load metric certifications:', err);
+    }
+  };
 
   const fetchDomains = async () => {
     setLoading(true);
@@ -274,17 +299,65 @@ export default function OntologyDomainManager() {
     }
   };
 
+  const fetchDomainDetailForGov = async (domainName) => {
+    if (!domainName) {
+      setGovDomainDetail(null);
+      return;
+    }
+    try {
+      const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(domainName)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setGovDomainDetail(data.parsed || data);
+      }
+    } catch (err) {
+      console.warn('Could not load domain detail for governance pickers:', err);
+    }
+  };
+
+  useEffect(() => {
+    const doms = domainData?.domains || [];
+    if (!doms.length) {
+      setGovDomainDetail(null);
+      return;
+    }
+    let chosen = null;
+    if (govDomainName) {
+      chosen = doms.find((d) => d.domain === govDomainName);
+    }
+    if (!chosen && govScopeProject) {
+      const sp = govScopeProject.toLowerCase();
+      chosen = doms.find(
+        (d) =>
+          (d.source_project_id || '').toLowerCase() === sp ||
+          (d.id || '').toLowerCase() === sp ||
+          (d.domain || '').toLowerCase() === sp
+      );
+    }
+    if (!chosen) {
+      chosen = doms[0];
+    }
+    if (chosen && chosen.domain) {
+      if (!govDomainName) setGovDomainName(chosen.domain);
+      fetchDomainDetailForGov(chosen.domain);
+    }
+  }, [domainData.domains, govScopeProject, govDomainName]);
+
   const handleBootstrapFromOsi = async () => {
     if (!bootstrapProject) return;
     setBootstrapping(true);
+    const existingForProj = (domainData?.domains || []).find(
+      (d) => (d.source_project_id || '').toLowerCase() === bootstrapProject.toLowerCase()
+    );
     try {
       const res = await authFetch('/api/ontology/domains/from-osi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           project_id: bootstrapProject,
-          domain_name: bootstrapDomain.trim() || undefined,
+          domain_name: bootstrapDomain.trim() || existingForProj?.domain || undefined,
           save_to_disk: true,
+          sync_existing: Boolean(existingForProj),
         }),
       });
       const data = await res.json();
@@ -371,6 +444,21 @@ export default function OntologyDomainManager() {
   const handleExecuteQuery = async () => {
     const sqlToRun = customSql || nlResolutionPlan?.generated_sql;
     if (!sqlToRun) return;
+    const strippedSql = sqlToRun
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+      .trim();
+    if (!strippedSql || nlResolutionPlan?.answerable === false) {
+      setExecutionResult({
+        success: false,
+        error: nlResolutionPlan?.explanation || 'Query could not be resolved to an executable metric in this model.',
+        columns: [],
+        rows: [],
+        execution_time_ms: 0,
+      });
+      return;
+    }
     setExecutingQuery(true);
     setExecutionResult(null);
     try {
@@ -423,12 +511,16 @@ export default function OntologyDomainManager() {
           sql: sqlToSave,
           target: selectedTarget,
           project_id: selectedProjectSlug,
+          confirmed: true,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setVerifiedSuccessMsg(data.message);
         setTimeout(() => setVerifiedSuccessMsg(null), 5000);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setStatusMessage({ type: 'error', text: describeApiError(errData, 'Failed to save verified query.') });
       }
     } catch (err) {
       console.error('Failed to save verified query:', err);
@@ -444,7 +536,7 @@ export default function OntologyDomainManager() {
   };
 
   const handleJumpToAiTest = (metricName, formula) => {
-    setNlPrompt(`Calculate ${metricName} by Customer in 2024`);
+    setNlPrompt(`What is ${metricName}?`);
     setActiveTab('ai');
     setInspectingDomain(null);
     setExecutionResult(null);
@@ -462,6 +554,8 @@ export default function OntologyDomainManager() {
           target_name: blastTarget.trim(),
           target_type: blastType,
           change_type: blastChangeType,
+          table_context: blastTableContext.trim() || undefined,
+          project_id: govScopeProject || undefined,
         }),
       });
       if (res.ok) {
@@ -485,9 +579,11 @@ export default function OntologyDomainManager() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          require_steward: lintRequireSteward,
+          require_steward: lintStewardSeverity !== 'OFF',
+          steward_severity: lintStewardSeverity,
           require_description: lintRequireDesc,
           enforce_snake_case_metrics: lintSnakeCase,
+          project_id: govScopeProject || undefined,
         }),
       });
       if (res.ok) {
@@ -504,68 +600,139 @@ export default function OntologyDomainManager() {
     }
   };
 
-  const handleRunReconciliation = async (scenarioOverride) => {
-    const activeScenario = scenarioOverride || reconScenario;
+  const handleRunReconciliation = async () => {
+    if (!reconMetric.trim() || !reconExpr.trim() || !reconTable.trim()) {
+      setStatusMessage({ type: 'error', text: 'Metric name, target table/view, and SQL formula are required.' });
+      return;
+    }
     setRunningRecon(true);
+    setReconResult(null);
     try {
       const dimList = reconDims
         .split(',')
         .map((d) => d.trim())
         .filter(Boolean);
+      const activeReconProject = govScopeProject || govDomainDetail?.source_project_id || selectedProjectSlug || undefined;
       const qRes = await authFetch('/api/reconciliation/generate-queries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          metric_name: reconMetric,
-          metric_sql_expression: reconExpr,
-          target_table_or_view: reconTable,
-          dimensions: dimList.length ? dimList : ['Customer_Tier'],
+          metric_name: reconMetric.trim(),
+          metric_sql_expression: reconExpr.trim(),
+          target_table_or_view: reconTable.trim(),
+          dimensions: dimList,
           filters: [],
+          project_id: activeReconProject,
         }),
       });
-      let generated = { dax_query: '', sql_query: '' };
-      if (qRes.ok) {
-        generated = await qRes.json();
-        setReconQueries(generated);
+      if (!qRes.ok) {
+        const errData = await qRes.json().catch(() => ({}));
+        setStatusMessage({ type: 'error', text: describeApiError(errData, 'Failed to generate reconciliation queries.') });
+        return;
+      }
+      const generated = await qRes.json();
+      setReconQueries(generated);
+
+      if (!reconDaxRowsJson.trim()) {
+        setStatusMessage({
+          type: 'info',
+          text: 'DAX and SQL queries generated. Paste exported Power BI JSON rows to run live parity verification.',
+        });
+        return;
       }
 
-      const primaryDim = dimList[0] || 'Customer_Tier';
-      const daxRows = [
-        { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
-        { [primaryDim]: 'Mid-Market', metric_value: 820400.0 },
-        { [primaryDim]: 'SMB', metric_value: 312900.25 },
-        { [primaryDim]: 'Strategic', metric_value: 2190000.0 },
-      ];
-      const sqlRows =
-        activeScenario === 'certified'
-          ? [
-              { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
-              { [primaryDim]: 'Mid-Market', metric_value: 820400.0 },
-              { [primaryDim]: 'SMB', metric_value: 312900.25 },
-              { [primaryDim]: 'Strategic', metric_value: 2190000.0 },
-            ]
-          : [
-              { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
-              { [primaryDim]: 'Mid-Market', metric_value: 794150.0 }, // Intentional filter/rounding drift
-              { [primaryDim]: 'SMB', metric_value: 312900.25 },
-              { [primaryDim]: 'Strategic', metric_value: 2105400.0 }, // Intentional drift
-            ];
+      let daxRows = [];
+      try {
+        daxRows = JSON.parse(reconDaxRowsJson);
+        if (!Array.isArray(daxRows)) throw new Error('Expected a JSON array of row objects.');
+      } catch (parseErr) {
+        setStatusMessage({ type: 'error', text: `Invalid Power BI JSON rows: ${parseErr.message}` });
+        return;
+      }
+
+      const execRes = await authFetch('/api/ai/execute-query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sql: generated.sql_query,
+          target: selectedTarget,
+          project_id: activeReconProject,
+          limit: 500,
+          allow_simulated: false,
+        }),
+      });
+      const execData = await execRes.json().catch(() => ({}));
+      if (!execRes.ok || !execData.success || execData.is_simulated) {
+        setStatusMessage({
+          type: 'error',
+          text: execData.error || execData.detail || execData.message || 'Live SQL warehouse execution is required for verification.',
+        });
+        return;
+      }
+
+      const cols = execData.columns || [];
+      const sqlRows = (execData.rows || []).map((rowArr) => {
+        const obj = {};
+        cols.forEach((c, idx) => {
+          obj[c] = rowArr[idx];
+        });
+        return obj;
+      });
 
       const vRes = await authFetch('/api/reconciliation/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          metric_name: reconMetric,
+          metric_name: reconMetric.trim(),
           dax_results: daxRows,
           sql_results: sqlRows,
-          dimension_keys: [primaryDim],
+          dimension_keys: dimList,
           dax_query: generated.dax_query,
           sql_query: generated.sql_query,
+          project_id: selectedProjectSlug || undefined,
+          domain: inspectingDomain || undefined,
         }),
       });
       if (vRes.ok) {
         const vData = await vRes.json();
         setReconResult(vData);
+        fetchCertifications(selectedProjectSlug);
+      } else {
+        const errData = await vRes.json().catch(() => ({}));
+        setStatusMessage({ type: 'error', text: describeApiError(errData, 'Reconciliation verification failed.') });
+      }
+    } catch (err) {
+      setStatusMessage({ type: 'error', text: String(err) });
+    } finally {
+      setRunningRecon(false);
+    }
+  };
+
+  const handleAutoRunDax = async () => {
+    if (!reconQueries?.dax_query) {
+      setStatusMessage({ type: 'info', text: 'Generate queries first before running automated DAX execution.' });
+      return;
+    }
+    setRunningRecon(true);
+    try {
+      const res = await authFetch('/api/reconciliation/run-dax', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: reconQueries.dax_query }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReconDaxRowsJson(JSON.stringify(data.rows || [], null, 2));
+        setStatusMessage({
+          type: 'success',
+          text: `Executed DAX via ${data.backend} (${data.row_count} rows). Click Verify to reconcile.`,
+        });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setStatusMessage({
+          type: 'error',
+          text: describeApiError(err, 'Automated DAX execution failed. You can paste exported Power BI JSON rows manually.'),
+        });
       }
     } catch (err) {
       setStatusMessage({ type: 'error', text: String(err) });
@@ -590,7 +757,7 @@ export default function OntologyDomainManager() {
                 dax_filter_expression: rlsDaxExpr,
               },
             ],
-            members: ['analyst_emea@company.com'],
+            members: [],
           },
           target_database: rlsTargetDb,
           target_schema: rlsTargetSchema,
@@ -599,6 +766,9 @@ export default function OntologyDomainManager() {
       if (res.ok) {
         const data = await res.json();
         setRlsDdl(data.ddl || '');
+        if (data.status === 'not translated' && data.reason) {
+          setStatusMessage({ type: 'error', text: data.reason });
+        }
       } else {
         const err = await res.json();
         setStatusMessage({ type: 'error', text: describeApiError(err, 'RLS translation failed.') });
@@ -688,11 +858,10 @@ export default function OntologyDomainManager() {
       {/* ── Status Toast ── */}
       {statusMessage && (
         <div
-          className={`px-6 py-2.5 text-xs font-medium flex items-center gap-2 border-b transition-all ${
-            statusMessage.type === 'success'
+          className={`px-6 py-2.5 text-xs font-medium flex items-center gap-2 border-b transition-all ${statusMessage.type === 'success'
               ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
               : 'bg-red-500/10 text-red-300 border-red-500/20'
-          }`}
+            }`}
         >
           {statusMessage.type === 'success' ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
           <span style={{ whiteSpace: 'pre-line' }}>{statusMessage.text}</span>
@@ -705,11 +874,10 @@ export default function OntologyDomainManager() {
           <button
             type="button"
             onClick={() => setActiveTab('mesh')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'mesh'
+            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${activeTab === 'mesh'
                 ? 'border-accent-blue text-accent-blue'
                 : 'border-transparent text-secondary hover:text-primary'
-            }`}
+              }`}
           >
             <Network size={15} />
             <span>Domain Mesh & Business Glossary</span>
@@ -721,11 +889,10 @@ export default function OntologyDomainManager() {
           <button
             type="button"
             onClick={() => setActiveTab('graph')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'graph'
+            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${activeTab === 'graph'
                 ? 'border-accent-blue text-accent-blue'
                 : 'border-transparent text-secondary hover:text-primary'
-            }`}
+              }`}
           >
             <Network size={15} />
             <span>Connection Map</span>
@@ -734,11 +901,10 @@ export default function OntologyDomainManager() {
           <button
             type="button"
             onClick={() => setActiveTab('ai')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'ai'
+            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${activeTab === 'ai'
                 ? 'border-accent-blue text-accent-blue'
                 : 'border-transparent text-secondary hover:text-primary'
-            }`}
+              }`}
           >
             <Sparkles size={15} className="text-amber-400" />
             <span>AI/BI Conversational Studio</span>
@@ -750,11 +916,10 @@ export default function OntologyDomainManager() {
           <button
             type="button"
             onClick={() => setActiveTab('governance')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'governance'
+            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${activeTab === 'governance'
                 ? 'border-accent-blue text-accent-blue'
                 : 'border-transparent text-secondary hover:text-primary'
-            }`}
+              }`}
           >
             <ShieldCheck size={15} className="text-emerald-400" />
             <span>Governance, Blast Radius & Reconciliation</span>
@@ -1034,11 +1199,10 @@ export default function OntologyDomainManager() {
                     setSelectedTarget('SNOWFLAKE');
                     setExecutionResult(null);
                   }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedTarget === 'SNOWFLAKE'
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${selectedTarget === 'SNOWFLAKE'
                       ? 'bg-blue-600 text-white shadow-sm'
                       : 'text-secondary hover:text-primary hover:bg-surface'
-                  }`}
+                    }`}
                   title="Target Snowflake Cortex Analyst and Semantic Views"
                 >
                   <Snowflake size={14} className={selectedTarget === 'SNOWFLAKE' ? 'text-cyan-200' : 'text-cyan-400'} />
@@ -1050,11 +1214,10 @@ export default function OntologyDomainManager() {
                     setSelectedTarget('DATABRICKS');
                     setExecutionResult(null);
                   }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedTarget === 'DATABRICKS'
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${selectedTarget === 'DATABRICKS'
                       ? 'bg-amber-600 text-white shadow-sm'
                       : 'text-secondary hover:text-primary hover:bg-surface'
-                  }`}
+                    }`}
                   title="Target Databricks AI/BI Genie and Unity Catalog Metric Views"
                 >
                   <Database size={14} className={selectedTarget === 'DATABRICKS' ? 'text-amber-200' : 'text-amber-400'} />
@@ -1066,11 +1229,10 @@ export default function OntologyDomainManager() {
                     setSelectedTarget('LOCAL');
                     setExecutionResult(null);
                   }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedTarget === 'LOCAL'
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${selectedTarget === 'LOCAL'
                       ? 'bg-emerald-600 text-white shadow-sm'
                       : 'text-secondary hover:text-primary hover:bg-surface'
-                  }`}
+                    }`}
                   title="In-memory local compiler with zero cloud warehouse credit cost"
                 >
                   <Server size={14} className={selectedTarget === 'LOCAL' ? 'text-emerald-200' : 'text-emerald-400'} />
@@ -1088,8 +1250,8 @@ export default function OntologyDomainManager() {
                     {selectedTarget === 'SNOWFLAKE'
                       ? 'Snowflake Cortex Analyst · Semantic Views & Cortex YAML'
                       : selectedTarget === 'DATABRICKS'
-                      ? 'Databricks AI/BI Genie · Unity Catalog Metric Views'
-                      : 'SemaBridge Local Engine · In-Memory AST Compiler'}
+                        ? 'Databricks AI/BI Genie · Unity Catalog Metric Views'
+                        : 'SemaBridge Local Engine · In-Memory AST Compiler'}
                   </span>
                 </div>
                 <span className="text-[11px] text-tertiary">
@@ -1102,7 +1264,10 @@ export default function OntologyDomainManager() {
                 <span className="text-secondary font-medium">Model Context:</span>
                 <select
                   value={selectedProjectSlug}
-                  onChange={(e) => setSelectedProjectSlug(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedProjectSlug(e.target.value);
+                    fetchCertifications(e.target.value);
+                  }}
                   className="bg-surface-raised border border-main rounded-lg px-2.5 py-1 text-xs text-primary font-medium focus:outline-none focus:border-accent-blue"
                   title="Scope AI query resolution to a specific project or the global enterprise mesh"
                 >
@@ -1132,55 +1297,44 @@ export default function OntologyDomainManager() {
                 </span>
               </div>
 
-              {/* Dynamic Preset Prompt Chips */}
-              <div className="flex flex-wrap gap-2 text-xs">
-                {(selectedTarget === 'DATABRICKS'
-                  ? [
-                      'Compare monthly MRR and customer churn rate by tier in 2024',
-                      'Show top 10 customers by annual sales in Unity Catalog',
-                      'Calculate net profit margin and COGS by product category',
-                    ]
-                  : [
-                      'What is the gross margin and ARR by Customer in 2024?',
-                      'Show me ebitda and revenue by region',
-                      'Calculate total gross margin for all customers',
-                    ]
-                ).map((chip, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setNlPrompt(chip);
-                      setExecutionResult(null);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary text-[11px] transition-colors"
-                  >
-                    "{chip}"
-                  </button>
-                ))}
-              </div>
+              {/* Dynamic Suggestion Chips derived from loaded domain metrics (no hardcoded prompts) */}
+              {inspectingDomainData?.parsed?.metrics?.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {inspectingDomainData.parsed.metrics.slice(0, 3).map((m, idx) => {
+                    const chip = `What is ${m.label || m.name}?`;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setNlPrompt(chip);
+                          setExecutionResult(null);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary text-[11px] transition-colors"
+                      >
+                        "{chip}"
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={nlPrompt}
                   onChange={(e) => setNlPrompt(e.target.value)}
-                  placeholder={
-                    selectedTarget === 'DATABRICKS'
-                      ? "Ask a question in plain English (e.g. 'Show total revenue by region in Databricks')..."
-                      : "Ask a question in plain English (e.g. 'What is the gross margin by customer in Snowflake?')..."
-                  }
+                  placeholder="Ask an analytical question using metrics and dimensions from the selected model..."
                   className="flex-1 px-4 py-2.5 rounded-xl bg-surface-raised border border-main text-xs text-primary focus:outline-none focus:border-accent-blue font-medium"
                 />
                 <button
                   type="button"
                   disabled={loading}
                   onClick={handleResolveNlQuery}
-                  className={`px-5 py-2.5 rounded-xl text-white font-semibold text-xs flex items-center gap-2 transition-colors disabled:opacity-50 ${
-                    selectedTarget === 'DATABRICKS'
+                  className={`px-5 py-2.5 rounded-xl text-white font-semibold text-xs flex items-center gap-2 transition-colors disabled:opacity-50 ${selectedTarget === 'DATABRICKS'
                       ? 'bg-amber-600 hover:bg-amber-500'
                       : 'bg-blue-600 hover:bg-blue-500'
-                  }`}
+                    }`}
                   title="Parse natural language prompt and generate governed SQL"
                 >
                   {loading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
@@ -1296,15 +1450,15 @@ export default function OntologyDomainManager() {
 
                   <button
                     type="button"
-                    disabled={executingQuery}
+                    disabled={executingQuery || nlResolutionPlan.answerable === false}
                     onClick={handleExecuteQuery}
-                    className={`px-5 py-2.5 rounded-xl text-white font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 ${
-                      selectedTarget === 'DATABRICKS'
+                    title={nlResolutionPlan.answerable === false ? 'Query could not be resolved against this ontology' : undefined}
+                    className={`px-5 py-2.5 rounded-xl text-white font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 ${selectedTarget === 'DATABRICKS'
                         ? 'bg-amber-600 hover:bg-amber-500'
                         : selectedTarget === 'LOCAL'
-                        ? 'bg-emerald-600 hover:bg-emerald-500'
-                        : 'bg-blue-600 hover:bg-blue-500'
-                    }`}
+                          ? 'bg-emerald-600 hover:bg-emerald-500'
+                          : 'bg-blue-600 hover:bg-blue-500'
+                      }`}
                   >
                     {executingQuery ? (
                       <RefreshCw size={14} className="animate-spin" />
@@ -1314,8 +1468,8 @@ export default function OntologyDomainManager() {
                     {selectedTarget === 'SNOWFLAKE'
                       ? 'Execute on Snowflake'
                       : selectedTarget === 'DATABRICKS'
-                      ? 'Execute on Databricks'
-                      : 'Run Local Query'}
+                        ? 'Execute on Databricks'
+                        : 'Run Local Query'}
                   </button>
                 </div>
               </div>
@@ -1341,13 +1495,15 @@ export default function OntologyDomainManager() {
                   {/* Accuracy Multiplier Action Button */}
                   <button
                     type="button"
-                    disabled={savingVerified}
+                    disabled={savingVerified || !executionResult?.success || executionResult?.is_simulated}
                     onClick={handleSaveVerifiedQuery}
                     className="px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
                     title={
-                      selectedTarget === 'DATABRICKS'
-                        ? 'Save as a verified benchmark query in Databricks AI/BI Genie Space'
-                        : 'Save as a verified query in Snowflake Cortex Analyst YAML'
+                      executionResult?.is_simulated || !executionResult?.success
+                        ? 'Run query live cleanly against warehouse before saving as verified'
+                        : selectedTarget === 'DATABRICKS'
+                          ? 'Save as a verified benchmark query in Databricks AI/BI Genie Space'
+                          : 'Save as a verified query in Snowflake Cortex Analyst YAML'
                     }
                   >
                     {savingVerified ? (
@@ -1433,13 +1589,35 @@ export default function OntologyDomainManager() {
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                <select
+                  value={govScopeProject}
+                  onChange={(e) => setGovScopeProject(e.target.value)}
+                  className="bg-surface-raised border border-main rounded-lg px-2.5 py-2 text-xs text-primary font-medium focus:outline-none focus:border-accent-blue"
+                  title="Scope Blast Radius & Linter checks to a specific project or all loaded domains"
+                >
+                  <option value="">All Loaded Domains</option>
+                  {projectsList.map((p) => (
+                    <option key={p.id || p.name} value={p.id || p.name}>
+                      {p.name || p.id}
+                    </option>
+                  ))}
+                  {(domainData?.domains || []).map((d) => (
+                    <option key={`dom:${d.domain}`} value={d.source_project_id || d.domain}>
+                      Domain: {d.domain}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   onClick={() => {
-                    handleRunBlastRadius();
+                    if (blastTarget.trim()) handleRunBlastRadius();
                     handleRunLinter();
-                    handleRunReconciliation('certified');
-                    handleTranslateRls();
+                    if (reconMetric.trim() && reconExpr.trim() && reconTable.trim()) {
+                      handleRunReconciliation();
+                    }
+                    if (rlsRoleName.trim() && rlsTableName.trim() && rlsDaxExpr.trim()) {
+                      handleTranslateRls();
+                    }
                   }}
                   className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
                 >
@@ -1467,30 +1645,28 @@ export default function OntologyDomainManager() {
                     </div>
                   </div>
 
-                  {/* Quick Preset Targets */}
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className="text-tertiary font-medium">Quick Presets:</span>
-                    {[
-                      { label: 'Metric: revenue', name: 'revenue', type: 'METRIC', change: 'MODIFY_EXPRESSION' },
-                      { label: 'Metric: gross_margin', name: 'gross_margin', type: 'METRIC', change: 'DROP' },
-                      { label: 'Column: AMOUNT', name: 'AMOUNT', type: 'COLUMN', change: 'RENAME' },
-                    ].map((preset, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => {
-                          setBlastTarget(preset.name);
-                          setBlastType(preset.type);
-                          setBlastChangeType(preset.change);
-                        }}
-                        className="px-2 py-0.5 rounded bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary transition-colors"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Dynamic Domain Presets */}
+                  {(domainData?.metrics || []).length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="text-tertiary font-medium">Loaded Metrics:</span>
+                      {(domainData.metrics || []).slice(0, 3).map((m, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => {
+                            setBlastTarget(m.name);
+                            setBlastType('METRIC');
+                            setBlastChangeType('MODIFY_EXPRESSION');
+                          }}
+                          className="px-2 py-0.5 rounded bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary transition-colors"
+                        >
+                          Metric: {m.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                     <div>
                       <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
                         Target Object
@@ -1499,8 +1675,20 @@ export default function OntologyDomainManager() {
                         type="text"
                         value={blastTarget}
                         onChange={(e) => setBlastTarget(e.target.value)}
-                        placeholder="e.g. revenue or AMOUNT"
-                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                        placeholder="Target metric, column, or table"
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                        Table Context (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={blastTableContext}
+                        onChange={(e) => setBlastTableContext(e.target.value)}
+                        placeholder="Concept / Table"
+                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
                       />
                     </div>
                     <div>
@@ -1527,6 +1715,7 @@ export default function OntologyDomainManager() {
                         className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary"
                       >
                         <option value="MODIFY_EXPRESSION">MODIFY_EXPRESSION</option>
+                        <option value="MODIFY_TYPE">MODIFY_TYPE</option>
                         <option value="RENAME">RENAME</option>
                         <option value="DROP">DROP</option>
                       </select>
@@ -1548,13 +1737,14 @@ export default function OntologyDomainManager() {
                       <div className="flex items-center justify-between border-b border-main pb-2">
                         <div className="flex items-center gap-2">
                           <span
-                            className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
-                              blastReport.severity === 'BREAKING'
+                            className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${blastReport.severity === 'BREAKING'
                                 ? 'bg-red-500/20 text-red-300 border border-red-500/40'
                                 : blastReport.severity === 'DEGRADED'
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            }`}
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                  : blastReport.severity === 'NOT_FOUND'
+                                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              }`}
                           >
                             {blastReport.severity}
                           </span>
@@ -1597,13 +1787,42 @@ export default function OntologyDomainManager() {
                             {blastReport.affected_metrics.map((m, idx) => (
                               <div
                                 key={idx}
-                                className="px-2.5 py-1.5 rounded bg-surface border border-main flex items-center justify-between text-[11px]"
+                                className="px-2.5 py-1.5 rounded bg-surface border border-main flex items-center justify-between gap-2 text-[11px]"
                               >
-                                <span className="font-mono font-semibold text-primary">{m.name}</span>
-                                <span className="text-tertiary">{m.details}</span>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                      m.impact_level === 'TRANSITIVE'
+                                        ? 'bg-violet-500/20 text-violet-300'
+                                        : 'bg-rose-500/20 text-rose-300'
+                                    }`}
+                                  >
+                                    {m.impact_level}
+                                  </span>
+                                  <span className="font-mono font-semibold text-primary truncate">{m.name}</span>
+                                </div>
+                                <span className="text-tertiary text-right truncate max-w-[60%]" title={m.details}>
+                                  {m.details}
+                                </span>
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {blastReport.suggestions?.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="text-tertiary font-medium">Did you mean:</span>
+                          {blastReport.suggestions.map((sug, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setBlastTarget(sug)}
+                              className="px-2 py-0.5 rounded bg-surface border border-main text-accent-blue hover:bg-surface-hover font-mono"
+                            >
+                              {sug}
+                            </button>
+                          ))}
                         </div>
                       )}
 
@@ -1637,14 +1856,18 @@ export default function OntologyDomainManager() {
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap gap-4 p-3 rounded-lg bg-surface-raised border border-main text-xs">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={lintRequireSteward}
-                        onChange={(e) => setLintRequireSteward(e.target.checked)}
-                      />
-                      <span>Require Data Steward</span>
+                  <div className="flex flex-wrap items-center gap-4 p-3 rounded-lg bg-surface-raised border border-main text-xs">
+                    <label className="flex items-center gap-2">
+                      <span>Data Steward Rule:</span>
+                      <select
+                        value={lintStewardSeverity}
+                        onChange={(e) => setLintStewardSeverity(e.target.value)}
+                        className="bg-surface border border-main rounded px-2 py-0.5 text-[11px] font-semibold text-primary"
+                      >
+                        <option value="ERROR">ERROR (Block)</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="OFF">Off</option>
+                      </select>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
@@ -1678,11 +1901,10 @@ export default function OntologyDomainManager() {
                     <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
                       <div className="flex items-center justify-between border-b border-main pb-2">
                         <span
-                          className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
-                            lintReport.passed
+                          className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${lintReport.passed
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                               : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                          }`}
+                            }`}
                         >
                           {lintReport.passed ? 'PASSED GATE' : 'FAILED GATE'}
                         </span>
@@ -1706,13 +1928,12 @@ export default function OntologyDomainManager() {
                                   [{issue.rule_id}] {issue.object_name}
                                 </span>
                                 <span
-                                  className={`text-[10px] font-bold uppercase ${
-                                    issue.severity === 'ERROR'
+                                  className={`text-[10px] font-bold uppercase ${issue.severity === 'ERROR'
                                       ? 'text-red-400'
                                       : issue.severity === 'WARNING'
-                                      ? 'text-amber-400'
-                                      : 'text-blue-400'
-                                  }`}
+                                        ? 'text-amber-400'
+                                        : 'text-blue-400'
+                                    }`}
                                 >
                                   {issue.severity}
                                 </span>
@@ -1748,6 +1969,111 @@ export default function OntologyDomainManager() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Pre-fill Pickers from Selected Domain Metadata (logical names) */}
+                  {(domainData?.domains || []).length > 0 && (
+                    <div className="p-3 rounded-lg bg-surface-raised border border-main space-y-2.5 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                            Pick Domain Model
+                          </label>
+                          <select
+                            value={govDomainName}
+                            onChange={(e) => {
+                              setGovDomainName(e.target.value);
+                              const matchedDom = (domainData?.domains || []).find((d) => d.domain === e.target.value);
+                              if (matchedDom?.source_project_id) {
+                                setGovScopeProject(matchedDom.source_project_id);
+                              }
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-surface border border-main text-xs text-primary"
+                          >
+                            {(domainData?.domains || []).map((d) => (
+                              <option key={d.domain} value={d.domain}>
+                                {d.domain}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                            Pick Metric (Pre-fills Target &amp; Formula)
+                          </label>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const chosenM = (govDomainDetail?.metrics || []).find((m) => m.name === e.target.value);
+                              if (!chosenM) return;
+                              const conceptObj = (govDomainDetail?.concepts || []).find(
+                                (c) => (c.name || '').toLowerCase() === (chosenM.concept || '').toLowerCase()
+                              );
+                              const tblLogical = (
+                                conceptObj?.logical_name ||
+                                chosenM.concept ||
+                                ''
+                              )
+                                .toString()
+                                .trim();
+                              const mLogical = (chosenM.logical_name || chosenM.name || '').toString().trim();
+                              const semView = chosenM.semantic_view_name || govDomainDetail?.semantic_view_name || '';
+                              setReconMetric(chosenM.label || chosenM.name);
+                              setReconTable(semView || tblLogical);
+                              setReconExpr(semView && tblLogical && mLogical ? `${tblLogical}.${mLogical}` : chosenM.sql_expression || '');
+                              setReconDims('');
+                              setReconQueries(null);
+                              setReconResult(null);
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-surface border border-main text-xs text-primary"
+                          >
+                            <option value="">Choose a metric from {govDomainDetail?.domain || 'domain'}...</option>
+                            {(govDomainDetail?.metrics || []).map((m) => (
+                              <option key={m.name} value={m.name}>
+                                {m.label || m.name} ({m.logical_name || m.name})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {(govDomainDetail?.concepts || []).length > 0 && (
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                            Pick Slice Dimensions (TABLE.COLUMN)
+                          </label>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const picked = e.target.value;
+                              if (!picked) return;
+                              const cur = reconDims
+                                .split(',')
+                                .map((s) => s.trim())
+                                .filter(Boolean);
+                              if (!cur.includes(picked)) {
+                                setReconDims([...cur, picked].join(', '));
+                              }
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-surface border border-main text-xs text-primary font-mono"
+                          >
+                            <option value="">Add dimension column...</option>
+                            {(govDomainDetail?.concepts || []).flatMap((c) => {
+                              const tLog = (c.logical_name || c.name || '').toString().trim();
+                              return (c.attributes || []).map((a) => {
+                                const cLog = (a.logical_name || a.name || '').toString().trim();
+                                const qual = `${tLog}.${cLog}`;
+                                return (
+                                  <option key={qual} value={qual}>
+                                    {qual} ({c.name}.{a.name})
+                                  </option>
+                                );
+                              });
+                            })}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
@@ -1796,50 +2122,79 @@ export default function OntologyDomainManager() {
                     </div>
                   </div>
 
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
+                      Power BI Exported Rows (JSON Array matching dimension & metric columns)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={reconDaxRowsJson}
+                      onChange={(e) => setReconDaxRowsJson(e.target.value)}
+                      placeholder='[{"DIM_COL": "Value", "METRIC_NAME": 123.45}]'
+                      className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
+                    />
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      disabled={runningRecon}
-                      onClick={() => {
-                        setReconScenario('certified');
-                        handleRunReconciliation('certified');
-                      }}
-                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                      disabled={runningRecon || !reconQueries?.dax_query}
+                      onClick={() => handleAutoRunDax()}
+                      className="py-2 px-3 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-primary font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                      title="Execute generated DAX via local Power BI Desktop, REST API, or XMLA"
                     >
-                      <CheckCheck size={14} />
-                      Verify Parity (100% Match)
+                      <Play size={13} />
+                      Auto-Run DAX
                     </button>
                     <button
                       type="button"
                       disabled={runningRecon}
-                      onClick={() => {
-                        setReconScenario('drift');
-                        handleRunReconciliation('drift');
-                      }}
-                      className="flex-1 py-2 px-3 rounded-lg bg-amber-600/80 hover:bg-amber-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                      onClick={() => handleRunReconciliation()}
+                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
                     >
-                      <AlertTriangle size={14} />
-                      Simulate Formula Drift
+                      <CheckCheck size={14} />
+                      Run Live SQL vs Power BI Verification
                     </button>
                   </div>
 
-                  {reconResult && (
+                  {(reconResult || reconQueries) && (
                     <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
-                      <div className="flex items-center justify-between border-b border-main pb-2">
-                        <span
-                          className={`px-2.5 py-0.5 rounded font-bold text-[10px] uppercase ${
-                            reconResult.status === 'CERTIFIED'
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                          }`}
-                        >
-                          {reconResult.certification_badge}
-                        </span>
-                        <span className="text-[11px] text-secondary">
-                          Matched {reconResult.matched_rows}/{reconResult.total_rows_compared} slices (Max Δ:{' '}
-                          {reconResult.max_percentage_delta}%)
-                        </span>
-                      </div>
+                      {reconResult && (
+                        <div className="flex items-center justify-between border-b border-main pb-2">
+                          <span
+                            className={`px-2.5 py-0.5 rounded font-bold text-[10px] uppercase ${reconResult.status === 'CERTIFIED'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                : reconResult.status === 'WARNING'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                  : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                              }`}
+                          >
+                            {reconResult.certification_badge}
+                          </span>
+                          <span className="text-[11px] text-secondary">
+                            Matched {reconResult.matched_rows}/{reconResult.total_rows_compared} slices (Max Δ:{' '}
+                            {reconResult.max_percentage_delta}%)
+                          </span>
+                        </div>
+                      )}
+
+                      {reconResult?.column_mapping?.metric && (
+                        <div className="p-2 rounded bg-surface border border-main text-[11px] font-mono text-secondary space-y-0.5">
+                          <span className="text-[10px] font-bold uppercase text-tertiary block">
+                            Column Mapping Used:
+                          </span>
+                          <div>
+                            Metric: {reconResult.column_mapping.metric.requested} → DAX:{' '}
+                            {reconResult.column_mapping.metric.dax_column || '—'} | SQL:{' '}
+                            {reconResult.column_mapping.metric.sql_column || '—'}
+                          </div>
+                          {(reconResult.column_mapping.dimensions || []).map((dm, dIdx) => (
+                            <div key={dIdx}>
+                              Dim ({dm.requested}) → DAX: {dm.dax_column || '—'} | SQL: {dm.sql_column || '—'}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       {reconQueries && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1862,7 +2217,7 @@ export default function OntologyDomainManager() {
                         </div>
                       )}
 
-                      {reconResult.sample_mismatches?.length > 0 && (
+                      {reconResult?.sample_mismatches?.length > 0 && (
                         <div className="p-2.5 rounded bg-red-500/10 border border-red-500/30 space-y-1.5">
                           <span className="text-[10px] font-bold uppercase text-red-300 block">
                             Detected Numerical Drift Slices:
@@ -1874,8 +2229,8 @@ export default function OntologyDomainManager() {
                             >
                               <span>{m.dimension_key}</span>
                               <span>
-                                DAX: {m.dax_value.toLocaleString()} vs SQL: {m.sql_value.toLocaleString()} (Δ{' '}
-                                {m.percentage_delta}%)
+                                DAX: {m.dax_value != null ? m.dax_value.toLocaleString() : 'NULL'} vs SQL:{' '}
+                                {m.sql_value != null ? m.sql_value.toLocaleString() : 'NULL'} (Δ {m.percentage_delta}%)
                               </span>
                             </div>
                           ))}
@@ -2009,33 +2364,30 @@ export default function OntologyDomainManager() {
               <button
                 type="button"
                 onClick={() => setInspectorActiveTab('metrics')}
-                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${
-                  inspectorActiveTab === 'metrics'
+                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${inspectorActiveTab === 'metrics'
                     ? 'border-accent-blue text-accent-blue'
                     : 'border-transparent text-secondary hover:text-primary'
-                }`}
+                  }`}
               >
                 Metrics & Formulas ({inspectingDomainData?.parsed?.metrics?.length || 0})
               </button>
               <button
                 type="button"
                 onClick={() => setInspectorActiveTab('concepts')}
-                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${
-                  inspectorActiveTab === 'concepts'
+                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${inspectorActiveTab === 'concepts'
                     ? 'border-accent-blue text-accent-blue'
                     : 'border-transparent text-secondary hover:text-primary'
-                }`}
+                  }`}
               >
                 Entities & Tables ({inspectingDomainData?.parsed?.concepts?.length || 0})
               </button>
               <button
                 type="button"
                 onClick={() => setInspectorActiveTab('yaml')}
-                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${
-                  inspectorActiveTab === 'yaml'
+                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${inspectorActiveTab === 'yaml'
                     ? 'border-accent-blue text-accent-blue'
                     : 'border-transparent text-secondary hover:text-primary'
-                }`}
+                  }`}
               >
                 YAML Definition
               </button>
@@ -2050,63 +2402,93 @@ export default function OntologyDomainManager() {
                     Authoritative KPIs owned by the <strong className="text-primary">{inspectingDomain}</strong> team.
                   </div>
                   {inspectingDomainData?.parsed?.metrics?.length > 0 ? (
-                    inspectingDomainData.parsed.metrics.map((m) => (
-                      <div key={m.name} className="p-4 rounded-xl bg-surface-raised border border-main text-xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-primary text-sm flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                            {m.label || m.name}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface border border-main text-secondary uppercase">
-                            {m.aggregation_type || 'SUM'}
-                          </span>
-                        </div>
-                        <p className="text-secondary text-[11px] m-0">{m.description || 'No description provided.'}</p>
-                        {m.sql_expression ? (
-                          <div className="p-2 rounded bg-surface border border-main font-mono text-[11px] text-emerald-400">
-                            {m.sql_expression}
-                          </div>
-                        ) : (
-                          <p className="text-tertiary text-[11px] italic m-0">
-                            No formula in the ontology — the SQL comes from the mapped BI measure.
-                          </p>
-                        )}
-                        {m.derives_from?.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1 pt-1">
-                            <span className="text-[10px] text-tertiary font-semibold mr-1">Derives from:</span>
-                            {m.derives_from.map((dep, dIdx) => (
-                              <span key={dIdx} className="px-2 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-[10px] font-mono text-violet-400">
-                                {dep}
+                    inspectingDomainData.parsed.metrics.map((m) => {
+                      const cert =
+                        certificationsMap[(m.label || '').toLowerCase()] ||
+                        certificationsMap[(m.name || '').toLowerCase()];
+                      const certStatus = cert?.status || 'NOT_CHECKED';
+                      const certClass =
+                        certStatus === 'CERTIFIED'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : certStatus === 'FAILED' || certStatus === 'ERROR'
+                            ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                            : certStatus === 'WARNING'
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                              : 'bg-surface text-tertiary border-main';
+                      const certLabel =
+                        certStatus === 'CERTIFIED'
+                          ? 'Certified'
+                          : certStatus === 'FAILED' || certStatus === 'ERROR'
+                            ? 'Failed'
+                            : certStatus === 'WARNING'
+                              ? 'Warning'
+                              : 'Not checked';
+                      return (
+                        <div key={m.name} className="p-4 rounded-xl bg-surface-raised border border-main text-xs space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-primary text-sm flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                              {m.label || m.name}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${certClass}`}
+                                title={cert?.certified_at ? `Last checked: ${cert.certified_at}` : 'No reconciliation run recorded yet'}
+                              >
+                                {certLabel}
                               </span>
-                            ))}
-                          </div>
-                        )}
-                        {m.filter_expression && (
-                          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 font-mono text-[10px] text-amber-400">
-                            Enforced Filter: {m.filter_expression}
-                          </div>
-                        )}
-                        {m.synonyms?.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1 pt-1">
-                            <span className="text-[10px] text-tertiary font-semibold mr-1">Synonyms:</span>
-                            {m.synonyms.map((s, sIdx) => (
-                              <span key={sIdx} className="px-2 py-0.5 rounded bg-surface border border-main text-[10px] text-secondary">
-                                {s}
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface border border-main text-secondary uppercase">
+                                {m.aggregation_type || 'SUM'}
                               </span>
-                            ))}
+                            </div>
                           </div>
-                        )}
-                        <div className="pt-2 flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => handleJumpToAiTest(m.label || m.name, m.sql_expression)}
-                            className="px-2.5 py-1 rounded bg-accent-blue/10 hover:bg-accent-blue/20 text-accent-blue text-[11px] font-semibold flex items-center gap-1 transition-colors"
-                          >
-                            <Sparkles size={12} /> Test in AI Studio
-                          </button>
+                          <p className="text-secondary text-[11px] m-0">{m.description || 'No description provided.'}</p>
+                          {m.sql_expression ? (
+                            <div className="p-2 rounded bg-surface border border-main font-mono text-[11px] text-emerald-400">
+                              {m.sql_expression}
+                            </div>
+                          ) : (
+                            <p className="text-tertiary text-[11px] italic m-0">
+                              No formula in the ontology — the SQL comes from the mapped BI measure.
+                            </p>
+                          )}
+                          {m.derives_from?.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 pt-1">
+                              <span className="text-[10px] text-tertiary font-semibold mr-1">Derives from:</span>
+                              {m.derives_from.map((dep, dIdx) => (
+                                <span key={dIdx} className="px-2 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-[10px] font-mono text-violet-400">
+                                  {dep}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {m.filter_expression && (
+                            <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 font-mono text-[10px] text-amber-400">
+                              Enforced Filter: {m.filter_expression}
+                            </div>
+                          )}
+                          {m.synonyms?.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1 pt-1">
+                              <span className="text-[10px] text-tertiary font-semibold mr-1">Synonyms:</span>
+                              {m.synonyms.map((s, sIdx) => (
+                                <span key={sIdx} className="px-2 py-0.5 rounded bg-surface border border-main text-[10px] text-secondary">
+                                  {s}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="pt-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleJumpToAiTest(m.label || m.name, m.sql_expression)}
+                              className="px-2.5 py-1 rounded bg-accent-blue/10 hover:bg-accent-blue/20 text-accent-blue text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                            >
+                              <Sparkles size={12} /> Test in AI Studio
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="text-center py-8 text-xs text-tertiary">No metrics defined for this domain.</div>
                   )}
@@ -2203,9 +2585,8 @@ export default function OntologyDomainManager() {
                   </div>
 
                   {validationResult && (
-                    <div className={`p-3 rounded-lg text-xs border ${
-                      validationResult.valid ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
-                    }`}>
+                    <div className={`p-3 rounded-lg text-xs border ${validationResult.valid ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
+                      }`}>
                       {validationResult.valid ? (
                         <span>Valid schema: {validationResult.concept_count} concepts, {validationResult.metric_count} metrics.</span>
                       ) : (
@@ -2425,15 +2806,22 @@ export default function OntologyDomainManager() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                disabled={bootstrapping || !bootstrapProject}
-                onClick={handleBootstrapFromOsi}
-                className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
-              >
-                {bootstrapping ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                Generate & Save Domain
-              </button>
+              {(() => {
+                const existingProjDom = (domainData?.domains || []).find(
+                  (d) => bootstrapProject && (d.source_project_id || '').toLowerCase() === bootstrapProject.toLowerCase()
+                );
+                return (
+                  <button
+                    type="button"
+                    disabled={bootstrapping || !bootstrapProject}
+                    onClick={handleBootstrapFromOsi}
+                    className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                  >
+                    {bootstrapping ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                    {existingProjDom ? `Sync Existing Domain (${existingProjDom.domain})` : 'Generate & Save Domain'}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         </div>

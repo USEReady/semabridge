@@ -2,8 +2,10 @@ domain: Artificial Intelligence Sample
 id: artificial_intelligence_sample
 version: 1.0.0
 source_project_id: proj-artificial-intelligence
+semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
 concepts:
 - name: Accounts
+  logical_name: ACCOUNTS
   label: Accounts
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -12,113 +14,156 @@ concepts:
   physical_table: Accounts
   attributes:
   - name: Account Name
+    logical_name: ACCOUNT_NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Street
+    logical_name: STREET
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: City
+    logical_name: CITY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: State or Province
+    logical_name: STATE_OR_PROVINCE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Postal Code
+    logical_name: POSTAL_CODE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Country
+    logical_name: COUNTRY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Latitude
+    logical_name: LATITUDE
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Longitude
+    logical_name: LONGITUDE
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Phone
+    logical_name: PHONE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Annual Revenue
+    logical_name: ANNUAL_REVENUE
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Number of Employees
+    logical_name: NUMBER_OF_EMPLOYEES
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Account Owner
+    logical_name: ACCOUNT_OWNER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: AccountID
+    logical_name: ACCOUNTID
     data_type: VARCHAR
     is_primary_key: true
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Industry Lookup
+    logical_name: INDUSTRY_LOOKUP
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Territory
+    logical_name: TERRITORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Region
+    logical_name: REGION
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: AccountSeq
+    logical_name: ACCOUNTS_ACCOUNTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: IndustrySeq
+    logical_name: ACCOUNTS_INDUSTRYSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: AccountOwnerSeq
+    logical_name: ACCOUNTOWNERSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Industry
+    logical_name: INDUSTRY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Account Number
+    logical_name: ACCOUNT_NUMBER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Campaigns
+  logical_name: CAMPAIGNS
   label: Campaigns
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -127,28 +172,37 @@ concepts:
   physical_table: Campaigns
   attributes:
   - name: CampaignSeq
+    logical_name: CAMPAIGNS_CAMPAIGNSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Type
+    logical_name: TYPE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Campaign Name
+    logical_name: CAMPAIGN_NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Factor
+    logical_name: FACTOR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Case Calendar
+  logical_name: CASE_CALENDAR
   label: Case Calendar
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -157,93 +211,128 @@ concepts:
   physical_table: Case Calendar
   attributes:
   - name: Date
+    logical_name: COL_DATE
     data_type: DATE
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DAY
+    logical_name: DAY
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DaySeq
+    logical_name: DAYSEQ
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR
+    logical_name: YEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MONTH NUMBER
+    logical_name: CASE_CALENDAR_MONTH_NUMBER
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MONTH
+    logical_name: MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR MONTH NUMBER
+    logical_name: CASE_CALENDAR_YEAR_MONTH_NUMBER
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR MONTH
+    logical_name: YEAR_MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR WEEK
+    logical_name: YEAR_WEEK
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: WEEK
+    logical_name: WEEK
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE WEEK
+    logical_name: RELATIVE_WEEK
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE DAY
+    logical_name: RELATIVE_DAY
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE 07 DAY PERIOD
+    logical_name: RELATIVE_07_DAY_PERIOD
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE 30 DAY PERIOD
+    logical_name: RELATIVE_30_DAY_PERIOD
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE MONTH
+    logical_name: RELATIVE_MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Weekday
+    logical_name: WEEKDAY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: WeekdaySeq
+    logical_name: WEEKDAYSEQ
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Cases
+  logical_name: CASES
   label: Cases
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -252,123 +341,170 @@ concepts:
   physical_table: Cases
   attributes:
   - name: Case Created On
+    logical_name: CASE_CREATED_ON
     data_type: TIMESTAMP_NTZ
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Status
+    logical_name: STATUS
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Agent
+    logical_name: AGENT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Title
+    logical_name: TITLE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Origin
+    logical_name: ORIGIN
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Is Escalated
+    logical_name: IS_ESCALATED
     data_type: BOOLEAN
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Subject
+    logical_name: SUBJECT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: CSAT Label
+    logical_name: CSAT_LABEL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Resolution Minutes
+    logical_name: RESOLUTION_MINUTES
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Severity
+    logical_name: SEVERITY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Is SLA Violation
+    logical_name: IS_SLA_VIOLATION
     data_type: BOOLEAN
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: CSAT
+    logical_name: CSAT
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: SLA Compliance Goal
+    logical_name: SLA_COMPLIANCE_GOAL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Resolution Minutes Goal
+    logical_name: RESOLUTION_MINUTES_GOAL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: CSAT Goal
+    logical_name: CSAT_GOAL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Escalations Goal
+    logical_name: ESCALATIONS_GOAL
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Minutes to First Contact
+    logical_name: MINUTES_TO_FIRST_CONTACT
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Activities
+    logical_name: ACTIVITIES
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Topic
+    logical_name: TOPIC
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: CaseSeq
+    logical_name: CASESEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: SystemUserSeq
+    logical_name: CASES_SYSTEMUSERSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: AccountSeq
+    logical_name: CASES_ACCOUNTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: ProductSeq
+    logical_name: CASES_PRODUCTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Contacts
+  logical_name: CONTACTS
   label: Contacts
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -377,83 +513,114 @@ concepts:
   physical_table: Contacts
   attributes:
   - name: ContactID
+    logical_name: CONTACTID
     data_type: VARCHAR
     is_primary_key: true
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Contact
+    logical_name: CONTACT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Job Title
+    logical_name: JOB_TITLE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Street
+    logical_name: STREET
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: City
+    logical_name: CITY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: State or Province
+    logical_name: STATE_OR_PROVINCE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Postal Code
+    logical_name: POSTAL_CODE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Country
+    logical_name: COUNTRY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Latitude
+    logical_name: LATITUDE
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Longitude
+    logical_name: LONGITUDE
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Phone
+    logical_name: PHONE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: ContactSeq
+    logical_name: CONTACTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: AccountSeq
+    logical_name: CONTACTS_ACCOUNTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: FirstName
+    logical_name: FIRSTNAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: LastName
+    logical_name: LASTNAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Industries
+  logical_name: INDUSTRIES
   label: Industries
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -462,18 +629,23 @@ concepts:
   physical_table: Industries
   attributes:
   - name: Industry
+    logical_name: INDUSTRIES_INDUSTRY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: IndustrySeq
+    logical_name: INDUSTRIES_INDUSTRYSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Opportunities
+  logical_name: OPPORTUNITIES
   label: Opportunities
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -482,133 +654,184 @@ concepts:
   physical_table: Opportunities
   attributes:
   - name: Budget
+    logical_name: BUDGET
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Topic
+    logical_name: TOPIC
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Purchase Process
+    logical_name: PURCHASE_PROCESS
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Decision Maker Identified
+    logical_name: DECISION_MAKER_IDENTIFIED
     data_type: BOOLEAN
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Status
+    logical_name: STATUS
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: PipelineStep
+    logical_name: PIPELINESTEP
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Value
+    logical_name: COL_VALUE
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: CloseDate
+    logical_name: CLOSEDATE
     data_type: DATE
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Opportunity Created On
+    logical_name: OPPORTUNITY_CREATED_ON
     data_type: TIMESTAMP_NTZ
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Weeks Open
+    logical_name: WEEKS_OPEN
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DaysToClose
+    logical_name: DAYSTOCLOSE
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Discount
+    logical_name: DISCOUNT
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Probability
+    logical_name: PROBABILITY
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Rating
+    logical_name: RATING
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Days Remaining In Pipeline
+    logical_name: DAYS_REMAINING_IN_PIPELINE
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Probability (raw)
+    logical_name: PROBABILITY_RAW
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: AccountSeq
+    logical_name: OPPORTUNITIES_ACCOUNTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Opportunity Owner Name
+    logical_name: OPPORTUNITY_OWNER_NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: OpportunitySeq
+    logical_name: OPPORTUNITYSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: ProductSeq
+    logical_name: OPPORTUNITIES_PRODUCTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: SystemUserSeq
+    logical_name: OPPORTUNITIES_SYSTEMUSERSEQ
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Product Name
+    logical_name: PRODUCT_NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: CampaignSeq
+    logical_name: OPPORTUNITIES_CAMPAIGNSEQ
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Campaign Name
+    logical_name: CAMPAIGN_NAME
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Blank
+    logical_name: BLANK
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Opportunity Calendar
+  logical_name: OPPORTUNITY_CALENDAR
   label: Opportunity Calendar
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -617,83 +840,114 @@ concepts:
   physical_table: Opportunity Calendar
   attributes:
   - name: Date
+    logical_name: COL_DATE
     data_type: DATE
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DAY
+    logical_name: OPPORTUNITY_CALENDAR_DAY
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DaySeq
+    logical_name: DAYSEQ
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR
+    logical_name: YEAR
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MONTH NUMBER
+    logical_name: OPPORTUNITY_CALENDAR_MONTH_NUMBER
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MONTH
+    logical_name: MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR MONTH NUMBER
+    logical_name: OPPORTUNITY_CALENDAR_YEAR_MONTH_NUMBER
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR MONTH
+    logical_name: YEAR_MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: YEAR WEEK
+    logical_name: YEAR_WEEK
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: WEEK
+    logical_name: OPPORTUNITY_CALENDAR_WEEK
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE WEEK
+    logical_name: RELATIVE_WEEK
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE DAY
+    logical_name: OPPORTUNITY_CALENDAR_RELATIVE_DAY
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE 07 DAY PERIOD
+    logical_name: RELATIVE_07_DAY_PERIOD
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE 30 DAY PERIOD
+    logical_name: RELATIVE_30_DAY_PERIOD
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: RELATIVE MONTH
+    logical_name: RELATIVE_MONTH
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Opportunity Forecast Adjustment
+  logical_name: OPPORTUNITY_FORECAST_ADJUSTMENT
   label: Opportunity Forecast Adjustment
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -702,13 +956,16 @@ concepts:
   physical_table: Opportunity Forecast Adjustment
   attributes:
   - name: Forecast Adjustment
+    logical_name: FORECAST_ADJUSTMENT
     data_type: FLOAT
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Owners
+  logical_name: OWNERS_SYSTEMUSERSEQ
   label: Owners
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -717,23 +974,30 @@ concepts:
   physical_table: Owners
   attributes:
   - name: Sales owner
+    logical_name: SALES_OWNER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Manager
+    logical_name: MANAGER
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: SystemUserSeq
+    logical_name: OWNERS_SYSTEMUSERSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Products
+  logical_name: PRODUCTS
   label: Products
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -742,33 +1006,44 @@ concepts:
   physical_table: Products
   attributes:
   - name: Product category
+    logical_name: PRODUCT_CATEGORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Product
+    logical_name: PRODUCT
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MinOppValue
+    logical_name: MINOPPVALUE
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MaxOppValue
+    logical_name: MAXOPPVALUE
     data_type: DECIMAL(18,2)
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: ProductSeq
+    logical_name: PRODUCTS_PRODUCTSEQ
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
 - name: Territories
+  logical_name: TERRITORIES
   label: Territories
   concept_type: DIMENSION
   domain: Artificial Intelligence Sample
@@ -777,24 +1052,32 @@ concepts:
   physical_table: Territories
   attributes:
   - name: Region
+    logical_name: TERRITORIES_REGION
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Territory
+    logical_name: TERRITORIES_TERRITORY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Country
+    logical_name: TERRITORIES_COUNTRY
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: State Or Province Abbreviation
+    logical_name: STATE_OR_PROVINCE_ABBREVIATION
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
@@ -811,36 +1094,43 @@ concepts:
     data_type: DATE
     is_primary_key: true
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Year
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Quarter
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: Month
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: MonthName
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DayOfWeek
     data_type: INTEGER
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   - name: DayName
     data_type: VARCHAR
     is_primary_key: false
     synonyms: []
+    sample_values: []
     origin: bi
   tags: []
   origin: bi
@@ -848,6 +1138,7 @@ concepts:
   bi_description: Auto-generated Calendar Dimension
 metrics:
 - name: CASE_COUNT
+  logical_name: CASE_COUNT
   label: Case Count
   sql_expression: COUNT(*)
   dax_expression: "\n    COUNTROWS('Cases')"
@@ -859,9 +1150,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: ESCALATIONS
+  logical_name: ESCALATIONS
   label: Escalations
   sql_expression: IFF(COALESCE((COUNT(*)), 0) = 0, 0, COUNT(CASE WHEN CASES."IS_ESCALATED"
     = TRUE THEN 1 END) / (COUNT(*)))
@@ -876,9 +1169,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: SLA_COMPLIANCE
+  logical_name: SLA_COMPLIANCE
   label: SLA Compliance
   sql_expression: IFF(COALESCE((COUNT(*)), 0) = 0, 0, COUNT(CASE WHEN CASES."IS_SLA_VIOLATION"
     = FALSE THEN 1 END) / (COUNT(*)))
@@ -892,9 +1187,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CASES_MOMPCT
+  logical_name: CASES_MOMPCT
   label: Cases MoM%
   sql_expression: (CASE WHEN ((COUNT(*))) IS NULL AND ((COUNT(CASE WHEN CASES."IS_SPLY_MONTH"
     THEN 1 END))) IS NULL THEN NULL ELSE (COUNT(*)) - (COUNT(CASE WHEN CASES."IS_SPLY_MONTH"
@@ -906,14 +1203,15 @@ metrics:
   grain: []
   synonyms:
   - Cases MoM%
-  - Cases Mompct
   - CASES_MOMPCT
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CASES_PCT_BY_PRODUCT
+  logical_name: CASES_PCT_BY_PRODUCT
   label: Cases % by Product
   sql_expression: CASES."CASE_COUNT" / NULLIF(SUM(CASES."CASE_COUNT"::FLOAT) OVER
     (PARTITION BY EXCLUDING PRODUCTS."PRODUCT"), 0)
@@ -923,14 +1221,17 @@ metrics:
   grain: []
   synonyms:
   - Cases % by Product
-  - Cases Pct By Product
   - CASES_PCT_BY_PRODUCT
   business_rules: []
+  derives_from:
+  - CASE_COUNT
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CASES_PCT_BY_SUBJECT
+  logical_name: CASES_PCT_BY_SUBJECT
   label: Cases % by Subject
   sql_expression: CASES."CASE_COUNT" / NULLIF(SUM(CASES."CASE_COUNT"::FLOAT) OVER
     (PARTITION BY EXCLUDING CASES."SUBJECT"), 0)
@@ -940,30 +1241,25 @@ metrics:
   grain: []
   synonyms:
   - Cases % by Subject
-  - Cases Pct By Subject
   - CASES_PCT_BY_SUBJECT
   business_rules: []
+  derives_from:
+  - CASE_COUNT
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CSAT_IMPACT
+  logical_name: CSAT_IMPACT
   label: CSAT Impact
-  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
-    (PARTITION BY EXCLUDING CASES."TOPIC") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."TOPIC") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."TOPIC") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."TOPIC"), 0)), 0)) IS NULL THEN NULL ELSE 1
-    - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."TOPIC")
-    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
-    CASES."TOPIC") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."TOPIC") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."TOPIC"), 0)), 0), 0) END
   dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
     \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
     \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
     \ ( 'Cases' ), 'Cases'[Topic] <> SELECTEDVALUE ( 'Cases'[Topic] ) )\n    )\nRETURN\n\
     \    1 - ( AllAvgExcept / AllAvg )"
+  deploy_reason: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently
+    of the query
   aggregation_type: NONE
   grain: []
   synonyms:
@@ -972,93 +1268,74 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CSAT_IMPACT_SUBJECT
+  logical_name: CSAT_IMPACT_SUBJECT
   label: CSAT Impact - Subject
-  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
-    (PARTITION BY EXCLUDING CASES."SUBJECT") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."SUBJECT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."SUBJECT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."SUBJECT"), 0)), 0)) IS NULL THEN NULL ELSE
-    1 - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."SUBJECT")
-    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
-    CASES."SUBJECT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."SUBJECT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."SUBJECT"), 0)), 0), 0) END
   dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
     \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
     \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
     \ ( 'Cases' ), 'Cases'[Subject] <> SELECTEDVALUE ( 'Cases'[Subject] ) )\n    )\n\
     RETURN\n    1 - ( AllAvgExcept / AllAvg )"
+  deploy_reason: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently
+    of the query
   aggregation_type: NONE
   grain: []
   synonyms:
   - CSAT Impact - Subject
-  - Csat Impact Subject
   - CSAT_IMPACT_SUBJECT
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CSAT_IMPACT_PRODUCTS
+  logical_name: CSAT_IMPACT_PRODUCTS
   label: CSAT Impact - Products
-  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
-    (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ"), 0)), 0)) IS NULL THEN NULL ELSE
-    1 - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ")
-    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
-    CASES."PRODUCTSEQ") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ"), 0)), 0), 0) END
   dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
     \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
     \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
     \ ( 'Cases' ), 'Cases'[ProductSeq] <> SELECTEDVALUE ( 'Cases'[ProductSeq] )  )\n\
     \    )\nRETURN\n    1 - ( AllAvgExcept / AllAvg )"
+  deploy_reason: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently
+    of the query
   aggregation_type: NONE
   grain: []
   synonyms:
   - CSAT Impact - Products
-  - Csat Impact Products
   - CSAT_IMPACT_PRODUCTS
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CSAT_IMPACT_AGENT
+  logical_name: CSAT_IMPACT_AGENT
   label: CSAT Impact - Agent
-  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
-    (PARTITION BY EXCLUDING CASES."AGENT") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."AGENT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."AGENT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."AGENT"), 0)), 0)) IS NULL THEN NULL ELSE 1
-    - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."AGENT")
-    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
-    CASES."AGENT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."AGENT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
-    OVER (PARTITION BY EXCLUDING CASES."AGENT"), 0)), 0), 0) END
   dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
     \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
     \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
     \ ( 'Cases' ), 'Cases'[Agent] <> SELECTEDVALUE ( 'Cases'[Agent] ) )\n    )\nRETURN\n\
     \    1 - ( AllAvgExcept / AllAvg )"
+  deploy_reason: DAX ALLEXCEPT/ALL requires re-partitioning the aggregate independently
+    of the query
   aggregation_type: NONE
   grain: []
   synonyms:
   - CSAT Impact - Agent
-  - Csat Impact Agent
   - CSAT_IMPACT_AGENT
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Cases
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: REVENUE_WON
+  logical_name: REVENUE_WON
   label: Revenue Won
   sql_expression: SUM(CASE WHEN OPPORTUNITIES."STATUS" = 'Won' THEN OPPORTUNITIES."COL_VALUE"
     END::FLOAT)
@@ -1072,9 +1349,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: REVENUE_IN_PIPELINE
+  logical_name: REVENUE_IN_PIPELINE
   label: Revenue In Pipeline
   sql_expression: COALESCE((SUM(CASE WHEN (OPPORTUNITIES."STATUS" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP",
     1)) >= 2) THEN OPPORTUNITIES."COL_VALUE" END::FLOAT)), 0) + COALESCE((SUM(CASE
@@ -1093,9 +1372,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: FORECAST_PCT
+  logical_name: FORECAST_PCT
   label: Forecast %
   sql_expression: (COALESCE((SUM(CASE WHEN OPPORTUNITIES."STATUS" = 'Won' THEN OPPORTUNITIES."COL_VALUE"
     END::FLOAT)), 0) + (COALESCE((SUM(CASE WHEN (OPPORTUNITIES."STATUS" = 'Open')
@@ -1119,14 +1400,15 @@ metrics:
   grain: []
   synonyms:
   - Forecast %
-  - Forecast Pct
   - FORECAST_PCT
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: FORECAST
+  logical_name: FORECAST
   label: Forecast
   sql_expression: COALESCE((SUM(CASE WHEN OPPORTUNITIES."STATUS" = 'Won' THEN OPPORTUNITIES."COL_VALUE"
     END::FLOAT)), 0) + (COALESCE((SUM(CASE WHEN (OPPORTUNITIES."STATUS" = 'Open')
@@ -1142,9 +1424,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: OPPORTUNITY_COUNT_IN_PIPELINE
+  logical_name: OPPORTUNITY_COUNT_IN_PIPELINE
   label: Opportunity Count In Pipeline
   sql_expression: COUNT(CASE WHEN OPPORTUNITIES."STATUS" = 'Open' THEN OPPORTUNITIES."COL_VALUE"
     END)
@@ -1160,9 +1444,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: OPPORTUNITY_COUNT
+  logical_name: OPPORTUNITY_COUNT
   label: Opportunity Count
   sql_expression: COUNT(*)
   dax_expression: '
@@ -1176,9 +1462,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: COUNT_OF_WON
+  logical_name: COUNT_OF_WON
   label: Count of Won
   sql_expression: COUNT(CASE WHEN OPPORTUNITIES."STATUS" = 'Won' THEN OPPORTUNITIES."OPPORTUNITYSEQ"
     END)
@@ -1192,9 +1480,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: COUNT_OF_LOST
+  logical_name: COUNT_OF_LOST
   label: Count of Lost
   sql_expression: COUNT(CASE WHEN OPPORTUNITIES."STATUS" = 'Lost' THEN OPPORTUNITIES."OPPORTUNITYSEQ"
     END)
@@ -1208,9 +1498,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: CLOSE_PCT
+  logical_name: CLOSE_PCT
   label: Close %
   sql_expression: (COUNT(CASE WHEN OPPORTUNITIES."STATUS" = 'Won' THEN OPPORTUNITIES."OPPORTUNITYSEQ"
     END)) / NULLIF(CASE WHEN ((COUNT(CASE WHEN OPPORTUNITIES."STATUS" = 'Won' THEN
@@ -1224,7 +1516,6 @@ metrics:
   grain: []
   synonyms:
   - Close %
-  - Close Pct
   - Close Percentage
   - Win %
   - Win Percentage
@@ -1233,9 +1524,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: REVENUE_OPEN
+  logical_name: REVENUE_OPEN
   label: Revenue Open
   sql_expression: SUM(CASE WHEN OPPORTUNITIES."STATUS" = 'Open' THEN OPPORTUNITIES."COL_VALUE"
     END::FLOAT)
@@ -1249,9 +1542,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: FORECAST_ADJUSTMENT_VALUE
+  logical_name: FORECAST_ADJUSTMENT_VALUE
   label: Forecast Adjustment Value
   sql_expression: IFF(COUNT(DISTINCT OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT")
     + MAX(IFF(OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT" IS NULL, 1, 0))
@@ -1266,9 +1561,11 @@ metrics:
   business_rules: []
   domain: Artificial Intelligence Sample
   concept: Opportunity Forecast Adjustment
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 - name: REV_GOAL
+  logical_name: REV_GOAL
   label: Rev Goal
   sql_expression: CASE WHEN (ROUND((COALESCE((SUM(CASE WHEN OPPORTUNITIES."STATUS"
     = 'Won' THEN OPPORTUNITIES."COL_VALUE" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN
@@ -1294,7 +1591,8 @@ metrics:
   - REV_GOAL
   business_rules: []
   domain: Artificial Intelligence Sample
-  concept: Owners
+  concept: Opportunities
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.ARTIFICIAL_INTELLIGENCE_SAMPLE_SEMANTIC
   tags: []
   origin: bi
 relationships:

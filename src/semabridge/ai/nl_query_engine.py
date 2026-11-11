@@ -1,7 +1,9 @@
-"""Natural Language to Semantic Query & SQL Engine.
+"""Natural Language to Governed Semantic Query & SQL Engine.
 
-Interprets analytical questions in plain English, resolves them against governed
-domain ontologies, determines optimal join paths, and generates executable SQL.
+Compiles plain English questions deterministically against a per-project
+NLP lexicon built from ontology metadata, sqlglot-parsed metric filter
+predicates, and deployed semantic view artifacts (dimensions & sample values).
+
 Operates completely locally with zero Snowflake credit consumption.
 """
 
@@ -13,21 +15,30 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
-from semabridge.ai.semantic_search import SearchHit, SemanticSearchIndex, _stem_token, _tokenize as _ss_tokenize
+from semabridge.ai.nlp_lexicon import (
+    _NUMERIC_TYPES,
+    _TIME_SHIFT_TAGS,
+    LexiconDimensionEntry,
+    LexiconMetricEntry,
+    ParsedMeasurePhrase,
+    ParsedQuestion,
+    ProjectLexicon,
+    content_lemmas,
+    lemmatize_phrase_tokens,
+    lemmatize_token,
+    parse_question,
+    split_identifier_text,
+    wordnet_related_lemmas,
+)
+from semabridge.ai.semantic_search import SemanticSearchIndex
 from semabridge.ontology.models import (
     DomainAttribute,
     DomainConcept,
     DomainMetric,
-    DomainRelationship,
     FederatedEnterpriseOntology,
 )
 
 logger = logging.getLogger("semabridge.ai.nl_query_engine")
-
-_NUMERIC_TYPES = frozenset({
-    "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
-    "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "NUMBER", "REAL",
-})
 
 _DAX_INVALID_RE = re.compile(
     r"\b(CALCULATE|CALCULATETABLE|COUNTROWS|DIVIDE|SUMX|AVERAGEX|MINX|MAXX|"
@@ -52,10 +63,12 @@ class QueryResolutionPlan(BaseModel):
     confidence_score: float
     explanation: str
     warnings: List[str] = Field(default_factory=list)
+    answerable: bool = True
+    parsed_phrases: Dict[str, Any] = Field(default_factory=dict)
 
 
 class NLQueryEngine:
-    """Interprets natural language questions and compiles them into governed SQL."""
+    """Interprets natural language questions via generic lexicon & phrase resolution."""
 
     def __init__(self, search_index: SemanticSearchIndex, ontology: FederatedEnterpriseOntology):
         self.search_index = search_index
@@ -76,16 +89,14 @@ class NLQueryEngine:
         from semabridge.utils.identifiers import IdentifierSanitizer
         return IdentifierSanitizer().to_alias(str(raw or "").strip() or "COL")
 
-    # Stem tokens generically so singular and plural forms match across prompts, metrics, and dimensions
     @staticmethod
     def _stem_words(text: str) -> Set[str]:
-        """Extract stemmed alphanumeric tokens so singular and plural words match generically."""
-        return {_stem_token(w) for w in re.findall(r"[a-z0-9]+", str(text or "").casefold())}
+        """Lemmatize alphanumeric tokens via NLTK WordNet."""
+        return {lemmatize_token(w) for w in re.findall(r"[a-z0-9]+", split_identifier_text(text).casefold()) if w}
 
-    # Identify COUNT metrics strictly from SQL/aggregation or non-additive definitions (never from 'count' in the name)
     @staticmethod
     def _is_sql_count_metric(m: DomainMetric) -> bool:
-        """Return True when the metric's own aggregation/SQL defines a count (not inferred from name)."""
+        """Return True when the metric's own aggregation or SQL defines a count."""
         m_text = f"{m.name} {m.label or ''}"
         if re.search(r"(%|_pct|\bpct\b|percent|ratio|share|\brate\b|\bmom|\byoy|\bqoq)", m_text, re.I):
             return False
@@ -94,12 +105,10 @@ class NLQueryEngine:
             return True
         sx = (m.sql_expression or "").strip()
         if sx:
-            # Exclude ratio/rate formulas that divide aggregates (e.g. COUNT(a) / NULLIF(COUNT(b), 0))
             if re.search(r"/\s*(?:NULLIF|COALESCE|IFF|\()?\s*(?:[A-Za-z0-9_.\"]*\s*)*\b(?:SUM|COUNT|AVG)\b", sx, re.I):
                 return False
             if re.search(r"\b(?:COUNT|COUNT_IF|APPROX_COUNT_DISTINCT|DISTINCTCOUNT|COUNTROWS|COUNTA|COUNTX)\s*\(", sx, re.I):
                 return True
-        # Non-additive count metrics without compiled SQL may still expose a count definition via DAX
         dax = (getattr(m, "dax_expression", None) or "").strip()
         dr = (getattr(m, "deploy_reason", None) or "").strip()
         if dax and ("non-additive" in dr.lower() or "non additive" in dr.lower()):
@@ -107,7 +116,6 @@ class NLQueryEngine:
                 return True
         return False
 
-    # Block uncompiled/DAX metrics everywhere, and block window/non-additive/cross-metric refs on raw tables
     @classmethod
     def _metric_invalid_reason(
         cls,
@@ -117,7 +125,7 @@ class NLQueryEngine:
         metrics_by_key: Optional[Dict[str, DomainMetric]] = None,
         physical_attr_keys: Optional[Set[str]] = None,
     ) -> Optional[str]:
-        """Return a deploy/translation/path reason if metric lacks valid executable SQL on the active path."""
+        """Return a deploy/translation/path reason if metric lacks valid executable SQL."""
         if getattr(m, "deploy_reason", None):
             return m.deploy_reason
         sx = (m.sql_expression or "").strip()
@@ -130,11 +138,7 @@ class NLQueryEngine:
 
         if not using_semantic_view:
             agg = (getattr(m, "aggregation_type", None) or "").strip().upper()
-            expanded_sx = (
-                cls._expand_metric_expression(m, metrics_by_key)
-                if metrics_by_key
-                else sx
-            )
+            expanded_sx = cls._expand_metric_expression(m, metrics_by_key) if metrics_by_key else sx
             if agg in {"NON_ADDITIVE", "NONADDITIVE", "SNAPSHOT"} or re.search(
                 r"\b(?:NON\s+ADDITIVE|PARTITION\s+BY\s+EXCLUDING)\b", expanded_sx, re.I
             ):
@@ -159,9 +163,257 @@ class NLQueryEngine:
                         tbl_ref = (q_tbl or u_tbl or "").strip()
                         return (
                             f"expression references semantic metric '{tbl_ref}.{col_ref}', "
-                            f"which is only executable via a deployed SEMANTIC_VIEW"
+                            "which is only executable via a deployed SEMANTIC_VIEW"
                         )
         return None
+
+    # ------------------------------------------------------------------
+    # Generic Phrase Scoring Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _score_measure_phrase(
+        phrase: ParsedMeasurePhrase,
+        lexicon: ProjectLexicon,
+        parsed: ParsedQuestion,
+        all_concept_lemmas: Set[str],
+    ) -> Tuple[List[Tuple[float, float, LexiconMetricEntry]], str]:
+        """Score every metric in the project lexicon against one parsed measure phrase."""
+        raw_explicit = list(dict.fromkeys(phrase.content_lemmas))
+
+        # When a temporal year/quarter filter is present, strip verb/noun tokens that name a DATE/TIMESTAMP
+        # column (e.g. 'created' matching 'Case Created On') so they act as date anchors, not missing metrics.
+        date_attr_lemmas: Set[str] = set()
+        if parsed.year_filters or parsed.quarter_filters:
+            for de in lexicon.dimensions:
+                if de.is_date:
+                    date_attr_lemmas.update(de.lemmas - de.concept_lemmas)
+
+        explicit_toks = [t for t in raw_explicit if t not in date_attr_lemmas] or raw_explicit
+        combined_toks = list(dict.fromkeys(explicit_toks + phrase.inherited_subject_lemmas))
+        if not combined_toks:
+            return [], "not found"
+
+        non_concept_toks = [t for t in explicit_toks if t not in all_concept_lemmas]
+        phrase_set = set(combined_toks)
+        total_w = sum(lexicon.weight(t) for t in combined_toks) or 1.0
+        raw_cf = phrase.raw_text.strip().casefold()
+        by_lemmas = {tok for bp in parsed.by_phrases for tok in content_lemmas(bp)}
+
+        deriv_cache: Dict[str, frozenset[str]] = {t: wordnet_related_lemmas(t) for t in combined_toks}
+
+        scored: List[Tuple[float, float, LexiconMetricEntry]] = []
+        for me in lexicon.metrics:
+            matched_w = 0.0
+            matched_tokens: Set[str] = set()
+            matched_non_concept = False
+            matched_name_or_filter = False
+            matched_filter_literal = False
+
+            filter_lemmas: Set[str] = set()
+            for vals in me.filter_literals.values():
+                for v in vals:
+                    filter_lemmas.update(lemmatize_phrase_tokens(v, use_pos=False))
+
+            for tok in combined_toks:
+                w = lexicon.weight(tok)
+                if tok in filter_lemmas and tok in me.qualifier_lemmas:
+                    matched_w += w * 2.6
+                    matched_tokens.add(tok)
+                    matched_filter_literal = True
+                    matched_name_or_filter = True
+                    if tok in non_concept_toks:
+                        matched_non_concept = True
+                elif tok in me.qualifier_lemmas:
+                    matched_w += w * 2.2
+                    matched_tokens.add(tok)
+                    matched_name_or_filter = True
+                    if tok in non_concept_toks:
+                        matched_non_concept = True
+                elif tok in me.name_label_lemmas:
+                    matched_w += w * 1.8
+                    matched_tokens.add(tok)
+                    matched_name_or_filter = True
+                    if tok in non_concept_toks:
+                        matched_non_concept = True
+                elif tok in me.concept_lemmas:
+                    matched_w += w * 0.85
+                    matched_tokens.add(tok)
+                else:
+                    tok_fam = deriv_cache[tok]
+                    if tok_fam & me.qualifier_lemmas:
+                        matched_w += w * 1.6
+                        matched_tokens.add(tok)
+                        matched_name_or_filter = True
+                        if tok in non_concept_toks:
+                            matched_non_concept = True
+                    elif tok_fam & me.name_label_lemmas:
+                        matched_w += w * 1.3
+                        matched_tokens.add(tok)
+                        matched_name_or_filter = True
+                        if tok in non_concept_toks:
+                            matched_non_concept = True
+
+            if matched_w <= 0.0:
+                continue
+
+            m_syns_cf = {s.casefold() for s in (getattr(me.metric, "synonyms", None) or [])}
+            is_exact_phrase = bool(
+                (raw_cf and raw_cf in {me.metric.name.casefold(), (me.metric.label or "").casefold()} | m_syns_cf)
+                or (
+                    len(explicit_toks) >= 1
+                    and me.is_pct_or_ratio == parsed.asks_pct_ratio
+                    and (
+                        set(explicit_toks) == me.name_label_lemmas
+                        or (bool(by_lemmas) and set(explicit_toks) | by_lemmas == me.name_label_lemmas)
+                    )
+                )
+            )
+            if non_concept_toks and not matched_non_concept and not is_exact_phrase:
+                continue
+            if not matched_name_or_filter and not is_exact_phrase:
+                if not (parsed.aggregation_intent == "COUNT" and me.is_count and not me.has_filter_clause):
+                    continue
+                extra_specific = me.qualifier_lemmas - phrase_set - parsed.time_shift_tags
+                if extra_specific:
+                    continue
+
+            coverage = len(matched_tokens) / max(len(combined_toks), 1)
+            score = (matched_w / total_w) * (0.45 + 0.55 * coverage)
+
+            q_shifts = parsed.time_shift_tags
+            m_shifts = me.time_shift_tags
+            if not is_exact_phrase:
+                if m_shifts and not parsed.asks_time_intel:
+                    score *= 0.25
+                elif m_shifts and parsed.asks_time_intel:
+                    if m_shifts & q_shifts:
+                        score += 0.55
+                    elif not q_shifts:
+                        score += 0.20
+                    else:
+                        score *= 0.35
+
+                if me.is_pct_or_ratio and not parsed.asks_pct_ratio and not (m_shifts & q_shifts):
+                    score *= 0.30
+                elif me.is_pct_or_ratio and parsed.asks_pct_ratio and not (m_shifts and not parsed.asks_time_intel):
+                    score += 0.45
+
+                if parsed.aggregation_intent == "COUNT":
+                    if me.is_count:
+                        score += 0.45
+                    elif not parsed.asks_pct_ratio:
+                        score *= 0.45
+                elif parsed.aggregation_intent in ("AVG", "MIN", "MAX"):
+                    agg_tok = parsed.aggregation_intent.lower()
+                    if agg_tok in me.name_label_lemmas or (getattr(me.metric, "aggregation_type", "") or "").upper() == parsed.aggregation_intent:
+                        score += 0.35
+
+                extra_quals = me.qualifier_lemmas - phrase_set - q_shifts - by_lemmas
+                if extra_quals:
+                    score *= max(0.35, 1.0 - 0.12 * min(len(extra_quals), 4))
+                if me.has_filter_clause and not matched_filter_literal and not (non_concept_toks and (set(non_concept_toks) & me.qualifier_lemmas)):
+                    score *= 0.45
+
+            if matched_filter_literal:
+                score += 0.25
+
+            # Tie-break metric variants whose own qualifier names the requested BY dimension (e.g. 'Cases % by Subject')
+            if by_lemmas and (by_lemmas & me.name_label_lemmas):
+                score += 0.35
+
+            # Exact metric name/label/synonym matches always outrank partial matches
+            if is_exact_phrase:
+                score += 2.5
+
+            scored.append((round(score, 4), round(coverage, 4), me))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        if not scored or scored[0][0] < 0.40:
+            return [], "not found"
+
+        if scored[0][1] >= 0.99 and len(combined_toks) >= 2:
+            scored = [item for item in scored if item[1] >= 0.99 or item[0] >= scored[0][0] - 0.05]
+
+        top_score = scored[0][0]
+        top_exact = raw_cf and raw_cf in {scored[0][2].metric.name.casefold(), (scored[0][2].metric.label or "").casefold()}
+        ambig_window = 0.04 if top_exact else 0.15
+        if len(scored) > 1 and (top_score - scored[1][0]) <= ambig_window and abs(scored[0][1] - scored[1][1]) < 0.01:
+            return scored, "ambiguous"
+        return scored, "resolved"
+
+    @staticmethod
+    def _resolve_by_phrase(
+        raw_by: str,
+        lexicon: ProjectLexicon,
+    ) -> Tuple[Optional[LexiconDimensionEntry], List[LexiconDimensionEntry], str]:
+        """Resolve one BY-clause dimension request strictly to a non-numeric semantic-view dimension."""
+        sbt = raw_by.strip()
+        sbt_cf = sbt.casefold()
+        sbt_nospace = re.sub(r"[^a-z0-9]+", "", sbt_cf)
+        bt_lemmas = content_lemmas(sbt)
+        bt_set = set(bt_lemmas)
+
+        # Explicitly check numeric columns first so numeric attributes never group
+        for _, col_name in lexicon.numeric_columns:
+            col_cf = col_name.casefold()
+            col_ns = re.sub(r"[^a-z0-9]+", "", col_cf)
+            if sbt_cf == col_cf or (sbt_nospace and sbt_nospace == col_ns):
+                return None, [], "numeric column cannot group"
+
+        exact_hits: List[LexiconDimensionEntry] = []
+        scored: List[Tuple[float, LexiconDimensionEntry]] = []
+
+        for de in lexicon.dimensions:
+            a_cf = de.attribute.name.casefold()
+            a_ns = re.sub(r"[^a-z0-9]+", "", a_cf)
+            c_cf = de.concept.name.casefold()
+            syns_cf = {s.casefold() for s in (de.attribute.synonyms or [])}
+
+            if sbt_cf == a_cf or sbt_nospace == a_ns or sbt_cf in syns_cf or sbt_cf == f"{c_cf} {a_cf}":
+                exact_hits.append(de)
+                continue
+
+            score = 0.0
+            if bt_set:
+                attr_overlap = bt_set & de.lemmas
+                concept_overlap = bt_set & de.concept_lemmas
+                if attr_overlap:
+                    score += sum(lexicon.weight(t) * 2.0 for t in attr_overlap)
+                    # Syntactic head bonus: right-most noun in English compound BY phrase matching attribute lemma
+                    if len(bt_lemmas) >= 2 and bt_lemmas[-1] in attr_overlap:
+                        score += lexicon.weight(bt_lemmas[-1]) * 1.5
+                    if bt_set.issubset(de.lemmas | de.concept_lemmas):
+                        score += 1.5
+                    is_key_attr = bool(getattr(de.attribute, "is_primary_key", False) or re.search(r"(seq|key|id)$", a_cf))
+                    if is_key_attr and not re.search(r"(seq|key|id)\b", sbt_cf):
+                        score *= 0.45
+                    if concept_overlap:
+                        score += 0.6 * len(concept_overlap)
+                elif len(bt_lemmas) == 1 and bt_lemmas[0] in a_cf:
+                    score += 0.8
+            if score > 0.0:
+                scored.append((round(score, 4), de))
+
+        if len(exact_hits) == 1:
+            return exact_hits[0], exact_hits, "resolved"
+        if len(exact_hits) > 1:
+            # Deduplicate only distinct physical concepts if same attr exists across multiple tables
+            return exact_hits[0], exact_hits, "ambiguous"
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if not scored or scored[0][0] < 0.75:
+            return None, [], "not found"
+
+        top_s = scored[0][0]
+        tied = [d for s, d in scored if (top_s - s) <= 0.05]
+        if len(tied) > 1:
+            return tied[0], tied, "ambiguous"
+        return scored[0][1], [scored[0][1]], "resolved"
+
+    # ------------------------------------------------------------------
+    # Main Entry Point
+    # ------------------------------------------------------------------
 
     def resolve_query(
         self,
@@ -171,297 +423,74 @@ class NLQueryEngine:
         allowed_domains: Optional[List[str]] = None,
         deployment_error: Optional[str] = None,
     ) -> QueryResolutionPlan:
-        """Parse natural language prompt, find matching metrics/dimensions, and compile SQL."""
+        """Parse natural language prompt against the auto-built project lexicon and compile SQL."""
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty.")
 
         clean_prompt = prompt.strip()
 
-        # Strip trailing grouping/time clauses (e.g. 'by <dim>', 'each <dim>', 'in 2024') when searching for METRICS
-        # so dimension tokens do not cause derived metrics containing that dimension name to outrank base metrics.
-        metric_search_query = re.sub(
-            r"\b(?:by|for\s+each|each|per|grouped\s+by)\s+[a-zA-Z0-9_\s,]+?(?:\s+(?:in|for|where|with|during|from)|\.|;|\?|$)",
-            " ",
-            clean_prompt,
-            flags=re.I,
+        # 1. Build initial project lexicon (scoped by allowed_domains & active semantic_view when known)
+        lexicon = ProjectLexicon.build(
+            ontology=self.ontology,
+            allowed_domains=allowed_domains,
+            semantic_view=semantic_view,
+            is_count_fn=self._is_sql_count_metric,
         )
-        metric_search_query = re.sub(r"\bin\s+(?:20[12][0-9]|Q[1-4])\b", " ", metric_search_query, flags=re.I).strip(" ?,.;:")
-        # Only fall back to full prompt when stripping removed everything (e.g. prompt was just 'by product')
-        if not metric_search_query:
-            metric_search_query = clean_prompt
+        parsed = parse_question(clean_prompt, lexicon=lexicon)
 
-        # 1. Search for matching metrics (using stripped metric_search_query so 'by <dim>' doesn't skew metric rank)
-        domain_filter = allowed_domains[0] if allowed_domains and len(allowed_domains) == 1 else None
-        metric_hits = self.search_index.search(
-            metric_search_query,
-            domain_filter=domain_filter,
-            item_type_filter="METRIC",
-            limit=12,
-            min_score=0.10,
-        )
+        all_concept_lemmas: Set[str] = set()
+        for c in lexicon.scoped_concepts:
+            all_concept_lemmas.update(content_lemmas(f"{c.name} {getattr(c, 'label', None) or ''} {' '.join(c.synonyms or [])}"))
+        for me in lexicon.metrics:
+            all_concept_lemmas.update(me.concept_lemmas)
 
-        # 2. Search for matching attributes (columns) and concepts (tables)
-        attr_hits = self.search_index.search(
-            clean_prompt,
-            domain_filter=domain_filter,
-            item_type_filter="ATTRIBUTE",
-            limit=8,
-            min_score=0.15,
-        )
-        concept_hits = self.search_index.search(
-            clean_prompt,
-            domain_filter=domain_filter,
-            item_type_filter="CONCEPT",
-            limit=8,
-            min_score=0.15,
-        )
-
-        # Build quick lookups by name, label, and synonyms
-        metric_lookup: Dict[str, DomainMetric] = {}
-        for m in self.ontology.metrics.values():
-            if allowed_domains and m.domain and m.domain not in allowed_domains:
-                continue
-            metric_lookup[m.name.casefold()] = m
-            if "_" in m.name:
-                metric_lookup[m.name.replace("_", " ").casefold()] = m
-            if m.label:
-                metric_lookup[m.label.casefold()] = m
-            for syn in m.synonyms:
-                metric_lookup[syn.casefold()] = m
-
-        concept_lookup: Dict[str, DomainConcept] = {}
-        for c in self.ontology.concepts.values():
-            if allowed_domains and c.domain and c.domain not in allowed_domains:
-                continue
-            concept_lookup[c.name.casefold()] = c
-            if getattr(c, "label", None):
-                concept_lookup[c.label.casefold()] = c
-            for syn in c.synonyms:
-                concept_lookup[syn.casefold()] = c
-
-        # Filter hits to allowed_domains before scoring/ranking so external domain hits do not skew top_score
-        if allowed_domains:
-            metric_hits = [h for h in metric_hits if not h.domain or h.domain in allowed_domains]
-            attr_hits = [h for h in attr_hits if not h.domain or h.domain in allowed_domains]
-            concept_hits = [h for h in concept_hits if not h.domain or h.domain in allowed_domains]
-
-        # Generic intent classifiers (no domain-specific vocabulary)
-        asks_for_rate_or_pct = bool(
-            re.search(
-                r"(%|percent|percentage|pct|ratio|share|proportion|rate)",
-                clean_prompt,
-                re.I,
-            )
-        )
-        asks_for_time_intel = bool(
-            re.search(
-                r"\b(ytd|qtd|mtd|py|pm|pq|sply|mat|mom|yoy|qoq|year[- ]?to[- ]?date|quarter[- ]?to[- ]?date|month[- ]?to[- ]?date|previous\s+(?:year|month|quarter)|same\s+period\s+last\s+year|moving\s+annual\s+total|month[-\s]+over[-\s]+month|year[-\s]+over[-\s]+year|quarter[-\s]+over[-\s]+quarter|change|growth|variance)\b",
-                clean_prompt,
-                re.I,
-            )
-        )
-        asks_for_count = bool(re.search(r"\b(how many|number of|count of)\b", clean_prompt, re.I))
-        # Check multi-metric intent on metric_search_query so 'by X and Y' dimension conjunctions don't multiply metrics
-        has_multi_intent = bool(re.search(r"\b(and|vs|versus|compare|comparison|compared|both|all|with)\b|,", metric_search_query, re.I))
-
-        q_norm_tokens = set(_ss_tokenize(clean_prompt))
-        _TIME_SHIFTS = {"ytd", "qtd", "mtd", "py", "pm", "pq", "sply", "mat", "mom", "yoy", "qoq"}
-        q_requested_shifts = q_norm_tokens & _TIME_SHIFTS
-
-        # Re-rank metric hits cleanly based on structural intent:
-        # - Penalize derived percentage/ratio/time-shift metrics when the prompt did not ask for them.
-        # - Boost count, percentage, or requested time-intelligence metrics when explicitly asked.
-        reranked_hits: List[tuple[float, Any, DomainMetric]] = []
-        for hit in metric_hits:
-            m = metric_lookup.get(hit.name.casefold()) or self.ontology.metrics.get(hit.name)
-            if not m:
-                continue
-            if allowed_domains and m.domain and m.domain not in allowed_domains:
-                continue
-            adj_score = hit.score
-            m_text = f"{m.name} {m.label or ''}".casefold()
-            m_norm_toks = set(_ss_tokenize(f"{m.name} {m.label or ''}"))
-            m_shifts = m_norm_toks & _TIME_SHIFTS
-            is_pct_metric = bool(re.search(r"(%|_pct|\bpct\b|pctof|percent|ratio|share|\brate\b|\bmom|\byoy|\bqoq)", m_text, re.I))
-            is_time_metric = bool(m_shifts) or bool(re.search(r"(\bcm\b|_cm\b)", m_text, re.I))
-            is_count_metric = self._is_sql_count_metric(m)
-            if is_time_metric and not asks_for_time_intel:
-                adj_score *= 0.45
-            elif is_time_metric and asks_for_time_intel:
-                # Only boost if this metric matches the specifically requested shift (e.g. py vs pm),
-                # or if query used general change/growth/variance words without naming a specific shift.
-                if (m_shifts & q_requested_shifts) or (not q_requested_shifts):
-                    adj_score += 0.25
-                else:
-                    adj_score *= 0.55
-            if is_pct_metric and not asks_for_rate_or_pct and not (m_shifts & q_requested_shifts):
-                adj_score *= 0.40
-            elif is_pct_metric and asks_for_rate_or_pct and not (is_time_metric and not asks_for_time_intel):
-                adj_score += 0.25
-            if asks_for_count and is_count_metric:
-                adj_score += 0.25
-            reranked_hits.append((adj_score, hit, m))
-
-        # Reject modifier-only / cross-subject false positives (e.g. 'average salary' matching 'Avg Age' on 'avg',
-        # or 'new hires SPLY' pulling 'Empcount Sply' solely on 'sply'):
-        # require at least one non-stopword/non-modifier subject token (or 3-char prefix) overlap when below 0.45.
-        _STOP_OR_MOD = {
-            "what", "is", "are", "the", "of", "in", "for", "a", "an", "show", "get", "give",
-            "me", "how", "many", "did", "we", "have", "our", "does", "each", "was", "were",
-            "avg", "average", "sum", "count", "total", "min", "max", "pct", "percent", "percentage", "rate",
-            "ytd", "qtd", "mtd", "py", "pm", "pq", "sply", "mat", "mom", "yoy", "qoq",
-            "year", "month", "quarter", "date", "previous", "same", "period", "last", "this",
-            "compared", "compare", "vs", "versus", "change", "growth", "variance", "moving", "annual", "to",
-        }
-        q_subject_toks = [
-            _stem_token(w) for w in re.findall(r"[a-z0-9]+", metric_search_query.casefold())
-            if w not in _STOP_OR_MOD and _stem_token(w) not in _STOP_OR_MOD and len(w) >= 2
-        ]
-        if q_subject_toks:
-            q_subj_set = set(q_subject_toks)
-            filtered_reranked = []
-            for adj_score, hit, m in reranked_hits:
-                m_corpus = f"{m.name} {m.label or ''} {' '.join(m.synonyms or [])}"
-                m_toks = self._stem_words(m_corpus)
-                shares_subject = any(
-                    qt in mt or mt in qt or (len(qt) >= 3 and len(mt) >= 3 and qt[:3] == mt[:3])
-                    for qt in q_subject_toks for mt in m_toks
-                )
-                # Boost metrics whose concept matches a stemmed subject token in the question
-                if m.concept and (self._stem_words(m.concept) & q_subj_set):
-                    adj_score += 0.15
-                if shares_subject or hit.score >= 0.45:
-                    filtered_reranked.append((adj_score, hit, m))
-            reranked_hits = filtered_reranked
-
-        reranked_hits.sort(key=lambda x: x[0], reverse=True)
-
+        # 2. Resolve each measure phrase independently
         detected_metrics: List[DomainMetric] = []
-        seen_m = set()
-        ambiguous_alternatives: List[str] = []
+        seen_metric_names: Set[str] = set()
+        measure_trace: List[Dict[str, Any]] = []
+        warnings: List[str] = []
 
-        prompt_tokens = self._stem_words(clean_prompt)
-        if reranked_hits:
-            top_adj_score, top_hit, top_m = reranked_hits[0]
-            top_hit_overlap = bool(self._stem_words(f"{top_hit.name} {top_m.label or ''}") & prompt_tokens)
-            if top_adj_score >= 0.20 or (top_hit_overlap and top_adj_score >= 0.15):
-                if has_multi_intent:
-                    # Explicit comparison/multi-metric intent: retain up to 3 top matching metrics
-                    for adj_score, hit, m in reranked_hits:
-                        if adj_score < top_adj_score - 0.20 and adj_score < 0.35:
-                            continue
-                        if m.name not in seen_m:
-                            seen_m.add(m.name)
-                            detected_metrics.append(m)
-                            if len(detected_metrics) >= 3:
-                                break
-                else:
-                    # Singular intent: select ONLY the top candidate; record close runners-up as ambiguity warnings
-                    seen_m.add(top_m.name)
-                    detected_metrics.append(top_m)
-                    for adj_score, hit, m in reranked_hits[1:]:
-                        if m.name in seen_m:
-                            continue
-                        if top_m.domain and m.domain and m.domain.casefold() != top_m.domain.casefold():
-                            continue
-                        runner_overlap = bool(self._stem_words(f"{hit.name} {m.label or ''}") & prompt_tokens)
-                        if runner_overlap and (top_adj_score - adj_score <= 0.10):
-                            ambiguous_alternatives.append(m.label or m.name)
-
-        # Count-intent entity recovery:
-        # Handles 'how many <entity>' / 'number of <entity>' using SQL/non-additive COUNT metrics,
-        # only when no count metric or subject-matching metric has been selected yet.
-        has_selected_count = any(self._is_sql_count_metric(m) for m in detected_metrics)
-        has_direct_subject_match = any(
-            bool(self._stem_words(f"{m.name} {m.label or ''} {' '.join(m.synonyms or [])}") & set(q_subject_toks))
-            for m in detected_metrics
-        )
-        if asks_for_count and not has_selected_count and (not detected_metrics or not has_direct_subject_match):
-            count_match = re.search(
-                r"\b(?:how many|number of)\s+(?:are there\s+)?([a-zA-Z0-9_]+)\b",
-                clean_prompt,
-                re.I,
+        for m_phrase in parsed.measure_phrases:
+            candidates, outcome = self._score_measure_phrase(
+                phrase=m_phrase,
+                lexicon=lexicon,
+                parsed=parsed,
+                all_concept_lemmas=all_concept_lemmas,
             )
-            if count_match:
-                target_entity = count_match.group(1).casefold()
-                target_stem = _stem_token(target_entity)
-                name_matched_cnt: Optional[DomainMetric] = None
-                concept_matched_cnt: Optional[DomainMetric] = None
-                for m in self.ontology.metrics.values():
-                    if allowed_domains and m.domain and m.domain not in allowed_domains:
-                        continue
-                    if not self._is_sql_count_metric(m):
-                        continue
-                    m_stems = self._stem_words(f"{m.name} {m.label or ''} {' '.join(m.synonyms or [])}")
-                    if target_stem in m_stems or any(len(ms) >= 3 and target_stem.startswith(ms) for ms in m_stems):
-                        name_matched_cnt = m
-                        break
-                    c_stem = _stem_token((m.concept or "").casefold())
-                    if c_stem == target_stem and not concept_matched_cnt:
-                        sx_upper = (m.sql_expression or "").upper()
-                        dax_upper = (getattr(m, "dax_expression", None) or "").upper()
-                        # Skip conditional event-subset counts when falling back purely on concept name
-                        has_event_filter = (
-                            "CASE WHEN" in sx_upper
-                            or bool(re.search(r"\bFILTER\s*\(\s*(?!ALL\b)", dax_upper))
-                        )
-                        if not has_event_filter:
-                            concept_matched_cnt = m
-                recovered_cnt = name_matched_cnt or concept_matched_cnt
-                if recovered_cnt:
-                    if not asks_for_rate_or_pct:
-                        detected_metrics = [recovered_cnt]
-                        seen_m = {recovered_cnt.name}
-                        ambiguous_alternatives.clear()
-                    elif recovered_cnt.name not in seen_m:
-                        detected_metrics.insert(0, recovered_cnt)
-                        seen_m.add(recovered_cnt.name)
+            if outcome == "not found" or not candidates:
+                measure_trace.append({"phrase": m_phrase.raw_text, "status": "not found", "selected": None})
+                if len(parsed.measure_phrases) > 1 and m_phrase.content_lemmas:
+                    warnings.append(f"Measure '{m_phrase.raw_text}' not found in domain.")
+                continue
 
-        detected_concepts: List[DomainConcept] = []
-        seen_c = set()
-        for hit in concept_hits:
-            c = concept_lookup.get(hit.name.casefold()) or self.ontology.concepts.get(hit.name)
-            if c and c.name not in seen_c:
-                if allowed_domains and c.domain and c.domain not in allowed_domains:
-                    continue
-                seen_c.add(c.name)
-                detected_concepts.append(c)
+            if outcome == "ambiguous":
+                opt_names = [item[2].display_name for item in candidates[:4] if (candidates[0][0] - item[0]) <= 0.15]
+                measure_trace.append(
+                    {"phrase": m_phrase.raw_text, "status": f"ambiguous ({', '.join(opt_names)})", "selected": opt_names[0]}
+                )
+                warnings.append(
+                    f"Measure phrase '{m_phrase.raw_text}' is ambiguous ({', '.join(opt_names)}); selected '{opt_names[0]}'."
+                )
+            else:
+                measure_trace.append(
+                    {"phrase": m_phrase.raw_text, "status": "resolved", "selected": candidates[0][2].display_name}
+                )
 
-        # Intent keyword detection:
-        # Extracts modifiers that change aggregation or result limits (unique/distinct, average, top N)
-        is_unique = bool(re.search(r"\b(unique|distinct|how many distinct|number of unique)\b", clean_prompt, re.I))
-        is_average = bool(re.search(r"\b(average|avg|mean)\b", clean_prompt, re.I))
-        top_n_match = re.search(r"\btop\s+(\d+)\b", clean_prompt, re.I)
-        limit_val = int(top_n_match.group(1)) if top_n_match else 100
+            chosen_m = candidates[0][2].metric
+            if chosen_m.name not in seen_metric_names:
+                seen_metric_names.add(chosen_m.name)
+                detected_metrics.append(chosen_m)
 
-        # Unmatched metric handling & suggestions:
-        # If no metric matched the question, do NOT hallucinate random concepts or report high confidence.
-        # Instead, search for the closest metric candidates and append helpful suggestions to warnings.
-        metric_suggestions: List[str] = []
-        if not detected_metrics:
-            broad_metric_hits = self.search_index.search(
-                clean_prompt,
-                domain_filter=domain_filter,
-                item_type_filter="METRIC",
-                limit=3,
-                min_score=0.0,
+        # 3. Determine primary domain and rebuild domain-scoped lexicon if multi-domain store lacked allowed_domains
+        target_domain: Optional[str] = detected_metrics[0].domain if detected_metrics else None
+        if target_domain and not allowed_domains:
+            lexicon = ProjectLexicon.build(
+                ontology=self.ontology,
+                allowed_domains=[target_domain],
+                target_domain=target_domain,
+                semantic_view=semantic_view,
+                is_count_fn=self._is_sql_count_metric,
             )
-            for h in broad_metric_hits:
-                if allowed_domains and h.domain and h.domain not in allowed_domains:
-                    continue
-                m_obj = metric_lookup.get(h.name.casefold()) or self.ontology.metrics.get(h.name)
-                sug_name = m_obj.label if (m_obj and m_obj.label) else h.name
-                if sug_name not in metric_suggestions:
-                    metric_suggestions.append(sug_name)
-
-        # Identify primary domain and deployment metadata BEFORE validating metric SQL and resolving dimensions
-        target_domain = None
-        if detected_metrics:
-            target_domain = detected_metrics[0].domain
-        elif detected_concepts:
-            target_domain = detected_concepts[0].domain
-        elif attr_hits:
-            target_domain = attr_hits[0].domain
 
         target_dom_obj = next(
             (d for d in self.ontology.domains.values() if target_domain and d.domain.casefold() == target_domain.casefold()),
@@ -469,7 +498,6 @@ class NLQueryEngine:
         )
         effective_deploy_error = deployment_error or (getattr(target_dom_obj, "deployment_error", None) if target_dom_obj else None)
 
-        # Determine active SEMANTIC_VIEW target and collect domain metrics/physical columns to validate raw-table execution
         effective_semantic_view = semantic_view
         if dialect.upper() == "SNOWFLAKE" and not effective_semantic_view:
             if detected_metrics:
@@ -477,24 +505,25 @@ class NLQueryEngine:
             if not effective_semantic_view and target_dom_obj:
                 effective_semantic_view = getattr(target_dom_obj, "semantic_view_name", None)
 
+        # Re-scope lexicon cleanly if semantic_view was discovered from domain metadata
+        if effective_semantic_view and not semantic_view:
+            lexicon = ProjectLexicon.build(
+                ontology=self.ontology,
+                allowed_domains=allowed_domains or ([target_domain] if target_domain else None),
+                target_domain=target_domain,
+                semantic_view=effective_semantic_view,
+                is_count_fn=self._is_sql_count_metric,
+            )
+
         domain_metrics_by_key: Dict[str, DomainMetric] = {}
-        for km, vm in self.ontology.metrics.items():
-            if target_domain and vm.domain and vm.domain.casefold() != target_domain.casefold():
-                continue
-            for k_opt in filter(None, [km, vm.name, vm.label, getattr(vm, "logical_name", None)]):
+        for me in lexicon.metrics:
+            vm = me.metric
+            for k_opt in filter(None, [vm.name, vm.label, getattr(vm, "logical_name", None)]):
                 domain_metrics_by_key[k_opt.casefold()] = vm
                 domain_metrics_by_key[self._to_logical_id(k_opt).casefold()] = vm
 
-        concepts_for_check: List[DomainConcept] = (
-            list(target_dom_obj.concepts)
-            if target_dom_obj
-            else [
-                c for c in self.ontology.concepts.values()
-                if not target_domain or not c.domain or c.domain.casefold() == target_domain.casefold()
-            ]
-        )
         physical_attr_keys: Set[str] = set()
-        for c_chk in concepts_for_check:
+        for c_chk in lexicon.scoped_concepts:
             for a_chk in c_chk.attributes:
                 for a_opt in filter(None, [a_chk.name, getattr(a_chk, "logical_name", None)]):
                     physical_attr_keys.add(a_opt.casefold())
@@ -505,10 +534,9 @@ class NLQueryEngine:
                         physical_attr_keys.add(col_part.casefold())
                         physical_attr_keys.add(self._to_logical_id(col_part).casefold())
 
-        # Reject metrics without valid SQL (DAX, NULL placeholder, unresolved refs) or raw-table-incompatible logic
-        unanswerable_warnings: List[str] = []
-        answerable_metrics: List[DomainMetric] = []
+        # 4. Validate executable SQL for each detected metric
         matched_before_sql_check = list(detected_metrics)
+        answerable_metrics: List[DomainMetric] = []
         for m in detected_metrics:
             m_sv = effective_semantic_view or (
                 getattr(m, "semantic_view_name", None) if dialect.upper() == "SNOWFLAKE" else None
@@ -521,41 +549,100 @@ class NLQueryEngine:
                 physical_attr_keys=physical_attr_keys,
             )
             if bad_reason:
-                unanswerable_warnings.append(
-                    f"Metric '{m.label or m.name}' is not answerable: {bad_reason}."
-                )
+                warnings.append(f"Metric '{m.label or m.name}' is not answerable: {bad_reason}.")
             else:
                 answerable_metrics.append(m)
         detected_metrics = answerable_metrics
-        unanswerable_concepts: List[str] = [
-            m.concept for m in matched_before_sql_check
-            if m not in detected_metrics and m.concept
-        ]
 
-        # Extract potential time filters and build warnings after checking metric SQL validity
+        # If no metric was found, compute close metric suggestions without hallucinating
+        if not detected_metrics and not matched_before_sql_check:
+            cand_labels = [me.display_name for me in lexicon.metrics]
+            sugs = difflib.get_close_matches(clean_prompt, cand_labels, n=3, cutoff=0.25)
+            if not sugs:
+                broad_hits = self.search_index.search(
+                    clean_prompt,
+                    domain_filter=allowed_domains[0] if allowed_domains and len(allowed_domains) == 1 else None,
+                    item_type_filter="METRIC",
+                    limit=3,
+                    min_score=0.05,
+                )
+                sugs = [h.name for h in broad_hits]
+            sug_text = f" Did you mean: {', '.join(sugs)}?" if sugs else ""
+            warnings.append(f"Metric not found matching '{clean_prompt}'.{sug_text}")
+
+        # 5. Resolve BY dimensions strictly against semantic-view non-numeric dimensions
+        dim_names: List[str] = []
+        dim_to_pair: Dict[str, Tuple[DomainConcept, DomainAttribute]] = {}
+        by_trace: List[Dict[str, Any]] = []
+        all_dim_labels = [de.attribute.name for de in lexicon.dimensions]
+
+        for bp in parsed.by_phrases:
+            chosen_de, all_matches, outcome = self._resolve_by_phrase(bp, lexicon)
+            if outcome == "numeric column cannot group":
+                by_trace.append({"phrase": bp, "status": "not allowed (numeric column)", "selected": None})
+                warnings.append(f"Column '{bp}' is numeric and cannot be used as a grouping dimension.")
+                continue
+            if outcome == "not found" or chosen_de is None:
+                close_dims: List[str] = []
+                # Check WordNet synonym/hypernym overlap across concepts & attributes (e.g. customer -> Accounts.Account Name)
+                try:
+                    from nltk.corpus import wordnet as _wn
+                    bp_toks = content_lemmas(bp)
+                    bp_syn_words: Set[str] = set(bp_toks)
+                    for bt in bp_toks:
+                        for syn in _wn.synsets(bt):
+                            for lm in syn.lemmas():
+                                bp_syn_words.add(lemmatize_token(lm.name()))
+                            for hyp in syn.hypernyms():
+                                for lm in hyp.lemmas():
+                                    bp_syn_words.add(lemmatize_token(lm.name()))
+                    for de in lexicon.dimensions:
+                        if de.is_date:
+                            continue
+                        if (de.concept_lemmas & bp_syn_words) and ("name" in de.lemmas or len(de.lemmas) <= 2):
+                            cand_d = f"{de.concept.name}.{de.attribute.name}"
+                            if cand_d not in close_dims:
+                                close_dims.append(cand_d)
+                except Exception:
+                    pass
+                if not close_dims:
+                    close_dims = difflib.get_close_matches(bp, all_dim_labels, n=2, cutoff=0.55)
+                sug_part = f" Did you mean: {', '.join(close_dims[:2])}?" if close_dims else ""
+                by_trace.append({"phrase": bp, "status": "not found", "selected": None})
+                warnings.append(f"Dimension '{bp}' not found in domain.{sug_part}")
+                continue
+            if outcome == "ambiguous":
+                opts = [f"{d.concept.name}.{d.attribute.name}" for d in all_matches[:4]]
+                by_trace.append({"phrase": bp, "status": f"ambiguous ({', '.join(opts)})", "selected": chosen_de.attribute.name})
+                warnings.append(
+                    f"Dimension '{bp}' is ambiguous ({', '.join(opts)}); selected '{chosen_de.concept.name}.{chosen_de.attribute.name}'."
+                )
+            else:
+                by_trace.append({"phrase": bp, "status": "resolved", "selected": chosen_de.attribute.name})
+
+            if chosen_de.attribute.name not in dim_names:
+                dim_names.append(chosen_de.attribute.name)
+                dim_to_pair[chosen_de.attribute.name] = (chosen_de.concept, chosen_de.attribute)
+
+        # Inline non-metric attribute check when prompt didn't use a BY clause (exclude WHERE/filter phrases)
+        if not parsed.by_phrases and not parsed.filter_phrases:
+            measure_only_text = " ".join(mp.raw_text for mp in parsed.measure_phrases)
+            prompt_lemmas = set(content_lemmas(measure_only_text))
+            for de in lexicon.dimensions:
+                if de.is_date or not de.lemmas:
+                    continue
+                if de.lemmas.issubset(prompt_lemmas) and not any(
+                    de.lemmas.issubset(me.name_label_lemmas) for me in lexicon.metrics if me.metric in detected_metrics
+                ):
+                    if de.attribute.name not in dim_names:
+                        dim_names.append(de.attribute.name)
+                        dim_to_pair[de.attribute.name] = (de.concept, de.attribute)
+
+        # 6. Collect policy filters & explicit/sample-value filter phrases
         filters: List[str] = []
         applied_policies: List[str] = []
         derived_from_metrics: List[str] = []
-        warnings: List[str] = list(unanswerable_warnings)
-        if not detected_metrics and not matched_before_sql_check:
-            sug_text = f" Did you mean: {', '.join(metric_suggestions)}?" if metric_suggestions else ""
-            warnings.append(f"No metric found matching '{clean_prompt}'.{sug_text}")
-        elif detected_metrics and ambiguous_alternatives:
-            valid_alts = [
-                a for a in ambiguous_alternatives
-                if not any(u for u in unanswerable_warnings if f"'{a}'" in u)
-            ]
-            if valid_alts:
-                top_disp = detected_metrics[0].label or detected_metrics[0].name
-                warnings.append(
-                    f"Multiple metrics match your query ({top_disp}, {', '.join(valid_alts)}). "
-                    f"Selected '{top_disp}'; specify another or ask to compare them if needed."
-                )
-
-        # Resolve upstream derived metrics and collect enforceable SQL policies & filter expressions
-        metrics_by_key: Dict[str, DomainMetric] = {
-            k.casefold(): v for k, v in self.ontology.metrics.items()
-        }
+        metrics_by_key: Dict[str, DomainMetric] = {k.casefold(): v for k, v in self.ontology.metrics.items()}
         for m in detected_metrics:
             for dep in getattr(m, "derives_from", None) or []:
                 dep_m = metrics_by_key.get(dep.casefold())
@@ -563,365 +650,154 @@ class NLQueryEngine:
                 if dep_name not in derived_from_metrics:
                     derived_from_metrics.append(dep_name)
 
-        scoped_policy_concepts = [
-            c for c in detected_concepts
-            if not target_domain or not c.domain or c.domain.casefold() == target_domain.casefold()
+        concept_by_name: Dict[str, DomainConcept] = {c.name.casefold(): c for c in lexicon.scoped_concepts}
+        metric_owner_concepts = [
+            concept_by_name[m.concept.casefold()]
+            for m in detected_metrics
+            if m.concept and m.concept.casefold() in concept_by_name
         ]
+        dim_concepts = [pair[0] for pair in dim_to_pair.values()]
+        policy_concepts: List[DomainConcept] = []
+        for c_pol in metric_owner_concepts + dim_concepts:
+            if c_pol not in policy_concepts:
+                policy_concepts.append(c_pol)
+
         self._collect_policy_filters(
-            detected_concepts=scoped_policy_concepts,
+            detected_concepts=policy_concepts,
             detected_metrics=detected_metrics,
             metrics_by_key=metrics_by_key,
             filters=filters,
             applied_policies=applied_policies,
         )
 
-        # Use only deployment-record semantic_view (passed from router or stored on ontology item);
-        # never derive a view name from the domain display name.
-        if dialect.upper() == "SNOWFLAKE" and not semantic_view and detected_metrics:
-            sv_candidate = getattr(detected_metrics[0], "semantic_view_name", None)
-            if not sv_candidate and target_dom_obj:
-                sv_candidate = getattr(target_dom_obj, "semantic_view_name", None)
-            if sv_candidate:
-                semantic_view = sv_candidate
-
-        # Detect dimensions from prompt:
-        # Only select attributes whose full name or component tokens are explicitly mentioned in the user prompt,
-        # scoped to target_domain when known, avoiding dumping irrelevant indexed attributes or foreign keys.
-        by_match = re.search(r"\b(?:by|each|per)\s+([a-zA-Z0-9_\s,]+?)(?:\s+(?:in|for|where|with|during|from)|\.|;|\?|$)", clean_prompt, re.I)
-        by_target = by_match.group(1).strip() if by_match else None
-        # In 'top N <entity> by <metric>' (e.g. 'Top 3 stores by sales'), if post-'by' names a metric, group by <entity> instead
-        top_n_by_match = re.search(
-            r"\btop\s+\d+\s+([a-zA-Z0-9_\s]+?)\s+by\s+([a-zA-Z0-9_\s]+?)(?:\s+(?:in|for|where|with|during|from)|\.|;|\?|$)",
-            clean_prompt,
-            re.I,
-        )
-        if top_n_by_match and by_target:
-            rank_phrase = top_n_by_match.group(2).strip().casefold()
-            if any(rank_phrase in (m.name or "").casefold() or rank_phrase in (m.label or "").casefold() for m in detected_metrics):
-                by_target = top_n_by_match.group(1).strip()
-        bt_lower = by_target.casefold() if by_target else ""
-
-        # Gather target domain's full concept list from self.ontology.domains so shared names
-        # (e.g. Product, Customer, Date across multiple models) are never shadowed by first-wins federation.
-        domain_concepts: List[DomainConcept] = []
-        if target_domain:
-            dom_entry = next(
-                (d for d in self.ontology.domains.values() if d.domain.casefold() == target_domain.casefold()),
-                None,
-            )
-            if dom_entry:
-                domain_concepts = list(dom_entry.concepts)
-        if not domain_concepts and allowed_domains:
-            allowed_cf = {ad.casefold() for ad in allowed_domains}
-            for dom_entry in self.ontology.domains.values():
-                if dom_entry.domain.casefold() in allowed_cf or (dom_entry.id and dom_entry.id.casefold() in allowed_cf):
-                    domain_concepts.extend(dom_entry.concepts)
-
-        scoped_concepts: List[DomainConcept] = list(domain_concepts)
-        if not scoped_concepts and (target_domain or allowed_domains):
-            scoped_concepts = [
-                c for c in self.ontology.concepts.values()
-                if (not target_domain or not c.domain or c.domain.casefold() == target_domain.casefold())
-                and (not allowed_domains or not c.domain or c.domain in allowed_domains)
-            ]
-
-        non_numeric_attr_names: Set[str] = {
-            a.name.casefold()
-            for c in scoped_concepts
-            for a in c.attributes
-            if not self._is_numeric_attr(a)
-        }
-
-        # Strip multi-word time-intelligence phrases when scanning for dimension attributes so
-        # e.g. 'year-to-date' or 'month-to-date' do not falsely trigger 'Year' or 'Date' dimensions.
-        prompt_for_dims = re.sub(
-            r"\b(?:\w+[- ]?to[- ]?date|\w+[-\s]+over[-\s]+\w+|previous\s+\w+|same\s+period\s+last\s+\w+|moving\s+annual\s+total|last\s+\d+\s+\w+)\b",
-            " ",
-            clean_prompt,
-            flags=re.I,
-        )
-        prompt_words = self._stem_words(prompt_for_dims)
-        dim_names: List[str] = []
-        for h in attr_hits:
-            if target_domain and h.domain and h.domain.casefold() != target_domain.casefold():
+        filter_trace: List[Dict[str, Any]] = []
+        for fp in parsed.filter_phrases:
+            if not fp.column_hint or not fp.value_text:
+                filter_trace.append({"phrase": fp.raw_text, "status": "not found"})
                 continue
-            if non_numeric_attr_names and h.name.casefold() not in non_numeric_attr_names:
+            f_de, _, f_out = self._resolve_by_phrase(fp.column_hint, lexicon)
+            if f_de is None or f_out == "not found":
+                filter_trace.append({"phrase": fp.raw_text, "status": "not found"})
+                warnings.append(f"Filter column '{fp.column_hint}' not found in domain.")
                 continue
-            h_lower = h.name.casefold()
-            h_words = self._stem_words(h_lower)
-            if h_words and (h_lower in prompt_for_dims.casefold() or h_words.issubset(prompt_words)):
-                h_clean = re.sub(r"[^a-z0-9]+", " ", h_lower).strip()
-                part_of_metric = any(
-                    (
-                        h_clean and (
-                            h_clean in re.sub(r"[^a-z0-9]+", " ", (m.name or "").casefold())
-                            or re.sub(r"[^a-z0-9]+", " ", (m.name or "").casefold()) in h_clean
-                            or h_clean in re.sub(r"[^a-z0-9]+", " ", (m.label or "").casefold())
-                            or re.sub(r"[^a-z0-9]+", " ", (m.label or "").casefold()) in h_clean
-                        )
-                    )
-                    for m in detected_metrics
-                )
-                if h.name not in dim_names and (not part_of_metric or (bt_lower and bt_lower in h_lower)):
-                    dim_names.append(h.name)
+            escaped_val = fp.value_text.replace("'", "''")
+            if effective_semantic_view:
+                f_tbl = self._q_ident(getattr(f_de.concept, "logical_name", None) or self._to_logical_id(f_de.concept.name))
+                f_col = self._q_ident(getattr(f_de.attribute, "logical_name", None) or self._to_logical_id(f_de.attribute.name))
+                pred_sql = f"{f_tbl}.{f_col} = '{escaped_val}'"
+            else:
+                pred_sql = f"{self._q_ident(f_de.attribute.name)} = '{escaped_val}'"
+            if pred_sql not in filters:
+                filters.append(pred_sql)
+            filter_trace.append({"phrase": fp.raw_text, "status": "resolved", "predicate": pred_sql})
 
-        def _non_numeric_attrs(concept: DomainConcept) -> List[DomainAttribute]:
-            return [a for a in concept.attributes if not self._is_numeric_attr(a)]
-
-        preferred_dim_pair: Dict[str, Tuple[DomainConcept, DomainAttribute]] = {}
-        if by_target:
-            bt_asks_key = bool(re.search(r"(seq|key|id)\b", bt_lower))
-            whole_exact = any(
-                bt_lower == a.name.casefold() or bt_n == a.name.casefold().replace(" ", "")
-                for bt_n in [bt_lower.replace(" ", "")]
-                for c in scoped_concepts for a in _non_numeric_attrs(c)
-            )
-            sub_targets = (
-                [by_target]
-                if whole_exact or not re.search(r",|\band\b", by_target, re.I)
-                else [s.strip() for s in re.split(r",|\band\b", by_target, flags=re.I) if s.strip()]
-            )
-
-            all_candidate_dim_names: List[str] = [
-                a.name for c in scoped_concepts for a in _non_numeric_attrs(c)
-            ]
-
-            for sub_bt in sub_targets:
-                sbt_lower = sub_bt.casefold()
-                if any(sbt_lower == d.casefold() for d in dim_names):
-                    continue
-                matched_dim = None
-                matched_pair: Optional[Tuple[DomainConcept, DomainAttribute]] = None
-                bt_words = sbt_lower.split()
-                bt_nospace = sbt_lower.replace(" ", "")
-                bt_stem = " ".join(_stem_token(w) for w in bt_words) if bt_words else _stem_token(sbt_lower)
-
-                # Pass 0: compound noun phrase where first word hints the concept and last word names the non-numeric attribute
-                if len(bt_words) >= 2:
-                    head_w, tail_w = bt_words[0], bt_words[-1]
-                    for c in scoped_concepts:
-                        if head_w in c.name.casefold():
-                            for a in _non_numeric_attrs(c):
-                                if tail_w == a.name.casefold():
-                                    matched_dim = a.name
-                                    matched_pair = (c, a)
-                                    break
-                        if matched_dim:
-                            break
-
-                bt_candidates = [sbt_lower]
-                if bt_stem != sbt_lower and bt_stem not in bt_candidates:
-                    bt_candidates.append(bt_stem)
-                if bt_nospace != sbt_lower and bt_nospace not in bt_candidates:
-                    bt_candidates.append(bt_nospace)
-                if len(bt_words) >= 2:
-                    if bt_words[-1] not in bt_candidates:
-                        bt_candidates.append(bt_words[-1])
-                    if bt_words[0] not in bt_candidates:
-                        bt_candidates.append(bt_words[0])
-
-                if not matched_dim:
-                    for bt_cand in bt_candidates:
-                        # Pass 1: exact or spaceless non-numeric attribute match
-                        for c in scoped_concepts:
-                            for a in _non_numeric_attrs(c):
-                                a_low = a.name.casefold()
-                                if bt_cand == a_low or bt_cand == a_low.replace(" ", ""):
-                                    matched_dim = a.name
-                                    matched_pair = (c, a)
-                                    break
-                            if matched_dim:
-                                break
-                        if matched_dim:
-                            break
-                        # Pass 2: non-key non-numeric substring match
-                        for c in scoped_concepts:
-                            for a in _non_numeric_attrs(c):
-                                a_low = a.name.casefold()
-                                is_surrogate = bool(re.search(r"(seq|key|id)$", a_low)) and not bt_asks_key
-                                if not is_surrogate and bt_cand in a_low:
-                                    matched_dim = a.name
-                                    matched_pair = (c, a)
-                                    break
-                            if matched_dim:
-                                break
-                        if matched_dim:
-                            break
-                # Pass 3: any non-numeric attribute substring match (never invent concept name as fake dim)
-                if not matched_dim:
-                    for c in scoped_concepts:
-                        for a in _non_numeric_attrs(c):
-                            if sbt_lower in a.name.casefold() or bt_stem in a.name.casefold():
-                                matched_dim = a.name
-                                matched_pair = (c, a)
-                                break
-                        if matched_dim:
-                            break
-                if matched_dim:
-                    dim_names = [
-                        d for d in dim_names
-                        if not (d.casefold() != matched_dim.casefold() and len(bt_words) >= 2 and (d.casefold() in bt_words or sbt_lower in d.casefold()))
-                    ]
-                    if matched_dim not in dim_names:
-                        dim_names.append(matched_dim)
-                    if matched_pair:
-                        preferred_dim_pair[matched_dim] = matched_pair
-                else:
-                    # Never invent a dimension (no X.title()); warn not found and suggest closest non-numeric attribute
-                    attr_sugs: List[str] = []
-                    for h in self.search_index.search(
-                        sub_bt,
-                        domain_filter=target_domain or domain_filter,
-                        item_type_filter="ATTRIBUTE",
-                        limit=5,
-                        min_score=0.0,
-                    ):
-                        if non_numeric_attr_names and h.name.casefold() not in non_numeric_attr_names:
-                            continue
-                        if h.name not in attr_sugs:
-                            attr_sugs.append(h.name)
-                    if not attr_sugs and all_candidate_dim_names:
-                        close = difflib.get_close_matches(sub_bt, all_candidate_dim_names, n=2, cutoff=0.3)
-                        attr_sugs.extend(close)
-                    sug_part = f" Did you mean: {', '.join(attr_sugs[:2])}?" if attr_sugs else ""
-                    warnings.append(f"Dimension '{sub_bt}' not found in domain.{sug_part}")
-
-        # If dim_names is empty and no explicit 'by X' failed, check concept_hits for non-numeric attributes
-        if not dim_names and not by_target and detected_concepts:
-            clean_toks = [w.strip("?,.:;'\"").casefold() for w in prompt_for_dims.split() if len(w.strip("?,.:;'\"")) >= 3]
-            for c in detected_concepts:
-                if target_domain and c.domain and c.domain.casefold() != target_domain.casefold():
-                    continue
-                for a in _non_numeric_attrs(c):
-                    a_low = a.name.casefold()
-                    part_of_metric = any(
-                        a_low in m.name.casefold() or a_low in (m.label or "").casefold()
-                        for m in detected_metrics
-                    )
-                    if not part_of_metric and any(re.search(rf"\b{re.escape(tok)}\b", a_low) for tok in clean_toks):
-                        dim_names.append(a.name)
-                        preferred_dim_pair[a.name] = (c, a)
-                        break
-                if dim_names:
-                    break
-
-        # Determine minimal set of concepts and attribute/concept objects strictly within scoped_concepts
-        # (no all-concepts cross-domain fallback).
+        # 7. Resolve needed concepts, date filter, and joins
         needed_concepts: Set[str] = set()
-        dim_to_concept: Dict[str, str] = {}
-        dim_to_pair: Dict[str, Tuple[DomainConcept, DomainAttribute]] = {}
-        concept_by_name: Dict[str, DomainConcept] = {c.name.casefold(): c for c in scoped_concepts}
-        for d in dim_names:
-            if d in preferred_dim_pair:
-                pc, pa = preferred_dim_pair[d]
-                needed_concepts.add(pc.name)
-                dim_to_concept[d] = pc.name
-                dim_to_pair[d] = (pc, pa)
-        for c in scoped_concepts:
-            for a in _non_numeric_attrs(c):
-                for d in dim_names:
-                    if d.casefold() == a.name.casefold() and d not in dim_to_pair:
-                        needed_concepts.add(c.name)
-                        dim_to_concept[d] = c.name
-                        dim_to_pair[d] = (c, a)
-
-        # Keep only dimensions that resolved to an actual non-numeric attribute in the domain
-        dim_names = [d for d in dim_names if d in dim_to_pair]
-
+        for c_obj, _ in dim_to_pair.values():
+            needed_concepts.add(c_obj.name)
         for m in detected_metrics:
             if m.concept:
                 needed_concepts.add(m.concept)
 
-        if not needed_concepts and detected_concepts:
-            for c in detected_concepts:
-                if not target_domain or not c.domain or c.domain.casefold() == target_domain.casefold():
-                    needed_concepts.add(c.name)
-
-        # Also enforce any concept-level policy/filter on detected metric's owning concept
-        metric_owner_concepts = [
-            concept_by_name[m.concept.casefold()]
-            for m in detected_metrics
-            if m.concept and m.concept.casefold() in concept_by_name
-            and concept_by_name[m.concept.casefold()] not in scoped_policy_concepts
-        ]
-        if metric_owner_concepts:
-            self._collect_policy_filters(
-                detected_concepts=metric_owner_concepts,
-                detected_metrics=detected_metrics,
-                metrics_by_key=metrics_by_key,
-                filters=filters,
-                applied_policies=applied_policies,
-            )
-
-        # Pick primary table:
-        # 1. Prefer concept associated with detected metrics
-        # 2. Prefer top detected concept from semantic search
-        # 3. Fallback to first needed concept
-        primary_table = None
+        primary_table: Optional[str] = None
         for m in detected_metrics:
             if m.concept and m.concept in needed_concepts:
                 primary_table = m.concept
                 break
-        if not primary_table and detected_concepts:
-            for c in detected_concepts:
-                if c.name in needed_concepts:
-                    primary_table = c.name
-                    break
         if not primary_table and needed_concepts:
             primary_table = sorted(needed_concepts)[0]
-        if not primary_table:
-            primary_table = "ANALYTICS"
 
-        # Year/quarter filters using a date dimension related to the metric's table (inside SEMANTIC_VIEW WHERE);
-        # if none exists in the domain's related concepts, warn and omit (never assume 'date').
-        year_match = re.search(r"\b(20[12][0-9])\b", clean_prompt)
-        quarter_match = re.search(r"\bQ([1-4])\b", clean_prompt, re.IGNORECASE)
-        if year_match or quarter_match:
+        if (parsed.year_filters or parsed.quarter_filters) and detected_metrics and primary_table:
             date_c, date_a = self._resolve_related_date_column(
                 primary_table=primary_table,
                 needed_concepts=needed_concepts,
-                scoped_concepts=scoped_concepts,
+                scoped_concepts=lexicon.scoped_concepts,
+                lexicon_dimensions=lexicon.dimensions if lexicon.sv_enforced else None,
                 target_domain=target_domain,
                 has_metrics=bool(detected_metrics),
+                prompt_lemmas=set(content_lemmas(clean_prompt)),
             )
             if date_c and date_a:
-                if semantic_view:
-                    dt_tbl = self._q_ident(getattr(date_c, "logical_name", None) or self._to_logical_id(date_c.name))
-                    dt_col = self._q_ident(getattr(date_a, "logical_name", None) or self._to_logical_id(date_a.name))
+                if effective_semantic_view:
+                    matched_de = next(
+                        (
+                            de for de in lexicon.dimensions
+                            if de.concept.name.casefold() == date_c.name.casefold()
+                            and de.attribute.name.casefold() == date_a.name.casefold()
+                            and de.sv_dim_alias
+                        ),
+                        None,
+                    )
+                    if matched_de and matched_de.sv_dim_alias:
+                        dt_tbl = self._q_ident(matched_de.sv_dim_alias[0])
+                        dt_col = self._q_ident(matched_de.sv_dim_alias[1])
+                    else:
+                        dt_tbl = self._q_ident(getattr(date_c, "logical_name", None) or self._to_logical_id(date_c.name))
+                        dt_col = self._q_ident(getattr(date_a, "logical_name", None) or self._to_logical_id(date_a.name))
                     date_ref = f"{dt_tbl}.{dt_col}"
                 else:
                     date_ref = self._q_ident(date_a.name)
-                if year_match:
-                    filters.append(f"YEAR({date_ref}) = {year_match.group(1)}")
-                if quarter_match:
-                    filters.append(f"QUARTER({date_ref}) = {quarter_match.group(1)}")
+                if parsed.year_filters:
+                    filters.append(f"YEAR({date_ref}) = {parsed.year_filters[0]}")
+                if parsed.quarter_filters:
+                    filters.append(f"QUARTER({date_ref}) = {parsed.quarter_filters[0]}")
             else:
                 warnings.append(
                     "No date dimension related to the metric's table was found; year/quarter filter omitted."
                 )
 
-        resolved_tables_list = [primary_table]
+        # 8. Refuse cleanly without fake 'FROM ANALYTICS' fallback when unanswerable
+        is_distinct_dim_query = bool(
+            parsed.aggregation_intent == "DISTINCT" and not detected_metrics and dim_names and not effective_semantic_view and primary_table
+        )
+        answerable = bool(detected_metrics) or is_distinct_dim_query
+
+        parsed_phrases = {
+            "aggregation": parsed.aggregation_intent,
+            "time": parsed.year_filters + [f"Q{q}" for q in parsed.quarter_filters] + sorted(parsed.time_shift_tags),
+            "measure": measure_trace,
+            "by": by_trace,
+            "filter": filter_trace,
+        }
+
+        if not answerable:
+            refusal_lines = [
+                "-- SemaBridge AI Query Refusal (No Executable Dummy Table Fallback)",
+                f"-- Question: \"{clean_prompt}\"",
+                f"-- Dialect: {dialect.upper()}",
+            ]
+            for w in warnings:
+                refusal_lines.append(f"-- Reason: {w}")
+            return QueryResolutionPlan(
+                original_prompt=clean_prompt,
+                detected_metrics=[],
+                detected_dimensions=dim_names,
+                filters=filters,
+                applied_policies=applied_policies,
+                derived_from_metrics=derived_from_metrics,
+                resolved_tables=[],
+                join_clauses=[],
+                generated_sql="\n".join(refusal_lines),
+                confidence_score=0.0,
+                explanation="; ".join(warnings) if warnings else "Query cannot be answered from this project's ontology.",
+                warnings=warnings,
+                answerable=False,
+                parsed_phrases=parsed_phrases,
+            )
+
+        # 9. Build relational joins & executable SQL
+        resolved_tables_list = [primary_table] if primary_table else []
         join_clauses: List[str] = []
 
-        # Relational Join Generation (Acyclic, Active-Only):
-        # 1. Skipped when targeting a Snowflake Semantic View (the view handles internal joins natively).
-        # 2. Only joins tables that belong to needed_concepts.
-        # 3. Skips inactive relationships (is_active=False) to avoid cycle joins.
-        # 4. Quotes identifiers with spaces to prevent SQL syntax errors.
-        if not semantic_view and len(needed_concepts) > 1:
+        if not effective_semantic_view and len(needed_concepts) > 1 and primary_table:
             in_query_tables: Set[str] = {primary_table.casefold()}
             remaining_concepts = {c for c in needed_concepts if c.casefold() not in in_query_tables}
-
             for rel in self.ontology.relationships:
                 if not remaining_concepts:
                     break
                 if getattr(rel, "is_active", True) is False:
                     continue
-
-                from_c = rel.from_concept
-                to_c = rel.to_concept
-
-                # Join to_c if from_c is already in query and to_c is needed
+                from_c, to_c = rel.from_concept, rel.to_concept
                 if from_c.casefold() in in_query_tables and to_c.casefold() in {c.casefold() for c in remaining_concepts}:
                     clean_join = self._quote_join_expression(rel.join_expression)
                     if clean_join:
@@ -930,8 +806,6 @@ class NLQueryEngine:
                         in_query_tables.add(to_c.casefold())
                         resolved_tables_list.append(to_c)
                         remaining_concepts = {c for c in remaining_concepts if c.casefold() != to_c.casefold()}
-
-                # Join from_c if to_c is already in query and from_c is needed
                 elif to_c.casefold() in in_query_tables and from_c.casefold() in {c.casefold() for c in remaining_concepts}:
                     clean_join = self._quote_join_expression(rel.join_expression)
                     if clean_join:
@@ -941,40 +815,46 @@ class NLQueryEngine:
                         resolved_tables_list.append(from_c)
                         remaining_concepts = {c for c in remaining_concepts if c.casefold() != from_c.casefold()}
 
-        # 3. Assemble Governed SQL
+        limit_val = parsed.top_n or 100
         select_parts: List[str] = []
         group_by_parts: List[str] = []
         first_metric_order_col: Optional[str] = None
 
-        if semantic_view:
+        if effective_semantic_view:
             sv_metrics: List[str] = []
             sv_dims: List[str] = []
-
             for m in detected_metrics:
-                m_c_name = m.concept or primary_table
+                m_c_name = m.concept or primary_table or ""
                 m_c_obj = concept_by_name.get(m_c_name.casefold())
                 tbl_logical = self._q_ident(
                     (getattr(m_c_obj, "logical_name", None) if m_c_obj else None)
                     or self._to_logical_id(m_c_name)
                 )
-                met_logical = self._q_ident(
-                    getattr(m, "logical_name", None) or self._to_logical_id(m.name)
-                )
+                met_logical = self._q_ident(getattr(m, "logical_name", None) or self._to_logical_id(m.name))
                 sv_metrics.append(f"{tbl_logical}.{met_logical}")
                 if not first_metric_order_col:
                     first_metric_order_col = met_logical
 
             for d in dim_names:
                 c_obj, a_obj = dim_to_pair[d]
-                tbl_logical = self._q_ident(
-                    getattr(c_obj, "logical_name", None) or self._to_logical_id(c_obj.name)
+                matched_de = next(
+                    (
+                        de for de in lexicon.dimensions
+                        if de.concept.name.casefold() == c_obj.name.casefold()
+                        and de.attribute.name.casefold() == a_obj.name.casefold()
+                        and de.sv_dim_alias
+                    ),
+                    None,
                 )
-                col_logical = self._q_ident(
-                    getattr(a_obj, "logical_name", None) or self._to_logical_id(a_obj.name)
-                )
+                if matched_de and matched_de.sv_dim_alias:
+                    tbl_logical = self._q_ident(matched_de.sv_dim_alias[0])
+                    col_logical = self._q_ident(matched_de.sv_dim_alias[1])
+                else:
+                    tbl_logical = self._q_ident(getattr(c_obj, "logical_name", None) or self._to_logical_id(c_obj.name))
+                    col_logical = self._q_ident(getattr(a_obj, "logical_name", None) or self._to_logical_id(a_obj.name))
                 sv_dims.append(f"{tbl_logical}.{col_logical}")
 
-            sv_clauses: List[str] = [semantic_view]
+            sv_clauses: List[str] = [effective_semantic_view]
             if sv_metrics:
                 sv_clauses.append(f"METRICS {', '.join(sv_metrics)}")
             if sv_dims:
@@ -982,26 +862,20 @@ class NLQueryEngine:
             if filters and (sv_metrics or sv_dims):
                 sv_clauses.append(f"WHERE {' AND '.join(filters)}")
 
-            if sv_metrics or sv_dims:
-                select_parts = ["    *"]
-                from_target = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
-            else:
-                select_parts = ["    NULL AS UNANSWERABLE"]
-                from_target = None
+            select_parts = ["    *"]
+            from_target: Optional[str] = "SEMANTIC_VIEW(" + " ".join(sv_clauses) + ")"
         else:
-            if is_unique and not detected_metrics and dim_names:
+            if is_distinct_dim_query:
                 primary_dim = dim_names[0]
                 dim_col = self._q_ident(primary_dim)
                 alias = f"UNIQUE_{re.sub(r'[^A-Za-z0-9_]', '_', primary_dim).upper()}"
                 select_parts.append(f"    COUNT(DISTINCT {dim_col}) AS {alias}")
                 for idx, dim in enumerate(dim_names[1:], 1):
-                    d_col = self._q_ident(dim)
-                    select_parts.insert(idx - 1, f"    {d_col}")
+                    select_parts.insert(idx - 1, f"    {self._q_ident(dim)}")
                     group_by_parts.append(str(idx))
             else:
                 for idx, dim in enumerate(dim_names, 1):
-                    dim_col = self._q_ident(dim)
-                    select_parts.append(f"    {dim_col}")
+                    select_parts.append(f"    {self._q_ident(dim)}")
                     if detected_metrics:
                         group_by_parts.append(str(idx))
 
@@ -1014,16 +888,22 @@ class NLQueryEngine:
                 if not first_metric_order_col:
                     first_metric_order_col = alias
 
-            if not select_parts:
-                select_parts.append("    *")
-            from_target = f'"{primary_table}"' if " " in primary_table else primary_table
+            tbl_name = primary_table or ""
+            from_target = f'"{tbl_name}"' if " " in tbl_name else tbl_name
 
-        target_engine = "Snowflake Cortex Analyst & Semantic View" if dialect.upper() == "SNOWFLAKE" else "Databricks AI/BI Genie & Unity Catalog Metric View" if dialect.upper() == "DATABRICKS" else "SemaBridge Local Engine"
-        sql_lines: List[str] = []
-        sql_lines.append(f"-- SemaBridge AI Generated Governed Semantic Query")
-        sql_lines.append(f"-- Target Engine: {target_engine}")
-        sql_lines.append(f"-- Question: \"{clean_prompt}\"")
-        sql_lines.append(f"-- Dialect: {dialect.upper()}")
+        target_engine = (
+            "Snowflake Cortex Analyst & Semantic View"
+            if dialect.upper() == "SNOWFLAKE"
+            else "Databricks AI/BI Genie & Unity Catalog Metric View"
+            if dialect.upper() == "DATABRICKS"
+            else "SemaBridge Local Engine"
+        )
+        sql_lines: List[str] = [
+            "-- SemaBridge AI Generated Governed Semantic Query",
+            f"-- Target Engine: {target_engine}",
+            f"-- Question: \"{clean_prompt}\"",
+            f"-- Dialect: {dialect.upper()}",
+        ]
         for m in detected_metrics:
             agg = (m.aggregation_type or "SUM").upper()
             sql_lines.append(f"-- Metric: {m.label or m.name} (Aggregation: {agg})")
@@ -1031,38 +911,21 @@ class NLQueryEngine:
         sql_lines.append(",\n".join(select_parts))
         if from_target:
             sql_lines.append(f"FROM {from_target}")
-
         for j in join_clauses:
-            sql_lines.append(f"{j}")
-
-        if not semantic_view and filters:
+            sql_lines.append(j)
+        if not effective_semantic_view and filters:
             sql_lines.append(f"WHERE {' AND '.join(filters)}")
-        elif semantic_view and not from_target:
-            sql_lines.append("WHERE FALSE")
-
-        if not semantic_view and group_by_parts:
+        if not effective_semantic_view and group_by_parts:
             sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
-
-        if from_target:
-            order_col = first_metric_order_col or "1"
-            sql_lines.append(f"ORDER BY {order_col} DESC")
-            sql_lines.append(f"LIMIT {limit_val};")
-        else:
-            sql_lines[-1] = sql_lines[-1] + ";"
+        order_col = first_metric_order_col or "1"
+        sql_lines.append(f"ORDER BY {order_col} DESC")
+        sql_lines.append(f"LIMIT {limit_val};")
 
         generated_sql = "\n".join(sql_lines)
         if dialect.upper() == "DATABRICKS":
-            # Adapt any Snowflake-specific IFF to Databricks standard IF
             generated_sql = re.sub(r"\bIFF\(", "IF(", generated_sql, flags=re.IGNORECASE)
 
-        # 4. Compute Confidence Score & Explanation
-        if not detected_metrics:
-            confidence = 0.25 if dim_names else 0.1
-        else:
-            metric_score = 0.5
-            concept_score = 0.4 if dim_names else 0.1
-            confidence = min(0.95, metric_score + concept_score)
-
+        confidence = min(0.95, 0.55 + (0.35 if dim_names else 0.15) - (0.10 if warnings else 0.0))
         explanation_parts = []
         if detected_metrics:
             explanation_parts.append(f"Calculated metrics: {', '.join(m.name for m in detected_metrics)}")
@@ -1076,7 +939,6 @@ class NLQueryEngine:
             explanation_parts.append(f"Applied filters: {', '.join(filters)}")
         for w in warnings:
             explanation_parts.append(f"Warning: {w}")
-        explanation = "; ".join(explanation_parts) if explanation_parts else "Resolved against semantic ontology."
 
         return QueryResolutionPlan(
             original_prompt=clean_prompt,
@@ -1088,9 +950,11 @@ class NLQueryEngine:
             resolved_tables=resolved_tables_list,
             join_clauses=join_clauses,
             generated_sql=generated_sql,
-            confidence_score=round(confidence, 2),
-            explanation=explanation,
+            confidence_score=round(max(confidence, 0.0), 2),
+            explanation="; ".join(explanation_parts) if explanation_parts else "Resolved against semantic ontology.",
             warnings=warnings,
+            answerable=True,
+            parsed_phrases=parsed_phrases,
         )
 
     @staticmethod
@@ -1104,7 +968,6 @@ class NLQueryEngine:
         if not expr:
             return ""
         deps: List[str] = list(getattr(metric, "derives_from", None) or [])
-        # Also include inline [Metric] references so composite SQL expands even if derives_from is omitted
         for inline_ref in re.findall(r"\[([^\]]+)\]", expr):
             if inline_ref not in deps:
                 deps.append(inline_ref)
@@ -1124,7 +987,6 @@ class NLQueryEngine:
             dep_sql = NLQueryEngine._expand_metric_expression(dep_m, metrics_by_key, seen)
             if not dep_sql:
                 continue
-            # Replace ONLY explicit bracketed [Metric] references, never bare words
             for token in filter(None, [dep_m.name, dep_m.label, dep_name]):
                 expanded = re.sub(
                     r"\[" + re.escape(token) + r"\]",
@@ -1142,7 +1004,7 @@ class NLQueryEngine:
         filters: List[str],
         applied_policies: List[str],
     ) -> None:
-        """Append enforceable SQL filter expressions only when their domain or target is active in the query."""
+        """Append enforceable SQL filter expressions when their domain or target is active."""
         seen_filters = {f.strip().casefold() for f in filters if f.strip()}
         seen_policies = {p.casefold() for p in applied_policies}
 
@@ -1174,7 +1036,6 @@ class NLQueryEngine:
                 add_filter(c.filter_expression, f"{c.name} filter")
             extract_inline_sql_rules(c.business_rules, c.name)
 
-        # Include detected metrics plus any upstream derived metrics
         all_involved_metrics: List[DomainMetric] = list(detected_metrics)
         for m in detected_metrics:
             for dep in getattr(m, "derives_from", None) or []:
@@ -1190,7 +1051,6 @@ class NLQueryEngine:
                 add_filter(m.filter_expression, f"{m.name} filter")
             extract_inline_sql_rules(m.business_rules, m.name)
 
-        # Check domain-level and federated policies strictly against active domains/targets
         all_policies = list(getattr(self.ontology, "policies", {}).values())
         for dom in self.ontology.domains.values():
             for pol in getattr(dom, "policies", None) or []:
@@ -1213,36 +1073,58 @@ class NLQueryEngine:
         primary_table: str,
         needed_concepts: Set[str],
         scoped_concepts: List[DomainConcept],
+        lexicon_dimensions: Optional[List[LexiconDimensionEntry]] = None,
         target_domain: Optional[str] = None,
         has_metrics: bool = True,
+        prompt_lemmas: Optional[Set[str]] = None,
     ) -> Tuple[Optional[DomainConcept], Optional[DomainAttribute]]:
-        """Find a date dimension attribute directly on or actively related to the metric's table.
-
-        Returns ``(concept, attribute)`` or ``(None, None)``; never scans outside the scoped
-        domain and never falls back to an assumed 'date' column.
-        """
+        """Find a date dimension attribute directly on or actively related to the metric's table."""
         by_name: Dict[str, DomainConcept] = {c.name.casefold(): c for c in scoped_concepts}
+        sv_allowed_pairs: Optional[Set[Tuple[str, str]]] = None
+        if lexicon_dimensions is not None:
+            sv_allowed_pairs = {
+                (de.concept.name.casefold(), de.attribute.name.casefold())
+                for de in lexicon_dimensions
+                if de.is_date
+            }
+
+        p_lems = prompt_lemmas or set()
 
         def pick_date_attr(c: DomainConcept) -> Optional[DomainAttribute]:
             date_attrs = [
                 a for a in c.attributes
                 if (a.data_type or "").split("(")[0].strip().upper() in self._DATE_TYPES
+                and (sv_allowed_pairs is None or (c.name.casefold(), a.name.casefold()) in sv_allowed_pairs)
             ]
             if not date_attrs:
                 return None
+            if p_lems:
+                verb_matched = [a for a in date_attrs if set(content_lemmas(a.name)) & p_lems]
+                if verb_matched:
+                    return verb_matched[0]
             exact = [a for a in date_attrs if a.name.casefold() == "date"]
             partial = [a for a in date_attrs if "date" in a.name.casefold()]
             return (exact or partial or date_attrs)[0]
 
-        # When metrics exist, anchor strictly on the metric's table (primary_table) so dimension tables
-        # shared by another fact table (e.g. Products -> Cases) don't inject an unrelated fact's date.
         anchor_names = (
             {primary_table.casefold()}
-            if has_metrics and primary_table and primary_table != "ANALYTICS"
+            if has_metrics and primary_table
             else {n.casefold() for n in needed_concepts} | ({primary_table.casefold()} if primary_table else set())
         )
 
-        # 1. Check active relationships within the domain linking anchor_names to a Date concept
+        # If the user specifically named a date verb/attribute (e.g. 'created' -> Case Created On), prefer direct match first
+        if p_lems and primary_table:
+            p_obj = by_name.get(primary_table.casefold())
+            if p_obj:
+                d_attrs = [
+                    a for a in p_obj.attributes
+                    if (a.data_type or "").split("(")[0].strip().upper() in self._DATE_TYPES
+                    and (sv_allowed_pairs is None or (p_obj.name.casefold(), a.name.casefold()) in sv_allowed_pairs)
+                    and (set(content_lemmas(a.name)) & p_lems)
+                ]
+                if d_attrs:
+                    return p_obj, d_attrs[0]
+
         dom_obj = next(
             (d for d in self.ontology.domains.values() if target_domain and d.domain.casefold() == target_domain.casefold()),
             None,
@@ -1259,8 +1141,7 @@ class NLQueryEngine:
                 if attr:
                     return by_name[linked_name], attr
 
-        # 2. Check date attribute directly on primary_table / anchor_names
-        check_order = [primary_table] if (has_metrics and primary_table != "ANALYTICS") else [primary_table, *sorted(needed_concepts)]
+        check_order = [primary_table] if has_metrics else [primary_table, *sorted(needed_concepts)]
         for cname in check_order:
             c_obj = by_name.get(cname.casefold())
             if c_obj:
@@ -1272,10 +1153,7 @@ class NLQueryEngine:
 
     @staticmethod
     def _quote_join_expression(expr: Optional[str]) -> Optional[str]:
-        """Quote identifiers with spaces in join condition parts (e.g. Accounts."Account Owner" = Owners."Sales owner").
-        
-        Prevents Snowflake/Databricks syntax errors when join predicates reference columns or tables with whitespace.
-        """
+        """Quote identifiers with spaces in join condition parts."""
         if not expr:
             return None
 

@@ -57,7 +57,11 @@ jobs:
 
       - name: Run Backend Regression Test Suite
         run: |
-          pytest Tests/test_scheduler_and_sync_modes.py Tests/test_job_runs_listing.py -v
+          pytest Tests/test_scheduler_and_sync_modes.py Tests/test_job_runs_listing.py Tests/test_blast_radius_and_linter.py Tests/test_golden_verifier.py Tests/test_nl_gold_benchmark.py -v
+
+      - name: Run Governance Quality Gate
+        run: |
+          python Tests/governance_tests/g09_cicd_gate.py --gate-only --direct --ontologies-dir Config/ontologies --changed --base-ref "${{ github.event.pull_request.base.ref || 'origin/main' }}" --max-errors 0 --steward-level warning --check-certifications
 
   frontend-quality-gate:
     name: "Gate 5: Frontend Production Bundle Build"
