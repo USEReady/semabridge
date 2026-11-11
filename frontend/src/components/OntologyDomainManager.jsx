@@ -95,7 +95,7 @@ export default function OntologyDomainManager() {
   const [govDomainDetail, setGovDomainDetail] = useState(null);
 
   // 2. Semantic Quality Linter
-  const [lintStewardSeverity, setLintStewardSeverity] = useState('ERROR'); // 'ERROR' | 'WARNING' | 'OFF'
+  const [lintStewardSeverity, setLintStewardSeverity] = useState('WARNING'); // 'ERROR' | 'WARNING' | 'OFF'
   const [lintRequireDesc, setLintRequireDesc] = useState(true);
   const [lintSnakeCase, setLintSnakeCase] = useState(true);
   const [lintReport, setLintReport] = useState(null);
@@ -2081,28 +2081,119 @@ export default function OntologyDomainManager() {
                         const issues = lintReport.issues || [];
                         const errorIssues = issues.filter((i) => i.severity === 'ERROR');
                         const nonErrorIssues = issues.filter((i) => i.severity !== 'ERROR');
-                        const groupMap = {};
-                        for (const iss of nonErrorIssues) {
-                          const domLabel = iss.domain || 'Global';
-                          const gKey = `${iss.rule_id}::${domLabel}`;
-                          if (!groupMap[gKey]) {
-                            groupMap[gKey] = {
-                              key: gKey,
-                              rule_id: iss.rule_id,
-                              domain: domLabel,
-                              severity: iss.severity,
-                              items: [],
-                            };
+
+                        const groupByRuleDomain = (list, prefix) => {
+                          const map = {};
+                          for (const iss of list) {
+                            const domLabel = iss.domain || 'Global';
+                            const gKey = `${prefix}:${iss.rule_id}::${domLabel}`;
+                            if (!map[gKey]) {
+                              map[gKey] = {
+                                key: gKey,
+                                rule_id: iss.rule_id,
+                                domain: domLabel,
+                                severity: iss.severity,
+                                items: [],
+                              };
+                            }
+                            map[gKey].items.push(iss);
                           }
-                          groupMap[gKey].items.push(iss);
-                        }
-                        const warningGroups = Object.values(groupMap).sort(
-                          (a, b) => b.items.length - a.items.length
+                          return Object.values(map).sort((a, b) => b.items.length - a.items.length);
+                        };
+
+                        const errorGroups = groupByRuleDomain(errorIssues, 'err');
+                        const warningGroups = groupByRuleDomain(nonErrorIssues, 'warn');
+
+                        const renderGroupSection = ({ title, titleClass, groups, totalCount, isErrorSection }) => (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`text-[10px] font-bold uppercase ${titleClass}`}>
+                                {title} ({groups.length} groups / {totalCount} items)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const anyOpen = groups.some((g) => expandedLintGroups[g.key]);
+                                  setExpandedLintGroups((prev) => {
+                                    const next = { ...prev };
+                                    groups.forEach((g) => {
+                                      next[g.key] = !anyOpen;
+                                    });
+                                    return next;
+                                  });
+                                }}
+                                className="text-[10px] font-semibold text-accent-blue hover:underline shrink-0"
+                              >
+                                {groups.some((g) => expandedLintGroups[g.key]) ? 'Collapse all' : 'Expand all'}
+                              </button>
+                            </div>
+                            <div className="space-y-1 max-h-60 overflow-y-auto">
+                              {groups.map((grp) => {
+                                const isOpen = Boolean(expandedLintGroups[grp.key]);
+                                const badgeStyle = isErrorSection
+                                  ? 'bg-red-500/15 text-red-300 border border-red-500/35'
+                                  : grp.severity === 'WARNING'
+                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                    : 'bg-blue-500/15 text-blue-300 border border-blue-500/30';
+                                return (
+                                  <div
+                                    key={grp.key}
+                                    className={`rounded bg-surface overflow-hidden border ${isErrorSection ? 'border-red-500/30' : 'border-main'}`}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedLintGroups((prev) => ({
+                                          ...prev,
+                                          [grp.key]: !prev[grp.key],
+                                        }))
+                                      }
+                                      className="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 text-left hover:bg-surface-hover transition-colors text-[11px]"
+                                    >
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        {isOpen ? (
+                                          <ChevronUp size={12} className="text-tertiary shrink-0" />
+                                        ) : (
+                                          <ChevronDown size={12} className="text-tertiary shrink-0" />
+                                        )}
+                                        <span className="font-mono font-bold text-primary shrink-0">{grp.rule_id}</span>
+                                        <span className="text-tertiary truncate" title={grp.domain}>
+                                          · {grp.domain}
+                                        </span>
+                                      </div>
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${badgeStyle}`}>
+                                        {grp.items.length} {grp.severity}
+                                      </span>
+                                    </button>
+                                    {isOpen && (
+                                      <div className="px-2.5 pb-2 pt-1 border-t border-main space-y-1 max-h-40 overflow-y-auto bg-surface-raised">
+                                        {grp.items.map((item, idx) => (
+                                          <div
+                                            key={idx}
+                                            className="text-[10px] flex flex-col gap-0.5 py-1 border-b border-main/40 last:border-b-0"
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="font-mono font-semibold text-primary">{item.object_name}</span>
+                                              <span className="text-tertiary uppercase shrink-0">{item.object_type}</span>
+                                            </div>
+                                            <span className="text-secondary">{item.message}</span>
+                                            {isErrorSection && item.remediation && (
+                                              <span className="text-emerald-400/90">Fix: {item.remediation}</span>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         );
 
                         return (
                           <div className="space-y-3">
-                            {errorIssues.length > 0 && (
+                            {errorIssues.length > 0 && errorIssues.length <= 5 && (
                               <div className="space-y-1.5">
                                 <span className="text-[10px] font-bold uppercase text-red-400 block">
                                   Blocking Errors ({errorIssues.length})
@@ -2118,7 +2209,7 @@ export default function OntologyDomainManager() {
                                           [{issue.rule_id}] {issue.object_name}
                                           {issue.domain ? ` · ${issue.domain}` : ''}
                                         </span>
-                                        <span className="text-[10px] font-bold uppercase text-red-400">
+                                        <span className="text-[10px] font-bold uppercase text-red-400 shrink-0">
                                           {issue.severity}
                                         </span>
                                       </div>
@@ -2134,80 +2225,23 @@ export default function OntologyDomainManager() {
                               </div>
                             )}
 
-                            {warningGroups.length > 0 && (
-                              <div className="space-y-1.5">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[10px] font-bold uppercase text-amber-300">
-                                    Warnings &amp; Info Summary by Rule &amp; Domain ({warningGroups.length} groups / {nonErrorIssues.length} items)
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const anyOpen = warningGroups.some((g) => expandedLintGroups[g.key]);
-                                      if (anyOpen) {
-                                        setExpandedLintGroups({});
-                                      } else {
-                                        const allOpen = {};
-                                        warningGroups.forEach((g) => {
-                                          allOpen[g.key] = true;
-                                        });
-                                        setExpandedLintGroups(allOpen);
-                                      }
-                                    }}
-                                    className="text-[10px] font-semibold text-accent-blue hover:underline"
-                                  >
-                                    {warningGroups.some((g) => expandedLintGroups[g.key]) ? 'Collapse all' : 'Expand all'}
-                                  </button>
-                                </div>
-                                <div className="space-y-1 max-h-60 overflow-y-auto">
-                                  {warningGroups.map((grp) => {
-                                    const isOpen = Boolean(expandedLintGroups[grp.key]);
-                                    return (
-                                      <div key={grp.key} className="rounded bg-surface border border-main overflow-hidden">
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setExpandedLintGroups((prev) => ({
-                                              ...prev,
-                                              [grp.key]: !prev[grp.key],
-                                            }))
-                                          }
-                                          className="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 text-left hover:bg-surface-hover transition-colors text-[11px]"
-                                        >
-                                          <div className="flex items-center gap-1.5 min-w-0">
-                                            {isOpen ? <ChevronUp size={12} className="text-tertiary shrink-0" /> : <ChevronDown size={12} className="text-tertiary shrink-0" />}
-                                            <span className="font-mono font-bold text-primary truncate">{grp.rule_id}</span>
-                                            <span className="text-tertiary truncate">· {grp.domain}</span>
-                                          </div>
-                                          <span
-                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
-                                              grp.severity === 'WARNING'
-                                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                                : 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
-                                            }`}
-                                          >
-                                            {grp.items.length} {grp.severity}
-                                          </span>
-                                        </button>
-                                        {isOpen && (
-                                          <div className="px-2.5 pb-2 pt-1 border-t border-main space-y-1 max-h-40 overflow-y-auto bg-surface-raised">
-                                            {grp.items.map((item, idx) => (
-                                              <div key={idx} className="text-[10px] flex flex-col gap-0.5 py-0.5 border-b border-main/40 last:border-b-0">
-                                                <div className="flex items-center justify-between gap-2">
-                                                  <span className="font-mono font-semibold text-primary">{item.object_name}</span>
-                                                  <span className="text-tertiary uppercase">{item.object_type}</span>
-                                                </div>
-                                                <span className="text-secondary">{item.message}</span>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
+                            {errorIssues.length > 5 &&
+                              renderGroupSection({
+                                title: 'Blocking Errors by Rule & Domain',
+                                titleClass: 'text-red-400',
+                                groups: errorGroups,
+                                totalCount: errorIssues.length,
+                                isErrorSection: true,
+                              })}
+
+                            {warningGroups.length > 0 &&
+                              renderGroupSection({
+                                title: 'Warnings & Info Summary by Rule & Domain',
+                                titleClass: 'text-amber-300',
+                                groups: warningGroups,
+                                totalCount: nonErrorIssues.length,
+                                isErrorSection: false,
+                              })}
                           </div>
                         );
                       })()}
