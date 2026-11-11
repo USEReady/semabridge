@@ -566,4 +566,66 @@ def check_table_name_collision_blocker(
     return None
 
 
+def detect_table_binding_warnings(
+    plan: List[Dict[str, Any]],
+    model_name: Optional[str] = None,
+    current_project_id: Optional[str] = None,
+    current_model_key: Optional[str] = None,
+    table_metadata: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Inspect planned table bindings and flag any binding to a table that
+    belongs to another model (bound by another project or created as another
+    project's placeholder) as a dry-run warning based on metadata (never a name prefix),
+    so the user confirms it.
+    """
+    bound_entries = [entry for entry in plan if entry.get("action") == "bind" and entry.get("table")]
+    if not bound_entries:
+        return plan
+
+    repo_bindings: Dict[str, str] = {}
+    try:
+        from semabridge.repository.model_repository import ModelRepository
+        from semabridge.repository.orm.models import TableBinding
+        from sqlalchemy import select
+        with ModelRepository()._session() as session:
+            rows = session.execute(select(TableBinding)).scalars().all()
+            for r in rows:
+                if current_project_id and r.project_id == current_project_id:
+                    continue
+                repo_bindings[r.table_name.upper()] = r.project_id
+    except Exception:
+        pass
+
+    for entry in bound_entries:
+        tbl = str(entry["table"]).upper()
+        warning = None
+
+        bound_proj = entry.get("bound_to_project") or entry.get("owner_project")
+        if bound_proj and (not current_project_id or bound_proj != current_project_id):
+            warning = f"Table '{entry['table']}' is bound by another project ('{bound_proj}'); confirmation required"
+        elif entry.get("is_placeholder") or entry.get("is_placeholder_table"):
+            warning = f"Table '{entry['table']}' was created as another project's placeholder; confirmation required"
+        elif entry.get("is_shared"):
+            warning = f"Table '{entry['table']}' is unprefixed/shared; confirmation required"
+
+        if not warning and table_metadata:
+            t_meta = table_metadata.get(entry["table"]) or table_metadata.get(tbl) or {}
+            meta_proj = t_meta.get("bound_project") or t_meta.get("project_id")
+            if meta_proj and (not current_project_id or meta_proj != current_project_id):
+                warning = f"Table '{entry['table']}' is bound by another project ('{meta_proj}'); confirmation required"
+            elif t_meta.get("is_placeholder"):
+                warning = f"Table '{entry['table']}' was created as another project's placeholder; confirmation required"
+
+        if not warning and tbl in repo_bindings:
+            other_p = repo_bindings[tbl]
+            warning = f"Table '{entry['table']}' is bound by another project ('{other_p}'); confirmation required"
+
+        if warning:
+            entry["warning"] = warning
+            logger.warning("Dry-run warning: %s", warning)
+
+    return plan
+
+
+
 

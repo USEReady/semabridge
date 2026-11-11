@@ -3202,6 +3202,18 @@ class DAXTranslator:
 
             # one function behind whatever DAX actually uses.
 
+            # DIVIDE([A], [B]) -> A / NULLIF(B, 0) referencing by name
+            m_div = self._DIVIDE_PATTERN.match(clean_expr)
+            if m_div:
+                num_ref = m_div.group(1).strip("[]")
+                den_ref = m_div.group(2).strip("[]")
+                num_sql = resolve_measure_sql(num_ref, visiting)
+                den_sql = resolve_measure_sql(den_ref, visiting)
+                if num_sql and den_sql:
+                    num_alias = to_alias(num_ref).upper()
+                    den_alias = to_alias(den_ref).upper()
+                    return f"{num_alias} / NULLIF({den_alias}, 0)"
+
             if self._has_function_call_outside_brackets(clean_expr):
 
                 return None
@@ -3219,7 +3231,9 @@ class DAXTranslator:
                     dep_sql = resolve_measure_sql(ref, visiting)
 
                     if not dep_sql or "CAST(NULL AS" in dep_sql.upper() or dep_sql.strip().upper() == "NULL":
-                        self._ast_render_errors.append(f"depends on untranslatable part: [{ref}]")
+                        dep_metric = metric_index.get((ref or "").strip().casefold())
+                        if dep_metric and (getattr(dep_metric, "is_placeholder", False) or getattr(dep_metric, "sync_enabled", True) is False):
+                            self._ast_render_errors.append(f"depends on untranslatable part: [{ref}]")
                         return None
 
                     measure_map[ref] = dep_sql

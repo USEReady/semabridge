@@ -243,7 +243,8 @@ class OSIToSMLConverter(BaseConverter):
             )
 
             # Step 3c: Collect unresolved metrics for Tier-5 batch fallback.
-            from semabridge.converter.dax_ast_parser import is_by_design_excluded
+            from semabridge.converter.dax_ast_parser import is_by_design_excluded, extract_measure_references_from_ast
+            all_metric_names = {m.unique_name.casefold() for m in sml.metrics if m.unique_name}
             tier5_candidates = []  # (metric_name, dax, table_alias, dataset_name)
             for sml_metric in sml.metrics:
                 if (
@@ -253,6 +254,16 @@ class OSIToSMLConverter(BaseConverter):
                     and not is_by_design_excluded(sml_metric.sync_failure_reason)
                 ):
                     dax = sml_metric.expression.strip()
+                    # Pure compositions of other measures (e.g. [A]-[B], DIVIDE([A],[B])) defer to
+                    # Step 3e so they reference dependencies by name rather than forcing LLM inlining.
+                    refs = list(extract_measure_references_from_ast(dax))
+                    is_pure_composite = (
+                        bool(refs)
+                        and all(r.casefold() in all_metric_names for r in refs)
+                        and not any(func in dax.upper() for func in ("CALCULATE", "SUMX", "AVERAGEX", "COUNTX", "MINX", "MAXX", "FILTER", "ALL", "ALLEXCEPT", "VALUES"))
+                    )
+                    if is_pure_composite:
+                        continue
                     table_alias = to_alias(sml_metric.dataset)
                     tier5_candidates.append((sml_metric.unique_name, dax, table_alias, sml_metric.dataset))
 
@@ -574,6 +585,10 @@ class OSIToSMLConverter(BaseConverter):
 
         # DAX Translation Logic
         expression = osi_metric.expression or ""
+        if (not expression or not str(expression).strip()) and osi_metric.source_column:
+            agg_name = str(getattr(osi_metric.aggregation, "value", osi_metric.aggregation) or "SUM").upper()
+            ds_name = osi_metric.dataset or ""
+            expression = f"{agg_name}('{ds_name}'[{osi_metric.source_column}])" if ds_name else f"{agg_name}([{osi_metric.source_column}])"
         if not expression or not str(expression).strip():
             sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
             return SMLMetric(

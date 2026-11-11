@@ -460,24 +460,33 @@ class TMSLToOSIConverter(BaseConverter):
                 if agg_str == "NONE":
                     agg_str = ""
                 expr = getattr(m, "expression", "") or ""
-                m_match = re.search(r'^(SUM|AVG|AVERAGE|MIN|MAX|COUNT)\s*\(\s*(?:[\'"][^\'"]+[\'"]\[|\[)?([^\s\]]+)\]?\s*\)$', expr, re.IGNORECASE)
-                if m_match:
-                    if not agg_str:
-                        agg_fn = m_match.group(1).upper()
-                        agg_str = "AVG" if agg_fn == "AVERAGE" else agg_fn
-                    col_ref = m_match.group(2).upper()
-                    covered_measure_keys.add((col_ref, agg_str))
+                for fn, col_ref in re.findall(r'\b(SUM|AVG|AVERAGE|MIN|MAX|COUNT)\s*\(\s*(?:[\'"][^\'"]+[\'"]\[|\[)?([A-Za-z0-9_ ]+)\]?', expr, re.IGNORECASE):
+                    c_clean = col_ref.strip().upper()
+                    fn_clean = "AVG" if fn.upper() == "AVERAGE" else fn.upper()
+                    covered_measure_keys.add((c_clean, fn_clean))
                     if m.dataset:
-                        covered_measure_keys.add((m.dataset.upper(), col_ref, agg_str))
-                elif agg_str and m.source_column:
+                        covered_measure_keys.add((m.dataset.upper(), c_clean, fn_clean))
+                if agg_str and m.source_column:
                     covered_measure_keys.add((m.source_column.upper(), agg_str))
                     if m.dataset:
                         covered_measure_keys.add((m.dataset.upper(), m.source_column.upper(), agg_str))
 
+            # Build set of relationship keys (foreign keys and primary keys)
+            rel_keys: Set[Tuple[str, str]] = set()
+            for r in osi_model.relationships:
+                if r.from_dataset:
+                    for fc in (r.from_columns or []):
+                        rel_keys.add((r.from_dataset.upper(), fc.upper()))
+                if r.to_dataset:
+                    for tc in (r.to_columns or []):
+                        rel_keys.add((r.to_dataset.upper(), tc.upper()))
+
             # Populate implicit metrics for visible numeric columns on fact tables
             for dataset in osi_model.datasets:
                 is_fact = dataset.unique_name in fact_datasets or getattr(dataset, "is_fact", False)
-                for metric in self._create_metrics_from_aggregation_columns(dataset, is_fact=is_fact, covered=covered_measure_keys):
+                for metric in self._create_metrics_from_aggregation_columns(
+                    dataset, is_fact=is_fact, covered=covered_measure_keys, rel_keys=rel_keys
+                ):
                     osi_model.metrics.append(metric)
 
             # Model-level objects Snowflake semantic views cannot represent.
@@ -1028,6 +1037,7 @@ class TMSLToOSIConverter(BaseConverter):
         dataset: OSIDataset,
         is_fact: bool = False,
         covered: Optional[Set[Tuple[str, str]]] = None,
+        rel_keys: Optional[Set[Tuple[str, str]]] = None,
     ) -> List[OSIMetric]:
         """Create OSI metrics for Fabric columns with summarizeBy aggregation."""
         if not is_fact or getattr(dataset, "is_hidden", False):
@@ -1036,9 +1046,13 @@ class TMSLToOSIConverter(BaseConverter):
         metrics: List[OSIMetric] = []
         seen: set[str] = set()
         covered_set = covered or set()
+        key_set = rel_keys or set()
 
         for col in dataset.columns:
             if col.is_hidden or getattr(col, "is_key", False):
+                continue
+
+            if (dataset.unique_name.upper(), col.unique_name.upper()) in key_set:
                 continue
 
             dtype = getattr(col, "data_type", None)
@@ -1072,7 +1086,7 @@ class TMSLToOSIConverter(BaseConverter):
                     label=col.label or metric_name,
                     dataset=dataset.unique_name,
                     source_column=col.unique_name,
-                    expression=None,
+                    expression=f"{agg_str}('{dataset.unique_name}'[{col.unique_name}])",
                     aggregation=aggregation,
                     description=col.description,
                     format_string=col.format_string,
@@ -1347,9 +1361,9 @@ class TMSLToOSIConverter(BaseConverter):
         if not normalized or normalized in ("none", "default"):
             return None
         int_map = {
-            "0": None, "1": None, "2": OSIAggregationType.SUM, "3": OSIAggregationType.MIN,
-            "4": OSIAggregationType.MAX, "5": OSIAggregationType.COUNT, "6": OSIAggregationType.AVG,
-            "7": OSIAggregationType.COUNT_DISTINCT,
+            "0": None, "1": None, "2": None, "3": OSIAggregationType.SUM, "4": OSIAggregationType.MIN,
+            "5": OSIAggregationType.MAX, "6": OSIAggregationType.COUNT, "7": OSIAggregationType.AVG,
+            "8": OSIAggregationType.COUNT_DISTINCT,
         }
         if normalized in int_map:
             return int_map[normalized]

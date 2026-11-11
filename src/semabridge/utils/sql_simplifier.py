@@ -95,21 +95,27 @@ def simplify_sql_expression(sql: str) -> str:
         )
 
         # 6. Dead multiplication by 0:
-        # expr * 0 / 100 -> 0
+        # expr * 0 / 100 -> CASE WHEN expr IS NULL THEN NULL ELSE 0 END (preserving NULL semantics)
+        def _simplify_zero_mul_div(match: re.Match) -> str:
+            expr = match.group(1).strip()
+            if re.match(r'^\(?\d+(?:\.\d+)?\)?$', expr):
+                return "0"
+            return f"CASE WHEN {expr} IS NULL THEN NULL ELSE 0 END"
+
         res = re.sub(
-            r'^.+?\s*\*\s*0(?:\.0+)?\s*/\s*[1-9]\d*(?:\.\d+)?$',
-            '0',
+            r'^(.+?)\s*\*\s*0(?:\.0+)?\s*/\s*[1-9]\d*(?:\.\d+)?$',
+            _simplify_zero_mul_div,
             res,
         )
-        # expr * 0 -> 0, 0 * expr -> 0
+        # expr * 0 -> CASE WHEN expr IS NULL THEN NULL ELSE 0 END
         res = re.sub(
-            r'^.+?\s*\*\s*0(?:\.0+)?$',
-            '0',
+            r'^(.+?)\s*\*\s*0(?:\.0+)?$',
+            _simplify_zero_mul_div,
             res,
         )
         res = re.sub(
-            r'^0(?:\.0+)?\s*\*\s*.+?$',
-            '0',
+            r'^0(?:\.0+)?\s*\*\s*(.+?)$',
+            _simplify_zero_mul_div,
             res,
         )
 

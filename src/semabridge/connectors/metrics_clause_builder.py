@@ -812,6 +812,20 @@ class MetricsClauseBuilder:
                     safe_comment = self._clean_comment(f"Window metric over {part_text}" if part_text else "Window metric")
                 comment_clause = f" COMMENT = '{safe_comment}'"
 
+            elif "LAG(" in expr.upper() or "LEAD(" in expr.upper():
+                grain = "period"
+                for u in ("YEAR", "MONTH", "QUARTER", "WEEK", "DAY"):
+                    if u in expr.upper() or (getattr(metric, "expression", None) and u in str(metric.expression).upper()):
+                        grain = u.capitalize()
+                        break
+                if grain == "period" and "SPLY" in str(getattr(metric, "unique_name", "")).upper():
+                    grain = "Year"
+                safe_comment = self._clean_comment(
+                    f"Window metric tied to {grain} grain. Requires grouping by {grain}; "
+                    f"queries at another grain must not silently return the previous row."
+                )
+                comment_clause = f" COMMENT = '{safe_comment}'"
+
             elif any(f"IS_CURRENT_{u}" in expr.upper() for u in ("MONTH", "YEAR", "QUARTER", "DAY")):
                 for u in ("MONTH", "YEAR", "QUARTER", "DAY"):
                     if f"IS_CURRENT_{u}" in expr.upper():
@@ -855,21 +869,36 @@ class MetricsClauseBuilder:
 
             # Metrics built from other metrics reference them by name without table qualifier on LHS:
             # e.g. TO_PCT AS SEPS / NULLIF(ACTIVES, 0)
+            expr_no_cols = re.sub(r'[A-Za-z0-9_"]+\s*\.\s*"?[A-Za-z0-9_]+"?', ' ', expr)
+            tokens_in_expr = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr_no_cols))
             is_referencing_metrics = False
             for cand_m in emittable_metric_name_set | set(metric_to_alias.keys()):
-                if cand_m.upper() != safe_metric_name.upper() and re.search(r'\b' + re.escape(cand_m) + r'\b', expr, re.IGNORECASE):
+                if cand_m.upper() != safe_metric_name.upper() and cand_m in tokens_in_expr:
                     is_referencing_metrics = True
                     break
 
             if is_referencing_metrics or is_referencing_non_additive:
                 lhs_target = safe_metric_name if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', safe_metric_name) else f'"{safe_metric_name}"'
                 all_known_metric_names = emittable_metric_name_set | set(metric_to_alias.keys()) | metric_name_set
+                col_lookup = getattr(self, "_dataset_col_lookup", {}) or {}
+                ds_aliases = getattr(self, "_dataset_aliases", {}) or {}
+                a_to_ds = {str(v).upper(): k for k, v in ds_aliases.items()}
+                a_to_ds.update({str(k).upper(): k for k in ds_aliases.keys()})
+
+                def _strip_metric_prefix(match):
+                    t_alias = match.group(1).strip('"')
+                    m_name = (match.group(2) or match.group(3)).strip('"')
+                    ds = a_to_ds.get(t_alias.upper())
+                    known_cols = {c.upper() for c in col_lookup.get(ds, set())} if ds else set()
+                    if m_name.upper() in known_cols:
+                        return match.group(0)
+                    return m_name if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', m_name) else f'"{m_name}"'
+
                 for cand_m in all_known_metric_names:
                     if cand_m.upper() != safe_metric_name.upper():
-                        cand_ref = cand_m if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', cand_m) else f'"{cand_m}"'
                         expr = re.sub(
-                            rf'(?:"?[A-Za-z_][A-Za-z0-9_$]*"?\.)+(?:"{re.escape(cand_m)}"|\b{re.escape(cand_m)}\b)',
-                            cand_ref,
+                            rf'(?:"?([A-Za-z_][A-Za-z0-9_$]*)"?\.)+(?:"({re.escape(cand_m)})"|\b({re.escape(cand_m)})\b)',
+                            _strip_metric_prefix,
                             expr,
                             flags=re.IGNORECASE,
                         )
@@ -2316,7 +2345,8 @@ class MetricsClauseBuilder:
                 lhs_alias = f'{alias}.' if alias else ""
                 lhs = f'{priv}{lhs_alias}"{name}"' if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name) or alias else f'{priv}{name}'
 
-                tokens = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr)) | set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr))
+                expr_no_cols = re.sub(r'[A-Za-z0-9_"]+\s*\.\s*"?[A-Za-z0-9_]+"?', ' ', expr)
+                tokens = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr_no_cols))
                 metric_refs = [r for r in tokens if r in metric_name_set and r != name]
 
                 # 1. Fail-closed: a reference to an undefined metric emits NULL placeholder;

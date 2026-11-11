@@ -290,6 +290,48 @@ class QueryValidator:
             return False, "GROUP BY should use table.column format"
         
         return True, None
+
+    @staticmethod
+    def validate_metric_grain(
+        metric_name: str,
+        metric_sql: str,
+        group_by_clause: Optional[str],
+        comment: Optional[str] = None
+    ) -> Tuple[bool, Optional[str]]:
+        """Validate that a window metric's required grain matches the query's GROUP BY.
+        
+        Per-row SPLY / PREVIOUSMONTH / DATEADD windows are tied to their period (year, month...).
+        A query at another grain must not silently return the previous row.
+        """
+        if not group_by_clause:
+            return True, None
+            
+        grp_upper = group_by_clause.upper()
+        sql_upper = (metric_sql or "").upper()
+        comm_upper = (comment or "").upper()
+        m_name_upper = metric_name.upper()
+        
+        # Check if metric is tied to Year grain (e.g. SPLY, PREVIOUSYEAR, or commented as Year grain)
+        is_year_grain = (
+            "YEAR" in comm_upper or "SPLY" in m_name_upper or "SPLY" in sql_upper
+            or "PREVIOUSYEAR" in sql_upper
+        ) and ("LAG(" in sql_upper or "OVER" in sql_upper or "WINDOW METRIC" in comm_upper)
+        
+        if is_year_grain:
+            if any(sub in grp_upper for sub in ("MONTH", "WEEK", "DAY", "DATE")) and "YEAR" not in grp_upper:
+                return False, f"Metric '{metric_name}' is tied to Year grain; grouping by '{group_by_clause}' would silently return the previous row"
+                
+        # Check if metric is tied to Month grain (e.g. PREVIOUSMONTH or commented as Month grain)
+        is_month_grain = (
+            "MONTH" in comm_upper or "PREVIOUSMONTH" in m_name_upper or "PREVIOUSMONTH" in sql_upper
+            or "_PM" in m_name_upper
+        ) and ("LAG(" in sql_upper or "OVER" in sql_upper or "WINDOW METRIC" in comm_upper)
+        
+        if is_month_grain:
+            if any(sub in grp_upper for sub in ("WEEK", "DAY", "DATE")) and "MONTH" not in grp_upper:
+                return False, f"Metric '{metric_name}' is tied to Month grain; grouping by '{group_by_clause}' would silently return the previous row"
+                
+        return True, None
     
     @staticmethod
     def validate_full_query(full_sql: str) -> Tuple[bool, Optional[str]]:
@@ -317,7 +359,8 @@ class QueryValidator:
     def validate_entire_query(
         select_clause: str,
         joins: List[str],
-        group_by_clause: Optional[str] = None
+        group_by_clause: Optional[str] = None,
+        metrics: Optional[List[TranslatedMetric]] = None,
     ) -> Tuple[bool, List[str]]:
         """
         Comprehensive query validation.
@@ -342,6 +385,13 @@ class QueryValidator:
             valid, error = QueryValidator.validate_group_by(group_by_clause)
             if not valid:
                 errors.append(f"GROUP BY: {error}")
+
+        # Validate metric grain
+        if metrics and group_by_clause:
+            for m in metrics:
+                ok, err = QueryValidator.validate_metric_grain(m.name, m.sql_expression, group_by_clause)
+                if not ok and err:
+                    errors.append(f"GRAIN: {err}")
         
         return len(errors) == 0, errors
 
@@ -488,7 +538,8 @@ class QueryBuilder:
         is_valid, errors = self.validator.validate_entire_query(
             select_clause,
             joins,
-            group_by_clause
+            group_by_clause,
+            metrics=metrics,
         )
         
         if not is_valid:

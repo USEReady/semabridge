@@ -14,9 +14,9 @@ from semabridge.utils.sql_simplifier import simplify_sql_expression
 @pytest.mark.parametrize(
     "raw_sql, expected_sql",
     [
-        # Dead multiplication by 0 with division
-        ("SUM(Sales.Amount) * 0 / 100", "0"),
-        ("(SUM(Sales.Amount)) * 0 / 100", "0"),
+        # Dead multiplication by 0 with division preserving NULL semantics
+        ("SUM(Sales.Amount) * 0 / 100", "CASE WHEN SUM(Sales.Amount) IS NULL THEN NULL ELSE 0 END"),
+        ("(SUM(Sales.Amount)) * 0 / 100", "CASE WHEN (SUM(Sales.Amount)) IS NULL THEN NULL ELSE 0 END"),
         # Dead addition / subtraction of 0
         ("SUM(Sales.Amount) + 0", "SUM(Sales.Amount)"),
         ("0 + SUM(Sales.Amount)", "SUM(Sales.Amount)"),
@@ -45,8 +45,42 @@ from semabridge.utils.sql_simplifier import simplify_sql_expression
         ("SUM(Sales.Amount) * 1", "SUM(Sales.Amount)"),
         ("1 * SUM(Sales.Amount)", "SUM(Sales.Amount)"),
         ("SUM(Sales.Amount) / 1", "SUM(Sales.Amount)"),
+        # NULL and empty string handling
+        (None, None),
+        ("", ""),
+        ("   ", ""),
+        ("NULL", "NULL"),
+        ("CAST(NULL AS DOUBLE)", "CAST(NULL AS DOUBLE)"),
     ],
 )
-def test_sql_simplification_before_after(raw_sql: str, expected_sql: str):
+def test_sql_simplification_before_after(raw_sql: str | None, expected_sql: str | None):
     simplified = simplify_sql_expression(raw_sql)
     assert simplified == expected_sql, f"Expected '{expected_sql}', got '{simplified}' from '{raw_sql}'"
+
+
+def test_null_semantics_with_sqlite():
+    """Point 7: NULL test: x * 0 / 100 with x NULL keeps NULL semantics."""
+    import sqlite3
+
+    con = sqlite3.connect(":memory:")
+    cur = con.cursor()
+    cur.execute("CREATE TABLE test (x DOUBLE)")
+    cur.execute("INSERT INTO test VALUES (NULL), (42.0)")
+
+    # When x is NULL, raw evaluation yields NULL
+    cur.execute("SELECT x * 0 / 100 FROM test WHERE x IS NULL")
+    assert cur.fetchone()[0] is None
+
+    # Simplified expression must preserve NULL when x is NULL
+    simplified = simplify_sql_expression("x * 0 / 100")
+    cur.execute(f"SELECT {simplified} FROM test WHERE x IS NULL")
+    assert cur.fetchone()[0] is None
+
+    # When x is non-NULL (42.0), both raw and simplified return 0
+    cur.execute("SELECT x * 0 / 100 FROM test WHERE x IS NOT NULL")
+    assert cur.fetchone()[0] == 0.0
+    cur.execute(f"SELECT {simplified} FROM test WHERE x IS NOT NULL")
+    assert cur.fetchone()[0] == 0.0
+
+
+

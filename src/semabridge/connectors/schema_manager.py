@@ -289,6 +289,7 @@ class SnowflakeSchemaManager:
         from semabridge.connectors.table_binding_resolver import (
             clean_ident,
             resolve_dataset_to_physical_table,
+            detect_table_binding_warnings,
         )
 
         self._execute_sql(cursor, f"SHOW TABLES IN SCHEMA {self._schema_fqn()}", context="SHOW TABLES")
@@ -345,6 +346,7 @@ class SnowflakeSchemaManager:
                     "matched_by": None,
                     "tie": [],
                 })
+        detect_table_binding_warnings(plan, model_name=model_name)
         return plan
 
     def _ensure_source_tables_exist(self, cursor, sml: SMLModel) -> None:
