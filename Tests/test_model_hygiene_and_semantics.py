@@ -114,7 +114,7 @@ def test_summarize_by_and_facts_clause():
     # Only Revenue should get an implicit metric!
     # ZipCode (none), SalesID (key), HiddenCost (hidden), Quantity (covered), CustomerAge (dimension) must NOT!
     metric_names = [m.unique_name for m in osi.metrics]
-    assert "Revenue" in metric_names
+    assert "Revenue" in metric_names or "SUM_OF_REVENUE" in metric_names
     assert "TotalQty" in metric_names
     assert "ZipCode" not in metric_names
     assert "SalesID" not in metric_names

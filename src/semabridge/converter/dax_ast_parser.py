@@ -5834,8 +5834,9 @@ class DaxSqlRenderer:
                         base_flag = self.anchor_flag_map[(cand,)]
                         break
 
-        # Check if window enrichment was explicitly requested and no anchor flag is present
-        if getattr(self, "allow_window_enrichment", False) and not base_flag and not self.anchor_flag_map:
+        # Time intelligence Option C: emit window metric for primary metric; _LATEST companion uses anchored flags
+        is_latest_companion = (getattr(self, "current_measure_name", "") or "").upper().endswith("_LATEST")
+        if getattr(self, "allow_window_enrichment", False) and not is_latest_companion:
             if isinstance(agg_node, (MeasureRefNode, IdentifierNode)):
                 inner_sql = to_alias(agg_node.name).upper()
             else:
@@ -5848,10 +5849,25 @@ class DaxSqlRenderer:
             unit_label = interval.capitalize()
             self.comparison_unit = interval.lower()
             self.comparison_comment = (
-                f"Window metric for {func_name or interval} tied to {unit_label} grain. "
+                f"Window metric tied to {unit_label} grain. "
                 f"Requires grouping by {unit_label}; queries at another grain must not silently return the previous row."
             )
-            return f"{window_fn}({inner_sql}, {offset}) OVER (ORDER BY {date_col})"
+            order_col = date_col
+            if unit == "YEAR" and getattr(self, "datasets", None):
+                date_ds = next((ds for ds in self.datasets if to_alias(getattr(ds, "unique_name", "")).upper() == (self.date_alias or "").upper()), None)
+                if date_ds:
+                    yr_col = next((getattr(c, "unique_name", "") for c in getattr(date_ds, "columns", []) if getattr(c, "unique_name", "").upper() in ("YEAR", "CALENDARYEAR", "FISCALYEAR")), None)
+                    if yr_col:
+                        order_col = f'{self.date_alias}."{sanitize_column(yr_col)}"'
+            elif unit == "MONTH" and getattr(self, "datasets", None):
+                date_ds = next((ds for ds in self.datasets if to_alias(getattr(ds, "unique_name", "")).upper() == (self.date_alias or "").upper()), None)
+                if date_ds:
+                    mo_col = next((getattr(c, "unique_name", "") for c in getattr(date_ds, "columns", []) if getattr(c, "unique_name", "").upper() in ("MONTH", "MONTHNUMBER", "MONTH_NO")), None)
+                    if mo_col:
+                        order_col = f'{self.date_alias}."{sanitize_column(mo_col)}"'
+            return f"{window_fn}({inner_sql}, {offset}) OVER (ORDER BY {order_col})"
+
+        self.comparison_comment = "Latest period vs previous period (anchored on the latest date in the data)"
 
         def _inline_condition() -> str:
             if unit == "DAY":
@@ -6034,6 +6050,7 @@ def try_ast_translate(
     model_metadata: Optional[Any] = None,
     dataset_col_lookup: Optional[Dict[str, Any]] = None,
     render_errors: Optional[List[str]] = None,
+    current_measure_name: Optional[str] = None,
 ) -> Optional[str]:
 
     """
@@ -6171,7 +6188,7 @@ def try_ast_translate(
 
         model_metadata=model_metadata,
         dataset_col_lookup=dataset_col_lookup,
-
+        current_measure_name=current_measure_name,
     )
 
     sql = renderer.render(ast)

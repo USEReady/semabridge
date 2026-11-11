@@ -568,15 +568,18 @@ class MetricsClauseBuilder:
                     if (" OVER " in _up or " OVER(" in _up or "PARTITION BY" in _up) and not any(
                         t in _up for t in (" SELECT ", " FROM ", " JOIN ", " WITH ", " UNION ")
                     ):
-                        # e.g. ALLEXCEPT -> SUM(x) OVER (PARTITION BY col): DAX keeps
-                        # only some filters, which a semantic-view metric can only
-                        # express as OVER (PARTITION BY EXCLUDING <dimensions>).
-                        failure = (
-                            "not applicable: window calculation that keeps only some filters "
-                            "(e.g. ALLEXCEPT) — Snowflake semantic-view metrics only support "
-                            "window metrics of the form OVER (PARTITION BY EXCLUDING <dimensions>)",
-                            expr[:200],
-                        )
+                        if "LAG(" in _up or "LEAD(" in _up:
+                            pass
+                        else:
+                            # e.g. ALLEXCEPT -> SUM(x) OVER (PARTITION BY col): DAX keeps
+                            # only some filters, which a semantic-view metric can only
+                            # express as OVER (PARTITION BY EXCLUDING <dimensions>).
+                            failure = (
+                                "not applicable: window calculation that keeps only some filters "
+                                "(e.g. ALLEXCEPT) — Snowflake semantic-view metrics only support "
+                                "window metrics of the form OVER (PARTITION BY EXCLUDING <dimensions>)",
+                                expr[:200],
+                            )
                     else:
                         failure = (
                             "Translated SQL contains a non-scalar construct (SELECT/JOIN/CTE), "
@@ -811,6 +814,9 @@ class MetricsClauseBuilder:
                     part_text = m_part.group(1).strip().replace('"', "") if m_part else ""
                     safe_comment = self._clean_comment(f"Window metric over {part_text}" if part_text else "Window metric")
                 comment_clause = f" COMMENT = '{safe_comment}'"
+
+            elif safe_metric_name.endswith("_LATEST") or getattr(metric, "unique_name", "").endswith("_LATEST"):
+                comment_clause = " COMMENT = 'Latest period vs previous period (anchored on the latest date in the data)'"
 
             elif "LAG(" in expr.upper() or "LEAD(" in expr.upper():
                 grain = "period"
@@ -1142,7 +1148,7 @@ class MetricsClauseBuilder:
         if not expr or "{" in expr or "}" in expr:
             return False
         upper = f" {expr.upper()} "
-        if "PARTITION BY EXCLUDING" in upper:
+        if "PARTITION BY EXCLUDING" in upper or "LAG(" in upper or "LEAD(" in upper:
             forbidden = (
                 " SELECT ",
                 " FROM ",
@@ -2387,12 +2393,20 @@ class MetricsClauseBuilder:
                 # Check for window metric reference in other expression definitions (Snowflake Error 010258)
                 window_ref = next((r for r in metric_refs if r in window_metrics), None)
                 if window_ref and expr.strip().upper() != NULL_PLACEHOLDER_SQL:
-                    reason = f"depends on window metric: [{window_ref}] (cannot be used in other expression definitions)"
-                    safe_comm = self._clean_comment(reason)
-                    next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
-                    comment_by_name[name] = reason
-                    rewritten = True
-                    continue
+                    companion_name = f"{window_ref}_LATEST"
+                    if companion_name in defined or companion_name in metric_name_set:
+                        expr = re.sub(rf'\b{re.escape(window_ref)}\b', companion_name, expr)
+                        expr_no_cols = re.sub(r'[A-Za-z0-9_"]+\s*\.\s*"?[A-Za-z0-9_]+"?', ' ', expr)
+                        tokens = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr_no_cols))
+                        metric_refs = [r for r in tokens if r in metric_name_set and r != name]
+                        rewritten = True
+                    else:
+                        reason = f"depends on window metric: [{window_ref}] (cannot be used in other expression definitions)"
+                        safe_comm = self._clean_comment(reason)
+                        next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
+                        comment_by_name[name] = reason
+                        rewritten = True
+                        continue
 
                 if expr.strip().upper() == NULL_PLACEHOLDER_SQL or "CAST(NULL AS DOUBLE)" in expr.upper():
                     if not comment_text:

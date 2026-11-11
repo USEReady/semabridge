@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -440,17 +441,23 @@ class TMSLToOSIConverter(BaseConverter):
             if not osi_model.relationships and osi_model.datasets and infer_rels:
                 self._infer_fallback_relationships(osi_model, valid_dataset_map)
 
-            # Determine fact tables: every table on the many side of a relationship
+            # Determine fact tables: only the many side of an ACTIVE MANY-TO-ONE relationship makes a table a fact (not one-to-one, not inactive)
             fact_datasets: Set[str] = set()
             for r in osi_model.relationships:
+                is_active = getattr(r, "is_active", True)
+                if is_active is False:
+                    continue
                 card = getattr(r, "cardinality", None)
                 card_val = str(getattr(card, "value", card) or "").lower()
                 if "one_to_many" in card_val or "one-to-many" in card_val:
                     if r.to_dataset:
                         fact_datasets.add(r.to_dataset)
-                else:
+                elif "many_to_one" in card_val or "many-to-one" in card_val:
                     if r.from_dataset:
                         fact_datasets.add(r.from_dataset)
+
+            for dataset in osi_model.datasets:
+                dataset.is_fact = dataset.unique_name in fact_datasets
 
             # Build set of columns already covered by DAX measures with the same aggregation
             covered_measure_keys: Set[Tuple[str, str]] = set()
@@ -481,13 +488,44 @@ class TMSLToOSIConverter(BaseConverter):
                     for tc in (r.to_columns or []):
                         rel_keys.add((r.to_dataset.upper(), tc.upper()))
 
+            # Count how many fact tables contain each visible numeric candidate column
+            fact_col_counts: Counter = Counter()
+            for ds in osi_model.datasets:
+                if ds.unique_name in fact_datasets:
+                    for c in ds.columns:
+                        if not c.is_hidden and not getattr(c, "is_key", False):
+                            fact_col_counts[c.unique_name.upper()] += 1
+
             # Populate implicit metrics for visible numeric columns on fact tables
             for dataset in osi_model.datasets:
-                is_fact = dataset.unique_name in fact_datasets or getattr(dataset, "is_fact", False)
+                is_fact = dataset.unique_name in fact_datasets
                 for metric in self._create_metrics_from_aggregation_columns(
-                    dataset, is_fact=is_fact, covered=covered_measure_keys, rel_keys=rel_keys
+                    dataset, is_fact=is_fact, covered=covered_measure_keys, rel_keys=rel_keys,
+                    fact_col_counts=fact_col_counts,
                 ):
                     osi_model.metrics.append(metric)
+
+            # Option C: emit companion "<NAME>_LATEST" for time-intelligence metrics
+            ti_pattern = re.compile(r'\b(SAMEPERIODLASTYEAR|PREVIOUSMONTH|PREVIOUSYEAR|PREVIOUSQUARTER|PREVIOUSDAY|DATEADD)\b', re.IGNORECASE)
+            companion_metrics: List[OSIMetric] = []
+            for m in list(osi_model.metrics):
+                expr_str = getattr(m, "expression", "") or ""
+                if ti_pattern.search(expr_str) and not m.unique_name.endswith("_LATEST"):
+                    companion = OSIMetric(
+                        unique_name=f"{m.unique_name}_LATEST",
+                        label=f"{m.label or m.unique_name} (Latest)",
+                        dataset=m.dataset,
+                        source_column=m.source_column,
+                        expression=m.expression,
+                        aggregation=m.aggregation,
+                        description="Latest period vs previous period (anchored on the latest date in the data)",
+                        format_string=m.format_string,
+                        is_hidden=False,
+                        access_modifier="public_access",
+                        synonyms=list(getattr(m, "synonyms", []) or []),
+                    )
+                    companion_metrics.append(companion)
+            osi_model.metrics.extend(companion_metrics)
 
             # Model-level objects Snowflake semantic views cannot represent.
             self._record_roles(model_obj, osi_model)
@@ -1038,6 +1076,7 @@ class TMSLToOSIConverter(BaseConverter):
         is_fact: bool = False,
         covered: Optional[Set[Tuple[str, str]]] = None,
         rel_keys: Optional[Set[Tuple[str, str]]] = None,
+        fact_col_counts: Optional[Counter] = None,
     ) -> List[OSIMetric]:
         """Create OSI metrics for Fabric columns with summarizeBy aggregation."""
         if not is_fact or getattr(dataset, "is_hidden", False):
@@ -1075,7 +1114,16 @@ class TMSLToOSIConverter(BaseConverter):
             if col_key in covered_set or col_key_bare in covered_set:
                 continue
 
-            metric_name = col.unique_name
+            # Item 3: Implicit metric names SUM_OF_<COLUMN> / AVG_OF_<COLUMN> etc., never collision suffixes like _3 or _3_2.
+            # If the column appears in multiple fact tables, qualify with dataset name to avoid collision.
+            base_metric_name = f"{agg_str}_OF_{col.unique_name.upper()}"
+            if fact_col_counts and fact_col_counts.get(col.unique_name.upper(), 0) > 1:
+                metric_name = f"{agg_str}_OF_{dataset.unique_name.upper()}_{col.unique_name.upper()}"
+                metric_label = f"{agg_str.title()} of {dataset.unique_name} {col.label or col.unique_name}"
+            else:
+                metric_name = base_metric_name
+                metric_label = f"{agg_str.title()} of {col.label or col.unique_name}"
+
             metric_key = metric_name.casefold()
             if metric_key in seen:
                 continue
@@ -1083,7 +1131,7 @@ class TMSLToOSIConverter(BaseConverter):
             metrics.append(
                 OSIMetric(
                     unique_name=metric_name,
-                    label=col.label or metric_name,
+                    label=metric_label,
                     dataset=dataset.unique_name,
                     source_column=col.unique_name,
                     expression=f"{agg_str}('{dataset.unique_name}'[{col.unique_name}])",

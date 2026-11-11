@@ -580,18 +580,22 @@ class TMSLTransformer:
         )
         scores = engine.classify()
         
-        for ds in sml.datasets:
-            score = scores.get(ds.unique_name)
-            if score:
-                # Force Dimensions by regex override still useful
-                if is_dimension_like_name(ds.unique_name):
-                     ds.is_fact = False
-                     continue
+        fact_datasets = set()
+        for r in sml.relationships:
+            is_active = getattr(r, "is_active", True)
+            if is_active is False:
+                continue
+            card = getattr(r, "cardinality", None)
+            card_val = str(getattr(card, "value", card) or "").lower()
+            if "one_to_many" in card_val or "one-to-many" in card_val:
+                if r.to_dataset:
+                    fact_datasets.add(r.to_dataset)
+            elif "many_to_one" in card_val or "many-to-one" in card_val:
+                if r.from_dataset:
+                    fact_datasets.add(r.from_dataset)
 
-                if score.classification == "FACT":
-                    ds.is_fact = True
-                else:
-                    ds.is_fact = False
+        for ds in sml.datasets:
+            ds.is_fact = ds.unique_name in fact_datasets
 
     def _inject_calendar_dimension(self, sml: SMLModel) -> None:
         """Never invent a calendar table."""
@@ -849,6 +853,7 @@ class TMSLTransformer:
                     metric_name=metric.unique_name,
                     skip_tier5=skip_tier5,
                     metrics_context=sml.metrics,
+                    allow_window_enrichment=not (metric.unique_name or "").upper().endswith("_LATEST"),
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql

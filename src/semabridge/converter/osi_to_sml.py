@@ -804,6 +804,7 @@ class OSIToSMLConverter(BaseConverter):
                     relationships=relationships,
                     table_key_map=table_key_map,
                     datasets=sml.datasets,
+                    allow_window_enrichment=not (metric.unique_name or "").upper().endswith("_LATEST"),
                 )
                 if translation.is_success and translation.sql:
                     metric.sql_expression = translation.sql
