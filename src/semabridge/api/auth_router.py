@@ -73,6 +73,13 @@ _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_BUCKETS: dict[Tuple[str, str], Deque[float]] = defaultdict(deque)
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Attach UTC tzinfo when SQLite returns an offset-naive datetime."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _client_ip(request: Request) -> str:
     client = request.client
     if client and client.host:
@@ -354,7 +361,7 @@ def refresh(
             detail="Invalid or already-used refresh token",
         )
 
-    if stored.expires_at < datetime.now(timezone.utc):
+    if stored.expires_at is None or _ensure_utc(stored.expires_at) < datetime.now(timezone.utc):
         stored.is_revoked = True
         db.commit()
         raise HTTPException(
@@ -506,11 +513,10 @@ def reset_password(
         select(PasswordResetToken).where(
             PasswordResetToken.token_hash == token_hash,
             PasswordResetToken.used == False,  # noqa: E712
-            PasswordResetToken.expires_at > datetime.now(timezone.utc),
         )
     ).scalar_one_or_none()
 
-    if not reset_token:
+    if not reset_token or reset_token.expires_at is None or _ensure_utc(reset_token.expires_at) <= datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
