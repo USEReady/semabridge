@@ -79,6 +79,7 @@ export default function OntologyDomainManager() {
   const [executingQuery, setExecutingQuery] = useState(false);
   const [executionResult, setExecutionResult] = useState(null);
   const [savingVerified, setSavingVerified] = useState(false);
+  const [showVerifyConfirm, setShowVerifyConfirm] = useState(false);
   const [verifiedSuccessMsg, setVerifiedSuccessMsg] = useState(null);
 
   // ── Governance, Blast Radius, Reconciliation & RLS State ──
@@ -109,7 +110,7 @@ export default function OntologyDomainManager() {
   // 4. Bidirectional RLS Policy Translator
   const [rlsRoleName, setRlsRoleName] = useState('EMEA_Regional_Managers');
   const [rlsTableName, setRlsTableName] = useState('DIM_CUSTOMER');
-  const [rlsDaxExpr, setRlsDaxExpr] = useState('[Region] = "EMEA"');
+  const [rlsDaxExpr, setRlsDaxExpr] = useState('[Region] = "EMEA" && [Status] = "ACTIVE"');
   const [rlsTargetDb, setRlsTargetDb] = useState('ANALYTICS_DB');
   const [rlsTargetSchema, setRlsTargetSchema] = useState('SEMANTIC');
   const [rlsDdl, setRlsDdl] = useState('');
@@ -420,6 +421,13 @@ export default function OntologyDomainManager() {
       });
       return;
     }
+    // Phase 1: Show confirmation prompt
+    if (!showVerifyConfirm) {
+      setShowVerifyConfirm(true);
+      return;
+    }
+    // Phase 2: User confirmed — send to backend
+    setShowVerifyConfirm(false);
     setSavingVerified(true);
     try {
       const res = await authFetch('/api/ai/save-verified-query', {
@@ -1373,6 +1381,21 @@ export default function OntologyDomainManager() {
                   </div>
 
                   {/* Accuracy Multiplier Action Button */}
+                  {showVerifyConfirm ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/30 bg-amber-500/5">
+                      <span className="text-amber-300">Is this answer correct?</span>
+                      <button
+                        type="button"
+                        onClick={handleSaveVerifiedQuery}
+                        className="px-2.5 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                      >Yes, Save</button>
+                      <button
+                        type="button"
+                        onClick={() => setShowVerifyConfirm(false)}
+                        className="px-2.5 py-1 rounded bg-surface-raised text-secondary hover:bg-surface-active transition-colors border border-main"
+                      >Cancel</button>
+                    </div>
+                  ) : (
                   <button
                     type="button"
                     disabled={savingVerified || !executionResult?.success || Boolean(executionResult?.is_simulated)}
@@ -1395,6 +1418,7 @@ export default function OntologyDomainManager() {
                       ? 'Save to Databricks Genie Benchmark'
                       : 'Add to Verified Queries (Cortex YAML)'}
                   </button>
+                  )}
                 </div>
 
                 {executionResult.message && (

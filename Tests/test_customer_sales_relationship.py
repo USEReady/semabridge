@@ -157,3 +157,93 @@ def test_customer_sales_builder_one_to_one_pk_consistency():
                 f"Relationship clause generated: '{rel_line}', but SALES has no declared primary key! "
                 f"Declared PKs: {declared_pks}"
             )
+
+
+def test_customer_one_to_one_excludes_implicit_metrics():
+    """Verify that a 1:1 relationship between Customer and Sales does NOT make Customer a fact table,
+
+    and Customer receives zero implicit metrics.
+    """
+    from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter, tmsl_relationship_cardinality
+    from semabridge.intermediate.models import OSICardinality
+
+    # 1. Verify integer 1:1 resolves to ONE_TO_ONE
+    rel_def = {
+        "fromTable": "Customer",
+        "fromColumn": "ID",
+        "toTable": "Sales",
+        "toColumn": "ID",
+        "fromCardinality": 1,
+        "toCardinality": 1,
+        "isActive": True,
+    }
+    assert tmsl_relationship_cardinality(rel_def) == OSICardinality.ONE_TO_ONE
+
+    # 2. Build model with Customer (1:1 to Sales), Sales (M:1 to Store), Store (Dim)
+    tmsl_payload = {
+        "model": {
+            "tables": [
+                {
+                    "name": "Customer",
+                    "columns": [
+                        {"name": "ID", "dataType": "int64"},
+                        {"name": "Unit", "dataType": "int64", "summarizeBy": "sum"},
+                        {"name": "Amount", "dataType": "double", "summarizeBy": "sum"},
+                    ],
+                    "measures": [],
+                },
+                {
+                    "name": "Sales",
+                    "columns": [
+                        {"name": "ID", "dataType": "int64"},
+                        {"name": "StoreID", "dataType": "int64"},
+                        {"name": "Unit", "dataType": "int64", "summarizeBy": "sum"},
+                        {"name": "Amount", "dataType": "double", "summarizeBy": "sum"},
+                    ],
+                    "measures": [],
+                },
+                {
+                    "name": "Store",
+                    "columns": [
+                        {"name": "StoreID", "dataType": "int64"},
+                        {"name": "StoreName", "dataType": "string"},
+                    ],
+                    "measures": [],
+                },
+            ],
+            "relationships": [
+                rel_def,
+                {
+                    "fromTable": "Sales",
+                    "fromColumn": "StoreID",
+                    "toTable": "Store",
+                    "toColumn": "StoreID",
+                    "fromCardinality": 2,
+                    "toCardinality": 1,
+                    "isActive": True,
+                },
+            ],
+        }
+    }
+
+    osi_conv = TMSLToOSIConverter()
+    osi = osi_conv.to_osi({"tmsl": tmsl_payload, "dataset_id": "TestSalesReturnsModel"})
+
+    customer_ds = next(ds for ds in osi.datasets if ds.unique_name == "Customer")
+    sales_ds = next(ds for ds in osi.datasets if ds.unique_name == "Sales")
+    store_ds = next(ds for ds in osi.datasets if ds.unique_name == "Store")
+
+    # Customer is 1:1, so it is NOT a fact table
+    assert customer_ds.is_fact is False, "Customer must not be classified as a fact table"
+    # Sales is M:1 to Store, so it IS a fact table
+    assert sales_ds.is_fact is True, "Sales must be classified as a fact table"
+    assert store_ds.is_fact is False, "Store must not be classified as a fact table"
+
+    # Verify Customer receives NO implicit metrics
+    customer_metrics = [m for m in osi.metrics if m.dataset == "Customer"]
+    assert len(customer_metrics) == 0, f"Customer should have 0 implicit metrics, got: {[m.unique_name for m in customer_metrics]}"
+
+    # Verify Sales receives implicit metrics
+    sales_metrics = [m for m in osi.metrics if m.dataset == "Sales"]
+    assert len(sales_metrics) == 2
+    assert {m.unique_name for m in sales_metrics} == {"SUM_OF_UNIT", "SUM_OF_AMOUNT"}

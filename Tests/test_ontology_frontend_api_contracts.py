@@ -180,3 +180,77 @@ def test_tmdl_rls_translation_contract():
     assert data["status"] == "translated"
     assert "CREATE OR REPLACE ROW ACCESS POLICY ANALYTICS_DB.SEMANTIC.RAP_DIM_CUSTOMER_EMEA_MANAGERS" in data["ddl"]
     assert "REGION = 'EMEA'" in data["ddl"]
+
+
+def test_tmdl_rls_translation_compound_and_or():
+    """6. RLS Translator: Supports AND (&&) / OR (||) combinations and rejects unsupported functions."""
+    # A. Compound AND comparison
+    res = client.post(
+        "/api/security/rls/tmdl-to-snowflake",
+        json={
+            "role": {
+                "name": "EMEA_Active",
+                "table_permissions": [
+                    {
+                        "table_name": "DIM_CUSTOMER",
+                        "dax_filter_expression": '[Region] = "EMEA" && [Status] = "ACTIVE"',
+                    }
+                ],
+            },
+            "target_database": "ANALYTICS_DB",
+            "target_schema": "SEMANTIC",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "translated"
+    assert "REGION VARCHAR, STATUS VARCHAR" in data["ddl"]
+    assert "REGION = 'EMEA' AND STATUS = 'ACTIVE'" in data["ddl"]
+
+    # B. Unsupported function fails closed -> 'not translated'
+    res_unsupported = client.post(
+        "/api/security/rls/tmdl-to-snowflake",
+        json={
+            "role": {
+                "name": "User_Principal_Role",
+                "table_permissions": [
+                    {
+                        "table_name": "DIM_CUSTOMER",
+                        "dax_filter_expression": '[UserEmail] = USERPRINCIPALNAME()',
+                    }
+                ],
+            },
+            "target_database": "ANALYTICS_DB",
+            "target_schema": "SEMANTIC",
+        },
+    )
+    assert res_unsupported.status_code == 200
+    data_unsupported = res_unsupported.json()
+    assert data_unsupported["status"] == "not translated"
+    assert "unsupported function" in data_unsupported["reason"].lower()
+
+
+def test_save_verified_query_zero_rows_success():
+    """7. Verified Query Save: Query execution with 0 rows succeeds and can be saved when confirmed=True."""
+    sql = "SELECT SUM(REVENUE) AS TOTAL_REV FROM SALES WHERE 1=0"
+    record_query_execution(
+        question="Empty Sales Result",
+        sql=sql,
+        view_name="SALES",
+        project_id="test_zero_row_proj",
+        success=True,
+        row_count=0,
+    )
+
+    # With confirmed=True and row_count=0, save succeeds
+    res_ok = client.post(
+        "/api/ai/save-verified-query",
+        json={
+            "question": "Empty Sales Result",
+            "sql": sql,
+            "confirmed": True,
+            "project_id": "test_zero_row_proj",
+        },
+    )
+    assert res_ok.status_code == 200
+    assert res_ok.json()["success"] is True

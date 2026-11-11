@@ -33,9 +33,10 @@ def get_pbixray() -> Optional[Any]:
             # Genuine missing pbixray
             return None
 
-        logger.info("Windows Application Control blocked xpress9 from current path; attempting user-site resolution")
+        logger.info("Windows Application Control blocked xpress8/xpress9 from current path; attempting user-site resolution")
         try:
-            _resolve_wdac_xpress9()
+            _resolve_wdac_xpress("xpress8")
+            _resolve_wdac_xpress("xpress9")
             from pbixray import PBIXRay  # type: ignore[import-untyped]
             return PBIXRay
         except Exception as retry_err:
@@ -46,9 +47,9 @@ def get_pbixray() -> Optional[Any]:
         return None
 
 
-def _resolve_wdac_xpress9() -> None:
-    """Load xpress9 from an allowed directory (such as AppData/Roaming/Python site-packages)."""
-    if "xpress9" in sys.modules:
+def _resolve_wdac_xpress(pkg_name: str = "xpress9") -> None:
+    """Load xpress8 or xpress9 from an allowed directory (such as AppData/Roaming/Python site-packages)."""
+    if pkg_name in sys.modules:
         return
 
     # Check AppData user-site packages
@@ -62,7 +63,7 @@ def _resolve_wdac_xpress9() -> None:
     target_pyd: Optional[str] = None
     if os.path.isdir(target_dir):
         for f in os.listdir(target_dir):
-            if f.startswith("xpress9") and f.endswith(".pyd"):
+            if f.startswith(pkg_name) and f.endswith(".pyd"):
                 target_pyd = os.path.join(target_dir, f)
                 break
 
@@ -72,7 +73,7 @@ def _resolve_wdac_xpress9() -> None:
             if os.path.isdir(p) and p != target_dir:
                 try:
                     for f in os.listdir(p):
-                        if f.startswith("xpress9") and f.endswith(".pyd"):
+                        if f.startswith(pkg_name) and f.endswith(".pyd"):
                             src = os.path.join(p, f)
                             dest = os.path.join(target_dir, f)
                             try:
@@ -87,11 +88,15 @@ def _resolve_wdac_xpress9() -> None:
                 break
 
     if target_pyd and os.path.exists(target_pyd):
-        spec = importlib.util.spec_from_file_location("xpress9", target_pyd)
+        spec = importlib.util.spec_from_file_location(pkg_name, target_pyd)
         if spec and spec.loader:
             mod = importlib.util.module_from_spec(spec)
-            sys.modules["xpress9"] = mod
+            sys.modules[pkg_name] = mod
             spec.loader.exec_module(mod)
             return
 
-    raise ImportError("Could not find or load xpress9 from an allowed location.")
+    raise ImportError(f"Could not find or load {pkg_name} from an allowed location.")
+
+
+def _resolve_wdac_xpress9() -> None:
+    _resolve_wdac_xpress("xpress9")

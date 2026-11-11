@@ -62,7 +62,12 @@ def join_tmsl_expression(value: Any) -> str:
 
 
 def _norm_token(value: Any) -> str:
-    return str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    raw = str(value or "").strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if raw in {"1", "one"}:
+        return "one"
+    if raw in {"2", "many", "m", "*"}:
+        return "many"
+    return raw
 
 
 _CARDINALITY_PAIR = {
@@ -76,14 +81,21 @@ _CARDINALITY_STRING = {
     "manytoone": OSICardinality.MANY_TO_ONE,
     "m:1": OSICardinality.MANY_TO_ONE,
     "*:1": OSICardinality.MANY_TO_ONE,
+    "2:1": OSICardinality.MANY_TO_ONE,
+    "2to1": OSICardinality.MANY_TO_ONE,
     "onetoone": OSICardinality.ONE_TO_ONE,
     "1:1": OSICardinality.ONE_TO_ONE,
+    "1to1": OSICardinality.ONE_TO_ONE,
     "onetomany": OSICardinality.ONE_TO_MANY,
     "1:m": OSICardinality.ONE_TO_MANY,
     "1:*": OSICardinality.ONE_TO_MANY,
+    "1:2": OSICardinality.ONE_TO_MANY,
+    "1to2": OSICardinality.ONE_TO_MANY,
     "manytomany": OSICardinality.MANY_TO_MANY,
     "m:m": OSICardinality.MANY_TO_MANY,
     "*:*": OSICardinality.MANY_TO_MANY,
+    "2:2": OSICardinality.MANY_TO_MANY,
+    "2to2": OSICardinality.MANY_TO_MANY,
 }
 
 

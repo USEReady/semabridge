@@ -39,12 +39,12 @@ class SnowflakeRowAccessPolicy(BaseModel):
     assigned_roles: List[str] = Field(default_factory=list)
 
 
-def can_translate_dax_filter(dax_expr: str) -> tuple[bool, Optional[str], Optional[tuple[str, str, str]]]:
-    """
-    Checks if a DAX filter is a simple column comparison: [Column] = 'Value' or Table[Column] = 'Value'.
+def _parse_single_comparison(expr: str) -> tuple[bool, Optional[str], Optional[tuple[str, str, str]]]:
+    """Parse a single DAX column comparison (no AND/OR).
+
     Returns: (can_translate, reason_if_not, (col_name, op, val_sql))
     """
-    expr = (dax_expr or "").strip()
+    expr = expr.strip()
     if not expr:
         return False, "DAX filter expression is empty", None
 
@@ -74,6 +74,55 @@ def can_translate_dax_filter(dax_expr: str) -> tuple[bool, Optional[str], Option
     return True, None, (col, op, val_clean)
 
 
+def can_translate_dax_filter(
+    dax_expr: str,
+) -> tuple[bool, Optional[str], Optional[tuple[str, str, str]], Optional[List[tuple[str, str, str, str]]]]:
+    """Check if a DAX filter is translatable to SQL.
+
+    Supports single comparisons and AND (``&&``) / OR (``||``) combinations of
+    simple column comparisons.
+
+    Returns
+    -------
+    (can_translate, reason_if_not, single_parsed, compound_parts)
+        *single_parsed* is ``(col, op, val)`` when the expression is a single
+        comparison (backward-compatible).  *compound_parts* is a list of
+        ``(connector, col, op, val)`` tuples when the expression contains
+        ``&&`` / ``||``; the first tuple's connector is always ``""``.
+    """
+    expr = (dax_expr or "").strip()
+    if not expr:
+        return False, "DAX filter expression is empty", None, None
+
+    # Split on && / || (DAX logical operators).
+    parts: List[tuple[str, str]] = []  # (connector, sub_expr)
+    # Regex splits while preserving the operator token.
+    tokens = re.split(r"\s*(&&|\|\|)\s*", expr)
+    if len(tokens) == 1:
+        # Single comparison — delegate to legacy parser.
+        ok, reason, parsed = _parse_single_comparison(expr)
+        return ok, reason, parsed, None
+
+    # Compound expression
+    connector = ""
+    compound: List[tuple[str, str, str, str]] = []
+    for token in tokens:
+        if token == "&&":
+            connector = "AND"
+            continue
+        elif token == "||":
+            connector = "OR"
+            continue
+        ok, reason, parsed = _parse_single_comparison(token)
+        if not ok:
+            return False, reason, None, None
+        col, op, val = parsed  # type: ignore[misc]
+        compound.append((connector, col, op, val))
+        connector = ""
+
+    return True, None, None, compound
+
+
 class SecurityPolicyTranslator:
     """Translates row-level security and masking policies bidirectionally."""
 
@@ -93,7 +142,7 @@ class SecurityPolicyTranslator:
             raise ValueError("target_database is required (no default database).")
 
         for perm in role.table_permissions:
-            can_trans, reason, _ = can_translate_dax_filter(perm.dax_filter_expression)
+            can_trans, reason, _, _ = can_translate_dax_filter(perm.dax_filter_expression)
             if not can_trans:
                 return {
                     "status": "not translated",
@@ -123,20 +172,50 @@ class SecurityPolicyTranslator:
 
         for perm in role.table_permissions:
             tbl = perm.table_name.upper()
-            can_trans, reason, parsed = can_translate_dax_filter(perm.dax_filter_expression)
-            if not can_trans or not parsed:
+            can_trans, reason, parsed, compound = can_translate_dax_filter(perm.dax_filter_expression)
+            if not can_trans:
                 raise ValueError(f"Role '{role.name}' {reason}; cannot translate to Snowflake policy.")
 
-            col_name, op, val_clean = parsed
-            sql_expr = f"{col_name} {op} {val_clean}"
             policy_name = f"RAP_{tbl}_{clean_role}"
 
-            lines.append(f"""CREATE OR REPLACE ROW ACCESS POLICY {target_database}.{target_schema}.{policy_name}
+            if compound:
+                # Compound AND/OR expression — multiple columns
+                col_defs = []
+                seen: set[str] = set()
+                for _conn, col, _op, _val in compound:
+                    if col not in seen:
+                        col_defs.append(f"{col} VARCHAR")
+                        seen.add(col)
+                as_clause = ", ".join(col_defs)
+                sql_parts = []
+                for conn, col, op, val in compound:
+                    clause = f"{col} {op} {val}"
+                    if conn:
+                        sql_parts.append(f" {conn} {clause}")
+                    else:
+                        sql_parts.append(clause)
+                sql_expr = "".join(sql_parts)
+                on_cols = ", ".join(seen)
+
+                lines.append(f"""CREATE OR REPLACE ROW ACCESS POLICY {target_database}.{target_schema}.{policy_name}
+AS ({as_clause}) RETURNS BOOLEAN ->
+    CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SECURITYADMIN')
+    OR (CURRENT_ROLE() = '{clean_role}' AND {sql_expr});""")
+
+                lines.append(f"""ALTER TABLE {target_database}.{target_schema}.{tbl}
+    ADD ROW ACCESS POLICY {target_database}.{target_schema}.{policy_name} ON ({on_cols});""")
+            else:
+                if not parsed:
+                    raise ValueError(f"Role '{role.name}' {reason}; cannot translate to Snowflake policy.")
+                col_name, op, val_clean = parsed
+                sql_expr = f"{col_name} {op} {val_clean}"
+
+                lines.append(f"""CREATE OR REPLACE ROW ACCESS POLICY {target_database}.{target_schema}.{policy_name}
 AS ({col_name} VARCHAR) RETURNS BOOLEAN ->
     CURRENT_ROLE() IN ('ACCOUNTADMIN', 'SECURITYADMIN')
     OR (CURRENT_ROLE() = '{clean_role}' AND {sql_expr});""")
 
-            lines.append(f"""ALTER TABLE {target_database}.{target_schema}.{tbl}
+                lines.append(f"""ALTER TABLE {target_database}.{target_schema}.{tbl}
     ADD ROW ACCESS POLICY {target_database}.{target_schema}.{policy_name} ON ({col_name});""")
             lines.append("")
 
