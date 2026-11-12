@@ -21,7 +21,7 @@ help:
 	@echo "  make migrate-history  Show migration history"
 	@echo ""
 	@echo "$(YELLOW)Server:$(NC)"
-	@echo "  make run              Start Uvicorn dev server (port 8001)"
+	@echo "  make run              Start Uvicorn dev server (port 8002)"
 	@echo "  make run-frontend     Start Vite frontend dev server"
 	@echo ""
 	@echo "$(YELLOW)Code Quality & Deployment:$(NC)"
@@ -63,8 +63,16 @@ dev:
 	@echo ""
 
 run:
-	@echo "$(YELLOW)Starting Uvicorn server on http://127.0.0.1:8001...$(NC)"
-	uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir src
+	@echo "$(YELLOW)Starting Uvicorn server on http://127.0.0.1:8002...$(NC)"
+	@if [ -x ".venv/bin/uvicorn" ]; then \
+		PYTHONPATH=src .venv/bin/uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir src; \
+	elif command -v uv >/dev/null 2>&1; then \
+		uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir src; \
+	elif [ -x "$$HOME/.local/bin/uv" ]; then \
+		$$HOME/.local/bin/uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir src; \
+	else \
+		PYTHONPATH=src python3 -m uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir src; \
+	fi
 
 run-frontend:
 	@echo "$(YELLOW)Starting Vite frontend dev server...$(NC)"

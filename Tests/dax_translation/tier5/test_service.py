@@ -764,15 +764,16 @@ def test_llm_self_reported_confidence_is_none_when_provider_ignores_the_json_con
     assert result.llm_self_reported_confidence is None
 
 
-def test_llm_self_reported_confidence_does_not_affect_the_accept_reject_gate():
-    """A LOW self-reported confidence inside the structured response must
-    NOT be used for the min_confidence accept/reject gate -- that gate
-    reads only raw.confidence (the adapter-level value), which is high
-    here. The translation must be accepted."""
+def test_low_llm_self_reported_confidence_is_rejected_even_when_adapter_confidence_is_high():
+    """E1: the model's own confidence below min_self_reported_confidence
+    (default 0.5) means the SQL is a guess -- it must fail closed (None ->
+    placeholder with a reason), never ship. Previously this was display-only
+    and a 0.15-confidence answer like SUM(CASE WHEN 1=1 THEN <id> ...) reached
+    the DDL."""
     factory = lambda settings: _FakeAdapter(
         settings,
         response_text='{"sql": "SUM(sometable.\\"SOMECOLUMN\\")", "confidence": 0.01}',
-        confidence=0.9,  # adapter-level -- above min_confidence, so this must be accepted
+        confidence=0.9,
     )
     config, original = _config_with_fake_adapters({"fake_low_self_reported": factory})
     try:
@@ -780,11 +781,65 @@ def test_llm_self_reported_confidence_does_not_affect_the_accept_reject_gate():
     finally:
         _restore_adapter_classes(original)
 
+    assert result is None
+
+
+def test_self_reported_confidence_at_or_above_threshold_is_accepted():
+    factory = lambda settings: _FakeAdapter(
+        settings,
+        response_text='{"sql": "SUM(sometable.\\"SOMECOLUMN\\")", "confidence": 0.5}',
+        confidence=0.9,
+    )
+    config, original = _config_with_fake_adapters({"fake_ok_self_reported": factory})
+    try:
+        result = tier5_service_module.Tier5Service(config).translate(_request())
+    finally:
+        _restore_adapter_classes(original)
+
     assert result is not None
-    assert result.llm_self_reported_confidence == 0.01
+    assert result.llm_self_reported_confidence == 0.5
 
 
-def test_batch_llm_self_reported_confidence_is_parsed_per_metric():
+def test_cached_entry_with_low_self_reported_confidence_is_ignored_not_trusted():
+    """A cache entry written before the gate existed is validated like a
+    fresh answer: low self-confidence -> treated as a miss (no provider here,
+    so None), and the entry is not deleted from the cache."""
+    from semabridge.dax_translation.tier5.cache import Tier5TranslationCache
+    from types import SimpleNamespace
+    cache = Tier5TranslationCache()
+    req = _request()
+    cache.put(req, SimpleNamespace(
+        sql='SUM(sometable."SOMECOLUMN")', provider="anthropic",
+        translation_provider_confidence=0.7, llm_self_reported_confidence=0.15,
+    ))
+    config = Tier5Config(provider_order=[], min_confidence=0.55, providers={})
+    assert tier5_service_module.Tier5Service(config, cache=cache).translate(req) is None
+    assert cache.get(req) is not None
+
+
+def test_cached_degenerate_or_invalid_sql_is_rejected():
+    """E1: real cached answers -- tautological CASE WHEN 1=1, x - x, and an
+    ELSE outside any CASE (invalid SQL) -- must never be served, even with a
+    high self-reported confidence."""
+    from semabridge.dax_translation.tier5.cache import Tier5TranslationCache
+    from types import SimpleNamespace
+    bad_sqls = [
+        'SUM(CASE WHEN 1=1 THEN sometable."SOMECOLUMN" ELSE 0 END)',
+        'SUM(sometable."SOMECOLUMN") - SUM(sometable."SOMECOLUMN")',
+        'COALESCE(SUM(sometable."SOMECOLUMN") - SUM(sometable."SOMECOLUMN") ELSE 0, 0)',
+    ]
+    config = Tier5Config(provider_order=[], min_confidence=0.55, providers={})
+    for sql in bad_sqls:
+        cache = Tier5TranslationCache()
+        req = _request()
+        cache.put(req, SimpleNamespace(
+            sql=sql, provider="anthropic",
+            translation_provider_confidence=0.9, llm_self_reported_confidence=0.95,
+        ))
+        assert tier5_service_module.Tier5Service(config, cache=cache).translate(req) is None, sql
+
+
+def test_batch_low_self_reported_confidence_is_rejected_per_metric():
     import json as _json
     response = _json.dumps({
         "m0": {"sql": 'SUM(sometable."SOMECOLUMN")', "confidence": 0.7},
@@ -797,8 +852,25 @@ def test_batch_llm_self_reported_confidence_is_parsed_per_metric():
     finally:
         _restore_adapter_classes(original)
 
+    assert results[0] is not None
+    assert results[1] is None
+
+
+def test_batch_llm_self_reported_confidence_is_parsed_per_metric():
+    import json as _json
+    response = _json.dumps({
+        "m0": {"sql": 'SUM(sometable."SOMECOLUMN")', "confidence": 0.7},
+        "m1": {"sql": 'AVG(sometable."SOMECOLUMN")', "confidence": 0.6},
+    })
+    fake = _FakeBatchAdapter(None, responses=[response])
+    config, original = _config_with_fake_adapters({"fake_batch": lambda settings: fake})
+    try:
+        results = tier5_service_module.Tier5Service(config).translate_batch(_batch_requests(2))
+    finally:
+        _restore_adapter_classes(original)
+
     assert results[0] is not None and results[0].llm_self_reported_confidence == 0.7
-    assert results[1] is not None and results[1].llm_self_reported_confidence == 0.3
+    assert results[1] is not None and results[1].llm_self_reported_confidence == 0.6
 
 
 def test_batch_llm_self_reported_confidence_is_none_for_bare_string_values():

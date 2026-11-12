@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
 from semabridge.intermediate.models import (
+    OSIAggregationType,
     OSIAttribute,
     OSICardinality,
     OSICrossFilterDirection,
@@ -51,6 +52,7 @@ from semabridge.intermediate.models import (
     OSIModel,
     OSIRelationship,
 )
+from semabridge.ontology.models import infer_aggregation_from_sql
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
 
@@ -226,7 +228,7 @@ class SemanticViewToOSIConverter(BaseConverter):
 
             osi = OSIModel(
                 unique_name=view_name,
-                label=view_name.replace("_", " ").title(),
+                label=view_name,
                 source_platform="snowflake_semantic_view",
                 datasets=datasets,
                 relationships=relationships,
@@ -437,7 +439,7 @@ class SemanticViewToOSIConverter(BaseConverter):
                     osi_columns.append(
                         OSIColumn(
                             unique_name=col["name"],
-                            label=col["name"].replace("_", " ").title(),
+                            label=col["name"],
                             data_type=_map_sf_type(col.get("data_type", "VARCHAR")),
                             description=col.get("comment") or "",
                             is_key=col["name"].upper() in {p.upper() for p in pk_columns},
@@ -450,7 +452,7 @@ class SemanticViewToOSIConverter(BaseConverter):
                     osi_columns.append(
                         OSIColumn(
                             unique_name=col_name,
-                            label=col_name.replace("_", " ").title(),
+                            label=col_name,
                             data_type=OSIDataType.STRING,
                             is_key=col_name.upper() in {p.upper() for p in pk_columns},
                         )
@@ -462,7 +464,7 @@ class SemanticViewToOSIConverter(BaseConverter):
                         osi_columns.append(
                             OSIColumn(
                                 unique_name=pk,
-                                label=pk.replace("_", " ").title(),
+                                label=pk,
                                 data_type=OSIDataType.INTEGER,
                                 is_key=True,
                             )
@@ -471,7 +473,7 @@ class SemanticViewToOSIConverter(BaseConverter):
             datasets.append(
                 OSIDataset(
                     unique_name=table_name,
-                    label=table_name.replace("_", " ").title(),
+                    label=table_name,
                     source_table=table_name,
                     columns=osi_columns,
                 )
@@ -519,7 +521,7 @@ class SemanticViewToOSIConverter(BaseConverter):
             entry = entry.strip()
             # alias."phys_col" AS "semantic_name"
             m = re.match(
-                r'(\w+)\."?(\w+)"?\s+AS\s+"?([^",\)]+)"?', entry, re.IGNORECASE
+                r'(\w+)\."?(\w+)"?\s+AS\s+(.+)$', entry, re.IGNORECASE | re.DOTALL
             )
             if not m:
                 m = re.match(r'(\w+)\."?(\w+)"?', entry)
@@ -527,12 +529,15 @@ class SemanticViewToOSIConverter(BaseConverter):
                     continue
                 alias, col, label = m.group(1), m.group(2), m.group(2)
             else:
-                alias, col, label = m.group(1), m.group(2), m.group(3)
+                alias, col, rhs = m.group(1), m.group(2), m.group(3).strip()
+                # Only a quoted string literal is a real display label; an
+                # expression such as ``fc.CASE_ID`` is not, so keep the raw name.
+                label = rhs if re.match(r'^"[^"]+"$', rhs) else col
 
             table_name = table_map.get(alias, {}).get("table_name", alias)
             attr = OSIAttribute(
                 unique_name=f"{table_name}.{col}",
-                label=_strip_quotes(label).replace("_", " ").title(),
+                label=_strip_quotes(label),
                 dataset=table_name,
                 source_column=col,
             )
@@ -544,7 +549,7 @@ class SemanticViewToOSIConverter(BaseConverter):
             dimensions.append(
                 OSIDimension(
                     unique_name=f"{table_name}_dim",
-                    label=table_name.replace("_", " ").title(),
+                    label=table_name,
                     dataset=table_name,
                     attributes=attrs,
                 )
@@ -579,9 +584,9 @@ class SemanticViewToOSIConverter(BaseConverter):
 
             alias, col, expr = m.group(1), m.group(2), m.group(3).strip()
             table_name = table_map.get(alias, {}).get("table_name", alias)
-            # If expression is a quoted string without parens, treat as label alias
+            # Preserve explicit label aliases; otherwise keep the column identifier without synthetic title-casing
             is_label_alias = re.match(r'^"[^"]+"$', expr)
-            label = _strip_quotes(expr) if is_label_alias else col.replace("_", " ").title()
+            label = _strip_quotes(expr) if is_label_alias else col
             sql_expr = None if is_label_alias else expr
 
             # Convert common Snowflake SQL metric patterns into Fabric-safe DAX.
@@ -610,6 +615,9 @@ class SemanticViewToOSIConverter(BaseConverter):
                     dataset=table_name,
                     source_column=col,
                     expression=normalized_expr,
+                    # Derive the aggregation from the view's SQL; NONE when the
+                    # expression is not a single aggregate (never invent SUM).
+                    aggregation=OSIAggregationType(infer_aggregation_from_sql(sql_expr).lower()),
                     description=f"Measure from Snowflake semantic view",
                 )
             )

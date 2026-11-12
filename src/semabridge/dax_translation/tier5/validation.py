@@ -61,6 +61,229 @@ def fix_common_llm_issues(sql: str, dax: str = "") -> str:
     return sql
 
 
+_SQL_TOKEN_RE = re.compile(
+    r"'(?:''|[^'])*'"          # string literal
+    r'|"(?:""|[^"])*"'         # quoted identifier
+    r"|[A-Za-z_][A-Za-z0-9_$]*" # word
+    r"|\d+(?:\.\d+)?"          # number
+    r"|::|<=|>=|<>|!=|\S",     # operators / punctuation
+)
+
+
+def _sql_tokens(sql: str):
+    return _SQL_TOKEN_RE.findall(sql or "")
+
+
+def check_case_expression_structure(sql: str) -> Optional[str]:
+    """Structural check for CASE ... WHEN ... THEN ... ELSE ... END nesting.
+
+    Balanced parentheses alone do not make SQL valid: a real cached Tier-5
+    answer was ``COALESCE(SUM(a) - SUM(a) ELSE 0, 0)`` -- an ELSE inside a
+    function call with no CASE -- which Snowflake rejects at CREATE time.
+    Every WHEN/THEN/ELSE must belong to the innermost open CASE, and a CASE
+    must close (END) inside the same parenthesis level it opened in.
+    Returns a reason string when the structure is invalid, else None.
+    """
+    stack: list = []
+    for tok in _sql_tokens(sql):
+        up = tok.upper()
+        if tok == "(":
+            stack.append("(")
+        elif tok == ")":
+            if not stack or stack[-1] != "(":
+                return "unbalanced parentheses / CASE without END inside a parenthesis"
+            stack.pop()
+        elif up == "CASE":
+            stack.append("CASE")
+        elif up in ("WHEN", "THEN", "ELSE"):
+            if not stack or stack[-1] != "CASE":
+                return f"{up} outside of a CASE expression"
+        elif up == "END":
+            if not stack or stack[-1] != "CASE":
+                return "END without a matching CASE"
+            stack.pop()
+    if stack:
+        return "unterminated CASE expression or parenthesis"
+    return None
+
+
+_TAUTOLOGY_WHEN_RE = re.compile(
+    r"\bWHEN\s+(?:\(\s*)?(?:1\s*=\s*1|TRUE|0\s*=\s*0|'([^']*)'\s*=\s*'\1')(?:\s*\))?\s+THEN\b",
+    re.IGNORECASE,
+)
+
+
+def _split_top_level(expr: str, seps: Tuple[str, ...]) -> list:
+    """Split `expr` on any of `seps` occurring at parenthesis depth 0 (and
+    outside quotes / CASE ... END). Returns [(sep_before, part), ...]."""
+    parts = []
+    depth = 0
+    buf = []
+    prev_sep = None
+    tokens = _sql_tokens(expr)
+    case_depth = 0
+    prev_tok = None
+    for tok in tokens:
+        up = tok.upper()
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+        elif up == "CASE":
+            case_depth += 1
+        elif up == "END" and case_depth:
+            case_depth -= 1
+        is_binary = (
+            prev_tok is not None
+            and (prev_tok in (")",) or re.match(r'^[A-Za-z0-9_"\']', prev_tok) is not None)
+            and prev_tok.upper() not in {"WHEN", "THEN", "ELSE", "AND", "OR", "NOT", "CASE", "IS", "IN"}
+        )
+        if depth == 0 and case_depth == 0 and tok in seps and (tok != "-" and tok != "+" or is_binary):
+            parts.append((prev_sep, " ".join(buf)))
+            buf = []
+            prev_sep = tok
+        else:
+            buf.append(tok)
+        prev_tok = tok
+    parts.append((prev_sep, " ".join(buf)))
+    return parts
+
+
+def _strip_outer_parens_and_coalesce(term: str) -> str:
+    t = re.sub(r"\s+", " ", term or "").strip()
+    while True:
+        changed = False
+        if t.startswith("(") and t.endswith(")"):
+            inner = t[1:-1]
+            depth = 0
+            ok = True
+            for ch in inner:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth < 0:
+                        ok = False
+                        break
+            if ok and depth == 0:
+                t = inner.strip()
+                changed = True
+        m = re.match(r"^COALESCE \((.*), 0 \)$", t, re.IGNORECASE)
+        if m and m.group(1).count("(") == m.group(1).count(")"):
+            t = m.group(1).strip()
+            changed = True
+        t = re.sub(r"\s*::\s*FLOAT$", "", t, flags=re.IGNORECASE)
+        if not changed:
+            return t
+
+
+def _has_column_or_aggregate(term: str) -> bool:
+    return bool(re.search(r"[A-Za-z_]", re.sub(r"'(?:''|[^'])*'", "", term or "")))
+
+
+def find_self_cancelling_subtraction(sql: str) -> Optional[str]:
+    """Find a degenerate ``X - X`` (identical operands) anywhere in `sql`.
+
+    ``SUM(a) - SUM(a)`` is always 0 (or NULL) no matter what the data is,
+    so it is never a faithful translation of a DAX ``[M] - [M SPLY]``
+    style difference -- it means one side lost its filter. Checked in
+    every parenthesised group and every function argument.
+    """
+    groups = [sql or ""]
+    # Collect the contents of every parenthesised group.
+    stack = []
+    for i, ch in enumerate(sql or ""):
+        if ch == "(":
+            stack.append(i)
+        elif ch == ")" and stack:
+            start = stack.pop()
+            groups.append(sql[start + 1:i])
+    for group in groups:
+        for _sep, arg in _split_top_level(group, (",",)):
+            terms = _split_top_level(arg, ("+", "-"))
+            if len(terms) < 2:
+                continue
+            for idx in range(1, len(terms)):
+                sep, right = terms[idx]
+                if sep != "-":
+                    continue
+                left = terms[idx - 1][1]
+                l_norm = _strip_outer_parens_and_coalesce(left).upper()
+                r_norm = _strip_outer_parens_and_coalesce(right).upper()
+                if l_norm and l_norm == r_norm and _has_column_or_aggregate(l_norm):
+                    return f"self-cancelling subtraction ({l_norm[:80]} - itself) is always 0"
+    return None
+
+
+_DAX_COUNT_ARG_RE = re.compile(
+    r"\b(?:COUNT|COUNTA|COUNTX|COUNTBLANK|DISTINCTCOUNT|DISTINCTCOUNTNOBLANK|APPROXIMATEDISTINCTCOUNT)\s*\(([^()]*)\)",
+    re.IGNORECASE,
+)
+_DAX_VALUE_AGG_RE = re.compile(
+    r"\b(?:SUM|SUMX|AVERAGE|AVERAGEX|AVERAGEA|MIN|MINX|MAX|MAXX|MEDIAN|MEDIANX|PRODUCT|PRODUCTX)\s*\(([^()]*)\)",
+    re.IGNORECASE,
+)
+_SQL_VALUE_AGG_RE = re.compile(
+    r"\b(SUM|AVG)\s*\(\s*(?:DISTINCT\s+)?(?:CASE\b.*?\bTHEN\s+)?(?:[A-Za-z_][\w$]*|\"[^\"]+\")\s*\.\s*(\"[^\"]+\"|[A-Za-z_][\w$]*)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _norm_ident(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (name or "").upper())
+
+
+def find_summed_counted_column(sql: str, dax: str) -> Optional[str]:
+    """A column the DAX only ever COUNTs (e.g. an ID / key) must not be
+    SUMmed or AVGed by the SQL -- summing identifiers is meaningless. The
+    check is purely grammatical: the column name appears inside a DAX
+    COUNT-family call and inside no value aggregation (SUM/AVERAGE/...)."""
+    if not sql or not dax:
+        return None
+    counted = set()
+    for arg in _DAX_COUNT_ARG_RE.findall(dax):
+        for col in re.findall(r"\[([^\]]+)\]", arg):
+            counted.add(_norm_ident(col))
+    if not counted:
+        return None
+    valued = set()
+    for arg in _DAX_VALUE_AGG_RE.findall(dax):
+        for col in re.findall(r"\[([^\]]+)\]", arg):
+            valued.add(_norm_ident(col))
+    for _fn, col in _SQL_VALUE_AGG_RE.findall(sql):
+        n = _norm_ident(col.strip('"'))
+        if n in counted and n not in valued:
+            return f"SQL sums/averages column {col.strip(chr(34))} that the DAX only counts"
+    return None
+
+
+def detect_unfaithful_metric_sql(sql: str, dax: str = "") -> Optional[str]:
+    """Reject SQL that is syntactically invalid for Snowflake or is a
+    degenerate stand-in for the DAX (used for every Tier-5 candidate,
+    fresh or cached). Returns a reason, or None when the SQL is acceptable.
+    """
+    if not sql:
+        return None
+    reason = check_case_expression_structure(sql)
+    if reason:
+        return f"invalid SQL: {reason}"
+    no_literals = re.sub(r"'(?:''|[^'])*'", "''", sql)
+    no_literals = re.sub(r'"(?:""|[^"])*"', '""', no_literals)
+    if "[" in no_literals or "]" in no_literals:
+        return "invalid SQL: contains DAX [bracket] references that were never translated"
+    if re.search(r"\bCAST\s*\(\s*NULL\b", no_literals, re.IGNORECASE):
+        return "uses a NULL stand-in (CAST(NULL ...)) for a part it could not translate"
+    if _TAUTOLOGY_WHEN_RE.search(sql):
+        return "tautological CASE WHEN condition (e.g. 1=1): a DAX filter was replaced by an always-true condition"
+    reason = find_self_cancelling_subtraction(sql)
+    if reason:
+        return reason
+    reason = find_summed_counted_column(sql, dax)
+    if reason:
+        return reason
+    return None
+
+
 def _dax_divide_lost_its_division(dax: str, sql: str) -> bool:
     """True if `dax` calls DIVIDE(...) as a function but `sql` contains
     no division operator — a known LLM failure mode where the numerator

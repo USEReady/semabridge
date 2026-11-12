@@ -1,10 +1,10 @@
-project_name: tiral_comp
+project_name: adfs
 source:
   type: pbix
-  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-tiral_comp/4275671811c548c8916423f778d9bcb5_Competitive
-    Marketing Analysis (More Synonyms).pbix
-  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-tiral_comp/4275671811c548c8916423f778d9bcb5_Competitive
-    Marketing Analysis (More Synonyms).pbix
+  pbix_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-adfs/780c33e2744745d6837727ec80907275_Competitive
+    Marketing Analysis.pbix
+  pbix_file_path: /private/var/folders/fz/8s1kk6f57tggymd0xxv21f2r0000gq/T/semabridge/projects/proj-adfs/780c33e2744745d6837727ec80907275_Competitive
+    Marketing Analysis.pbix
 targets:
 - type: snowflake
   database: SEMABRIDGE
@@ -14,8 +14,8 @@ targets:
 mappings_overrides:
 - source_path: datasets.Category.columns.Category
   target_name: COL_CATEGORY
-- source_path: datasets.Category.columns.Ch
-  target_name: CH
+- source_path: datasets.Category.columns.Channel
+  target_name: CHANNEL
 - source_path: datasets.Category.columns.Sort
   target_name: CATEGORY_SORT
 - source_path: datasets.Date.columns.Date
@@ -212,6 +212,14 @@ mappings_overrides:
   target_name: AVERAGE_OF_SCORE
 - source_path: metrics.New Demo Measure
   target_name: NEW_DEMO_MEASURE
+- source_path: metrics.SUM_OF_MONTHNO
+  target_name: SUM_OF_MONTHNO
+- source_path: metrics.SUM_OF_YEAR
+  target_name: SUM_OF_YEAR
+- source_path: metrics.SUM_OF_SORT
+  target_name: SUM_OF_SORT
+- source_path: metrics.SUM_OF_KPI
+  target_name: SUM_OF_KPI
 ui:
   intermediate_format: osi
   editor_mode: form
@@ -219,5 +227,5 @@ options:
   auto_relationships: true
   generate_descriptions: true
   write_strategy: copy
-project_id: proj-tiral_comp
-display_name: tiral_comp
+project_id: proj-adfs
+display_name: adfs

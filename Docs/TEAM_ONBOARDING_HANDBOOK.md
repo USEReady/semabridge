@@ -130,7 +130,7 @@ make migrate
 Open two terminal windows (or tabs):
 
 ```bash
-# Terminal 1: Backend API (FastAPI + Uvicorn on http://127.0.0.1:8001)
+# Terminal 1: Backend API (FastAPI + Uvicorn on http://127.0.0.1:8002)
 make run
 
 # Terminal 2: Frontend Dashboard (Vite on http://localhost:5180 or :5173)
@@ -138,7 +138,7 @@ make run-frontend
 ```
 
 > [!TIP]
-> **API Documentation:** Once the backend is running, open [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs) in your browser to inspect interactive Swagger documentation for all REST API endpoints.
+> **API Documentation:** Once the backend is running, open [http://127.0.0.1:8002/docs](http://127.0.0.1:8002/docs) in your browser to inspect interactive Swagger documentation for all REST API endpoints.
 
 ---
 
@@ -326,7 +326,7 @@ make pre-deploy
 | Issue / Gotcha | Cause | Solution |
 | :--- | :--- | :--- |
 | `ModuleNotFoundError: No module named 'semabridge'` | Python ran outside the virtual environment. | Always activate `.venv` or use `.venv/bin/python3`. |
-| Port 8001 or 5180 already in use | Stale process from previous run. | Run `lsof -i :8001` (or `:5180`) and kill the process. |
+| Port 8002 or 5180 already in use | Stale process from previous run. | Run `lsof -i :8002` (or `:5180`) and kill the process. |
 | Inverted colors in Light Mode | Hardcoded hex or rgba background color. | Replace with CSS variable (`var(--bg-surface)`). |
 | Explore page shows historical models after project deletion | Snapshots are stored in `model_versions` table. | This is intentional version control. Clear snapshots via Settings if a full reset is needed. |
 | Database connection error | PostgreSQL service stopped or invalid password in `.env`. | Verify `.env` credentials and ensure PostgreSQL is running (`pg_isready`). |

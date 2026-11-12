@@ -22,7 +22,7 @@ export function WizardFooter({ createdProject, step, goBack, goNext, canAdvance,
     }}>
       <div style={{
         width: '100%',
-        maxWidth: (step === 3 || step === 4) ? 1400 : 900,
+        maxWidth: (step >= 3 && step <= 5) ? 1400 : 900,
         padding: '0 36px',
         display: 'flex',
         alignItems: 'center',
@@ -50,7 +50,7 @@ export function WizardFooter({ createdProject, step, goBack, goNext, canAdvance,
             }`}
           >
             {(saving || mappingLoading) && <Loader2 size={14} className="animate-spin" />}
-            {step === 5 ? (
+            {step === 6 ? (
               <>
                 <Save size={14} />
                 {saving ? 'SAVING…' : (editMode ? 'SAVE CHANGES' : 'CREATE PROJECT')}

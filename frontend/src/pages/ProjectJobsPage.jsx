@@ -1,209 +1,61 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import usePageCache from '../hooks/usePageCache';
-import { Play, RefreshCw, Clock, CalendarClock, ChevronDown, ChevronRight, BarChart3, Cloud, Snowflake, Database, Link2, Download, FileText, AlertTriangle, Plus, Pencil, Trash2, Info } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import PageHeader from '../components/common/PageHeader';
-import StatusBadge from '../components/common/StatusBadge';
+import { Play, RefreshCw, ChevronDown } from 'lucide-react';
 import SearchInput from '../components/common/SearchInput';
 import DroppedFieldsPanel from '../components/common/DroppedFieldsPanel';
 import Modal from '../components/common/Modal';
 import ScheduleModal from '../components/projects/ScheduleModal';
-import RunReportSummary from '../components/RunReportSummary';
+import { ConversionBar } from '../components/projects/projectHealth';
 import { matchesSmartQuery } from '../components/common/smartSearchQuery.js';
 import { api } from '../utils/api';
-import { buildMockRunLogs, getPerModelRunEntries, getRunLogs, saveRunLogs } from '../utils/runLogs';
-import ModelRunSection from '../components/runs/ModelRunSection';
+import { buildMockRunLogs, getRunLogs, saveRunLogs } from '../utils/runLogs';
 import { cleanPbixLabel } from '../utils/pbixLabel';
-import { translateCron, formatRelativeCountdown } from '../utils/cronTranslator';
-import { isInternalAutoTable } from '../utils/placeholderMetric';
+import RunDrawer, { StatusPill } from '../components/runs/RunDrawer';
+import RunReportModal from '../components/runs/RunReportModal';
+import { defaultReportModel, downloadRunMarkdown } from '../components/runs/runReportActions';
+import SchedulesTab from '../components/runs/SchedulesTab';
+import { DriftView } from './GovernanceSuitePage';
+import useRunReportCounts, { clearRunCounts } from '../components/runs/useRunReportCounts';
+import { formatAgo, formatDateTime, formatDuration, normStatus, parseIso, shortMessage } from '../components/runs/runsFormat';
 
 const REFRESH_INTERVAL_MS = 4000;
+const PAGE_SIZE = 50;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-function formatDuration(ms) {
-  if (!ms) return '—';
-  if (ms < 1000) return `${ms}ms`;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'running', label: 'Running' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'success', label: 'Succeeded' },
+];
 
-function formatDate(iso) {
-  if (!iso) return '—';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  }).format(date);
-}
-
-function normalizeSourceKey(value) {
-  if (!value) return '';
-
-  let key = '';
-  if (typeof value === 'string') {
-    key = value.toLowerCase().trim();
-  } else if (typeof value === 'object') {
-    key = String(
-      value.type || value.adapter || value.source || value.source_type || value.connector || ''
-    ).toLowerCase().trim();
-  }
-
-  if (!key) return '';
-  if (key.includes('pbix') || key.includes('powerbi') || key.includes('power bi') || key === 'pbi') return 'pbix';
-  if (key.includes('fabric')) return 'fabric';
-  if (key.includes('snowflake')) return 'snowflake';
-  if (key.includes('databricks')) return 'databricks';
-  return key;
-}
-
-function sourceIcon(sourceType) {
-  const normalized = normalizeSourceKey(sourceType);
-
-  if (normalized.includes('pbix')) return <BarChart3 size={14} color="#F2C811" />;
-  if (normalized.includes('fabric')) return <Cloud size={14} color="#3b82f6" />;
-  if (normalized.includes('snowflake')) return <Snowflake size={14} color="#38bdf8" />;
-  if (normalized.includes('databricks')) return <Database size={14} color="#f97316" />;
-  return <Link2 size={14} color="var(--text-tertiary)" />;
-}
-
-// UPSERT runs with a delta show only what changed, per model (see
-// UpsertChangesView); the run-wide dropped banner and snapshot diff would
-// repeat or contradict it, so they are left out for those runs.
-function isUpsertFocusedRun(run) {
-  return String(run?.sync_mode || '').toLowerCase() === 'upsert'
-    && (run?.results || []).some(r => r?.upsert_delta || r?.summary?.upsert_delta);
-}
-
-function RunDiffViewer({ run, projectId }) {
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const beforeId = run.before_target_snapshot_ids?.[0];
-    const afterId = run.after_target_snapshot_ids?.[0] || run.after_tgt_snapshots?.[0];
-
-    if (!beforeId || !afterId || !projectId) {
-      setStats({ total_after: 0, removed: 0, retained_from_target: 0, source_added: 0 });
-      setLoading(false);
-      return;
-    }
-
-    let isMounted = true;
-    setLoading(true);
-    api.compareProjectSnapshots(projectId, beforeId, afterId)
-      .then(diff => {
-        if (!isMounted) return;
-        let removed = 0;
-        let added = 0;
-        const totalAfter = diff.metadata_diff?.snapshot_b?.model_count || 0;
-        const totalBefore = diff.metadata_diff?.snapshot_a?.model_count || 0;
-
-        if (diff.models) {
-          for (const mInfo of Object.values(diff.models)) {
-             if (mInfo.status === 'removed') removed++;
-             else if (mInfo.status === 'added') added++;
-          }
-        }
-
-        const retainedFromTarget = Math.max(0, totalBefore - removed);
-        setStats({
-          total_after: totalAfter,
-          removed: removed,
-          retained_from_target: retainedFromTarget,
-          source_added: added
-        });
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setStats({ total_after: 0, removed: 0, retained_from_target: 0, source_added: 0 });
-      })
-      .finally(() => {
-        if (isMounted) setLoading(false);
-      });
-
-    return () => { isMounted = false; };
-  }, [run, projectId]);
-
-  if (loading || !stats) {
-    return (
-      <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 16, background: 'var(--bg-surface)', marginBottom: 16, fontSize: 13, color: 'var(--text-tertiary)' }}>
-        Loading backend stats...
-      </div>
-    );
-  }
-
-  const isUpsert = (run.sync_mode || 'copy') === 'upsert';
-
-  return (
-    <div style={{ border: '1px solid var(--border-main)', borderRadius: 8, padding: 16, background: 'var(--bg-surface)', marginBottom: 16 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>Run Summary & Diffs</div>
-      
-      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', flexDirection: 'column' }}>
-        {isUpsert ? (
-          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Sync Mode:</span>
-              <span style={{ fontWeight: 700, color: '#10b981' }}>UPSERT</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Models retained from target snapshot:</span>
-              <span style={{ fontWeight: 600 }}>{stats.retained_from_target}</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Net new source models added:</span>
-              <span style={{ fontWeight: 600 }}>{stats.source_added}</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
-              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{stats.total_after}</span>
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Sync Mode:</span>
-              <span style={{ fontWeight: 700, color: '#64748b' }}>COPY</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Target replaced with source</span>
-              <span style={{ fontWeight: 600, color: 'var(--color-error)' }}>({stats.removed} target-only models removed)</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Total after snapshot:</span>
-              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{stats.total_after} (exact source copy)</span>
-            </div>
-          </div>
-        )}
-      </div>
-      
-      <div style={{ marginTop: 16, padding: 10, background: 'var(--bg-input)', borderRadius: 6, fontSize: 12, borderLeft: `3px solid ${isUpsert ? '#10b981' : '#64748b'}` }}>
-        {isUpsert 
-          ? `UPSERT retained ${stats.retained_from_target} models from the previous target snapshot and added ${stats.source_added} net new source models.`
-          : `COPY mode removed ${stats.removed} models not present in source.`}
-      </div>
-    </div>
-  );
-}
+const th = {
+  textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', padding: '10px 14px',
+  borderBottom: '1px solid var(--border-main)', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.04em',
+};
+const td = { padding: '11px 14px', fontSize: 13, color: 'var(--text-secondary)', verticalAlign: 'middle' };
 
 export default function ProjectJobsPage() {
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [runs, setRuns] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadedAt, setLoadedAt] = useState(0);
   const [running, setRunning] = useState(false);
+  const [runMenuOpen, setRunMenuOpen] = useState(false);
   const [scheduleDeletingId, setScheduleDeletingId] = useState('');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState(null);
   const [runningScheduleId, setRunningScheduleId] = useState('');
+  const [liveManifests, setLiveManifests] = useState({});
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
+  const runMenuRef = useRef(null);
+  const wide = useIsWide(1180);
 
   // Cached UI state — survives SPA navigation within the same tab.
   const [jobsCache, setJobsCache] = usePageCache('jobs-page', {
@@ -211,38 +63,57 @@ export default function ProjectJobsPage() {
     searchUseRegex: false,
     statusFilter: 'all',
     expandedRunId: null,
+    tab: 'history',
   });
-  const { search, searchUseRegex, statusFilter, expandedRunId } = jobsCache;
-  const setSearch = (v) => setJobsCache({ search: typeof v === 'function' ? v(search) : v });
-  const setSearchUseRegex = (v) => setJobsCache({ searchUseRegex: typeof v === 'function' ? v(searchUseRegex) : v });
-  const setStatusFilter = (v) => setJobsCache({ statusFilter: typeof v === 'function' ? v(statusFilter) : v });
-  const setExpandedRunId = (v) => setJobsCache({ expandedRunId: typeof v === 'function' ? v(expandedRunId) : v });
-  const [liveManifests, setLiveManifests] = useState({});
-  const [expandedModelSections, setExpandedModelSections] = useState({});
+  const { search, searchUseRegex, statusFilter, expandedRunId: openRunId, tab } = jobsCache;
+  const setSearch = (v) => setJobsCache({ search: v });
+  const setSearchUseRegex = (v) => setJobsCache({ searchUseRegex: v });
+  const setStatusFilter = (v) => setJobsCache({ statusFilter: v });
+  const setTab = (v) => setJobsCache({ tab: v });
 
-  // Auto-expand newly triggered run or running run when routed to /jobs
+  const openRun = useCallback((id) => {
+    setJobsCache({ expandedRunId: id || null, ...(id ? { tab: 'history' } : {}) });
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set('run', id); else next.delete('run');
+      return next;
+    }, { replace: true });
+  }, [setJobsCache, setSearchParams]);
+  const closeRun = useCallback(() => openRun(null), [openRun]);
+
+  // Deep links: ?run=<id> on first load.
+  const initialRunParam = useRef(searchParams.get('run'));
   useEffect(() => {
-    const targetRunId = location.state?.runId;
-    if (targetRunId) {
-      setExpandedRunId(targetRunId);
-    } else if (location.state?.autoExpand && runs.length > 0) {
-      setExpandedRunId(runs[0].id);
-    } else if (!expandedRunId && runs.length > 0 && runs[0].status === 'running') {
-      setExpandedRunId(runs[0].id);
+    if (initialRunParam.current) setJobsCache({ expandedRunId: initialRunParam.current, tab: 'history' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Other pages navigate here with { runId } or { autoExpand }: open that run's drawer once.
+  const handledNavKey = useRef(null);
+  useEffect(() => {
+    const st = location.state;
+    if (!st || handledNavKey.current === location.key) return;
+    if (st.runId) {
+      handledNavKey.current = location.key;
+      openRun(st.runId);
+    } else if (st.autoExpand && runs.length > 0) {
+      handledNavKey.current = location.key;
+      openRun(runs[0].id);
     }
-  }, [location.state, runs, expandedRunId]);
+  }, [location.key, location.state, runs, openRun]);
 
+  // While the open run is running, poll its per-model manifest.
+  const openRunObj = runs.find(r => r.id === openRunId);
+  const openRunIsRunning = normStatus(openRunObj?.status) === 'running';
+  const openRunProject = openRunObj?.project_id;
   useEffect(() => {
-    if (!expandedRunId) return;
-    const activeRun = runs.find(r => r.id === expandedRunId);
-    if (!activeRun || activeRun.status !== 'running') return;
-
+    if (!openRunId || !openRunIsRunning || !openRunProject) return undefined;
     let cancelled = false;
     const fetchManifest = async () => {
       try {
-        const manifest = await api.getRunModels(activeRun.project_id, activeRun.id);
+        const manifest = await api.getRunModels(openRunProject, openRunId);
         if (!cancelled && Array.isArray(manifest) && manifest.length > 0) {
-          setLiveManifests(prev => ({ ...prev, [activeRun.id]: manifest }));
+          setLiveManifests(prev => ({ ...prev, [openRunId]: manifest }));
         }
       } catch {
         // best effort polling while running
@@ -250,11 +121,8 @@ export default function ProjectJobsPage() {
     };
     fetchManifest();
     const interval = setInterval(fetchManifest, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [expandedRunId, runs]);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [openRunId, openRunIsRunning, openRunProject]);
 
   useEffect(() => {
     let cancelled = false;
@@ -267,16 +135,13 @@ export default function ProjectJobsPage() {
           api.listJobSchedules().catch(() => []),
           api.listProjects().catch(() => []),
         ]);
-
         if (cancelled) return;
-
         const nextRuns = (Array.isArray(runsData) ? runsData : []).map((run) => {
-          if (run?.id) {
-            saveRunLogs(run.id, getRunLogs(run));
-          }
+          if (run?.id) saveRunLogs(run.id, getRunLogs(run));
           return run;
         });
         setRuns(nextRuns);
+        setLoadedAt(Date.now());
         setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
         setProjects(Array.isArray(projectsData) ? projectsData : []);
       } catch {
@@ -285,9 +150,7 @@ export default function ProjectJobsPage() {
         setSchedules([]);
         setProjects([]);
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     };
 
@@ -297,42 +160,44 @@ export default function ProjectJobsPage() {
       if (cancelled) return;
       timerId = window.setTimeout(poll, REFRESH_INTERVAL_MS);
     };
-
     poll();
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timerId);
-    };
+    return () => { cancelled = true; window.clearTimeout(timerId); };
   }, []);
 
-  const handleOpenScheduleModal = (schedule = null) => {
-    setEditingSchedule(schedule);
-    setScheduleModalOpen(true);
+  useEffect(() => {
+    if (!runMenuOpen) return undefined;
+    const onDown = (e) => { if (runMenuRef.current && !runMenuRef.current.contains(e.target)) setRunMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [runMenuOpen]);
+
+  const addStartedRun = (result) => {
+    if (!result) return;
+    const nextRun = { ...result, id: result.id ?? result.run_id, status: 'running' };
+    if (nextRun.id) saveRunLogs(nextRun.id, buildMockRunLogs(nextRun));
+    setRuns(prev => [nextRun, ...prev.filter(r => r.id !== nextRun.id)]);
+    if (nextRun.id) openRun(nextRun.id);
   };
 
-  const handleScheduleSaved = (saved) => {
-    setSchedules((prev) => {
-      const filtered = prev.filter(
-        (s) => String(s.project_id || s.id) !== String(saved.project_id || saved.id)
-      );
-      return [saved, ...filtered];
-    });
+  // "Run a project": all projects (the original Run now) or one picked from the menu.
+  const handleRunNow = async (projectId = null) => {
+    setRunMenuOpen(false);
+    setRunning(true);
+    try {
+      addStartedRun(await api.triggerJob(projectId || undefined));
+    } catch (err) {
+      console.error('Trigger job failed:', err);
+      alert(`Could not start the run: ${err.message || 'Unknown error'}`);
+    } finally {
+      setRunning(false);
+    }
   };
 
   const handleRunScheduledProject = async (projectId) => {
     if (!projectId || runningScheduleId) return;
     setRunningScheduleId(String(projectId));
     try {
-      const result = await api.runProjectNow(projectId);
-      if (result) {
-        const nextRun = { ...result, status: 'running' };
-        if (nextRun?.id) {
-          saveRunLogs(nextRun.id, buildMockRunLogs(nextRun));
-        }
-        setRuns((prev) => [nextRun, ...prev]);
-        setExpandedRunId(nextRun.id ?? null);
-      }
+      addStartedRun(await api.runProjectNow(projectId));
     } catch (err) {
       console.error('Trigger project run failed:', err);
       alert(`Trigger run failed: ${err.message || 'Unknown error'}`);
@@ -341,189 +206,17 @@ export default function ProjectJobsPage() {
     }
   };
 
-  const [clearingLogs, setClearingLogs] = useState(false);
-  const handleClearLogs = async () => {
-    if (clearingLogs) return;
-    setClearingLogs(true);
-    try {
-      await api.clearJobRuns();
-      try {
-        localStorage.removeItem('semabridge_run_logs_v1');
-      } catch {}
-      setRuns([]);
-      setLiveManifests({});
-      setExpandedRunId(null);
-    } catch (err) {
-      console.error('Clear runs failed:', err);
-    } finally {
-      setClearingLogs(false);
-    }
+  const handleOpenScheduleModal = (schedule = null) => {
+    setEditingSchedule(schedule);
+    setScheduleModalOpen(true);
   };
 
-  const handleRunNow = async () => {
-    setRunning(true);
-    try {
-      const result = await api.triggerJob();
-      if (result) {
-        const nextRun = { ...result, status: 'running' };
-        if (nextRun?.id) {
-          saveRunLogs(nextRun.id, buildMockRunLogs(nextRun));
-        }
-        setRuns(prev => [nextRun, ...prev]);
-        setExpandedRunId(nextRun.id ?? null);
-      }
-    } catch (err) {
-      console.error('Trigger job failed:', err);
-    } finally {
-      setRunning(false);
-    }
+  const handleScheduleSaved = (saved) => {
+    setSchedules((prev) => {
+      const filtered = prev.filter(s => String(s.project_id || s.id) !== String(saved.project_id || saved.id));
+      return [saved, ...filtered];
+    });
   };
-
-  // "View Report Preview" modal -- always exactly ONE button per run, even
-  // for a multi-PBIX batch (run.model_reports has 2+ entries in that case,
-  // never exactly 1 -- see generate_per_model_reports()). reportModalModel
-  // is null for a single-file run (which selects the non-model-scoped
-  // endpoints below) and defaults to the first file's model for a
-  // multi-file run -- a file-selector dropdown inside the modal (rendered
-  // only when model_reports.length > 1) then lets the user switch which
-  // file's Summary/Raw Report are shown, without closing and reopening the
-  // modal. Summary (JSON) and Raw Report (Markdown) are both fetched up
-  // front, not lazily on tab switch, so toggling between them is instant
-  // once the modal (or a newly-selected file) has finished loading --
-  // matches demo_version_ref's exact approach, since this modal is ported
-  // from there.
-  const [reportModalRun, setReportModalRun] = useState(null);
-  const [reportModalModel, setReportModalModel] = useState(null);
-  const [reportModalMaximized, setReportModalMaximized] = useState(false);
-  const [reportContent, setReportContent] = useState('');
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState(null);
-  const [reportViewMode, setReportViewMode] = useState('summary');
-  const [reportSummary, setReportSummary] = useState(null);
-  const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
-  const [reportSummaryError, setReportSummaryError] = useState(null);
-
-  const loadReportForModel = async (run, modelLabel) => {
-    const pid = run.project_id;
-    const rid = run.id || run.run_id;
-    setReportLoading(true);
-    setReportError(null);
-    setReportContent('');
-    setReportSummaryLoading(true);
-    setReportSummaryError(null);
-    setReportSummary(null);
-    await Promise.all([
-      (async () => {
-        try {
-          const text = modelLabel
-            ? await api.getRunModelReport(pid, rid, modelLabel)
-            : await api.getRunReport(pid, rid);
-          setReportContent(text);
-        } catch (err) {
-          console.error('Failed to load report preview:', err);
-          setReportError(err.message || 'Failed to load report content.');
-        } finally {
-          setReportLoading(false);
-        }
-      })(),
-      (async () => {
-        try {
-          const summary = modelLabel
-            ? await api.getRunModelReportSummary(pid, rid, modelLabel)
-            : await api.getRunReportSummary(pid, rid);
-          setReportSummary(summary);
-        } catch (err) {
-          console.error('Failed to load report summary:', err);
-          setReportSummaryError(err.message || 'Failed to load report summary.');
-        } finally {
-          setReportSummaryLoading(false);
-        }
-      })(),
-    ]);
-  };
-
-  // preselectModel: optional model_reports[].model label -- the per-model
-  // sections of a multi-model run open the modal on that model's own
-  // report. When multi-model without preselectModel, defaults to the first model's report.
-  const openReportModal = async (run, preselectModel = null) => {
-    const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
-    const initialModel = preselectModel
-      ? (modelEntries.some((e) => e.model === preselectModel) ? preselectModel : null)
-      : (modelEntries.length > 1 ? modelEntries[0].model : null);
-    setReportModalRun(run);
-    setReportModalModel(initialModel);
-    setReportModalMaximized(false);
-    setReportViewMode('summary');
-    await loadReportForModel(run, initialModel);
-  };
-
-  const selectReportModel = async (modelLabel) => {
-    if (!reportModalRun) return;
-    const targetModel = modelLabel || null;
-    setReportModalModel(targetModel);
-    await loadReportForModel(reportModalRun, targetModel);
-  };
-
-  const closeReportModal = () => {
-    setReportModalRun(null);
-    setReportModalModel(null);
-  };
-
-  // "Dropped Fields" modal -- a separate, standalone button/modal from
-  // "View Report Preview" (previously a third tab inside that modal; moved
-  // back out to its own display). Mirrors the report modal's file-selector
-  // pattern exactly (same run.model_reports dropdown, hidden for a
-  // single-file run) but needs no fetch at all: the data is derived
-  // straight from run.results, already loaded client-side -- the same
-  // source the original page-level DroppedFieldsPanel used before it was
-  // ever moved into the report modal.
-  const [droppedFieldsModalRun, setDroppedFieldsModalRun] = useState(null);
-  const [droppedFieldsModalModel, setDroppedFieldsModalModel] = useState(null);
-
-  // preselectModel: optional result.model label (per-model sections of a
-  // multi-model run). Without it, defaults to the first file as before.
-  const openDroppedFieldsModal = (run, preselectModel = null) => {
-    const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
-    setDroppedFieldsModalRun(run);
-    setDroppedFieldsModalModel(
-      preselectModel || (modelEntries.length > 1 ? modelEntries[0].model : null)
-    );
-  };
-
-  const selectDroppedFieldsModel = (modelLabel) => {
-    setDroppedFieldsModalModel(modelLabel);
-  };
-
-  const closeDroppedFieldsModal = () => {
-    setDroppedFieldsModalRun(null);
-    setDroppedFieldsModalModel(null);
-  };
-
-  // Scoped to whichever file is currently selected (or the whole run, for
-  // a single-file run). No `model` field is added when scoped to one file,
-  // so DroppedFieldsPanel's own per-model grouping never kicks in here --
-  // it only ever sees one file's entries at a time.
-  const droppedFieldsModalEntries = useMemo(() => {
-    const results = Array.isArray(droppedFieldsModalRun?.results) ? droppedFieldsModalRun.results : [];
-    const scoped = droppedFieldsModalModel
-      ? results.filter((r) => r?.model === droppedFieldsModalModel)
-      : results;
-    let list = scoped.flatMap(
-      (r) => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : []).map(
-        (entry) => ({ ...entry, model: r?.model })
-      )
-    );
-    if (!list.length && droppedFieldsModalRun) {
-      const fallback = (
-        (Array.isArray(droppedFieldsModalRun.dropped_entities) && droppedFieldsModalRun.dropped_entities) ||
-        (Array.isArray(droppedFieldsModalRun.summary?.dropped_entities) && droppedFieldsModalRun.summary.dropped_entities) ||
-        (Array.isArray(droppedFieldsModalRun.summary?.drop_ledger) && droppedFieldsModalRun.summary.drop_ledger) ||
-        []
-      );
-      list = fallback.map((entry) => ({ ...entry, model: droppedFieldsModalRun.source_model_name || droppedFieldsModalRun.model || 'Model' }));
-    }
-    return list;
-  }, [droppedFieldsModalRun, droppedFieldsModalModel]);
 
   const handleDeleteSchedule = async (projectId) => {
     if (!projectId) return;
@@ -538,297 +231,194 @@ export default function ProjectJobsPage() {
     }
   };
 
+  const handleClearLogs = async () => {
+    if (clearingLogs) return;
+    setClearingLogs(true);
+    try {
+      await api.clearJobRuns();
+      try { localStorage.removeItem('semabridge_run_logs_v1'); } catch { /* ignore */ }
+      clearRunCounts();
+      setRuns([]);
+      setLiveManifests({});
+      closeRun();
+    } catch (err) {
+      console.error('Clear runs failed:', err);
+    } finally {
+      setClearingLogs(false);
+      setConfirmClear(false);
+    }
+  };
+
+  // Report viewer (Summary / Raw Report, per-file picker, download).
+  const [report, setReport] = useState(null); // { run, model, view, key }
+  const openReport = (run, model = null, view = 'summary') => {
+    setReport({ run, model: model ? defaultReportModel(run, model) : defaultReportModel(run), view, key: Date.now() });
+  };
+  const downloadReport = (run) => {
+    downloadRunMarkdown(run, null).catch(err => console.error('Failed to download report:', err));
+  };
+
+  // Dropped fields viewer, derived from run.results (no fetch).
+  const [droppedFieldsModalRun, setDroppedFieldsModalRun] = useState(null);
+  const [droppedFieldsModalModel, setDroppedFieldsModalModel] = useState(null);
+  const openDroppedFieldsModal = (run, preselectModel = null) => {
+    const modelEntries = Array.isArray(run.model_reports) ? run.model_reports : [];
+    setDroppedFieldsModalRun(run);
+    setDroppedFieldsModalModel(preselectModel || (modelEntries.length > 1 ? modelEntries[0].model : null));
+  };
+  const closeDroppedFieldsModal = () => {
+    setDroppedFieldsModalRun(null);
+    setDroppedFieldsModalModel(null);
+  };
+  const droppedFieldsModalEntries = useMemo(() => {
+    const results = Array.isArray(droppedFieldsModalRun?.results) ? droppedFieldsModalRun.results : [];
+    const scoped = droppedFieldsModalModel ? results.filter(r => r?.model === droppedFieldsModalModel) : results;
+    let list = scoped.flatMap(r => (Array.isArray(r?.dropped_entities) ? r.dropped_entities : []).map(entry => ({ ...entry, model: r?.model })));
+    if (!list.length && droppedFieldsModalRun) {
+      const fallback = (
+        (Array.isArray(droppedFieldsModalRun.dropped_entities) && droppedFieldsModalRun.dropped_entities) ||
+        (Array.isArray(droppedFieldsModalRun.summary?.dropped_entities) && droppedFieldsModalRun.summary.dropped_entities) ||
+        (Array.isArray(droppedFieldsModalRun.summary?.drop_ledger) && droppedFieldsModalRun.summary.drop_ledger) ||
+        []
+      );
+      list = fallback.map(entry => ({ ...entry, model: droppedFieldsModalRun.source_model_name || droppedFieldsModalRun.model || 'Model' }));
+    }
+    return list;
+  }, [droppedFieldsModalRun, droppedFieldsModalModel]);
+
+  // Header numbers: last 30 days.
+  const stats = useMemo(() => {
+    const since = loadedAt - 30 * DAY_MS;
+    const recent = runs.filter(r => (parseIso(r.started_at)?.getTime() || 0) >= since);
+    const finished = recent.filter(r => ['success', 'failed'].includes(normStatus(r.status)));
+    const ok = finished.filter(r => normStatus(r.status) === 'success').length;
+    return { recent: recent.length, pct: finished.length ? Math.round((100 * ok) / finished.length) : null };
+  }, [runs, loadedAt]);
+
+  // "#N" labels: position in time order across the loaded history.
+  const runNumbers = useMemo(() => {
+    const sorted = [...runs].sort((a, b) => (parseIso(a.started_at)?.getTime() || 0) - (parseIso(b.started_at)?.getTime() || 0));
+    return new Map(sorted.map((r, i) => [r.id, i + 1]));
+  }, [runs]);
+
+  const projectName = (run) => {
+    if (run.project_name && run.project_name !== 'Project run') return run.project_name;
+    const p = projects.find(x => String(x.id) === String(run.project_id));
+    return p?.name || p?.display_name || run.project_id || 'Project run';
+  };
+
   const filteredRuns = runs.filter((run) => {
     const matchSearch = !search || matchesSmartQuery(
-      `${String(run.id || '')} ${String(run.project_name || '')}`,
+      `${String(run.id || '')} #${runNumbers.get(run.id) || ''} ${projectName(run)}`,
       search,
       searchUseRegex,
     );
-    const matchStatus = statusFilter === 'all' || String(run.status || '').toLowerCase() === statusFilter;
+    const matchStatus = statusFilter === 'all' || normStatus(run.status) === statusFilter;
     return matchSearch && matchStatus;
   });
+  const visibleRuns = filteredRuns.slice(0, visibleCount);
+  const drawerRun = openRunObj ? { ...openRunObj, project_name: projectName(openRunObj) } : null;
+  const countsByRun = useRunReportCounts(drawerRun ? [...visibleRuns, drawerRun] : visibleRuns);
 
-  const inputStyle = {
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-main)',
-    borderRadius: 8,
-    color: 'var(--text-primary)',
-    padding: '8px 12px',
-    fontSize: 13,
-    outline: 'none',
-    fontFamily: 'inherit',
+  const tabBtn = (key, label, extra) => (
+    <button
+      type="button"
+      onClick={() => setTab(key)}
+      style={{
+        padding: '8px 2px', marginRight: 20, border: 'none', background: 'transparent', cursor: 'pointer',
+        fontSize: 13, fontWeight: 600,
+        color: tab === key ? 'var(--text-primary)' : 'var(--text-tertiary)',
+        borderBottom: `2px solid ${tab === key ? 'var(--accent-blue)' : 'transparent'}`,
+        marginBottom: -1,
+      }}
+    >
+      {label}{extra !== undefined && <span style={{ marginLeft: 6, color: 'var(--text-tertiary)', fontWeight: 500 }}>{extra}</span>}
+    </button>
+  );
+
+  const renderResult = (run) => {
+    const st = normStatus(run.status);
+    if (st === 'running') return <span style={{ color: 'var(--text-tertiary)' }}>running…</span>;
+    const c = countsByRun[run.id];
+    if (c?.counts) return <div style={{ width: 150 }}><ConversionBar counts={c.counts} /></div>;
+    if (st === 'failed') {
+      const msg = run.error || run.message;
+      return <span title={msg} style={{ color: 'var(--text-secondary)' }}>{shortMessage(msg, 48) || 'Failed'}</span>;
+    }
+    return <span style={{ color: 'var(--text-tertiary)' }}>{c ? '—' : ''}</span>;
   };
 
   return (
-    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
-      <PageHeader
-        title="Runs"
-        description="Configure execution schedules and monitor run history."
-        action={{
-          label: running ? 'Running…' : 'Run Now',
-          icon: running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />,
-          onClick: handleRunNow,
-        }}
-      />
-
-      <div
-        className="rounded-xl mb-6"
-        style={{
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-main)',
-          padding: 24,
-        }}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <CalendarClock size={16} style={{ color: 'var(--accent-blue)' }} />
-              <h2 className="text-primary font-semibold" style={{ fontSize: 14, margin: 0 }}>Scheduled Jobs</h2>
-            </div>
-            <p className="text-[11px] text-tertiary mt-0.5" style={{ margin: '2px 0 0 24px' }}>
-              Automated background synchronizations for PowerBI, Snowflake Cortex, and Databricks Genie
-            </p>
+    <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: openRunId && wide ? '0 520px 0 auto' : '0 auto' }} className="md:px-10">
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: 'var(--text-primary)', lineHeight: 1.2 }}>Runs</h1>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 6 }}>
+            {stats.recent
+              ? `${stats.recent} in the last 30 days${stats.pct !== null ? ` · ${stats.pct}% succeeded` : ''}`
+              : 'No runs in the last 30 days'}
           </div>
+        </div>
+        <div ref={runMenuRef} style={{ position: 'relative', display: 'inline-flex' }}>
           <button
             type="button"
-            onClick={() => handleOpenScheduleModal(null)}
+            onClick={() => setRunMenuOpen(v => !v)}
+            disabled={running}
+            aria-haspopup="menu"
+            aria-expanded={runMenuOpen}
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '6px 14px',
-              borderRadius: 8,
-              background: 'var(--accent-blue)',
-              color: '#ffffff',
-              border: 'none',
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
+              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 8,
+              background: 'var(--accent-blue)', color: '#fff', border: 'none', fontSize: 13, fontWeight: 600,
+              cursor: running ? 'wait' : 'pointer', boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
             }}
           >
-            <Plus size={14} /> Add Schedule
+            {running ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+            {running ? 'Starting…' : 'Run a project'}
+            <ChevronDown size={14} />
           </button>
-        </div>
-
-        {schedules.length === 0 ? (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '28px 16px',
-              background: 'var(--bg-surface-raised)',
-              borderRadius: 10,
-              border: '1px dashed var(--border-main)',
-            }}
-          >
-            <CalendarClock size={32} style={{ color: 'var(--text-tertiary)', margin: '0 auto 10px auto' }} />
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>No active job schedules</div>
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4, marginBottom: 14, maxWidth: 440, marginLeft: 'auto', marginRight: 'auto' }}>
-              Set up automated background synchronizations for your semantic models using friendly cadences (Hourly, Daily, Weekly) or Custom Cron.
-            </div>
-            <button
-              type="button"
-              onClick={() => handleOpenScheduleModal(null)}
+          {runMenuOpen && (
+            <div
+              role="menu"
+              className="custom-scrollbar"
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '8px 16px',
-                borderRadius: 8,
-                background: 'var(--accent-blue)',
-                color: '#ffffff',
-                border: 'none',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
+                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 30, minWidth: 240, maxHeight: 320, overflowY: 'auto',
+                background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 10,
+                boxShadow: 'var(--shadow-md)', padding: 4,
               }}
             >
-              <Plus size={14} /> Create Your First Schedule
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {schedules.map((schedule) => {
-              const humanSchedule = schedule.schedule_type === 'cron'
-                ? translateCron(schedule.cron)
-                : `One-time: ${schedule.date || ''} ${schedule.time || ''}`.trim();
-              const relativeCountdown = formatRelativeCountdown(schedule.next_run_at);
-              const pid = schedule.project_id || schedule.id;
-              const isRunningThis = runningScheduleId === String(pid);
-
-              return (
-                <div
-                  key={schedule.id || schedule.project_id}
-                  className="flex flex-col md:grid md:grid-cols-[1.5fr_1.2fr_1fr_auto] gap-4"
-                  style={{
-                    border: '1px solid var(--border-main)',
-                    borderRadius: 10,
-                    padding: '14px 18px',
-                    alignItems: 'center',
-                    background: 'var(--bg-surface-raised)',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span>{schedule.project_name || schedule.project_id}</span>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          padding: '1px 6px',
-                          borderRadius: 4,
-                          background: 'rgba(16, 185, 129, 0.15)',
-                          color: '#10b981',
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        Active
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        {humanSchedule}
-                      </span>
-                      {schedule.cron && (
-                        <span
-                          style={{
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            padding: '1px 5px',
-                            borderRadius: 3,
-                            background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-main)',
-                            color: 'var(--text-tertiary)',
-                          }}
-                        >
-                          {schedule.cron}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                      Next Execution
-                    </div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginTop: 2 }}>
-                      {formatDate(schedule.next_run_at)}
-                      {relativeCountdown && (
-                        <span style={{ color: 'var(--accent-blue)', marginLeft: 6, fontSize: 11 }}>
-                          ({relativeCountdown})
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                    Timezone: <strong style={{ color: 'var(--text-secondary)' }}>{schedule.timezone || 'UTC'}</strong>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleRunScheduledProject(pid)}
-                      disabled={isRunningThis}
-                      style={{
-                        border: '1px solid rgba(59, 130, 246, 0.4)',
-                        background: 'rgba(59, 130, 246, 0.1)',
-                        color: '#3b82f6',
-                        borderRadius: 8,
-                        padding: '6px 12px',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: isRunningThis ? 'not-allowed' : 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        opacity: isRunningThis ? 0.6 : 1,
-                      }}
-                      title="Trigger immediate sync for this project"
-                    >
-                      {isRunningThis ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
-                      <span>{isRunningThis ? 'Running…' : 'Run Now'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleOpenScheduleModal(schedule)}
-                      style={{
-                        border: '1px solid var(--border-main)',
-                        background: 'var(--bg-surface)',
-                        color: 'var(--text-secondary)',
-                        borderRadius: 8,
-                        padding: '6px 10px',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                      title="Edit schedule configuration"
-                    >
-                      <Pencil size={12} />
-                      <span>Edit</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteSchedule(schedule.project_id)}
-                      disabled={scheduleDeletingId === String(schedule.project_id)}
-                      style={{
-                        border: '1px solid rgba(239, 68, 68, 0.3)',
-                        background: 'rgba(239, 68, 68, 0.08)',
-                        color: '#ef4444',
-                        borderRadius: 8,
-                        padding: '6px 10px',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: scheduleDeletingId === String(schedule.project_id) ? 'not-allowed' : 'pointer',
-                        opacity: scheduleDeletingId === String(schedule.project_id) ? 0.6 : 1,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                      title="Cancel and remove schedule"
-                    >
-                      <Trash2 size={12} />
-                      <span>{scheduleDeletingId === String(schedule.project_id) ? 'Cancelling…' : 'Cancel'}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+              <MenuItem onClick={() => handleRunNow(null)} label="Run all scheduled projects now" hint="Same as before: every project that has a schedule" />
+              {projects.length > 0 && <div style={{ height: 1, background: 'var(--border-main)', margin: '4px 0' }} />}
+              {projects.map(p => (
+                <MenuItem key={p.id} onClick={() => handleRunNow(p.id)} label={p.name || p.display_name || p.id} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="mt-10">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <h2 className="text-primary font-bold" style={{ fontSize: 18, margin: 0 }}>Run History</h2>
-              <span className="px-2 py-0.5 rounded-full bg-surface-raised border border-main text-[11px] text-tertiary">
-                {runs.length} runs
-              </span>
-            </div>
-            <p className="text-[11px] text-tertiary mt-0.5">
-              Live status, execution durations, per-model diffs, and step logs
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleClearLogs}
-              disabled={clearingLogs || runs.length === 0}
-              className="text-[11px] text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {clearingLogs ? 'Clearing…' : 'Clear Runs'}
-            </button>
-          </div>
-        </div>
+      {/* Tabs */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border-main)', marginBottom: 16 }}>
+        {tabBtn('history', 'History')}
+        {tabBtn('schedules', 'Schedules', schedules.length)}
+        {tabBtn('drift', 'Drift Approvals')}
+      </div>
 
-        <div className="flex flex-row items-center gap-3 mb-6">
-          <div className="flex-1 relative">
+      {tab === 'drift' ? (
+        <DriftView />
+      ) : tab === 'schedules' ? (
+        <SchedulesTab
+          schedules={schedules}
+          onAdd={() => handleOpenScheduleModal(null)}
+          onEdit={handleOpenScheduleModal}
+          onDelete={handleDeleteSchedule}
+          onRun={handleRunScheduledProject}
+          runningScheduleId={runningScheduleId}
+          deletingId={scheduleDeletingId}
+        />
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
             <SearchInput
               value={search}
               onChange={setSearch}
@@ -836,689 +426,145 @@ export default function ProjectJobsPage() {
               onToggleRegex={setSearchUseRegex}
               allowRegex
               helperText={searchUseRegex ? 'Regex enabled' : ''}
-              placeholder="Search by prefix or regex..."
-              width="100%"
+              placeholder="Filter by project or run…"
+              width={280}
             />
-          </div>
-
-          <div className="shrink-0">
-            <div className="relative group">
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value)}
-                style={{
-                  ...inputStyle,
-                  padding: '7px 12px',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  minWidth: 140,
-                  appearance: 'none',
-                  backgroundImage: 'none',
-                  textAlign: 'center',
-                }}
-                className="hover:border-accent group-hover:bg-surface-hover"
-              >
-                <option value="all">🔍 All Status</option>
-                <option value="success">✅ Success</option>
-                <option value="failed">❌ Failed</option>
-                <option value="running">🔄 Running</option>
-              </select>
+            <div role="tablist" aria-label="Status" style={{ display: 'inline-flex', padding: 2, borderRadius: 8, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
+              {FILTERS.map(f => (
+                <button
+                  key={f.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={statusFilter === f.key}
+                  onClick={() => setStatusFilter(f.key)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 6, border: 'none', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    background: statusFilter === f.key ? 'var(--bg-surface-raised)' : 'transparent',
+                    color: statusFilter === f.key ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                    boxShadow: statusFilter === f.key ? 'var(--shadow-sm)' : 'none',
+                  }}
+                >
+                  {f.label}
+                </button>
+              ))}
             </div>
+            <span style={{ flex: 1 }} />
+            {confirmClear ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', paddingTop: 6 }}>
+                Clear all run history?
+                <button type="button" onClick={handleClearLogs} disabled={clearingLogs} style={{ ...linkBtn, color: 'var(--color-error)' }}>
+                  {clearingLogs ? 'Clearing…' : 'Clear'}
+                </button>
+                <button type="button" onClick={() => setConfirmClear(false)} style={linkBtn}>Cancel</button>
+              </span>
+            ) : (
+              <button type="button" onClick={() => setConfirmClear(true)} disabled={runs.length === 0} style={{ ...linkBtn, paddingTop: 6, opacity: runs.length ? 1 : 0.5 }}>
+                Clear runs
+              </button>
+            )}
           </div>
-        </div>
 
-        <div
-          className="rounded-xl overflow-x-auto custom-scrollbar"
-          style={{ border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}
-        >
-          <div style={{ minWidth: 850 }}>
+          <div className="custom-scrollbar" style={{ border: '1px solid var(--border-main)', borderRadius: 12, background: 'var(--bg-surface)', overflowX: 'auto' }}>
             {loading ? (
-              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-                Loading runs...
-              </div>
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Loading runs…</div>
             ) : filteredRuns.length === 0 ? (
               <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-                No job runs yet. Click 'Run Now' to trigger your first execution.
+                {runs.length ? 'No runs match this filter.' : 'No runs yet. Use Run a project to start the first one.'}
               </div>
             ) : (
-              filteredRuns.map((run, index) => {
-                const isExpanded = expandedRunId === run.id;
-                const logs = getRunLogs(run);
-                const effectiveRun = (liveManifests[run.id] && run.status === 'running')
-                  ? { ...run, results: liveManifests[run.id] }
-                  : run;
-                const perModelEntries = getPerModelRunEntries(effectiveRun);
-                const isMultiModel = perModelEntries.length > 0;
-                return (
-                  <div
-                    key={run.id ?? index}
-                    style={{
-                      borderTop: index === 0 ? 'none' : '1px solid var(--border-main)',
-                      background: index % 2 === 0 ? 'transparent' : 'var(--bg-surface-raised)',
-                    }}
-                  >
-                    <button
-                      onClick={() => setExpandedRunId(isExpanded ? null : run.id)}
-                      style={{
-                        width: '100%',
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                        padding: '14px 16px',
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(120px, 0.8fr) minmax(200px, 2.5fr) minmax(80px, 0.5fr) 80px 110px 160px 80px',
-                        gap: 16,
-                        alignItems: 'center',
-                        textAlign: 'left',
-                        color: 'var(--text-primary)',
-                        minHeight: 56,
-                      }}
-                    >
-                      <div className="hidden lg:flex items-center gap-10 min-w-0">
-                        <div className="flex items-center gap-2">
-                          {isExpanded ? <ChevronDown size={14} className="text-tertiary" /> : <ChevronRight size={14} className="text-tertiary" />}
-                          <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {String(run.id ?? '-').substring(0, 12)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="lg:hidden flex items-center justify-center flex-shrink-0" style={{ width: 24 }}>
-                        {isExpanded ? <ChevronDown size={14} className="text-tertiary" /> : <ChevronRight size={14} className="text-tertiary" />}
-                      </div>
-                      <div style={{
-                        display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600,
-                        minWidth: 0,
-                      }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          {sourceIcon(run.source_type)}
-                        </span>
-                        <span style={{
-                          whiteSpace: isExpanded ? 'normal' : 'nowrap',
-                          overflow: isExpanded ? 'visible' : 'hidden',
-                          textOverflow: isExpanded ? 'clip' : 'ellipsis',
-                          flex: 1,
-                          minWidth: 0,
-                          overflowWrap: 'break-word',
-                          wordBreak: 'break-word',
-                        }}>
-                          {run.project_name || 'Project run'}
-                        </span>
-                      </div>
-                      <div className="hidden sm:block" style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>{run.schedule || 'Manual'}</div>
-                      <div style={{ display: 'flex', justifyContent: 'center' }}>
-                        <StatusBadge status={run.status || 'draft'} size="sm" />
-                      </div>
-                      {/* Sync Mode Badge */}
-                      <div style={{ display: 'flex', justifyContent: 'center' }}>
-                        <span style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          letterSpacing: '0.08em',
-                          padding: '2px 8px',
-                          borderRadius: 4,
-                          textTransform: 'uppercase',
-                          background: (run.sync_mode || 'copy') === 'upsert'
-                            ? 'rgba(16, 185, 129, 0.15)' /* Green for UPSERT */
-                            : 'rgba(100, 116, 139, 0.15)', /* Gray/Blue for COPY */
-                          color: (run.sync_mode || 'copy') === 'upsert'
-                            ? '#10b981'
-                            : '#64748b',
-                          border: `1px solid ${(run.sync_mode || 'copy') === 'upsert' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(100, 116, 139, 0.25)'}`,
-                        }}>
-                          {(run.sync_mode || 'copy').toUpperCase()}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {formatDate(run.started_at)}
-                      </div>
-                      <div className="hidden md:block" style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-secondary)', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {formatDuration(run.duration_ms)}
-                      </div>
-                    </button>
-
-                    {isExpanded && (
-                      <div style={{ padding: '0 16px 16px 16px', background: 'var(--bg-input)', borderTop: '1px solid var(--border-main)' }}>
-                        {(() => {
-                          const allDroppedList = perModelEntries.flatMap((e) =>
-                            Array.isArray(e.droppedEntities) ? e.droppedEntities : []
-                          );
-                          const fallbackDropped =
-                            (Array.isArray(run.dropped_entities) && run.dropped_entities) ||
-                            (Array.isArray(run.summary?.dropped_entities) && run.summary.dropped_entities) ||
-                            (Array.isArray(run.summary?.drop_ledger) && run.summary.drop_ledger) ||
-                            [];
-                          const combinedDropped = allDroppedList.length > 0 ? allDroppedList : fallbackDropped;
-                          const totalDroppedCount = combinedDropped.length;
-                          const actionableCount = combinedDropped.filter(
-                            (e) => !e?.by_design && !isInternalAutoTable(e)
-                          ).length;
-                          const byDesignCount = totalDroppedCount - actionableCount;
-
-                          return (
-                            <>
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: '14px 0' }}>
-                                <InfoCard label="Run ID" value={String(run.id ?? '-')} mono />
-                                <InfoCard label="Sync Mode" value={(run.sync_mode || 'copy').toUpperCase()} />
-                                <InfoCard label="Started" value={formatDate(run.started_at)} />
-                                <InfoCard label="Duration" value={formatDuration(run.duration_ms)} mono />
-                                <InfoCard label="Status" value={String(run.status || 'draft')} />
-                                <InfoCard label="Message" value={run.message || run.error || '—'} />
-                              </div>
-
-                              {totalDroppedCount > 0 && !isUpsertFocusedRun(run) && (
-                                actionableCount > 0 ? (
-                                  <div
-                                    style={{
-                                      marginBottom: 12,
-                                      padding: '10px 14px',
-                                      borderRadius: 8,
-                                      background: 'rgba(239, 68, 68, 0.08)',
-                                      border: '1px solid rgba(239, 68, 68, 0.35)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      flexWrap: 'wrap',
-                                      gap: 10,
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-error, #ef4444)', fontWeight: 600 }}>
-                                      <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-                                      <span>
-                                        This run recorded {actionableCount} entity {actionableCount === 1 ? 'issue' : 'issues'} requiring attention. See individual model sections below for rejection reasons and logs.
-                                      </span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => openDroppedFieldsModal(run)}
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 6,
-                                        padding: '4px 10px',
-                                        fontSize: 11,
-                                        fontWeight: 600,
-                                        borderRadius: 4,
-                                        background: 'var(--bg-surface-raised)',
-                                        color: 'var(--text-primary)',
-                                        border: '1px solid var(--border-main)',
-                                        cursor: 'pointer',
-                                      }}
-                                    >
-                                      View Dropped Details
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div
-                                    style={{
-                                      marginBottom: 12,
-                                      padding: '10px 14px',
-                                      borderRadius: 8,
-                                      background: 'rgba(100, 116, 139, 0.08)',
-                                      border: '1px solid rgba(100, 116, 139, 0.25)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      flexWrap: 'wrap',
-                                      gap: 10,
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>
-                                      <Info size={15} style={{ color: '#38bdf8', flexShrink: 0 }} />
-                                      <span>
-                                        Clean target schema: <strong>{byDesignCount}</strong> Power BI system {byDesignCount === 1 ? 'table was' : 'tables were'} excluded by design (auto date hierarchies & spacers). No action needed.
-                                      </span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => openDroppedFieldsModal(run)}
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 6,
-                                        padding: '4px 10px',
-                                        fontSize: 11,
-                                        fontWeight: 600,
-                                        borderRadius: 4,
-                                        background: 'var(--bg-surface-raised)',
-                                        color: 'var(--text-secondary)',
-                                        border: '1px solid var(--border-main)',
-                                        cursor: 'pointer',
-                                      }}
-                                    >
-                                      View Excluded Tables
-                                    </button>
-                                  </div>
-                                )
-                              )}
-                            </>
-                          );
-                        })()}
-
-                        {/* "View Report Preview" button -- available whenever a run report or model reports exist */}
-                        {Boolean(run.has_report || run.report_path || (Array.isArray(run.model_reports) && run.model_reports.length > 0)) && (
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8, marginBottom: 8 }}>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openReportModal(run);
-                              }}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                padding: '6px 12px',
-                                borderRadius: 6,
-                                fontSize: 12,
-                                fontWeight: 600,
-                                background: 'var(--bg-surface-raised)',
-                                color: 'var(--text-primary)',
-                                border: '1px solid var(--border-main)',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <FileText size={14} /> View Report Preview
-                            </button>
-                          </div>
-                        )}
-
-                        {run.status === 'success' && !isUpsertFocusedRun(run) && (
-                          <RunDiffViewer run={run} projectId={run.project_id} />
-                        )}
-
-                        {isMultiModel ? (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 6 }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                                {perModelEntries.length > 1
-                                  ? `Models In This Run (${perModelEntries.length})`
-                                  : 'Target Model & Dropped Fields'}
-                              </div>
-                              {perModelEntries.length > 1 && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedModelSections(prev => ({
-                                      ...prev,
-                                      ...Object.fromEntries(perModelEntries.map(e => [e.key, true])),
-                                    }))}
-                                    style={{
-                                      fontSize: 11,
-                                      color: 'var(--text-tertiary)',
-                                      background: 'transparent',
-                                      border: 'none',
-                                      cursor: 'pointer',
-                                      padding: 0,
-                                    }}
-                                    className="hover:text-primary transition-colors"
-                                  >
-                                    Expand all
-                                  </button>
-                                  <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>•</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedModelSections(prev => ({
-                                      ...prev,
-                                      ...Object.fromEntries(perModelEntries.map(e => [e.key, false])),
-                                    }))}
-                                    style={{
-                                      fontSize: 11,
-                                      color: 'var(--text-tertiary)',
-                                      background: 'transparent',
-                                      border: 'none',
-                                      cursor: 'pointer',
-                                      padding: 0,
-                                    }}
-                                    className="hover:text-primary transition-colors"
-                                  >
-                                    Collapse all
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                            {perModelEntries.map((entry) => {
-                              const shouldOpenByDefault = (
-                                perModelEntries.length <= 3 ||
-                                entry.status === 'running' ||
-                                entry.status === 'failed' ||
-                                entry.status === 'conflict' ||
-                                (Array.isArray(entry.droppedEntities) && entry.droppedEntities.length > 0)
-                              );
-                              const isOpen = expandedModelSections[entry.key] !== undefined
-                                ? expandedModelSections[entry.key]
-                                : shouldOpenByDefault;
-
-                              return (
-                                <ModelRunSection
-                                  key={entry.key}
-                                  entry={entry}
-                                  projectId={run.project_id}
-                                  runId={run.id}
-                                  isRunActive={run.status === 'running'}
-                                  isOpen={isOpen}
-                                  onToggle={() => setExpandedModelSections(prev => ({
-                                    ...prev,
-                                    [entry.key]: !(prev[entry.key] !== undefined ? prev[entry.key] : shouldOpenByDefault),
-                                  }))}
-                                  formatDuration={formatDuration}
-                                  defaultOpen={shouldOpenByDefault}
-                                />
-                              );
-                            })}
-                          </>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                              Execution Stages For Selected Run
-                            </div>
-                            <div
-                              style={{
-                                borderRadius: 8,
-                                border: '1px solid var(--border-main)',
-                                background: 'var(--bg-surface)',
-                                padding: 12,
-                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                                fontSize: 12,
-                                lineHeight: 1.65,
-                                color: 'var(--text-primary)',
-                                whiteSpace: 'pre-wrap',
-                              }}
-                            >
-                              {logs.join('\n')}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Run</th>
+                    <th style={th}>Project</th>
+                    <th style={th}>Started</th>
+                    <th style={th}>Took</th>
+                    <th style={{ ...th, width: 180 }}>Result</th>
+                    <th style={th}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRuns.map((run, i) => {
+                    const selected = run.id === openRunId;
+                    return (
+                      <tr
+                        key={run.id ?? i}
+                        onClick={() => (selected ? closeRun() : openRun(run.id))}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRun(run.id); } }}
+                        tabIndex={0}
+                        aria-selected={selected}
+                        style={{
+                          cursor: 'pointer',
+                          borderTop: i ? '1px solid var(--border-main)' : 'none',
+                          background: selected ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
+                          boxShadow: selected ? 'inset 3px 0 0 var(--accent-blue)' : 'none',
+                        }}
+                        className="hover:bg-surface-hover"
+                      >
+                        <td style={{ ...td, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }} title={String(run.id || '')}>
+                          #{runNumbers.get(run.id) || '?'}
+                        </td>
+                        <td style={{ ...td, color: 'var(--text-primary)', fontWeight: 600, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {projectName(run)}
+                        </td>
+                        <td style={{ ...td, whiteSpace: 'nowrap' }} title={formatDateTime(run.started_at)}>{formatAgo(run.started_at)}</td>
+                        <td style={{ ...td, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{formatDuration(run.duration_ms)}</td>
+                        <td style={{ ...td, fontSize: 12, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderResult(run)}</td>
+                        <td style={td}><StatusPill status={run.status} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
-          </div>
-        </div>
-      </div>
-
-      {/* Run Report Preview Modal -- shared by the whole-run button and every
-          per-model button; reportModalModel selects which endpoints/label to use. */}
-      <Modal
-        open={Boolean(reportModalRun)}
-        onClose={closeReportModal}
-        title={
-          `Run Report Preview — ${reportModalRun?.id || reportModalRun?.run_id || ''}` +
-          (reportModalModel ? ` — ${cleanPbixLabel(reportModalModel)}` : '')
-        }
-        size="lg"
-        allowMaximize
-        isMaximized={reportModalMaximized}
-        onToggleMaximize={() => setReportModalMaximized((v) => !v)}
-        footer={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!reportModalRun) return;
-                const rid = reportModalRun.id || reportModalRun.run_id;
-                try {
-                  if (reportModalModel) {
-                    await api.downloadRunModelReport(reportModalRun.project_id, rid, reportModalModel);
-                  } else {
-                    await api.downloadRunReport(reportModalRun.project_id, rid);
-                  }
-                } catch (err) {
-                  console.error('Failed to download report:', err);
-                }
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '6px 12px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 600,
-                background: 'var(--accent-primary, #3b82f6)',
-                color: '#ffffff',
-                border: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              <Download size={14} /> {reportModalModel ? `Download ${cleanPbixLabel(reportModalModel)} .md` : 'Download Combined .md'}
-            </button>
-            <button
-              type="button"
-              onClick={closeReportModal}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 500,
-                background: 'var(--bg-surface-raised)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-main)',
-                cursor: 'pointer',
-              }}
-            >
-              Close
-            </button>
-          </div>
-        }
-      >
-        {Array.isArray(reportModalRun?.model_reports) && reportModalRun.model_reports.length > 1 && (
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
-              Model
-            </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-              {reportModalRun.model_reports.map((entry) => {
-                const isSelected = reportModalModel === entry.model;
-                return (
-                  <button
-                    key={entry.model}
-                    type="button"
-                    onClick={() => selectReportModel(entry.model)}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      border: isSelected ? '1px solid var(--accent-primary, #3b82f6)' : '1px solid var(--border-main)',
-                      background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'var(--bg-surface-raised)',
-                      color: isSelected ? 'var(--accent-primary, #3b82f6)' : 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    {cleanPbixLabel(entry.model)}
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => selectReportModel('')}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  border: !reportModalModel ? '1px solid var(--accent-primary, #3b82f6)' : '1px solid var(--border-main)',
-                  background: !reportModalModel ? 'rgba(59, 130, 246, 0.12)' : 'var(--bg-surface-raised)',
-                  color: !reportModalModel ? 'var(--accent-primary, #3b82f6)' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                All Models (Combined)
-              </button>
-            </div>
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 4, padding: '0 4px 12px 4px', borderBottom: '1px solid var(--border-subtle)', marginBottom: 8 }}>
-          {[
-            { key: 'summary', label: 'Summary' },
-            { key: 'markdown', label: 'Raw Report' },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setReportViewMode(tab.key)}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 600,
-                border: 'none',
-                cursor: 'pointer',
-                background: reportViewMode === tab.key ? 'var(--accent-primary, #3b82f6)' : 'transparent',
-                color: reportViewMode === tab.key ? '#ffffff' : 'var(--text-secondary)',
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        {reportViewMode === 'summary' ? (
-          reportSummaryLoading ? (
-            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
-              Loading summary...
-            </div>
-          ) : reportSummaryError ? (
-            <div style={{ padding: 24, color: 'var(--color-error)' }}>
-              {reportSummaryError}
-            </div>
-          ) : (
-            <RunReportSummary data={reportSummary} />
-          )
-        ) : reportLoading ? (
-          <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
-            Loading report...
-          </div>
-        ) : reportError ? (
-          <div style={{ padding: 24, color: 'var(--color-error)' }}>
-            {reportError}
-          </div>
-        ) : (
-          <div style={{ padding: '8px 4px', fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)' }}>
-            {/* "At a glance" — a short, plain-language summary ahead of the
-                full itemized breakdown below, for anyone who just wants a
-                quick status check. Built from reportSummary (the same JSON
-                already fetched for the Summary tab, in parallel with this
-                raw markdown), not the backend markdown itself — the Raw
-                Report content stays byte-for-byte unchanged. Skipped
-                entirely when that summary is unavailable/crashed (nothing
-                reliable to show at a glance; the markdown below already
-                carries its own status line either way). */}
-            {reportSummary && !reportSummary.crashed && reportSummary.counts && (
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 16,
-                  alignItems: 'center',
-                  padding: '12px 16px',
-                  marginBottom: 16,
-                  borderRadius: 8,
-                  background: 'var(--bg-surface-raised)',
-                  border: '1px solid var(--border-main)',
-                  fontSize: 12,
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                <span style={{
-                  fontWeight: 700,
-                  color: reportSummary.status === 'success' ? 'var(--color-success)'
-                    : reportSummary.status === 'failed' ? 'var(--color-error)'
-                    : 'var(--accent-orange)',
-                }}>
-                  {reportSummary.status === 'success' && '✅ Completed successfully'}
-                  {reportSummary.status === 'failed' && '❌ Did not complete successfully'}
-                  {reportSummary.status !== 'success' && reportSummary.status !== 'failed' && '⚠️ Completed — a few items need your attention'}
-                </span>
-                <span><strong style={{ color: 'var(--text-primary)' }}>{reportSummary.counts?.tables ?? 0}</strong> tables found</span>
-                <span><strong style={{ color: 'var(--text-primary)' }}>{reportSummary.counts?.calculations ?? 0}</strong> calculations found</span>
-                <span><strong style={{ color: 'var(--color-success)' }}>{reportSummary.counts?.converted_total ?? 0}</strong> converted</span>
-                <span>
-                  <strong style={{ color: 'var(--color-error)' }}>
-                    {Math.max(0, (reportSummary.counts?.calculations ?? 0) - (reportSummary.counts?.converted_total ?? 0))}
-                  </strong> not converted
-                </span>
+            {filteredRuns.length > visibleCount && (
+              <div style={{ borderTop: '1px solid var(--border-main)', padding: 10, textAlign: 'center' }}>
+                <button type="button" onClick={() => setVisibleCount(n => n + PAGE_SIZE)} style={linkBtn}>
+                  Show more ({filteredRuns.length - visibleCount} older)
+                </button>
               </div>
             )}
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                table: ({ ...props }) => (
-                  <table style={{ width: '100%', borderCollapse: 'collapse', margin: '16px 0', border: '1px solid var(--border-main)', borderRadius: 8, overflow: 'hidden' }} {...props} />
-                ),
-                th: ({ style, align, ...props }) => (
-                  <th style={{ background: 'var(--bg-surface-raised)', padding: '10px 20px', border: '1px solid var(--border-main)', textAlign: style?.textAlign || align || 'left', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', ...style }} {...props} />
-                ),
-                td: ({ style, align, ...props }) => (
-                  <td style={{ padding: '10px 20px', border: '1px solid var(--border-main)', textAlign: style?.textAlign || align || 'left', color: 'var(--text-primary)', ...style }} {...props} />
-                ),
-                h1: ({ ...props }) => (
-                  <h1 style={{ fontSize: '1.4em', fontWeight: 700, margin: '16px 0 8px 0', color: 'var(--text-primary)' }} {...props} />
-                ),
-                h2: ({ ...props }) => (
-                  <h2 style={{ fontSize: '1.2em', fontWeight: 600, margin: '14px 0 6px 0', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 4 }} {...props} />
-                ),
-                h3: ({ ...props }) => (
-                  <h3 style={{ fontSize: '1.05em', fontWeight: 600, margin: '12px 0 4px 0', color: 'var(--text-primary)' }} {...props} />
-                ),
-                ul: ({ ...props }) => (
-                  <ul style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />
-                ),
-                ol: ({ ...props }) => (
-                  <ol style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />
-                ),
-                li: ({ ...props }) => (
-                  <li style={{ marginBottom: 4 }} {...props} />
-                ),
-                code: ({ inline, ...props }) => (
-                  inline ? (
-                    <code style={{ background: 'var(--bg-surface-raised)', padding: '2px 5px', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.9em' }} {...props} />
-                  ) : (
-                    <code style={{ display: 'block', background: 'var(--bg-surface-raised)', padding: 10, borderRadius: 6, fontFamily: 'monospace', fontSize: '0.9em', overflowX: 'auto' }} {...props} />
-                  )
-                ),
-                blockquote: ({ ...props }) => (
-                  <blockquote style={{ borderLeft: '3px solid var(--accent-primary, #3b82f6)', paddingLeft: 12, margin: '8px 0', color: 'var(--text-secondary)', fontStyle: 'italic' }} {...props} />
-                ),
-              }}
-            >
-              {reportContent}
-            </ReactMarkdown>
           </div>
-        )}
-      </Modal>
+        </>
+      )}
 
-      {/* Dropped Fields Modal -- separate from the report modal, with its
-          own independent file-selector state (droppedFieldsModalModel),
-          so switching files here never affects whichever file is selected
-          in the report modal, and vice versa. */}
+      {openRunId && (
+        <RunDrawer
+          key={openRunId}
+          runId={openRunId}
+          run={drawerRun}
+          runNumber={runNumbers.get(openRunId)}
+          liveManifest={liveManifests[openRunId]}
+          counts={countsByRun[openRunId]}
+          onClose={closeRun}
+          onOpenReport={openReport}
+          onDownload={downloadReport}
+          onOpenDropped={openDroppedFieldsModal}
+          modalOpen={Boolean(report || droppedFieldsModalRun || scheduleModalOpen)}
+        />
+      )}
+
+      {report && (
+        <RunReportModal
+          key={report.key}
+          run={report.run}
+          initialModel={report.model}
+          initialView={report.view}
+          onClose={() => setReport(null)}
+        />
+      )}
+
       <Modal
         open={Boolean(droppedFieldsModalRun)}
         onClose={closeDroppedFieldsModal}
-        title={
-          `Dropped Fields — ${droppedFieldsModalRun?.id || droppedFieldsModalRun?.run_id || ''}` +
-          (droppedFieldsModalModel ? ` — ${cleanPbixLabel(droppedFieldsModalModel)}` : '')
-        }
+        title={`Dropped fields · ${droppedFieldsModalRun?.id || droppedFieldsModalRun?.run_id || ''}${droppedFieldsModalModel ? ` · ${cleanPbixLabel(droppedFieldsModalModel)}` : ''}`}
         size="lg"
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
             <button
               type="button"
               onClick={closeDroppedFieldsModal}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 500,
-                background: 'var(--bg-surface-raised)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-main)',
-                cursor: 'pointer',
-              }}
+              style={{ padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 500, background: 'var(--bg-surface-raised)', color: 'var(--text-secondary)', border: '1px solid var(--border-main)', cursor: 'pointer' }}
             >
               Close
             </button>
@@ -1527,26 +573,20 @@ export default function ProjectJobsPage() {
       >
         {Array.isArray(droppedFieldsModalRun?.model_reports) && droppedFieldsModalRun.model_reports.length > 1 && (
           <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
-              File
-            </label>
+            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>File</label>
             <select
               value={droppedFieldsModalModel || ''}
-              onChange={(e) => selectDroppedFieldsModel(e.target.value)}
-              style={{ ...inputStyle, width: '100%', maxWidth: 360, cursor: 'pointer' }}
+              onChange={(e) => setDroppedFieldsModalModel(e.target.value)}
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-main)', borderRadius: 8, color: 'var(--text-primary)', padding: '8px 12px', fontSize: 13, width: '100%', maxWidth: 360, cursor: 'pointer' }}
             >
-              {droppedFieldsModalRun.model_reports.map((entry) => (
-                <option key={entry.model} value={entry.model}>
-                  {cleanPbixLabel(entry.model)}
-                </option>
+              {droppedFieldsModalRun.model_reports.map(entry => (
+                <option key={entry.model} value={entry.model}>{cleanPbixLabel(entry.model)}</option>
               ))}
             </select>
           </div>
         )}
         {droppedFieldsModalEntries.length === 0 ? (
-          <div style={{ padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>
-            Nothing was dropped for this file.
-          </div>
+          <div style={{ padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>Nothing was dropped for this file.</div>
         ) : (
           <div style={{ padding: '8px 4px' }}>
             <DroppedFieldsPanel entries={droppedFieldsModalEntries} defaultExpanded />
@@ -1554,7 +594,6 @@ export default function ProjectJobsPage() {
         )}
       </Modal>
 
-      {/* Direct Scheduling Modal */}
       <ScheduleModal
         open={scheduleModalOpen}
         onClose={() => setScheduleModalOpen(false)}
@@ -1566,20 +605,37 @@ export default function ProjectJobsPage() {
   );
 }
 
-function InfoCard({ label, value, mono = false }) {
+const linkBtn = {
+  border: 'none', background: 'transparent', padding: 0, cursor: 'pointer',
+  fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)',
+};
+
+function MenuItem({ label, hint, onClick }) {
   return (
-    <div
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="hover:bg-surface-hover"
       style={{
-        border: '1px solid var(--border-main)',
-        borderRadius: 8,
-        padding: 12,
-        background: 'var(--bg-surface)',
+        display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 6, border: 'none',
+        background: 'transparent', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 13,
       }}
     >
-      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' : 'inherit' }}>
-        {value || '—'}
-      </div>
-    </div>
+      {label}
+      {hint && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 1 }}>{hint}</div>}
+    </button>
   );
+}
+
+// Leave room for the drawer beside the table when the window is wide enough.
+function useIsWide(minWidth) {
+  const get = () => (typeof window !== 'undefined' ? window.innerWidth >= minWidth : true);
+  const [wide, setWide] = useState(get);
+  useEffect(() => {
+    const onResize = () => setWide(window.innerWidth >= minWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [minWidth]);
+  return wide;
 }

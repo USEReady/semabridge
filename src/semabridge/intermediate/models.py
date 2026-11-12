@@ -629,6 +629,9 @@ class OSIModel(OSIBaseModel):
     relationships: List[OSIRelationship] = Field(
         default_factory=list, description="Relationship definitions"
     )
+    verified_queries: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Verified queries for AI accuracy"
+    )
     source_platform: Optional[str] = Field(
         default=None, description="Platform model was extracted from"
     )

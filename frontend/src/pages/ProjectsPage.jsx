@@ -25,10 +25,18 @@ import { useAuth } from '../context/AuthContext';
 import { DEFAULT_FILTER_OPTIONS, useUIStore } from '../store/uiStore';
 import { SidebarSystemGroup, SidebarAddButton } from '../components/projects/SystemSidebar';
 import { hasFailures } from '../utils/statusUtils';
+import PortfolioSummary from '../components/projects/PortfolioSummary';
+import ProjectsTable from '../components/projects/ProjectsTable';
+import { OntologyScore } from '../components/projects/projectHealth';
+
+const LAYOUT_KEY = 'semabridge:projects:layout';
+function readLayout() {
+  try { return localStorage.getItem(LAYOUT_KEY) === 'cards' ? 'cards' : 'table'; } catch { return 'table'; }
+}
 
 function openRunsPage() {
   if (typeof window !== 'undefined') {
-    window.location.assign('/jobs');
+    window.location.assign('/runs');
   }
 }
 
@@ -182,6 +190,7 @@ export default function ProjectsPage() {
   }, []);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [showTopologyDeck, setShowTopologyDeck] = useState(true);
 
   const {
     data: projects = [],
@@ -230,6 +239,46 @@ export default function ProjectsPage() {
       return data;
     },
   });
+
+  // ── Migration summary band + per-project ontology health ──
+  // The folder panel (create/rename/delete folders, drag projects into them) is
+  // hidden by default; the "Folder" filter in the toolbar covers everyday use.
+  const [showFolderPanel, setShowFolderPanelState] = useState(() => {
+    try { return localStorage.getItem('semabridge:projects:folderPanel') === 'true'; } catch { return false; }
+  });
+  const setShowFolderPanel = useCallback((next) => {
+    setShowFolderPanelState(next);
+    try { localStorage.setItem('semabridge:projects:folderPanel', String(next)); } catch { /* storage unavailable */ }
+  }, []);
+  const [layout, setLayoutState] = useState(readLayout);
+  const setLayout = useCallback((next) => {
+    setLayoutState(next);
+    try { localStorage.setItem(LAYOUT_KEY, next); } catch { /* storage unavailable */ }
+  }, []);
+  const [summaryDays, setSummaryDays] = useState(30);
+  const {
+    data: portfolio,
+    isLoading: portfolioLoading,
+    isError: portfolioError,
+  } = useQuery({
+    queryKey: ['portfolio-summary', summaryDays],
+    queryFn: () => api.getPortfolioSummary(summaryDays),
+    enabled: canFetch,
+    staleTime: 30000,
+    retry: 0,
+  });
+  const projectIdsKey = useMemo(
+    () => projects.map(p => p.id).filter(Boolean).sort().join(','),
+    [projects],
+  );
+  const { data: ontologyHealthData } = useQuery({
+    queryKey: ['projects-ontology-health', projectIdsKey],
+    queryFn: () => api.getProjectsOntologyHealth(projectIdsKey.split(',')),
+    enabled: canFetch && projectIdsKey.length > 0,
+    staleTime: 30000,
+    retry: 0,
+  });
+  const ontologyHealth = ontologyHealthData?.projects || {};
 
   const loading = (projectsLoading && projects.length === 0) || (foldersLoading && folders.length === 0);
   const loadFailed = (projectsError || foldersError) && projects.length === 0 && folders.length === 0;
@@ -617,6 +666,7 @@ export default function ProjectsPage() {
     <div style={{ display: 'flex', flexDirection: 'row-reverse', height: '100%', overflow: 'hidden' }}>
 
       {/* ── Folder/Adapter Sidebar ── */}
+      {showFolderPanel && (
       <aside style={{
         width: sidebarWidth, flexShrink: 0,
         borderLeft: '1px solid var(--border-main)',
@@ -644,8 +694,19 @@ export default function ProjectsPage() {
         />
         <div style={{ padding: '0 12px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              Group Projects
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                Folders
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowFolderPanel(false)}
+                title="Hide folders"
+                aria-label="Hide folders"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 2, display: 'flex' }}
+              >
+                <X size={13} />
+              </button>
             </span>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               <button
@@ -867,6 +928,7 @@ export default function ProjectsPage() {
           {dragOverFolder === 'root' ? 'Release to remove' : ''}
         </div>
       </aside>
+      )}
 
       {/* ── Main content ── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', maxWidth: 1400, margin: '0 auto', padding: '28px 16px' }} className="md:px-10">
@@ -878,7 +940,7 @@ export default function ProjectsPage() {
                 {selectedFolder === null ? 'Projects' : (folders.find(f => f.id === selectedFolder)?.name ?? 'Folder')}
               </h1>
               <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
-                Manage semantic models, bi-directional sync pipelines, and domain ontologies ({filtered.length} project{filtered.length !== 1 ? 's' : ''})
+                {filtered.length} project{filtered.length !== 1 ? 's' : ''}{folders.length ? ` across ${folders.length} folder${folders.length === 1 ? '' : 's'}` : ''}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -887,17 +949,50 @@ export default function ProjectsPage() {
               </button>
               {filtered.length > 0 && (
                 <button onClick={handleExportAll} style={btnStyle('secondary')}>
-                  <Download size={13} /> Export All
+                  <Download size={13} /> Export all
                 </button>
               )}
               <button onClick={() => navigate('/projects/new', { state: { fresh: true } })} style={btnStyle('primary')}>
-                <Plus size={13} /> New Project
+                <Plus size={13} /> New project
               </button>
             </div>
           </div>
 
+          <PortfolioSummary
+            summary={portfolio}
+            loading={portfolioLoading}
+            error={portfolioError}
+            ontologyHealth={ontologyHealth}
+            days={summaryDays}
+            onDaysChange={setSummaryDays}
+            onOpenRuns={openRunsPage}
+          />
+
           {/* Search + filter bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <select
+              aria-label="Folder"
+              value={selectedFolder === null ? '' : String(selectedFolder)}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '__manage') { setShowFolderPanel(true); return; }
+                updateFilterOption('selectedFolder', v === '' ? null : (folders.find(f => String(f.id) === v)?.id ?? v));
+              }}
+              style={{
+                padding: '8px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                background: 'var(--bg-surface)', border: '1px solid var(--border-main)',
+                color: 'var(--text-secondary)', cursor: 'pointer', maxWidth: 200,
+              }}
+            >
+              <option value="">Folder: All</option>
+              {folders.map(f => (
+                <option key={f.id} value={String(f.id)}>{f.name} ({projects.filter(p => p.folder_id === f.id).length})</option>
+              ))}
+              {String(selectedFolder || '').startsWith('source:') && (
+                <option value={String(selectedFolder)}>Source: {String(selectedFolder).slice(7)}</option>
+              )}
+              <option value="__manage">Manage folders…</option>
+            </select>
             <div style={{ flex: 1, maxWidth: 440 }}>
               <SmartSearchBar
                 value={searchQuery}
@@ -939,12 +1034,30 @@ export default function ProjectsPage() {
               <input type="checkbox" readOnly checked={showDrafts} style={{ margin: 0, pointerEvents: 'none' }} />
               Show drafts ({draftCount})
             </button>
+            <span style={{ flex: 1 }} />
+            <div role="group" aria-label="Layout" style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 7, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)' }}>
+              {[['table', 'Table'], ['cards', 'Cards']].map(([value, text]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={layout === value}
+                  onClick={() => setLayout(value)}
+                  style={{
+                    padding: '4px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                    background: layout === value ? 'var(--bg-surface)' : 'transparent',
+                    color: layout === value ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  }}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
             {/* Hidden - using consolidated filter panel instead */}
             {/* <FilterBar ... /> */}
           </div>
 
           {/* Selection / bulk actions */}
-          {filtered.length > 0 && (
+          {filtered.length > 0 && (layout === 'cards' || selectedVisible.length > 0) && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, minHeight: 32,
               padding: selectedVisible.length ? '6px 10px' : 0, borderRadius: 7,
@@ -1134,8 +1247,25 @@ export default function ProjectsPage() {
           )}
         </div>
 
-        {/* Cards grid */}
+        {/* Table (default) or cards grid */}
+        {layout === 'table' && !loading && filtered.length > 0 ? (
+          <ProjectsTable
+            projects={filtered}
+            perProject={portfolio?.per_project || {}}
+            ontologyHealth={ontologyHealth}
+            allSelected={allVisibleSelected}
+            someSelected={selectedVisible.length > 0}
+            onToggleAll={toggleSelectAll}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onOpen={(p) => { setActiveProjectId(p.id); navigate(`/projects/${p.id}`); }}
+            onOpenOntology={(p) => { setActiveProjectId(p.id); navigate(`/projects/${p.id}?tab=ontology`); }}
+            onRunNow={handleRunNow}
+            runningProjectIds={runningProjectIds}
+          />
+        ) : (
         <VirtualProjectGrid
+          ontologyHealth={ontologyHealth}
           filtered={filtered}
           loading={loading}
           searchQuery={searchQuery}
@@ -1156,6 +1286,7 @@ export default function ProjectsPage() {
           setProjectListScrollTop={setProjectListScrollTop}
           projectListScrollTop={projectListScrollTop}
         />
+        )}
       </div>
 
       {/* Modals */}
@@ -1338,7 +1469,7 @@ const ProjectCard = React.memo(function ProjectCard({
   project, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   selected = false, onToggleSelect,
-  onDragStart, onDragEnd,
+  onDragStart, onDragEnd, ontologyHealth,
 }) {
   const navigate = useNavigate();
   const isOpen = menuOpen === project.id;
@@ -1498,7 +1629,8 @@ const ProjectCard = React.memo(function ProjectCard({
           })()}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <IconBtn title={syncInFlight ? 'Running...' : 'Run Now'} onClick={handleSyncClick} disabled={syncInFlight}>
+          {ontologyHealth && <OntologyScore health={ontologyHealth} size={20} />}
+          <IconBtn title={syncInFlight ? 'Running…' : 'Run now'} onClick={handleSyncClick} disabled={syncInFlight}>
             {syncInFlight ? <Layers size={12} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
           </IconBtn>
           <IconBtn title="View Runs" onClick={onViewDetail}><Layers size={12} /></IconBtn>
@@ -1548,7 +1680,7 @@ function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExpor
   const items = [
     { icon: <Layers size={13} />, label: 'View Runs', action: onViewDetail },
     { icon: <Settings size={13} />, label: 'Configure', action: onConfigure },
-    { icon: <Play size={13} fill="currentColor" />, label: 'Run Now', action: onRunNow },
+    { icon: <Play size={13} fill="currentColor" />, label: 'Run now', action: onRunNow },
     { icon: <Copy size={13} />, label: 'Duplicate', action: onDuplicate },
     { icon: <Download size={13} />, label: 'Export', action: onExport },
     null,
@@ -1604,6 +1736,7 @@ function VirtualProjectGrid({
   selectedIds, onToggleSelect,
   handleDragStart, handleDragEnd,
   setProjectListScrollTop, projectListScrollTop,
+  ontologyHealth = {},
 }) {
   const scrollRef = useRef(null);
 
@@ -1712,6 +1845,7 @@ function VirtualProjectGrid({
                   onToggleSelect={onToggleSelect}
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
+                  ontologyHealth={ontologyHealth[project.id]}
                 />
               ))}
             </div>

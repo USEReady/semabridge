@@ -51,17 +51,28 @@ class OntologyEmitter:
 
     def __init__(
         self,
-        target_database: str = "PROD_DWH",
-        target_schema: str = "ANALYTICS",
+        target_database: str,
+        target_schema: Optional[str] = None,
         ontology_schema: str = "_SEMABRIDGE_ONTOLOGY",
-        warehouse: str = "COMPUTE_WH",
+        warehouse: Optional[str] = None,
         target_lag: str = "1 hour",
+        semantic_view: Optional[str] = None,
     ):
+        """``target_database`` is required (the project's deployment database).
+
+        ``semantic_view`` is the real deployed view (fully qualified); without
+        it the binding is derived from ``target_schema`` when given, else left
+        NULL. Without a ``warehouse`` the Cortex Search services are emitted
+        commented out instead of guessing a warehouse.
+        """
+        if not str(target_database or "").strip():
+            raise ValueError("OntologyEmitter needs the project's target database.")
         self.target_database = _sanitize_identifier(target_database)
-        self.target_schema = _sanitize_identifier(target_schema)
+        self.target_schema = _sanitize_identifier(target_schema) if str(target_schema or "").strip() else None
         self.ontology_schema = _sanitize_identifier(ontology_schema)
-        self.warehouse = _sanitize_identifier(warehouse)
+        self.warehouse = _sanitize_identifier(warehouse) if str(warehouse or "").strip() else None
         self.target_lag = target_lag
+        self.semantic_view = str(semantic_view).strip() if str(semantic_view or "").strip() else None
 
     def emit_ontology_ddl(
         self,
@@ -314,7 +325,13 @@ WHEN NOT MATCHED THEN INSERT (
 
         # 5. Insert / Merge Metrics
         lines.append(f"-- 6. Populate / Refresh Metric Bindings")
-        sem_view = f"{self.target_database}.{self.target_schema}.{model_name}_SEMANTIC"
+        if self.semantic_view:
+            sem_view = self.semantic_view
+        elif self.target_schema:
+            sem_view = f"{self.target_database}.{self.target_schema}.{model_name}_SEMANTIC"
+        else:
+            sem_view = None
+            lines.append("-- NOTE: deployed semantic view unknown; SEMANTIC_VIEW_NAME is left NULL.")
         for m in model.metrics:
             m_name = m.unique_name
             m_key = (model_name.casefold(), m.dataset.casefold(), m_name.casefold())
@@ -373,13 +390,14 @@ WHEN NOT MATCHED THEN INSERT (
 
         # 6. Cortex Search Services
         lines.append(f"-- 7. Snowflake Cortex Search Services for Agent Discovery")
+        search_start = len(lines)
         concept_svc_name = f"{model_name}_CONCEPT_SEARCH"
         metric_svc_name = f"{model_name}_METRIC_SEARCH"
 
         lines.append(f"""CREATE OR REPLACE CORTEX SEARCH SERVICE {self.target_database}.{self.ontology_schema}.{concept_svc_name}
   ON concept_name, synonyms, description
   ATTRIBUTES domain, concept_type, source_dataset, data_steward
-  WAREHOUSE = {self.warehouse}
+  WAREHOUSE = {self.warehouse or '<WAREHOUSE>'}
   TARGET_LAG = '{self.target_lag}'
   AS (
     SELECT 
@@ -397,7 +415,7 @@ WHEN NOT MATCHED THEN INSERT (
         lines.append(f"""CREATE OR REPLACE CORTEX SEARCH SERVICE {self.target_database}.{self.ontology_schema}.{metric_svc_name}
   ON metric_name, synonyms, description
   ATTRIBUTES concept_id, semantic_view_name, aggregation_type, data_steward
-  WAREHOUSE = {self.warehouse}
+  WAREHOUSE = {self.warehouse or '<WAREHOUSE>'}
   TARGET_LAG = '{self.target_lag}'
   AS (
     SELECT 
@@ -410,5 +428,14 @@ WHEN NOT MATCHED THEN INSERT (
       COALESCE(data_steward, 'Unassigned') AS data_steward
     FROM {self.target_database}.{self.ontology_schema}.ONTOLOGY_METRIC_BINDINGS
   );""")
+
+        if not self.warehouse:
+            # No warehouse configured for the project: keep the services as a
+            # commented template rather than inventing a warehouse name.
+            body = "\n".join(lines[search_start:]).splitlines()
+            del lines[search_start:]
+            lines.append("-- WAREHOUSE not configured for this project: Cortex Search services not created.")
+            lines.append("-- Set the project's Snowflake warehouse (or pass one) and regenerate.")
+            lines.extend(f"-- {ln}" if ln.strip() else "--" for ln in body)
 
         return "\n".join(lines)

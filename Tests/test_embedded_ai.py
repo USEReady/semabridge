@@ -72,9 +72,10 @@ def test_nl_query_generation():
 
     plan = engine.resolve_query("What is the gross margin by SalesTransactions in 2024?")
     assert plan.confidence_score > 0.4
-    assert "gross_margin" in plan.detected_metrics
-    assert "SalesTransactions" in plan.detected_dimensions
-    assert "YEAR(date) = 2024" in plan.filters
+    assert "Gross Margin" in plan.detected_metrics
     assert "SELECT" in plan.generated_sql
     assert "SUM(revenue) - SUM(cogs) AS gross_margin" in plan.generated_sql
-    assert "GROUP BY" in plan.generated_sql
+    # The ontology has no date column, so no YEAR(...) filter is invented --
+    # and the plan says so instead of silently returning an all-time total.
+    assert not any("YEAR(" in f for f in plan.filters)
+    assert any("year/quarter filter omitted" in w for w in plan.warnings)

@@ -5,24 +5,26 @@ import {
     GitCommit,
     Bell,
     Settings,
-    RefreshCw,
-    Save,
-    PanelBottom,
-    FileCode2,
     Layers,
+    Plus,
+    PlayCircle,
+    Sparkles,
+    BookOpen,
+    FolderOpen,
     Command,
 } from 'lucide-react';
 import { getSmartQueryError, matchesSmartQuery } from './common/smartSearchQuery.js';
 
 const COMMANDS = [
-    { id: 'repo-map', label: 'Open Repository Map', icon: Map, action: 'toggleRepoMap', category: 'View' },
-    { id: 'version', label: 'Version Control', icon: GitCommit, action: 'toggleVersionControl', category: 'View' },
-    { id: 'logs', label: 'Logs & Activity', icon: Bell, action: 'toggleLogs', category: 'View' },
-    { id: 'terminal', label: 'Toggle Terminal', icon: PanelBottom, action: 'toggleTerminal', category: 'View' },
-    { id: 'settings', label: 'Open Settings', icon: Settings, action: 'toggleConnections', category: 'Settings' },
-    { id: 'sync', label: 'Sync Models', icon: RefreshCw, action: 'sync', category: 'Project' },
-    { id: 'save', label: 'Save Configuration', icon: Save, action: 'save', category: 'File' },
-    { id: 'export', label: 'Export SML', icon: FileCode2, action: 'export', category: 'File' },
+    { id: 'new-project', label: 'New project', icon: Plus, action: 'newProject', category: 'Actions' },
+    { id: 'ask', label: 'Ask AI a question', icon: Sparkles, action: 'askAi', category: 'Actions' },
+    { id: 'logs', label: 'Logs & activity', icon: Bell, action: 'toggleLogs', category: 'Actions' },
+    { id: 'projects', label: 'Projects', icon: FolderOpen, action: 'openModel', category: 'Go to' },
+    { id: 'runs', label: 'Runs', icon: PlayCircle, action: 'openRuns', category: 'Go to' },
+    { id: 'ontology', label: 'Ontology', icon: BookOpen, action: 'openOntology', category: 'Go to' },
+    { id: 'repo-map', label: 'Model map', icon: Map, action: 'toggleRepoMap', category: 'Go to' },
+    { id: 'version', label: 'History', icon: GitCommit, action: 'toggleVersionControl', category: 'Go to' },
+    { id: 'settings', label: 'Settings', icon: Settings, action: 'toggleConnections', category: 'Go to' },
 ];
 
 export default function CommandPalette({

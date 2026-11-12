@@ -216,7 +216,7 @@ relationships:
 ```bash
 # Stop current API (Ctrl+C)
 # Restart
-uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001
+uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002
 ```
 
 **Monitor logs for:**
@@ -227,7 +227,7 @@ uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001
 #### Step 3.5: Test Measure Views
 ```bash
 # Call API to trigger model validation
-curl -X POST http://127.0.0.1:8001/api/sync \
+curl -X POST http://127.0.0.1:8002/api/sync \
   -H "Content-Type: application/json" \
   -d '{"validate_only": true}'
 ```

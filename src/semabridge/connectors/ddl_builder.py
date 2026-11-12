@@ -177,6 +177,8 @@ class SemanticViewBuilder:
         # relationships) land in one place — see core/drop_ledger.py.
 
         self.drop_ledger: DropLedger = drop_ledger if drop_ledger is not None else DropLedger()
+        self.validation_advisories: List[str] = []
+        self.project_id: Optional[str] = getattr(config, "project_id", None)
 
 
 
@@ -687,12 +689,27 @@ class SemanticViewBuilder:
                         dropped_metrics.append({"name": m_name, "reason": reason})
                 else:
                     reason = "placeholder: not computable"
+                    by_design = False
+                    untranslated = not sql_expr or bool(
+                        re.match(r"^\(?\s*CAST\s*\(\s*NULL", sql_expr, re.IGNORECASE)
+                    )
+                    prior = str(getattr(m, "sync_failure_reason", None) or "").strip()
+                    if untranslated and prior:
+                        # The metric already failed translation for a specific
+                        # reason (e.g. it depends on a metric excluded by
+                        # design). Report that reason, not a generic one --
+                        # this record is the first for the metric, so it is
+                        # what the run report shows.
+                        from semabridge.core.drop_ledger import classify_drop_reason as _classify
+                        clean = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", prior, flags=re.I)
+                        reason = f"placeholder: {clean}"[:500]
+                        by_design = bool(_classify(prior) or _classify(clean))
                     logger.info("Emitting unreachable metric '%s' on '%s' as NULL placeholder: %s", m_name, curr_ds, reason)
                     m.sql_expression = "CAST(NULL AS DOUBLE)"
                     m.is_placeholder = True
                     surviving_metrics.append(m)
                     if getattr(self, "drop_ledger", None):
-                        self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds)
+                        self.drop_ledger.record("metric", m_name, DropStage.DDL_EMISSION, reason, dataset=curr_ds, by_design=by_design)
                     if hasattr(model, "record_dropped_metric"):
                         model.record_dropped_metric(m_name, reason)
                     elif hasattr(dropped_metrics, "append"):
@@ -799,6 +816,9 @@ class SemanticViewBuilder:
 
             errors = validate_semantic_ddl(semantic_ddl)
 
+            if errors:
+                # One impossible metric must never fail the whole model.
+                semantic_ddl, errors = self._isolate_unreachable_metrics(semantic_ddl, errors)
             if errors:
 
                 raise ConnectorError("Invalid semantic DDL: " + "; ".join(errors))
@@ -1022,11 +1042,21 @@ class SemanticViewBuilder:
 
 
 
+        # FACTS (numeric non-key fact columns, placed between RELATIONSHIPS and DIMENSIONS)
+        facts_lines, fact_phys_keys = self._build_facts_clause(
+            sml, registry.dataset_aliases, ds_by_name, ds_lookup, live_ds_lookup
+        )
+        if facts_lines:
+            definitions.append("FACTS (\n" + ",\n".join(facts_lines) + "\n)")
+
         # DIMENSIONS
 
         measure_cols = self._collect_measure_columns(sml, ds_lookup)
 
-        dims_lines, _missing = self.dimensions_builder.build_for_sml(sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, live_col_lookup=live_ds_lookup)
+        dims_lines, _missing = self.dimensions_builder.build_for_sml(
+            sml, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols,
+            live_col_lookup=live_ds_lookup, excluded_fact_cols=fact_phys_keys,
+        )
 
         for _ds, _cols in _missing.items():
 
@@ -1072,7 +1102,7 @@ class SemanticViewBuilder:
         _emitted_dims = {}
         _emitted_dim_by_phys = {}
         for _dl in (dims_lines or []):
-            _dm = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS\s+([A-Za-z0-9_]+)\."([^"]+)"', _dl)
+            _dm = re.match(r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\."([^"]+)"\s+AS\s+([A-Za-z0-9_]+)\."([^"]+)"', _dl)
             if _dm:
                 _t_alias = _dm.group(1).upper()
                 _emitted = _dm.group(2)
@@ -1081,7 +1111,7 @@ class SemanticViewBuilder:
                 _emitted_dim_by_phys[(_t_alias, _phys_col.upper())] = _emitted
                 _emitted_dim_by_phys[(_t_alias, _emitted.upper())] = _emitted
             else:
-                _dm2 = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS', _dl)
+                _dm2 = re.match(r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\."([^"]+)"\s+AS', _dl)
                 if _dm2:
                     _t_alias = _dm2.group(1).upper()
                     _emitted = _dm2.group(2)
@@ -1104,7 +1134,18 @@ class SemanticViewBuilder:
 
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
+        # AI_VERIFIED_QUERIES
+        vqueries = list(getattr(sml, "verified_queries", []) or [])
+        if not vqueries and getattr(self, "project_id", None):
+            try:
+                from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+                vqueries = list_verified_queries_for_project(self.project_id)
+            except Exception as exc:
+                logger.debug("Could not load verified queries from database: %s", exc)
 
+        vq_clause = self._build_ai_verified_queries_clause(vqueries, safe_view_name)
+        if vq_clause:
+            definitions.append(vq_clause)
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
 
@@ -1180,11 +1221,21 @@ class SemanticViewBuilder:
 
 
 
+        # FACTS (numeric non-key fact columns, placed between RELATIONSHIPS and DIMENSIONS)
+        facts_lines, fact_phys_keys = self._build_facts_clause(
+            osi, registry.dataset_aliases, ds_by_name, ds_lookup, live_ds_lookup
+        )
+        if facts_lines:
+            definitions.append("FACTS (\n" + ",\n".join(facts_lines) + "\n)")
+
         # DIMENSIONS
 
         measure_cols = self._collect_measure_columns(osi, ds_lookup)
 
-        dims_lines, _missing = self.dimensions_builder.build_for_osi(osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols, live_col_lookup=live_ds_lookup)
+        dims_lines, _missing = self.dimensions_builder.build_for_osi(
+            osi, registry.dataset_aliases, ds_by_name, ds_lookup, measure_cols,
+            live_col_lookup=live_ds_lookup, excluded_fact_cols=fact_phys_keys,
+        )
 
         for _ds, _cols in _missing.items():
 
@@ -1230,7 +1281,7 @@ class SemanticViewBuilder:
         _emitted_dims = {}
         _emitted_dim_by_phys = {}
         for _dl in (dims_lines or []):
-            _dm = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS\s+([A-Za-z0-9_]+)\."([^"]+)"', _dl)
+            _dm = re.match(r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\."([^"]+)"\s+AS\s+([A-Za-z0-9_]+)\."([^"]+)"', _dl)
             if _dm:
                 _t_alias = _dm.group(1).upper()
                 _emitted = _dm.group(2)
@@ -1239,7 +1290,7 @@ class SemanticViewBuilder:
                 _emitted_dim_by_phys[(_t_alias, _phys_col.upper())] = _emitted
                 _emitted_dim_by_phys[(_t_alias, _emitted.upper())] = _emitted
             else:
-                _dm2 = re.match(r'^\s*([A-Za-z0-9_]+)\."([^"]+)"\s+AS', _dl)
+                _dm2 = re.match(r'^\s*(?:(?:PRIVATE|PUBLIC)\s+)?([A-Za-z0-9_]+)\."([^"]+)"\s+AS', _dl)
                 if _dm2:
                     _t_alias = _dm2.group(1).upper()
                     _emitted = _dm2.group(2)
@@ -1260,7 +1311,18 @@ class SemanticViewBuilder:
 
         if metrics_lines: definitions.append("METRICS (\n" + "\n".join(metrics_lines) + "\n)")
 
+        # AI_VERIFIED_QUERIES
+        vqueries = list(getattr(osi, "verified_queries", []) or [])
+        if not vqueries and getattr(self, "project_id", None):
+            try:
+                from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+                vqueries = list_verified_queries_for_project(self.project_id)
+            except Exception as exc:
+                logger.debug("Could not load verified queries from database: %s", exc)
 
+        vq_clause = self._build_ai_verified_queries_clause(vqueries, safe_view_name)
+        if vq_clause:
+            definitions.append(vq_clause)
 
         final_ddl = lines[0] + "\n" + "\n".join(definitions) + ";"
 
@@ -1314,6 +1376,115 @@ class SemanticViewBuilder:
 
 
 
+    def _build_facts_clause(
+        self,
+        model: Any,
+        dataset_aliases: Dict[str, str],
+        ds_by_name: Dict[str, Any],
+        ds_lookup: Dict[str, Set[str]],
+        live_ds_lookup: Optional[Dict[str, Set[str]]],
+    ) -> Tuple[List[str], Set[Tuple[str, str]]]:
+        """Emit numeric non-key fact columns in the semantic-view FACTS clause."""
+        facts_lines: List[str] = []
+        fact_phys_keys: Set[Tuple[str, str]] = set()
+        rels = list(getattr(model, "relationships", []) or [])
+
+        many_side: Set[str] = set()
+        one_side: Set[str] = set()
+        active_n1 = False
+        rel_cols_by_ds: Dict[str, Set[str]] = {}
+        for rel in rels:
+            for c in getattr(rel, "from_columns", None) or []:
+                rel_cols_by_ds.setdefault(str(getattr(rel, "from_dataset", "") or "").casefold(), set()).add(str(c).strip().upper())
+            for c in getattr(rel, "to_columns", None) or []:
+                rel_cols_by_ds.setdefault(str(getattr(rel, "to_dataset", "") or "").casefold(), set()).add(str(c).strip().upper())
+            if not getattr(rel, "is_active", True):
+                continue
+            card = getattr(rel, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "many_to_one").lower().replace("-", "_").strip()
+            if card_str in ("many_to_one", "manytoone", "m:1", "*:1", ""):
+                active_n1 = True
+                if getattr(rel, "from_dataset", None):
+                    many_side.add(rel.from_dataset)
+                if getattr(rel, "to_dataset", None):
+                    one_side.add(rel.to_dataset)
+            elif card_str in ("one_to_many", "onetomany", "1:m", "1:*"):
+                active_n1 = True
+                if getattr(rel, "to_dataset", None):
+                    many_side.add(rel.to_dataset)
+                if getattr(rel, "from_dataset", None):
+                    one_side.add(rel.from_dataset)
+
+        metric_names_by_ds: Dict[str, Set[str]] = {}
+        for m in getattr(model, "metrics", []) or []:
+            m_ds = str(getattr(m, "dataset", "") or "").casefold()
+            m_alias = self.identifier_sanitizer.to_alias(str(getattr(m, "unique_name", "") or "")).upper()
+            if m_alias:
+                metric_names_by_ds.setdefault(m_ds, set()).add(m_alias)
+
+        _NUMERIC_TYPES = {"integer", "float", "decimal", "int64", "double", "number"}
+        model_name = getattr(model, "unique_name", None) or getattr(model, "label", None)
+
+        for ds_name, ds in ds_by_name.items():
+            alias = dataset_aliases.get(ds_name)
+            if not alias:
+                continue
+            if active_n1:
+                is_fact = ds_name in (many_side - one_side) or getattr(ds, "table_type", "").upper() == "FACT"
+            else:
+                is_fact = bool(getattr(ds, "is_fact", False)) or getattr(ds, "table_type", "").upper() == "FACT"
+            if not is_fact:
+                continue
+
+            ds_rel_cols = rel_cols_by_ds.get(ds_name.casefold(), set())
+            ds_metric_names = metric_names_by_ds.get(ds_name.casefold(), set())
+            live_cols = (live_ds_lookup or {}).get(ds_name)
+            known_cols = ds_lookup.get(ds_name, set())
+
+            for col in getattr(ds, "columns", []) or []:
+                c_name = str(getattr(col, "unique_name", "") or "")
+                if not c_name or c_name == "_" or c_name.startswith(("RowNumber", "_", "_CURRENT_", "_ALL_", "_COL_")):
+                    continue
+                if getattr(col, "is_key", False):
+                    continue
+                if getattr(col, "is_calculated", False):
+                    continue
+                src_expr = getattr(col, "source_expression", None)
+                if src_expr and not IdentifierSanitizer.is_physical_source_column(src_expr):
+                    continue
+                dt = getattr(col, "data_type", None)
+                dt_str = str(getattr(dt, "value", dt) or "").lower()
+                if dt_str not in _NUMERIC_TYPES:
+                    continue
+
+                phys_col = self.schema_manager._resolve_physical_column_name(ds, c_name)
+                if not phys_col:
+                    continue
+                if c_name.strip().upper() in ds_rel_cols or phys_col.strip().upper() in ds_rel_cols:
+                    continue
+                if live_cols is not None:
+                    if phys_col not in live_cols:
+                        continue
+                elif known_cols and phys_col not in known_cols:
+                    continue
+
+                semantic_name = self.sanitizer.sanitize_semantic_name(
+                    str(getattr(col, "label", None) or c_name)
+                )
+                if semantic_name.upper() in ds_metric_names:
+                    continue
+                key = (alias.upper(), phys_col.upper())
+                if key in fact_phys_keys:
+                    continue
+                fact_phys_keys.add(key)
+                priv = "PRIVATE " if (getattr(col, "is_hidden", False) or getattr(ds, "is_hidden", False)) else ""
+                facts_lines.append(
+                    f'  {priv}{alias}."{semantic_name}" AS '
+                    f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
+                )
+
+        return facts_lines, fact_phys_keys
+
     def _deduplicate_cross_clause(self, metrics_lines: List[str], dims_lines: List[str], dims_block: str) -> Tuple[List[str], str]:
 
         metric_keys = {extract_expr_key(line) for line in metrics_lines if extract_expr_key(line)}
@@ -1327,6 +1498,106 @@ class SemanticViewBuilder:
             dims_block = "DIMENSIONS (\n" + ",\n".join(filtered_dims) + "\n)" if filtered_dims else ""
 
         return metrics_lines, dims_block
+
+    def _build_ai_verified_queries_clause(
+        self,
+        queries: List[Any],
+        view_name: str,
+    ) -> Optional[str]:
+        """Validate verified queries against the semantic view and emit the AI_VERIFIED_QUERIES clause.
+
+        Invalid queries are reported and excluded (never silently dropped).
+        """
+        if not queries:
+            return None
+
+        import time
+        from semabridge.connectors.sql_guard import validate_safe_sql
+
+        valid_entries = []
+        for item in queries:
+            if isinstance(item, dict):
+                q_name = item.get("name") or item.get("unique_name") or "query"
+                question = str(item.get("question") or "").strip()
+                sql = str(item.get("sql") or "").strip()
+                verified_at = int(item.get("verified_at") or time.time())
+                is_onboarding = "TRUE" if bool(item.get("is_onboarding", False)) else "FALSE"
+                steward = str(item.get("verified_by") or "")
+            else:
+                q_name = getattr(item, "name", None) or getattr(item, "unique_name", None) or "query"
+                question = str(getattr(item, "question", "") or "").strip()
+                sql = str(getattr(item, "sql", "") or "").strip()
+                verified_at = int(getattr(item, "verified_at", 0) or time.time())
+                is_onboarding = "TRUE" if bool(getattr(item, "is_onboarding", False)) else "FALSE"
+                steward = str(getattr(item, "verified_by", "") or "")
+
+            q_alias = re.sub(r"[^A-Za-z0-9_]", "_", q_name).strip("_") or "verified_query"
+            steward_clean = steward.replace("'", "''")
+
+            # 1. Syntax & security validation
+            is_valid = True
+            err_msg = ""
+            if not sql or not question:
+                is_valid = False
+                err_msg = "Question or SQL statement is empty."
+            else:
+                try:
+                    validate_safe_sql(sql)
+                    clean_sql = re.sub(r"--[^\r\n]*", "", sql)
+                    clean_sql = re.sub(r"/\*.*?\*/", "", clean_sql, flags=re.DOTALL).strip()
+                    if not re.match(r"^(SELECT|WITH)\b", clean_sql, re.IGNORECASE):
+                        is_valid = False
+                        err_msg = "Only read-only SELECT or WITH statements are allowed."
+                except Exception as exc:
+                    is_valid = False
+                    err_msg = f"SQL security guard rejected statement: {exc}"
+
+            # 2. Syntax check for unbalanced quotes / parentheses
+            if is_valid:
+                if sql.count("(") != sql.count(")"):
+                    is_valid = False
+                    err_msg = "Unbalanced parentheses in query SQL."
+                elif sql.count("'") % 2 != 0:
+                    is_valid = False
+                    err_msg = "Unclosed single quote in query SQL."
+
+            # 3. Live warehouse compilation check if cursor is available
+            if is_valid and self.cursor:
+                try:
+                    test_compile_sql = f"SELECT * FROM ({sql.rstrip(';')}) WHERE 1=0"
+                    self.cursor.execute(test_compile_sql)
+                except Exception as exc:
+                    is_valid = False
+                    err_msg = f"Warehouse compilation failed: {exc}"
+
+            if not is_valid:
+                warning_text = (
+                    f"Verified query '{q_alias}' failed validation against semantic view '{view_name}': {err_msg}. "
+                    f"Excluded from DDL."
+                )
+                logger.warning(warning_text)
+                if hasattr(self, "validation_advisories"):
+                    self.validation_advisories.append(warning_text)
+                continue
+
+            escaped_q = question.replace("\\", "\\\\").replace("'", "''")
+            escaped_sql = sql.replace("\\", "\\\\").replace("'", "''")
+
+            entry = (
+                f"    {q_alias} AS (\n"
+                f"      QUESTION '{escaped_q}'\n"
+                f"      VERIFIED_AT {verified_at}\n"
+                f"      ONBOARDING_QUESTION {is_onboarding}\n"
+                f"      VERIFIED_BY '(STEWARD = {steward_clean})'\n"
+                f"      SQL '{escaped_sql}'\n"
+                f"    )"
+            )
+            valid_entries.append(entry)
+
+        if not valid_entries:
+            return None
+
+        return "AI_VERIFIED_QUERIES (\n" + ",\n".join(valid_entries) + "\n)"
 
 
 
@@ -1925,6 +2196,65 @@ class SemanticViewBuilder:
 
 
 
+    _UNREACHABLE_RE = re.compile(
+        r"^Metric '([^.']+)\.([^']+)': aggregates columns from \[([^\]]*)\], not reachable"
+    )
+
+    def _isolate_unreachable_metrics(self, semantic_ddl: str, errors: list[str]) -> tuple[str, list[str]]:
+        """Turn per-metric reachability errors (Snowflake 010219) into NULL
+        placeholders with the reason, instead of failing the whole model.
+
+        A metric that aggregates columns of a table it cannot reach through
+        many-to-one relationships (e.g. across a many-to-many bridge) cannot
+        be computed by a Snowflake semantic view -- a by-design limitation.
+        Metrics derived from it are nulled too (isolate_item cascades).
+        Returns (ddl, remaining errors); structural errors are left as is.
+        """
+        from semabridge.connectors.ddl_validator import validate_semantic_ddl
+        from semabridge.connectors.snowflake_emitter_parts.semantic_view_items import (
+            SemanticViewDDL,
+            isolate_item,
+        )
+
+        ledger = getattr(self, "drop_ledger", None)
+        for _ in range(5):  # cascades can expose new findings
+            targets = [(m, e) for e in errors for m in [self._UNREACHABLE_RE.match(e)] if m]
+            if not targets:
+                return semantic_ddl, errors
+            view = SemanticViewDDL(semantic_ddl)
+            if not view.parsed:
+                return semantic_ddl, errors
+            seen: set = set()
+            changed = False
+            for match, _err in targets:
+                alias, name, tables = match.group(1), match.group(2), match.group(3)
+                item = view.find("METRICS", name, alias)
+                if item is None:
+                    continue
+                tables_txt = ", ".join(t.strip().strip("'\"") for t in tables.split(",") if t.strip())
+                reason = (
+                    f"Not supported by Snowflake semantic views: aggregates columns of {tables_txt}, "
+                    f"which {alias} cannot reach through many-to-one relationships (for example across "
+                    f"a many-to-many/bridge relationship). Snowflake 010219."
+                )
+                for o in isolate_item(view, item, reason, None, seen):
+                    changed = True
+                    if ledger is not None:
+                        label = o.name if o.entity_kind in ("metric", "relationship", "table") or not o.alias else f"{o.alias}.{o.name}"
+                        ledger.record(
+                            o.entity_kind, label, DropStage.DDL_EMISSION,
+                            (f"placeholder: {o.reason}" if o.entity_kind == "metric" else o.reason)[:500],
+                            dataset=o.alias,
+                            detail="Emitted as CAST(NULL AS DOUBLE); the reason is in the metric's COMMENT.",
+                            by_design=True,
+                        )
+                    logger.warning("Isolated %s '%s': %s", o.entity_kind, o.name, o.reason)
+            if not changed:
+                return semantic_ddl, errors
+            semantic_ddl = view.render()
+            errors = validate_semantic_ddl(semantic_ddl)
+        return semantic_ddl, errors
+
     def _validate_pre_emit_integrity(
 
         self,
@@ -1962,6 +2292,13 @@ class SemanticViewBuilder:
         many_side = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
 
         one_side = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
+
+        # One-to-one: BOTH tables are on the one side, so both legitimately carry
+        # the key (Snowflake infers 1:1 from the keys on each side).
+        for rel in relationships:
+            card = str(getattr(getattr(rel, "cardinality", None), "value", getattr(rel, "cardinality", "")) or "").lower()
+            if card in ("one-to-one", "one_to_one", "1:1") and getattr(rel, "from_dataset", None):
+                one_side.add(rel.from_dataset)
 
         fact_datasets = {ds for ds in many_side if ds not in one_side}
 

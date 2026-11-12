@@ -49,6 +49,10 @@ class Tier5Config:
     # used (20 metrics per JSON-map call) — restored as a general Tier 5
     # batching limit, not tied to any one provider or pipeline.
     max_batch_size: int = 20
+    # The model's own confidence in its answer ({"sql":..., "confidence":...}).
+    # Below this, the translation is not trusted (fresh or cached) and the
+    # metric fails closed to a placeholder with a reason. None disables it.
+    min_self_reported_confidence: Optional[float] = 0.5
 
     def enabled_provider_order(self) -> List[str]:
         """provider_order filtered to enabled providers, with Settings-
@@ -184,6 +188,10 @@ class Tier5Config:
                 "skills_dir_env", "SEMABRIDGE_LLM_SKILLS_DIR"
             ),
             max_batch_size=int(tier5.get("max_batch_size", 20)),
+            min_self_reported_confidence=(
+                None if tier5.get("min_self_reported_confidence", 0.5) is None
+                else float(tier5.get("min_self_reported_confidence", 0.5))
+            ),
         )
 
     @classmethod

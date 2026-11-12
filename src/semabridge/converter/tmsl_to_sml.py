@@ -439,7 +439,6 @@ class TMSLTransformer:
                 })
                 
             self._classify_tables(sml, engine_rels, row_counts or {})
-            self._inject_calendar_dimension(sml)
 
             # --- NEW: Populate SML Dimensions from Datasets ---
             # SML Dimensions are required for proper Snowflake/Cortex generation.
@@ -750,35 +749,33 @@ class TMSLTransformer:
         ]
         
         is_measure_candidate = False
-        
-        # 1. Explicit TMSL Override: Check summarizeBy property
-        #    summarizeBy = "sum" | "avg" | "count" | "max" | "min" | "none"
-        summarize_by = col_def.get("summarizeBy", "").lower()
-        if summarize_by and summarize_by != "none":
+
+        # 1. Explicit TMSL Override: Check summarizeBy property (none/default/blank stays False)
+        summarize_by = str(col_def.get("summarizeBy") or "").strip().lower()
+        if summarize_by in {"sum", "avg", "average", "count", "distinctcount", "countdistinct", "max", "maximum", "min", "minimum", "3", "4", "5", "6", "7", "8"}:
             is_measure_candidate = True
             logger.debug(f"Column '{col_name}' marked as measure via summarizeBy={summarize_by}")
-        
-        # 2. Format String Detection (currency/percent = measure)
+
+        # Respect explicit summarizeBy="none"/"default" — never override with name/format heuristics.
         format_string = col_def.get("formatString", "")
-        if format_string:
-            for pattern in MEASURE_FORMAT_PATTERNS:
-                if re.search(pattern, format_string):
-                    is_measure_candidate = True
-                    logger.debug(f"Column '{col_name}' marked as measure via format string")
-                    break
-        
-        # 3. Name Pattern Heuristics (if numeric type)
-        if mapped_type in (DataType.INTEGER, DataType.FLOAT, DataType.DECIMAL):
-            # First check if it's a Key/ID column
-            is_key_column = any(re.search(p, name_upper, re.IGNORECASE) for p in KEY_PATTERNS)
-            
-            if not is_key_column:
-                # Check if it matches measure name patterns
-                for pattern in MEASURE_NAME_PATTERNS:
-                    if re.search(pattern, name_upper, re.IGNORECASE):
+        if summarize_by not in {"none", "default", "1", "2"} and not is_measure_candidate:
+            # 2. Format String Detection (currency/percent = measure)
+            if format_string:
+                for pattern in MEASURE_FORMAT_PATTERNS:
+                    if re.search(pattern, format_string):
                         is_measure_candidate = True
-                        logger.debug(f"Column '{col_name}' marked as measure via name pattern")
+                        logger.debug(f"Column '{col_name}' marked as measure via format string")
                         break
+
+            # 3. Name Pattern Heuristics (if numeric type)
+            if not is_measure_candidate and mapped_type in (DataType.INTEGER, DataType.FLOAT, DataType.DECIMAL):
+                is_key_column = any(re.search(p, name_upper, re.IGNORECASE) for p in KEY_PATTERNS)
+                if not is_key_column:
+                    for pattern in MEASURE_NAME_PATTERNS:
+                        if re.search(pattern, name_upper, re.IGNORECASE):
+                            is_measure_candidate = True
+                            logger.debug(f"Column '{col_name}' marked as measure via name pattern")
+                            break
         
         # HEURISTIC: If everything is string (common in some sources), try to infer from name
         if mapped_type == DataType.STRING:

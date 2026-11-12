@@ -531,11 +531,23 @@ async def list_project_discovery_compat():
             ):
                 continue
             try:
+                # Cache parsed discovery headers by (mtime_ns, size) using CSafeLoader to eliminate repeated YAML parsing latency
+                cache = globals().setdefault("_DISCOVERY_FILE_CACHE", {})
+                stat = file_path.stat()
+                sig = (getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)), stat.st_size)
+                cached = cache.get(str(file_path))
+                if cached and cached[0] == sig:
+                    entries.append(dict(cached[1]))
+                    seen.add(project_id)
+                    continue
                 file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
-                project_cfg = yaml.safe_load(file_text) or {}
+                yaml_loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+                project_cfg = await asyncio.to_thread(yaml.load, file_text, yaml_loader) or {}
                 if not isinstance(project_cfg, dict):
                     continue
-                entries.append(_project_discovery_entry(project_id, file_path, project_cfg))
+                entry = _project_discovery_entry(project_id, file_path, project_cfg)
+                cache[str(file_path)] = (sig, dict(entry))
+                entries.append(entry)
                 seen.add(project_id)
             except Exception as exc:
                 logger.warning("Failed to load project discovery entry %s: %s", file_path, exc)
@@ -572,11 +584,21 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
                 )
                 continue
             try:
+                # Cache parsed discovery headers by (mtime_ns, size) using CSafeLoader to eliminate repeated YAML parsing latency
+                cache = globals().setdefault("_DISCOVERY_FILE_CACHE", {})
+                stat = file_path.stat()
+                sig = (getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)), stat.st_size)
+                cached = cache.get(str(file_path))
+                if cached and cached[0] == sig:
+                    deduped[pid] = dict(cached[1])
+                    continue
                 file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
-                project_cfg = yaml.safe_load(file_text) or {}
+                yaml_loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+                project_cfg = await asyncio.to_thread(yaml.load, file_text, yaml_loader) or {}
                 if not isinstance(project_cfg, dict):
                     continue
                 entry = _project_discovery_entry(pid, file_path, project_cfg)
+                cache[str(file_path)] = (sig, dict(entry))
                 deduped[pid] = entry
             except Exception as e:
                 logger.warning(f"Failed to load project config {file_path}: {e}")
@@ -590,18 +612,19 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
 
         current = deduped.get(pid)
         if not current:
-            deduped[pid] = _project_with_semantic_models(p, pid)
+            deduped[pid] = p
             continue
         cur_ts = str(current.get("updated_at") or current.get("created_at") or "")
         new_ts = str(p.get("updated_at") or p.get("created_at") or "")
         if new_ts >= cur_ts:
-            deduped[pid] = _project_with_semantic_models(p, pid)
+            deduped[pid] = p
 
-    all_projects = [
+    # Slice paginated projects BEFORE calling _project_with_semantic_models so only the requested page is hydrated
+    paged_projects = list(deduped.values())[offset: offset + limit]
+    return [
         _project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or ""))
-        for project in deduped.values()
+        for project in paged_projects
     ]
-    return all_projects[offset: offset + limit]
 
 async def create_project_compat(request: dict):
     """Compatibility: create in-memory project for UI continuity."""

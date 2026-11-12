@@ -17,8 +17,12 @@ from pydantic import ValidationError
 from semabridge.intermediate.models import (
     OSICardinality,
     OSIColumn,
+    OSICrossFilterDirection,
     OSIDataset,
     OSIDataType,
+    OSIDimension,
+    OSIHierarchy,
+    OSILevel,
     OSIMetric,
     OSIModel,
     OSIRelationship,
@@ -28,6 +32,8 @@ from semabridge.ontology.models import (
     ConceptType,
     DomainAttribute,
     DomainConcept,
+    DomainHierarchy,
+    DomainHierarchyLevel,
     DomainMetric,
     DomainOntology,
     DomainPolicy,
@@ -74,6 +80,42 @@ _OSI_TYPE_MAP: Dict[str, OSIDataType] = {
 
 def _sanitize_name_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", value).upper()
+
+
+def _norm_ident(raw: str) -> str:
+    return re.sub(r"\s+", "_", raw.strip()).casefold()
+
+
+def normalize_formula_for_compare(expr: Optional[str]) -> str:
+    """Canonical form of a metric formula used only for equality checks.
+
+    Column-reference syntax is reduced to the bare column name so equivalent
+    spellings compare equal: ``[x]``, ``'T'[x]``, ``T[x]``, ``"x"``, ``"T"."x"``,
+    ``T.x`` and ``x`` all become ``x``. Case, whitespace and spacing around
+    operators are ignored. Single-quoted string literals are kept verbatim.
+    """
+    txt = str(expr or "").strip()
+    if not txt:
+        return ""
+    literals: List[str] = []
+
+    def _stash_literal(m: "re.Match[str]") -> str:
+        literals.append(m.group(0))
+        return f"\x00{len(literals) - 1}\x00"
+
+    # DAX table-qualified refs: 'Table Name'[Col] / Table[Col] -> [Col]
+    txt = re.sub(r"'(?:[^']|'')*'\s*(?=\[)", "", txt)
+    txt = re.sub(r"\b[A-Za-z_][\w]*\s*(?=\[)", "", txt)
+    # Remaining single-quoted strings are literals; protect them
+    txt = re.sub(r"'(?:[^']|'')*'", _stash_literal, txt)
+    # [Col] and "Col" -> col
+    txt = re.sub(r"\[([^\]]+)\]", lambda m: _norm_ident(m.group(1)), txt)
+    txt = re.sub(r'"([^"]+)"', lambda m: _norm_ident(m.group(1)), txt)
+    # Dotted qualifiers (T.col, db.schema.t.col) -> col (numbers like 1.5 untouched)
+    txt = re.sub(r"\b(?:[A-Za-z_]\w*\s*\.\s*)+([A-Za-z_]\w*)\b", r"\1", txt)
+    txt = re.sub(r"\s+", " ", txt).casefold()
+    txt = re.sub(r"\s*([(),+\-*/=<>])\s*", r"\1", txt)
+    return re.sub(r"\x00(\d+)\x00", lambda m: literals[int(m.group(1))], txt)
 
 
 class OntologyValidationError(ValueError):
@@ -184,6 +226,14 @@ class FederatedOntologyLoader:
             if domain_override and str(domain_override).strip():
                 data["domain"] = str(domain_override).strip()
             else:
+                # User guidance guard: Detect when a user accidentally uploads a raw Semantic Model
+                # (SML/OSI) file instead of a Domain Ontology YAML, providing an actionable error message.
+                if "unique_name" in data or "datasets" in data:
+                    raise OntologyValidationError([
+                        "Missing required key 'domain' at top level. This file appears to be a Semantic Model (SML/OSI) "
+                        "rather than a Domain Ontology YAML. To convert a semantic model into an ontology, please select "
+                        "the project and use 'Generate from OSI' instead."
+                    ])
                 raise OntologyValidationError(["Missing required key 'domain' at top level"])
         domain_name = str(data["domain"]).strip()
 
@@ -210,10 +260,66 @@ class FederatedOntologyLoader:
             raise OntologyValidationError(format_validation_error(e, data)) from e
 
         FederatedOntologyLoader._auto_infer_metric_dependencies(dom)
+        # Strip auto-synthesized identifier title-casing whenever a genuine human label/synonym exists
+        FederatedOntologyLoader._strip_domain_synthetic_synonyms(dom)
         errors = FederatedOntologyLoader.validate_references(dom, [], require_external=False)
         if errors:
             raise OntologyValidationError(errors)
         return dom
+
+    @staticmethod
+    def _strip_synthetic_title_synonyms(
+        synonyms: List[str],
+        tech_name: str,
+        approved_texts: Optional[List[Optional[str]]] = None,
+    ) -> List[str]:
+        """Drop synthetic 'TECH_NAME'.replace('_', ' ').title() variants when a genuine human spelling exists."""
+        raw_tech = str(tech_name or "").strip()
+        if not synonyms or "_" not in raw_tech:
+            return list(synonyms)
+        synthetic = raw_tech.replace("_", " ").title().strip()
+        if not synthetic:
+            return list(synonyms)
+        candidates = list(approved_texts or []) + list(synonyms)
+        has_real_human = any(
+            str(t or "").strip()
+            and str(t).strip().casefold() != raw_tech.casefold()
+            and str(t).strip().casefold() != synthetic.casefold()
+            for t in candidates
+        )
+        if not has_real_human:
+            return list(synonyms)
+        return [s for s in synonyms if str(s or "").strip().casefold() != synthetic.casefold()]
+
+    @classmethod
+    def _strip_domain_synthetic_synonyms(cls, dom: DomainOntology) -> None:
+        """Generically normalize synthetic underscore-to-title variants on loaded BI metrics."""
+        for m in dom.metrics:
+            if m.origin == "user":
+                continue
+            raw_tech = str(m.name or "").strip()
+            if "_" not in raw_tech:
+                continue
+            synthetic = raw_tech.replace("_", " ").title().strip()
+            cleaned = cls._strip_synthetic_title_synonyms(list(m.synonyms or []), raw_tech, [m.label])
+            if cleaned != list(m.synonyms or []):
+                m.synonyms = cleaned
+            if m.label and m.label.strip().casefold() == synthetic.casefold():
+                # Only a better spelling of the SAME words (e.g. "YTD Sales" for
+                # "Ytd Sales") replaces the label -- never a different synonym
+                # ("Margin" must not replace "Gross Margin").
+                same_words = re.sub(r"[^0-9a-z]+", "", synthetic.casefold())
+                human_alt = next(
+                    (
+                        s for s in cleaned
+                        if s.strip() != synthetic
+                        and s.strip().casefold() != raw_tech.casefold()
+                        and re.sub(r"[^0-9a-z]+", "", s.casefold()) == same_words
+                    ),
+                    None,
+                )
+                if human_alt:
+                    m.label = human_alt
 
     @staticmethod
     def _auto_infer_metric_dependencies(dom: DomainOntology) -> None:
@@ -424,9 +530,9 @@ class FederatedOntologyLoader:
                 if len(concept_sources[c_key]) == 1:
                     fed.concepts[concept.name] = concept
 
-            # Register Metrics
+            # Register Metrics (normalize spaces/underscores while preserving symbols like %)
             for metric in dom.metrics:
-                m_key = metric.name.casefold()
+                m_key = re.sub(r"[\s_]+", "_", str(metric.name or "").strip()).casefold()
                 if m_key not in metric_sources:
                     metric_sources[m_key] = []
                 metric_sources[m_key].append((dom.domain, metric))
@@ -446,53 +552,143 @@ class FederatedOntologyLoader:
                     fed.policies[pol.name] = pol
                     existing_pol_keys.add(pol.name.casefold())
 
-        # 1. Check Metric Collisions
+        # Group domains by source_project_id so re-exported duplicates of one model are flagged once as WARNING
+        by_source_project: Dict[str, List[str]] = {}
+        domain_project_map: Dict[str, str] = {}
+        for dom in domain_list:
+            src_pid = str(getattr(dom, "source_project_id", None) or "").strip()
+            if src_pid:
+                key_pid = src_pid.casefold()
+                by_source_project.setdefault(key_pid, []).append(dom.domain)
+                domain_project_map[dom.domain.casefold()] = key_pid
+
+        for key_pid, dom_names in sorted(by_source_project.items()):
+            if len(dom_names) > 1:
+                src_label = next(
+                    (getattr(fed.domains[n], "source_project_id", None) or key_pid for n in dom_names if n in fed.domains),
+                    key_pid,
+                )
+                fed.collisions.append(
+                    OntologyCollision(
+                        item_type="domain",
+                        item_name=str(src_label),
+                        conflicting_domains=dom_names,
+                        severity="WARNING",
+                        message=(
+                            f"Duplicate domain of the same project '{src_label}' "
+                            f"({', '.join(dom_names)}) — re-sync instead of keeping duplicate domains."
+                        ),
+                    )
+                )
+
+        _norm_formula_cmp = normalize_formula_for_compare
+
+        # 1. Check Metric Collisions across distinct projects / business domains (plus intra-domain separator collisions)
         for m_key, occurrences in metric_sources.items():
-            if len(occurrences) > 1:
-                domains = [occ[0] for occ in occurrences]
-                metrics = [occ[1] for occ in occurrences]
-                exprs = {occ[0]: occ[1].sql_expression for occ in occurrences}
-                descs = {occ[0]: occ[1].description for occ in occurrences}
+            if len(occurrences) <= 1:
+                continue
 
-                # Check if formulas differ
-                unique_exprs = {(occ[1].sql_expression or "").strip().casefold() for occ in occurrences}
-                if len(unique_exprs) > 1:
+            # Intra-domain collisions (e.g. 'Dup Metric' and 'DUP_METRIC' inside the same domain)
+            by_dom_intra: Dict[str, List[DomainMetric]] = {}
+            for d_name, met in occurrences:
+                by_dom_intra.setdefault(d_name, []).append(met)
+            for d_name, dom_mets in by_dom_intra.items():
+                if len(dom_mets) > 1:
+                    exprs_intra = {_norm_formula_cmp(m.sql_expression) for m in dom_mets}
+                    non_empty_intra = {e for e in exprs_intra if e}
+                    names_str = ", ".join(m.name for m in dom_mets)
+                    is_conflict = len(non_empty_intra) > 1
                     fed.collisions.append(
                         OntologyCollision(
                             item_type="metric",
-                            item_name=metrics[0].name,
-                            conflicting_domains=domains,
-                            descriptions=descs,
-                            expressions=exprs,
-                            severity="ERROR",
+                            item_name=names_str,
+                            conflicting_domains=[d_name],
+                            expressions={m.name: m.sql_expression for m in dom_mets},
+                            severity="ERROR" if is_conflict else "WARNING",
                             message=(
-                                f"Metric collision: '{metrics[0].name}' defined with conflicting "
-                                f"formulas across domains: {', '.join(domains)}."
-                            ),
-                        )
-                    )
-                else:
-                    fed.collisions.append(
-                        OntologyCollision(
-                            item_type="metric",
-                            item_name=metrics[0].name,
-                            conflicting_domains=domains,
-                            descriptions=descs,
-                            expressions=exprs,
-                            severity="WARNING",
-                            message=(
-                                f"Shared metric: '{metrics[0].name}' declared identically in multiple "
-                                f"domains ({', '.join(domains)}). Suggest consolidating ownership."
+                                f"Intra-domain duplicate metric in '{d_name}': {names_str} "
+                                f"({ 'conflicting formulas' if is_conflict else 'same normalized name' })."
                             ),
                         )
                     )
 
-        # 2. Check Concept Collisions
+            # Collapse occurrences belonging to the same source_project_id to one representative
+            distinct_proj_buckets: Dict[str, Tuple[str, DomainMetric]] = {}
+            for d_name, met in occurrences:
+                bucket = domain_project_map.get(d_name.casefold(), f"dom:{d_name.casefold()}")
+                distinct_proj_buckets.setdefault(bucket, (d_name, met))
+            if len(distinct_proj_buckets) < 2:
+                continue
+
+            filtered_occ = list(distinct_proj_buckets.values())
+            domains = [occ[0] for occ in filtered_occ]
+            metrics = [occ[1] for occ in filtered_occ]
+            exprs = {occ[0]: occ[1].sql_expression for occ in filtered_occ}
+            descs = {occ[0]: occ[1].description for occ in filtered_occ}
+
+            # Compare formulas after whitespace/case normalization
+            unique_exprs = {_norm_formula_cmp(occ[1].sql_expression) for occ in filtered_occ}
+            non_empty_exprs = {e for e in unique_exprs if e}
+            if len(non_empty_exprs) > 1:
+                diff_parts = [f"{d}: {(exprs[d] or '').strip()!r}" for d in domains]
+                fed.collisions.append(
+                    OntologyCollision(
+                        item_type="metric",
+                        item_name=metrics[0].name,
+                        conflicting_domains=domains,
+                        descriptions=descs,
+                        expressions=exprs,
+                        severity="ERROR",
+                        message=(
+                            f"Metric collision: '{metrics[0].name}' defined with conflicting "
+                            f"formulas across domains ({'; '.join(diff_parts)})."
+                        ),
+                    )
+                )
+            elif len(non_empty_exprs) == 1 and len(unique_exprs) > 1:
+                fed.collisions.append(
+                    OntologyCollision(
+                        item_type="metric",
+                        item_name=metrics[0].name,
+                        conflicting_domains=domains,
+                        descriptions=descs,
+                        expressions=exprs,
+                        severity="WARNING",
+                        message=(
+                            f"Metric partial definition: '{metrics[0].name}' has a formula in some "
+                            f"domains ({', '.join(domains)}) and binding-only in others."
+                        ),
+                    )
+                )
+            elif len(non_empty_exprs) == 1:
+                fed.collisions.append(
+                    OntologyCollision(
+                        item_type="metric",
+                        item_name=metrics[0].name,
+                        conflicting_domains=domains,
+                        descriptions=descs,
+                        expressions=exprs,
+                        severity="WARNING",
+                        message=(
+                            f"Metric '{metrics[0].name}' is shared across domains "
+                            f"({', '.join(domains)}) with identical formula."
+                        ),
+                    )
+                )
+
+        # 2. Check Concept Collisions across distinct projects
         for c_key, occurrences in concept_sources.items():
             if len(occurrences) > 1:
-                domains = [occ[0] for occ in occurrences]
-                concepts = [occ[1] for occ in occurrences]
-                descs = {occ[0]: occ[1].description for occ in occurrences}
+                distinct_proj_buckets_c: Dict[str, Tuple[str, DomainConcept]] = {}
+                for d_name, con in occurrences:
+                    bucket = domain_project_map.get(d_name.casefold(), f"dom:{d_name.casefold()}")
+                    distinct_proj_buckets_c.setdefault(bucket, (d_name, con))
+                if len(distinct_proj_buckets_c) < 2:
+                    continue
+                filtered_c = list(distinct_proj_buckets_c.values())
+                domains = [occ[0] for occ in filtered_c]
+                concepts = [occ[1] for occ in filtered_c]
+                descs = {occ[0]: occ[1].description for occ in filtered_c}
                 fed.collisions.append(
                     OntologyCollision(
                         item_type="concept",
@@ -617,14 +813,72 @@ class FederatedOntologyLoader:
             return [p[0] for p in pk_pairs], [p[1] for p in pk_pairs]
         return None
 
+    @staticmethod
+    def validate_bi_formula_immutability(
+        candidate: DomainOntology,
+        existing: Optional[DomainOntology],
+    ) -> List[str]:
+        """Reject edits to formulas of metrics that came from a PBIX/BI model (read-only)."""
+        if existing is None:
+            return []
+
+        def _norm(expr: Optional[str]) -> str:
+            return re.sub(r"\s+", " ", str(expr or "").strip())
+
+        existing_by_name = {m.name.casefold(): m for m in existing.metrics}
+        errors: List[str] = []
+        for m in candidate.metrics:
+            prev = existing_by_name.get(m.name.casefold())
+            if prev is None or prev.origin != "bi":
+                continue
+            if _norm(m.sql_expression) != _norm(prev.sql_expression) or _norm(m.dax_expression) != _norm(prev.dax_expression):
+                errors.append(
+                    f"Formula of metric '{m.name}' comes from the PBIX model and is read-only; "
+                    "edit the measure in Power BI instead of overriding it in the domain file."
+                )
+        return errors
+
+    @staticmethod
+    def validate_bi_formula_shadowing(
+        candidate: DomainOntology,
+        related: List[DomainOntology],
+    ) -> List[str]:
+        """Reject a metric that reuses the name of a PBIX/BI measure from another domain
+        of the same project with a different formula (BI formulas are read-only)."""
+        bi_by_name: Dict[str, Tuple[str, DomainMetric]] = {}
+        for dom in related or []:
+            if dom is candidate or dom.domain.casefold() == candidate.domain.casefold():
+                continue
+            for m in dom.metrics:
+                if m.origin == "bi" and not m.stale:
+                    bi_by_name.setdefault(m.name.casefold(), (dom.domain, m))
+        errors: List[str] = []
+        for m in candidate.metrics:
+            if m.origin == "bi":
+                continue
+            hit = bi_by_name.get(m.name.casefold())
+            if hit is None:
+                continue
+            mine = {normalize_formula_for_compare(f) for f in (m.sql_expression, m.dax_expression)} - {""}
+            if not mine:
+                continue  # annotation-only entry: fine
+            theirs = {normalize_formula_for_compare(f) for f in (hit[1].sql_expression, hit[1].dax_expression)} - {""}
+            if theirs and not (mine & theirs):
+                errors.append(
+                    f"Metric '{m.name}' has the same name as the PBIX measure in domain '{hit[0]}' but a "
+                    "different formula. BI formulas are read-only: rename the metric or remove its formula."
+                )
+        return errors
+
     @classmethod
     def to_osi_model(cls, federated: FederatedEnterpriseOntology, model_name: str = "ENTERPRISE_ONTOLOGY") -> OSIModel:
         """Convert a Federated Enterprise Ontology into a standard SemaBridge OSIModel."""
         datasets: List[OSIDataset] = []
         metrics: List[OSIMetric] = []
+        dimensions: List[OSIDimension] = []
         relationships: List[OSIRelationship] = []
 
-        # Convert Concepts to OSIDatasets
+        # Convert Concepts to OSIDatasets (and Dimensions when hierarchies exist)
         for concept in federated.concepts.values():
             cols: List[OSIColumn] = []
             for attr in concept.attributes:
@@ -637,6 +891,8 @@ class FederatedOntologyLoader:
                         data_type=mapped_type,
                         description=attr.description,
                         is_key=attr.is_primary_key,
+                        is_hidden=bool(getattr(attr, "is_hidden", False)),
+                        format_string=getattr(attr, "format_string", None),
                         synonyms=attr.synonyms,
                     )
                 )
@@ -651,12 +907,45 @@ class FederatedOntologyLoader:
                 )
             )
 
+            concept_hiers = getattr(concept, "hierarchies", None) or []
+            if concept_hiers:
+                osi_hiers: List[OSIHierarchy] = []
+                for h in concept_hiers:
+                    levels = [
+                        OSILevel(
+                            unique_name=lv.name,
+                            label=lv.label or lv.name,
+                            attribute=lv.attribute,
+                        )
+                        for lv in (getattr(h, "levels", None) or [])
+                    ]
+                    osi_hiers.append(
+                        OSIHierarchy(
+                            unique_name=h.name,
+                            label=h.label or h.name,
+                            description=getattr(h, "description", None),
+                            is_hidden=bool(getattr(h, "is_hidden", False)),
+                            levels=levels,
+                        )
+                    )
+                dimensions.append(
+                    OSIDimension(
+                        unique_name=concept.name,
+                        label=concept.label or concept.name,
+                        description=concept.description,
+                        dataset=concept.name,
+                        hierarchies=osi_hiers,
+                    )
+                )
+
         by_key: Dict[str, DomainConcept] = {c.name.casefold(): c for c in federated.concepts.values()}
 
         # Convert Metrics (bound to a real concept/dataset, never to a domain name)
         for m in federated.metrics.values():
-            if not (m.sql_expression or "").strip():
-                logger.info("Metric '%s' has no sql_expression (annotation-only); not compiled to OSI.", m.name)
+            has_sql = bool((m.sql_expression or "").strip())
+            has_dax = bool((getattr(m, "dax_expression", None) or "").strip())
+            if not has_sql and not has_dax:
+                logger.info("Metric '%s' has no sql_expression/dax_expression (annotation-only); not compiled to OSI.", m.name)
                 continue
             bound = cls._resolve_metric_concept(m, federated.concepts, by_key)
             if bound is None:
@@ -670,8 +959,11 @@ class FederatedOntologyLoader:
                     unique_name=m.name,
                     label=m.label or m.name,
                     dataset=bound.name,
-                    expression=m.sql_expression,
+                    expression=(getattr(m, "dax_expression", None) or m.sql_expression),
+                    sql_expression=m.sql_expression,
                     description=m.description,
+                    format_string=getattr(m, "format_string", None),
+                    is_hidden=bool(getattr(m, "is_hidden", False)),
                     synonyms=m.synonyms,
                 )
             )
@@ -711,6 +1003,9 @@ class FederatedOntologyLoader:
             used_names[base] = used_names.get(base, 0) + 1
             rel_name = base if used_names[base] == 1 else f"{base}_{used_names[base]}"
 
+            cfd_raw = str(getattr(rel, "cross_filter_direction", "") or "single").strip().lower()
+            cfd = OSICrossFilterDirection.BOTH if cfd_raw in ("both", "bi", "bidirectional") else OSICrossFilterDirection.SINGLE
+
             relationships.append(
                 OSIRelationship(
                     unique_name=rel_name,
@@ -719,6 +1014,8 @@ class FederatedOntologyLoader:
                     from_columns=from_cols,
                     to_columns=to_cols,
                     cardinality=card_map.get(rel.cardinality, OSICardinality.MANY_TO_ONE),
+                    cross_filter_direction=cfd,
+                    is_active=bool(getattr(rel, "is_active", True)),
                 )
             )
 
@@ -728,6 +1025,7 @@ class FederatedOntologyLoader:
             description="Federated Enterprise Ontology compiled to OSI Intermediate Model",
             datasets=datasets,
             metrics=metrics,
+            dimensions=dimensions,
             relationships=relationships,
         )
 
@@ -762,6 +1060,111 @@ class FederatedOntologyLoader:
                     out.append(t)
         return out
 
+    @staticmethod
+    def _to_logical_id(raw: str) -> str:
+        """Compute deterministic Snowflake logical identifier matching IdentifierSanitizer rules."""
+        from semabridge.utils.identifiers import IdentifierSanitizer
+        return IdentifierSanitizer().to_alias(str(raw or "").strip() or "COL")
+
+    @classmethod
+    def _extract_semantic_view_metadata(cls, ddl: Optional[str]) -> Dict[str, Any]:
+        """Extract deployed view name, table aliases, logical dim/metric names, and NULL reasons from DDL."""
+        meta: Dict[str, Any] = {
+            "view_name": None,
+            "tables": {},      # norm_key -> table_alias
+            "dims": {},        # (table_alias_upper, norm_col_key) -> logical_dim_name
+            "metrics": {},     # norm_metric_key -> (table_alias, logical_metric_name, null_reason)
+        }
+        if not ddl or not isinstance(ddl, str):
+            return meta
+
+        hdr = re.search(r"CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+([^\s(]+)", ddl, re.I)
+        if hdr:
+            raw_vn = hdr.group(1).strip()
+            parts = [p.strip().strip('"') for p in raw_vn.split(".") if p.strip()]
+            meta["view_name"] = ".".join(parts) if parts else raw_vn
+
+        def _norm(val: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(val or "").casefold())
+
+        def _extract_block(keyword: str) -> str:
+            m = re.search(rf"\b{keyword}\s*\(", ddl, re.I)
+            if not m:
+                return ""
+            start = m.end()
+            depth = 1
+            in_sq = False
+            i = start
+            n = len(ddl)
+            while i < n and depth > 0:
+                ch = ddl[i]
+                if in_sq:
+                    if ch == "'":
+                        if i + 1 < n and ddl[i + 1] == "'":
+                            i += 2
+                            continue
+                        in_sq = False
+                else:
+                    if ch == "'":
+                        in_sq = True
+                    elif ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            return ddl[start:i]
+                i += 1
+            return ""
+
+        for line in _extract_block("TABLES").splitlines():
+            tm = re.match(r"^\s*([A-Za-z0-9_]+)\s+AS\s+([^\s,(]+)", line, re.I)
+            if tm:
+                t_alias = tm.group(1).strip()
+                phys_parts = [p.strip().strip('"') for p in tm.group(2).split(".") if p.strip()]
+                phys_tbl = phys_parts[-1] if phys_parts else t_alias
+                meta["tables"][_norm(t_alias)] = t_alias
+                meta["tables"][_norm(phys_tbl)] = t_alias
+
+        for line in _extract_block("DIMENSIONS").splitlines():
+            dm = re.match(
+                r'^\s*(PRIVATE\s+)?([A-Za-z0-9_]+)\."?([^"\s]+)"?\s+AS\s+([A-Za-z0-9_]+)\."?([^"\s,)]+)"?',
+                line,
+                re.I,
+            )
+            if dm and not dm.group(1):
+                t_alias = dm.group(2).strip()
+                logical_col = dm.group(3).strip()
+                phys_col = dm.group(5).strip()
+                tu = t_alias.upper()
+                meta["dims"][(tu, _norm(phys_col))] = logical_col
+                meta["dims"][(tu, _norm(logical_col))] = logical_col
+                syn_m = re.search(r"WITH\s+SYNONYMS\s*=\s*\(([^)]+)\)", line, re.I)
+                if syn_m:
+                    for s in re.findall(r"'((?:[^']|'')*)'", syn_m.group(1)):
+                        meta["dims"].setdefault((tu, _norm(s.replace("''", "'"))), logical_col)
+
+        for line in _extract_block("METRICS").splitlines():
+            mm = re.match(r'^\s*(PRIVATE\s+)?([A-Za-z0-9_]+)\."?([^"\s]+)"?\s+AS\s+(.+?)\s*,?\s*$', line, re.I)
+            if not mm:
+                continue
+            is_priv = bool(mm.group(1))
+            t_alias = mm.group(2).strip()
+            logical_m = mm.group(3).strip()
+            rhs = mm.group(4).strip()
+            null_reason: Optional[str] = None
+            if is_priv:
+                null_reason = "Marked PRIVATE in deployed semantic view"
+            elif re.match(r"^(?:CAST\s*\(\s*NULL\b|NULL\b)", rhs, re.I):
+                cm = re.search(r"\bCOMMENT\s*=\s*'((?:[^']|'')*)'", rhs, re.I)
+                null_reason = (cm.group(1).replace("''", "'") if cm else "Compiled as NULL placeholder during deployment")
+            meta["metrics"][_norm(logical_m)] = (t_alias, logical_m, null_reason)
+            syn_m = re.search(r"WITH\s+SYNONYMS\s*=\s*\(([^)]+)\)", line, re.I)
+            if syn_m:
+                for s in re.findall(r"'((?:[^']|'')*)'", syn_m.group(1)):
+                    meta["metrics"].setdefault(_norm(s.replace("''", "'")), (t_alias, logical_m, null_reason))
+
+        return meta
+
     @classmethod
     def from_osi_model(
         cls,
@@ -769,6 +1172,9 @@ class FederatedOntologyLoader:
         domain_name: Optional[str] = None,
         existing_ontology: Optional[DomainOntology] = None,
         report: Optional[Dict[str, List[str]]] = None,
+        semantic_view_ddl: Optional[str] = None,
+        semantic_view_name: Optional[str] = None,
+        deployment_error: Optional[str] = None,
     ) -> DomainOntology:
         """Convert an OSIModel into a DomainOntology, MERGING into ``existing_ontology``.
 
@@ -789,6 +1195,15 @@ class FederatedOntologyLoader:
         for k in ("added", "updated", "stale", "kept_user"):
             rep.setdefault(k, [])
         union = cls._union
+        sv_meta = cls._extract_semantic_view_metadata(semantic_view_ddl)
+        resolved_sv_name = (
+            semantic_view_name
+            or sv_meta.get("view_name")
+            or (existing_ontology.semantic_view_name if existing_ontology else None)
+        )
+
+        def _norm_key(val: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(val or "").casefold())
 
         domain = (
             (existing_ontology.domain if existing_ontology else None)
@@ -823,6 +1238,12 @@ class FederatedOntologyLoader:
             if c_key in new_concepts:
                 continue
             exist_c = existing_concepts.get(c_key)
+            ds_logical = (
+                sv_meta["tables"].get(_norm_key(ds.unique_name))
+                or sv_meta["tables"].get(_norm_key(ds.source_table or ""))
+                or (exist_c.logical_name if exist_c and exist_c.logical_name else None)
+                or cls._to_logical_id(ds.unique_name)
+            )
 
             existing_attrs = {a.name.casefold(): a for a in (exist_c.attributes if exist_c else [])}
             attrs: List[DomainAttribute] = []
@@ -834,13 +1255,23 @@ class FederatedOntologyLoader:
                 bi_attr_keys.add(a_key)
                 exist_a = existing_attrs.get(a_key)
                 desc, bi_desc = cls._merge_description(exist_a, col.description)
+                col_logical = (
+                    sv_meta["dims"].get((ds_logical.upper(), _norm_key(col.source_column or col.unique_name)))
+                    or sv_meta["dims"].get((ds_logical.upper(), _norm_key(col.unique_name)))
+                    or (exist_a.logical_name if exist_a and exist_a.logical_name else None)
+                    or cls._to_logical_id(col.unique_name)
+                )
                 attrs.append(
                     DomainAttribute(
                         name=exist_a.name if exist_a else col.unique_name,
+                        logical_name=col_logical,
                         data_type=osi_to_sql_type.get(col.data_type, "VARCHAR"),
                         description=desc,
                         is_primary_key=exist_a.is_primary_key if exist_a else col.is_key,
+                        is_hidden=bool(getattr(col, "is_hidden", False)),
+                        format_string=getattr(col, "format_string", None),
                         synonyms=union(exist_a.synonyms if exist_a else [], col.synonyms),
+                        sample_values=union(exist_a.sample_values if exist_a else [], getattr(col, "sample_values", []) or []),
                         maps_to=exist_a.maps_to if exist_a else [],
                         origin="bi",
                         stale=False,
@@ -864,8 +1295,39 @@ class FederatedOntologyLoader:
                 bi_syns.append(ds.label)
             desc, bi_desc = cls._merge_description(exist_c, ds.description)
 
+            ds_hierarchies: List[DomainHierarchy] = []
+            seen_h: set[str] = set()
+            for dim in (getattr(model, "dimensions", None) or []):
+                if (getattr(dim, "dataset", "") or "").casefold() != ds.unique_name.casefold():
+                    continue
+                for h in (getattr(dim, "hierarchies", None) or []):
+                    hk = (h.unique_name or "").casefold()
+                    if not hk or hk in seen_h:
+                        continue
+                    seen_h.add(hk)
+                    ds_hierarchies.append(
+                        DomainHierarchy(
+                            name=h.unique_name,
+                            label=getattr(h, "label", None) or h.unique_name,
+                            description=getattr(h, "description", None),
+                            is_hidden=bool(getattr(h, "is_hidden", False)),
+                            levels=[
+                                DomainHierarchyLevel(
+                                    name=lv.unique_name,
+                                    label=getattr(lv, "label", None) or lv.unique_name,
+                                    attribute=lv.attribute,
+                                )
+                                for lv in (getattr(h, "levels", None) or [])
+                            ],
+                            origin="bi",
+                        )
+                    )
+            if not ds_hierarchies and exist_c and getattr(exist_c, "hierarchies", None):
+                ds_hierarchies = list(exist_c.hierarchies)
+
             new_concepts[c_key] = DomainConcept(
                 name=exist_c.name if exist_c else ds.unique_name,
+                logical_name=ds_logical,
                 label=exist_c.label if (exist_c and exist_c.label) else (ds.label or ds.unique_name),
                 concept_type=exist_c.concept_type if exist_c else inferred_type,
                 domain=domain,
@@ -877,6 +1339,7 @@ class FederatedOntologyLoader:
                 source_dataset=exist_c.source_dataset if exist_c else None,
                 physical_table=ds.source_table or ds.unique_name,
                 attributes=attrs,
+                hierarchies=ds_hierarchies,
                 tags=exist_c.tags if exist_c else [],
                 maps_to=exist_c.maps_to if exist_c else [],
                 origin="bi",
@@ -900,36 +1363,140 @@ class FederatedOntologyLoader:
 
         # 2. Metrics
         new_metrics: Dict[str, DomainMetric] = {}
+        # BI measures a user-authored metric already binds via maps_to (e.g. the
+        # copies merged into one metric by the wizard's Ontology step) are owned
+        # by that metric: re-sync must not re-add them as separate metrics.
+        bound_by_user: set = set()
+        for exist in existing_metrics.values():
+            if exist.origin == "bi":
+                continue
+            for binding in exist.maps_to:
+                for key in (binding, binding.split(".")[-1]):
+                    k = str(key or "").strip().casefold()
+                    if k and k != exist.name.casefold():
+                        bound_by_user.add(k)
         for m in model.metrics:
             m_key = m.unique_name.casefold()
             if m_key in new_metrics:
                 continue
+            if m_key in bound_by_user and m_key not in existing_metrics:
+                continue
             exist_m = existing_metrics.get(m_key)
 
-            calc_expr = m.expression
+            # Separate compiled SQL expression from raw DAX formula:
+            # - sql_expr: snowflake/databricks SQL generated during model compilation
+            # - dax_expr: original Power BI DAX formula preserved for lineage / inspection
+            sql_expr = getattr(m, "sql_expression", None)
+            dax_expr = getattr(m, "expression", None)
             agg_fn = (m.aggregation.value if hasattr(m.aggregation, "value") else str(m.aggregation)).upper()
+            calc_expr = sql_expr
+
+            # Fallback AST translation: if the snapshot has no pre-compiled sql_expression,
+            # translate the DAX formula to Snowflake SQL via AST parser so the ontology gets valid SQL instead of DAX.
+            if not calc_expr and dax_expr:
+                try:
+                    from semabridge.converter.dax_ast_parser import try_ast_translate
+                    ast_sql = try_ast_translate(dax_expr, m.dataset or "")
+                    if ast_sql:
+                        calc_expr = ast_sql
+                except Exception:
+                    pass
+
             if not calc_expr and m.source_column:
-                calc_expr = m.source_column if agg_fn == "NONE" else f"{agg_fn}({m.source_column})"
-            calc_expr = calc_expr or getattr(m, "sql_expression", None) or "COUNT(*)"
-            agg_type = "SUM" if agg_fn == "NONE" else agg_fn
+                # Raw columns get their aggregation function applied, complex calculations remain NONE/CUSTOM
+                calc_expr = m.source_column if agg_fn in ("NONE", "CUSTOM") else f"{agg_fn}({m.source_column})"
+            # Do not coerce NONE to SUM: calculated metrics, ratios, and percentages must retain NONE/CUSTOM
+            agg_type = "NONE" if agg_fn in ("NONE", "CUSTOM") else agg_fn
             user_formula = bool(exist_m and exist_m.origin != "bi" and exist_m.sql_expression)
             desc, bi_desc = cls._merge_description(exist_m, m.description)
 
+            # Domain-agnostic metadata propagation: inherit synonyms strictly from source BI metadata
+            # without synthetic title-casing whenever genuine source labels/synonyms exist
+            metric_synonyms = list(m.synonyms or [])
+            orig_name = getattr(m, "original_name", None)
+            if orig_name and orig_name not in metric_synonyms:
+                metric_synonyms.append(orig_name)
+            synthetic_title = m.unique_name.replace("_", " ").title() if "_" in m.unique_name else None
+            if m.label and m.label not in metric_synonyms:
+                if not synthetic_title or m.label.casefold() != synthetic_title.casefold():
+                    metric_synonyms.append(m.label)
+
+            sv_m_entry = (
+                sv_meta["metrics"].get(_norm_key(m.unique_name))
+                or sv_meta["metrics"].get(_norm_key(orig_name or ""))
+                or sv_meta["metrics"].get(_norm_key(m.label or ""))
+            )
+            m_logical = (
+                sv_m_entry[1]
+                if sv_m_entry
+                else (exist_m.logical_name if exist_m and exist_m.logical_name else cls._to_logical_id(m.unique_name))
+            )
+            m_deploy_reason = sv_m_entry[2] if sv_m_entry else (exist_m.deploy_reason if exist_m else None)
+            if sv_m_entry and sv_m_entry[2] and not user_formula:
+                # Metric compiled to NULL placeholder or PRIVATE in deployed DDL: mark unanswerable with reason
+                calc_expr = None
+            m_concept = m.dataset or (exist_m.concept if exist_m else None)
+            if sv_m_entry:
+                deployed_c = next(
+                    (c_obj.name for c_obj in concepts if (c_obj.logical_name or "").upper() == sv_m_entry[0].upper()),
+                    None,
+                )
+                if deployed_c:
+                    m_concept = deployed_c
+
+            metric_name_ref = exist_m.name if exist_m else m.unique_name
+            merged_syns = cls._strip_synthetic_title_synonyms(
+                union(exist_m.synonyms if exist_m else [], metric_synonyms),
+                metric_name_ref,
+                [orig_name, m.label],
+            )
+            human_label = (
+                orig_name
+                or (
+                    m.label
+                    if m.label
+                    and m.label != m.unique_name
+                    and (not synthetic_title or m.label.casefold() != synthetic_title.casefold())
+                    else None
+                )
+            )
+            exist_label_is_synth = bool(
+                exist_m
+                and exist_m.label
+                and exist_m.origin != "user"
+                and synthetic_title
+                and exist_m.label.casefold() == synthetic_title.casefold()
+                and human_label
+            )
+            resolved_label = (
+                exist_m.label
+                if (exist_m and exist_m.label and not exist_label_is_synth)
+                else (human_label or m.unique_name)
+            )
+
+            if (getattr(model, "source_platform", None) or "").lower() == "snowflake" and sql_expr and dax_expr == sql_expr:
+                dax_expr = None
+
             new_metrics[m_key] = DomainMetric(
-                name=exist_m.name if exist_m else m.unique_name,
-                label=exist_m.label if (exist_m and exist_m.label) else (m.label or m.unique_name),
+                name=metric_name_ref,
+                logical_name=m_logical,
+                label=resolved_label,
                 description=desc,
                 sql_expression=exist_m.sql_expression if user_formula else calc_expr,
+                dax_expression=getattr(exist_m, "dax_expression", None) or dax_expr,
+                deploy_reason=m_deploy_reason,
+                format_string=getattr(m, "format_string", None) or (getattr(exist_m, "format_string", None) if exist_m else None),
+                is_hidden=bool(getattr(m, "is_hidden", False)),
                 aggregation_type=exist_m.aggregation_type if user_formula else agg_type,
                 grain=exist_m.grain if exist_m else [],
-                synonyms=union(exist_m.synonyms if exist_m else [], m.synonyms),
+                synonyms=merged_syns,
                 business_rules=exist_m.business_rules if exist_m else [],
                 filter_expression=exist_m.filter_expression if exist_m else None,
                 derives_from=exist_m.derives_from if exist_m else [],
                 data_steward=(exist_m.data_steward if (exist_m and exist_m.data_steward) else (m.business_owner or None)),
                 domain=domain,
-                concept=m.dataset or (exist_m.concept if exist_m else None),
-                semantic_view_name=exist_m.semantic_view_name if exist_m else None,
+                concept=m_concept,
+                semantic_view_name=resolved_sv_name or (exist_m.semantic_view_name if exist_m else None),
                 tags=exist_m.tags if exist_m else [],
                 maps_to=exist_m.maps_to if exist_m else [],
                 origin="bi",
@@ -968,23 +1535,46 @@ class FederatedOntologyLoader:
             OSICardinality.MANY_TO_MANY: CardinalityType.MANY_TO_MANY,
         }
 
-        def _rkey(a: str, b: str) -> str:
+        # Disambiguate relationships between identical tables (e.g., role-playing or active vs inactive keys)
+        # by including normalized join expression and relationship unique name in the composite lookup key.
+        def _rkey(a: str, b: str, join_expr: Optional[str] = None, name: Optional[str] = None) -> str:
+            norm_expr = (join_expr or "").replace(" ", "").casefold()
+            if norm_expr:
+                return f"{a.casefold()}->{b.casefold()}[{norm_expr}]"
+            if name:
+                return f"{a.casefold()}->{b.casefold()}#{name.casefold()}"
             return f"{a.casefold()}->{b.casefold()}"
 
         first_existing: Dict[str, DomainRelationship] = {}
         for r in existing_rels:
-            first_existing.setdefault(_rkey(r.from_concept, r.to_concept), r)
+            k = _rkey(r.from_concept, r.to_concept, r.join_expression, r.name)
+            first_existing.setdefault(k, r)
+            first_existing.setdefault(f"{r.from_concept.casefold()}->{r.to_concept.casefold()}", r)
 
         new_rels: Dict[str, DomainRelationship] = {}
+        matched_existing_to_rkey: Dict[int, str] = {}
         for rel in model.relationships:
-            r_key = _rkey(rel.from_dataset, rel.to_dataset)
+            # Quote column identifiers that contain whitespace (e.g. Cases."Case Created On")
+            def _qcol(c: str) -> str:
+                return f'"{c}"' if " " in c and not c.startswith('"') else c
+
+            pairs = [f"{rel.from_dataset}.{_qcol(fc)} = {rel.to_dataset}.{_qcol(tc)}" for fc, tc in zip(rel.from_columns, rel.to_columns)]
+            join_expr = " AND ".join(pairs) if pairs else None
+            r_key = _rkey(rel.from_dataset, rel.to_dataset, join_expr, rel.unique_name)
             if r_key in new_rels:
                 continue
             exist_r = first_existing.get(r_key)
+            if not exist_r:
+                # Only fall back to endpoint-only matching if that existing relationship hasn't already been claimed
+                cand = first_existing.get(f"{rel.from_dataset.casefold()}->{rel.to_dataset.casefold()}")
+                if cand and id(cand) not in matched_existing_to_rkey:
+                    exist_r = cand
+            if exist_r and id(exist_r) not in matched_existing_to_rkey:
+                matched_existing_to_rkey[id(exist_r)] = r_key
             user_r = bool(exist_r and exist_r.origin != "bi")
-            pairs = [f"{rel.from_dataset}.{fc} = {rel.to_dataset}.{tc}" for fc, tc in zip(rel.from_columns, rel.to_columns)]
-            join_expr = " AND ".join(pairs) if pairs else None
             card = card_rev_map.get(rel.cardinality, CardinalityType.MANY_TO_ONE)
+            cfd_val = getattr(rel, "cross_filter_direction", None)
+            cfd_str = (cfd_val.value if hasattr(cfd_val, "value") else str(cfd_val)) if cfd_val else None
             new_rels[r_key] = DomainRelationship(
                 name=exist_r.name if (exist_r and exist_r.name) else rel.unique_name,
                 from_concept=rel.from_dataset,
@@ -993,17 +1583,23 @@ class FederatedOntologyLoader:
                 relationship_type=exist_r.relationship_type if exist_r else RelationshipType.JOIN,
                 join_expression=(exist_r.join_expression if (user_r and exist_r.join_expression) else join_expr),
                 predicate_label=exist_r.predicate_label if exist_r else None,
+                cross_filter_direction=(getattr(exist_r, "cross_filter_direction", None) if user_r else cfd_str),
+                # Preserve relationship activity flag (is_active) from the BI model
+                is_active=getattr(exist_r, "is_active", None) if user_r else getattr(rel, "is_active", True),
                 origin="bi",
             )
 
         relationships: List[DomainRelationship] = []
         for r in existing_rels:
-            r_key = _rkey(r.from_concept, r.to_concept)
-            if first_existing.get(r_key) is r and r_key in new_rels:
-                relationships.append(new_rels.pop(r_key))
-            elif r.origin == "bi" and first_existing.get(r_key) is r:
+            k = _rkey(r.from_concept, r.to_concept, r.join_expression, r.name)
+            matched_rkey = matched_existing_to_rkey.get(id(r))
+            if matched_rkey and matched_rkey in new_rels:
+                relationships.append(new_rels.pop(matched_rkey))
+            elif k in new_rels and first_existing.get(k) is r:
+                relationships.append(new_rels.pop(k))
+            elif r.origin == "bi":
                 if not r.stale:
-                    rep["stale"].append(f"relationship {r.name or r_key}")
+                    rep["stale"].append(f"relationship {r.name or k}")
                 relationships.append(r.model_copy(update={"stale": True}))
             else:
                 relationships.append(r)
@@ -1031,6 +1627,8 @@ class FederatedOntologyLoader:
                 if (existing_ontology and existing_ontology.description)
                 else model.description
             ),
+            semantic_view_name=resolved_sv_name,
+            deployment_error=deployment_error or (existing_ontology.deployment_error if existing_ontology else None),
             concepts=concepts,
             metrics=metrics,
             relationships=deduped,

@@ -1,5 +1,5 @@
 /**
- * CreateProjectPage — 5-step wizard at /projects/new
+ * CreateProjectPage — 6-step wizard at /projects/new (step 4: Ontology review, before the dry run)
  *
  * Step 1: Name + connectors
  * Step 2: Source + target config (with live discovery)
@@ -54,6 +54,8 @@ import { StepConnectorConfig } from '../components/CreateProjectWizard/StepConne
 import { StepSourceBrowser } from '../components/CreateProjectWizard/StepSourceBrowser';
 import { StepMappingOptions } from '../components/CreateProjectWizard/StepMappingOptions';
 import { StepFinish } from '../components/CreateProjectWizard/StepFinish';
+import { StepOntologyReview } from '../components/CreateProjectWizard/StepOntologyReview';
+import { EMPTY_REVIEW } from '../components/CreateProjectWizard/ontologyReviewState';
 import { WizardHeader } from '../components/CreateProjectWizard/WizardHeader';
 import { WizardFooter } from '../components/CreateProjectWizard/WizardFooter';
 import { useConnectorAccounts } from '../hooks/useConnectorAccounts';
@@ -62,8 +64,9 @@ const STEPS = [
   { id: 1, label: 'Basic Info' },
   { id: 2, label: 'Connector Config' },
   { id: 3, label: 'Select Sources' },
-  { id: 4, label: 'Mapping Options' },
-  { id: 5, label: 'Finish' },
+  { id: 4, label: 'Ontology Review' },
+  { id: 5, label: 'Mapping Options' },
+  { id: 6, label: 'Finish' },
 ];
 
 const CONNECTOR_TYPES = [
@@ -407,6 +410,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
+  // Step 4 (Ontology review) state; kept here so Back/Next preserves decisions.
+  const [ontologyReview, setOntologyReview] = useState(EMPTY_REVIEW);
   const isHydratedRef = useRef(false);
   const prevWorkspaceIdRef = useRef(null);
   const prevSourceConnectorRef = useRef(null);
@@ -1209,6 +1214,21 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setCreatedProject(project);
       const projectId = project?.id || project?.project_id;
 
+      // Attach the domain saved in the Ontology review step to the new project.
+      const reviewedDomainId = ontologyReview?.saved?.id;
+      if (projectId && reviewedDomainId) {
+        try {
+          const current = await api.getProjectOntologyDomains(projectId);
+          const ids = (current?.domains || []).map(d => d.id);
+          if (!ids.includes(reviewedDomainId)) {
+            await api.setProjectOntologyDomains(projectId, [...ids, reviewedDomainId]);
+          }
+        } catch (attachErr) {
+          const msg = `The reviewed ontology was saved but not attached to the project: ${attachErr?.message || 'unknown error'}. Attach it from the project's Ontology tab.`;
+          setRunWarning(prev => `${prev ? `${prev} ` : ''}${msg}`.trim());
+        }
+      }
+
       if (projectId && isMultiModelRun) {
         // Multi-model: persist each EDITED row through the mapping store as
         // well, tagged with its model, so it is stored against this project
@@ -1546,13 +1566,36 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     };
   }, [allModels, modelQuery, modelQueryRegex, wsModels]);
 
+  /* ─── Step 4: Ontology review (before the dry run) ─── */
+  // Same source config the dry run sends; PBIX gets real file paths so the
+  // backend can read each file without running the pipeline.
+  const buildOntologyReviewRequest = useCallback(() => {
+    const { sourceConfig } = buildDryRunPayload({
+      sourceConnector,
+      targetConnectors,
+      fabricAccountId,
+      fabricWorkspaceId,
+      snowflakeAccountId,
+      snowflakeDatabase,
+      snowflakeSchema,
+      targetDatabase,
+      targetSchema,
+      selectedModelNames,
+      pbixPath: effectiveSources.isMulti ? '' : effectiveSources.singlePbixPath,
+    });
+    const selected = sourceConnector === 'pbix'
+      ? (effectiveSources.isMulti ? effectiveSources.sources : [effectiveSources.singlePbixPath]).filter(Boolean)
+      : selectedModelNames;
+    return { source_config: sourceConfig, selected_sources: selected };
+  }, [sourceConnector, targetConnectors, fabricAccountId, fabricWorkspaceId, snowflakeAccountId, snowflakeDatabase, snowflakeSchema, targetDatabase, targetSchema, selectedModelNames, effectiveSources]);
+
   /* ─── Step validity ─── */
   const canAdvance = () => {
     if (step === 1) return name.trim().length > 0;
     // Fabric: the backend rejects an empty model list -- require >= 1.
     if (step === 3 && sourceConnector === 'fabric') return selectedModelNames.length > 0;
-    if (step === 4) return mappingReadyToProceed;
-    if (step === 5) return true;
+    if (step === 5) return mappingReadyToProceed;
+    if (step === 6) return true;
     return true;
   };
 
@@ -1901,7 +1944,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           setCreatedProject({ id: result.project_id, project_id: result.project_id });
         }
         setMappingReadyToProceed(true);
-        setStep(5);
+        setStep(6);
       } else {
         const errMsg = (Array.isArray(result?.errors) && result.errors[0])
           ? `Deploy failed: ${result.errors[0]}`
@@ -1916,7 +1959,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   }, [detectedMappings, createdProject]);
 
   const goNext = async () => {
-    if (step === 5) { handleFinish(); return; }
+    if (step === 6) { handleFinish(); return; }
     if (step === 1) {
       const isStep1Valid = Boolean(sourceConnector) && targetConnectors.size > 0 && Boolean(intermediateFormat);
       if (!isStep1Valid) {
@@ -1939,11 +1982,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         setMultiDryRunJob(null);
       }
     }
-    if (step === 4 && !mappingReadyToProceed) {
+    if (step === 5 && !mappingReadyToProceed) {
       setMappingError('Resolve blocking mapping validation issues before continuing.');
       return;
     }
-    setStep(s => Math.min(5, s + 1));
+    setStep(s => Math.min(6, s + 1));
   };
   const goBack = () => setStep(s => Math.max(1, s - 1));
 
@@ -2075,7 +2118,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }}>
         <div style={{ 
           width: '100%', 
-          maxWidth: (step === 3 || step === 4) ? 1400 : 900,
+          maxWidth: (step >= 3 && step <= 5) ? 1400 : 900,
           transition: 'max-width 0.3s ease'
         }}>
           {/* Step content */}
@@ -2185,6 +2228,18 @@ export default function CreateProjectPage({ editMode = false, initialData = null
           )}
           {step === 4 && (
             <ErrorBoundary>
+              <StepOntologyReview
+                review={ontologyReview}
+                setReview={setOntologyReview}
+                sourceConnector={sourceConnector}
+                buildRequest={buildOntologyReviewRequest}
+                projectName={name}
+                projectId={editMode ? initialData?.id : undefined}
+              />
+            </ErrorBoundary>
+          )}
+          {step === 5 && (
+            <ErrorBoundary>
               {editMode && (
                 <div style={{ marginBottom: 20, padding: '16px', background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: '12px' }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mapping Mode</div>
@@ -2260,10 +2315,11 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onMultiBulkResolved={handleMultiBulkResolved}
                 onMultiSynonymUpdate={handleMultiSynonymUpdate}
                 onRetryMultiFile={multiJob.rerunFile}
+                onRemoveMultiFile={multiJob.removeFile}
               />
             </ErrorBoundary>
           )}
-          {step === 5 && (
+          {step === 6 && (
             <StepFinish
               name={name}
               saving={saving}

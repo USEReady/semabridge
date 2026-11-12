@@ -223,10 +223,16 @@ class TablesClauseBuilder:
         # 0. Live KEY UNIQUENESS query
         if hasattr(self.schema_manager, "check_key_uniqueness"):
             live_result = self.schema_manager.check_key_uniqueness(unqualified_table, target_cols, cursor=self.cursor)
-            # Only a real yes/no answer counts; anything else (None, an
-            # unconfigured stub) means "unknown" and falls through.
-            if isinstance(live_result, bool):
-                return live_result
+            # Proven unique in the data: done. Proven NOT unique is advisory
+            # only -- keys come from the PBIX model and Snowflake schema, never
+            # from table data -- so warn and fall through to the model checks.
+            if live_result is True:
+                return True
+            if live_result is False:
+                logger.warning(
+                    "Key %s on %s is not unique in the current data; keeping the key the model defines.",
+                    target_cols, unqualified_table,
+                )
 
         # 1. Column metadata
         cols = getattr(dataset, "columns", []) or []
@@ -252,7 +258,8 @@ class TablesClauseBuilder:
 
         for rel in relationships:
             card = getattr(rel, "cardinality", None)
-            card_str = str(getattr(card, "value", card) or "").lower().replace("_", "-")
+            # TMSL default cardinality (unset) is many-to-one.
+            card_str = str(getattr(card, "value", card) or "many-to-one").lower().replace("_", "-")
 
             # Check if this rel targets dataset on target_cols
             if getattr(rel, "to_dataset", None) in target_ds_names:
@@ -392,7 +399,24 @@ class TablesClauseBuilder:
             # Omit unlinked measure-only tables (containers with no physical data columns and no relationships)
             cols = getattr(d, "columns", []) or []
             is_measure_table = getattr(d, "is_measure_table", False)
-            non_dummy_cols = [c for c in cols if getattr(c, "unique_name", "").upper() not in ("ID", "NAME", "DESCRIPTION", "_ID")]
+            non_dummy_cols = [
+                c for c in cols
+                if getattr(c, "unique_name", "") != "_"
+                and not str(getattr(c, "unique_name", "")).startswith("_RowNumber")
+            ]
+            # A measure container in Power BI is a table that hosts measures,
+            # has no relationships and only hidden placeholder column(s) (e.g.
+            # "Value" from {1}, "Column1" from an empty #table) that no measure
+            # reads. Those placeholders are not data -- treat the table as
+            # measure-only so its measures are re-homed like any other.
+            if (
+                non_dummy_cols
+                and metric_counts_by_dataset.get(d_name, 0) > 0
+                and str(d_name).casefold() not in related_dataset_names
+                and all(getattr(c, "is_hidden", False) for c in non_dummy_cols)
+                and not self._columns_used_by_metrics(d_name, non_dummy_cols)
+            ):
+                non_dummy_cols = []
             if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
                 logger.info("Omitting unlinked measure-only table '%s' from semantic view TABLES clause", d_name)
                 if self.drop_ledger is not None:
@@ -400,7 +424,8 @@ class TablesClauseBuilder:
                         "table",
                         d_name,
                         DropStage.DDL_EMISSION,
-                        "Measure-only table omitted: no relationships and no physical data columns",
+                        "Measure-only table omitted: no relationships and no physical data columns "
+                        "(only hidden placeholder columns no measure uses); its measures are placed on a data table",
                         by_design=True,
                     )
                 continue
@@ -415,14 +440,31 @@ class TablesClauseBuilder:
             if card_str in ("1:1", "one-to-one", "onetoone"):
                 from_cnt = metric_counts_by_dataset.get(r.from_dataset, 0)
                 to_cnt = metric_counts_by_dataset.get(r.to_dataset, 0)
-                from_is_fact = is_fact_like_name(r.from_dataset)
-                to_is_fact = is_fact_like_name(r.to_dataset)
-                if to_cnt > from_cnt or (to_cnt == from_cnt and to_is_fact and not from_is_fact):
+                if to_cnt > from_cnt:
                     r.from_dataset, r.to_dataset = r.to_dataset, r.from_dataset
                     r.from_columns, r.to_columns = r.to_columns, r.from_columns
 
-        many_side_datasets = {rel.from_dataset for rel in relationships if getattr(rel, "from_dataset", None)}
-        one_side_datasets = {rel.to_dataset for rel in relationships if getattr(rel, "to_dataset", None)}
+        # Fact classification relies strictly on active N:1 relationships (never 1:1, inactive, or table names).
+        many_side_datasets: set[str] = set()
+        one_side_datasets: set[str] = set()
+        active_n1_rels: list[Any] = []
+        for rel in relationships:
+            if not getattr(rel, "is_active", True):
+                continue
+            card = getattr(rel, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "many_to_one").lower().replace("-", "_").strip()
+            if card_str in ("many_to_one", "manytoone", "m:1", "*:1", ""):
+                active_n1_rels.append(rel)
+                if getattr(rel, "from_dataset", None):
+                    many_side_datasets.add(rel.from_dataset)
+                if getattr(rel, "to_dataset", None):
+                    one_side_datasets.add(rel.to_dataset)
+            elif card_str in ("one_to_many", "onetomany", "1:m", "1:*"):
+                active_n1_rels.append(rel)
+                if getattr(rel, "to_dataset", None):
+                    many_side_datasets.add(rel.to_dataset)
+                if getattr(rel, "from_dataset", None):
+                    one_side_datasets.add(rel.from_dataset)
 
         target_keys_by_dataset: dict[str, list[list[str]]] = {}
         for rel in relationships:
@@ -465,7 +507,13 @@ class TablesClauseBuilder:
                     self.identifier_sanitizer.sanitize_column(c.unique_name) for c in getattr(dataset, "columns", []) or []
                 }
 
-            modeled_cols_list = [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            fn = getattr(self.schema_manager, "_physical_model_column_names", None)
+            raw_physical = fn(dataset) if callable(fn) else None
+            modeled_cols_list = (
+                raw_physical
+                if isinstance(raw_physical, list)
+                else [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            )
             source_table = resolve_dataset_to_physical_table(
                 dataset.unique_name,
                 modeled_cols_list,
@@ -473,6 +521,8 @@ class TablesClauseBuilder:
                 explicit_mapping=source_table_mapping,
                 model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
             )
+            if source_table == dataset.unique_name and getattr(dataset, "source_table", None):
+                source_table = str(dataset.source_table)
             _unq_src = source_table.rsplit(".", 1)[-1] if "." in source_table else source_table
             safe_source_key = self.identifier_sanitizer.sanitize_table_name(_unq_src)
             source_key = safe_source_key.upper()
@@ -488,7 +538,13 @@ class TablesClauseBuilder:
                 live_col_lookup[dataset.unique_name] = set(live_cols)
 
         for dataset in datasets:
-            modeled_cols_list = [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            fn = getattr(self.schema_manager, "_physical_model_column_names", None)
+            raw_physical = fn(dataset) if callable(fn) else None
+            modeled_cols_list = (
+                raw_physical
+                if isinstance(raw_physical, list)
+                else [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            )
             source_table = resolve_dataset_to_physical_table(
                 dataset.unique_name,
                 modeled_cols_list,
@@ -496,6 +552,8 @@ class TablesClauseBuilder:
                 explicit_mapping=source_table_mapping,
                 model_name=getattr(self._current_model, "unique_name", None) or getattr(self._current_model, "name", None),
             )
+            if source_table == dataset.unique_name and getattr(dataset, "source_table", None):
+                source_table = str(dataset.source_table)
             parts = [p.strip().strip('"') for p in source_table.split(".") if p.strip()]
             if len(parts) >= 3:
                 safe_db = self.identifier_sanitizer.sanitize_table_name(parts[0])
@@ -519,6 +577,8 @@ class TablesClauseBuilder:
             known_phys = dataset_col_lookup.get(dataset.unique_name, set())
 
             def _physical(col_name: str) -> str:
+                if self.schema_manager is None:
+                    return self.identifier_sanitizer.sanitize_column(col_name)
                 return self.schema_manager._resolve_physical_column_name(dataset, col_name, model=self._current_model)
 
             # Resolve target keys for this dataset to physical column names
@@ -537,18 +597,15 @@ class TablesClauseBuilder:
                 and dataset.unique_name.upper() != "KPI"
             )
 
-            # Facts and keys come from the PBIX model and the Snowflake schema
-            # only, never from table data: a fact is on the many side of the
-            # model's relationships (or flagged/named as one). A key is the
-            # one-side column of a relationship, else the PBIX key column,
-            # else a primary key declared in Snowflake, else the first column.
+            # Facts come from active N:1 many-side relationships (never table names, 1:1, or inactive).
+            # A key is the one-side column of a relationship, else the PBIX key column,
+            # else a primary key declared in Snowflake (no columns[0] guessing).
             is_on_many_side = (dataset.unique_name in many_side_datasets and dataset.unique_name not in one_side_datasets)
 
             is_fact_table = (
-                getattr(dataset, "is_fact", False)
-                or is_fact_like_name(dataset.unique_name)
+                is_on_many_side
                 or getattr(dataset, "table_type", "").upper() == "FACT"
-                or is_on_many_side
+                or (not active_n1_rels and getattr(dataset, "is_fact", False))
             )
 
             # Resolve primary key
@@ -580,7 +637,7 @@ class TablesClauseBuilder:
                         # Safeguard: unreferenced or unverified fact table keys are never guessed
                         pk_cols = []
                     else:
-                        # Dimension table fallback
+                        # Dimension table fallback: PBIX key or Snowflake declared PK only (never columns[0])
                         key_cols = [c for c in dataset.columns if c.is_key]
                         declared = []
                         if not key_cols and hasattr(self.schema_manager, "declared_primary_keys"):
@@ -591,8 +648,6 @@ class TablesClauseBuilder:
                             pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
                         elif declared:
                             pk_cols = [f'"{c}"' for c in declared]
-                        elif dataset.columns:
-                            pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
             else:
                 if is_fact_table:
                     # Safeguard: fact table not targeted by any relationship has PK suppressed
@@ -608,8 +663,6 @@ class TablesClauseBuilder:
                         pk_cols = [f'"{_physical(key_cols[0].unique_name)}"']
                     elif declared:
                         pk_cols = [f'"{c}"' for c in declared]
-                    elif dataset.columns:
-                        pk_cols = [f'"{_physical(dataset.columns[0].unique_name)}"']
 
             # Verification: only retain columns that actually exist in the physical table
             verified_pk = [p for p in pk_cols if p.strip('"') in known_phys] if known_phys else pk_cols
@@ -656,20 +709,26 @@ class TablesClauseBuilder:
             constraints = [c for c in [pk_clause, *unique_clauses] if c]
             pk_suffix = f" {' '.join(constraints)}" if constraints else ""
 
-            if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (dataset.is_fact or is_measure_only or is_fact_like_name(dataset.unique_name)):
+            if getattr(self.behavior.snowflake, "auto_add_anchors", True) and (is_fact_table or is_measure_only):
                 full_table = self._build_source_query_with_anchors(full_table, dataset.unique_name, self._current_model)
 
             tables_lines.append(f'  {alias} AS {full_table}{pk_suffix}{table_annotation_clause(dataset)}')
 
-        # Emit alias tables for inactive relationships
+        # Emit alias tables for inactive relationships ONLY when referenced by USERELATIONSHIP(...)
+        from semabridge.utils.identifiers import inactive_role_alias_map, _relationship_signature
+
+        # One unique alias per used inactive relationship (two inactive
+        # relationships from the same FK to different dimension columns must
+        # not share an alias -- a duplicate TABLES alias fails the view).
+        role_aliases = inactive_role_alias_map(relationships, self._current_model)
         for rel in relationships:
-            if not getattr(rel, "is_active", True):
+            inact_alias = role_aliases.get(_relationship_signature(rel)) if not getattr(rel, "is_active", True) else None
+            if inact_alias:
                 dim_ds_name = getattr(rel, "to_dataset", None)
                 dim_dataset = dataset_by_name.get(dim_ds_name)
                 from_cols = getattr(rel, "from_columns", None) or []
                 fk_col = from_cols[0] if from_cols else ""
                 if dim_dataset and fk_col:
-                    inact_alias = to_alias(dim_ds_name, fk_col)
                     modeled_cols_list = [c.unique_name for c in getattr(dim_dataset, "columns", []) or []]
                     source_table = resolve_dataset_to_physical_table(
                         dim_dataset.unique_name,
@@ -718,6 +777,31 @@ class TablesClauseBuilder:
                         dataset_col_lookup[inact_alias.lower()] = set(dim_cols)
 
         return tables_lines, declared_pk_by_alias, relationship_target_alias, dataset_col_lookup, dataset_by_name, live_col_lookup
+
+    def _columns_used_by_metrics(self, dataset_name: str, columns: List[Any]) -> bool:
+        """True when any metric expression references one of ``columns`` of ``dataset_name``."""
+        metrics = getattr(getattr(self, "_current_model", None), "metrics", None) or []
+        tbl = re.escape(str(dataset_name))
+        for c in columns:
+            col = re.escape(str(getattr(c, "unique_name", "") or ""))
+            if not col:
+                continue
+            # 'Table'[Col] / Table[Col], or a bare [Col] (not another table's column).
+            dax_ref = re.compile(
+                rf"(?:(?:'{tbl}'|(?<![\w']){tbl})\s*|(?<![\w'\]]))\[\s*{col}\s*\]", re.IGNORECASE
+            )
+            alias = re.escape(self.identifier_sanitizer.to_alias(str(dataset_name)))
+            phys = re.escape(self.identifier_sanitizer.sanitize_column(str(c.unique_name)))
+            sql_ref = re.compile(rf'(?<![\w"]){alias}\s*\.\s*"?{phys}\b', re.IGNORECASE)
+            for m in metrics:
+                expr = str(getattr(m, "expression", None) or "")
+                sql = str(getattr(m, "sql_expression", None) or "")
+                src = str(getattr(m, "source_column", None) or "")
+                if dax_ref.search(expr) or (sql and sql_ref.search(sql)):
+                    return True
+                if src and src.casefold() == str(c.unique_name).casefold() and str(getattr(m, "dataset", "")).casefold() == str(dataset_name).casefold():
+                    return True
+        return False
 
     def _get_unique_alias(self, name: str, registry: Any) -> str:
         alias = registry.get_alias(name)

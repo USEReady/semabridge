@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Map as MapIcon, RefreshCw,
     LayoutGrid, Waypoints,
     Search, X, Filter,
     Eye, EyeOff,
-    Database, FolderOpen, PanelRight, Files, ArrowLeft,
+    Database, Files, Check, ChevronDown, SlidersHorizontal, AlertTriangle, History,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../utils/api';
 import FileTreePanel from './FileTreePanel';
 import DependencyGraph from './DependencyGraph';
@@ -127,7 +128,7 @@ function isSystemTableName(name) {
  * Center: React-Flow dependency graph.
  * Right:  detail / file preview panel (slides in on selection).
  */
-export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId = null, diffMode = false }) {
+export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId = null, diffMode = false, initialModel = null }) {
     // ── data ──
     const [snapshotTreeData, setSnapshotTreeData] = useState(null);
     const [graphData, setGraphData] = useState({ nodes: [], edges: [], meta: {} });
@@ -136,8 +137,12 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [selectedFile, setSelectedFile] = useState(null);
     const [selectedNode, setSelectedNode] = useState(null);
     const [filePreview, setFilePreview] = useState(null);
-    const [workbenchOpen, setWorkbenchOpen] = usePageCache('explore:workbenchOpen', false);
-    const [showExplorer, setShowExplorer] = usePageCache('explore:showExplorer', true);
+    const navigate = useNavigate();
+    // Diagram | Table (the table is the former "Schema Inspector")
+    const [view, setView] = usePageCache('explore:view', 'diagram');
+    const [viewMenuOpen, setViewMenuOpen] = useState(false);
+    // Snapshot file tree — now opt-in from the View menu
+    const [showExplorer, setShowExplorer] = usePageCache('explore:showFiles', false);
 
     const [layout, setLayout] = useState('hierarchical');           // hierarchical | force
     const [erMode, setErMode] = usePageCache('explore:erMode', true);                     // Power BI-like relationship view
@@ -155,7 +160,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     const [graphLoading, setGraphLoading] = useState(true);
     const [diffLoading, setDiffLoading] = useState(false);
     const [diffReport, setDiffReport] = useState(null);
-    const [inspectorResetToken, setInspectorResetToken] = useState(0);
     // Map of workspace_id → display name for the Explore detail panel
     const [workspaceNames, setWorkspaceNames] = useState({});
     // Configured Account records for the connector dropdown
@@ -443,12 +447,6 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             systemExcluded: Number(graphData?.meta?.system_tables_excluded || 0),
         };
     }, [graphData, snapshotId]);
-
-    // ── filter chips ────────────────────────────────
-    const chips = [
-        { id: 'all', label: 'All' },
-        { id: 'broken', label: 'Broken Refs' },
-    ];
 
     // --- FULL SCREEN STATE ---
     const [fullScreen, setFullScreen] = useState(false);
@@ -801,6 +799,9 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         setUnsyncedModel({ id: model.id, name: model.name });
     }, [availableModels, projects, selectedWorkspaceId]);
 
+    // ?model=<id or name> deep link — applied once, after the graph's models are known.
+    const pendingInitialModelRef = useRef(initialModel);
+
     const focusTableInER = useCallback((tableId) => {
         if (!tableId) return;
         setSelectedTableId(String(tableId));
@@ -809,6 +810,19 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
     }, []);
 
     useEffect(() => {
+        if (pendingInitialModelRef.current) {
+            if (modelOptions.length === 0) return; // wait for the graph before applying ?model=
+            const want = String(pendingInitialModelRef.current).toLowerCase();
+            pendingInitialModelRef.current = null;
+            const match = modelOptions.find(m => String(m.id).toLowerCase() === want)
+                || modelOptions.find(m => String(m.label).toLowerCase() === want)
+                || modelOptions.find(m => String(m.label).toLowerCase().includes(want));
+            if (match) {
+                setSelectedModelId(match.id);
+                setSelectedTableId('__all__');
+                return;
+            }
+        }
         if (selectedModelId !== '__all__' && !modelOptions.some((m) => m.id === selectedModelId)) {
             setSelectedModelId('__all__');
             setSelectedTableId('__all__');
@@ -834,14 +848,125 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
         borderRadius: 8,
         background: 'var(--bg-surface-raised)',
         color: 'var(--text-primary)',
-        fontSize: 11.5,
-        fontWeight: 500,
-        padding: '5px 10px',
-        maxWidth: 240,
-        minWidth: 130,
+        fontSize: 12,
+        fontWeight: 600,
+        padding: '6px 10px',
+        maxWidth: 220,
+        minWidth: 120,
         outline: 'none',
         transition: 'all 0.15s ease',
         cursor: 'pointer',
+    };
+
+    // ── Discovered (live) models that have no synced graph yet ──
+    const unsyncedDiscoveredModels = useMemo(() => {
+        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const graphModelLabels = (Array.isArray(graphData?.nodes) ? graphData.nodes : [])
+            .filter(n => n?.data?.nodeType === 'model')
+            .map(n => norm(n?.data?.label));
+        const optionLabels = modelOptions.map(mo => norm(mo.label));
+        return availableModels.filter(m => {
+            const normM = norm(m.name);
+            const matches = (normL) => normL === normM || normL.includes(normM) || normM.includes(normL);
+            return !optionLabels.some(matches) && !graphModelLabels.some(matches);
+        });
+    }, [availableModels, modelOptions, graphData]);
+
+    // Source dropdown merges Connector + (Fabric) Workspace into one control.
+    const sourceValue = selectedWorkspaceId !== '__all__'
+        ? `ws:${selectedWorkspaceId}`
+        : selectedConnector !== '__all__' ? `conn:${selectedConnector}` : '__all__';
+
+    const handleSourceChange = (value) => {
+        if (value.startsWith('ws:')) {
+            setSelectedWorkspaceId(value.slice(3));
+            setSelectedModelId('__all__');
+            setSelectedTableId('__all__');
+            setUnsyncedModel(null);
+            setModelDropdownValue('__all__');
+            setOverrideSnapshotId(null);
+            return;
+        }
+        const connector = value.startsWith('conn:') ? value.slice(5) : '__all__';
+        setSelectedConnector(connector);
+        setSelectedModelId('__all__');
+        setSelectedTableId('__all__');
+        setSelectedWorkspaceId('__all__');
+        setAvailableWorkspaces([]);
+        setAvailableModels([]);
+        setUnsyncedModel(null);
+        setModelDropdownValue('__all__');
+        setOverrideSnapshotId(null);
+    };
+
+    const handleModelChange = (val) => {
+        setModelDropdownValue(val);
+        if (val.startsWith('discovered:')) {
+            handleDiscoveredModelSelect(val.slice('discovered:'.length));
+        } else {
+            setSelectedModelId(val);
+            setSelectedTableId('__all__');
+            setUnsyncedModel(null);
+            setOverrideSnapshotId(null);
+        }
+    };
+
+    const modelSelectPlaceholder = modelsLoading
+        ? 'Loading…'
+        : selectedConnector !== '__all__' && availableWorkspaces.length > 0 && selectedWorkspaceId === '__all__'
+            ? 'Pick a workspace first'
+            : 'All models';
+
+    // ── Footer counts (scoped to the selected model) ──
+    const mapCounts = useMemo(() => {
+        const nodes = Array.isArray(renderedGraphData?.nodes) ? renderedGraphData.nodes : [];
+        const edges = Array.isArray(renderedGraphData?.edges) ? renderedGraphData.edges : [];
+        const inScope = (n) => selectedModelId === '__all__'
+            || !String(n?.data?.model_id || '').trim()
+            || String(n.data.model_id) === String(selectedModelId);
+        const scoped = nodes.filter(inScope);
+        const scopedIds = new Set(scoped.map(n => n.id));
+        return {
+            tables: scoped.filter(n => n?.data?.nodeType === 'table').length,
+            measures: scoped.filter(n => n?.data?.nodeType === 'measure').length,
+            relationships: edges.filter(e => String(e?.id || '').startsWith('rel-') && scopedIds.has(e.source)).length,
+            broken: scoped.filter(n => n?.data?.status === 'broken').length,
+        };
+    }, [renderedGraphData, selectedModelId]);
+
+    // Close the View menu on Escape.
+    useEffect(() => {
+        if (!viewMenuOpen) return undefined;
+        const onKey = (e) => { if (e.key === 'Escape') setViewMenuOpen(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [viewMenuOpen]);
+
+    const layoutChoice = erMode ? 'er' : layout;
+    const chooseLayout = (choice) => {
+        if (choice === 'er') {
+            setErMode(true);
+        } else {
+            if (filterType === 'tables') setFilterType('all');
+            setErMode(false);
+            setLayout(choice);
+        }
+    };
+
+    const graphProps = {
+        graphData: renderedGraphData,
+        layout,
+        erMode,
+        selectedModelId,
+        selectedTableId,
+        searchQuery,
+        filterType,
+        showVersionBadges,
+        onNodeClick: handleNodeClick,
+        isLoading: graphLoading,
+        snapshotId,
+        diffMode,
+        defaultEdgeOptions: { type: 'step' },
     };
 
     return (
@@ -850,353 +975,215 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
             height: '100%', width: '100%',
             background: 'var(--bg-app)', color: 'var(--text-primary)',
         }}>
-            {/* ─── TOP BAR ─── */}
+            {/* ─── TOOLBAR: title · model picker · search · broken pill · Diagram|Table · View ▾ ─── */}
             <div style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                padding: '8px 16px',
-                borderBottom: '1px solid var(--border-color)',
+                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                padding: '10px 16px',
+                borderBottom: '1px solid var(--border-main)',
                 background: 'var(--bg-surface)',
                 flexShrink: 0,
-                overflowX: 'auto',
-                overflowY: 'hidden',
             }}>
-                {/* Title */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 4 }}>
                     <MapIcon size={16} style={{ color: 'var(--accent-blue)' }} />
-                    <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>Repository Map</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500, marginLeft: 2 }}>
-                        • Semantic ER Diagram
-                    </span>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>Model map</span>
                 </div>
 
-                <div style={{ width: 1, height: 20, background: 'var(--border-color)' }} />
-
-
-                {/* Filter chips */}
-                <div style={{ display: 'flex', gap: 4 }}>
-                    {chips.map(c => (
-                        <button key={c.id}
-                            onClick={() => setFilterType(c.id)}
-                            style={{
-                                ...chipStyle,
-                                ...(filterType === c.id ? activeChipStyle : {}),
-                            }}
-                        >
-                            {c.label}
-                        </button>
-                    ))}
-                </div>
-
-                <button
-                    onClick={() => setWorkbenchOpen(v => !v)}
-                    title="Open model/data inspector"
-                    style={{
-                        ...toolBtnStyle,
-                        color: workbenchOpen ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                        background: workbenchOpen ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-                        borderColor: workbenchOpen ? 'var(--accent-blue)' : 'var(--border-main)',
-                        marginLeft: 4,
-                    }}
-                >
-                    <PanelRight size={14} />
-                    <span>Inspector</span>
-                </button>
-
-                <button
-                    onClick={() => setShowExplorer(v => !v)}
-                    title="Toggle snapshot/files explorer"
-                    style={{
-                        ...toolBtnStyle,
-                        color: showExplorer ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                        background: showExplorer ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-                        borderColor: showExplorer ? 'var(--accent-blue)' : 'var(--border-main)',
-                    }}
-                >
-                    <Files size={14} />
-                    <span>Explorer</span>
-                </button>
-
+                {/* Model picker — source (connector / workspace) + model */}
                 {connectorOptions.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, flexShrink: 0 }}>
-                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
-                            Connector
-                        </span>
-                        <select
-                            value={selectedConnector}
-                            onChange={(e) => {
-                                setSelectedConnector(e.target.value);
-                                setSelectedModelId('__all__');
-                                setSelectedTableId('__all__');
-                                setSelectedWorkspaceId('__all__');
-                                setAvailableWorkspaces([]);
-                                setAvailableModels([]);
-                                setUnsyncedModel(null);
-                                setModelDropdownValue('__all__');
-                                setOverrideSnapshotId(null);
-                            }}
-                            style={dropdownStyle}
-                            title="Choose connector filter"
-                        >
-                            <option value="__all__">Select connector</option>
-                            {connectorOptions.map(c => (
-                                <option key={c.id} value={c.id}>
-                                    {c.label}{c.subtitle ? ` (${c.subtitle})` : ''}
-                                </option>
-                            ))}
-                        </select>
-
-                        {/* Workspace dropdown — shown for Fabric connectors when workspaces loaded */}
-                        {selectedConnector !== '__all__' && (workspacesLoading || availableWorkspaces.length > 0) && (
-                            <>
-                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>›</span>
-                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
-                                    Workspace
-                                </span>
-                                <select
-                                    value={selectedWorkspaceId}
-                                    onChange={(e) => {
-                                        setSelectedWorkspaceId(e.target.value);
-                                        setSelectedModelId('__all__');
-                                        setSelectedTableId('__all__');
-                                        setUnsyncedModel(null);
-                                        setModelDropdownValue('__all__');
-                                        setOverrideSnapshotId(null);
-                                    }}
-                                    style={dropdownStyle}
-                                    disabled={workspacesLoading}
-                                    title="Choose workspace"
-                                >
-                                    <option value="__all__">{workspacesLoading ? 'Loading…' : 'Select workspace'}</option>
-                                    {availableWorkspaces.map(w => (
-                                        <option key={w.id} value={w.id}>{w.name || w.displayName || w.id}</option>
-                                    ))}
-                                </select>
-                            </>
+                    <select
+                        value={sourceValue}
+                        onChange={(e) => handleSourceChange(e.target.value)}
+                        style={dropdownStyle}
+                        title="Where the model comes from"
+                        aria-label="Source"
+                    >
+                        <option value="__all__">All sources</option>
+                        {connectorOptions.map(c => (
+                            <optgroup key={c.id} label={c.subtitle ? `${c.label} (${c.subtitle})` : c.label}>
+                                <option value={`conn:${c.id}`}>{c.label}</option>
+                                {selectedConnector === c.id && workspacesLoading && (
+                                    <option value={`conn:${c.id}`} disabled>  Loading workspaces…</option>
+                                )}
+                                {selectedConnector === c.id && availableWorkspaces.map(w => (
+                                    <option key={w.id} value={`ws:${w.id}`}>{`  ${w.name || w.id}`}</option>
+                                ))}
+                            </optgroup>
+                        ))}
+                    </select>
+                )}
+                {(modelOptions.length > 0 || selectedConnector !== '__all__') && (
+                    <select
+                        value={modelDropdownValue !== '__all__' ? modelDropdownValue : selectedModelId}
+                        onChange={(e) => handleModelChange(e.target.value)}
+                        style={dropdownStyle}
+                        disabled={modelsLoading}
+                        title="Choose model"
+                        aria-label="Model"
+                    >
+                        <option value="__all__">{modelSelectPlaceholder}</option>
+                        {modelOptions.length > 0 && (
+                            <optgroup label="Synced models">
+                                {modelOptions.map(m => (
+                                    <option key={m.id} value={m.id}>{m.label}</option>
+                                ))}
+                            </optgroup>
                         )}
-
-                        {/* Model dropdown */}
-                        {selectedConnector !== '__all__' && (
-                            <>
-                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>›</span>
-                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>
-                                    Model
-                                </span>
-                                <select
-                                    value={modelDropdownValue !== '__all__' ? modelDropdownValue : selectedModelId}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        setModelDropdownValue(val);
-                                        if (val.startsWith('discovered:')) {
-                                            handleDiscoveredModelSelect(val.slice('discovered:'.length));
-                                        } else {
-                                            setSelectedModelId(val);
-                                            setSelectedTableId('__all__');
-                                            setUnsyncedModel(null);
-                                            setOverrideSnapshotId(null);
-                                        }
-                                    }}
-                                    style={dropdownStyle}
-                                    disabled={modelsLoading}
-                                    title="Choose model"
-                                >
-                                    <option value="__all__">
-                                        {modelsLoading ? 'Loading…' :
-                                         availableWorkspaces.length > 0 && selectedWorkspaceId === '__all__' ? 'Select workspace first' :
-                                         'Select model'}
-                                    </option>
-                                    {/* Synced models from graph */}
-                                    {modelOptions.length > 0 && (
-                                        <optgroup label="Synced models">
-                                            {modelOptions.map(m => (
-                                                <option key={m.id} value={m.id}>{m.label}</option>
-                                            ))}
-                                        </optgroup>
-                                    )}
-                                    {/* Live discovered models not yet matched to a synced graph model */}
-                                    {availableModels.filter(m => {
-                                        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                                        const normM = norm(m.name);
-                                        // Matched if any modelOption label is an exact or partial match
-                                        const matchedInOptions = modelOptions.some(mo => {
-                                            const normL = norm(mo.label);
-                                            return normL === normM || normL.includes(normM) || normM.includes(normL);
-                                        });
-                                        if (matchedInOptions) return false;
-                                        // Also check raw graph model nodes
-                                        const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-                                        return !nodes.some(n => {
-                                            if (n?.data?.nodeType !== 'model') return false;
-                                            const normL = norm(n?.data?.label);
-                                            return normL === normM || normL.includes(normM) || normM.includes(normL);
-                                        });
-                                    }).length > 0 && (
-                                        <optgroup label="Not yet synced">
-                                            {availableModels.filter(m => {
-                                                const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                                                const normM = norm(m.name);
-                                                const matchedInOptions = modelOptions.some(mo => {
-                                                    const normL = norm(mo.label);
-                                                    return normL === normM || normL.includes(normM) || normM.includes(normL);
-                                                });
-                                                if (matchedInOptions) return false;
-                                                const nodes = Array.isArray(graphData?.nodes) ? graphData.nodes : [];
-                                                return !nodes.some(n => {
-                                                    if (n?.data?.nodeType !== 'model') return false;
-                                                    const normL = norm(n?.data?.label);
-                                                    return normL === normM || normL.includes(normM) || normM.includes(normL);
-                                                });
-                                            }).map(m => (
-                                                <option key={`discovered:${m.id}`} value={`discovered:${m.id}`}>{m.name || m.displayName}</option>
-                                            ))}
-                                        </optgroup>
-                                    )}
-                                </select>
-                            </>
+                        {unsyncedDiscoveredModels.length > 0 && (
+                            <optgroup label="Not yet synced">
+                                {unsyncedDiscoveredModels.map(m => (
+                                    <option key={`discovered:${m.id}`} value={`discovered:${m.id}`}>{m.name || m.displayName}</option>
+                                ))}
+                            </optgroup>
                         )}
+                    </select>
+                )}
 
-                        {/* Fallback model dropdown when no connector selected */}
-                        {selectedConnector === '__all__' && modelOptions.length > 0 && (
-                            <>
-                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', marginLeft: 8 }}>
-                                    Model
-                                </span>
-                                <select
-                                    value={selectedModelId}
-                                    onChange={(e) => { setSelectedModelId(e.target.value); setSelectedTableId('__all__'); }}
-                                    style={dropdownStyle}
-                                    title="Choose model"
-                                >
-                                    <option value="__all__">Select model</option>
-                                    {modelOptions.map(m => (
-                                        <option key={m.id} value={m.id}>{m.label}</option>
-                                    ))}
-                                </select>
-                            </>
-                        )}
+                {/* Search */}
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <Search size={13} style={{ position: 'absolute', left: 9, color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
+                    <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Find table or measure…"
+                        aria-label="Find table or measure"
+                        style={{
+                            border: '1px solid var(--border-main)',
+                            borderRadius: 8,
+                            background: 'var(--bg-input, var(--bg-surface-raised))',
+                            color: 'var(--text-primary)',
+                            fontSize: 12,
+                            padding: '6px 10px 6px 28px',
+                            width: 210,
+                            outline: 'none',
+                        }}
+                    />
+                </div>
 
-                        {selectedModelId !== '__all__' && (
-                            <span style={{
-                                fontSize: 10.5,
-                                fontWeight: 600,
-                                color: 'var(--accent-blue)',
-                                border: '1px solid var(--accent-blue)',
-                                background: 'var(--color-accent-faint)',
-                                padding: '3px 8px',
-                                borderRadius: 6,
-                                whiteSpace: 'nowrap',
-                                marginLeft: 4,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
-                            }}>
-                                <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent-blue)' }} />
-                                Model filtered
-                            </span>
-                        )}
-                    </div>
+                {/* Broken references pill (click = filter) */}
+                {(mapCounts.broken > 0 || filterType === 'broken') && (
+                    <button
+                        onClick={() => setFilterType(filterType === 'broken' ? 'all' : 'broken')}
+                        title={filterType === 'broken' ? 'Show everything again' : 'Show only broken references'}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
+                            fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                            color: 'var(--color-error)',
+                            background: filterType === 'broken' ? 'var(--color-error-bg, rgba(239,68,68,.12))' : 'transparent',
+                            border: '1px solid var(--color-error)',
+                        }}
+                    >
+                        <AlertTriangle size={12} />
+                        {mapCounts.broken} broken reference{mapCounts.broken === 1 ? '' : 's'}
+                        {filterType === 'broken' && <X size={12} />}
+                    </button>
                 )}
 
                 <div style={{ flex: 1 }} />
 
-                {/* Version badge toggle */}
-                {!erMode && (
-                    <button
-                        onClick={() => setShowVersionBadges(v => !v)}
-                        title="Toggle version history badges"
-                        style={{
-                            ...toolBtnStyle,
-                            color: showVersionBadges ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-                            background: showVersionBadges ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-                            borderColor: showVersionBadges ? 'var(--accent-blue)' : 'var(--border-main)',
-                        }}
-                    >
-                        {showVersionBadges ? <Eye size={14} /> : <EyeOff size={14} />}
-                        <span>Versions</span>
-                    </button>
-                )}
-
-                {snapshotId && (
-                    <button
-                        onClick={() => setIncludeSystemTables(v => !v)}
-                        title="Include system-generated tables in snapshot"
-                        style={{
-                            ...toolBtnStyle,
-                            color: includeSystemTables ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-                            background: includeSystemTables ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-                            borderColor: includeSystemTables ? 'var(--accent-blue)' : 'var(--border-main)',
-                        }}
-                    >
-                        <Filter size={14} />
-                        <span>{includeSystemTables ? 'System: On' : 'System: Off'}</span>
-                    </button>
-                )}
-
-                {/* Layout toggles */}
-                <button
-                    onClick={() => {
-                        setErMode(v => !v);
-                    }}
-                    title="Toggle ER relationship view"
-                    style={{
-                        ...toolBtnStyle,
-                        color: erMode ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-                        background: erMode ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-                        borderColor: erMode ? 'var(--accent-blue)' : 'var(--border-main)',
-                        fontWeight: erMode ? 600 : 500,
-                    }}
-                >
-                    <Database size={14} />
-                    <span>ER View</span>
-                </button>
-
-                {!erMode && (
-                    <>
+                {/* Diagram | Table */}
+                <div role="tablist" aria-label="View" style={{
+                    display: 'inline-flex', padding: 2, borderRadius: 8,
+                    border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)',
+                }}>
+                    {[{ id: 'diagram', label: 'Diagram' }, { id: 'table', label: 'Table' }].map(v => (
                         <button
-                            onClick={() => setLayout('hierarchical')}
-                            title="Hierarchical layout"
+                            key={v.id}
+                            role="tab"
+                            aria-selected={view === v.id}
+                            onClick={() => setView(v.id)}
                             style={{
-                                ...toolBtnStyle,
-                                color: layout === 'hierarchical' ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-                                background: layout === 'hierarchical' ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
+                                border: 'none', cursor: 'pointer', borderRadius: 6,
+                                padding: '4px 12px', fontSize: 12, fontWeight: 600,
+                                background: view === v.id ? 'var(--bg-surface)' : 'transparent',
+                                color: view === v.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                                boxShadow: view === v.id ? 'var(--shadow-sm)' : 'none',
                             }}
                         >
-                            <LayoutGrid size={14} />
+                            {v.label}
                         </button>
-                        <button
-                            onClick={() => setLayout('force')}
-                            title="Force-directed layout"
-                            style={{
-                                ...toolBtnStyle,
-                                color: layout === 'force' ? 'var(--accent-blue)' : 'var(--text-tertiary)',
-                                background: layout === 'force' ? 'var(--color-accent-faint)' : 'var(--bg-surface-raised)',
-                            }}
-                        >
-                            <Waypoints size={14} />
-                        </button>
-                    </>
-                )}
+                    ))}
+                </div>
 
-                {/* Sync */}
-                <button
-                    onClick={handleSync}
-                    disabled={syncing}
-                    title="Refresh Map"
-                    style={{
-                        ...toolBtnStyle,
-                        background: 'var(--accent-blue)',
-                        color: '#fff',
-                        border: '1px solid var(--accent-blue)',
-                        padding: '5px 12px',
-                        borderRadius: 8,
-                        fontWeight: 600,
-                        opacity: syncing ? .6 : 1,
-                    }}
-                >
-                    <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-                    <span>
-                        {syncing ? 'Syncing...' : 'Refresh'}
-                    </span>
-                </button>
+                {/* View ▾ menu — layout, system tables, versions, files, refresh */}
+                <div style={{ position: 'relative' }}>
+                    <button
+                        onClick={() => setViewMenuOpen(v => !v)}
+                        aria-haspopup="menu"
+                        aria-expanded={viewMenuOpen}
+                        style={{ ...toolBtnStyle, fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}
+                    >
+                        {syncing ? <RefreshCw size={13} className="animate-spin" /> : <SlidersHorizontal size={13} />}
+                        <span>View</span>
+                        <ChevronDown size={13} />
+                    </button>
+                    {viewMenuOpen && (
+                        <>
+                            <div onClick={() => setViewMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                            <div role="menu" style={{
+                                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 41,
+                                width: 250, padding: 6, borderRadius: 10,
+                                background: 'var(--bg-surface)', border: '1px solid var(--border-main)',
+                                boxShadow: 'var(--shadow-lg, 0 12px 32px rgba(0,0,0,.18))',
+                            }}>
+                                <MenuLabel>Layout</MenuLabel>
+                                {[
+                                    { id: 'er', label: 'Relationships', hint: 'Tables and joins, like Power BI', icon: Database },
+                                    { id: 'hierarchical', label: 'Hierarchy', hint: 'Model → tables → measures', icon: LayoutGrid },
+                                    { id: 'force', label: 'Free-form', hint: 'Force-directed', icon: Waypoints },
+                                ].map(opt => (
+                                    <MenuItem
+                                        key={opt.id}
+                                        icon={opt.icon}
+                                        label={opt.label}
+                                        hint={opt.hint}
+                                        checked={layoutChoice === opt.id}
+                                        onClick={() => { chooseLayout(opt.id); setViewMenuOpen(false); }}
+                                    />
+                                ))}
+                                <MenuDivider />
+                                <MenuLabel>Show</MenuLabel>
+                                <MenuItem
+                                    icon={Filter}
+                                    label="System tables"
+                                    hint={includeSystemTables ? 'On' : 'Off'}
+                                    checked={includeSystemTables}
+                                    onClick={() => setIncludeSystemTables(v => !v)}
+                                />
+                                <MenuItem
+                                    icon={showVersionBadges ? Eye : EyeOff}
+                                    label="Version badges"
+                                    hint={erMode ? 'Hierarchy / free-form layouts only' : (showVersionBadges ? 'On' : 'Off')}
+                                    checked={showVersionBadges && !erMode}
+                                    disabled={erMode}
+                                    onClick={() => setShowVersionBadges(v => !v)}
+                                />
+                                <MenuItem
+                                    icon={Files}
+                                    label="Snapshot files"
+                                    hint="Browse the stored snapshot files"
+                                    checked={showExplorer}
+                                    onClick={() => setShowExplorer(v => !v)}
+                                />
+                                <MenuDivider />
+                                <MenuItem
+                                    icon={History}
+                                    label="Older versions…"
+                                    hint="Compare snapshots in History"
+                                    onClick={() => { setViewMenuOpen(false); navigate('/history'); }}
+                                />
+                                <MenuItem
+                                    icon={RefreshCw}
+                                    label={syncing ? 'Refreshing…' : 'Refresh map'}
+                                    hint="Re-sync the repository"
+                                    disabled={syncing}
+                                    onClick={() => { setViewMenuOpen(false); handleSync(); }}
+                                />
+                            </div>
+                        </>
+                    )}
+                </div>
 
                 {onClose && (
                     <button onClick={onClose} style={iconBtnStyle} title="Close map">
@@ -1211,16 +1198,16 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))',
                     gap: 10,
                     padding: '10px 16px',
-                    borderBottom: '1px solid var(--border-color)',
+                    borderBottom: '1px solid var(--border-main)',
                     background: 'var(--bg-surface)',
                 }}>
                     <AuditCard label="Total Tables" value={snapshotAudit.totalTables} tone="var(--accent-blue)" />
-                    <AuditCard label="Relationships" value={snapshotAudit.totalRelationships} tone="#22C55E" />
-                    <AuditCard label="Broken Refs" value={snapshotAudit.brokenTables} tone={snapshotAudit.brokenTables > 0 ? '#EF4444' : '#22C55E'} />
+                    <AuditCard label="Relationships" value={snapshotAudit.totalRelationships} tone="var(--color-success)" />
+                    <AuditCard label="Broken Refs" value={snapshotAudit.brokenTables} tone={snapshotAudit.brokenTables > 0 ? 'var(--color-error)' : 'var(--color-success)'} />
                     <AuditCard
                         label={includeSystemTables ? 'System Included' : 'System Excluded'}
                         value={includeSystemTables ? snapshotAudit.systemDetected : snapshotAudit.systemExcluded}
-                        tone={includeSystemTables ? '#F59E0B' : 'var(--accent-blue)'}
+                        tone={includeSystemTables ? 'var(--color-warning)' : 'var(--accent-blue)'}
                     />
                 </div>
             )}
@@ -1231,7 +1218,7 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                     alignItems: 'center',
                     gap: 10,
                     padding: '8px 16px',
-                    borderBottom: '1px solid var(--border-color)',
+                    borderBottom: '1px solid var(--border-main)',
                     background: 'var(--bg-surface)',
                     fontSize: 11,
                 }}>
@@ -1249,247 +1236,159 @@ export default function RepositoryMap({ onClose, snapshotId, compareSnapshotId =
                 </div>
             )}
 
-            {/* ─── BODY ─── */}
-            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                {/* File Tree */}
-                {showExplorer && (
+            {/* Unsynced model banner */}
+            {unsyncedModel && (
                 <div style={{
-                    width: 260, minWidth: 200,
-                    borderRight: '1px solid var(--border-color)',
-                    overflow: 'hidden',
-                    background: 'var(--bg-surface)',
-                    display: 'flex', flexDirection: 'column',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 20px',
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    borderBottom: '1px solid rgba(245, 158, 11, 0.25)',
+                    flexShrink: 0,
                 }}>
-                    {/* Snapshots Header */}
-                    <div style={{
-                        display: 'flex', borderBottom: '1px solid var(--border-color)',
-                        background: 'var(--bg-app)', flexShrink: 0,
-                        padding: '6px 8px', alignItems: 'center', gap: 4,
-                    }}>
-                        <Database size={12} />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Snapshots</span>
-                    </div>
-                    <div style={{ flex: 1, overflow: 'auto' }}>
-                    {treeLoading ? (
-                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
-                            Loading tree...
+                    <AlertTriangle size={16} style={{ color: 'var(--color-warning)', flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {unsyncedModel.name} — not yet synced
                         </div>
-                    ) : (
-                        <FileTreePanel
-                            tree={snapshotTreeData}
-                            onFileClick={handleFileClick}
-                            selectedPath={selectedFile}
-                        />
-                    )}
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                            This model exists in your connector but has no lineage data yet. Create a project and run it to explore its tables and measures.
+                        </div>
                     </div>
+                    <button
+                        onClick={() => setUnsyncedModel(null)}
+                        style={iconBtnStyle}
+                        title="Dismiss"
+                    ><X size={14} /></button>
                 </div>
-                )}
+            )}
 
-                {/* Unsynced model banner */}
-                {unsyncedModel && (
+            {/* ─── BODY ─── */}
+            <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                {/* Snapshot files (optional, from View ▾) */}
+                {showExplorer && (
                     <div style={{
-                        display: 'flex', alignItems: 'center', gap: 12,
-                        padding: '10px 20px',
-                        background: 'rgba(245, 158, 11, 0.08)',
-                        borderBottom: '1px solid rgba(245, 158, 11, 0.25)',
-                        flexShrink: 0,
-                    }}>
-                        <span style={{ fontSize: 18 }}>📋</span>
-                        <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E' }}>
-                                {unsyncedModel.name} — not yet synced
-                            </div>
-                            <div style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
-                                This model exists in your connector but has no lineage data yet. Create a project and run a sync to explore its tables and metrics.
-                            </div>
-                        </div>
-                        <button
-                            onClick={() => setUnsyncedModel(null)}
-                            style={{ fontSize: 16, background: 'none', border: 'none', cursor: 'pointer', color: '#B45309', padding: '0 4px' }}
-                        >✕</button>
-                    </div>
-                )}
-
-                {/* Dependency Graph */}
-                {/* Full Screen Relationship Diagram (ER/Table View) */}
-                {(erMode || filterType === 'tables') && fullScreen && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0, left: 0, right: 0, bottom: 0,
-                        background: 'var(--bg-app)',
-                        zIndex: 2000,
+                        width: 250, minWidth: 200,
+                        borderRight: '1px solid var(--border-main)',
+                        overflow: 'hidden',
+                        background: 'var(--bg-surface)',
                         display: 'flex', flexDirection: 'column',
                     }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-color)' }}>
-                            <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent-blue)' }}>Model Relationship Explorer (Full Screen)</span>
-                            <button onClick={() => setFullScreen(false)} style={{ ...iconBtnStyle, fontSize: 18, color: '#EF4444', border: '1px solid #EF4444', borderRadius: 6, padding: '4px 12px', fontWeight: 700 }}>Exit Full Screen ✕</button>
+                        <div style={{
+                            display: 'flex', borderBottom: '1px solid var(--border-main)',
+                            background: 'var(--bg-app)', flexShrink: 0,
+                            padding: '6px 8px', alignItems: 'center', gap: 6,
+                        }}>
+                            <Files size={12} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>Snapshot files</span>
+                            <button onClick={() => setShowExplorer(false)} style={iconBtnStyle} title="Hide snapshot files">
+                                <X size={12} />
+                            </button>
                         </div>
-                        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-                            <ReactFlowProvider>
-                                <DependencyGraph
-                                    graphData={renderedGraphData}
-                                    layout={layout}
-                                    erMode={erMode}
-                                    selectedModelId={selectedModelId}
-                                    selectedTableId={selectedTableId}
-                                    searchQuery={searchQuery}
-                                    filterType={filterType}
-                                    showVersionBadges={showVersionBadges}
-                                    onNodeClick={handleNodeClick}
-                                    isLoading={graphLoading}
-                                    snapshotId={snapshotId}
-                                    diffMode={diffMode}
-                                    defaultEdgeOptions={{ type: 'step' }}
-                                    // Pass a prop to enable zoom/pan/minimap in full screen
-                                    fullScreenMode={true}
+                        <div style={{ flex: 1, overflow: 'auto' }}>
+                            {treeLoading ? (
+                                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12 }}>
+                                    Loading files…
+                                </div>
+                            ) : (
+                                <FileTreePanel
+                                    tree={snapshotTreeData}
+                                    onFileClick={handleFileClick}
+                                    selectedPath={selectedFile}
                                 />
-                            </ReactFlowProvider>
-                        </div>
-                    </div>
-                )}
-                {/* Normal (non-fullscreen) diagram */}
-                {!(erMode || filterType === 'tables') || !fullScreen ? (
-                    <div style={{ flex: 1, position: 'relative' }}>
-                                                <ReactFlowProvider>
-                                                    <DependencyGraph
-                                                            graphData={renderedGraphData}
-                                                            layout={layout}
-                                                            erMode={erMode}
-                                                            selectedModelId={selectedModelId}
-                                                            selectedTableId={selectedTableId}
-                                                            searchQuery={searchQuery}
-                                                            filterType={filterType}
-                                                            showVersionBadges={showVersionBadges}
-                                                            onNodeClick={handleNodeClick}
-                                                            isLoading={graphLoading}
-                                                            snapshotId={snapshotId}
-                                                            diffMode={diffMode}
-                                                            defaultEdgeOptions={{ type: 'step' }}
-                                                            fullScreenMode={false}
-                                                            onRequestFullScreen={() => setFullScreen(true)}
-                                                            showFullScreenButton={(erMode || filterType === 'tables' || filterType === 'metrics') && !fullScreen}
-                                                    />
-                                                </ReactFlowProvider>
-                    </div>
-                ) : null}
-
-                {/* Detail / Preview Panel - Modal Overlay */}
-                {showDetail && !workbenchOpen && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: 'rgba(0,0,0,.4)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 16,
-                        zIndex: 999,
-                    }}>
-                        <div style={{
-                            width: '98vw',
-                            maxWidth: '98vw',
-                            height: '92vh',
-                            maxHeight: '92vh',
-                            borderRadius: 10,
-                            background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            overflow: 'auto',
-                            boxShadow: '0 20px 60px rgba(0,0,0,.3)',
-                        }}>
-                            <DetailPanel
-                                filePreview={filePreview}
-                                selectedNode={selectedNode}
-                                workspaceNames={workspaceNames}
-                                onClose={handleCloseDetail}
-                            />
+                            )}
                         </div>
                     </div>
                 )}
 
-                {workbenchOpen && (
-                    <div style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: 'rgba(0,0,0,.4)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 16,
-                        zIndex: 1000,
-                    }}>
-                        <div style={{
-                            width: '98vw',
-                            maxWidth: '98vw',
-                            height: '92vh',
-                            maxHeight: '92vh',
-                            borderRadius: 10,
-                            background: 'var(--bg-surface)',
-                            border: '1px solid var(--border-color)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            overflow: 'hidden',
-                            boxShadow: '0 20px 60px rgba(0,0,0,.3)',
-                        }}>
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '12px 16px',
-                                borderBottom: '1px solid var(--border-color)',
-                                background: 'var(--bg-app)',
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                    <button
-                                        onClick={() => setInspectorResetToken(v => v + 1)}
-                                        style={{
-                                            ...iconBtnStyle,
-                                            border: '1px solid var(--border-color)',
-                                            borderRadius: 6,
-                                            padding: '4px 8px',
-                                            gap: 6,
-                                        }}
-                                        title="Back one step inside inspector"
-                                    >
-                                        <ArrowLeft size={14} />
-                                        <span style={{ fontSize: 11, fontWeight: 700 }}>Back</span>
-                                    </button>
-                                    <div style={{ minWidth: 0 }}>
-                                        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-secondary)' }}>Schema Inspector</div>
-                                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Explore tables, relationships, and measures in plain view</div>
+                {/* Main area */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    {view === 'diagram' ? (
+                        <>
+                            {(erMode || filterType === 'tables') && fullScreen && (
+                                <div style={{
+                                    position: 'fixed', inset: 0,
+                                    background: 'var(--bg-app)',
+                                    zIndex: 2000,
+                                    display: 'flex', flexDirection: 'column',
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border-main)' }}>
+                                        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Model map · full screen</span>
+                                        <button onClick={() => setFullScreen(false)} style={{ ...toolBtnStyle, fontSize: 12, fontWeight: 600 }}>
+                                            <X size={13} /> Exit full screen
+                                        </button>
+                                    </div>
+                                    <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                                        <ReactFlowProvider>
+                                            <DependencyGraph {...graphProps} fullScreenMode={true} />
+                                        </ReactFlowProvider>
                                     </div>
                                 </div>
-                                <button onClick={() => setWorkbenchOpen(false)} style={iconBtnStyle} title="Close">
-                                    <X size={16} />
-                                </button>
+                            )}
+                            {!((erMode || filterType === 'tables') && fullScreen) && (
+                                <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                                    <ReactFlowProvider>
+                                        <DependencyGraph
+                                            {...graphProps}
+                                            fullScreenMode={false}
+                                            onRequestFullScreen={() => setFullScreen(true)}
+                                            showFullScreenButton={(erMode || filterType === 'tables' || filterType === 'metrics') && !fullScreen}
+                                        />
+                                    </ReactFlowProvider>
+                                </div>
+                            )}
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: 12,
+                                padding: '6px 16px', fontSize: 11.5,
+                                borderTop: '1px solid var(--border-main)',
+                                background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+                                flexShrink: 0,
+                            }}>
+                                <span>
+                                    {mapCounts.tables} table{mapCounts.tables === 1 ? '' : 's'} · {mapCounts.relationships} relationship{mapCounts.relationships === 1 ? '' : 's'} · {mapCounts.measures} measure{mapCounts.measures === 1 ? '' : 's'}
+                                </span>
+                                <span style={{ flex: 1 }} />
+                                <span style={{ color: 'var(--text-tertiary)' }}>Scroll to zoom · drag to pan · click a table for details</span>
                             </div>
-
-                            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                                <ModelDataPanel
-                                    key={`inspector-${inspectorResetToken}`}
-                                    graphData={renderedGraphData}
-                                    selectedModelId={selectedModelId}
-                                    erMode={erMode}
-                                    selectedTableId={selectedTableId}
-                                    onSelectTable={setSelectedTableId}
-                                    onOpenTableER={focusTableInER}
-                                    compact
-                                    showTabHeader
-                                />
-                            </div>
+                        </>
+                    ) : (
+                        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: 'var(--bg-surface)' }}>
+                            <ModelDataPanel
+                                graphData={renderedGraphData}
+                                selectedModelId={selectedModelId}
+                                erMode={erMode}
+                                selectedTableId={selectedTableId}
+                                onSelectTable={setSelectedTableId}
+                                onOpenTableER={(tableId) => { focusTableInER(tableId); setView('diagram'); }}
+                                compact
+                                showTabHeader
+                            />
                         </div>
-                    </div>
+                    )}
+                </div>
+
+                {/* Single right-side panel for the selected node / file (Table view has its own detail pane) */}
+                {showDetail && (view === 'diagram' || filePreview) && (
+                    <aside style={{
+                        width: 380, minWidth: 320, maxWidth: '40%',
+                        borderLeft: '1px solid var(--border-main)',
+                        background: 'var(--bg-surface)',
+                        display: 'flex', flexDirection: 'column',
+                        overflow: 'hidden',
+                    }}>
+                        <DetailPanel
+                            key={selectedNode?.id || selectedNode?.label || filePreview?.name || 'detail'}
+                            filePreview={filePreview}
+                            selectedNode={selectedNode}
+                            workspaceNames={workspaceNames}
+                            onClose={handleCloseDetail}
+                        />
+                    </aside>
                 )}
             </div>
 
             {diffMode && !diffLoading && diffReport && (
                 <div style={{
-                    borderTop: '1px solid var(--border-color)',
+                    borderTop: '1px solid var(--border-main)',
                     background: 'var(--bg-surface)',
                     maxHeight: 220,
                     overflow: 'auto',
@@ -1558,23 +1457,46 @@ const toolBtnStyle = {
     color: 'var(--text-secondary)', fontSize: 11.5, fontWeight: 500,
     transition: 'all .15s ease',
 };
-const chipStyle = {
-    border: '1px solid var(--border-main)',
-    background: 'var(--bg-surface-raised)',
-    color: 'var(--text-secondary)',
-    fontSize: 11,
-    fontWeight: 500,
-    padding: '4px 10px',
-    borderRadius: 8,
-    cursor: 'pointer',
-    transition: 'all .15s ease',
-};
-const activeChipStyle = {
-    background: 'var(--color-accent-faint)',
-    border: '1px solid var(--accent-blue)',
-    color: 'var(--accent-blue)',
-    fontWeight: 600,
-};
+function MenuLabel({ children }) {
+    return (
+        <div style={{ padding: '6px 10px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-tertiary)' }}>
+            {children}
+        </div>
+    );
+}
+
+function MenuDivider() {
+    return <div style={{ height: 1, background: 'var(--border-main)', margin: '6px 4px' }} />;
+}
+
+function MenuItem({ icon: Icon, label, hint, checked = false, disabled = false, onClick }) {
+    return (
+        <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={checked}
+            disabled={disabled}
+            onClick={onClick}
+            onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '7px 10px', borderRadius: 6, border: 'none',
+                background: 'transparent', textAlign: 'left',
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                opacity: disabled ? 0.5 : 1,
+                color: 'var(--text-primary)',
+            }}
+        >
+            {Icon && <Icon size={14} style={{ color: checked ? 'var(--accent-blue)' : 'var(--text-tertiary)', flexShrink: 0 }} />}
+            <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>{label}</span>
+                {hint && <span style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)' }}>{hint}</span>}
+            </span>
+            {checked && <Check size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />}
+        </button>
+    );
+}
 
 function AuditCard({ label, value, tone }) {
     return (

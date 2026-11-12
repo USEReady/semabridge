@@ -1,17 +1,17 @@
 import {
     X, Box, Database, BarChart3,
-    FileCode, Clock, HardDrive,
-    ChevronDown, Info, Code2, Link2,
+    FileCode, Clock, HardDrive, Link2,
 } from 'lucide-react';
 import { useState } from 'react';
 
 /**
  * DetailPanel — right sidebar showing:
  *   • File preview (syntax-highlighted raw content) when a file is selected.
- *   • Structured node detail (HLD & LLD) when a graph node is clicked.
+ *   • Node detail with Columns | Measures | Lineage tabs when a graph node is clicked.
  */
 export default function DetailPanel({ filePreview, selectedNode, workspaceNames = {}, onClose }) {
-    const [expandedSections, setExpandedSections] = useState({});
+    // Active tab; null = default for the node type. Parent re-keys this panel per node.
+    const [tab, setTab] = useState(null);
 
     // ── File preview ────────────────────────────
     if (filePreview) {
@@ -92,419 +92,209 @@ export default function DetailPanel({ filePreview, selectedNode, workspaceNames 
         );
     }
 
-    // ── Node detail ─────────────────────────────
+    // ── Node detail: compact header + Columns | Measures | Lineage tabs ──
     if (selectedNode) {
         const rawNodeType = String(selectedNode.nodeType || '').toLowerCase();
         const nodeType = ['model', 'table', 'measure'].includes(rawNodeType) ? rawNodeType : 'model';
         const nodeTypeLabel = nodeType.charAt(0).toUpperCase() + nodeType.slice(1);
-        const inspectionSource = selectedNode.parent_model ? 'Dependency Graph → Table/Measure' : 'Dependency Graph → Model';
         // Prefer the pre-resolved name in node data, fall back to workspaceNames map, then raw GUID
         const resolvedWsName = selectedNode.workspace_name || workspaceNames[selectedNode.workspace_id] || selectedNode.workspace_id || 'local';
-        const contextLabel = nodeType === 'table'
-            ? `${selectedNode.schema || 'PUBLIC'}.${selectedNode.table_name || selectedNode.label || 'table'}`
-            : nodeType === 'measure'
-                ? `${selectedNode.parent_model || 'Model'} :: ${selectedNode.label || 'Measure'}`
-                : `${resolvedWsName} :: ${selectedNode.model_id || selectedNode.label || 'model'}`;
-        const quickStatus = selectedNode.status === 'broken' ? 'Needs Attention' : 'Healthy';
-        
-        const toggleSection = (section) => {
-            setExpandedSections(prev => ({
-                ...prev,
-                [section]: !prev[section]
-            }));
-        };
+        const isBroken = selectedNode.status === 'broken';
+        const TypeIcon = nodeType === 'model' ? Box : nodeType === 'table' ? Database : BarChart3;
+        const typeTone = nodeType === 'model' ? 'var(--accent-blue)' : nodeType === 'table' ? 'var(--color-success)' : 'var(--color-warning)';
+
+        const columns = Array.isArray(selectedNode.columns) ? selectedNode.columns : [];
+        const measures = Array.isArray(selectedNode.measures) ? selectedNode.measures : [];
+        const sourceTables = Array.isArray(selectedNode.source_tables) ? selectedNode.source_tables : [];
+
+        const subtitleParts = [];
+        if (nodeType === 'table') {
+            subtitleParts.push(`${columns.length} col${columns.length === 1 ? '' : 's'}`);
+            if (measures.length) subtitleParts.push(`${measures.length} measure${measures.length === 1 ? '' : 's'}`);
+        } else if (nodeType === 'model') {
+            subtitleParts.push(`${sourceTables.length} table${sourceTables.length === 1 ? '' : 's'}`);
+            subtitleParts.push(`${measures.length} measure${measures.length === 1 ? '' : 's'}`);
+        } else if (selectedNode.parent_model) {
+            subtitleParts.push(`in ${selectedNode.parent_model}`);
+        }
+
+        const defaultTab = nodeType === 'measure' ? 'measures' : 'columns';
+        const activeTab = tab || defaultTab;
+        const tabs = [
+            { id: 'columns', label: 'Columns' },
+            { id: 'measures', label: 'Measures' },
+            { id: 'lineage', label: 'Lineage' },
+        ];
 
         return (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                {/* ═══ HEADER: What You're Inspecting ═══ */}
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+                {/* Header */}
                 <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '16px 18px',
-                    borderBottom: '2.5px solid var(--border-color)',
-                    background:
-                        nodeType === 'model'
-                            ? 'linear-gradient(135deg, #3b82f6 0%, #1E293B 100%)'
-                            : nodeType === 'table'
-                                ? 'linear-gradient(135deg, #134e2e 0%, #0f172a 100%)'
-                                : 'linear-gradient(135deg, #facc15 0%, #1E293B 100%)',
-                    borderTopLeftRadius: 18,
-                    borderTopRightRadius: 18,
-                    boxShadow: nodeType === 'model'
-                        ? '0 0 16px 0 #60a5fa33'
-                        : nodeType === 'table'
-                            ? '0 0 16px 0 #22c55e33'
-                            : '0 0 16px 0 #fde04733',
-                    transition: 'box-shadow .18s, border-color .18s',
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    padding: '14px 16px 10px',
+                    borderBottom: '1px solid var(--border-main)',
                 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
+                    <div style={{
+                        width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)',
+                    }}>
+                        <TypeIcon size={15} style={{ color: typeTone }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            width: 44, height: 44, borderRadius: 14,
-                            background: nodeType === 'model' ? '#1e293b' : nodeType === 'table' ? '#0f172a' : '#1e293b',
-                            border: nodeType === 'model' ? '2.5px solid #3B82F6' : nodeType === 'table' ? '2.5px solid #22C55E' : '2.5px solid #EAB308',
-                            boxShadow: nodeType === 'model' ? '0 0 8px #3B82F6' : nodeType === 'table' ? '0 0 8px #22C55E' : '0 0 8px #EAB308',
-                            flexShrink: 0,
+                            fontSize: 14, fontWeight: 700, color: 'var(--text-primary)',
+                            fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                            wordBreak: 'break-word', lineHeight: 1.3,
                         }}>
-                            {nodeType === 'model' && <Box size={22} style={{ color: '#60A5FA' }} />}
-                            {nodeType === 'table' && <Database size={22} style={{ color: '#4ADE80' }} />}
-                            {nodeType === 'measure' && <BarChart3 size={22} style={{ color: '#FDE047' }} />}
+                            {selectedNode.label}
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                            <span style={{ fontSize: 9, fontWeight: 800, color: '#E0E7EF', textTransform: 'uppercase', letterSpacing: '.12em' }}>
-                                🔍 Inspecting Now
-                            </span>
-                            <span style={{ fontSize: 16, fontWeight: 800, color: '#fff', wordBreak: 'break-word', lineHeight: 1.2, letterSpacing: '.01em' }}>
-                                {nodeTypeLabel}
-                            </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, fontSize: 11.5, color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
+                            <span>{nodeTypeLabel}</span>
+                            {subtitleParts.map(p => <span key={p}>· {p}</span>)}
+                            {isBroken && (
+                                <span style={{ color: 'var(--color-error)', fontWeight: 600 }}>· broken reference</span>
+                            )}
                         </div>
                     </div>
-                    <button onClick={onClose} style={closeBtnStyle}>
-                        <X size={18} />
+                    <button onClick={onClose} style={closeBtnStyle} title="Close" aria-label="Close details">
+                        <X size={16} />
                     </button>
                 </div>
 
-                {/* ═══ NAME/IDENTIFIER SECTION ═══ */}
-                <div style={{
-                    padding: '14px 14px',
-                    borderBottom: '1px solid var(--border-color)',
-                    background: 'linear-gradient(180deg, var(--bg-app) 0%, var(--bg-surface) 100%)',
-                }}>
-                    <div style={{ fontSize: 8, fontWeight: 800, color: 'var(--text-tertiary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.08em' }}>
-                        📝 Selected Item
-                    </div>
-                    <div style={{
-                        fontSize: 12, fontWeight: 700, color: 'var(--text-primary)',
-                        padding: '10px 12px', background: 'var(--bg-app)', borderRadius: 8,
-                        border: '1.5px solid var(--border-color)',
-                        wordBreak: 'break-word',
-                        fontFamily: 'monospace',
-                        letterSpacing: '.3px',
-                    }}>
-                        {selectedNode.label}
-                    </div>
+                {/* Tabs */}
+                <div role="tablist" style={{ display: 'flex', gap: 2, padding: '0 12px', borderBottom: '1px solid var(--border-main)' }}>
+                    {tabs.map(t => (
+                        <button
+                            key={t.id}
+                            role="tab"
+                            aria-selected={activeTab === t.id}
+                            onClick={() => setTab(t.id)}
+                            style={{
+                                border: 'none', background: 'transparent', cursor: 'pointer',
+                                padding: '9px 10px', fontSize: 12.5, fontWeight: 600,
+                                color: activeTab === t.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                                borderBottom: `2px solid ${activeTab === t.id ? 'var(--accent-blue)' : 'transparent'}`,
+                                marginBottom: -1,
+                            }}
+                        >
+                            {t.label}
+                        </button>
+                    ))}
                 </div>
 
-                <div style={{
-                    padding: '10px 14px',
-                    borderBottom: '1px solid var(--border-color)',
-                    background: 'var(--bg-app)',
-                }}>
-                    <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'auto 1fr',
-                        gap: '6px 10px',
-                        alignItems: 'center',
-                        fontSize: 10,
-                    }}>
-                        <span style={{ color: 'var(--text-tertiary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em' }}>Source</span>
-                        <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{inspectionSource}</span>
-                        <span style={{ color: 'var(--text-tertiary)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em' }}>Context</span>
-                        <span style={{ color: 'var(--accent-blue)', fontFamily: 'monospace', fontWeight: 700, wordBreak: 'break-word' }}>{contextLabel}</span>
-                    </div>
-                </div>
-
-                <div style={{
-                    padding: '10px 14px',
-                    borderBottom: '1px solid var(--border-color)',
-                    background: 'var(--bg-surface)',
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                    gap: 8,
-                }}>
-                    <MiniInfoCard label="Type" value={nodeTypeLabel} />
-                    <MiniInfoCard label="Current State" value={quickStatus} tone={selectedNode.status === 'broken' ? '#EF4444' : '#22C55E'} />
-                    <MiniInfoCard label="From" value={nodeType === 'table' ? (selectedNode.source_type || 'source') : resolvedWsName} />
-                </div>
-
-                {/* ═══ CONTENT SECTIONS ═══ */}
-                <div style={{ flex: 1, overflow: 'auto', padding: 0 }}>
-                    {/* ── Model detail ── */}
-                    {nodeType === 'model' && (
+                <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px 16px' }}>
+                    {/* ── Columns ── */}
+                    {activeTab === 'columns' && (
                         <>
-                            {/* HLD - High Level Design */}
-                            <CollapsibleSection
-                                title="Quick Summary"
-                                subtitle="What this model is and where it belongs"
-                                icon={<Info size={14} />}
-                                expanded={expandedSections.hld !== false}
-                                onToggle={() => toggleSection('hld')}
-                            >
-                                <Section title="Overview">
-                                    <Row label="Model ID" value={selectedNode.model_id} code />
-                                    <Row label="Workspace" value={resolvedWsName} />
-                                    <Row label="Status" value={
-                                        <StatusBadge status={selectedNode.status} />
-                                    } />
-                                    {selectedNode.description && (
-                                        <Row label="Description" value={selectedNode.description} />
-                                    )}
-                                </Section>
-                            </CollapsibleSection>
-
-                            {/* Lineage section */}
-                            <CollapsibleSection
-                                title="Source Lineage"
-                                subtitle="Where this model's data originates"
-                                icon={<Link2 size={14} />}
-                                expanded={expandedSections.lineage !== false}
-                                onToggle={() => toggleSection('lineage')}
-                            >
-                                <Section title="Origin">
-                                    <Row
-                                        label="Source Workspace"
-                                        value={resolvedWsName !== 'local' ? resolvedWsName : '—'}
-                                    />
-                                    <Row
-                                        label="Source Platform"
-                                        value={selectedNode.source_tables?.[0]?.source_type || '—'}
-                                    />
-                                    <Row
-                                        label="Tables"
-                                        value={`${selectedNode.source_tables?.length || 0} source table(s)`}
-                                    />
-                                    <Row
-                                        label="Measures"
-                                        value={`${selectedNode.measures?.length || 0} measure(s)`}
-                                    />
-                                </Section>
-                                {selectedNode.source_tables?.length > 0 && (
-                                    <Section title="Table → Column Mapping">
-                                        {selectedNode.source_tables.map((t, i) => (
-                                            <div key={i} style={{ ...tableCardStyle, flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                    <Database size={11} style={{ color: '#22C55E', flexShrink: 0 }} />
-                                                    <span style={{ fontWeight: 700, fontSize: 12 }}>{t.schema}.{t.table}</span>
-                                                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 4 }}>
-                                                        {t.columns?.length ? `${t.columns.length} col(s)` : 'no columns'}
-                                                    </span>
-                                                </div>
-                                                {t.columns?.length > 0 && (
-                                                    <div style={{
-                                                        display: 'grid',
-                                                        gridTemplateColumns: '1fr auto',
-                                                        gap: '2px 8px',
-                                                        fontSize: 10,
-                                                        width: '100%',
-                                                        paddingLeft: 18,
-                                                    }}>
-                                                        {t.columns.map((col, ci) => {
-                                                            const cName = col?.name || col?.unique_name || '';
-                                                            const cType = col?.data_type || col?.type || '';
-                                                            return (
-                                                                <><span key={`n-${ci}`} style={{ color: 'var(--text-primary)' }}>{cName}</span>
-                                                                <span key={`t-${ci}`} style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>{cType}</span></>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
+                            {nodeType === 'table' && (columns.length > 0 ? (
+                                <ColumnTable columns={columns} />
+                            ) : (
+                                <EmptyHint text="No columns are available for this table in the current snapshot." />
+                            ))}
+                            {nodeType === 'model' && (sourceTables.length > 0 ? (
+                                sourceTables.map((t, i) => (
+                                    <Section key={`${t.schema}.${t.table}.${i}`} title={`${t.schema ? `${t.schema}.` : ''}${t.table}`}>
+                                        {t.columns?.length > 0
+                                            ? <ColumnTable columns={t.columns} />
+                                            : <EmptyHint text="No columns recorded for this table." />}
                                     </Section>
-                                )}
-                            </CollapsibleSection>
-
-                            {/* LLD - Low Level Design */}
-                            <CollapsibleSection
-                                title="Technical Details"
-                                subtitle="Data sources, measures, and dependencies"
-                                icon={<Code2 size={14} />}
-                                expanded={expandedSections.lld !== false}
-                                onToggle={() => toggleSection('lld')}
-                            >
-                                {selectedNode.source_tables?.length > 0 && (
-                                    <Section title="Source Tables">
-                                        {selectedNode.source_tables.map((t, i) => (
-                                            <div key={i} style={tableCardStyle}>
-                                                <Database size={12} style={{ color: '#22C55E', flexShrink: 0 }} />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontWeight: 600, fontSize: 12 }}>{t.table}</div>
-                                                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
-                                                        {t.schema} · {t.source_type}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </Section>
-                                )}
-                                {(!selectedNode.source_tables || selectedNode.source_tables.length === 0) && (
-                                    <EmptyHint text="No source tables were detected for this model." />
-                                )}
-
-                                {selectedNode.measures?.length > 0 && (
-                                    <Section title="Measures / Metrics">
-                                        {selectedNode.measures.map((m, i) => (
-                                            <div key={i} style={tableCardStyle}>
-                                                <BarChart3 size={12} style={{ color: '#EAB308', flexShrink: 0 }} />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontWeight: 600, fontSize: 12 }}>{m.name}</div>
-                                                    <code style={{ fontSize: 10, color: '#D4A017', wordBreak: 'break-word' }}>
-                                                        {m.expression}
-                                                    </code>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </Section>
-                                )}
-                                {(!selectedNode.measures || selectedNode.measures.length === 0) && (
-                                    <EmptyHint text="No measures are attached to this model yet." />
-                                )}
-                            </CollapsibleSection>
+                                ))
+                            ) : (
+                                <EmptyHint text="No source tables were detected for this model." />
+                            ))}
+                            {nodeType === 'measure' && (
+                                <EmptyHint text="Measures don't have columns. See the Measures tab for the formula." />
+                            )}
                         </>
                     )}
 
-                    {/* ── Table detail ── */}
-                    {nodeType === 'table' && (
+                    {/* ── Measures ── */}
+                    {activeTab === 'measures' && (
                         <>
-                            {/* HLD - High Level Design */}
-                            <CollapsibleSection
-                                title="Quick Summary"
-                                subtitle="Table basics and source information"
-                                icon={<Info size={14} />}
-                                expanded={expandedSections.hld !== false}
-                                onToggle={() => toggleSection('hld')}
-                            >
-                                <Section title="Overview">
-                                    <Row label="Table Name" value={selectedNode.table_name} code />
-                                    <Row label="Schema" value={selectedNode.schema || 'PUBLIC'} />
-                                    <Row label="Source Type" value={selectedNode.source_type || 'snowflake'} />
-                                    <Row label="Origin" value={
-                                        <OriginBadge
-                                            tableName={selectedNode.table_name || selectedNode.label}
-                                            schema={selectedNode.schema}
-                                        />
-                                    } />
-                                    <Row label="Status" value={
-                                        <StatusBadge status={selectedNode.status} />
-                                    } />
-                                </Section>
-                            </CollapsibleSection>
-
-                            {/* LLD - Low Level Design */}
-                            {selectedNode.columns?.length > 0 && (
-                                <CollapsibleSection
-                                    title="Technical Details"
-                                    subtitle="Column names and data types"
-                                    icon={<Code2 size={14} />}
-                                    expanded={expandedSections.lld !== false}
-                                    onToggle={() => toggleSection('lld')}
-                                >
-                                    <Section title="Column Schema">
-                                        <div style={{
-                                            display: 'grid',
-                                            gridTemplateColumns: '1fr auto',
-                                            gap: '2px 8px',
-                                            fontSize: 11,
+                            {nodeType === 'measure' ? (
+                                <>
+                                    <Section title="Formula">
+                                        <pre style={{
+                                            margin: 0, padding: '10px 12px',
+                                            background: 'var(--bg-app)', borderRadius: 6,
+                                            border: '1px solid var(--border-main)',
+                                            fontSize: 11.5, fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                                            color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                            maxHeight: 320, overflow: 'auto',
                                         }}>
-                                            <div style={{ fontWeight: 700, fontSize: 10, color: 'var(--text-tertiary)', padding: '4px 0' }}>Name</div>
-                                            <div style={{ fontWeight: 700, fontSize: 10, color: 'var(--text-tertiary)', padding: '4px 0' }}>Type</div>
-                                            {selectedNode.columns.map((col, i) => {
-                                                const colName = typeof col === 'string'
-                                                    ? col
-                                                    : (col.unique_name || col.label || col.name || col.column_name || '');
-                                                const colType = col.data_type || col.type || '';
-                                                return (
-                                                    <div
-                                                        key={col.id || colName || i}
-                                                        style={{ display: 'contents' }}
-                                                    >
-                                                        <span style={{ color: 'var(--text-primary)', padding: '4px 0', wordBreak: 'break-word' }}>{colName}</span>
-                                                        <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: 10, padding: '4px 0' }}>{colType}</span>
-                                                    </div>
-                                                );
-                                            })}
+                                            {selectedNode.expression || 'No expression found for this measure.'}
+                                        </pre>
+                                    </Section>
+                                    {selectedNode.data_type && <Row label="Data type" value={selectedNode.data_type} />}
+                                </>
+                            ) : measures.length > 0 ? (
+                                measures.map((m, i) => (
+                                    <div key={`${m.name || m.label}-${i}`} style={tableCardStyle}>
+                                        <BarChart3 size={12} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontWeight: 600, fontSize: 12 }}>{m.name || m.label}</div>
+                                            {m.expression && (
+                                                <code style={{ display: 'block', marginTop: 2, fontSize: 10.5, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+                                                    {m.expression}
+                                                </code>
+                                            )}
                                         </div>
-                                    </Section>
-                                </CollapsibleSection>
-                            )}
-                            {(!selectedNode.columns || selectedNode.columns.length === 0) && (
-                                <div style={{ padding: '12px 14px' }}>
-                                    <EmptyHint text="No columns are available for this table in the current snapshot." />
-                                </div>
-                            )}
-
-                            {/* Measures/Metrics for Table */}
-                            {selectedNode.measures?.length > 0 && (
-                                <CollapsibleSection
-                                    title="Measures / Metrics"
-                                    subtitle="All metrics/measures for this table"
-                                    icon={<BarChart3 size={14} />}
-                                    expanded={expandedSections.measures !== false}
-                                    onToggle={() => toggleSection('measures')}
-                                >
-                                    <Section title="Measures / Metrics">
-                                        {selectedNode.measures.map((m, i) => (
-                                            <div key={i} style={tableCardStyle}>
-                                                <BarChart3 size={12} style={{ color: '#EAB308', flexShrink: 0 }} />
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <div style={{ fontWeight: 600, fontSize: 12 }}>{m.name || m.label}</div>
-                                                    {m.parent_model && (
-                                                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
-                                                            Model: {m.parent_model}
-                                                        </div>
-                                                    )}
-                                                    {m.expression && (
-                                                        <code style={{ fontSize: 10, color: '#D4A017', wordBreak: 'break-word' }}>
-                                                            {m.expression}
-                                                        </code>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </Section>
-                                </CollapsibleSection>
-                            )}
-                            {(!selectedNode.measures || selectedNode.measures.length === 0) && (
-                                <EmptyHint text="No measures/metrics are attached to this table yet." />
+                                    </div>
+                                ))
+                            ) : (
+                                <EmptyHint text={`No measures are attached to this ${nodeType} yet.`} />
                             )}
                         </>
                     )}
 
-                    {/* ── Measure detail ── */}
-                    {nodeType === 'measure' && (
+                    {/* ── Lineage ── */}
+                    {activeTab === 'lineage' && (
                         <>
-                            {/* HLD - High Level Design */}
-                            <CollapsibleSection
-                                title="Quick Summary"
-                                subtitle="What this measure represents"
-                                icon={<Info size={14} />}
-                                expanded={expandedSections.hld !== false}
-                                onToggle={() => toggleSection('hld')}
-                            >
-                                <Section title="Overview">
-                                    <Row label="Measure Name" value={selectedNode.label} code />
-                                    <Row label="Parent Model" value={selectedNode.parent_model} />
-                                    {selectedNode.data_type && (
-                                        <Row label="Data Type" value={selectedNode.data_type} />
+                            {nodeType === 'table' && (
+                                <>
+                                    <Row label="Table" value={selectedNode.table_name || selectedNode.label} code />
+                                    <Row label="Schema" value={selectedNode.schema || 'PUBLIC'} />
+                                    <Row label="Comes from" value={selectedNode.source_type || '—'} />
+                                    {selectedNode.model_id && <Row label="Model" value={selectedNode.model_label || selectedNode.model_name || selectedNode.model_id} />}
+                                    <Row label="Origin" value={<OriginBadge tableName={selectedNode.table_name || selectedNode.label} schema={selectedNode.schema} />} />
+                                    <Row label="Status" value={<StatusBadge status={selectedNode.status} />} />
+                                </>
+                            )}
+                            {nodeType === 'model' && (
+                                <>
+                                    <Row label="Model ID" value={selectedNode.model_id} code />
+                                    <Row label="Workspace" value={resolvedWsName !== 'local' ? resolvedWsName : '—'} />
+                                    <Row label="Source platform" value={sourceTables[0]?.source_type || selectedNode.source_type || '—'} />
+                                    <Row label="Status" value={<StatusBadge status={selectedNode.status} />} />
+                                    {selectedNode.description && <Row label="Description" value={selectedNode.description} />}
+                                    {sourceTables.length > 0 && (
+                                        <div style={{ marginTop: 14 }}>
+                                            <Section title="Built from">
+                                                {sourceTables.map((t, i) => (
+                                                    <div key={`${t.table}-${i}`} style={tableCardStyle}>
+                                                        <Database size={12} style={{ color: 'var(--color-success)', flexShrink: 0, marginTop: 2 }} />
+                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                            <div style={{ fontWeight: 600, fontSize: 12 }}>{t.table}</div>
+                                                            <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>
+                                                                {[t.schema, t.source_type].filter(Boolean).join(' · ')}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </Section>
+                                        </div>
                                     )}
-                                </Section>
-                            </CollapsibleSection>
-
-                            {/* LLD - Low Level Design */}
-                            <CollapsibleSection
-                                title="Technical Details"
-                                subtitle="Formula and calculation logic"
-                                icon={<Code2 size={14} />}
-                                expanded={expandedSections.lld !== false}
-                                onToggle={() => toggleSection('lld')}
-                            >
-                                <Section title="Expression">
-                                    <div style={{
-                                        padding: '10px 12px',
-                                        background: 'var(--bg-app)',
-                                        borderRadius: 6,
-                                        border: '1px solid var(--border-color)',
-                                        fontSize: 11,
-                                        fontFamily: 'monospace',
-                                        color: '#D4A017',
-                                        overflow: 'auto',
-                                        maxHeight: 200,
-                                        wordBreak: 'break-word',
-                                        letterSpacing: '.3px',
-                                    }}>
-                                        {selectedNode.expression || 'No expression found for this measure.'}
-                                    </div>
-                                </Section>
-                            </CollapsibleSection>
+                                </>
+                            )}
+                            {nodeType === 'measure' && (
+                                <>
+                                    <Row label="Measure" value={selectedNode.label} code />
+                                    <Row label="Model" value={selectedNode.parent_model || '—'} />
+                                    {selectedNode.dataset && <Row label="Table" value={selectedNode.dataset} />}
+                                    <Row label="Status" value={<StatusBadge status={selectedNode.status} />} />
+                                </>
+                            )}
                         </>
                     )}
                 </div>
@@ -517,54 +307,39 @@ export default function DetailPanel({ filePreview, selectedNode, workspaceNames 
 
 // ── Shared sub-components ──
 
-function CollapsibleSection({ title, icon, expanded, onToggle, children, subtitle }) {
+function ColumnTable({ columns }) {
     return (
-        <div style={{
-            borderBottom: '1px solid var(--border-color)',
-            background: 'var(--bg-app)',
-        }}>
-            <button
-                onClick={onToggle}
-                style={{
-                    width: '100%', padding: '12px 14px',
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    border: 'none', background: expanded ? 'var(--bg-surface)' : 'transparent', cursor: 'pointer',
-                    color: 'var(--text-primary)', fontSize: 12, fontWeight: 700,
-                    textAlign: 'left', transition: 'all 0.2s ease',
-                    borderLeft: expanded ? '3px solid var(--accent-blue)' : '3px solid transparent',
-                    paddingLeft: '11px',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-surface)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = expanded ? 'var(--bg-surface)' : 'transparent'}
-            >
-                <ChevronDown
-                    size={14}
-                    style={{
-                        flexShrink: 0,
-                        transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)',
-                        transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                        color: 'var(--text-tertiary)',
-                    }}
-                />
-                {icon && <span style={{ color: 'var(--text-secondary)' }}>{icon}</span>}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>{title}</span>
-                    {subtitle && <span style={{ fontSize: 9.5, color: 'var(--text-tertiary)', fontWeight: 500 }}>{subtitle}</span>}
-                </div>
-            </button>
-            {expanded && (
-                <div style={{
-                    padding: '14px 14px',
-                    borderTop: '1px solid var(--border-color)',
-                    background: 'linear-gradient(180deg, var(--bg-app) 0%, var(--bg-surface) 50%)',
-                    animation: 'fadeIn 0.2s ease-in-out',
-                }}>
-                    {children}
-                </div>
-            )}
-        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+                <tr>
+                    <th style={colThStyle}>Column</th>
+                    <th style={{ ...colThStyle, textAlign: 'right' }}>Type</th>
+                </tr>
+            </thead>
+            <tbody>
+                {columns.map((col, i) => {
+                    const colName = typeof col === 'string'
+                        ? col
+                        : (col.unique_name || col.label || col.name || col.column_name || '');
+                    const colType = typeof col === 'string' ? '' : (col.data_type || col.type || '');
+                    return (
+                        <tr key={(typeof col === 'object' && col.id) || colName || i}>
+                            <td style={{ ...colTdStyle, color: 'var(--text-primary)', wordBreak: 'break-word' }}>{colName}</td>
+                            <td style={{ ...colTdStyle, textAlign: 'right', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 11 }}>{colType}</td>
+                        </tr>
+                    );
+                })}
+            </tbody>
+        </table>
     );
 }
+
+const colThStyle = {
+    textAlign: 'left', padding: '6px 0', fontSize: 10.5, fontWeight: 700,
+    textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-tertiary)',
+    borderBottom: '1px solid var(--border-main)',
+};
+const colTdStyle = { padding: '6px 0', borderBottom: '1px solid var(--border-light, var(--border-main))' };
 
 function Section({ title, children }) {
     return (
@@ -661,24 +436,6 @@ function OriginBadge({ tableName, schema }) {
     );
 }
 
-function MiniInfoCard({ label, value, tone }) {
-    return (
-        <div style={{
-            border: '1px solid var(--border-color)',
-            borderRadius: 8,
-            padding: '8px 9px',
-            background: 'var(--bg-app)',
-            minWidth: 0,
-        }}>
-            <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text-tertiary)', fontWeight: 700 }}>
-                {label}
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: tone || 'var(--text-primary)', marginTop: 4, wordBreak: 'break-word' }}>
-                {value || '-'}
-            </div>
-        </div>
-    );
-}
 
 function EmptyHint({ text }) {
     return (

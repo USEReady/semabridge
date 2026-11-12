@@ -1692,17 +1692,21 @@ class MetricExpressionTranslator:
             num = match.group("num").strip()
             den = match.group("den").strip()
             if num.upper() == den.upper(): return self._build_safe_sum_sql(num, num)
-            return "NULL"
+            return metric_sql  # ratio-of-window: left for the METRICS builder to classify
         ytd_like = re.compile(r'(?is)^\s*(SUM|AVG|COUNT|MIN|MAX)\s*\([^\)]+\)\s+OVER\s*\(\s*PARTITION\s+BY\s+.+?\s+ORDER\s+BY\s+.+?\)\s*$')
         if ytd_like.match(metric_sql.strip()):
             if preferred_table_alias:
                 over_parts = re.split(r"\bOVER\b", metric_sql, maxsplit=1, flags=re.IGNORECASE)
                 refs = set(a.upper() for a in re.findall(r'(?i)\b(\w+)\s*\.', over_parts[1] if len(over_parts) > 1 else ""))
-                if refs and any(a != preferred_table_alias.upper() for a in refs): return "NULL"
+                if refs and any(a != preferred_table_alias.upper() for a in refs): return metric_sql
             return metric_sql
         sply_like = re.compile(r'(?is)^\s*(LAG|LEAD)\s*\(\s*.+?\)\s+OVER\s*\(.*\)\s*$')
         if sply_like.match(metric_sql.strip()): return metric_sql
-        return "NULL"
+        # Any other window shape is not a valid semantic-view metric. Return it
+        # unchanged: the METRICS builder rejects OVER/PARTITION BY (other than
+        # PARTITION BY EXCLUDING) as a by-design drop WITH its reason, instead
+        # of a silent NULL that reports "no reason recorded".
+        return metric_sql
 
     def _pick_preferred_aggregate_column(self, metric_name: str, known_columns: set[str]) -> Optional[str]:
         """Only auto-resolves when excluding structural key/FK/date-suffixed

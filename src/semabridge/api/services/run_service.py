@@ -492,7 +492,30 @@ def _reconcile_model_result(project_id: str, result_entry: Dict[str, Any], logge
         summary_dropped.extend(unaccounted_entries)
 
 
+# Runs executing in THIS process. The stale-run sweeper must never time out a
+# run that is still working (long post-deploy checks can exceed its cutoff);
+# it only cleans up runs left "running" by a crash or restart.
+_ACTIVE_RUN_IDS: set = set()
+_ACTIVE_RUN_LOCK = threading.Lock()
+
+
+def _is_run_active(run_id: Any) -> bool:
+    with _ACTIVE_RUN_LOCK:
+        return str(run_id or "") in _ACTIVE_RUN_IDS
+
+
 async def _perform_project_run(run: dict, project_cfg: str, started: float) -> dict:
+    run_id = str(run.get("run_id") or run.get("id") or "")
+    with _ACTIVE_RUN_LOCK:
+        _ACTIVE_RUN_IDS.add(run_id)
+    try:
+        return await _perform_project_run_impl(run, project_cfg, started)
+    finally:
+        with _ACTIVE_RUN_LOCK:
+            _ACTIVE_RUN_IDS.discard(run_id)
+
+
+async def _perform_project_run_impl(run: dict, project_cfg: str, started: float) -> dict:
     import logging
     logger = logging.getLogger(__name__)
 
@@ -852,6 +875,8 @@ def _sweep_stale_runs():
                 select(Run).where(Run.status == "running")
             ).scalars().all()
             for r in running_db_runs:
+                if _is_run_active(getattr(r, "id", None) or getattr(r, "run_id", None)):
+                    continue
                 run_ts = getattr(r, "started_at", None) or getattr(r, "created_at", None)
                 if run_ts:
                     if isinstance(run_ts, str):
@@ -875,6 +900,8 @@ def _sweep_stale_runs():
     for pid, r_list in list(_compat_project_runs.items()):
         for r in r_list:
             if str(r.get("status") or "").lower() == "running":
+                if _is_run_active(r.get("run_id") or r.get("id")):
+                    continue
                 ts_str = r.get("started_at") or r.get("created_at")
                 run_ts = None
                 if ts_str:
@@ -1290,7 +1317,10 @@ def _combine_model_summaries(
 
     if len(model_summaries) == 1:
         _, single_summary = model_summaries[0]
-        return {**header, **{k: v for k, v in single_summary.items() if k not in header}}
+        merged = {**header, **{k: v for k, v in single_summary.items() if k not in header}}
+        if not merged.get("source_files") and single_summary.get("source_files"):
+            merged["source_files"] = single_summary["source_files"]
+        return merged
 
     multi_model = len(model_summaries) > 1
     counts = {
@@ -1396,22 +1426,62 @@ async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[D
     data = build_run_report_data(run, project_cfg)
 
     # If run had no live results in memory (e.g. stripped on store save/restart),
-    # check for persisted model report summaries on disk and combine them.
+    # reconstruct from persisted per-model .summary.json files (via manifest,
+    # DB RunModelResult summary_path, or matching files in output/reports).
     if not data or data.get("crashed"):
-        from semabridge.api.services.run_report_service import load_persisted_model_reports
-        from semabridge.api.services.run_model_results import load_model_summary
+        import json
+        from pathlib import Path
+        from semabridge.api.services.run_report_service import REPORTS_ROOT, load_persisted_model_reports
+        from semabridge.api.services.run_model_results import load_model_summary, load_run_model_results
 
-        manifest = load_persisted_model_reports(project_id, run_id)
-        if manifest:
-            summaries = []
-            for entry in manifest:
-                m_label = entry.get("model")
+        summaries: List[Tuple[str, Dict[str, Any]]] = []
+        seen_models: set = set()
+
+        def _try_add_summary(m_label: str, path_hint: Optional[str] = None) -> None:
+            key = m_label.casefold()
+            if key in seen_models:
+                return
+            s = None
+            if path_hint:
+                p = Path(str(path_hint))
+                if p.is_file():
+                    try:
+                        s = json.loads(p.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        s = None
+            if s is None:
+                s = load_model_summary(project_id, run_id, m_label)
+            if isinstance(s, dict) and not s.get("crashed"):
+                seen_models.add(key)
+                summaries.append((m_label, s))
+
+        for entry in load_persisted_model_reports(project_id, run_id) or []:
+            m_label = entry.get("model")
+            if m_label:
+                _try_add_summary(str(m_label), entry.get("summary_path"))
+
+        for res in run.get("results") or []:
+            if isinstance(res, dict) and (res.get("model") or res.get("summary_path")):
+                m_label = str(res.get("model") or "model")
+                _try_add_summary(m_label, res.get("summary_path"))
+
+        if not summaries:
+            for row in load_run_model_results(project_id, run_id) or []:
+                m_label = row.get("model")
                 if m_label:
-                    s = load_model_summary(project_id, run_id, m_label)
-                    if s and not s.get("crashed"):
-                        summaries.append((m_label, s))
-            if summaries:
-                data = _combine_model_summaries(run, summaries, project_cfg)
+                    _try_add_summary(str(m_label), row.get("summary_path"))
+
+        if not summaries:
+            proj_dir = REPORTS_ROOT / str(project_id)
+            if proj_dir.is_dir():
+                prefix = f"{run_id}__"
+                for p in sorted(proj_dir.glob(f"{run_id}__*.summary.json")):
+                    stem = p.name[:-len(".summary.json")]
+                    m_label = stem[len(prefix):] if stem.startswith(prefix) else stem
+                    _try_add_summary(m_label, str(p))
+
+        if summaries:
+            data = _combine_model_summaries(run, summaries, project_cfg)
 
     if data and _is_run_demo_masked(project_id, run_id):
         if isinstance(data.get("summary"), dict):

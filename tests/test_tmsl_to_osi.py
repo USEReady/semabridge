@@ -171,10 +171,10 @@ class TestTMSLToOSI:
         assert units_col.default_aggregation == OSIAggregationType.SUM
 
         metric_by_name = {m.unique_name: m for m in osi.metrics}
-        assert metric_by_name["Units"].source_column == "Units"
-        assert metric_by_name["Units"].aggregation == OSIAggregationType.SUM
-        assert metric_by_name["Revenue"].source_column == "Revenue"
-        assert metric_by_name["Score"].aggregation == OSIAggregationType.AVG
+        assert metric_by_name["SUM_OF_UNITS"].source_column == "Units"
+        assert metric_by_name["SUM_OF_UNITS"].aggregation == OSIAggregationType.SUM
+        assert metric_by_name["SUM_OF_REVENUE"].source_column == "Revenue"
+        assert metric_by_name["AVG_OF_SCORE"].aggregation == OSIAggregationType.AVG
 
         dim = next(d for d in osi.dimensions if d.unique_name == "SalesFact")
         assert [attr.unique_name for attr in dim.attributes] == ["ProductID"]

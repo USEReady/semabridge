@@ -216,7 +216,7 @@ class RemediationPlan:
             description="Reload configuration and recompile semantic model",
             commands=[
                 "# Stop running semabridge API",
-                "uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001",
+                "uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002",
                 "# Monitor logs for 'Relationships: X compiled' message"
             ],
             estimated_time="2 min"

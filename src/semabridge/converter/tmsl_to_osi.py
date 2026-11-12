@@ -95,13 +95,40 @@ def _rel_get(rel_def: Dict[str, Any], *names: str) -> Any:
     return None
 
 
+_CARDINALITY_END_MAP = {
+    "1": "one",
+    "one": "one",
+    "single": "one",
+    "2": "many",
+    "many": "many",
+    "*": "many",
+}
+
+def _identifier_named(name: Any) -> bool:
+    """True for an identifier-style column name (``...ID``, ``...KEY``, ``PK_``/``FK_``).
+
+    Used ONLY to keep such columns from becoming implicit SUM/AVG metrics
+    (summing an ID is meaningless). It never makes a column a key: keys come
+    from the model (``isKey``), relationship one-sides and declared Snowflake
+    primary keys.
+    """
+    upper = str(name or "").upper()
+    return upper.endswith("ID") or upper.endswith("KEY") or upper.startswith("PK_") or upper.startswith("FK_")
+
+
+def _norm_cardinality_end(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    tok = _norm_token(value)
+    return _CARDINALITY_END_MAP.get(tok, tok)
+
 def tmsl_relationship_cardinality(rel_def: Dict[str, Any]) -> OSICardinality:
     """Resolve a TMSL relationship's cardinality.
 
     Real TMSL / model.bim / Fabric definitions express cardinality as two
     per-end properties, ``fromCardinality`` (default "many") and
-    ``toCardinality`` (default "one"). Some internal producers (the pbixray
-    fallback, older fixtures) emit a combined ``cardinality`` string instead.
+    ``toCardinality`` (default "one") or numeric codes (1=one, 2=many).
+    Some internal producers emit a combined ``cardinality`` string instead.
     Both forms are honoured; the per-end form wins when present.
     """
     from_card = _rel_get(rel_def, "fromCardinality", "from_cardinality")
@@ -109,8 +136,8 @@ def tmsl_relationship_cardinality(rel_def: Dict[str, Any]) -> OSICardinality:
     combined = _rel_get(rel_def, "cardinality")
     if from_card is not None or to_card is not None or combined is None:
         pair = (
-            _norm_token(from_card) if from_card is not None else "many",
-            _norm_token(to_card) if to_card is not None else "one",
+            _norm_cardinality_end(from_card, "many"),
+            _norm_cardinality_end(to_card, "one"),
         )
         if pair in _CARDINALITY_PAIR:
             return _CARDINALITY_PAIR[pair]
@@ -377,9 +404,6 @@ class TMSLToOSIConverter(BaseConverter):
                     self._record_non_physical_dataset(dataset)
                     self._record_sort_by_columns(dataset)
 
-                    for metric in self._create_metrics_from_aggregation_columns(dataset):
-                        osi_model.metrics.append(metric)
-
                     # Create corresponding Dimension for each Dataset
                     # In TMSL/Power BI, every table is potentially a dimension
                     hierarchies = self._parse_hierarchies(table, dataset)
@@ -392,8 +416,6 @@ class TMSLToOSIConverter(BaseConverter):
                     for measure in self._iter_table_measures_with_stable_names(table):
                         metric = self._parse_metric(measure, dataset.unique_name)
                         osi_model.metrics.append(metric)
-
-            self._dedupe_metric_names_across_model(osi_model)
 
             # Process Relationships
             # Build case-insensitive map of valid datasets so relationship
@@ -442,6 +464,10 @@ class TMSLToOSIConverter(BaseConverter):
             # source model never declared.
             if not osi_model.relationships and osi_model.datasets and infer_rels:
                 self._infer_fallback_relationships(osi_model, valid_dataset_map)
+
+            # Generate implicit metrics strictly for visible numeric fact columns with exact SummarizeBy
+            self._create_implicit_metrics_for_model(osi_model)
+            self._dedupe_metric_names_across_model(osi_model)
 
             # Model-level objects Snowflake semantic views cannot represent.
             self._record_roles(model_obj, osi_model)
@@ -986,15 +1012,139 @@ class TMSLToOSIConverter(BaseConverter):
             is_hidden=dataset.is_hidden
         )
 
+    def _create_implicit_metrics_for_model(self, osi_model: OSIModel) -> None:
+        """Create OSI metrics strictly for visible numeric fact columns with exact SummarizeBy."""
+        many_side: set[str] = set()
+        one_side: set[str] = set()
+        active_n1 = False
+        for rel in osi_model.relationships or ():
+            if not getattr(rel, "is_active", True):
+                continue
+            if rel.cardinality == OSICardinality.MANY_TO_ONE:
+                active_n1 = True
+                if rel.from_dataset:
+                    many_side.add(rel.from_dataset)
+                if rel.to_dataset:
+                    one_side.add(rel.to_dataset)
+            elif rel.cardinality == OSICardinality.ONE_TO_MANY:
+                active_n1 = True
+                if rel.to_dataset:
+                    many_side.add(rel.to_dataset)
+                if rel.from_dataset:
+                    one_side.add(rel.from_dataset)
+
+        if active_n1:
+            fact_dataset_names = many_side - one_side
+            for ds in osi_model.datasets:
+                ds.is_fact = ds.unique_name in fact_dataset_names
+        else:
+            fact_dataset_names = {ds.unique_name for ds in osi_model.datasets if ds.is_fact}
+            if not fact_dataset_names:
+                # No active many-to-one relationship and nothing flagged as a
+                # fact (e.g. a single-table model): every visible table holds
+                # its own facts.
+                fact_dataset_names = {ds.unique_name for ds in osi_model.datasets if not ds.is_hidden}
+        # Columns used by any relationship are keys, never implicit metrics.
+        _rel_cols: set = set()
+        for rel in osi_model.relationships or ():
+            for ds_name, cols in (
+                (getattr(rel, "from_dataset", None), getattr(rel, "from_columns", None) or [getattr(rel, "from_column", None)]),
+                (getattr(rel, "to_dataset", None), getattr(rel, "to_columns", None) or [getattr(rel, "to_column", None)]),
+            ):
+                for c in cols or []:
+                    if ds_name and c:
+                        _rel_cols.add((str(ds_name).casefold(), str(c).casefold()))
+
+        _AGG_LABEL = {
+            OSIAggregationType.SUM: "SUM",
+            OSIAggregationType.AVG: "AVG",
+            OSIAggregationType.MIN: "MIN",
+            OSIAggregationType.MAX: "MAX",
+            OSIAggregationType.COUNT: "COUNT",
+            OSIAggregationType.COUNT_DISTINCT: "COUNT_DISTINCT",
+        }
+        _NUMERIC_TYPES = {OSIDataType.INTEGER, OSIDataType.FLOAT, OSIDataType.DECIMAL}
+
+        def _clean_part(text: str) -> str:
+            return re.sub(r"[^A-Za-z0-9]+", "_", str(text or "")).strip("_").upper() or "COLUMN"
+
+        candidates: List[Tuple[OSIDataset, OSIColumn, OSIAggregationType, str, str]] = []
+        base_name_counts: Dict[str, int] = {}
+        _default_cols = getattr(self, "_default_summarized_cols", set())
+        for ds in osi_model.datasets:
+            # Power BI auto date/time tables are never a source of metrics.
+            if ds.is_hidden or re.match(r"(?i)^(local[ _]*date[ _]*table|date[ _]*table[ _]*template)[ _]", str(ds.unique_name)):
+                continue
+            is_fact_ds = ds.unique_name in fact_dataset_names
+            for col in ds.columns:
+                if col.is_hidden or getattr(col, "is_key", False) or getattr(col, "is_calculated", False) or _identifier_named(col.unique_name):
+                    continue
+                if col.data_type not in _NUMERIC_TYPES:
+                    continue
+                agg = getattr(col, "default_aggregation", None)
+                if agg is None:
+                    continue
+                _key = (str(ds.unique_name).casefold(), str(col.unique_name).casefold())
+                if _key in _rel_cols:
+                    continue
+                # An explicit summarization set in Power BI counts on any
+                # table; the unset "default" only on fact tables.
+                if not is_fact_ds and _key in _default_cols:
+                    continue
+                # Unset ("default") summarization on a calendar part (Year,
+                # Month, Quarter, Day, Week, ...) is never a meaningful sum.
+                if _key in _default_cols and re.fullmatch(
+                    r"(?i)(calendar|fiscal|date|dt)?[ _]*(year|quarter|qtr|month|monthno|monthnumber|month[ _]?index|"
+                    r"week|weeknum|weeknumber|weekday|day|dayofweek|dayofmonth|dayofyear|period|periodnumber|"
+                    r"year[ _]?month|yearmonth)[ _]*(no|num|number|index|id)?",
+                    str(col.unique_name).strip(),
+                ):
+                    continue
+                agg_label = _AGG_LABEL.get(agg, str(getattr(agg, "value", agg)).upper())
+                base_name = f"{agg_label}_OF_{_clean_part(col.unique_name)}"
+                qualified_name = f"{agg_label}_OF_{_clean_part(ds.unique_name)}_{_clean_part(col.unique_name)}"
+                base_name_counts[base_name.casefold()] = base_name_counts.get(base_name.casefold(), 0) + 1
+                candidates.append((ds, col, agg, base_name, qualified_name))
+
+        existing_metric_names = {str(m.unique_name).casefold() for m in osi_model.metrics}
+        for ds, col, agg, base_name, qualified_name in candidates:
+            metric_name = qualified_name if base_name_counts.get(base_name.casefold(), 0) > 1 else base_name
+            if metric_name.casefold() in existing_metric_names:
+                continue
+            existing_metric_names.add(metric_name.casefold())
+            osi_model.metrics.append(
+                OSIMetric(
+                    unique_name=metric_name,
+                    label=metric_name,
+                    dataset=ds.unique_name,
+                    source_column=col.unique_name,
+                    expression=None,
+                    aggregation=agg,
+                    description=col.description,
+                    format_string=col.format_string,
+                    is_hidden=col.is_hidden,
+                    access_modifier="public_access",
+                    synonyms=list(getattr(col, "synonyms", []) or []),
+                    source_file=getattr(col, "source_file", None),
+                )
+            )
+
     def _create_metrics_from_aggregation_columns(self, dataset: OSIDataset) -> List[OSIMetric]:
-        """Create OSI metrics for Fabric columns with summarizeBy aggregation."""
+        """Legacy per-dataset helper kept for compatibility; prefers numeric visible SummarizeBy columns."""
         metrics: List[OSIMetric] = []
         seen: set[str] = set()
+        _NUMERIC_TYPES = {OSIDataType.INTEGER, OSIDataType.FLOAT, OSIDataType.DECIMAL}
         for col in dataset.columns:
-            if col.is_hidden or not getattr(col, "is_measure_candidate", False):
+            if col.is_hidden or getattr(col, "is_key", False) or getattr(col, "is_calculated", False) or _identifier_named(col.unique_name):
                 continue
-            aggregation = getattr(col, "default_aggregation", None) or OSIAggregationType.SUM
-            metric_name = col.unique_name
+            if col.data_type not in _NUMERIC_TYPES:
+                continue
+            aggregation = getattr(col, "default_aggregation", None)
+            if aggregation is None:
+                continue
+            agg_label = str(getattr(aggregation, "value", aggregation)).upper()
+            clean_col = re.sub(r"[^A-Za-z0-9]+", "_", str(col.unique_name)).strip("_").upper() or "COLUMN"
+            metric_name = f"{agg_label}_OF_{clean_col}"
             metric_key = metric_name.casefold()
             if metric_key in seen:
                 continue
@@ -1002,7 +1152,7 @@ class TMSLToOSIConverter(BaseConverter):
             metrics.append(
                 OSIMetric(
                     unique_name=metric_name,
-                    label=col.label or metric_name,
+                    label=metric_name,
                     dataset=dataset.unique_name,
                     source_column=col.unique_name,
                     expression=None,
@@ -1108,11 +1258,10 @@ class TMSLToOSIConverter(BaseConverter):
                 mapped_type = self._infer_string_column_type(col_name, format_string)
 
 
-        # Determine if key (heuristic on name pattern)
-        is_key = False
-        upper_name = col_name.upper()
-        if upper_name.endswith("ID") or upper_name.endswith("KEY") or upper_name.startswith("PK_") or upper_name.startswith("FK_"):
-            is_key = True
+        # Key flag comes only from the model itself (TMSL ``isKey``). Never
+        # guessed from the column name: relationship one-sides and declared
+        # Snowflake primary keys are handled where keys are resolved.
+        is_key = bool(col_def.get("isKey") or col_def.get("is_key"))
 
         # ── Cortex AI metadata ──────────────────────────────────────────────
         user_synonyms = col_def.get("synonyms") or []
@@ -1152,6 +1301,15 @@ class TMSLToOSIConverter(BaseConverter):
 
         summarize_by = str(col_def.get("summarizeBy") or "").strip().lower()
         default_aggregation = self._map_summarize_by(summarize_by)
+        # Power BI's "default" summarization is Sum for numeric columns. Keys
+        # are excluded later (relationship columns never become metrics).
+        if default_aggregation is None and summarize_by == "default" and mapped_type in (
+            OSIDataType.INTEGER, OSIDataType.FLOAT, OSIDataType.DECIMAL
+        ):
+            default_aggregation = OSIAggregationType.SUM
+            if not hasattr(self, "_default_summarized_cols"):
+                self._default_summarized_cols = set()
+            self._default_summarized_cols.add((str(table_name).casefold(), str(col_def.get("name") or "").casefold()))
         is_measure_candidate = default_aggregation is not None
 
         # Physical source column and calculated-column DAX are carried in
@@ -1274,24 +1432,32 @@ class TMSLToOSIConverter(BaseConverter):
         return merged, bool(report_aliases), matched_aliases
 
     @staticmethod
-    def _map_summarize_by(summarize_by: str) -> Optional[OSIAggregationType]:
-        """Map Fabric summarizeBy to OSI aggregation; none/blank means dimension."""
-        normalized = str(summarize_by or "").strip().lower()
-        if not normalized or normalized == "none":
+    def _map_summarize_by(summarize_by: Any) -> Optional[OSIAggregationType]:
+        """Map Fabric/PBIX summarizeBy to OSI aggregation; none/default/blank stay dimensions."""
+        if summarize_by is None:
+            return None
+        normalized = str(summarize_by).strip().lower()
+        if normalized in ("", "none", "default", "1", "2"):
             return None
         mapping = {
             "sum": OSIAggregationType.SUM,
-            "average": OSIAggregationType.AVG,
-            "avg": OSIAggregationType.AVG,
-            "count": OSIAggregationType.COUNT,
-            "distinctcount": OSIAggregationType.COUNT_DISTINCT,
-            "countdistinct": OSIAggregationType.COUNT_DISTINCT,
+            "3": OSIAggregationType.SUM,
             "min": OSIAggregationType.MIN,
             "minimum": OSIAggregationType.MIN,
+            "4": OSIAggregationType.MIN,
             "max": OSIAggregationType.MAX,
             "maximum": OSIAggregationType.MAX,
+            "5": OSIAggregationType.MAX,
+            "count": OSIAggregationType.COUNT,
+            "6": OSIAggregationType.COUNT,
+            "average": OSIAggregationType.AVG,
+            "avg": OSIAggregationType.AVG,
+            "7": OSIAggregationType.AVG,
+            "distinctcount": OSIAggregationType.COUNT_DISTINCT,
+            "countdistinct": OSIAggregationType.COUNT_DISTINCT,
+            "8": OSIAggregationType.COUNT_DISTINCT,
         }
-        return mapping.get(normalized, OSIAggregationType.SUM)
+        return mapping.get(normalized)
 
     _BUSINESS_FIELD_TYPE_TO_OSI = {
         "BOOLEAN": OSIDataType.BOOLEAN,

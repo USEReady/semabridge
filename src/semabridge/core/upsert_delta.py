@@ -33,6 +33,7 @@ DELTA_KINDS: Tuple[Tuple[str, str], ...] = (
     ("dimensions", "dimensions"),
     ("relationships", "relationships"),
     ("tables", "datasets"),
+    ("verified_queries", "verified_queries"),
 )
 
 _ITEM_CLASSES = {
@@ -40,6 +41,7 @@ _ITEM_CLASSES = {
     "dimensions": SMLDimension,
     "relationships": SMLRelationship,
     "tables": SMLDataset,
+    "verified_queries": dict,
 }
 
 # Upper bound on names listed per bucket in the one-line summary.
@@ -72,16 +74,31 @@ def _enum_text(value: Any) -> str:
 
 
 def _display_name(item: Any) -> str:
-    return str(_get(item, "label") or _get(item, "unique_name") or "")
+    return str(_get(item, "label") or _get(item, "unique_name") or _get(item, "name") or _get(item, "question") or "")
+
+
+def _norm_synonyms(item: Any) -> List[str]:
+    seen: Dict[str, str] = {}
+    for s in (_get(item, "synonyms") or []):
+        t = _ws(s)
+        if t and t.casefold() not in seen:
+            seen[t.casefold()] = t
+    return [seen[k] for k in sorted(seen)]
 
 
 def _signature(kind: str, item: Any) -> Dict[str, Any]:
     """Definition fields that decide whether an item changed.
 
-    Only source-defined fields take part. Derived/deploy-time fields
-    (sql_expression, synonyms, confidence, advisory notes, ...) are left
-    out so a re-extraction of an unchanged PBIX compares equal.
+    Includes source-defined fields plus ontology-applied ``description`` and
+    ``synonyms`` so metadata edits in the ontology trigger an UPSERT while an
+    unchanged PBIX + unchanged ontology still compares equal.
     """
+    if kind == "verified_queries":
+        return {
+            "question": _ws(_get(item, "question")),
+            "sql": _ws(_get(item, "sql")),
+            "is_onboarding": bool(_get(item, "is_onboarding", False)),
+        }
     if kind == "metrics":
         return {
             "expression": _ws(_get(item, "expression")),
@@ -90,6 +107,8 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
             "source_column": normalize_name(_get(item, "source_column")),
             "format_string": _get(item, "format_string") or "",
             "is_hidden": bool(_get(item, "is_hidden", False)),
+            "description": _ws(_get(item, "description")),
+            "synonyms": _norm_synonyms(item),
         }
     if kind == "dimensions":
         attributes = sorted(
@@ -98,13 +117,17 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
                 normalize_name(_get(a, "dataset")),
                 normalize_name(_get(a, "dataset_column")),
                 bool(_get(a, "is_hidden", False)),
+                _ws(_get(a, "description")),
+                tuple(_norm_synonyms(a)),
             )
             for a in (_get(item, "attributes") or [])
         )
         return {
             "dataset": normalize_name(_get(item, "dataset")),
-            "attributes": [list(a) for a in attributes],
+            "attributes": [list(a) if isinstance(a, tuple) else a for a in attributes],
             "is_hidden": bool(_get(item, "is_hidden", False)),
+            "description": _ws(_get(item, "description")),
+            "synonyms": _norm_synonyms(item),
         }
     if kind == "relationships":
         return {
@@ -122,13 +145,17 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
             normalize_name(_get(c, "unique_name")),
             _enum_text(_get(c, "data_type")),
             bool(_get(c, "is_hidden", False)),
+            _ws(_get(c, "description")),
+            tuple(_norm_synonyms(c)),
         )
         for c in (_get(item, "columns") or [])
     )
     return {
         "source_table": normalize_name(_get(item, "source_table")),
-        "columns": [list(c) for c in columns],
+        "columns": [list(c) if isinstance(c, tuple) else c for c in columns],
         "is_hidden": bool(_get(item, "is_hidden", False)),
+        "description": _ws(_get(item, "description")),
+        "synonyms": _norm_synonyms(item),
     }
 
 
@@ -136,7 +163,7 @@ def _index(items: Iterable[Any]) -> Dict[str, Any]:
     """Normalized name -> item. First occurrence wins (never duplicates)."""
     indexed: Dict[str, Any] = {}
     for item in items or []:
-        key = normalize_name(_get(item, "unique_name"))
+        key = normalize_name(_get(item, "unique_name") or _get(item, "name") or _get(item, "question"))
         if key and key not in indexed:
             indexed[key] = item
     return indexed
@@ -148,19 +175,35 @@ def _item_entry(kind: str, item: Any) -> Dict[str, Any]:
         table = f"{_get(item, 'from_dataset')} -> {_get(item, 'to_dataset')}"
     elif kind == "tables":
         table = _get(item, "source_table") or _get(item, "unique_name")
+    elif kind == "verified_queries":
+        table = _get(item, "view_name") or "semantic_view"
     else:
         table = _get(item, "dataset")
     entry: Dict[str, Any] = {"name": _display_name(item), "table": str(table or "")}
     if kind == "metrics":
         entry["expression"] = str(_get(item, "expression") or "")
+    elif kind == "verified_queries":
+        entry["sql"] = str(_get(item, "sql") or "")
     return entry
 
 
 def _modified_entry(kind: str, old: Any, new: Any, old_sig: Dict[str, Any], new_sig: Dict[str, Any]) -> Dict[str, Any]:
+    changed_fields = sorted(k for k in new_sig if new_sig.get(k) != old_sig.get(k))
     entry: Dict[str, Any] = {
         **_item_entry(kind, new),
-        "changed_fields": sorted(k for k in new_sig if new_sig.get(k) != old_sig.get(k)),
+        "changed_fields": changed_fields,
     }
+    if changed_fields and set(changed_fields) <= {"description", "synonyms"}:
+        entry["change_type"] = "metadata changed"
+        entry["metadata_changed"] = True
+    elif any(f in changed_fields for f in ("description", "synonyms")):
+        entry["metadata_changed"] = True
+    if "description" in changed_fields:
+        entry["old_description"] = _ws(_get(old, "description"))
+        entry["new_description"] = _ws(_get(new, "description"))
+    if "synonyms" in changed_fields:
+        entry["old_synonyms"] = _norm_synonyms(old)
+        entry["new_synonyms"] = _norm_synonyms(new)
     if kind == "metrics":
         entry["old_expression"] = str(_get(old, "expression") or "")
         entry["new_expression"] = str(_get(new, "expression") or "")
@@ -232,6 +275,39 @@ def compute_delta(
 
     added_total = sum(len(k["added"]) for k in kinds.values())
     modified_total = sum(len(k["modified"]) for k in kinds.values())
+    metadata_changed_items: List[Dict[str, Any]] = []
+    ontology_changes: Dict[str, List[Dict[str, Any]]] = {
+        "descriptions": [],
+        "synonyms": [],
+        "verified_queries": [],
+    }
+    for kind, _ in DELTA_KINDS:
+        bucket = kinds[kind]
+        for entry in bucket["modified"]:
+            if entry.get("metadata_changed"):
+                metadata_changed_items.append({"kind": kind, **entry})
+            cf = entry.get("changed_fields") or []
+            if "description" in cf:
+                ontology_changes["descriptions"].append({
+                    "kind": kind,
+                    "name": entry.get("name"),
+                    "old": entry.get("old_description", ""),
+                    "new": entry.get("new_description", ""),
+                })
+            if "synonyms" in cf:
+                ontology_changes["synonyms"].append({
+                    "kind": kind,
+                    "name": entry.get("name"),
+                    "old": entry.get("old_synonyms", []),
+                    "new": entry.get("new_synonyms", []),
+                })
+    for vq in kinds["verified_queries"]["added"] + kinds["verified_queries"]["modified"]:
+        ontology_changes["verified_queries"].append({
+            "action": "added" if vq in kinds["verified_queries"]["added"] else "modified",
+            "name": vq.get("name"),
+            "sql": vq.get("sql", ""),
+        })
+
     delta = {
         "sync_mode": "upsert",
         "first_deployment": baseline is None,
@@ -240,9 +316,12 @@ def compute_delta(
         # Removed items are kept in the target (upsert), so only added or
         # modified items change what gets deployed.
         "has_changes": bool(added_total or modified_total),
+        "metadata_changed": bool(metadata_changed_items),
+        "ontology_changes": ontology_changes,
         "totals": {
             "added": added_total,
             "modified": modified_total,
+            "metadata_changed": len(metadata_changed_items),
             "removed": sum(len(k["removed"]) for k in kinds.values()),
             "unchanged": sum(k["unchanged"] for k in kinds.values()),
         },
@@ -298,13 +377,16 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
 
     for kind, attr in DELTA_KINDS:
         cls = _ITEM_CLASSES[kind]
-        current: List[Any] = getattr(merged, attr)
-        current_keys = {normalize_name(_get(i, "unique_name")) for i in current}
+        current: List[Any] = getattr(merged, attr, [])
+        current_keys = {normalize_name(_get(i, "unique_name") or _get(i, "name") or _get(i, "question")) for i in current}
         old_items = _index(baseline.get(attr) or [])
         for key, old_item in old_items.items():
             if key in current_keys:
                 continue
-            current.append(cls.model_validate(old_item))
+            if cls is dict:
+                current.append(old_item if isinstance(old_item, dict) else old_item.model_dump())
+            else:
+                current.append(cls.model_validate(old_item))
             current_keys.add(key)
 
         if kind in ("tables", "dimensions"):

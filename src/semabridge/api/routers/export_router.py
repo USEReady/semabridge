@@ -146,30 +146,38 @@ async def export_pbix_via_fabric(
 
 
 async def _load_osi_model(project_id: str, snapshot_id: Optional[str] = None):
-    """Load the OSI model from the project's latest (or specified) snapshot.
+    """Load the OSI model from the project's latest successful (or a given) snapshot.
 
-    Returns None if no snapshot exists.
+    Returns None ONLY when the project has no snapshot (caller -> 404).
+    Any other failure raises HTTP 500 with the real reason.
     """
+    import json
+    from semabridge.intermediate.models import OSIModel
+    from semabridge.repository.model_repository import ModelRepository
+
+    repo = ModelRepository()
+    # 1. Fetch head snapshot for the project from the persistent SQLite repository
+    snap = repo.get_snapshot(snapshot_id) if snapshot_id else repo.get_head(project_id)
+    if snap is None or (snapshot_id and snap.project_id != project_id):
+        return None
+    raw = snap.sml_blob
+    if isinstance(raw, (bytes, str)):
+        raw = json.loads(raw)
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=500, detail=f"Snapshot for '{project_id}' has no model payload.")
+    
+    # 2. If the snapshot blob already contains an OSIModel, validate and return directly
+    if "datasets" in raw and "relationships" in raw and "unique_name" in raw:
+        try:
+            return OSIModel.model_validate_json(json.dumps(raw, default=str))
+        except Exception:
+            pass
+            
+    # 3. Otherwise, convert the SML model into an OSI intermediate model
     try:
-        from semabridge.api.dependencies import get_db_session
-        from semabridge.repository.db import ModelRepository
-
-        repo = ModelRepository()
-        # Try to get the snapshot from the version history
-        snapshot = repo.get_snapshot(project_id, snapshot_id=snapshot_id)
-        if snapshot is None:
-            return None
-
-        # Deserialise the OSI model from the snapshot
-        from semabridge.intermediate.models import OSIModel
-        import json
-
-        raw = snapshot.get("osi_model") or snapshot.get("model_data") or snapshot
-        if isinstance(raw, str):
-            raw = json.loads(raw)
-        if isinstance(raw, dict):
-            return OSIModel(**raw)
-        return None
+        from semabridge.converter.sml_to_osi import SMLToOSIConverter
+        from semabridge.sml.models import SMLModel
+        return SMLToOSIConverter().to_osi(SMLModel(**raw))
     except Exception as e:
-        logger.warning(f"Could not load OSI model for project '{project_id}': {e}")
-        return None
+        logger.exception("OSI conversion failed for project '%s'", project_id)
+        raise HTTPException(status_code=500, detail=f"Could not build OSI model for '{project_id}': {e}")

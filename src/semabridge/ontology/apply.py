@@ -148,6 +148,9 @@ class OntologyApplier:
         self.unmatched: List[str] = []
         self.ambiguous: List[str] = []
         self.matched: List[str] = []
+        # Domain metrics whose formula differs from the BI (PBIX) measure they
+        # annotate: BI formulas are read-only, so the domain formula is ignored.
+        self.formula_overrides_ignored: List[Dict[str, Any]] = []
 
     # -------------------------------------------------------------- layers
     def _add(self, layers: Dict[int, List[_Annot]], obj: Any, annot: _Annot) -> None:
@@ -304,12 +307,46 @@ class OntologyApplier:
                     ),
                 )
                 self.matched.append(f"{label} -> metric {cands[0].unique_name}")
+                self._check_formula_override(dname, metric, cands[0])
             elif len(cands) > 1:
                 self.ambiguous.append(
                     f"{label}: matches several metrics ({', '.join(m.unique_name for m in cands)}); add 'maps_to'"
                 )
             else:
                 self.unmatched.append(f"{label}: no metric in this model matches (maps_to / name / label / synonyms)")
+
+    def _check_formula_override(self, dname: str, metric: Any, target: Any) -> None:
+        """Record a finding when a domain metric carries a formula that differs from
+        the BI measure it matched (the BI formula always wins; never silently)."""
+        from semabridge.ontology.federated_loader import normalize_formula_for_compare as _norm
+
+        dom_formulas = {
+            _norm(f) for f in (getattr(metric, "sql_expression", None), getattr(metric, "dax_expression", None)) if _norm(f)
+        }
+        if not dom_formulas:
+            return
+        bi_raw = [getattr(target, "sql_expression", None), getattr(target, "expression", None)]
+        agg = getattr(getattr(target, "aggregation", None), "value", getattr(target, "aggregation", None))
+        src_col = getattr(target, "source_column", None)
+        if agg and src_col:
+            bi_raw.append(f"{agg}({src_col})")
+        bi_formulas = {_norm(f) for f in bi_raw if _norm(f)}
+        if not bi_formulas or dom_formulas & bi_formulas:
+            return
+        bi_display = next((str(f) for f in bi_raw if str(f or "").strip()), "")
+        dom_display = getattr(metric, "sql_expression", None) or getattr(metric, "dax_expression", None)
+        self.formula_overrides_ignored.append({
+            "metric": metric.name,
+            "domain": dname,
+            "model_metric": target.unique_name,
+            "domain_formula": dom_display,
+            "bi_formula": bi_display,
+            "message": (
+                f"Domain '{dname}' metric '{metric.name}' defines formula {dom_display!r} but the BI measure "
+                f"'{target.unique_name}' uses {bi_display!r}. BI (PBIX) formulas are read-only: the domain "
+                "formula is ignored — rename the domain metric or remove its formula."
+            ),
+        })
 
     def _match_concept(self, concept: Any) -> List[Any]:
         if concept.maps_to:
@@ -401,12 +438,35 @@ class OntologyApplier:
             "sources": [s for a in layers for s in a.sources],
         }
 
+    def _element_name(self, kind: str, obj: Any) -> str:
+        name = str(getattr(obj, "unique_name", "") or getattr(obj, "label", "") or "")
+        if kind == "columns":
+            for ds in self.idx.datasets:
+                if any(c is obj for c in (getattr(ds, "columns", None) or [])):
+                    return f"{ds.unique_name}.{name}"
+        return name
+
     def apply(self) -> Dict[str, int]:
         counts = {"tables": 0, "columns": 0, "metrics": 0}
+        # What the ontology actually changed on the model (vs. the BI source),
+        # so a COPY-mode dry run can show description / synonym changes too.
+        self.changes: Dict[str, List[Dict[str, Any]]] = {"descriptions": [], "synonyms": []}
         for kind, layers_map in (("tables", self.table_layers), ("columns", self.column_layers), ("metrics", self.metric_layers)):
             for oid, layers in layers_map.items():
                 obj = self._objs[oid]
+                old_desc = str(getattr(obj, "description", "") or "")
+                old_syns = list(getattr(obj, "synonyms", None) or [])
                 resolved = self._resolve(obj, layers)
+                if (resolved["description"] or "") != old_desc:
+                    self.changes["descriptions"].append({
+                        "kind": kind, "name": self._element_name(kind, obj),
+                        "old": old_desc, "new": resolved["description"] or "",
+                    })
+                if hasattr(obj, "synonyms") and {" ".join(str(s).split()).casefold() for s in resolved["synonyms"]} != {" ".join(str(s).split()).casefold() for s in old_syns}:
+                    self.changes["synonyms"].append({
+                        "kind": kind, "name": self._element_name(kind, obj),
+                        "old": old_syns, "new": list(resolved["synonyms"]),
+                    })
                 _set(obj, "description", resolved["description"])
                 if resolved.get("data_steward") and hasattr(obj, "business_owner") and not getattr(obj, "business_owner", None):
                     _set(obj, "business_owner", resolved["data_steward"])
@@ -471,6 +531,7 @@ def apply_ontology_to_model(
         applier.add_domain(dom)
     counts = applier.apply()
     warnings = [f"Unmatched {u}" for u in applier.unmatched] + [f"Ambiguous {a}" for a in applier.ambiguous]
+    warnings += [f"Formula ignored: {f['message']}" for f in applier.formula_overrides_ignored]
     for w in warnings:
         logger.warning("Ontology: %s", w)
     return {
@@ -479,8 +540,145 @@ def apply_ontology_to_model(
         "unmatched": applier.unmatched,
         "ambiguous": applier.ambiguous,
         "warnings": warnings,
+        "formula_overrides_ignored": list(applier.formula_overrides_ignored),
+        "changes": applier.changes,
         "domains": [getattr(d, "domain", str(d)) for d in (domains or [])],
     }
+
+
+CONFLICT_MODES = ("priority", "namespace")
+
+
+def _norm_resolution(resolution: Optional[str]) -> Optional[str]:
+    mode = str(resolution or "").strip().lower()
+    return mode if mode in CONFLICT_MODES else None
+
+
+def _formula_conflicts(domains: List[Any]) -> List[Dict[str, Any]]:
+    """Cross-domain metric formula conflicts (ERROR collisions) among ``domains``."""
+    if len(domains or []) < 2:
+        return []
+    from semabridge.ontology.federated_loader import FederatedOntologyLoader
+
+    fed = FederatedOntologyLoader.merge_domains(list(domains))
+    out: List[Dict[str, Any]] = []
+    for col in fed.collisions:
+        if col.item_type == "metric" and col.severity == "ERROR" and len(col.conflicting_domains or []) > 1:
+            out.append({
+                "metric": col.item_name,
+                "domains": list(col.conflicting_domains or []),
+                "expressions": dict(col.expressions or {}),
+                "message": col.message,
+                "resolution_options": list(CONFLICT_MODES),
+            })
+    return out
+
+
+def _detect_formula_conflicts(
+    domains: List[Any],
+    resolution: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return blocking metric-formula conflicts across attached domains unless explicitly resolved."""
+    if _norm_resolution(resolution):
+        return []
+    return _formula_conflicts(domains)
+
+
+def _namespace_prefix(domain_name: str) -> str:
+    import re as _re
+
+    return _re.sub(r"[^0-9A-Za-z]+", "_", str(domain_name or "")).strip("_") or "domain"
+
+
+def order_domains_by_priority(domains: List[Any], priority: Optional[Iterable[str]]) -> List[Any]:
+    """Domains named (by display name or id) in ``priority`` first, in that order;
+    the rest keep their attachment order."""
+    keys = [_cf(p) for p in (priority or []) if _cf(p)]
+    if not keys:
+        return list(domains or [])
+    rank = {}
+    for i, k in enumerate(keys):
+        rank.setdefault(k, i)
+
+    def _rank(d: Any) -> int:
+        cands = [rank[k] for k in (_cf(getattr(d, "domain", "")), _cf(getattr(d, "id", ""))) if k in rank]
+        return min(cands) if cands else len(keys)
+
+    indexed = list(enumerate(domains or []))
+    indexed.sort(key=lambda t: (_rank(t[1]), t[0]))
+    return [d for _, d in indexed]
+
+
+def resolve_domain_conflicts(
+    domains: List[Any],
+    resolution: Optional[str],
+) -> Tuple[List[Any], Dict[str, Any]]:
+    """Apply the chosen cross-domain conflict resolution and return (domains, report).
+
+    * ``priority``: ``domains`` are in precedence order; for each conflicting
+      metric only the highest-precedence domain's definition is kept, the
+      others are dropped from the (copied) lower-precedence domains.
+    * ``namespace``: every conflicting definition is kept, renamed
+      ``<Domain>_<metric>`` (label and synonyms prefixed too) so none of them
+      silently claims the shared name.
+
+    The input domains are never mutated.
+    """
+    mode = _norm_resolution(resolution)
+    conflicts = _formula_conflicts(domains)
+    report: Dict[str, Any] = {"mode": mode, "conflicts": len(conflicts), "resolved": []}
+    if not mode or not conflicts:
+        return list(domains or []), report
+
+    conflict_keys = {_cf(c["metric"]) for c in conflicts}
+    order = [getattr(d, "domain", "") for d in domains]
+    out: List[Any] = []
+    winners: Dict[str, str] = {}
+    for dom in domains:
+        new_metrics = []
+        changed = False
+        for m in dom.metrics:
+            key = _cf(m.name)
+            if key not in conflict_keys or not (m.sql_expression or m.dax_expression):
+                new_metrics.append(m)
+                continue
+            if mode == "priority":
+                if key not in winners:
+                    winners[key] = dom.domain
+                    new_metrics.append(m)
+                else:
+                    changed = True
+            else:  # namespace
+                prefix = _namespace_prefix(dom.domain)
+                new_metrics.append(m.model_copy(update={
+                    "name": f"{prefix}_{m.name}",
+                    "label": f"{dom.domain} {m.label or m.name}",
+                    "synonyms": [f"{dom.domain} {s}" for s in (m.synonyms or [])],
+                }))
+                changed = True
+        out.append(dom.model_copy(update={"metrics": new_metrics}) if changed else dom)
+
+    for c in conflicts:
+        key = _cf(c["metric"])
+        doms = sorted(c["domains"], key=lambda n: order.index(n) if n in order else len(order))
+        if mode == "priority":
+            winner = winners.get(key) or (doms[0] if doms else None)
+            report["resolved"].append({
+                "metric": c["metric"],
+                "mode": mode,
+                "winner": winner,
+                "overridden": [d for d in doms if d != winner],
+                "message": f"'{c['metric']}': using the definition from '{winner}' (domain priority).",
+            })
+        else:
+            names = [f"{_namespace_prefix(d)}_{c['metric']}" for d in doms]
+            report["resolved"].append({
+                "metric": c["metric"],
+                "mode": mode,
+                "namespaced": dict(zip(doms, names)),
+                "message": f"'{c['metric']}': kept per domain as {', '.join(names)}.",
+            })
+    return out, report
 
 
 def apply_project_ontology(
@@ -491,9 +689,16 @@ def apply_project_ontology(
     model_names: Optional[Iterable[str]] = None,
     store: Any = None,
     overrides: Optional[Dict[Tuple[str, str, str], Dict[str, Any]]] = None,
+    conflict_resolution: Optional[str] = None,
+    domain_priority: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     """Load the project's overrides + attached domains and apply them to ``model``
-    (and, identically, to every model in ``extra_models``, e.g. the OSI model)."""
+    (and, identically, to every model in ``extra_models``, e.g. the OSI model).
+
+    ``conflict_resolution`` ('priority' | 'namespace') falls back to the choice
+    saved for the project; ``domain_priority`` (names/ids) reorders the attached
+    domains before 'priority' picks the winning definition.
+    """
     if store is None:
         from semabridge.ontology.store import ontology_store as store  # noqa: N811
     if overrides is None:
@@ -502,6 +707,10 @@ def apply_project_ontology(
         overrides = load_ontology_overrides(project_id)
     domains = store.get_project_domains(project_id) if project_id else []
     attach_info = store.describe_project_domains(project_id) if project_id else {"missing_domain_ids": []}
+    if _norm_resolution(conflict_resolution) is None and project_id and hasattr(store, "get_conflict_resolution"):
+        conflict_resolution = store.get_conflict_resolution(project_id)
+    domains = order_domains_by_priority(domains, domain_priority)
+    domains, resolution_report = resolve_domain_conflicts(domains, conflict_resolution)
     names = list(model_names or [])
     report = apply_ontology_to_model(model, domains=domains, overrides=overrides, model_names=names)
     for extra in extra_models or []:
@@ -513,16 +722,50 @@ def apply_project_ontology(
             logger.warning("Ontology apply to secondary model failed: %s", exc)
     for missing in attach_info.get("missing_domain_ids", []):
         report["warnings"].append(f"Attached domain id '{missing}' no longer exists")
+    blockers = _detect_formula_conflicts(domains, resolution=conflict_resolution)
+    report["blocking_conflicts"] = blockers
+    report["conflict_resolution"] = resolution_report
+    for res in resolution_report.get("resolved", []):
+        report["warnings"].append(f"Resolved: {res['message']}")
+    for blk in blockers:
+        report["warnings"].append(
+            f"BLOCKER: {blk['message']} Choose a namespace or domain priority order before deploying."
+        )
     report["project_id"] = project_id
     return report
 
 
-def apply_ontology_for_run(engine: Any, context: Any) -> None:
-    """ExecutionEngine hook: apply the ontology to context.sml_model / osi_model.
+def _attach_project_verified_queries(project_id: Optional[str], *models: Any) -> int:
+    pid = str(project_id or "").strip()
+    if not pid:
+        return 0
+    try:
+        from semabridge.ai.verified_queries_service import list_verified_queries_for_project
 
-    Never fails the run; problems land in ``ontology_report.warnings`` of the
-    run context and run summary.
-    """
+        vqs = list_verified_queries_for_project(pid)
+    except Exception as exc:
+        logger.debug("Could not load verified queries for project %s: %s", pid, exc)
+        return 0
+    for mdl in models:
+        if mdl is not None and hasattr(mdl, "verified_queries"):
+            mdl.verified_queries = list(vqs)
+    return len(vqs)
+
+
+def apply_ontology_for_run(engine: Any, context: Any) -> None:
+    """ExecutionEngine hook: apply the ontology & verified queries to context.sml_model / osi_model."""
+    payload = getattr(context, "config_payload", None) or {}
+    effective_project_id = (
+        payload.get("binding_project_id")
+        or payload.get("delta_baseline_project_id")
+        or getattr(context, "project_id", None)
+    )
+    resolution = payload.get("ontology_conflict_resolution")
+    priority = payload.get("ontology_domain_priority") or payload.get("ontology_priority")
+    if isinstance(priority, str):
+        priority = [p.strip() for p in priority.split(",") if p.strip()]
+    if not isinstance(priority, list):
+        priority = None
     try:
         sml = context.sml_model
         osi = getattr(context, "osi_model", None)
@@ -533,19 +776,32 @@ def apply_ontology_for_run(engine: Any, context: Any) -> None:
             getattr(context, "semantic_view_name_override", None),
         ]
         report = apply_project_ontology(
-            getattr(context, "project_id", None), sml,
+            effective_project_id, sml,
             extra_models=[osi], model_names=[n for n in names if n],
+            conflict_resolution=resolution,
+            domain_priority=priority,
         )
+        vq_count = _attach_project_verified_queries(effective_project_id, sml, osi)
+        report["verified_queries_count"] = vq_count
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Ontology application failed (continuing without it): %s", exc)
-        report = {"warnings": [f"Ontology application failed: {exc}"]}
+        report = {"warnings": [f"Ontology application failed: {exc}"], "blocking_conflicts": []}
     try:
         context.ontology_report = report
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Could not attach the ontology report to the run context: %s", exc)
     summary = getattr(engine, "_summary", None)
     if summary is not None:
         try:
             summary.ontology_report = report
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Could not attach the ontology report to the run summary (dry run will not show it): %s", exc)
+    blockers = report.get("blocking_conflicts") or []
+    if blockers and not getattr(context, "dry_run", False):
+        from semabridge.core.engine.exceptions import ConversionError
+
+        details = "; ".join(b.get("message", b.get("metric", "")) for b in blockers)
+        raise ConversionError(
+            f"Conflicting metric definitions across attached domains block deployment ({details}). "
+            "Resolve the conflict or set a namespace / priority choice."
+        )

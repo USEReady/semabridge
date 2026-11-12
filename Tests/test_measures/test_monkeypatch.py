@@ -1,4 +1,10 @@
-import sys, re
+import os, sys, re
+import pytest
+
+openpyxl = pytest.importorskip("openpyxl")
+_report_path = os.environ.get("SEMABRIDGE_TEST_MEASURES_XLSX", "")
+if not os.path.isfile(_report_path):
+    pytest.skip(f"Measures Excel report not found at {_report_path!r} (set SEMABRIDGE_TEST_MEASURES_XLSX)", allow_module_level=True)
 sys.path.insert(0, ".")
 
 from semabridge.converter.dax_ast_parser import (
@@ -179,8 +185,7 @@ def enhanced_render_calc(self, args):
 DaxSqlRenderer._render_calculate = enhanced_render_calc
 
 # Now test all 22 AI measures!
-import openpyxl
-wb = openpyxl.load_workbook(r"C:\Users\manoj.s\Downloads\PowerBI_Measures_Report_Model_wise.xlsx", read_only=True, data_only=True)
+wb = openpyxl.load_workbook(_report_path, read_only=True, data_only=True)
 ws = wb["Measures Report"]
 ai_measures = []
 current_model = None

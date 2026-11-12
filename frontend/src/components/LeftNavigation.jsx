@@ -3,10 +3,12 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Map, FolderOpen, PlayCircle, Settings,
   Split, PanelLeftClose, PanelLeftOpen,
-  History as HistoryIcon, Sparkles,
+  History as HistoryIcon, Sparkles, BookOpen,
+  Activity, Zap, Clock, ArrowLeftRight, ShieldCheck, Layers,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ContextBadge from './ContextBadge';
+import StatusBar from './StatusBar';
 import './Sidebar.css';
 
 function SidebarNavIcon({ icon: Icon, active }) {
@@ -41,14 +43,29 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
     localStorage.setItem('semabridge_sidebar_pinned', JSON.stringify(isPinned));
   }, [isPinned]);
 
-  const NAV_ITEMS = [
-    { to: '/projects',      label: 'Projects',        icon: FolderOpen },
-    { to: '/jobs',          label: 'Runs',            icon: PlayCircle },
-    { to: '/explore',       label: 'Explore',         icon: Map },
-    { to: '/ontology',      label: 'Ontology & AI',   icon: Sparkles },
-    { to: '/version-control', label: 'Version Control', icon: HistoryIcon },
-    { to: '/comparator',    label: 'Comparator',      icon: Split },
-    { to: '/settings',      label: 'Settings',        icon: Settings },
+  // Grouped by job: doing the migration, then owning the semantic layer.
+  const NAV_GROUPS = [
+    {
+      label: null,
+      items: [
+        { to: '/projects', label: 'Projects', icon: FolderOpen },
+        { to: '/runs',     label: 'Runs',     icon: PlayCircle },
+        { to: '/ask',      label: 'Ask AI',   icon: Sparkles },
+      ],
+    },
+    {
+      label: 'Semantic layer',
+      items: [
+        { to: '/ontology',          label: 'Explorer',          icon: BookOpen },
+        { to: '/metric-comparator', label: 'Metric Comparator', icon: Activity },
+        { to: '/blast-radius',      label: 'Blast Radius',      icon: Zap },
+        { to: '/bi-truth',          label: 'BI-Truth Suite',    icon: ShieldCheck },
+        { to: '/cross-platform',    label: 'Cross-Platform',    icon: Layers },
+        { to: '/map',               label: 'Model map',         icon: Map },
+        { to: '/history',           label: 'History',           icon: HistoryIcon },
+        { to: '/compare',           label: 'Compare',           icon: Split },
+      ],
+    },
   ];
 
   return (
@@ -70,27 +87,44 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
         {/* Navigation Links */}
 
         {/* Navigation Links */}
-        <nav className="sidebar-nav">
-          {NAV_ITEMS.map(({ to, label, icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `nav-item ${isActive ? 'active' : ''}`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <SidebarNavIcon icon={icon} active={isActive} />
-                  <span className="nav-label">{label}</span>
-                </>
+        <nav className="sidebar-nav" aria-label="Main">
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={group.label || gi} role="group" aria-label={group.label || 'Work'}>
+              {group.label && (
+                <div className="nav-label nav-group-label">{group.label}</div>
               )}
-            </NavLink>
+              {group.items.map(({ to, label, icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <SidebarNavIcon icon={icon} active={isActive} />
+                      <span className="nav-label">{label}</span>
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
         {/* Bottom Area */}
         <div className="sidebar-footer">
+          <NavLink
+            to="/settings"
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          >
+            {({ isActive }) => (
+              <>
+                <SidebarNavIcon icon={Settings} active={isActive} />
+                <span className="nav-label">Settings</span>
+              </>
+            )}
+          </NavLink>
+          <StatusBar variant="sidebar" collapsed={!isPinned} />
           <ContextBadge 
             variant="footer" 
             isCollapsed={!isPinned} 

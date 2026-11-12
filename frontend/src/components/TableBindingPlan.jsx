@@ -33,10 +33,14 @@ export default function TableBindingPlan({ plan, style }) {
   }
 
   const tables = Array.isArray(plan.tables) ? plan.tables : [];
+  const blocked = tables.filter(t => t.action === 'blocked');
   const toCreate = tables.filter(t => t.action === 'create');
   const ties = tables.filter(t => Array.isArray(t.tie) && t.tie.length > 1);
-  const bound = tables.length - toCreate.length;
-  const accent = toCreate.length || ties.length ? 'var(--color-warning)' : 'var(--color-success)';
+  const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
+  const bound = tables.length - toCreate.length - blocked.length;
+  const accent = blocked.length
+    ? 'var(--color-danger, #ef4444)'
+    : (toCreate.length || ties.length || warnings.length ? 'var(--color-warning)' : 'var(--color-success)');
 
   return (
     <div style={{ ...box, borderLeft: `3px solid ${accent}` }}>
@@ -44,8 +48,34 @@ export default function TableBindingPlan({ plan, style }) {
         Target tables{' '}
         <span style={{ color: accent, fontWeight: 600 }}>
           {bound} bound to existing · {toCreate.length} to be created
+          {blocked.length > 0 ? ` · ${blocked.length} blocked` : ''}
         </span>
       </div>
+      {blocked.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ color: 'var(--color-danger, #ef4444)', fontWeight: 600 }}>
+            Blocked due to existing table collision (columns differ):
+          </div>
+          {blocked.map(t => (
+            <div key={`b-${t.dataset}`} style={{ fontFamily: MONO, fontSize: 11, paddingLeft: 14, color: 'var(--color-danger, #ef4444)' }}>
+              {t.dataset} ✕ {t.table}{t.message ? ` — ${t.message}` : ''}
+            </div>
+          ))}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ color: 'var(--color-warning)', fontWeight: 600 }}>
+            Tables already used by another project (same database.schema.table):
+          </div>
+          {warnings.map((w, idx) => (
+            <div key={`w-${idx}`} style={{ fontSize: 11, paddingLeft: 14, color: 'var(--color-warning)' }}>
+              {w.type === 'other_project_placeholder_table' ? '⚠ ' : ''}
+              {w.message || `Table ${w.table} is also bound by project ${w.other_project_id}`}
+            </div>
+          ))}
+        </div>
+      )}
       {toCreate.length > 0 && (
         <div style={{ marginTop: 4 }}>
           <div style={{ color: 'var(--text-primary)' }}>Empty tables this sync will create (no existing table matches):</div>

@@ -18,7 +18,14 @@ def test_returns_none_when_no_matching_run_record(monkeypatch):
     assert result is None
 
 
-def test_returns_structured_data_for_a_matching_run(monkeypatch):
+def test_returns_structured_data_for_a_matching_run(monkeypatch, tmp_path):
+    from semabridge.api.services import run_report_service, run_model_results
+
+    # Keep the persisted-summary fallback away from real output/reports files.
+    monkeypatch.setattr(run_report_service, "REPORTS_ROOT", tmp_path)
+    monkeypatch.setattr(run_report_service, "load_persisted_model_reports", lambda *a, **k: [])
+    monkeypatch.setattr(run_model_results, "load_run_model_results", lambda *a, **k: [])
+    monkeypatch.setattr(run_model_results, "load_model_summary", lambda *a, **k: None)
     monkeypatch.setattr(run_service, "_compat_ensure_loaded", lambda: None)
     monkeypatch.setattr(
         run_service,

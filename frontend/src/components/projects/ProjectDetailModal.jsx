@@ -17,7 +17,7 @@ const TABS = ['Runs', 'Config', 'Mappings'];
 
 function openRunsPage() {
   if (typeof window !== 'undefined') {
-    window.location.assign('/jobs');
+    window.location.assign('/runs');
   }
 }
 

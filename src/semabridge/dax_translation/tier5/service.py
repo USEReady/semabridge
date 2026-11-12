@@ -33,6 +33,7 @@ from semabridge.dax_translation.tier5.validation import (
     fix_common_llm_issues,
     _is_scalar_metric_sql,
     _dax_divide_lost_its_division,
+    detect_unfaithful_metric_sql,
     normalize_metric_column_references,
     validate_metric_column_references,
 )
@@ -143,14 +144,42 @@ def _repair_and_validate(sql: Optional[str], request: TranslationRequest) -> Tup
     nested_aggregate_reason = detect_nested_aggregate(repaired)
     if nested_aggregate_reason:
         return None, nested_aggregate_reason
+    unfaithful_reason = detect_unfaithful_metric_sql(repaired, request.dax)
+    if unfaithful_reason:
+        return None, unfaithful_reason
     normalized = normalize_metric_column_references(repaired, request)
     ok, err = validate_metric_column_references(normalized, request)
     if not ok:
         return None, err
+    unfaithful_reason = detect_unfaithful_metric_sql(normalized, request.dax)
+    if unfaithful_reason:
+        return None, unfaithful_reason
     has_invented, invented_reason = _check_no_invented_literals(normalized, request.dax)
     if has_invented:
         return None, invented_reason
     return normalized, None
+
+
+def _self_confidence_too_low(confidence: Any, threshold: Optional[float]) -> Optional[str]:
+    """The model's OWN confidence in its answer (requested in the structured
+    {"sql":..., "confidence":...} contract). When the model says it is not
+    confident (below `threshold`), the SQL is not trusted -- the metric fails
+    closed to a placeholder with a reason instead of shipping a guess. Applies
+    equally to fresh answers and to cache entries written before this gate
+    existed. A provider that ignored the JSON contract (None) is not gated
+    here; every other validation still applies to it."""
+    if threshold is None or confidence is None:
+        return None
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return None
+    if value < float(threshold):
+        return (
+            f"model self-reported confidence {value:.2f} is below "
+            f"min_self_reported_confidence {float(threshold):.2f}"
+        )
+    return None
 
 
 def _build_adapters(config: Tier5Config) -> Dict[str, ProviderAdapter]:
@@ -192,6 +221,15 @@ class Tier5Service:
     def _try_cache(self, request: TranslationRequest) -> Optional[TranslationResult]:
         entry = self._cache.get(request)
         if entry is None:
+            return None
+        low_reason = _self_confidence_too_low(
+            entry.get("llm_self_reported_confidence"),
+            getattr(self.config, "min_self_reported_confidence", None),
+        )
+        if low_reason:
+            # Same gate as a fresh answer: a low-confidence cached entry is
+            # ignored (never deleted from the user's cache file).
+            logger.info("Tier5Service: ignoring cached translation for %r: %s", request.metric_name, low_reason)
             return None
         normalized, _failure_reason = _repair_and_validate(entry.get("sql"), request)
         if normalized is None:
@@ -262,6 +300,13 @@ class Tier5Service:
             parsed_sql, llm_self_reported_confidence = parse_structured_response(raw.text)
             if not parsed_sql:
                 validation_notes.append(f"{provider_name}: no SQL found in structured response — rejected")
+                continue
+            low_reason = _self_confidence_too_low(
+                llm_self_reported_confidence,
+                getattr(self.config, "min_self_reported_confidence", None),
+            )
+            if low_reason:
+                validation_notes.append(f"{provider_name}: {low_reason} — rejected")
                 continue
 
             normalized, failure_reason = _repair_and_validate(parsed_sql, request)
@@ -414,7 +459,8 @@ class Tier5Service:
 
             candidates = [
                 self._validate_one_batch_candidate(
-                    req, parsed.get(batch_key(i)), provider_name, raw.confidence
+                    req, parsed.get(batch_key(i)), provider_name, raw.confidence,
+                    min_self_reported_confidence=getattr(self.config, "min_self_reported_confidence", None),
                 )
                 for i, req in enumerate(requests)
             ]
@@ -431,6 +477,7 @@ class Tier5Service:
         raw_value: Any,
         provider_name: str,
         confidence: float,
+        min_self_reported_confidence: Optional[float] = None,
     ) -> Optional[TranslationResult]:
         """Applies the identical per-item checks translate() applies to a
         single-item response — never a weaker pass just because the
@@ -451,6 +498,8 @@ class Tier5Service:
         """
         sql, llm_self_reported_confidence = _extract_sql_and_confidence(raw_value)
         if not sql:
+            return None
+        if _self_confidence_too_low(llm_self_reported_confidence, min_self_reported_confidence):
             return None
 
         normalized, _failure_reason = _repair_and_validate(sql, request)

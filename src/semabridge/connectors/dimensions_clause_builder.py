@@ -44,6 +44,7 @@ class DimensionsClauseBuilder:
         measure_columns: Set[Tuple[str, str]],
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
         relationships: Optional[List[Any]] = None,
+        excluded_fact_cols: Optional[Set[Tuple[str, str]]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         """Build DIMENSIONS clause for SML model.
 
@@ -58,6 +59,7 @@ class DimensionsClauseBuilder:
             is_osi=False, live_col_lookup=live_col_lookup or {},
             relationships=getattr(sml, "relationships", []) or [],
             model=sml,
+            excluded_fact_cols=excluded_fact_cols,
         )
 
     def build_for_osi(
@@ -68,6 +70,7 @@ class DimensionsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         measure_columns: Set[Tuple[str, str]],
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
+        excluded_fact_cols: Optional[Set[Tuple[str, str]]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         """Build DIMENSIONS clause for OSI model.
 
@@ -79,7 +82,24 @@ class DimensionsClauseBuilder:
             is_osi=True, live_col_lookup=live_col_lookup or {},
             relationships=getattr(osi, "relationships", []) or [],
             model=osi,
+            excluded_fact_cols=excluded_fact_cols,
         )
+
+    def _is_hidden_column(self, dataset_obj: Any, raw_col: Any, phys_col: str, attr: Any = None) -> bool:
+        if attr is not None and getattr(attr, "is_hidden", False):
+            return True
+        if dataset_obj is None:
+            return False
+        if getattr(dataset_obj, "is_hidden", False):
+            return True
+        targets = {str(raw_col or "").strip().upper(), str(phys_col or "").strip().upper()} - {""}
+        for col in getattr(dataset_obj, "columns", []) or []:
+            c_name = str(getattr(col, "unique_name", "") or "").strip().upper()
+            c_phys = str(self.identifier_sanitizer.sanitize_column(getattr(col, "unique_name", "")) or "").strip().upper()
+            if c_name in targets or c_phys in targets:
+                if getattr(col, "is_hidden", False):
+                    return True
+        return False
 
     def _build_dimensions(
         self,
@@ -94,6 +114,7 @@ class DimensionsClauseBuilder:
         live_col_lookup: Optional[Dict[str, Set[str]]] = None,
         relationships: Optional[List[Any]] = None,
         model: Optional[Any] = None,
+        excluded_fact_cols: Optional[Set[Tuple[str, str]]] = None,
     ) -> Tuple[List[str], Dict[str, List[str]]]:
         dims_lines: List[str] = []
         # Tracks columns present in the source model but skipped because they
@@ -152,6 +173,9 @@ class DimensionsClauseBuilder:
                 dim_key = (alias, semantic_name, phys_col)
                 physical_dim_key = (alias, phys_col)
                 
+                if excluded_fact_cols and (alias.upper(), str(phys_col).upper()) in excluded_fact_cols:
+                    continue
+
                 if self._is_measure_column(attr, phys_col, measure_columns, is_osi):
                     continue
                 
@@ -176,8 +200,9 @@ class DimensionsClauseBuilder:
                     if orig_pbix:
                         alias_to_phys_col[(alias, str(orig_pbix).strip().upper())] = phys_col
 
+                    priv_prefix = "PRIVATE " if self._is_hidden_column(dataset_obj, raw_col, phys_col, attr=attr) else ""
                     dims_lines.append(
-                        f'  {alias}."{emitted_name}" AS '
+                        f'  {priv_prefix}{alias}."{emitted_name}" AS '
                         f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                         f'{synonyms_clause(col_synonyms, element_description(attr, column_of(dataset_obj, raw_col)))}'
                     )
@@ -285,6 +310,9 @@ class DimensionsClauseBuilder:
                             "(no live Snowflake schema was fetched to confirm it)",
                             dataset=dataset.unique_name,
                         )
+                if excluded_fact_cols and (alias.upper(), str(phys_col).upper()) in excluded_fact_cols:
+                    continue
+
                 dim_key = (alias, semantic_name, phys_col)
                 physical_dim_key = (alias, phys_col)
                 if dim_key in added_dimensions or physical_dim_key in added_physical_dimensions:
@@ -306,8 +334,9 @@ class DimensionsClauseBuilder:
                 if semantic_source_name and semantic_source_name.strip().upper() != emitted_name.strip().upper():
                     if semantic_source_name not in col_syns:
                         col_syns.append(semantic_source_name)
+                priv_prefix = "PRIVATE " if self._is_hidden_column(dataset, col.unique_name, phys_col) else ""
                 dims_lines.append(
-                    f'  {alias}."{emitted_name}" AS '
+                    f'  {priv_prefix}{alias}."{emitted_name}" AS '
                     f'{self.sanitizer.format_physical_column_ref(alias, phys_col, model_name=model_name)}'
                     f'{synonyms_clause(col_syns, element_description(col))}'
                 )
@@ -398,6 +427,9 @@ class DimensionsClauseBuilder:
                 emitted_name = self._resolve_unique_dimension_alias(
                     semantic_name, ds_used, phys_col
                 )
+                if excluded_fact_cols and (alias.upper(), str(phys_col).upper()) in excluded_fact_cols:
+                    continue
+
                 is_helper = (
                     phys_col.startswith("IS_")
                     or phys_col.startswith(("_CURRENT_", "_ALL_", "_COL_"))
@@ -408,6 +440,7 @@ class DimensionsClauseBuilder:
                         and semantic_name.upper() not in ds_orig_cols
                         and emitted_name.upper() not in ds_orig_cols
                     )
+                    or self._is_hidden_column(dataset, phys_col, phys_col)
                 )
                 priv_prefix = "PRIVATE " if is_helper else ""
                 dims_lines.append(
@@ -423,15 +456,16 @@ class DimensionsClauseBuilder:
             ds_used = used_dimension_aliases_by_dataset.setdefault(fallback_alias, set())
             self._apply_fallback(datasets[0], dataset_aliases, dataset_col_lookup, measure_columns, ds_used, dims_lines, model_name, is_osi)
 
-        # 4. Duplicate dimensions for inactive-relationship alias tables
+        # 4. Duplicate dimensions for inactive-relationship alias tables ONLY when USERELATIONSHIP uses them
+        from semabridge.utils.identifiers import inactive_role_alias_map, _relationship_signature
+
         seen_inact_aliases = set()
+        role_aliases = inactive_role_alias_map(relationships or (), model)
         for rel in relationships or ():
-            if not getattr(rel, "is_active", True):
+            inact_alias = role_aliases.get(_relationship_signature(rel)) if not getattr(rel, "is_active", True) else None
+            if inact_alias:
                 to_ds = getattr(rel, "to_dataset", None)
-                from_cols = getattr(rel, "from_columns", None) or []
-                fk_col = from_cols[0] if from_cols else ""
-                if to_ds and fk_col:
-                    inact_alias = to_alias(to_ds, fk_col)
+                if to_ds:
                     base_alias = dataset_aliases.get(to_ds)
                     if base_alias and inact_alias != base_alias and inact_alias not in seen_inact_aliases:
                         seen_inact_aliases.add(inact_alias)

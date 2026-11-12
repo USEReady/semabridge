@@ -800,6 +800,10 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 # with a COMMENT, others removed) and ledgered -- never a
                 # whole-deploy failure.
                 ddls = self._validate_ddl_against_information_schema(cur, ddls)
+                # A date stored as TEXT in an existing table/view would make
+                # YEAR()/EXTRACT/DATE_TRUNC reject the whole view; coerce
+                # those references instead (existing tables are never altered).
+                ddls = self._coerce_text_date_columns(cur, ddls)
 
                 _ddls_with_sql_total = sum(1 for _s in ddls if _s)
                 _ddls_executed_count = 0
@@ -2127,52 +2131,61 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
     _tokenize_dataset_name = staticmethod(_tokenize_dataset_name)
 
     def _identify_fact_table(self, model):
+        """Identify the primary fact table from the model's structure only.
+
+        Same rule as the TABLES clause: a fact is the many side of ACTIVE
+        many-to-one relationships (one-to-many counted from its many end;
+        1:1, many-to-many and inactive relationships never count), preferring
+        tables that are never on a one side. Among those, the one holding the
+        most metrics wins, then the most active N:1 relationships. Without
+        any active N:1 relationship, the dataset holding the most metrics.
+        Table names are never used.
         """
-        Automatically identify the fact table in the model.
-        Strategy: Table with most relationships OR most metrics OR contains 'FACT' keyword.
-        """
-        datasets = getattr(model, 'datasets', [])
+        datasets = getattr(model, 'datasets', []) or []
         if not datasets:
             return None
+        order = {d.unique_name: i for i, d in enumerate(datasets) if getattr(d, "unique_name", None)}
 
-        # Strategy 1: Look for a table whose name contains 'FACT'/'SALES'/'TRANSACTION'
-        # as a whole word — not merely as a substring (e.g. "Manufacturer", "Artifact",
-        # and "Satisfaction" all contain "fact" mid-word but aren't fact tables).
-        for dataset in datasets:
-            tokens = set(self._tokenize_dataset_name(dataset.unique_name))
-            if tokens & self._FACT_KEYWORDS:
-                logger.info(f"✅ Identified fact table: {dataset.unique_name} (token match)")
-                return dataset.unique_name
-        
-        # Strategy 2: Table with most relationships
-        relationships = getattr(model, 'relationships', [])
-        from_counts = {}
-        for rel in relationships:
-            from_ds = getattr(rel, 'from_dataset', None)
-            if from_ds:
-                from_counts[from_ds] = from_counts.get(from_ds, 0) + 1
-        
-        if from_counts:
-            max_from = max(from_counts, key=from_counts.get)
-            logger.info(f"✅ Identified fact table: {max_from} (most relationships: {from_counts[max_from]})")
-            return max_from
-        
-        # Strategy 3: Table with most metrics
-        metrics = getattr(model, 'metrics', [])
-        metric_counts = {}
-        for metric in metrics:
+        many_side: dict = {}
+        one_side: set = set()
+        for rel in getattr(model, 'relationships', []) or []:
+            if not getattr(rel, "is_active", True):
+                continue
+            card = getattr(rel, "cardinality", None)
+            card_str = str(getattr(card, "value", card) or "many_to_one").lower().replace("-", "_").strip()
+            if card_str in ("many_to_one", "manytoone", "m:1", "*:1", ""):
+                many, one = getattr(rel, "from_dataset", None), getattr(rel, "to_dataset", None)
+            elif card_str in ("one_to_many", "onetomany", "1:m", "1:*"):
+                many, one = getattr(rel, "to_dataset", None), getattr(rel, "from_dataset", None)
+            else:
+                continue
+            if many in order:
+                many_side[many] = many_side.get(many, 0) + 1
+            if one:
+                one_side.add(one)
+
+        metric_counts: dict = {}
+        for metric in getattr(model, 'metrics', []) or []:
             ds = getattr(metric, 'dataset', None)
-            if ds:
+            if ds in order:
                 metric_counts[ds] = metric_counts.get(ds, 0) + 1
-        
+
+        candidates = [d for d in many_side if d not in one_side] or list(many_side)
+        if candidates:
+            best = max(candidates, key=lambda d: (metric_counts.get(d, 0), many_side[d], -order[d]))
+            logger.info(
+                "Identified fact table: %s (many side of %d active N:1 relationship(s), %d metric(s))",
+                best, many_side[best], metric_counts.get(best, 0),
+            )
+            return best
+
         if metric_counts:
-            max_metrics = max(metric_counts, key=metric_counts.get)
-            logger.info(f"✅ Identified fact table: {max_metrics} (most metrics: {metric_counts[max_metrics]})")
-            return max_metrics
-        
-        # Fallback: first dataset
-        logger.warning(f"⚠️ Using first dataset as fact table: {datasets[0].unique_name}")
-        return datasets[0].unique_name
+            best = max(metric_counts, key=lambda d: (metric_counts[d], -order[d]))
+            logger.info("Identified fact table: %s (no active N:1 relationships; most metrics: %d)", best, metric_counts[best])
+            return best
+
+        logger.info("No fact table identified: no active N:1 relationships and no metrics.")
+        return None
 
     def _get_fact_tables_needing_enrichment(self, model) -> list[str]:
         """

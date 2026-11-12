@@ -298,6 +298,25 @@ async def list_projects(
     return projects
 
 
+@router.get("/api/portfolio/summary")
+async def get_portfolio_summary(
+    request: Request,
+    days: int = Query(30, ge=1, le=365, description="Run-health window in days"),
+):
+    """Migration summary across the caller's projects (Projects page summary band)."""
+    from semabridge.api.services.portfolio_summary_service import build_portfolio_summary
+
+    user_id = require_request_user_id(request)
+    projects = await list_projects_compat(limit=200, offset=0)
+    if auth_is_enabled():
+        projects = [
+            p for p in projects
+            if (p.get("id") or p.get("project_id"))
+            and is_project_owned_by_user(p.get("id") or p.get("project_id"), user_id, log_denied=False)
+        ]
+    return await build_portfolio_summary(projects, days=days)
+
+
 @router.get("/api/projects/discovery")
 async def list_project_discovery(request: Request):
     user_id = require_request_user_id(request)

@@ -476,7 +476,9 @@ function localInputsFromUtcIso(isoValue) {
 /**
  * ProjectConfigPage — dedicated full page /projects/:id/config
  */
-export default function ProjectConfigPage() {
+// `embedded`: rendered as the Settings tab of /projects/:id. Hides this page's
+// own title/back button and its Run now button (the project page has them).
+export default function ProjectConfigPage({ embedded = false } = {}) {
   // --- Scheduler State (must be at top-level of component) ---
   const [schedulerOpen, setSchedulerOpen] = useState(false);
   const [scheduleType, setScheduleType] = useState('manual');
@@ -1311,7 +1313,7 @@ export default function ProjectConfigPage() {
       }
 
       // Sync Now is the primary execution entry point. Route users directly to Runs page showing model runs.
-      navigate('/jobs', { state: { runId, autoExpand: true } });
+      navigate('/runs', { state: { runId, autoExpand: true } });
       return;
     } catch (err) {
       const msg = err?.message || 'Sync failed due to unexpected error.';
@@ -1650,7 +1652,7 @@ export default function ProjectConfigPage() {
 
   const handleCreateJob = async () => {
     await handleSave();
-    navigate('/jobs');
+    navigate('/runs');
   };
 
   const handleScheduleSave = async () => {
@@ -1767,7 +1769,7 @@ export default function ProjectConfigPage() {
     ? `Syncing${projectSyncProgress > 0 ? ` ${projectSyncProgress}%` : '...'}`
     : isProjectSynced
       ? 'Sync Successful'
-      : 'Sync Now';
+      : 'Run now';
 
   const wizardInitialData = useMemo(() => {
     return {
@@ -1803,8 +1805,11 @@ export default function ProjectConfigPage() {
 
 
   return (
-    <div style={{ padding: '28px 48px', minHeight: '100%', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '24px 0', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap' }}>
+    <div style={embedded
+      ? { width: '100%', display: 'flex', flexDirection: 'column' }
+      : { padding: '28px 48px', minHeight: '100%', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ padding: embedded ? '0 0 12px' : '24px 0', borderBottom: '1px solid var(--border-main)', display: 'flex', alignItems: 'flex-start', gap: 24, flexWrap: 'wrap', justifyContent: embedded ? 'flex-end' : undefined }}>
+        {!embedded && (
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <button
@@ -1839,11 +1844,15 @@ export default function ProjectConfigPage() {
             </span>
           </div>
         </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button 
             onClick={() => setSchedulerOpen(true)} 
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all rounded-lg bg-[var(--accent-blue)] hover:bg-blue-600 text-white shadow-lg shadow-blue-900/20"
+            className={embedded
+              // Embedded: "Run now" in the project header stays the only primary button.
+              ? "flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all rounded-lg border border-[var(--border-main)] hover:bg-[var(--bg-surface-raised)] text-[var(--text-secondary)]"
+              : "flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all rounded-lg bg-[var(--accent-blue)] hover:bg-blue-600 text-white shadow-lg shadow-blue-900/20"}
           >
             <CalendarClock size={14} /> CONFIGURE SCHEDULE
           </button>
@@ -1932,12 +1941,15 @@ export default function ProjectConfigPage() {
           </div>
           */}
 
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
-            <MappingPreviewPanel
-              mappings={projectMappings}
-              loading={projectMappingsLoading}
-              error={projectMappingsError}
-            />
+          <div style={{ flex: 1, minHeight: 0, overflow: embedded ? 'visible' : 'auto', padding: embedded ? '16px 0' : 16 }}>
+            {/* Embedded in the project page, the Mappings tab shows these. */}
+            {!embedded && (
+              <MappingPreviewPanel
+                mappings={projectMappings}
+                loading={projectMappingsLoading}
+                error={projectMappingsError}
+              />
+            )}
             {viewMode === 'form' ? (
               <ProjectDashboard
                 project={project}
@@ -2008,18 +2020,21 @@ export default function ProjectConfigPage() {
 
       {/* Sticky Bottom Persistent Action Bar */}
       <div style={{ 
-        padding: '16px 48px', 
+        padding: embedded ? '12px 16px' : '16px 48px', 
         borderTop: '1px solid var(--border-main)', 
         display: 'flex', 
         alignItems: 'center',
         justifyContent: 'space-between', 
         background: 'var(--bg-surface)', 
         backdropFilter: 'blur(16px)',
-        position: 'fixed', 
+        // Embedded: stick to the bottom of the tab instead of covering the app's side nav.
+        position: embedded ? 'sticky' : 'fixed', 
         bottom: 0, 
         left: 0,
         right: 0,
-        zIndex: 1000,
+        zIndex: embedded ? 5 : 1000,
+        borderRadius: embedded ? 10 : undefined,
+        border: embedded ? '1px solid var(--border-main)' : undefined,
         boxShadow: 'var(--shadow-md)'
       }}>
         <div style={{ display: 'flex', gap: 12 }}>
@@ -2050,14 +2065,16 @@ export default function ProjectConfigPage() {
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
               Save Config
             </button>
+            {!embedded && (
             <button 
               onClick={handleRunNow} 
               disabled={syncing} 
               className="flex items-center gap-2 px-6 py-2 text-xs font-bold transition-all rounded-lg bg-[var(--accent-blue)] hover:bg-blue-600 text-white shadow-lg shadow-blue-900/20"
             >
               {syncing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              {syncing ? 'Syncing...' : 'Sync Now'}
+              {syncing ? 'Running…' : 'Run now'}
             </button>
+            )}
           </div>
         </div>
       </div>
@@ -2660,7 +2677,8 @@ export default function ProjectConfigPage() {
   );
 }
 
-function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
+// Also used by the Mappings tab of the project page.
+export function MappingPreviewPanel({ mappings = [], loading = false, error = '' }) {
   if (loading) {
     return (
       <div style={{ marginBottom: 16, border: '1px solid var(--border-main)', borderRadius: 10, background: 'var(--bg-surface)', padding: 14, fontSize: 12, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>

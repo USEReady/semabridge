@@ -7,6 +7,8 @@ fact tables based on relationship patterns.
 
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 from semabridge.sml.models import DataType, AggregationType
@@ -171,11 +173,10 @@ class MeasureDetector:
                 suggested_agg = AggregationType.SUM
 
             if is_likely_measure:
-                # Include table name in measure name to ensure uniqueness across the model
-                col_display = col_name.replace('_', ' ').title()
-                table_prefix = table_name.replace('_', ' ').title()
+                clean_col = re.sub(r"[^A-Za-z0-9]+", "_", col_name).strip("_").upper() or "COLUMN"
+                agg_label = suggested_agg.value.upper()
                 measure = {
-                    "name": f"{table_prefix} - Sum of {col_display}",
+                    "name": f"{agg_label}_OF_{clean_col}",
                     "column": col_name,
                     "table": table_name,
                     "aggregation": suggested_agg.value,
@@ -222,8 +223,21 @@ class MeasureDetector:
             measures = self.detect_measures(table_name, cols, is_fact=is_fact)
             if measures:
                 results[table_name] = measures
-        
-        total = sum(len(m) for m in results.values())
+
+        # Names are AGG_OF_COLUMN; when the same column name exists on several
+        # tables, qualify with the table so metric names stay unique per model.
+        name_counts: dict[str, int] = {}
+        for measures in results.values():
+            for m in measures:
+                name_counts[m["name"]] = name_counts.get(m["name"], 0) + 1
+        for table_name, measures in results.items():
+            clean_table = re.sub(r"[^A-Za-z0-9]+", "_", table_name).strip("_").upper() or "TABLE"
+            for m in measures:
+                if name_counts.get(m["name"], 0) > 1:
+                    agg, _, col = m["name"].partition("_OF_")
+                    m["name"] = f"{agg}_OF_{clean_table}_{col}"
+
+        total =sum(len(m) for m in results.values())
         logger.info(f"Detected {total} potential measures across {len(results)} tables")
         
         return results

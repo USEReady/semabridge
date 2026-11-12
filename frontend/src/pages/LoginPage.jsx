@@ -13,7 +13,7 @@ export default function LoginPage() {
   const location = useLocation();
   const from = typeof location.state?.from === 'string'
     ? location.state.from
-    : (location.state?.from?.pathname ?? '/explore');
+    : (location.state?.from?.pathname ?? '/projects');
 
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [username, setUsername] = useState('');
@@ -88,9 +88,32 @@ export default function LoginPage() {
 
   return (
     <div
-      className="flex items-center justify-center h-screen bg-app"
+      className="flex h-screen bg-app"
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}
     >
+      {/* What the product does, for people invited by a teammate (hidden on small screens) */}
+      <section
+        className="hidden md:flex flex-col justify-between"
+        style={{
+          flex: '1.1 1 0', padding: 48, color: '#fff',
+          background: 'linear-gradient(150deg, var(--accent-blue) 0%, var(--accent-cyan, #06B6D4) 100%)',
+        }}
+      >
+        <div className="flex items-center gap-2" style={{ fontWeight: 700, fontSize: 15 }}>
+          <Hexagon size={22} strokeWidth={2.5} /> SemaBridge
+        </div>
+        <div style={{ maxWidth: 460 }}>
+          <h2 style={{ fontSize: 30, lineHeight: 1.2, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>
+            Move your semantic models between BI platforms without losing a single definition.
+          </h2>
+          <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 14, opacity: 0.92 }}>
+            <span>Power BI · Fabric → Snowflake · Databricks</span>
+            <span>Governed metrics shared by every dashboard and AI agent</span>
+          </div>
+        </div>
+        <span style={{ fontSize: 12, opacity: 0.75 }}>Semantic model migration and governance</span>
+      </section>
+      <div className="flex items-center justify-center" style={{ flex: '1 1 0', padding: 24 }}>
       <div
         className="w-full max-w-sm rounded-xl bg-surface border border-main p-8"
         style={{ boxShadow: 'var(--shadow-lg)' }}
@@ -254,6 +277,7 @@ export default function LoginPage() {
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

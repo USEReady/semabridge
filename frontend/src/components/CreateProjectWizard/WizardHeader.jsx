@@ -49,7 +49,7 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
               letterSpacing: '-0.02em',
               lineHeight: 1.2
             }}>
-              {editMode ? 'Modernize Project' : 'New Semantic Project'}
+              {editMode ? 'Edit project' : 'New project'}
             </h1>
             {name.trim() && (
               <span style={{
@@ -73,7 +73,7 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
             alignItems: 'center',
             gap: 6
           }}>
-            <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>Step {step} of 5</span>
+            <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>Step {step} of {STEPS.length}</span>
             <span style={{ color: 'var(--border-main)' }}>•</span>
             <span>{STEPS[step - 1]?.label}</span>
           </div>
@@ -158,12 +158,17 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
       {/* Stepper Progress Badges */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         {STEPS.map((s, idx) => {
-          const isCompleted = step > idx + 1;
-          const isActive = step === idx + 1;
+          const targetStep = idx + 1;
+          const isCompleted = step > targetStep;
+          const isActive = step === targetStep;
+          const canJump = editMode || targetStep <= step;
           return (
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div
-                title={`Step ${idx + 1}: ${s.label}`}
+              <button
+                type="button"
+                disabled={!canJump}
+                onClick={() => canJump && setWizardState({ step: targetStep })}
+                title={canJump ? `Go to Step ${targetStep}: ${s.label}` : `Step ${targetStep}: ${s.label}`}
                 style={{
                   width: isActive ? 28 : 24,
                   height: isActive ? 28 : 24,
@@ -173,6 +178,8 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
                   justifyContent: 'center',
                   fontSize: 11,
                   fontWeight: 700,
+                  padding: 0,
+                  cursor: canJump ? 'pointer' : 'default',
                   transition: 'all 0.2s ease',
                   background: isActive
                     ? 'var(--accent-blue)'
@@ -192,8 +199,8 @@ export function WizardHeader({ editMode, hasMeaningfulData, clearWizardState, na
                   boxShadow: isActive ? '0 0 12px var(--color-accent-faint)' : 'none'
                 }}
               >
-                {isCompleted ? <Check size={13} strokeWidth={2.8} /> : idx + 1}
-              </div>
+                {isCompleted ? <Check size={13} strokeWidth={2.8} /> : targetStep}
+              </button>
               {idx < STEPS.length - 1 && (
                 <div
                   style={{

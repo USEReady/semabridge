@@ -62,7 +62,7 @@ We provide **convenient commands** for common development tasks on all platforms
 make help              # Show all available commands
 make install           # Install all dependencies (Python + npm)
 make migrate           # Apply database migrations
-make run               # Start FastAPI backend (port 8001)
+make run               # Start FastAPI backend (port 8002)
 make run-frontend      # Start Vite React frontend
 make test              # Run backend pytest test suite
 make pre-deploy        # Run 5-stage automated pre-deploy quality gates
@@ -84,7 +84,7 @@ These provide a **uniform interface** across Windows, macOS, and Linux. All back
 ```bash
 # macOS/Linux
 make migrate      # Apply latest database migrations
-make run          # Start Uvicorn backend (http://127.0.0.1:8001)
+make run          # Start Uvicorn backend (http://127.0.0.1:8002)
 make run-frontend # Start Vite frontend dev server
 make pre-deploy   # Run automated quality gates before pushing code
 

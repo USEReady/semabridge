@@ -1,21 +1,20 @@
 """Semantic Model & Domain Ontology CI/CD Linter.
 
-Automates semantic quality gates for GitHub Actions, GitLab CI, and pre-commit hooks:
-- Enforces data stewardship and documentation completeness
-- Enforces metric naming conventions
-- Detects circular joins and invalid graph relationships
-- Validates cross-domain metric collisions
+Automates semantic quality gates for CI/CD pipelines and pre-commit checks:
+- Enforces data stewardship and documentation completeness on metrics & concepts
+- Enforces naming conventions and separator-normalized collision detection
+- Detects circular joins and self-referencing hierarchies across relationships
+- Lints every domain independently so duplicate metrics in secondary domains are never skipped
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
-from semabridge.intermediate.models import OSIModel
-from semabridge.ontology.models import FederatedEnterpriseOntology
+from semabridge.ontology.models import DomainOntology, FederatedEnterpriseOntology
 
 logger = logging.getLogger("semabridge.governance.linter")
 
@@ -23,7 +22,7 @@ logger = logging.getLogger("semabridge.governance.linter")
 class LintIssue(BaseModel):
     rule_id: str
     severity: str  # 'ERROR', 'WARNING', 'INFO'
-    object_type: str  # 'METRIC', 'CONCEPT', 'RELATIONSHIP'
+    object_type: str  # 'METRIC', 'CONCEPT', 'ATTRIBUTE', 'RELATIONSHIP'
     object_name: str
     domain: Optional[str] = None
     message: str
@@ -39,6 +38,31 @@ class LintReport(BaseModel):
     summary: str
 
 
+# Concept/attribute identifiers: snake_case in either warehouse case (order_line / ORDER_LINE).
+_SNAKE_IDENT_RE = re.compile(r"^(?:[a-z][a-z0-9_]*|[A-Z][A-Z0-9_]*)$")
+
+
+def _governed_identifier(obj: Any) -> str:
+    """Identifier a concept/attribute is deployed under.
+
+    BI-derived objects keep their human display name in ``name`` and carry the generated
+    warehouse identifier in ``logical_name``; that identifier is what naming governs (the same way
+    a metric's display ``label`` is never checked). Hand-written objects without one are checked on ``name``.
+    """
+    return str(getattr(obj, "logical_name", None) or getattr(obj, "name", None) or "").strip()
+
+
+def _norm_metric_name(name: str) -> str:
+    """Normalize whitespace, underscores, and hyphens while preserving symbols such as '%'."""
+    return re.sub(r"[\s_\-]+", "", str(name or "").strip().casefold())
+
+
+def _norm_formula_text(expr: Optional[str]) -> str:
+    """Normalize SQL formula whitespace and casing for collision comparison."""
+    txt = re.sub(r"\s+", " ", str(expr or "").strip()).casefold()
+    return re.sub(r"\s*([(),+\-*/=<>])\s*", r"\1", txt)
+
+
 class SemanticLinter:
     """Evaluates semantic models and domain ontologies against enterprise governance standards."""
 
@@ -47,17 +71,43 @@ class SemanticLinter:
         require_steward: bool = True,
         require_description: bool = True,
         enforce_snake_case_metrics: bool = True,
+        steward_severity: Optional[str] = None,
+        enforce_snake_case_concepts: Optional[bool] = None,
     ):
         self.require_steward = require_steward
         self.require_description = require_description
         self.enforce_snake_case_metrics = enforce_snake_case_metrics
+        # Concept/attribute naming follows the metric naming switch unless set explicitly.
+        self.enforce_snake_case_concepts = (
+            enforce_snake_case_metrics if enforce_snake_case_concepts is None else bool(enforce_snake_case_concepts)
+        )
+        if steward_severity is not None and str(steward_severity).strip():
+            sev = str(steward_severity).strip().upper()
+            self.steward_severity = sev if sev in ("ERROR", "WARNING", "OFF") else ("ERROR" if require_steward else "OFF")
+        else:
+            self.steward_severity = "ERROR" if require_steward else "OFF"
 
-    def lint_ontology(self, ontology: FederatedEnterpriseOntology) -> LintReport:
-        """Run all governance rules over a federated enterprise ontology."""
+    def lint_ontology(
+        self,
+        ontology: FederatedEnterpriseOntology,
+        allowed_domains: Optional[List[str]] = None,
+    ) -> LintReport:
+        """Run all governance rules over every scoped domain and relationship in the ontology."""
         issues: List[LintIssue] = []
+        allowed_cf = {d.casefold() for d in (allowed_domains or []) if d}
 
-        # 1. Rule: Metric Collisions
+        def _domain_allowed(dom_name: Optional[str], dom_id: Optional[str] = None) -> bool:
+            if not allowed_cf:
+                return True
+            names = {n.casefold() for n in (dom_name, dom_id) if n}
+            return bool(names & allowed_cf)
+
+        # 1. Rule: Existing Metric Collisions + Separator-Normalized Collisions (E7, E8)
+        reported_collision_keys: Set[str] = set()
         for col in ontology.collisions:
+            if allowed_cf and not any(d.casefold() in allowed_cf for d in (col.conflicting_domains or [])):
+                continue
+            reported_collision_keys.add(_norm_metric_name(col.item_name))
             issues.append(
                 LintIssue(
                     rule_id="RULE_METRIC_COLLISION",
@@ -66,33 +116,187 @@ class SemanticLinter:
                     object_name=col.item_name,
                     domain=", ".join(col.conflicting_domains),
                     message=col.message,
-                    remediation="Align metric definitions across teams or designate a single domain owner.",
+                    remediation="Align definitions across domains or designate a single owner.",
                 )
             )
 
-        # 2. Rule: Unresolved References
-        for unres in ontology.unresolved_references:
+        domain_list: List[DomainOntology] = (
+            [d for d in ontology.domains.values() if _domain_allowed(d.domain, getattr(d, "id", None))]
+            if ontology.domains
+            else []
+        )
+
+        # Group all metric definitions across distinct-project domains by separator-normalized identifier
+        if domain_list:
+            dom_proj_key: Dict[str, str] = {}
+            for dom in domain_list:
+                sp = str(getattr(dom, "source_project_id", None) or "").strip()
+                dom_proj_key[dom.domain] = sp.casefold() if sp else f"dom:{dom.domain.casefold()}"
+
+            by_norm: Dict[str, List[Tuple[str, Any]]] = {}
+            for dom in domain_list:
+                for m in dom.metrics:
+                    nk = _norm_metric_name(m.name)
+                    if nk:
+                        by_norm.setdefault(nk, []).append((dom.domain, m))
+
+            for nk, entries in sorted(by_norm.items()):
+                if len(entries) < 2 or nk in reported_collision_keys:
+                    continue
+                # Collapse identical metric names across same-project duplicate domains, while preserving distinct spellings (E8)
+                bucketed: Dict[Tuple[str, str], Tuple[str, Any]] = {}
+                for d_name, m_obj in entries:
+                    bkey = (dom_proj_key.get(d_name, d_name.casefold()), m_obj.name.casefold())
+                    bucketed.setdefault(bkey, (d_name, m_obj))
+                eff_entries = list(bucketed.values())
+                if len(eff_entries) < 2:
+                    continue
+
+                distinct_names = {m.name for _, m in eff_entries}
+                distinct_domains: List[str] = []
+                for d_name, _ in eff_entries:
+                    if d_name not in distinct_domains:
+                        distinct_domains.append(d_name)
+                norm_exprs = {
+                    _norm_formula_text(m.sql_expression)
+                    for _, m in eff_entries
+                    if (m.sql_expression or "").strip()
+                }
+                has_diff_formula = len(norm_exprs) > 1
+                # Flag normalized name variations (e.g. 'Dup Metric' vs 'DUP_METRIC') or cross-domain conflicts
+                if len(distinct_names) > 1 or len(distinct_domains) > 1:
+                    rep_name = eff_entries[0][1].name
+                    diff_note = ""
+                    if has_diff_formula:
+                        diff_parts = [f"{d}: {(m.sql_expression or '').strip()!r}" for d, m in eff_entries]
+                        diff_note = f" Conflicting formulas: {'; '.join(diff_parts)}."
+                    issues.append(
+                        LintIssue(
+                            rule_id="RULE_METRIC_COLLISION",
+                            severity="ERROR" if has_diff_formula else "WARNING",
+                            object_type="METRIC",
+                            object_name=rep_name,
+                            domain=", ".join(distinct_domains),
+                            message=(
+                                f"Normalized metric name collision across {sorted(distinct_names)} "
+                                f"in domain(s) {', '.join(distinct_domains)}.{diff_note}"
+                            ),
+                            remediation="Standardize to a single canonical name or disambiguate formulas.",
+                        )
+                    )
+
+        # 2. Rule: Unresolved References (E13, E14) — attributed to the domain that declares
+        #    them, scoped like every other rule, and de-duplicated (the same relationship can be
+        #    loaded by several domains of one project).
+        unresolved: Dict[str, List[str]] = {}
+        if domain_list:
+            known_concepts = {str(k).casefold() for k in (ontology.concepts or {}).keys()}
+            known_metrics = {str(k).casefold() for k in (ontology.metrics or {}).keys()}
+            for dom in domain_list:
+                known_concepts.update(str(c.name).casefold() for c in dom.concepts if c.name)
+                known_metrics.update(str(m.name).casefold() for m in dom.metrics if m.name)
+            for dom in domain_list:
+                for rel in dom.relationships or []:
+                    rel_label = rel.name or f"{rel.from_concept}->{rel.to_concept}"
+                    for side, concept in (("source", rel.from_concept), ("target", rel.to_concept)):
+                        if concept and str(concept).casefold() not in known_concepts:
+                            msg = f"Relationship '{rel_label}' references unknown {side} concept: '{concept}'"
+                            doms = unresolved.setdefault(msg, [])
+                            if dom.domain not in doms:
+                                doms.append(dom.domain)
+                for m in dom.metrics:
+                    for dep in getattr(m, "derives_from", None) or []:
+                        if dep and str(dep).casefold() not in known_metrics:
+                            msg = f"Metric '{m.name}' derives_from unknown metric: '{dep}'"
+                            doms = unresolved.setdefault(msg, [])
+                            if dom.domain not in doms:
+                                doms.append(dom.domain)
+        elif not allowed_cf:
+            for unres in ontology.unresolved_references:
+                unresolved.setdefault(str(unres), [])
+
+        for unres, doms in unresolved.items():
+            obj_match = re.search(r"'([^']+)'", unres)
+            obj_name = obj_match.group(1) if obj_match else "Relationship"
             issues.append(
                 LintIssue(
                     rule_id="RULE_UNRESOLVED_REFERENCE",
                     severity="ERROR",
-                    object_type="RELATIONSHIP",
-                    object_name="Unknown",
+                    object_type="METRIC" if unres.startswith("Metric ") else "RELATIONSHIP",
+                    object_name=obj_name,
+                    domain=", ".join(doms) or None,
                     message=unres,
                     remediation="Ensure concepts referenced in joins are defined in an ingested domain YAML.",
                 )
             )
 
-        # 3. Rule: Metric Data Stewards & Descriptions
-        for m in ontology.metrics.values():
-            if self.require_steward and not m.data_steward:
+        # 3. Rule: Concepts & Metrics across EVERY domain (E1-E6, E9)
+        if domain_list:
+            all_concepts = [(dom.domain, c) for dom in domain_list for c in dom.concepts]
+            all_metrics = [(dom.domain, m) for dom in domain_list for m in dom.metrics]
+        elif allowed_cf:
+            all_concepts = []
+            all_metrics = []
+        else:
+            all_concepts = [(c.domain, c) for c in ontology.concepts.values()]
+            all_metrics = [(m.domain, m) for m in ontology.metrics.values()]
+
+        for dom_name, c in all_concepts:
+            if self.steward_severity != "OFF" and not getattr(c, "data_steward", None):
                 issues.append(
                     LintIssue(
                         rule_id="RULE_MISSING_STEWARD",
-                        severity="ERROR",
+                        severity=self.steward_severity,
+                        object_type="CONCEPT",
+                        object_name=c.name,
+                        domain=dom_name or c.domain,
+                        message=f"Concept '{c.name}' has no data steward assigned.",
+                        remediation="Add 'data_steward: \"user@enterprise.com\"' to the concept definition.",
+                    )
+                )
+
+            if self.enforce_snake_case_concepts:
+                c_ident = _governed_identifier(c)
+                if c_ident and not _SNAKE_IDENT_RE.match(c_ident):
+                    issues.append(
+                        LintIssue(
+                            rule_id="RULE_NAMING_CONVENTION",
+                            severity="WARNING",
+                            object_type="CONCEPT",
+                            object_name=c.name,
+                            domain=dom_name or c.domain,
+                            message=f"Concept identifier '{c_ident}' is not snake_case (letters, digits, underscores; one case).",
+                            remediation="Rename to snake_case (e.g. order_line) or set logical_name to the warehouse identifier.",
+                        )
+                    )
+                for attr in getattr(c, "attributes", None) or []:
+                    a_ident = _governed_identifier(attr)
+                    if a_ident and not _SNAKE_IDENT_RE.match(a_ident):
+                        issues.append(
+                            LintIssue(
+                                rule_id="RULE_NAMING_CONVENTION",
+                                severity="WARNING",
+                                object_type="ATTRIBUTE",
+                                object_name=f"{c.name}.{attr.name}",
+                                domain=dom_name or c.domain,
+                                message=(
+                                    f"Attribute identifier '{a_ident}' on concept '{c.name}' is not snake_case "
+                                    "(letters, digits, underscores; one case)."
+                                ),
+                                remediation="Rename to snake_case (e.g. order_amount) or set logical_name to the warehouse identifier.",
+                            )
+                        )
+
+        for dom_name, m in all_metrics:
+            eff_domain = dom_name or m.domain
+            if self.steward_severity != "OFF" and not m.data_steward:
+                issues.append(
+                    LintIssue(
+                        rule_id="RULE_MISSING_STEWARD",
+                        severity=self.steward_severity,
                         object_type="METRIC",
                         object_name=m.name,
-                        domain=m.domain,
+                        domain=eff_domain,
                         message=f"Metric '{m.name}' has no data steward assigned.",
                         remediation="Add 'data_steward: \"user@enterprise.com\"' to the metric definition.",
                     )
@@ -105,84 +309,139 @@ class SemanticLinter:
                         severity="WARNING",
                         object_type="METRIC",
                         object_name=m.name,
-                        domain=m.domain,
+                        domain=eff_domain,
                         message=f"Metric '{m.name}' lacks a comprehensive business description.",
                         remediation="Provide an unambiguous description explaining the business logic.",
                     )
                 )
 
-            if not m.sql_expression or not m.sql_expression.strip():
-                issues.append(
-                    LintIssue(
-                        rule_id="RULE_EMPTY_EXPRESSION",
-                        severity="ERROR",
-                        object_type="METRIC",
-                        object_name=m.name,
-                        domain=m.domain,
-                        message=f"Metric '{m.name}' has an empty or blank SQL expression.",
-                        remediation="Define a valid calculation expression (e.g. SUM(amount)).",
+            has_sql = bool(m.sql_expression and m.sql_expression.strip())
+            has_binding = bool(getattr(m, "maps_to", None))
+            deploy_reason = getattr(m, "deploy_reason", None)
+            if not has_sql and not has_binding:
+                if deploy_reason:
+                    issues.append(
+                        LintIssue(
+                            rule_id="RULE_EMPTY_EXPRESSION",
+                            severity="INFO",
+                            object_type="METRIC",
+                            object_name=m.name,
+                            domain=eff_domain,
+                            message=f"Metric '{m.name}' has no compiled SQL due to deployment constraint: {deploy_reason}",
+                            remediation="Query through a deployed SEMANTIC_VIEW or supply an explicit SQL override.",
+                        )
                     )
-                )
+                else:
+                    issues.append(
+                        LintIssue(
+                            rule_id="RULE_EMPTY_EXPRESSION",
+                            severity="ERROR",
+                            object_type="METRIC",
+                            object_name=m.name,
+                            domain=eff_domain,
+                            message=f"Metric '{m.name}' has an empty or blank SQL expression.",
+                            remediation="Define a valid calculation expression or bind it with maps_to.",
+                        )
+                    )
 
             if self.enforce_snake_case_metrics:
-                # Check for spaces or irregular characters in identifier
-                if " " in m.name or not re.match(r"^[A-Za-z0-9_]+$", m.name):
+                if " " in m.name or not re.match(r"^[a-z][a-z0-9_]*$", m.name):
                     issues.append(
                         LintIssue(
                             rule_id="RULE_NAMING_CONVENTION",
                             severity="WARNING",
                             object_type="METRIC",
                             object_name=m.name,
-                            domain=m.domain,
-                            message=f"Metric name '{m.name}' contains spaces or non-standard characters.",
-                            remediation="Use snake_case or standard alphanumeric identifiers (e.g. 'gross_margin').",
+                            domain=eff_domain,
+                            message=f"Metric name '{m.name}' is not strict snake_case (lowercase letters, digits, underscores).",
+                            remediation="Use strict snake_case identifiers matching ^[a-z][a-z0-9_]*$.",
                         )
                     )
 
-        # 4. Rule: Circular Joins in Relationships
-        graph: Dict[str, List[str]] = {}
-        for rel in ontology.relationships:
-            if rel.from_concept not in graph:
-                graph[rel.from_concept] = []
-            graph[rel.from_concept].append(rel.to_concept)
+        # 4. Rule: Circular Joins & Self-Referencing Hierarchies per domain (E10, E11, E12)
+        domain_rel_groups: List[Tuple[Optional[str], List[Any]]] = (
+            [(dom.domain, list(dom.relationships or [])) for dom in sorted(domain_list, key=lambda d: d.domain.casefold())]
+            if domain_list
+            else ([] if allowed_cf else [(None, list(ontology.relationships or []))])
+        )
 
-        visited: Set[str] = set()
-        rec_stack: Set[str] = set()
+        for dom_name, dom_rels in domain_rel_groups:
+            graph: Dict[str, List[str]] = {}
+            self_loops: List[str] = []
+            seen_self: Set[str] = set()
+            for rel in dom_rels:
+                # Inactive relationships are already deactivated in BI/semantic models to prevent cycles
+                if getattr(rel, "is_active", True) is False:
+                    continue
+                fc = rel.from_concept
+                tc = rel.to_concept
+                if fc == tc:
+                    if fc not in seen_self:
+                        seen_self.add(fc)
+                        self_loops.append(fc)
+                    continue
+                adj = graph.setdefault(fc, [])
+                if tc not in adj:
+                    adj.append(tc)
 
-        def is_cyclic(v: str) -> bool:
-            visited.add(v)
-            rec_stack.add(v)
-            for neighbor in graph.get(v, []):
-                if neighbor not in visited:
-                    if is_cyclic(neighbor):
-                        return True
-                elif neighbor in rec_stack:
-                    return True
-            rec_stack.remove(v)
-            return False
-
-        for node in list(graph.keys()):
-            if node not in visited:
-                if is_cyclic(node):
-                    issues.append(
-                        LintIssue(
-                            rule_id="RULE_CIRCULAR_JOIN",
-                            severity="ERROR",
-                            object_type="RELATIONSHIP",
-                            object_name=node,
-                            message=f"Circular relationship cycle detected beginning at concept '{node}'.",
-                            remediation="Break the circular dependency in the relationship graph.",
-                        )
+            for sl in sorted(self_loops):
+                issues.append(
+                    LintIssue(
+                        rule_id="RULE_CIRCULAR_JOIN",
+                        severity="INFO",
+                        object_type="RELATIONSHIP",
+                        object_name=sl,
+                        domain=dom_name,
+                        message=f"Self-referencing hierarchy relationship detected on concept '{sl}'.",
+                        remediation="Verify whether parent-child hierarchy self-join is intentional.",
                     )
-                    break
+                )
+
+            # Report all distinct directed multi-node active cycles within this domain
+            visited: Set[str] = set()
+            reported_cycles: Set[Tuple[str, ...]] = set()
+            path: List[str] = []
+            on_stack: Set[str] = set()
+
+            def _dfs(node: str) -> None:
+                visited.add(node)
+                on_stack.add(node)
+                path.append(node)
+                for nb in graph.get(node, []):
+                    if nb in on_stack:
+                        idx = path.index(nb)
+                        cyc_nodes = path[idx:]
+                        canon = tuple(sorted(cyc_nodes))
+                        if canon not in reported_cycles:
+                            reported_cycles.add(canon)
+                            cycle_str = " -> ".join(cyc_nodes + [nb])
+                            issues.append(
+                                LintIssue(
+                                    rule_id="RULE_CIRCULAR_JOIN",
+                                    severity="ERROR",
+                                    object_type="RELATIONSHIP",
+                                    object_name=cyc_nodes[0],
+                                    domain=dom_name,
+                                    message=f"Circular relationship cycle detected: {cycle_str}.",
+                                    remediation="Break the circular dependency in the relationship graph.",
+                                )
+                            )
+                    elif nb not in visited:
+                        _dfs(nb)
+                path.pop()
+                on_stack.remove(node)
+
+            for node in sorted(graph.keys()):
+                if node not in visited:
+                    _dfs(node)
 
         error_count = sum(1 for i in issues if i.severity == "ERROR")
         warning_count = sum(1 for i in issues if i.severity == "WARNING")
-        passed = (error_count == 0)
+        passed = error_count == 0
 
         summary = (
             f"CI/CD Governance Gate: {'PASSED' if passed else 'FAILED'} · "
-            f"{error_count} Errors, {warning_count} Warnings across {len(ontology.metrics)} metrics."
+            f"{error_count} Errors, {warning_count} Warnings across {len(all_metrics)} metrics."
         )
 
         return LintReport(

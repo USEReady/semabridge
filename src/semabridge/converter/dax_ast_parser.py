@@ -4995,6 +4995,25 @@ class DaxSqlRenderer:
             calc_node = FunctionCallNode(func="CALCULATE", args=args)
             pat = match_whole_table_all_ast(calc_node, fact_table=self.primary_table_name or self.table_alias)
             if pat:
+                # Leave-One-Out (LOO) total expression substitution:
+                # When CALCULATE(..., ALL(FactTable)) is evaluated inside a leave-one-out context (e.g. CSAT Impact),
+                # directly use the precomputed total calculation expression rather than referencing an external helper column.
+                loo = getattr(self, "_current_loo_info", None)
+                if loo:
+                    filter_arg = args[1]
+                    if isinstance(filter_arg, FunctionCallNode) and filter_arg.func.upper() in ("ALL", "REMOVEFILTERS", "ALLNOBLANKROW"):
+                        if filter_arg.args:
+                            arg0 = filter_arg.args[0]
+                            tbl = getattr(arg0, "name", getattr(arg0, "table", str(arg0))).strip("'\"")
+                            fact_alias = (self.table_alias or "").upper()
+                            fact_tbl = (self.primary_table_name or self.table_alias or "").upper()
+                            if tbl.upper() in (fact_alias, fact_tbl) or (self.table_aliases and self.table_aliases.get(tbl, tbl).upper() == fact_alias):
+                                if loo.get("inner_fn") in ("AVERAGE", "AVERAGEX"):
+                                    return f'({loo["sum_total"]} / NULLIF({loo["cnt_total"]}, 0))'
+                                elif loo.get("inner_fn") in ("COUNT", "COUNTROWS", "COUNTA"):
+                                    return f'{loo["cnt_total"]}'
+                                else:
+                                    return f'{loo["sum_total"]}'
                 tgt_alias = (self.table_alias or self.primary_table_name or "f").upper()
                 return f'MAX({tgt_alias}."{pat.helper_name}")'
 

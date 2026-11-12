@@ -8,8 +8,7 @@ intermediate representation, applying semantic enrichment like DAX translation.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List, Optional
-from ast import Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 from semabridge.core.interfaces import BaseConverter
 from semabridge.core.exceptions import ConversionError
 from semabridge.connectors.dataset_classification_keywords import is_calendar_like_name
@@ -188,17 +187,11 @@ class OSIToSMLConverter(BaseConverter):
                         if getattr(rel, "to_dataset", None) == d.unique_name and getattr(rel, "to_columns", None):
                             key_col = rel.to_columns[0]
                             break
-                # 4. Column naming convention heuristics (id / key suffix)
                 if not key_col:
-                    for c in getattr(d, "columns", []) or []:
-                        if re.search(r"(?:^|_)id$", c.unique_name, re.I) or re.search(r"(?:^|_)key$", c.unique_name, re.I):
-                            key_col = c.unique_name
-                            break
-                # 5. Fallback: first column
-                if not key_col and getattr(d, "columns", []):
-                    key_col = d.columns[0].unique_name
+                    # Do not guess PK from column name heuristics or fall back
+                    # to columns[0]; tables without a real key have no PK.
+                    key_col = None
                 if key_col:
-                    from semabridge.utils.naming import to_alias
                     from semabridge.utils.identifiers import IdentifierSanitizer
                     table_key_map[d.unique_name.casefold()] = key_col
                     table_key_map[to_alias(d.unique_name).casefold()] = key_col
@@ -208,15 +201,22 @@ class OSIToSMLConverter(BaseConverter):
             # Step 3a: Convert all metrics individually for Tier 1-4 translations
 
             known_measure_names = {m.unique_name for m in osi_model.metrics}
+            model_columns = self._model_column_index(osi_model)
             for osi_metric in osi_model.metrics:
-                sml_metric = self._convert_metric(
-                    osi_metric,
-                    dataset_col_lookup=dax_dataset_col_lookup,
-                    dataset_aliases=dax_dataset_aliases,
-                    relationships=osi_model.relationships,
-                    table_key_map=table_key_map,
-                    known_measure_names=known_measure_names,
+                missing_refs = self._missing_model_column_refs(
+                    osi_metric.expression, model_columns, known_measure_names
                 )
+                if missing_refs:
+                    sml_metric = self._source_broken_metric(osi_metric, missing_refs)
+                else:
+                    sml_metric = self._convert_metric(
+                        osi_metric,
+                        dataset_col_lookup=dax_dataset_col_lookup,
+                        dataset_aliases=dax_dataset_aliases,
+                        relationships=osi_model.relationships,
+                        table_key_map=table_key_map,
+                        known_measure_names=known_measure_names,
+                    )
                 if getattr(osi_metric, "folder", None) and not getattr(sml_metric, "folder", None):
                     sml_metric.folder = osi_metric.folder
                 metric_renames = column_renames.get(sml_metric.dataset) or {}
@@ -372,14 +372,6 @@ class OSIToSMLConverter(BaseConverter):
             # run after 4a and after Step 3 for the same reasons.
             self._flag_reachable_dimension_filters_pending_enrichment(sml)
 
-            # 4b. Fabric/PBIX extractions can legitimately surface 0 explicit
-            # measures in TMSL. Reuse the older heuristic detector so downstream
-            # publishers still have simple metrics to materialize.
-            self._auto_detect_metrics(sml, row_counts=row_counts)
-
-            # 5. Inject Calendar Dimension if missing (SML Requirement for Cortex)
-            self._inject_calendar_dimension(sml)
-
             # 6. Ensure status consistency: any metric with a source expression but no
             # sql_expression must never be left as sync_enabled=True.
             for metric in sml.metrics:
@@ -525,6 +517,77 @@ class OSIToSMLConverter(BaseConverter):
             is_hidden=osi_dim.is_hidden
         )
 
+    @staticmethod
+    def _model_column_index(osi_model: OSIModel) -> Dict[str, Set[str]]:
+        """Table name (casefolded) -> its column names (casefolded), as modelled in the source."""
+        index: Dict[str, Set[str]] = {}
+        for ds in osi_model.datasets or []:
+            cols = {str(c.unique_name).casefold() for c in (ds.columns or [])}
+            for name in (ds.unique_name, getattr(ds, "name", None), getattr(ds, "label", None)):
+                if name:
+                    index.setdefault(str(name).casefold(), set()).update(cols)
+        return index
+
+    # 'Table'[Column] or Table[Column] -- a column reference qualified by a table.
+    _QUALIFIED_REF_RE = re.compile(r"(?:'((?:[^']|'')+)'|\b([A-Za-z_][A-Za-z0-9_]*))\s*\[([^\]]+)\]")
+
+    @classmethod
+    def _missing_model_column_refs(
+        cls,
+        expression: Optional[str],
+        model_columns: Dict[str, Set[str]],
+        measure_names: Set[str],
+    ) -> List[str]:
+        """Qualified column references whose table is in the model but has no such column.
+
+        Only references to a table the model actually has are checked, so DAX
+        variables and virtual tables (ADDCOLUMNS/SUMMARIZE results) are never
+        flagged. Such a measure is broken in Power BI itself.
+        """
+        if not expression or not model_columns:
+            return []
+        text = re.sub(r'"(?:[^"]|"")*"', '""', str(expression))  # ignore string literals
+        text = re.sub(r"//[^\n]*|--[^\n]*|/\*.*?\*/", " ", text, flags=re.S)  # and comments
+        measures = {str(m).casefold() for m in measure_names or ()}
+        missing: List[str] = []
+        for quoted, bare, col in cls._QUALIFIED_REF_RE.findall(text):
+            table = (quoted.replace("''", "'") if quoted else bare).strip()
+            cols = model_columns.get(table.casefold())
+            if cols is None:
+                continue
+            col_key = col.strip().casefold()
+            if col_key in cols or col_key in measures:
+                continue
+            ref = f"{table}[{col.strip()}]"
+            if ref not in missing:
+                missing.append(ref)
+        return missing
+
+    def _source_broken_metric(self, osi_metric: OSIMetric, missing_refs: List[str]) -> SMLMetric:
+        sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
+        return SMLMetric(
+            unique_name=osi_metric.unique_name,
+            label=osi_metric.label,
+            description=osi_metric.description or "",
+            dataset=osi_metric.dataset,
+            expression=osi_metric.expression or "",
+            sql_expression="CAST(NULL AS DOUBLE)",
+            aggregation=sml_agg,
+            format_string=osi_metric.format_string,
+            is_hidden=osi_metric.is_hidden,
+            complexity_tier=1,
+            sync_enabled=False,
+            sync_failure_reason=(
+                "not applicable: the Power BI measure refers to column(s) missing from the "
+                f"source model, so it is broken in Power BI too: {', '.join(missing_refs[:5])}"
+            ),
+            access_modifier=osi_metric.access_modifier,
+            synonyms=list(osi_metric.synonyms),
+            synonym_sources=dict(osi_metric.synonym_sources),
+            has_report_alias=osi_metric.has_report_alias,
+            source_file=osi_metric.source_file,
+        )
+
     def _convert_metric(
         self,
         osi_metric: OSIMetric,
@@ -575,6 +638,20 @@ class OSIToSMLConverter(BaseConverter):
 
         # DAX Translation Logic
         expression = osi_metric.expression or ""
+        # Implicit (column summarization) metrics carry a source column and
+        # an aggregation but no expression: build the equivalent DAX so they
+        # translate like any measure (SUM/AVERAGE/MIN/MAX/COUNT/DISTINCTCOUNT).
+        if (not expression or not str(expression).strip()) and getattr(osi_metric, "source_column", None):
+            _agg_name = str(getattr(osi_metric.aggregation, "name", osi_metric.aggregation) or "").upper()
+            _dax_fn = {
+                "SUM": "SUM", "AVG": "AVERAGE", "MIN": "MIN", "MAX": "MAX",
+                "COUNT": "COUNT", "COUNT_DISTINCT": "DISTINCTCOUNT",
+            }.get(_agg_name)
+            if _dax_fn:
+                _tbl = str(osi_metric.dataset or "").replace("'", "''")
+                _col = str(osi_metric.source_column).replace("]", "]]")
+                expression = f"{_dax_fn}('{_tbl}'[{_col}])"
+                osi_metric = osi_metric.model_copy(update={"expression": expression})
         if not expression or not str(expression).strip():
             sml_agg = getattr(SMLAggregationType, osi_metric.aggregation.name, SMLAggregationType.SUM)
             return SMLMetric(

@@ -28,6 +28,8 @@ from semabridge.ontology.models import (
 logger = logging.getLogger("semabridge.ontology.store")
 
 _ATTACHMENTS_FILE = "_project_domains.json"
+_PROJECT_SETTINGS_FILE = "_project_ontology_settings.json"
+CONFLICT_RESOLUTION_MODES = ("priority", "namespace")
 
 
 class DomainOntologyStore:
@@ -114,7 +116,7 @@ class DomainOntologyStore:
         self._refresh_index()
 
     def _seed_sample_domains(self) -> None:
-        finance_yaml = """
+        finance_yaml = """  # hardcoding-ok: demo seed domain
 domain: Finance
 owner: finance-governance@enterprise.com
 version: 1.0.0
@@ -159,7 +161,7 @@ metrics:
     data_steward: "VP Financial Planning"
 relationships: []
 """
-        sales_yaml = """
+        sales_yaml = """  # hardcoding-ok: demo seed domain
 domain: Sales
 owner: revops-team@enterprise.com
 version: 1.0.0
@@ -197,8 +199,8 @@ relationships:
     join_expression: "GeneralLedger.customer_id = Customer.customer_id"
 """
         try:
-            dom_fin = FederatedOntologyLoader.parse_yaml_string(finance_yaml, "Finance")
-            dom_sales = FederatedOntologyLoader.parse_yaml_string(sales_yaml, "Sales")
+            dom_fin = FederatedOntologyLoader.parse_yaml_string(finance_yaml, "Finance")  # hardcoding-ok: demo seed domain
+            dom_sales = FederatedOntologyLoader.parse_yaml_string(sales_yaml, "Sales")  # hardcoding-ok: demo seed domain
             self.domains[dom_fin.domain] = dom_fin
             self.domains[dom_sales.domain] = dom_sales
         except Exception as e:
@@ -249,14 +251,23 @@ relationships:
         domain_ontology: DomainOntology,
         original: Optional[str] = None,
         batch: Optional[List[DomainOntology]] = None,
+        enforce_bi_formula_readonly: bool = False,
     ) -> List[str]:
-        """Federation-level validation (references, name/id clashes). Returns errors."""
+        """Federation-level validation (references, name/id clashes, read-only BI formulas). Returns errors."""
         errors: List[str] = []
         orig = self.get_domain(original) if original else None
         if original and orig is None:
             errors.append(f"Domain '{original}' not found.")
             return errors
         same = orig or self._find(domain_ontology.domain)
+        if enforce_bi_formula_readonly and same is not None:
+            errors.extend(FederatedOntologyLoader.validate_bi_formula_immutability(domain_ontology, same))
+        if enforce_bi_formula_readonly:
+            errors.extend(
+                FederatedOntologyLoader.validate_bi_formula_shadowing(
+                    domain_ontology, self._project_related_domains(domain_ontology, same)
+                )
+            )
         # Name clash: renaming onto another existing domain.
         other_named = self._find(domain_ontology.domain)
         if other_named is not None and orig is not None and other_named is not orig:
@@ -271,12 +282,35 @@ relationships:
         errors.extend(FederatedOntologyLoader.validate_references(domain_ontology, others, require_external=True))
         return errors
 
+    def _project_related_domains(
+        self, candidate: DomainOntology, same: Optional[DomainOntology]
+    ) -> List[DomainOntology]:
+        """Other domains that share a project with ``candidate`` (attachment or source project)."""
+        ids = {i for i in (candidate.id, getattr(same, "id", None)) if i}
+        attachments = self._read_attachments()
+        pids = {pid for pid, dom_ids in attachments.items() if ids & set(dom_ids)}
+        src = (candidate.source_project_id or getattr(same, "source_project_id", None) or "").strip()
+        if src:
+            pids.add(src)
+        if not pids:
+            return []
+        pids_cf = {p.casefold() for p in pids}
+        related_ids = {i for pid in pids for i in attachments.get(pid, [])}
+        out: List[DomainOntology] = []
+        for dom in self.domains.values():
+            if dom is same or dom is candidate:
+                continue
+            if dom.id in related_ids or (dom.source_project_id or "").strip().casefold() in pids_cf:
+                out.append(dom)
+        return out
+
     def add_or_update_domain(
         self,
         domain_ontology: DomainOntology,
         save_to_disk: bool = True,
         original: Optional[str] = None,
         batch: Optional[List[DomainOntology]] = None,
+        enforce_bi_formula_readonly: bool = False,
     ) -> FederatedEnterpriseOntology:
         """Create, update or (with ``original``) rename a domain.
 
@@ -295,7 +329,12 @@ relationships:
                 if existing is not None and existing.id and domain_ontology.id == slugify_domain(domain_ontology.domain):
                     domain_ontology = domain_ontology.model_copy(update={"id": existing.id})
 
-            errors = self.validate_domain(domain_ontology, original=original, batch=batch)
+            errors = self.validate_domain(
+                domain_ontology,
+                original=original,
+                batch=batch,
+                enforce_bi_formula_readonly=enforce_bi_formula_readonly,
+            )
             if errors:
                 raise OntologyValidationError(errors)
 
@@ -420,6 +459,55 @@ relationships:
             else:
                 attached.append({"id": dom.id, "domain": dom.domain})
         return {"project_id": project_id, "domains": attached, "missing_domain_ids": missing}
+
+    # ------------------------------------------------------------------
+    # per-project ontology settings (cross-domain conflict resolution)
+    # ------------------------------------------------------------------
+
+    def _read_project_settings(self) -> Dict[str, Dict[str, Any]]:
+        path = self.storage_dir / _PROJECT_SETTINGS_FILE
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): dict(v) for k, v in data.items() if isinstance(v, dict)}
+        except Exception as e:
+            logger.warning("Could not read %s: %s", path, e)
+        return {}
+
+    def get_conflict_resolution(self, project_id: Optional[str]) -> Optional[str]:
+        """Saved cross-domain metric conflict resolution for a project: 'priority', 'namespace' or None."""
+        if not project_id:
+            return None
+        mode = str(self._read_project_settings().get(str(project_id), {}).get("conflict_resolution") or "")
+        mode = mode.strip().lower()
+        return mode if mode in CONFLICT_RESOLUTION_MODES else None
+
+    def set_conflict_resolution(self, project_id: str, mode: Optional[str]) -> Optional[str]:
+        """Persist the conflict resolution choice (None clears it)."""
+        norm = str(mode or "").strip().lower() or None
+        if norm is not None and norm not in CONFLICT_RESOLUTION_MODES:
+            raise OntologyValidationError(
+                [f"Unknown conflict resolution '{mode}'; use one of: {', '.join(CONFLICT_RESOLUTION_MODES)}."]
+            )
+        with self._lock:
+            data = self._read_project_settings()
+            entry = dict(data.get(str(project_id), {}))
+            if norm is None:
+                entry.pop("conflict_resolution", None)
+            else:
+                entry["conflict_resolution"] = norm
+            if entry:
+                data[str(project_id)] = entry
+            else:
+                data.pop(str(project_id), None)
+            self.storage_dir.mkdir(parents=True, exist_ok=True)
+            path = self.storage_dir / _PROJECT_SETTINGS_FILE
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, path)
+        return norm
 
 
 # Global singleton instance for application use.

@@ -784,6 +784,8 @@ class LocalPBIXConnector(BaseConnector):
                     _opt("c", "DataCategory", col_schema, "ColumnDataCategory"),
                     _opt("c", "SortByColumnID", col_schema, "ColumnSortByColumnID"),
                     _opt("c", "SourceColumn", col_schema, "ColumnSourceColumn"),
+                    _opt("c", "SummarizeBy", col_schema, "ColumnSummarizeBy"),
+                    _opt("c", "IsKey", col_schema, "ColumnIsKey"),
                     _opt("t", "CalculationGroupID", tbl_schema, "TableCalculationGroupID"),
                 ]
             )
@@ -850,6 +852,13 @@ class LocalPBIXConnector(BaseConnector):
                         "is_hidden": bool(row.get("ColumnIsHidden", False)),
                         "type": col_kind,
                     }
+                    # The model's own key flag (e.g. a table marked as a date
+                    # table); never inferred from the column name.
+                    try:
+                        if self._present(row.get("ColumnIsKey")) and int(float(row.get("ColumnIsKey"))):
+                            col_def["is_key"] = True
+                    except (TypeError, ValueError):
+                        pass
                     if col_kind == "calculated":
                         # DAX calculated column: no physical source column.
                         col_def["expression"] = col_expr
@@ -864,6 +873,25 @@ class LocalPBIXConnector(BaseConnector):
                         value = self._text(row.get(src))
                         if value:
                             col_def[key] = value
+                    raw_sb = row.get("ColumnSummarizeBy")
+                    if raw_sb is not None and str(raw_sb).strip() != "":
+                        _sb_code_map = {
+                            1: "default",
+                            2: "none",
+                            3: "sum",
+                            4: "min",
+                            5: "max",
+                            6: "count",
+                            7: "average",
+                            8: "distinctCount",
+                        }
+                        try:
+                            sb_key = int(float(raw_sb))
+                            mapped_sb = _sb_code_map.get(sb_key)
+                        except (ValueError, TypeError):
+                            mapped_sb = str(raw_sb).strip()
+                        if mapped_sb:
+                            col_def["summarize_by"] = mapped_sb
                     table_def["columns"].append(col_def)
                     if row.get("ColumnID") is not None:
                         column_id_to_ref[self._id_key(row.get("ColumnID"))] = (table_name, col_name)
@@ -1422,6 +1450,8 @@ class LocalPBIXConnector(BaseConnector):
                 }
                 if col.get("is_hidden"):
                     col_def["isHidden"] = bool(col.get("is_hidden"))
+                if col.get("is_key"):
+                    col_def["isKey"] = True
                 col_kind = str(col.get("type") or "data")
                 if col_kind == "calculated":
                     # Calculated column: carry the DAX, never a sourceColumn.
@@ -1438,6 +1468,7 @@ class LocalPBIXConnector(BaseConnector):
                     ("display_folder", "displayFolder"),
                     ("data_category", "dataCategory"),
                     ("sort_by_column", "sortByColumn"),
+                    ("summarize_by", "summarizeBy"),
                 ):
                     if col.get(src_key):
                         col_def[tmsl_key] = str(col.get(src_key))

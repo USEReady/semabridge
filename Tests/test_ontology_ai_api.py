@@ -76,12 +76,28 @@ def test_api_ai_search(seeded_store):
 
 
 def test_api_ai_nl_query(seeded_store):
+    # Explicit local target: the local engine drafts governed SQL.
     response = client.post(
         "/api/ai/nl-query",
-        json={"prompt": "Show me gross margin by customer", "dialect": "SNOWFLAKE"},
+        json={"prompt": "Show me gross margin by customer", "dialect": "SNOWFLAKE", "target": "LOCAL"},
     )
     assert response.status_code == 200
     plan = response.json()
     assert "generated_sql" in plan
     assert "SELECT" in plan["generated_sql"]
     assert plan["confidence_score"] > 0
+
+
+def test_api_ai_nl_query_snowflake_without_cortex_is_not_faked(seeded_store, monkeypatch):
+    # Snowflake target with Cortex unavailable must say so instead of passing
+    # off a locally drafted query as Cortex's answer.
+    for var in ("SNOWFLAKE_PRIVATE_KEY", "SNOWFLAKE_PRIVATE_KEY_PATH", "SNOWFLAKE_PRIVATE_KEY_FILE"):
+        monkeypatch.delenv(var, raising=False)
+    response = client.post(
+        "/api/ai/nl-query",
+        json={"prompt": "Show me gross margin by customer", "dialect": "SNOWFLAKE"},
+    )
+    assert response.status_code == 200
+    plan = response.json()
+    assert plan["generated_sql"] == ""
+    assert any("Cortex unavailable" in w for w in plan["warnings"])

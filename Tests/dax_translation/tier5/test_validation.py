@@ -428,3 +428,59 @@ def test_pick_preferred_aggregate_column_returns_sole_non_key_candidate():
     columns = {"WIDGET_TOTAL", "WIDGET_ID", "WIDGET_KEY", "WIDGET_DATE"}
     result = _validator()._pick_preferred_aggregate_column("Anything", columns)
     assert result == "WIDGET_TOTAL"
+
+
+# ---------------------------------------------------------------------------
+# E1: degenerate / structurally invalid SQL detection (fresh or cached Tier 5)
+# ---------------------------------------------------------------------------
+from semabridge.dax_translation.tier5.validation import (  # noqa: E402
+    check_case_expression_structure,
+    detect_unfaithful_metric_sql,
+)
+
+
+def test_else_outside_case_is_invalid_sql():
+    sql = "COALESCE(SUM(CASE WHEN 1=1 THEN T.A ELSE 0 END) - SUM(T.B) ELSE 0, 0)"
+    assert check_case_expression_structure(sql) is not None
+    assert detect_unfaithful_metric_sql(sql).startswith("invalid SQL")
+
+
+def test_valid_case_structures_pass():
+    for sql in [
+        "CASE WHEN T.A > 0 THEN 1 ELSE 0 END",
+        "SUM(CASE WHEN T.A = 'x' THEN CASE WHEN T.B IS NULL THEN 0 ELSE T.B END END)",
+        "COALESCE(SUM(T.A), 0) - COALESCE(SUM(T.B), 0)",
+        "SUM(CASE WHEN T.D BETWEEN DATEADD(YEAR, -1, CURRENT_DATE()) AND CURRENT_DATE() THEN T.A END) - SUM(T.A)",
+        "COUNT(T.ID) - 1",
+        "'ELSE (' || T.NAME",
+    ]:
+        assert detect_unfaithful_metric_sql(sql) is None, sql
+
+
+def test_unterminated_case_is_invalid():
+    assert check_case_expression_structure("SUM(CASE WHEN T.A > 0 THEN 1)") is not None
+
+
+def test_tautological_when_is_rejected():
+    assert detect_unfaithful_metric_sql("SUM(CASE WHEN 1=1 THEN T.A ELSE 0 END)") is not None
+    assert detect_unfaithful_metric_sql("SUM(CASE WHEN TRUE THEN T.A ELSE 0 END)") is not None
+
+
+def test_self_cancelling_subtraction_is_rejected():
+    assert detect_unfaithful_metric_sql("SUM(T.A) - SUM(T.A)") is not None
+    assert detect_unfaithful_metric_sql("COALESCE(SUM(T.A), 0) - COALESCE((SUM(T.A)), 0)") is not None
+    assert detect_unfaithful_metric_sql("SUM(T.A) - -SUM(T.A)") is None
+    assert detect_unfaithful_metric_sql("SUM(T.A) - SUM(T.B)") is None
+
+
+def test_summing_a_column_the_dax_only_counts_is_rejected():
+    assert detect_unfaithful_metric_sql("SUM(T.EMPLID)", "CALCULATE(COUNT([EmplID]))") is not None
+    assert detect_unfaithful_metric_sql("COUNT(T.EMPLID)", "CALCULATE(COUNT([EmplID]))") is None
+    assert detect_unfaithful_metric_sql("SUM(T.QTY)", "SUM([Qty]) + COUNT([Qty])") is None
+
+
+def test_dax_bracket_syntax_and_null_stand_ins_are_rejected():
+    assert detect_unfaithful_metric_sql("CASE WHEN COALESCE([Top N], 0) < 4 THEN 1 ELSE 0 END") is not None
+    assert detect_unfaithful_metric_sql("SUM(CASE WHEN CAST(NULL AS DOUBLE) THEN T.A ELSE 0 END)") is not None
+    # brackets / CAST(NULL text inside string literals are fine
+    assert detect_unfaithful_metric_sql("COUNT(CASE WHEN T.A = '[x] CAST(NULL' THEN 1 END)") is None

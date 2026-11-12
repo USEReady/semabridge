@@ -1096,7 +1096,9 @@ function DatabricksAccountForm({ initialTag, status, onSave, onCancel }) {
         if (!confirm('Remove all stored Databricks credentials?')) return;
         try {
             await api.deleteConnection('databricks');
-            setFormData({});
+            // Clear the form's own fields (this form has no formData state).
+            setHostInput(''); setWarehouseId(''); setCatalog(''); setSchemaName('');
+            setClientId(''); setClientSecret(''); setPatToken('');
             setTestResult(null);
         } catch (err) { addLog('error', 'Connections', err.message); }
     };

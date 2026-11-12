@@ -122,6 +122,7 @@ _UNEXPECTED_MARKERS: tuple = (
     "translation bug",
     "unknown error",
     "internal error",
+    "dropped unexpectedly",
 )
 
 

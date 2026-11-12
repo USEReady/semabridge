@@ -27,7 +27,7 @@ function Show-Help {
     Write-Host "  migrate-downgrade REV Downgrade to specific revision"
     Write-Host ""
     Write-Host "Server:" -ForegroundColor Yellow
-    Write-Host "  run                  Start Uvicorn backend (http://127.0.0.1:8001)"
+    Write-Host "  run                  Start Uvicorn backend (http://127.0.0.1:8002)"
     Write-Host "  run-frontend         Start Vite frontend dev server"
     Write-Host ""
     Write-Host "Code Quality:" -ForegroundColor Yellow
@@ -111,9 +111,9 @@ switch ($Command.ToLower()) {
     
     "run" {
         Check-Venv
-        Write-Host "Starting Uvicorn server on http://127.0.0.1:8001..." -ForegroundColor Yellow
+        Write-Host "Starting Uvicorn server on http://127.0.0.1:8002..." -ForegroundColor Yellow
         $env:PYTHONPATH = "src"
-        python -m uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir src
+        python -m uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir src
     }
     
     "run-frontend" {

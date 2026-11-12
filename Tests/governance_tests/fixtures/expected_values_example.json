@@ -1,0 +1,19 @@
+[
+  {
+    "metric": "Case Count",
+    "view_metric": "CASES.CASE_COUNT",
+    "view_dimensions": ["CASES.AGENT"],
+    "pbi_dimension_columns": ["Agent"],
+    "where": "",
+    "rows": [
+      {"Agent": "<agent name from Power BI>", "Case Count": 0}
+    ]
+  },
+  {
+    "metric": "Revenue Won",
+    "view_metric": "OPPORTUNITIES.REVENUE_WON",
+    "view_dimensions": [],
+    "pbi_dimension_columns": [],
+    "rows": [{"Revenue Won": 0}]
+  }
+]

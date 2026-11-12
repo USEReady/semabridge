@@ -10,12 +10,73 @@ from __future__ import annotations
 import re
 
 
+def simplify_dead_arithmetic_sql(expr: str) -> str:
+    """Apply NULL-safe, precedence-safe dead-arithmetic simplification.
+
+    Simplifies identity operations (* 1, 1 *, / 1, + 0, 0 +, - 0) outside
+    quoted identifiers and string literals while keeping * 0 and 0 - x intact
+    so NULL propagation and subtraction semantics never change.
+    """
+    if not expr or not isinstance(expr, str):
+        return expr
+
+    literals: list[str] = []
+
+    def _mask(match: re.Match[str]) -> str:
+        literals.append(match.group(0))
+        return f"__SMLQ_{len(literals) - 1}__"
+
+    # Mask single-quoted strings and double-quoted identifiers
+    masked = re.sub(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"", _mask, expr)
+
+    prev = None
+    cur = masked
+    passes = 0
+    while cur != prev and passes < 5:
+        prev = cur
+        passes += 1
+        # x * 1 / x / 1
+        cur = re.sub(
+            r"(?<=[A-Za-z0-9_)\]])\s*\*\s*1(?:\.0+)?(?![.\dA-Za-z_])",
+            "",
+            cur,
+        )
+        cur = re.sub(
+            r"(?<=[A-Za-z0-9_)\]])\s*/\s*1(?:\.0+)?(?![.\dA-Za-z_])",
+            "",
+            cur,
+        )
+        # 1 * x (not preceded by / or digit/identifier)
+        cur = re.sub(
+            r"(^|[(\[,=]\s*)1(?:\.0+)?\s*\*\s*(?=[A-Za-z0-9_(\[])",
+            r"\1",
+            cur,
+        )
+        # x + 0 / x - 0 (never when followed by * or /)
+        cur = re.sub(
+            r"(?<=[A-Za-z0-9_)\]])\s*[+-]\s*0(?:\.0+)?(?![.\dA-Za-z_])(?!\s*[*/])",
+            "",
+            cur,
+        )
+        # 0 + x (only after start, '(', '[', ',', or '='; never after '-')
+        cur = re.sub(
+            r"(^|[(\[,=]\s*)0(?:\.0+)?\s*\+\s*(?=[A-Za-z0-9_(\[])",
+            r"\1",
+            cur,
+        )
+
+    def _unmask(match: re.Match[str]) -> str:
+        return literals[int(match.group(1))]
+
+    return re.sub(r"__SMLQ_(\d+)__", _unmask, cur)
+
+
 def normalize_snowflake_metric_sql(expr: str) -> str:
     """Normalize a scalar metric expression for Snowflake semantic views."""
     if not expr:
         return expr
     normalized = _rewrite_function(expr, "INT", lambda inner: f"CAST(({inner}) AS INT)")
-    return normalized
+    return simplify_dead_arithmetic_sql(normalized)
 
 
 def validate_snowflake_metric_sql(expr: str) -> tuple[bool, str | None]:

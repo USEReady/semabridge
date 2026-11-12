@@ -2,8 +2,9 @@ export const STEPS = [
   { id: 1, label: 'Basic Info' },
   { id: 2, label: 'Connector Config' },
   { id: 3, label: 'Select Sources' },
-  { id: 4, label: 'Mapping Options' },
-  { id: 5, label: 'Finish' },
+  { id: 4, label: 'Ontology Review' },
+  { id: 5, label: 'Mapping Options' },
+  { id: 6, label: 'Finish' },
 ];
 
 export const CONNECTOR_TYPES = [

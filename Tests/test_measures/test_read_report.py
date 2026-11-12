@@ -1,4 +1,7 @@
-import openpyxl
+import os
+import pytest
+
+openpyxl = pytest.importorskip("openpyxl")
 import re
 from collections import Counter
 
@@ -66,7 +69,7 @@ def read_report(path):
     return uniq
 
 if __name__ == "__main__":
-    path = r"C:\Users\manoj.s\Downloads\PowerBI_Measures_Report_Model_wise.xlsx"
+    path = os.environ.get("SEMABRIDGE_TEST_MEASURES_XLSX", "")
     measures = read_report(path)
     print(f"Total measures extracted: {len(measures)}")
     by_model = Counter(x["model"] for x in measures)

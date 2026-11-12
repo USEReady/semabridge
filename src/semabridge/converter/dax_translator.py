@@ -616,12 +616,20 @@ class DAXTranslator:
                 for cat in self._ast_advisories:
                     if cat not in cats:
                         cats.append(cat)
-                if parsed_ast is not None and dax_has_overriding_calculate_filter(parsed_ast):
+                # A whole-table ALL helper (MAX(T."_ALL_<AGG>_...")) is computed
+                # over the whole table with the FILTER predicate baked in, so
+                # it already ignores the query's filters exactly like
+                # CALCULATE(..., FILTER(ALL(T), ...)) -- the "filter override
+                # differs" note would be false for it.
+                uses_whole_table_helper = bool(re.search(r'(?<![A-Za-z0-9])_ALL_[A-Z0-9_]+', result.sql or "", re.IGNORECASE))
+                if parsed_ast is not None and dax_has_overriding_calculate_filter(parsed_ast) and not uses_whole_table_helper:
                     if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in cats:
                         cats.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
                 if "CURRENT_DATE()" in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
                     if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in cats:
                         cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                from semabridge.connectors.snowflake_metric_sql import simplify_dead_arithmetic_sql
+                result.sql = simplify_dead_arithmetic_sql(result.sql)
                 result.advisory_categories = cats
                 return result
             if result is not None and result.failure_reason:
@@ -3225,8 +3233,8 @@ class DAXTranslator:
                     known_measure_names=set(measure_map.keys()),
 
                     allow_window_enrichment=getattr(self, "_allow_window_enrichment", False),
-                datasets=kwargs.get("datasets"),
-                dataset_col_lookup=dataset_col_lookup,
+                datasets=getattr(self, "_current_datasets", None),
+                dataset_col_lookup=getattr(self, "_dataset_col_lookup", None),
 
                 )
 

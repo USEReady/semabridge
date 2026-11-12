@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -21,14 +21,22 @@ class SynonymOverrideRequest(BaseModel):
     field keeps its stored value.
     """
 
-    project_id: str
-    model_name: str
-    table_name: str
-    column_name: str
+    model_config = ConfigDict(extra="forbid")
+    project_id: str = Field(..., min_length=1)
+    model_name: str = Field(..., min_length=1)
+    table_name: str = Field(..., min_length=1)
+    column_name: str = Field(..., min_length=1)
     synonyms: Optional[List[str]] = None
     description: Optional[str] = None
     business_rules: Optional[List[str]] = None
     data_steward: Optional[str] = None
+
+    @field_validator("project_id", "model_name", "table_name", "column_name")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not str(v or "").strip():
+            raise ValueError("must not be empty")
+        return v.strip()
 
 
 def _clean_synonyms(values: List[str]) -> List[str]:

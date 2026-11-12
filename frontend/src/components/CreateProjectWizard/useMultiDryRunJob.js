@@ -194,6 +194,30 @@ export function useMultiDryRunJob({ projectId, job }) {
     setPollNonce((n) => n + 1);
   }, []);
 
+  const removeFile = useCallback((fileId) => {
+    setFileStates((prev) => {
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
+    setRerunErrors((prev) => {
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
+    setJobStatus((prev) => {
+      if (!prev) return prev;
+      const remaining = (prev.files || []).filter((f) => f.file_id !== fileId);
+      const anyFailed = remaining.some((f) => normalizeFileStatus(f.status) === 'failed');
+      const allSuccess = remaining.length > 0 && remaining.every((f) => normalizeFileStatus(f.status) === 'success');
+      return {
+        ...prev,
+        status: allSuccess ? 'success' : (anyFailed ? 'partial' : prev.status),
+        files: remaining,
+      };
+    });
+  }, []);
+
   const sections = useMemo(
     () => (jobId ? buildMultiModelSections(jobStatus, fileStates) : []),
     [jobId, jobStatus, fileStates],
@@ -208,6 +232,7 @@ export function useMultiDryRunJob({ projectId, job }) {
     rerunErrors,
     updateFileRows,
     rerunFile,
+    removeFile,
     retryPolling,
   };
 }

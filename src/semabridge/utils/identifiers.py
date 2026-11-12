@@ -598,3 +598,128 @@ def inactive_alias(dim_table: str, fk_column: str, *, uppercase: bool = True) ->
     combined = f"{dim_clean} {fk_clean}"
     alias = sanitizer.sanitize_column(combined)
     return alias.upper() if uppercase else alias.lower()
+
+
+def inactive_relationship_used_by_measures(rel: Any, model: Any) -> bool:
+    """Return True if any measure on `model` references `rel` via USERELATIONSHIP(...)."""
+    metrics = getattr(model, "metrics", None) or ()
+    if not metrics:
+        return False
+
+    def _norm(s: Any) -> str:
+        return re.sub(r"[^A-Z0-9]", "", str(s or "").upper())
+
+    from_cols = {_norm(c) for c in (getattr(rel, "from_columns", None) or []) if _norm(c)}
+    to_cols = {_norm(c) for c in (getattr(rel, "to_columns", None) or []) if _norm(c)}
+    from_ds = _norm(getattr(rel, "from_dataset", ""))
+    to_ds = _norm(getattr(rel, "to_dataset", ""))
+    userel_re = re.compile(r"USERELATIONSHIP\s*\(([^()]+)\)", re.IGNORECASE)
+    col_ref_re = re.compile(r"(?:'([^']+)'|([A-Za-z0-9_ &%$./-]+))?\s*\[\s*([^\]]+)\s*\]")
+
+    for m in metrics:
+        expr = str(getattr(m, "expression", None) or "")
+        if "USERELATIONSHIP" not in expr.upper():
+            continue
+        for match in userel_re.finditer(expr):
+            refs = col_ref_re.findall(match.group(1))
+            if not refs:
+                return True
+            ref_cols = {_norm(r[2]) for r in refs if _norm(r[2])}
+            ref_tbls = {_norm(r[0] or r[1]) for r in refs if _norm(r[0] or r[1])}
+            col_match = bool(
+                (not from_cols or (from_cols & ref_cols))
+                and (not to_cols or (to_cols & ref_cols))
+            )
+            tbl_match = (not ref_tbls) or (
+                (not from_ds or from_ds in ref_tbls)
+                and (not to_ds or to_ds in ref_tbls)
+            )
+            if col_match and tbl_match:
+                return True
+    return False
+
+
+def _relationship_signature(rel: Any) -> tuple:
+    return (
+        str(getattr(rel, "from_dataset", "") or "").upper(),
+        tuple(str(c).upper() for c in (getattr(rel, "from_columns", None) or [])),
+        str(getattr(rel, "to_dataset", "") or "").upper(),
+        tuple(str(c).upper() for c in (getattr(rel, "to_columns", None) or [])),
+    )
+
+
+def inactive_role_alias_map(relationships: Any, model: Any) -> Dict[tuple, str]:
+    """Unique role-playing alias for every inactive relationship used by USERELATIONSHIP.
+
+    The base alias is ``<DIM>_<FK>`` (see :func:`inactive_alias`). When two or
+    more used inactive relationships share that base (e.g. one fact date column
+    related to two different date-table columns, or two facts with the same FK
+    name), each is disambiguated by its target column, then its source table,
+    then a numeric suffix, so every role table gets its own TABLES alias and
+    its own relationship. Keyed by :func:`_relationship_signature`.
+    """
+    used = []
+    for rel in relationships or ():
+        if getattr(rel, "is_active", True):
+            continue
+        from_cols = getattr(rel, "from_columns", None) or []
+        if not from_cols or not getattr(rel, "to_dataset", None):
+            continue
+        if not inactive_relationship_used_by_measures(rel, model):
+            continue
+        used.append(rel)
+
+    def _candidates(rel: Any) -> List[str]:
+        to_ds = getattr(rel, "to_dataset", "")
+        fk = (getattr(rel, "from_columns", None) or [""])[0]
+        to_col = (getattr(rel, "to_columns", None) or [""])[0]
+        from_ds = getattr(rel, "from_dataset", "")
+        cands = [inactive_alias(to_ds, fk)]
+        if to_col:
+            cands.append(inactive_alias(to_ds, f"{fk} {to_col}"))
+        cands.append(inactive_alias(to_ds, f"{from_ds} {fk} {to_col}".strip()))
+        return cands
+
+    result: Dict[tuple, str] = {}
+    level = {_relationship_signature(r): 0 for r in used}
+    # Escalate only the relationships whose alias collides with another one.
+    for _ in range(3):
+        counts: Dict[str, int] = {}
+        for r in used:
+            cands = _candidates(r)
+            a = cands[min(level[_relationship_signature(r)], len(cands) - 1)]
+            counts[a] = counts.get(a, 0) + 1
+        clash = False
+        for r in used:
+            sig = _relationship_signature(r)
+            cands = _candidates(r)
+            a = cands[min(level[sig], len(cands) - 1)]
+            if counts[a] > 1 and level[sig] < len(cands) - 1:
+                level[sig] += 1
+                clash = True
+        if not clash:
+            break
+    taken: Set[str] = set()
+    for r in used:
+        sig = _relationship_signature(r)
+        if sig in result:
+            continue
+        cands = _candidates(r)
+        a = cands[min(level[sig], len(cands) - 1)]
+        base, n = a, 2
+        while a in taken:
+            a = f"{base}_{n}"
+            n += 1
+        taken.add(a)
+        result[sig] = a
+    return result
+
+
+def inactive_role_alias(rel: Any, relationships: Any, model: Any) -> str:
+    """Role-playing alias for one inactive relationship (unique within the model)."""
+    sig = _relationship_signature(rel)
+    alias = inactive_role_alias_map(relationships, model).get(sig)
+    if alias:
+        return alias
+    fk = (getattr(rel, "from_columns", None) or [""])[0]
+    return inactive_alias(getattr(rel, "to_dataset", ""), fk) if fk else ""

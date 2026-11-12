@@ -3,22 +3,30 @@ import { ArrowLeft } from 'lucide-react';
 import PageHeader from '../components/common/PageHeader';
 import GlobalConfigEditor from '../components/GlobalConfigEditor';
 
-export default function GlobalConfigPage() {
+/**
+ * Global configuration — raw YAML editor for ~/.semabridge/config.yaml.
+ * Standalone at /global-config; rendered with `embedded` under Settings › Advanced.
+ */
+export default function GlobalConfigPage({ embedded = false }) {
     const navigate = useNavigate();
+
+    if (embedded) {
+        return <GlobalConfigEditor />;
+    }
 
     return (
         <div style={{ padding: '28px 16px', minHeight: '100%', maxWidth: 1400, margin: '0 auto' }} className="md:px-10">
             <div style={{ marginBottom: 20 }}>
                 <button
-                    onClick={() => navigate('/settings')}
-                    style={{ 
-                        background: 'none', 
-                        border: 'none', 
-                        cursor: 'pointer', 
-                        color: 'var(--text-tertiary)', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: 6, 
+                    onClick={() => navigate('/settings?section=advanced')}
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'var(--text-tertiary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
                         fontSize: 13,
                         padding: 0
                     }}
@@ -28,8 +36,8 @@ export default function GlobalConfigPage() {
             </div>
 
             <PageHeader
-                title="Global Configuration"
-                description="Manage environment variables, default credentials, and system-wide settings in ~/.semabridge/config.yaml."
+                title="Global configuration"
+                description="Environment variables, default credentials and system-wide settings in ~/.semabridge/config.yaml."
             />
 
             <div style={{ marginTop: 24 }}>

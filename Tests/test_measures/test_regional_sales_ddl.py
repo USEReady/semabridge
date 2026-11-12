@@ -11,7 +11,7 @@ import pytest
 # SEMABRIDGE_REGIONAL_SALES_PBIX at it; otherwise the module is skipped.
 pbix_path = os.environ.get(
     "SEMABRIDGE_REGIONAL_SALES_PBIX",
-    r"C:\Users\manoj.s\Downloads\PBIX Files\Regional Sales Sample.pbix",
+    os.path.join(os.environ.get("SEMABRIDGE_PBIX_DIR", ""), "Regional Sales Sample.pbix"),
 )
 if not os.path.isfile(pbix_path):
     pytest.skip(f"Regional Sales Sample .pbix not found at {pbix_path}", allow_module_level=True)

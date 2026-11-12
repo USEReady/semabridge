@@ -253,6 +253,18 @@ body {
     color: var(--accent-blue);
   }
 
+  .bg-accent-blue {
+    background-color: var(--accent-blue);
+  }
+
+  .hover\:bg-accent-blue-hover:hover {
+    background-color: var(--accent-blue-hover);
+  }
+
+  .border-accent-blue {
+    border-color: var(--accent-blue);
+  }
+
   .text-color-success {
     color: var(--color-success);
   }
@@ -371,69 +383,71 @@ body {
 /* ============================= */
 /* Input & Interactive Elements  */
 /* ============================= */
-input,
-select,
-textarea,
-button {
-  color: var(--text-primary);
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-main);
-  border-radius: 6px;
-  transition: all var(--transition-normal);
-  font-family: inherit;
-  font-size: 13px;
-}
+@layer base {
+  input,
+  select,
+  textarea,
+  button {
+    color: var(--text-primary);
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-main);
+    border-radius: 6px;
+    transition: all var(--transition-normal);
+    font-family: inherit;
+    font-size: 13px;
+  }
 
-/* Input field focus styles - Enhanced Visibility */
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: var(--accent-blue) !important;
-  outline: none;
-  box-shadow: var(--shadow-focus);
-  background-color: var(--bg-input-hover);
-}
+  /* Input field focus styles - Enhanced Visibility */
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--accent-blue) !important;
+    outline: none;
+    box-shadow: var(--shadow-focus);
+    background-color: var(--bg-input-hover);
+  }
 
-/* Input placeholder text - Better contrast */
-input::placeholder,
-textarea::placeholder {
-  color: var(--text-quaternary);
-  font-weight: 400;
-}
+  /* Input placeholder text - Better contrast */
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-quaternary);
+    font-weight: 400;
+  }
 
-/* Disabled input states */
-input:disabled,
-select:disabled,
-textarea:disabled {
-  background-color: var(--bg-surface-raised);
-  color: var(--text-quaternary);
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+  /* Disabled input states */
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    background-color: var(--bg-surface-raised);
+    color: var(--text-quaternary);
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 
-/* Button base styles - Better interactivity */
-button {
-  cursor: pointer;
-  background-color: var(--bg-button);
-  color: var(--text-primary);
-  font-weight: 500;
-  padding: 8px 12px;
-  border: 1px solid var(--border-main);
-  transition: all var(--transition-normal);
-}
+  /* Button base styles - Better interactivity */
+  button {
+    cursor: pointer;
+    background-color: var(--bg-button);
+    color: var(--text-primary);
+    font-weight: 500;
+    padding: 8px 12px;
+    border: 1px solid var(--border-main);
+    transition: all var(--transition-normal);
+  }
 
-button:hover:not(:disabled) {
-  background-color: var(--bg-button-hover);
-  border-color: var(--border-main);
-}
+  button:hover:not(:disabled) {
+    background-color: var(--bg-button-hover);
+    border-color: var(--border-main);
+  }
 
-button:active:not(:disabled) {
-  transform: scale(0.98);
-}
+  button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 /* Primary button variant */
@@ -690,4 +704,102 @@ button:disabled {
   font-weight: 600 !important;
   letter-spacing: 0.02em !important;
 }
+
+/* =========================================================
+   SEMABRIDGE SPATIAL OS ("STUNNER" EDITION) DESIGN TOKENS
+   ========================================================= */
+[data-theme="dark"] {
+  --spatial-canvas-bg: #05070E;
+  --spatial-mesh-1: rgba(99, 102, 241, 0.14);
+  --spatial-mesh-2: rgba(6, 182, 212, 0.10);
+  --spatial-mesh-3: rgba(168, 85, 247, 0.09);
+  --spatial-dot: rgba(255, 255, 255, 0.055);
+  --spatial-glass-bg: rgba(13, 19, 36, 0.76);
+  --spatial-glass-raised: rgba(20, 29, 53, 0.82);
+  --spatial-glass-border: rgba(255, 255, 255, 0.09);
+  --spatial-glass-shadow: 0 18px 46px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+  --spatial-dock-shadow: 0 20px 50px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+[data-theme="light"] {
+  --spatial-canvas-bg: #EEF2F9;
+  --spatial-mesh-1: rgba(99, 102, 241, 0.11);
+  --spatial-mesh-2: rgba(6, 182, 212, 0.09);
+  --spatial-mesh-3: rgba(168, 85, 247, 0.07);
+  --spatial-dot: rgba(15, 23, 42, 0.06);
+  --spatial-glass-bg: rgba(255, 255, 255, 0.84);
+  --spatial-glass-raised: rgba(248, 250, 252, 0.94);
+  --spatial-glass-border: rgba(15, 23, 42, 0.09);
+  --spatial-glass-shadow: 0 12px 32px rgba(15, 23, 42, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  --spatial-dock-shadow: 0 16px 42px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.spatial-os-canvas {
+  background-color: var(--spatial-canvas-bg);
+  background-image:
+    radial-gradient(circle at 14% 16%, var(--spatial-mesh-1) 0%, transparent 42%),
+    radial-gradient(circle at 86% 20%, var(--spatial-mesh-2) 0%, transparent 40%),
+    radial-gradient(circle at 52% 86%, var(--spatial-mesh-3) 0%, transparent 45%),
+    radial-gradient(var(--spatial-dot) 1.15px, transparent 1.15px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 24px 24px;
+}
+
+.spatial-top-hud {
+  background: var(--spatial-glass-bg);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--spatial-glass-border);
+  border-radius: 16px;
+  box-shadow: var(--spatial-glass-shadow);
+}
+
+.spatial-glass-card {
+  background: var(--spatial-glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--spatial-glass-border);
+  border-radius: 18px;
+  box-shadow: var(--spatial-glass-shadow);
+}
+
+.spatial-bottom-dock {
+  background: var(--spatial-glass-bg);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-radius: 18px;
+  box-shadow: var(--spatial-dock-shadow);
+  padding: 5px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.spatial-dock-item {
+  padding: 7px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.spatial-dock-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover);
+}
+
+.spatial-dock-item.active {
+  background: linear-gradient(135deg, #6366F1 0%, #06B6D4 100%);
+  color: #FFFFFF !important;
+  font-weight: 700;
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+}
+
 

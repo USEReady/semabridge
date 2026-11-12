@@ -84,10 +84,28 @@ def test_saved_binding_wins_while_its_table_exists():
     assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, gone) == "SALES_FACT"
 
 
-def test_name_only_match_binds_instead_of_blocking():
+def test_name_only_match_with_incompatible_columns_does_not_bind_and_blocks():
+    from semabridge.connectors.table_binding_resolver import check_table_name_collision_blocker
+    from semabridge.core.exceptions import ConnectorError
+
     meta = LiveSchemaMetadata({"SALES": {"RANDOM_A", "RANDOM_B"}})
-    assert resolve_dataset_to_physical_table("Sales", ["Opportunity ID", "Sales Date"], meta) == "SALES"
-    assert meta.binding_log["SALES"]["matched_by"] == "name"
+    assert resolve_dataset_to_physical_table("Sales", ["Opportunity ID", "Sales Date"], meta) == "Sales"
+    assert "SALES" not in meta.binding_log
+    blocker = check_table_name_collision_blocker("Sales", ["Opportunity ID", "Sales Date"], meta)
+    assert blocker is not None
+
+    clear_schema_cache()
+    conn = _Conn(tables=["SALES"], columns={"SALES": ["RANDOM_A", "RANDOM_B"]}, row_counts={"SALES": 10})
+    manager = _schema_manager(conn)
+    model = SMLModel(
+        unique_name="CollisionModel",
+        datasets=[SMLDataset(unique_name="Sales", columns=[SMLColumn(unique_name="Opportunity ID"), SMLColumn(unique_name="Sales Date")])],
+    )
+    plan = {e["dataset"]: e for e in manager.plan_source_tables(_Cursor(), model)}
+    assert plan["Sales"]["action"] == "blocked"
+    with pytest.raises(ConnectorError, match="incompatible existing table"):
+        manager._ensure_source_tables_exist(_Cursor(), model)
+    clear_schema_cache()
 
 
 class _Cursor:

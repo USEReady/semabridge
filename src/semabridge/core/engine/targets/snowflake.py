@@ -77,6 +77,13 @@ def _convert_to_snowflake_target(self, context: RunContext) -> None:
         physical_namespace=emitter_physical_namespace(context),
     )
     emitter.binding_scope = table_binding_scope(context)
+    if getattr(emitter, "semantic_view_builder", None) is not None:
+        resolved_pid = (
+            (getattr(context, "config_payload", None) or {}).get("binding_project_id")
+            or (getattr(context, "config_payload", None) or {}).get("delta_baseline_project_id")
+            or getattr(context, "project_id", None)
+        )
+        emitter.semantic_view_builder.project_id = resolved_pid
 
     if not context.sml_model:
         raise ConversionError("No SML model available for target conversion. Ensure Stage 6 completed successfully.")

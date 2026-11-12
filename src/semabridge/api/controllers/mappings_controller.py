@@ -108,6 +108,64 @@ def _is_preview_project_id(project_id: Optional[str]) -> bool:
     return pid in ("", "preview") or pid.startswith("preview-")
 
 
+def _changed_verified_queries(
+    project_id: Optional[str],
+    model_names: List[Optional[str]],
+    current: Optional[List[Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Verified queries that are new or changed since the last deployment.
+
+    ``current`` is the dry run's verified query list (falls back to the
+    project's saved ones). Unchanged queries are not listed.
+    """
+    pid = str(project_id or "").strip()
+    if _is_preview_project_id(pid):
+        return []
+    if current is None:
+        try:
+            from semabridge.ai.verified_queries_service import list_verified_queries_for_project
+
+            current = list_verified_queries_for_project(pid)
+        except Exception as exc:
+            logger.warning("Dry run: verified queries of project %s unavailable: %s", pid, exc)
+            return []
+
+    def _key(v: Any) -> str:
+        return " ".join(str((v or {}).get("name") or "").split()).casefold()
+
+    def _sql(v: Any) -> str:
+        return " ".join(str((v or {}).get("sql") or "").split()).casefold()
+
+    baseline: Dict[str, str] = {}
+    names = [n for n in model_names if n]
+    if names:
+        try:
+            from semabridge.api.services.project_shared import db_manager as _repo
+
+            snap = _repo.get_last_deployed_snapshot(project_id=pid, model_names=names)
+            blob = getattr(snap, "sml_blob", None) if snap is not None else None
+            if isinstance(blob, str):
+                import json as _json
+
+                blob = _json.loads(blob)
+            for v in (blob or {}).get("verified_queries") or []:
+                if isinstance(v, dict):
+                    baseline[_key(v)] = _sql(v)
+        except Exception as exc:
+            logger.warning("Dry run: last deployment of project %s unreadable for verified queries: %s", pid, exc)
+    out: List[Dict[str, Any]] = []
+    for v in current or []:
+        v = v if isinstance(v, dict) else getattr(v, "model_dump", lambda: {})()
+        k = _key(v)
+        if not k:
+            continue
+        if k not in baseline:
+            out.append({"action": "added", "name": v.get("name"), "sql": v.get("sql", "")})
+        elif baseline[k] != _sql(v):
+            out.append({"action": "modified", "name": v.get("name"), "sql": v.get("sql", "")})
+    return out
+
+
 def _dry_run_preview_project_id(
     request_user_id: Any,
     source_config: Dict[str, Any],
@@ -407,11 +465,14 @@ async def _run_dry_run_pipeline(
     ambiguous_report_aliases: List[Dict[str, Any]] = []
     upsert_delta: Optional[Dict[str, Any]] = None
     table_binding_plan: Optional[Dict[str, Any]] = None
+    ontology_report: Optional[Dict[str, Any]] = None
     # Step 8 of the engine dry run built the target DDL against the live
     # schema; its drops/placeholders are what the sync would report.
     target_ddl_drops: List[Dict[str, Any]] = []
     for r in results:
         summary = r.get("summary") or {}
+        if ontology_report is None and isinstance(summary.get("ontology_report"), dict):
+            ontology_report = summary.get("ontology_report")
         live_schema_error = next(
             (
                 str(e.get("message") or "")
@@ -642,6 +703,24 @@ async def _run_dry_run_pipeline(
     # mapped/translated cleanly pre-deploy — never folded into auto_count.
     predicted_failure_count = sum(1 for m in filtered_mappings if m.get("status") == "predicted_failure")
 
+    delta_changes = (upsert_delta or {}).get("ontology_changes")
+    if isinstance(delta_changes, dict):
+        # UPSERT: changes vs. the deployed snapshot.
+        ontology_changes = {"descriptions": [], "synonyms": [], "verified_queries": [], **delta_changes}
+    else:
+        # COPY (no UPSERT delta): what the ontology changed on the model, and
+        # only the verified queries that differ from the last deployment.
+        applied_changes = (ontology_report or {}).get("changes") or {}
+        ontology_changes = {
+            "descriptions": list(applied_changes.get("descriptions") or []),
+            "synonyms": list(applied_changes.get("synonyms") or []),
+            "verified_queries": _changed_verified_queries(
+                project_id, [model_name], sml_blob.get("verified_queries") if isinstance(sml_blob, dict) else None
+            ),
+        }
+
+    ontology_blockers = list((ontology_report or {}).get("blocking_conflicts") or [])
+
     return {
         "success": True,
         "project_id": preview_project_id,
@@ -659,6 +738,16 @@ async def _run_dry_run_pipeline(
         "ambiguous_report_aliases": ambiguous_report_aliases,
         "sync_mode": sync_mode,
         "upsert_delta": upsert_delta,
+        "ontology_changes": {
+            **ontology_changes,
+            "applied": (ontology_report or {}).get("applied") or {},
+            "domains": (ontology_report or {}).get("domains") or [],
+            "blocking_conflicts": ontology_blockers,
+            "warnings": (ontology_report or {}).get("warnings") or [],
+            "formula_overrides_ignored": (ontology_report or {}).get("formula_overrides_ignored") or [],
+            "conflict_resolution": (ontology_report or {}).get("conflict_resolution") or {},
+        },
+        "blocking_conflicts": ontology_blockers,
         "table_binding_plan": table_binding_plan,
         "summary": {
             "total_fields": len(filtered_mappings),
@@ -667,6 +756,7 @@ async def _run_dry_run_pipeline(
             "collisions": collision_count,
             "predicted_failures": predicted_failure_count,
             "extraction_failed": extraction_failed,
+            "ontology_blockers": len(ontology_blockers),
         },
     }
 

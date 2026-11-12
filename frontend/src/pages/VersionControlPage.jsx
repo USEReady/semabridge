@@ -1,53 +1,44 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import usePageCache from '../hooks/usePageCache';
 import {
     History,
-    History as HistoryIcon,
-    GitCompare,
-    RotateCcw,
-    Trash2,
     Database,
-    Clock,
-    ShieldCheck,
     Zap,
     Search,
-    Filter,
-    ChevronRight,
     RefreshCw,
     Loader2,
     AlertTriangle,
     CheckCircle2,
     ArrowRight,
-    ArrowLeft,
-    Layers,
-    FileText,
-    Activity,
     Info,
-    LayoutGrid,
-    Calendar,
-    Check,
     X,
-    Lock,
-    Unlock,
-    Hash,
-    GitBranch,
-    Table,
-    ListTree,
     Pin,
-    Download
+    Save,
 } from 'lucide-react';
 import { api, formatDate } from '../utils/api';
 import { useUIStore } from '../store/uiStore';
 import { useLogs } from '../context/LogsContext';
-import PageHeader from '../components/common/PageHeader';
 import RepositoryBrowser from '../components/RepositoryBrowser';
-import { Archive } from 'lucide-react';
+import VersionList from '../components/history/VersionList';
+import VersionDetail from '../components/history/VersionDetail';
+import RestoreDialog from '../components/history/RestoreDialog';
+import StorageDisclosure from '../components/history/StorageDisclosure';
+import { Btn, Card, MenuButton } from '../components/history/ui';
+import {
+    snapshotOf,
+    beforeSnapshotOf,
+    countDiff,
+    summarizeCounts,
+    longTime,
+} from '../components/history/historyUtils';
 
 
-// --- STYLED COMPONENTS ---
+// --- SHARED STYLED COMPONENTS ---
+// Exported because RepositoryBrowser (shown under History › More) reuses them.
 
 export const GlassCard = ({ children, className = "", style = {} }) => (
-    <div 
+    <div
         className={`bg-[var(--bg-surface)]/40 backdrop-blur-md border border-[var(--border-main)] rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 ${className}`}
         style={style}
     >
@@ -78,8 +69,8 @@ export const ActionButton = ({ onClick, children, variant = "default", disabled 
         default: "bg-[var(--bg-button)] hover:bg-[var(--bg-button-hover)] text-[var(--text-primary)] border-[var(--border-main)]"
     };
     return (
-        <button 
-            onClick={onClick} 
+        <button
+            onClick={onClick}
             disabled={disabled}
             className={`px-4 py-2 rounded-xl text-[12px] font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${className}`}
             style={style}
@@ -89,433 +80,143 @@ export const ActionButton = ({ onClick, children, variant = "default", disabled 
     );
 };
 
-// --- DIFF VIEW COMPONENT ---
-
-function DiffView({ diffData, baseRun, targetRun, onBack }) {
-    if (!diffData) return null;
-    const { metadata_diff, models } = diffData;
-    const [filterStatus, setFilterStatus] = useState('ALL');
-    const [search, setSearch] = useState('');
-
-    const filteredModels = (models || []).filter(m => {
-        const matchesSearch = m.name.toLowerCase().includes(search.toLowerCase());
-        const matchesStatus = filterStatus === 'ALL' || m.status === filterStatus;
-        return matchesSearch && matchesStatus;
-    });
-    
-    return (
-        <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {[
-                    { key: 'snapshot_a', run: baseRun, label: 'BASE VERSION', accent: 'var(--accent-blue)', color: 'blue' },
-                    { key: 'snapshot_b', run: targetRun, label: 'TARGET VERSION', accent: 'var(--color-success)', color: 'emerald' }
-                ].map(({ key, run, label, accent, color }) => (
-                    <GlassCard key={key} className="p-6 relative group overflow-hidden">
-                        <div className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-10 -mr-16 -mt-16 bg-${color}-500`} />
-                        <div className="flex justify-between items-center mb-4 relative z-10">
-                            <h4 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.2em]">{label}</h4>
-                            <div className="p-2 rounded-lg bg-[var(--bg-main)]/50 border border-[var(--border-light)]">
-                                <Database size={16} className={`text-${color}-500`} />
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-y-4 text-[13px] relative z-10">
-                            <div className="flex flex-col">
-                                <span className="text-[var(--text-tertiary)] text-[10px] uppercase font-bold tracking-wider">Run Context</span> 
-                                <span className="text-[var(--text-primary)] font-mono font-bold mt-0.5">{run?.run_id?.substring(0, 12) || 'N/A'}</span>
-                            </div>
-                            <div className="flex flex-col">
-                                <span className="text-[var(--text-tertiary)] text-[10px] uppercase font-bold tracking-wider">Data Format</span> 
-                                <span className="text-[var(--text-primary)] uppercase font-bold mt-0.5">{metadata_diff?.[key]?.format || 'OSI'}</span>
-                            </div>
-                            <div className="flex flex-col">
-                                <span className="text-[var(--text-tertiary)] text-[10px] uppercase font-bold tracking-wider">Model Count</span> 
-                                <span className="text-[var(--text-primary)] font-bold mt-0.5">{metadata_diff?.[key]?.model_count || 0} Entities</span>
-                            </div>
-                            <div className="flex flex-col">
-                                <span className="text-[var(--text-tertiary)] text-[10px] uppercase font-bold tracking-wider">Captured At</span> 
-                                <span className="text-[var(--text-primary)] font-bold mt-0.5">
-                                    {formatDate(metadata_diff?.[key]?.taken_at)}
-                                </span>
-                            </div>
-                        </div>
-                    </GlassCard>
-                ))}
-            </div>
-
-            <GlassCard className="flex-1 flex flex-col overflow-hidden bg-[var(--bg-surface)]/20 min-h-[500px]">
-                <div className="px-6 py-5 border-b border-[var(--border-light)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[var(--bg-surface)]/50">
-                    <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-                            <GitCompare size={20} className="text-blue-500" />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-widest">Structural Evolution</h3>
-                            <p className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase mt-0.5">Comparing logical schema divergence</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3 w-full md:w-auto">
-                        <div className="relative flex-1 md:w-64">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" size={14} />
-                            <input 
-                                type="text"
-                                placeholder="Filter models..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="w-full bg-[var(--bg-main)]/50 border border-[var(--border-light)] rounded-xl pl-9 pr-4 py-2 text-xs font-bold focus:border-blue-500/50 outline-none transition-all"
-                            />
-                        </div>
-                        <select 
-                            value={filterStatus}
-                            onChange={(e) => setFilterStatus(e.target.value)}
-                            className="bg-[var(--bg-main)]/50 border border-[var(--border-light)] rounded-xl px-4 py-2 text-xs font-bold outline-none focus:border-blue-500/50 cursor-pointer"
-                        >
-                            <option value="ALL">ALL CHANGES</option>
-                            <option value="ADDED">ADDED</option>
-                            <option value="REMOVED">REMOVED</option>
-                            <option value="MODIFIED">MODIFIED</option>
-                            <option value="UNCHANGED">UNCHANGED</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div className="overflow-auto no-scrollbar max-h-[600px]">
-                    <table className="w-full text-left">
-                        <thead className="sticky top-0 bg-[var(--bg-surface)]/90 backdrop-blur-md z-10 border-b border-[var(--border-light)]">
-                            <tr className="text-[var(--text-tertiary)]">
-                                <th className="px-8 py-4 font-black uppercase tracking-[0.1em] text-[9px] w-1/3">Model Entity</th>
-                                <th className="px-8 py-4 font-black uppercase tracking-[0.1em] text-[9px] w-1/4">Status</th>
-                                <th className="px-8 py-4 font-black uppercase tracking-[0.1em] text-[9px]">Drift Analysis</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--border-light)]/30">
-                            {filteredModels.length === 0 ? (
-                                <tr>
-                                    <td colSpan="3" className="px-8 py-20 text-center text-[var(--text-tertiary)]">
-                                        <div className="flex flex-col items-center gap-3">
-                                            <Search size={32} className="opacity-10" />
-                                            <p className="text-sm font-bold uppercase tracking-widest opacity-40">No matching entities found</p>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : filteredModels.map((m, idx) => (
-                                <tr 
-                                    key={idx} 
-                                    onClick={() => setSelectedModelHistory(m.name)}
-                                    className="hover:bg-blue-500/5 transition-colors group cursor-pointer"
-                                >
-                                    <td className="px-8 py-5">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-2 h-2 rounded-full ${
-                                                m.status === 'ADDED' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 
-                                                m.status === 'REMOVED' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 
-                                                m.status === 'MODIFIED' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-400 opacity-60'
-                                            }`} />
-                                            <span className="font-bold text-[var(--text-primary)] text-sm tracking-tight">{m.name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <div className="flex">
-                                            <Badge variant={
-                                                m.status === 'ADDED' ? 'success' : 
-                                                m.status === 'REMOVED' ? 'error' : 
-                                                m.status === 'MODIFIED' ? 'warning' : 'default'
-                                            }>{m.status}</Badge>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5 text-[12px] text-[var(--text-secondary)] font-medium leading-relaxed italic opacity-80">
-                                        {m.details?.message || 'Logical consistency maintained across this mutation.'}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </GlassCard>
-        </div>
-    );
-}
-
 // --- MODEL HISTORY DRAWER ---
+// Opened by clicking a row in "Changes vs …" or in Mappings.
 
 function ModelHistoryDrawer({ projectId, modelName, onClose }) {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetch = async () => {
+        const load = async () => {
             setLoading(true);
             try {
-                const res = await api.apiFetch(`/projects/${projectId}/models/${modelName}/history`);
+                const res = await api.apiFetch(`/projects/${projectId}/models/${encodeURIComponent(modelName)}/history`);
                 const json = await res.json();
-                setHistory(json || []);
+                setHistory(Array.isArray(json) ? json : []);
             } catch (e) {
                 console.error(e);
             } finally {
                 setLoading(false);
             }
         };
-        fetch();
+        load();
     }, [projectId, modelName]);
 
     return (
-        <div className="fixed inset-y-0 right-0 w-[500px] bg-[var(--bg-surface)]/95 backdrop-blur-xl border-l border-[var(--border-light)] z-[300] shadow-2xl animate-in slide-in-from-right duration-300">
-            <div className="p-8 h-full flex flex-col">
-                <div className="flex justify-between items-start mb-8">
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-                            <History size={24} className="text-blue-500" />
-                        </div>
-                        <div>
-                            <h3 className="text-xl font-black text-[var(--text-primary)] truncate max-w-[300px]">{modelName}</h3>
-                            <p className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase tracking-widest mt-1">Entity Evolution Timeline</p>
-                        </div>
+        <div style={{
+            position: 'fixed', top: 0, bottom: 0, right: 0, width: 'min(440px, 100vw)', zIndex: 300,
+            background: 'var(--bg-surface)', borderLeft: '1px solid var(--border-main)', boxShadow: 'var(--shadow-lg)',
+            display: 'flex', flexDirection: 'column',
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border-light)' }}>
+                <History size={18} color="var(--accent-blue)" />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{modelName}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Versions that contain this model</div>
+                </div>
+                <button type="button" onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                    <X size={18} />
+                </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+                {loading ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-tertiary)' }}>
+                        <Loader2 size={14} className="animate-spin" /> Loading…
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-500/10 rounded-xl transition-all">
-                        <X size={20} className="text-[var(--text-tertiary)]" />
-                    </button>
-                </div>
-
-                <div className="flex-1 overflow-auto no-scrollbar pr-4">
-                    {loading ? (
-                        <div className="h-full flex flex-col items-center justify-center gap-4">
-                            <Loader2 size={32} className="animate-spin text-blue-500" />
-                            <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest">Tracing lineage...</span>
+                ) : history.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No saved versions contain this model.</div>
+                ) : (
+                    [...history].reverse().map((item, i) => (
+                        <div key={`${item.snapshot_id}-${i}`} style={{ padding: '10px 0', borderBottom: '1px solid var(--border-light)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{String(item.run_id || '').substring(0, 18) || 'Manual save'}</span>
+                                <span style={{ color: 'var(--text-tertiary)' }}>{formatDate(item.timestamp)}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', marginTop: 2 }}>{item.snapshot_id}</div>
                         </div>
-                    ) : history.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
-                            <Search size={48} className="mb-4" />
-                            <p className="text-sm font-bold uppercase tracking-widest">No change history found</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-12 relative before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-[2px] before:bg-gradient-to-b before:from-blue-500/50 before:to-transparent">
-                            {history.reverse().map((item, i) => (
-                                <div key={i} className="relative pl-12 group">
-                                    <div className="absolute left-0 top-1 w-10 h-10 rounded-full bg-[var(--bg-surface)] border-2 border-blue-500 flex items-center justify-center z-10 group-hover:scale-110 transition-transform shadow-lg shadow-blue-500/20">
-                                        <div className="w-2 h-2 rounded-full bg-blue-500" />
-                                    </div>
-                                    <div className="p-5 rounded-2xl bg-[var(--bg-main)]/50 border border-[var(--border-light)] hover:border-blue-500/30 transition-all">
-                                        <div className="flex justify-between items-start mb-3">
-                                            <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Run #{item.run_id.substring(0,8)}</span>
-                                            <span className="text-[10px] font-bold text-[var(--text-tertiary)]">{formatDate(item.timestamp)}</span>
-                                        </div>
-                                        <div className="flex items-center gap-3 mb-4">
-                                            <Badge variant="ghost">Snapshot {item.snapshot_id.substring(0,8)}</Badge>
-                                            <Badge variant="success">Active</Badge>
-                                        </div>
-                                        <div className="text-[11px] text-[var(--text-secondary)] font-medium leading-relaxed italic opacity-80">
-                                            This model was captured as part of a system sync. Its logical structure was validated.
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+                    ))
+                )}
             </div>
         </div>
     );
 }
 
-// --- PROJECT STATS VIEW ---
+// --- MAPPINGS TAB ---
 
-function ProjectStatsView({ projectId }) {
-    const [stats, setStats] = useState(null);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const fetch = async () => {
-            setLoading(true);
-            try {
-                const data = await api.apiFetch(`/projects/${projectId}/stats`);
-                const json = await data.json();
-                setStats(json);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetch();
-    }, [projectId]);
-
-    if (loading) return (
-        <div className="py-40 flex justify-center">
-            <Loader2 className="animate-spin text-blue-500" size={32} />
-        </div>
-    );
-
-    const cards = [
-        { label: 'Total Snapshots', val: stats?.total_snapshots, icon: Database, color: 'text-blue-500' },
-        { label: 'Pinned Versions', val: stats?.pinned_count, icon: Pin, color: 'text-amber-500' },
-        { label: 'Storage Used', val: stats?.storage_estimate, icon: ShieldCheck, color: 'text-emerald-500' },
-        { label: 'Avg Models/Snap', val: stats?.avg_models_per_snapshot, icon: ListTree, color: 'text-purple-500' }
-    ];
-
-    return (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {cards.map((c, i) => (
-                    <GlassCard key={i} className="p-8">
-                        <div className="flex justify-between items-start mb-6">
-                            <div className={`p-3 rounded-xl bg-slate-500/5 ${c.color}`}>
-                                <c.icon size={24} />
-                            </div>
-                            <div className="h-2 w-12 bg-slate-500/10 rounded-full overflow-hidden">
-                                <div className={`h-full ${c.color.replace('text', 'bg')} opacity-40`} style={{width: '60%'}} />
-                            </div>
-                        </div>
-                        <p className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-[0.15em] mb-2">{c.label}</p>
-                        <h3 className="text-3xl font-black text-[var(--text-primary)] tracking-tighter">{c.val}</h3>
-                    </GlassCard>
-                ))}
-            </div>
-
-            <GlassCard className="p-10">
-                <div className="flex items-center gap-4 mb-10">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                        <Activity size={24} className="text-emerald-500" />
-                    </div>
-                    <div>
-                        <h3 className="text-xl font-black text-[var(--text-primary)]">Project Health Score</h3>
-                        <p className="text-xs text-[var(--text-tertiary)] font-bold uppercase tracking-widest mt-1">Reliability index based on sync success rates</p>
-                    </div>
-                </div>
-                
-                <div className="flex items-center gap-12">
-                    <div className="relative w-48 h-48 flex items-center justify-center">
-                        <svg className="w-full h-full transform -rotate-90">
-                            <circle cx="96" cy="96" r="88" className="stroke-slate-500/10 fill-none" strokeWidth="16" />
-                            <circle cx="96" cy="96" r="88" className="stroke-emerald-500 fill-none transition-all duration-1000" strokeWidth="16" strokeDasharray="552.92" strokeDashoffset={552.92 * (1 - stats?.health_score / 100)} />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-5xl font-black text-[var(--text-primary)] tracking-tighter">{stats?.health_score}%</span>
-                            <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mt-1">Stable</span>
-                        </div>
-                    </div>
-                    <div className="flex-1 space-y-6">
-                        <div className="p-6 rounded-2xl bg-blue-500/5 border border-blue-500/10">
-                            <h4 className="text-xs font-black text-blue-500 uppercase tracking-widest mb-2">Observation</h4>
-                            <p className="text-[13px] text-[var(--text-secondary)] font-medium leading-relaxed italic">
-                                "This project has maintained high structural integrity. Sync operations are 92% successful, and snapshot pruning is optimized for retention."
-                            </p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="p-5 rounded-2xl border border-[var(--border-light)] bg-[var(--bg-main)]/30">
-                                <span className="text-[9px] font-black text-[var(--text-tertiary)] uppercase tracking-widest block mb-1">Prune Eligible</span>
-                                <span className="text-xl font-black text-[var(--text-primary)]">12 Snapshots</span>
-                            </div>
-                            <div className="p-5 rounded-2xl border border-[var(--border-light)] bg-[var(--bg-main)]/30">
-                                <span className="text-[9px] font-black text-[var(--text-tertiary)] uppercase tracking-widest block mb-1">Last Pruned</span>
-                                <span className="text-xl font-black text-[var(--text-primary)]">2d ago</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </GlassCard>
-        </div>
-    );
-}
-
-// --- MAPPINGS VIEW COMPONENT ---
-
-function MappingsView({ runId, projectId }) {
+function MappingsView({ projectId, onSelectModel }) {
     const [mappings, setMappings] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [query, setQuery] = useState('');
 
     useEffect(() => {
-        const fetch = async () => {
+        const load = async () => {
             setLoading(true);
             try {
                 const data = await api.listMappings(projectId);
-                // The backend returns an object { mappings: [...], collisions: [...] }
+                // The backend returns { mappings: [...], collisions: [...] }
                 // or a direct array in some legacy paths.
-                const results = Array.isArray(data) ? data : (data?.mappings || []);
-                setMappings(results);
+                setMappings(Array.isArray(data) ? data : (data?.mappings || []));
             } catch (e) {
                 console.error(e);
+                setMappings([]);
             } finally {
                 setLoading(false);
             }
         };
-        fetch();
-    }, [projectId, runId]);
+        load();
+    }, [projectId]);
 
-    if (loading) return (
-        <div className="flex flex-col items-center justify-center py-40 gap-4">
-            <Loader2 size={32} className="animate-spin text-blue-500" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">Reconstructing effective mappings...</span>
-        </div>
-    );
+    const visible = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        if (!q) return mappings;
+        return mappings.filter((m) => `${m.source} ${m.target}`.toLowerCase().includes(q));
+    }, [mappings, query]);
+
+    const th = { padding: '8px 14px', fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)', textAlign: 'left', borderBottom: '1px solid var(--border-light)' };
+    const td = { padding: '8px 14px', fontSize: 13, borderBottom: '1px solid var(--border-light)' };
 
     return (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <GlassCard className="overflow-hidden">
-                <div className="px-8 py-6 border-b border-[var(--border-light)] flex justify-between items-center bg-[var(--bg-surface)]/30">
-                    <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-                            <ListTree size={20} className="text-amber-500" />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-widest">Effective Mappings</h3>
-                            <p className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase mt-0.5">Source to Target Resolution</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-500/5 border border-[var(--border-light)]">
-                        <Lock size={14} className="text-[var(--text-tertiary)]" />
-                        <span className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest">Immutable Context</span>
-                    </div>
+        <Card>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+                <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Mappings</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>How each source object is named in the target</div>
                 </div>
-
-                <div className="overflow-auto no-scrollbar">
-                    <table className="w-full text-left">
-                        <thead className="bg-[var(--bg-surface)]/60 text-[var(--text-tertiary)]">
-                            <tr>
-                                <th className="px-8 py-4 font-black uppercase tracking-[0.1em] text-[9px]">Source Entity</th>
-                                <th className="px-8 py-4 font-black uppercase tracking-[0.1em] text-[9px]">Target (Effective)</th>
-                                <th className="px-8 py-4 font-black uppercase tracking-[0.1em] text-[9px] text-center">Collision</th>
-                            </tr>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border-main)', background: 'var(--bg-input)' }}>
+                    <Search size={14} color="var(--text-tertiary)" />
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter mappings…" aria-label="Filter mappings"
+                        style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: 'var(--text-primary)', width: 180 }} />
+                </div>
+            </div>
+            {loading ? (
+                <div style={{ padding: 16, fontSize: 13, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Loader2 size={14} className="animate-spin" /> Loading mappings…
+                </div>
+            ) : visible.length === 0 ? (
+                <div style={{ padding: 16, fontSize: 13, color: 'var(--text-tertiary)' }}>
+                    {query ? 'No mappings match this filter.' : 'No mappings recorded for this project yet.'}
+                </div>
+            ) : (
+                <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr><th style={th}>Source</th><th style={th}>Target</th><th style={th}>Name clash</th></tr>
                         </thead>
-                        <tbody className="divide-y divide-[var(--border-light)]/20">
-                            {mappings.length === 0 ? (
-                                <tr>
-                                    <td colSpan="3" className="px-8 py-20 text-center text-[var(--text-tertiary)]">
-                                        <Info size={32} className="mx-auto opacity-10 mb-2" />
-                                        <p className="text-xs font-bold uppercase tracking-widest opacity-40">No mapping data associated with this execution</p>
+                        <tbody>
+                            {visible.map((m, i) => (
+                                <tr key={`${m.source}-${i}`} onClick={() => onSelectModel(m.source)} style={{ cursor: 'pointer' }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-surface-hover)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+                                    <td style={{ ...td, fontFamily: 'monospace', color: 'var(--text-primary)' }}>{m.source}</td>
+                                    <td style={{ ...td, fontFamily: 'monospace', color: 'var(--accent-blue)' }}>
+                                        <ArrowRight size={12} style={{ display: 'inline', marginRight: 6, color: 'var(--text-tertiary)' }} />{m.target}
                                     </td>
-                                </tr>
-                            ) : mappings.map((m, i) => (
-                                <tr 
-                                    key={i} 
-                                    onClick={() => setSelectedModelHistory(m.source)}
-                                    className="hover:bg-[var(--color-accent-faint)] transition-colors cursor-pointer"
-                                >
-                                    <td className="px-8 py-5">
-                                        <div className="flex items-center gap-3">
-                                            <Table size={14} className="text-blue-500 opacity-50" />
-                                            <span className="font-mono text-xs font-bold text-[var(--text-primary)]">{m.source}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <div className="flex items-center gap-3">
-                                            <ArrowRight size={14} className="text-[var(--text-tertiary)]" />
-                                            <div className="flex flex-col">
-                                                <span className="font-mono text-xs font-bold text-blue-500">{m.target}</span>
-                                                {m.collision_detected && (
-                                                    <span className="text-[9px] font-black text-amber-500/80 uppercase tracking-tighter mt-0.5">Hash Suffix Appended</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5 text-center">
+                                    <td style={{ ...td, color: m.collision_detected ? 'var(--color-warning)' : 'var(--text-tertiary)' }}>
                                         {m.collision_detected ? (
-                                            <div className="flex items-center justify-center gap-1 text-amber-500">
-                                                <AlertTriangle size={16} fill="currentColor" fillOpacity={0.1} />
-                                                <span className="text-[10px] font-black uppercase tracking-tighter">Resolved</span>
-                                            </div>
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={13} /> Resolved with a suffix</span>
                                         ) : (
-                                            <div className="flex items-center justify-center text-emerald-500 opacity-40">
-                                                <CheckCircle2 size={16} />
-                                            </div>
+                                            <CheckCircle2 size={14} color="var(--color-success)" />
                                         )}
                                     </td>
                                 </tr>
@@ -523,242 +224,119 @@ function MappingsView({ runId, projectId }) {
                         </tbody>
                     </table>
                 </div>
-            </GlassCard>
-        </div>
+            )}
+        </Card>
     );
 }
 
-// --- LINEAGE VIEW COMPONENT ---
+// --- LINEAGE VIEW (History › More) ---
 
 function LineageView({ projectId }) {
     const [data, setData] = useState({ nodes: [], edges: [] });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetch = async () => {
+        const load = async () => {
             setLoading(true);
             try {
                 const json = await api.getProjectLineage(projectId);
-                setData(json || { nodes: [], edges: [] });
+                setData(json && Array.isArray(json.nodes) ? json : { nodes: [], edges: [] });
             } catch (e) {
                 console.error(e);
             } finally {
                 setLoading(false);
             }
         };
-        fetch();
+        load();
     }, [projectId]);
 
     if (loading) return (
-        <div className="flex flex-col items-center justify-center py-40 gap-4">
-            <Loader2 size={32} className="animate-spin text-purple-500" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">Mapping system lineage...</span>
+        <div style={{ padding: 16, fontSize: 13, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Loader2 size={14} className="animate-spin" /> Loading lineage…
         </div>
     );
 
-    return (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <GlassCard className="p-8">
-                <div className="flex items-center gap-4 mb-8">
-                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
-                        <GitBranch size={20} className="text-purple-500" />
-                    </div>
-                    <div>
-                        <h3 className="text-sm font-black text-[var(--text-primary)] uppercase tracking-widest">Lineage Trace</h3>
-                        <p className="text-[10px] text-[var(--text-tertiary)] font-bold uppercase mt-0.5">Snapshot Evolution & Dependency Tree</p>
-                    </div>
-                </div>
-
-                <div className="relative min-h-[500px] bg-[var(--bg-main)]/30 rounded-2xl border border-[var(--border-light)] p-8 overflow-auto no-scrollbar">
-                    {data.nodes.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-[var(--text-tertiary)] py-20">
-                            <Info size={40} className="opacity-10 mb-4" />
-                            <p className="text-xs font-bold uppercase tracking-widest opacity-40">Insufficient data to reconstruct lineage</p>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col gap-12 items-center">
-                            {[...data.nodes]
-                                .sort((a, b) => new Date(a.metadata?.created_at || a.metadata?.started_at || 0) - new Date(b.metadata?.created_at || b.metadata?.started_at || 0))
-                                .map((node, i) => (
-                                <div key={node.id} className="flex flex-col items-center relative">
-                                    {i > 0 && (
-                                        <div className="absolute -top-12 h-12 w-0.5 bg-gradient-to-b from-purple-500/20 to-transparent" />
-                                    )}
-                                    <div className={`
-                                        p-4 rounded-2xl border transition-all shadow-sm hover:shadow-md
-                                        ${node.type === 'snapshot' 
-                                            ? 'bg-[var(--bg-surface)] border-[var(--border-main)] w-64' 
-                                            : 'bg-gradient-to-br from-purple-600 to-indigo-600 border-transparent w-48 text-white'}
-                                    `}>
-                                        <div className="flex items-center gap-3">
-                                            {node.type === 'snapshot' ? (
-                                                <Database size={16} className="text-blue-500" />
-                                            ) : (
-                                                <Zap size={16} className="text-white" />
-                                            )}
-                                            <div className="flex flex-col">
-                                                <span className={`text-[10px] font-black uppercase tracking-widest ${node.type === 'run' ? 'text-purple-100' : 'text-[var(--text-tertiary)]'}`}>
-                                                    {node.metadata?.is_pinned && <Pin size={10} className="text-amber-500 fill-amber-500 mr-1" />}
-                                                    {node.type}
-                                                </span>
-                                                <span className="text-xs font-bold font-mono truncate">{node.label}</span>
-                                            </div>
-                                        </div>
-                                        <div className={`mt-3 pt-3 border-t ${node.type === 'run' ? 'border-white/10' : 'border-[var(--border-light)]'}`}>
-                                            <div className="flex justify-between items-center text-[9px] font-bold uppercase opacity-60">
-                                                <span>{formatDate(node.metadata?.created_at || node.metadata?.started_at)}</span>
-                                                {node.metadata?.status && (
-                                                    <span className={node.metadata.status === 'success' ? 'text-emerald-400' : 'text-rose-400'}>
-                                                        {node.metadata.status}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </GlassCard>
-        </div>
-    );
-}
-
-// --- RESTORE PREVIEW MODAL ---
-
-function RestorePreviewModal({ projectId, snapshotId, onConfirm, onCancel }) {
-    const [preview, setPreview] = useState(null);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const fetch = async () => {
-            setLoading(true);
-            try {
-                const data = await api.previewRestore(projectId, snapshotId);
-                setPreview(data);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetch();
-    }, [projectId, snapshotId]);
+    const nodes = [...data.nodes].sort((a, b) =>
+        new Date(a.metadata?.created_at || a.metadata?.started_at || 0) - new Date(b.metadata?.created_at || b.metadata?.started_at || 0));
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
-            <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md" onClick={onCancel} />
-            <GlassCard className="relative p-10 max-w-2xl w-full border-blue-500/30 animate-in zoom-in-95 shadow-2xl bg-[var(--bg-surface)]">
-                <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20">
-                        <RotateCcw size={24} />
-                    </div>
-                    <div>
-                        <h3 className="text-xl font-black text-[var(--text-primary)] tracking-tight">Restore Impact Analysis</h3>
-                        <p className="text-xs text-[var(--text-tertiary)] font-bold uppercase tracking-widest">Pre-flight check for Snapshot {snapshotId.substring(0, 8)}</p>
-                    </div>
+        <Card style={{ padding: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Lineage</div>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>Runs and the snapshots they produced, oldest first</div>
+            {nodes.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Info size={14} /> Not enough history to show lineage yet.
                 </div>
-
-                {loading ? (
-                    <div className="py-20 flex flex-col items-center gap-4">
-                        <Loader2 className="animate-spin text-blue-500" size={32} />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)]">Calculating structural delta...</span>
-                    </div>
-                ) : preview ? (
-                    <div className="space-y-8">
-                        <div className="grid grid-cols-4 gap-4">
-                            {[
-                                { label: 'Added', val: preview.impact_summary.added, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-                                { label: 'Removed', val: preview.impact_summary.removed, color: 'text-rose-500', bg: 'bg-rose-500/10' },
-                                { label: 'Modified', val: preview.impact_summary.modified, color: 'text-amber-500', bg: 'bg-amber-500/10' },
-                                { label: 'Unchanged', val: preview.impact_summary.unchanged, color: 'text-slate-500', bg: 'bg-slate-500/10' }
-                            ].map(s => (
-                                <div key={s.label} className={`p-4 rounded-xl border border-transparent ${s.bg}`}>
-                                    <div className="text-[9px] font-black uppercase tracking-widest opacity-60 mb-1">{s.label}</div>
-                                    <div className={`text-xl font-black ${s.color}`}>{s.val}</div>
-                                </div>
-                            ))}
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                    {nodes.map((node) => (
+                        <div key={node.id} style={{
+                            width: 'min(320px, 100%)', padding: '8px 12px', borderRadius: 8,
+                            border: '1px solid var(--border-main)',
+                            background: node.type === 'snapshot' ? 'var(--bg-surface-raised)' : 'var(--color-accent-faint)',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)' }}>
+                                {node.type === 'snapshot' ? <Database size={12} /> : <Zap size={12} />}
+                                {node.type === 'snapshot' ? 'Snapshot' : 'Run'}
+                                {node.metadata?.is_pinned && <Pin size={11} color="var(--color-warning)" />}
+                                <span style={{ marginLeft: 'auto' }}>{formatDate(node.metadata?.created_at || node.metadata?.started_at)}</span>
+                            </div>
+                            <div style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{node.label}</div>
                         </div>
-
-                        <div className="max-h-60 overflow-auto border border-[var(--border-light)] rounded-xl bg-[var(--bg-main)]/50 p-4 space-y-2 no-scrollbar">
-                            <h4 className="text-[10px] font-black uppercase tracking-widest text-[var(--text-tertiary)] mb-4">Detailed Mutations</h4>
-                            {preview.models.map((m, i) => (
-                                <div key={i} className="flex items-center justify-between py-2 border-b border-[var(--border-light)] last:border-0">
-                                    <span className="text-xs font-bold text-[var(--text-primary)] font-mono">{m.name}</span>
-                                    <Badge variant={m.status === 'ADDED' ? 'success' : m.status === 'REMOVED' ? 'error' : m.status === 'MODIFIED' ? 'warning' : 'ghost'}>
-                                        {m.status}
-                                    </Badge>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
-                            <p className="text-[11px] text-amber-200/70 leading-relaxed">
-                                <span className="font-black uppercase text-amber-500 mr-2">Warning:</span>
-                                This restore will overwrite your current active project state. Downstream dependencies may be affected. This action is recorded in the audit trail.
-                            </p>
-                        </div>
-
-                        <div className="flex gap-4">
-                            <ActionButton onClick={onCancel} className="flex-1 py-4 font-black uppercase tracking-widest text-[11px]">Abort Mission</ActionButton>
-                            <ActionButton 
-                                variant="primary" 
-                                onClick={onConfirm}
-                                className="flex-1 py-4 font-black uppercase tracking-widest text-[11px]"
-                            >
-                                Execute Restore
-                            </ActionButton>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="py-20 text-center">
-                        <p className="text-rose-500 font-bold">Failed to load preview data.</p>
-                        <ActionButton onClick={onCancel} className="mt-4">Close</ActionButton>
-                    </div>
-                )}
-            </GlassCard>
-        </div>
+                    ))}
+                </div>
+            )}
+        </Card>
     );
 }
 
 // --- MAIN PAGE ---
 
+const MAIN_TABS = ['versions', 'mappings'];
+const MORE_VIEWS = { repository: 'Saved snapshots', lineage: 'Lineage' };
+
 export default function VersionControlPage() {
     const activeProjectId = useUIStore(state => state.activeProjectId);
+    const [searchParams, setSearchParams] = useSearchParams();
     const [projects, setProjects] = useState([]);
     const [versions, setVersions] = useState([]);
+    const [snapshotMeta, setSnapshotMeta] = useState({}); // snapshot_id -> { is_pinned, tag }
     const [isLoading, setIsLoading] = useState(false);
-    const [isProjectsLoading, setIsProjectsLoading] = useState(false);
     const [projectsLoadError, setProjectsLoadError] = useState('');
     const [versionsLoadError, setVersionsLoadError] = useState('');
-    const [selectedRun, setSelectedRun] = useState(null);
-    const [diffSelection, setDiffSelection] = useState([]);
-    const [diffData, setDiffData] = useState(null);
-    const [isComparing, setIsComparing] = useState(false);
-    const [rollbackTarget, setRollbackTarget] = useState(null);
-    const [isRollingBack, setIsRollingBack] = useState(false);
-    const [isDeleting, setIsDeleting] = useState(null);
-    const [isTagging, setIsTagging] = useState(null); // snapshot_id being tagged
-    const [tagValue, setTagValue] = useState('');
-    const [showRestorePreview, setShowRestorePreview] = useState(null); // snapshot_id for preview
+    const [selectedRunId, setSelectedRunId] = useState(searchParams.get('v') || null);
+    const [baseChoice, setBaseChoice] = useState(null); // null = previous version; else { kind: 'before' } | { kind: 'run', runId }
+    const [diffs, setDiffs] = useState({}); // `${from}|${to}` -> { loading, error, models }
+    const [restoreOpen, setRestoreOpen] = useState(false);
+    const [isRestoring, setIsRestoring] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [notice, setNotice] = useState(null); // { tone, text }
     const [selectedModelHistory, setSelectedModelHistory] = useState(null);
-    const [stats, setStats] = useState(null);
     const [hasLoadedProjects, setHasLoadedProjects] = useState(false);
 
     // Cached UI state — survives SPA navigation within the same tab.
     const [vcCache, setVcCache] = usePageCache('version-control-page', {
-      selectedProjectId: activeProjectId || '',
-      viewMode: 'history',
+      selectedProjectId: searchParams.get('project') || activeProjectId || '',
+      viewMode: 'versions',
       searchQuery: '',
-      showPinnedOnly: false,
     });
-    const { selectedProjectId, viewMode, searchQuery, showPinnedOnly } = vcCache;
-    const setSelectedProjectId = (v) => setVcCache({ selectedProjectId: typeof v === 'function' ? v(selectedProjectId) : v });
-    const setViewMode = (v) => setVcCache({ viewMode: typeof v === 'function' ? v(viewMode) : v });
-    const setSearchQuery = (v) => setVcCache({ searchQuery: typeof v === 'function' ? v(searchQuery) : v });
-    const setShowPinnedOnly = (v) => setVcCache({ showPinnedOnly: typeof v === 'function' ? v(showPinnedOnly) : v });
+    const { selectedProjectId, searchQuery } = vcCache;
+    // Older cached values ('history', 'diff', 'stats') map onto the new tabs.
+    const viewMode = MAIN_TABS.includes(vcCache.viewMode) || MORE_VIEWS[vcCache.viewMode] ? vcCache.viewMode : 'versions';
+    const setSelectedProjectId = (v) => setVcCache({ selectedProjectId: v });
+    const setViewMode = (v) => setVcCache({ viewMode: v });
+    const setSearchQuery = (v) => setVcCache({ searchQuery: v });
     const { addLog } = useLogs();
+
+    // A ?project= link wins over the project remembered for this tab.
+    useEffect(() => {
+        const fromUrl = searchParams.get('project');
+        if (fromUrl && fromUrl !== vcCache.selectedProjectId) {
+            latestProjectIdRef.current = fromUrl;
+            setVcCache({ selectedProjectId: fromUrl });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only
+    }, []);
     const normalizeId = useCallback((value) => String(value ?? '').trim(), []);
 
     const latestProjectIdRef = useRef(selectedProjectId);
@@ -766,29 +344,48 @@ export default function VersionControlPage() {
         latestProjectIdRef.current = selectedProjectId;
     }, [selectedProjectId]);
 
+    // Keep ?project=…&v=… in the URL so a version can be linked to.
+    useEffect(() => {
+        const next = new URLSearchParams(searchParams);
+        if (selectedProjectId) next.set('project', selectedProjectId); else next.delete('project');
+        if (selectedRunId) next.set('v', selectedRunId); else next.delete('v');
+        if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+    }, [selectedProjectId, selectedRunId, searchParams, setSearchParams]);
+
     const loadProjects = useCallback(async () => {
-        setIsProjectsLoading(true);
         setProjectsLoadError('');
         try {
             const data = await api.listProjects();
             const projectList = Array.isArray(data) ? data : [];
             setProjects(projectList);
 
-            const currentId = normalizeId(selectedProjectId);
+            const currentId = normalizeId(latestProjectIdRef.current);
             const hasCurrent = currentId && projectList.some((p) => normalizeId(p?.id ?? p?.project_id) === currentId);
             if (projectList.length > 0 && !hasCurrent) {
                 const nextId = normalizeId(projectList[0].id ?? projectList[0].project_id);
                 latestProjectIdRef.current = nextId;
-                setSelectedProjectId(nextId);
+                setVcCache({ selectedProjectId: nextId });
             }
             setHasLoadedProjects(true);
         } catch (err) {
             setProjectsLoadError(err?.message || 'Failed to load projects');
-            addLog('error', 'VC', 'Failed to load projects: ' + err.message);
-        } finally {
-            setIsProjectsLoading(false);
+            addLog('error', 'History', 'Failed to load projects: ' + err.message);
         }
-    }, [selectedProjectId, addLog, normalizeId]);
+    }, [addLog, normalizeId, setVcCache]);
+
+    const loadSnapshotMeta = useCallback(async (projectId) => {
+        try {
+            const rows = await api.listProjectSnapshots(projectId, { limit: 500 });
+            const list = Array.isArray(rows) ? rows : (rows?.snapshots || []);
+            const meta = {};
+            for (const s of list) {
+                if (s?.snapshot_id) meta[s.snapshot_id] = { is_pinned: Boolean(s.is_pinned), tag: s.tag || null };
+            }
+            if (normalizeId(projectId) === normalizeId(latestProjectIdRef.current)) setSnapshotMeta(meta);
+        } catch {
+            /* pin/tag badges are optional decoration */
+        }
+    }, [normalizeId]);
 
     const loadVersions = useCallback(async (projId) => {
         const projectId = normalizeId(projId);
@@ -796,183 +393,231 @@ export default function VersionControlPage() {
         setIsLoading(true);
         setVersionsLoadError('');
         try {
-            const [runs, vcStats] = await Promise.all([
-                api.getProjectRuns(projectId),
-                api.apiFetch ? api.apiFetch(`/projects/${projectId}/stats`) : Promise.resolve(null)
-            ]);
-            
-            if (normalizeId(projId) !== normalizeId(latestProjectIdRef.current)) {
-                return;
-            }
-
+            const runs = await api.getProjectRuns(projectId);
+            if (projectId !== normalizeId(latestProjectIdRef.current)) return;
             const sorted = (Array.isArray(runs) ? runs : []).sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0));
             setVersions(sorted);
-            const runIds = new Set(sorted.map((r) => r.run_id));
-            setDiffSelection((prev) => prev.filter((id) => runIds.has(id)));
-            
-            // Stats might be raw from fetch
-            if (vcStats && vcStats.json) {
-                const s = await vcStats.json();
-                setStats(s);
-            }
-
-            setSelectedRun((prev) => {
+            setSelectedRunId((prev) => {
                 if (!sorted.length) return null;
-                if (!prev || !runIds.has(prev.run_id)) return sorted[0];
-                return prev;
+                return prev && sorted.some((r) => r.run_id === prev) ? prev : sorted[0].run_id;
             });
         } catch (err) {
-            if (normalizeId(projId) !== normalizeId(latestProjectIdRef.current)) {
-                return;
-            }
+            if (projectId !== normalizeId(latestProjectIdRef.current)) return;
             setVersionsLoadError(err?.message || 'Failed to load version history');
-            addLog('error', 'VC', 'Load failed: ' + err.message);
+            addLog('error', 'History', 'Load failed: ' + err.message);
         } finally {
-            if (normalizeId(projId) === normalizeId(latestProjectIdRef.current)) {
-                setIsLoading(false);
-            }
+            if (projectId === normalizeId(latestProjectIdRef.current)) setIsLoading(false);
         }
-    }, [addLog, normalizeId]);
+        loadSnapshotMeta(projectId);
+    }, [addLog, normalizeId, loadSnapshotMeta]);
 
     useEffect(() => {
         loadProjects();
     }, [loadProjects]);
 
+    const isFirstProjectLoad = useRef(true);
     useEffect(() => {
         if (hasLoadedProjects && selectedProjectId) {
-            // Reset state when switching projects
-            setDiffSelection([]);
-            setViewMode('history');
-            setDiffData(null);
-            setSelectedRun(null);
+            if (!isFirstProjectLoad.current) setSelectedRunId(null);
+            isFirstProjectLoad.current = false;
+            setVersions([]);
+            setDiffs({});
+            setSnapshotMeta({});
+            setBaseChoice(null);
             loadVersions(selectedProjectId);
         }
     }, [hasLoadedProjects, selectedProjectId, loadVersions]);
 
+    // ── Derived data ────────────────────────────────────────────────────────
+    const runNumbers = useMemo(() => {
+        const map = {};
+        versions.forEach((v, idx) => { map[v.run_id] = versions.length - idx; });
+        return map;
+    }, [versions]);
+    const runNumber = useCallback((run) => runNumbers[run?.run_id] ?? '?', [runNumbers]);
+
+    const pinInfo = useCallback((run) => {
+        const meta = snapshotMeta[snapshotOf(run)] || {};
+        return { pinned: Boolean(meta.is_pinned || run?.is_pinned), tag: meta.tag || run?.tags?.[0] || null };
+    }, [snapshotMeta]);
+
     const filteredVersions = useMemo(() => {
-        let list = versions;
-        if (showPinnedOnly) {
-            list = list.filter(v => v.is_pinned);
-        }
-        if (!searchQuery.trim()) return list;
-        const q = searchQuery.toLowerCase();
-        return list.filter(v => 
-            v.run_id?.toLowerCase().includes(q) || 
-            (v.tags && v.tags.some(t => t.toLowerCase().includes(q))) ||
-            (v.last_comment && v.last_comment.toLowerCase().includes(q))
-        );
-    }, [versions, searchQuery, showPinnedOnly]);
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return versions;
+        return versions.filter((v) => {
+            const { tag } = pinInfo(v);
+            return v.run_id?.toLowerCase().includes(q)
+                || `run #${runNumbers[v.run_id]}`.includes(q)
+                || String(runNumbers[v.run_id]) === q.replace('#', '')
+                || (tag && tag.toLowerCase().includes(q))
+                || (v.tags || []).some((t) => t.toLowerCase().includes(q));
+        });
+    }, [versions, searchQuery, pinInfo, runNumbers]);
 
-    const handleTagSnapshot = async (snapshotId) => {
-        if (!tagValue.trim()) return;
+    const selectedRun = versions.find((v) => v.run_id === selectedRunId) || null;
+
+    /** The default "previous" pair for a run: previous run's result, else the state just before this run. */
+    const defaultPair = useCallback((run) => {
+        const idx = versions.findIndex((v) => v.run_id === run.run_id);
+        const prev = idx >= 0 ? versions[idx + 1] : null;
+        const to = snapshotOf(run);
+        const prevSnap = prev ? snapshotOf(prev) : null;
+        const from = prevSnap || beforeSnapshotOf(run);
+        if (!from || !to || from === to) return null;
+        return { from, to, label: prevSnap ? `Run #${runNumbers[prev.run_id]}` : 'before this run' };
+    }, [versions, runNumbers]);
+
+    const activePair = useMemo(() => {
+        if (!selectedRun) return null;
+        const to = snapshotOf(selectedRun);
+        if (!baseChoice) return defaultPair(selectedRun);
+        if (baseChoice.kind === 'before') {
+            const from = beforeSnapshotOf(selectedRun);
+            return from && to && from !== to ? { from, to, label: 'before this run' } : null;
+        }
+        const other = versions.find((v) => v.run_id === baseChoice.runId);
+        const from = snapshotOf(other);
+        return from && to ? { from, to, label: `Run #${runNumbers[other.run_id]}` } : null;
+    }, [selectedRun, baseChoice, defaultPair, versions, runNumbers]);
+
+    const diffsRef = useRef(diffs);
+    useEffect(() => { diffsRef.current = diffs; }, [diffs]);
+
+    const ensureDiff = useCallback(async (projectId, from, to) => {
+        const key = `${from}|${to}`;
+        if (diffsRef.current[key]) return;
+        diffsRef.current = { ...diffsRef.current, [key]: { loading: true } };
+        setDiffs((d) => ({ ...d, [key]: { loading: true } }));
         try {
-            await api.tagSnapshot(selectedProjectId, snapshotId, tagValue, 'Manual tag');
-            setIsTagging(null);
-            setTagValue('');
+            const data = await api.compareProjectSnapshots(projectId, from, to);
+            if (normalizeId(projectId) !== normalizeId(latestProjectIdRef.current)) return;
+            setDiffs((d) => ({ ...d, [key]: { models: Array.isArray(data?.models) ? data.models : [] } }));
+        } catch (err) {
+            if (normalizeId(projectId) !== normalizeId(latestProjectIdRef.current)) return;
+            setDiffs((d) => ({ ...d, [key]: { error: `Could not compare these versions: ${err?.message || 'unknown error'}` } }));
+        }
+    }, [normalizeId]);
+
+    // Diff for the selected version (re-uses the structural snapshot compare).
+    useEffect(() => {
+        if (activePair && selectedProjectId) ensureDiff(selectedProjectId, activePair.from, activePair.to);
+    }, [activePair, selectedProjectId, ensureDiff]);
+
+    // Short change summaries for the most recent versions in the list.
+    useEffect(() => {
+        if (!selectedProjectId || versions.length === 0) return undefined;
+        let cancelled = false;
+        (async () => {
+            for (const run of versions.slice(0, 15)) {
+                if (cancelled) return;
+                const pair = defaultPair(run);
+                if (pair) await ensureDiff(selectedProjectId, pair.from, pair.to);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [versions, selectedProjectId, defaultPair, ensureDiff]);
+
+    const summaries = useMemo(() => {
+        const out = {};
+        for (const run of versions) {
+            const pair = defaultPair(run);
+            const d = pair ? diffs[`${pair.from}|${pair.to}`] : null;
+            if (d?.models) out[run.run_id] = summarizeCounts(countDiff(d.models));
+            else if (!pair && run === versions[versions.length - 1]) out[run.run_id] = 'First version';
+        }
+        return out;
+    }, [versions, diffs, defaultPair]);
+
+    const activeDiff = activePair ? (diffs[`${activePair.from}|${activePair.to}`] || { loading: true }) : null;
+
+    // ── Actions ─────────────────────────────────────────────────────────────
+    const handleSelectRun = (run) => {
+        setSelectedRunId(run.run_id);
+        setBaseChoice(null);
+    };
+
+    const handleTagSnapshot = async (run, tag) => {
+        const snapshotId = snapshotOf(run);
+        if (!snapshotId || !tag) return;
+        try {
+            await api.tagSnapshot(selectedProjectId, snapshotId, tag, 'Label added from History');
+            addLog('success', 'History', `Labelled Run #${runNumber(run)} "${tag}"`);
             loadVersions(selectedProjectId);
         } catch (error) {
-            console.error('Tagging failed:', error);
+            addLog('error', 'History', 'Adding a label failed: ' + error.message);
         }
     };
 
-    const handleTogglePin = async (snapshotId, currentPinned) => {
+    const handleTogglePin = async (run) => {
+        const snapshotId = snapshotOf(run);
+        if (!snapshotId) return;
+        const { pinned } = pinInfo(run);
         try {
-            await api.toggleSnapshotPin(selectedProjectId, snapshotId, !currentPinned);
-            addLog('success', 'VC', `Snapshot ${!currentPinned ? 'pinned' : 'unpinned'}`);
-            loadVersions(selectedProjectId);
+            await api.toggleSnapshotPin(selectedProjectId, snapshotId, !pinned);
+            setSnapshotMeta((m) => ({ ...m, [snapshotId]: { ...(m[snapshotId] || {}), is_pinned: !pinned } }));
+            addLog('success', 'History', `Run #${runNumber(run)} ${pinned ? 'unpinned' : 'pinned'}`);
         } catch (error) {
-            addLog('error', 'VC', 'Pinning failed: ' + error.message);
+            addLog('error', 'History', 'Pinning failed: ' + error.message);
         }
     };
 
-    // Downloads the Markdown run-summary report for the currently selected
-    // run. Available for every run regardless of outcome -- write_run_report
-    // is called unconditionally (success, warning, partial, or failed) from
-    // the backend's finally block, so there is always a report to fetch here.
+    // Downloads the Markdown run-summary report. Available for every run
+    // regardless of outcome -- write_run_report is called unconditionally
+    // from the backend's finally block.
     const handleDownloadReport = async (run) => {
         if (!run?.run_id) return;
         try {
             await api.downloadRunReport(selectedProjectId, run.run_id);
         } catch (error) {
-            addLog('error', 'VC', 'Report download failed: ' + error.message);
+            addLog('error', 'History', 'Report download failed: ' + error.message);
         }
     };
 
-    // Downloads one model's own report from a multi-PBIX batch run (see
-    // run.model_reports, populated only when a run synced more than one
-    // file -- each file gets its own separate report instead of one
-    // combined report for the whole batch).
+    // One file's own report from a multi-PBIX batch run (run.model_reports).
     const handleDownloadModelReport = async (run, modelLabel) => {
         if (!run?.run_id || !modelLabel) return;
         try {
             await api.downloadRunModelReport(selectedProjectId, run.run_id, modelLabel);
         } catch (error) {
-            addLog('error', 'VC', 'Report download failed: ' + error.message);
-        }
-    };
-
-    const handleCompare = async () => {
-        if (diffSelection.length !== 2) return;
-        setIsComparing(true);
-        try {
-            const r1 = versions.find(v => v.run_id === diffSelection[0]);
-            const r2 = versions.find(v => v.run_id === diffSelection[1]);
-            
-            // Logic to determine which is base and which is target (chronological)
-            const d1 = new Date(r1.started_at).getTime();
-            const d2 = new Date(r2.started_at).getTime();
-            
-            const [base, target] = d1 < d2 ? [r1, r2] : [r2, r1];
-            
-            const s1 = base?.after_tgt_snapshots?.[0] || base?.before_tgt_snapshots?.[0];
-            const s2 = target?.after_tgt_snapshots?.[0] || target?.before_tgt_snapshots?.[0];
-            
-            if (!s1 || !s2) throw new Error('Selected versions do not contain valid snapshots.');
-            
-            const data = await api.compareProjectSnapshots(selectedProjectId, s1, s2);
-            setDiffData(data);
-            setViewMode('diff');
-        } catch (err) {
-            addLog('error', 'VC', 'Comparison Error: ' + err.message);
-        } finally {
-            setIsComparing(false);
+            addLog('error', 'History', 'Report download failed: ' + error.message);
         }
     };
 
     const handleRestore = async (version) => {
-        setIsRollingBack(true);
+        if (!version) return;
+        setIsRestoring(true);
         try {
-            const snapId = version.after_tgt_snapshots?.[0] || version.before_tgt_snapshots?.[0];
             await api.restoreProjectVersion(selectedProjectId, {
-                restore_snapshot_id: snapId,
+                restore_snapshot_id: snapshotOf(version),
                 sync_mode: version.sync_mode || 'copy',
-                comment: 'Rollback to ' + version.run_id
+                comment: 'Restore to ' + version.run_id,
             });
-            addLog('success', 'VC', 'Rollback initiated successfully');
-            setRollbackTarget(null);
+            addLog('success', 'History', `Restore of Run #${runNumber(version)} started`);
+            setNotice({ tone: 'success', text: `Restoring Run #${runNumber(version)}. It will appear here as a new version when it finishes.` });
+            setRestoreOpen(false);
             loadVersions(selectedProjectId);
         } catch (err) {
-            addLog('error', 'VC', 'Rollback failed: ' + err.message);
+            addLog('error', 'History', 'Restore failed: ' + err.message);
+            setNotice({ tone: 'error', text: 'Restore failed: ' + err.message });
         } finally {
-            setIsRollingBack(false);
+            setIsRestoring(false);
         }
     };
 
-    const handleDeleteSnapshot = async (snapshotId) => {
-        if (!snapshotId) return;
-        setIsDeleting(snapshotId);
+    const handleSaveNow = async () => {
+        if (!selectedProjectId) return;
+        setIsSaving(true);
         try {
-            const result = await api.deleteModelVersions(selectedProjectId, [snapshotId]);
-            if (result.blocked_ids?.length > 0) {
-                addLog('warning', 'VC', 'Snapshot is referenced and cannot be deleted.');
-            } else {
-                addLog('success', 'VC', `Successfully deleted version(s).`);
-                loadVersions(selectedProjectId);
-            }
+            const res = await api.captureProjectSnapshot(selectedProjectId, { label: `Saved from History ${new Date().toISOString().slice(0, 16).replace('T', ' ')}` });
+            addLog('success', 'History', 'Saved a version of the current model');
+            const count = Array.isArray(res?.snapshot_ids) ? res.snapshot_ids.length : null;
+            setNotice({ tone: 'success', text: `Version saved${count ? ` (${count} snapshot${count === 1 ? '' : 's'})` : ''}. Saved versions are listed under More › Saved snapshots.` });
+            loadSnapshotMeta(selectedProjectId);
         } catch (err) {
-            addLog('error', 'VC', 'Delete failed: ' + err.message);
+            addLog('error', 'History', 'Save failed: ' + err.message);
+            setNotice({ tone: 'error', text: 'Could not save a version: ' + err.message });
         } finally {
-            setIsDeleting(null);
+            setIsSaving(false);
         }
     };
 
@@ -980,488 +625,200 @@ export default function VersionControlPage() {
         (p) => normalizeId(p?.id ?? p?.project_id) === normalizeId(selectedProjectId)
     );
 
+    const compareItems = (() => {
+        if (!selectedRun) return [];
+        const def = defaultPair(selectedRun);
+        const others = versions.filter((v) => v.run_id !== selectedRun.run_id && snapshotOf(v)).slice(0, 50);
+        const items = [
+            { key: 'prev', label: 'Previous version', hint: def ? `Default · ${def.label}` : 'Default', active: !baseChoice, onClick: () => setBaseChoice(null) },
+        ];
+        // Only offer "just before this run" when it differs from the default.
+        if (beforeSnapshotOf(selectedRun) && def?.label !== 'before this run') {
+            items.push({ key: 'before', label: 'Just before this run', active: baseChoice?.kind === 'before', onClick: () => setBaseChoice({ kind: 'before' }) });
+        }
+        if (others.length) {
+            items.push({ key: 'div', divider: true }, { key: 'h', heading: 'Another version' });
+            others.forEach((v) => items.push({
+                key: v.run_id,
+                label: `Run #${runNumbers[v.run_id]}${pinInfo(v).tag ? ` · ${pinInfo(v).tag}` : ''}`,
+                hint: longTime(v.started_at),
+                active: baseChoice?.kind === 'run' && baseChoice.runId === v.run_id,
+                onClick: () => setBaseChoice({ kind: 'run', runId: v.run_id }),
+            }));
+        }
+        return items;
+    })();
+
+    const tabStyle = (active) => ({
+        padding: '8px 2px', marginRight: 20, border: 'none', background: 'none', cursor: 'pointer',
+        fontSize: 14, fontWeight: active ? 600 : 500,
+        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+        borderBottom: `2px solid ${active ? 'var(--accent-blue)' : 'transparent'}`,
+        marginBottom: -1,
+    });
+
     return (
-        <div className="p-8 max-w-[1600px] mx-auto min-h-full">
-            <PageHeader 
-                title="Version Control" 
-                description="Manage semantic snapshots, structural evolution, and system rollbacks across all projects."
-            />
-
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-8">
-                
-                {/* --- Left Sidebar: Project Selection & Stats --- */}
-                <aside className="xl:col-span-3 flex flex-col gap-6">
-                    <GlassCard className="p-6">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-                                <Layers size={16} className="text-blue-500" />
-                            </div>
-                            <h3 className="text-xs font-black text-[var(--text-primary)] uppercase tracking-widest">Workspace Context</h3>
-                        </div>
-
-                        <div className="space-y-4">
-                            {projectsLoadError && (
-                                <div className="p-3 rounded-xl border border-rose-500/20 bg-rose-500/10">
-                                    <p className="text-[11px] text-rose-400 font-bold mb-2">Project load blocked: {projectsLoadError}</p>
-                                    <ActionButton variant="ghost" onClick={loadProjects} className="w-full justify-center">
-                                        <RefreshCw size={13} /> Retry
-                                    </ActionButton>
-                                </div>
-                            )}
-                            <div>
-                                <label className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-[0.1em] block mb-2 px-1">Active Project</label>
-                                <div className="relative group">
-                                    <select 
-                                        value={normalizeId(selectedProjectId)}
-                                        onChange={(e) => setSelectedProjectId(e.target.value)}
-                                        className="w-full bg-[var(--bg-surface-raised)] border border-[var(--border-main)] rounded-xl px-4 py-3 text-[13px] font-bold text-[var(--text-primary)] appearance-none cursor-pointer outline-none focus:border-[var(--accent-blue)] transition-all group-hover:bg-[var(--bg-surface)]"
-                                    >
-                                        {projects.map(p => (
-                                            <option key={normalizeId(p?.id ?? p?.project_id)} value={normalizeId(p?.id ?? p?.project_id)}>{p.name}</option>
-                                        ))}
-                                    </select>
-                                    <ChevronRight size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] rotate-90 pointer-events-none" />
-                                </div>
-                            </div>
-
-                            {selectedProject && (
-                                <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 mt-2">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Badge variant="info">{selectedProject.adapter || 'SML'}</Badge>
-                                        <span className="text-[10px] font-bold text-[var(--text-secondary)] truncate">{selectedProject.id}</span>
-                                    </div>
-                                    <p className="text-[11px] text-[var(--text-tertiary)] leading-normal line-clamp-2">
-                                        {selectedProject.description || 'Enterprise semantic model with versioned schema history.'}
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </GlassCard>
-
-                    <GlassCard className="p-6">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
-                                <Activity size={16} className="text-purple-500" />
-                            </div>
-                            <h3 className="text-xs font-black text-[var(--text-primary)] uppercase tracking-widest">Pruning Intelligence</h3>
-                        </div>
-
-                        <div className="space-y-5">
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs text-[var(--text-secondary)] font-medium">History Depth</span>
-                                <span className="text-sm font-black text-[var(--text-primary)]">{versions.length} versions</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs text-[var(--text-secondary)] font-medium">Storage Impact</span>
-                                <span className="text-sm font-black text-[var(--text-primary)]">{stats?.storage_size || '12.4 MB'}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs text-[var(--text-secondary)] font-medium">Oldest Snapshot</span>
-                                <span className="text-sm font-black text-[var(--text-primary)]">
-                                    {versions.length > 0 ? formatDate(versions[versions.length-1].started_at) : '—'}
-                                </span>
-                            </div>
-                            
-                            <div className="pt-4 border-t border-[var(--border-light)]">
-                                <ActionButton variant="ghost" className="w-full justify-center opacity-60 hover:opacity-100">
-                                    <ShieldCheck size={14} /> View Retention Policy
-                                </ActionButton>
-                            </div>
-                        </div>
-                    </GlassCard>
-                </aside>
-
-                {/* --- Main Area: Tabs & Views --- */}
-                <main className="xl:col-span-9 flex flex-col gap-6">
-                    
-                    {/* --- Navigation Tabs --- */}
-                    <div className="flex items-center gap-1 p-1 bg-[var(--bg-surface)]/40 border border-[var(--border-light)] rounded-2xl w-fit">
-                        {[
-                            { id: 'history', label: 'History Log', icon: HistoryIcon },
-                            { id: 'repository', label: 'Repository', icon: Archive },
-                            { id: 'diff', label: 'Structural Diff', icon: GitCompare, disabled: !diffData },
-                            { id: 'mappings', label: 'Mappings', icon: ListTree, disabled: !selectedRun },
-                            { id: 'lineage', label: 'Lineage Graph', icon: GitBranch },
-                            { id: 'stats', label: 'Stats', icon: Activity }
-                        ].map(tab => (
-                            <button
-                                key={tab.id}
-                                disabled={tab.disabled}
-                                onClick={() => setViewMode(tab.id)}
-                                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
-                                    viewMode === tab.id 
-                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' 
-                                    : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-slate-500/5 disabled:opacity-30 disabled:cursor-not-allowed'
-                                }`}
-                            >
-                                <tab.icon size={14} />
-                                {tab.label}
-                            </button>
+        <div style={{ padding: '28px 32px', maxWidth: 1400, margin: '0 auto', minHeight: '100%' }}>
+            {/* Header: title · project picker · Save a version now */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+                <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>History</h1>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select
+                        value={normalizeId(selectedProjectId)}
+                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        aria-label="Project"
+                        style={{
+                            padding: '6px 10px', borderRadius: 6, fontSize: 13, fontWeight: 500, maxWidth: 260,
+                            background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border-main)', cursor: 'pointer',
+                        }}
+                    >
+                        {projects.length === 0 && <option value="">No projects</option>}
+                        {projects.map(p => (
+                            <option key={normalizeId(p?.id ?? p?.project_id)} value={normalizeId(p?.id ?? p?.project_id)}>{p.name || p.id}</option>
                         ))}
-                    </div>
-                    
-                    {viewMode === 'history' && (
-                        <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                            {versionsLoadError && (
-                                <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 flex items-center justify-between">
-                                    <p className="text-[11px] text-amber-300 font-bold">Version history blocked: {versionsLoadError}</p>
-                                    <ActionButton
-                                        variant="ghost"
-                                        onClick={() => loadVersions(selectedProjectId)}
-                                        className="justify-center"
-                                    >
-                                        <RefreshCw size={13} /> Retry
-                                    </ActionButton>
-                                </div>
-                            )}
-                            {/* --- Selected Version Overview --- */}
-                            <GlassCard className="p-8 relative overflow-hidden group">
-                                <div className="absolute top-0 right-0 w-64 h-64 blur-[100px] opacity-[0.03] -mr-32 -mt-32 bg-blue-500" />
-                                
-                                {selectedRun ? (
-                                    <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                                                    <RotateCcw className="text-white" size={28} />
-                                                </div>
-                                                <div>
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Active Checkpoint</span>
-                                                        <Badge variant={selectedRun.status === 'success' ? 'success' : 'error'}>{selectedRun.status}</Badge>
-                                                    </div>
-                                                    <h3 className="text-2xl font-black text-[var(--text-primary)] tracking-tight font-mono">{selectedRun.run_id}</h3>
-                                                </div>
-                                            </div>
-
-                                            <div className="flex gap-3">
-                                                <ActionButton 
-                                                    variant="primary" 
-                                                    onClick={() => setShowRestorePreview(selectedRun?.after_tgt_snapshots?.[0] || selectedRun?.before_tgt_snapshots?.[0])}
-                                                    className="px-8 py-3.5 shadow-xl"
-                                                >
-                                                    <RotateCcw size={18} /> Rollback
-                                                </ActionButton>
-                                                <ActionButton
-                                                    variant="ghost"
-                                                    onClick={() => setViewMode('mappings')}
-                                                    className="px-8 py-3.5"
-                                                >
-                                                    <ListTree size={18} /> View Mappings
-                                                </ActionButton>
-                                                {(!selectedRun.model_reports || selectedRun.model_reports.length === 0) && (
-                                                    <ActionButton
-                                                        variant="ghost"
-                                                        onClick={() => handleDownloadReport(selectedRun)}
-                                                        className="px-8 py-3.5"
-                                                        title="Download the run-summary report (available for every run, success or failure)"
-                                                    >
-                                                        <Download size={18} /> Download Report
-                                                    </ActionButton>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                                            {[
-                                                { label: 'Run Type', val: selectedRun.run_type || 'Manual', icon: Zap, color: 'text-amber-500' },
-                                                { label: 'Sync Mode', val: selectedRun.sync_mode ? selectedRun.sync_mode.toUpperCase() : 'N/A', icon: GitCompare, color: 'text-blue-500' },
-                                                { label: 'Executed', val: formatDate(selectedRun.started_at), icon: Clock, color: 'text-slate-500' },
-                                                { label: 'Completed', val: selectedRun.completed ? 'Yes' : 'No', icon: selectedRun.completed ? CheckCircle2 : AlertTriangle, color: selectedRun.completed ? 'text-emerald-500' : 'text-amber-500' },
-                                                { label: 'Snapshot', val: (selectedRun.after_tgt_snapshots?.[0] || 'N/A').substring(0, 8), icon: Database, color: 'text-blue-500' }
-                                            ].map((stat, i) => (
-                                                <div key={i} className="p-5 rounded-2xl bg-[var(--bg-surface-raised)]/50 border border-[var(--border-light)]">
-                                                    <div className="flex items-center gap-2 mb-2">
-                                                        <stat.icon size={14} className={stat.color} />
-                                                        <span className="text-[9px] font-black text-[var(--text-tertiary)] uppercase tracking-widest">{stat.label}</span>
-                                                    </div>
-                                                    <p className="text-[var(--text-primary)] font-bold text-[14px] flex items-center gap-1">
-                                                        {stat.val}
-                                                        {stat.label === 'Completed' && !selectedRun.completed && (
-                                                            <span title="Run did not complete" className="ml-1">
-                                                                <AlertTriangle size={12} className="text-amber-500 inline" />
-                                                            </span>
-                                                        )}
-                                                    </p>
-                                                </div>
-                                            ))}
-                                        </div>
-
-                                        {selectedRun.model_reports && selectedRun.model_reports.length > 0 && (
-                                            <div className="mt-8">
-                                                <h4 className="text-[10px] font-black text-[var(--text-tertiary)] uppercase tracking-widest mb-3">
-                                                    Per-file reports ({selectedRun.model_reports.length})
-                                                </h4>
-                                                <div className="flex flex-col gap-2">
-                                                    {selectedRun.model_reports.map((entry) => (
-                                                        <div
-                                                            key={entry.model}
-                                                            className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--bg-surface-raised)]/50 border border-[var(--border-light)]"
-                                                        >
-                                                            <span className="text-[var(--text-primary)] font-bold text-[13px] font-mono truncate">{entry.model}</span>
-                                                            <ActionButton
-                                                                variant="ghost"
-                                                                onClick={() => handleDownloadModelReport(selectedRun, entry.model)}
-                                                                className="px-4 py-2 shrink-0"
-                                                                title={`Download the report for ${entry.model}`}
-                                                            >
-                                                                <Download size={14} /> Download
-                                                            </ActionButton>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <div className="py-20 text-center">
-                                        <HistoryIcon size={40} className="mx-auto text-[var(--text-tertiary)] opacity-20 mb-4" />
-                                        <h3 className="text-xl font-bold text-[var(--text-primary)]">Select a checkpoint</h3>
-                                        <p className="text-[var(--text-tertiary)] max-w-xs mx-auto mt-2">Pick a version from the list below to analyze or restore state.</p>
-                                    </div>
-                                )}
-                            </GlassCard>
-
-                            {/* --- Comparison Tray --- */}
-                            {diffSelection.length > 0 && (
-                                <div className="p-4 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-between animate-in slide-in-from-left-4">
-                                    <div className="flex items-center gap-4">
-                                        <GitCompare className="text-blue-500" size={20} />
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Comparison Context:</span>
-                                            {diffSelection.map((id, i) => (
-                                                <span key={id} className="text-xs font-mono font-bold text-[var(--text-primary)]">
-                                                    {id.substring(0, 8)}{i === 0 && diffSelection.length > 1 ? " vs " : ""}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setDiffSelection([])} className="px-4 py-2 text-[10px] font-black uppercase text-[var(--text-tertiary)] hover:text-blue-500">Clear</button>
-                                        <ActionButton 
-                                            variant="primary" 
-                                            disabled={diffSelection.length !== 2 || isComparing}
-                                            onClick={handleCompare}
-                                            className="px-6 py-2"
-                                        >
-                                            {isComparing ? <Loader2 size={14} className="animate-spin" /> : <GitCompare size={14} />}
-                                            Run Diff
-                                        </ActionButton>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="relative flex flex-col md:flex-row gap-4">
-                                <div className="relative flex-1">
-                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" size={18} />
-                                    <input 
-                                        type="text"
-                                        placeholder="Search history by tag, run ID, or metadata..."
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="w-full bg-[var(--bg-surface)]/60 border border-[var(--border-main)] rounded-2xl pl-12 pr-4 py-5 text-sm font-bold focus:border-blue-500/50 outline-none transition-all shadow-inner"
-                                    />
-                                </div>
-                                <button 
-                                    onClick={() => setShowPinnedOnly(!showPinnedOnly)}
-                                    className={`px-6 py-4 rounded-2xl border transition-all flex items-center gap-2 font-black text-[10px] uppercase tracking-widest ${
-                                        showPinnedOnly 
-                                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 shadow-lg shadow-amber-500/10' 
-                                        : 'bg-[var(--bg-surface)]/60 border-[var(--border-main)] text-[var(--text-tertiary)] hover:border-blue-500/30'
-                                    }`}
-                                >
-                                    <Pin size={14} className={showPinnedOnly ? 'fill-amber-500' : ''} />
-                                    {showPinnedOnly ? 'Pinned Only' : 'Show Pinned'}
-                                </button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
-                                {isLoading ? (
-                                    Array(6).fill(0).map((_, i) => (
-                                        <div key={i} className="h-48 rounded-2xl bg-[var(--bg-surface)]/40 border border-[var(--border-main)] animate-pulse" />
-                                    ))
-                                ) : filteredVersions.length === 0 ? (
-                                    <div className="col-span-full py-40 text-center">
-                                        <Info size={48} className="mx-auto text-[var(--text-tertiary)] opacity-10 mb-4" />
-                                        <p className="text-[var(--text-tertiary)] font-black uppercase tracking-widest text-sm">No historical data matched your filter</p>
-                                    </div>
-                                ) : filteredVersions.map((v, idx) => (
-                                    <div 
-                                        key={v.run_id}
-                                        onClick={() => setSelectedRun(v)}
-                                        className={`group relative p-6 rounded-2xl border transition-all cursor-pointer ${
-                                            selectedRun?.run_id === v.run_id 
-                                            ? 'bg-gradient-to-br from-blue-600 to-blue-500 border-transparent shadow-xl shadow-blue-500/20' 
-                                            : 'bg-[var(--bg-surface)]/60 border-[var(--border-main)] hover:border-blue-500/30'
-                                        }`}
-                                    >
-                                        <div className="flex justify-between items-start mb-6">
-                                            <div className="flex items-start gap-3">
-                                                <div 
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        const id = v.run_id;
-                                                        setDiffSelection(p => p.includes(id) ? p.filter(x => x !== id) : p.length < 2 ? [...p, id] : [p[1], id]);
-                                                    }}
-                                                    className={`mt-1 w-5 h-5 rounded-md border-2 transition-all flex items-center justify-center ${
-                                                        diffSelection.includes(v.run_id)
-                                                        ? 'bg-blue-500 border-blue-500 text-white'
-                                                        : 'border-[var(--border-main)] hover:border-blue-500/50'
-                                                    }`}
-                                                >
-                                                    {diffSelection.includes(v.run_id) && <Check size={12} strokeWidth={4} />}
-                                                </div>
-                                                <div>
-                                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                                        <span className={`text-[9px] font-black uppercase tracking-widest ${selectedRun?.run_id === v.run_id ? 'text-blue-100' : 'text-[var(--text-tertiary)]'}`}>
-                                                            #{versions.length - idx}
-                                                        </span>
-                                                        {v.tags?.map(t => (
-                                                            <span key={t} className="px-1.5 py-0.5 rounded bg-blue-500/20 text-[8px] font-black text-blue-300 uppercase tracking-tighter">{t}</span>
-                                                        ))}
-                                                        <div className={`w-2 h-2 rounded-full ${v.status === 'success' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                                                    </div>
-                                                    <h4 className={`text-base font-bold font-mono ${selectedRun?.run_id === v.run_id ? 'text-white' : 'text-[var(--text-primary)]'}`}>
-                                                        {v.run_id?.substring(0, 12)}
-                                                    </h4>
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <button 
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        const snapId = v.after_tgt_snapshots?.[0] || v.before_tgt_snapshots?.[0];
-                                                        if (snapId) handleTogglePin(snapId, v.is_pinned);
-                                                    }}
-                                                    className={`p-2 rounded-lg transition-all ${
-                                                        v.is_pinned 
-                                                        ? 'bg-amber-500/20 text-amber-500' 
-                                                        : 'hover:bg-slate-500/10 text-[var(--text-tertiary)]'
-                                                    }`}
-                                                >
-                                                    <Pin size={14} className={v.is_pinned ? 'fill-amber-500' : ''} />
-                                                </button>
-                                                <div 
-                                                    className={`p-2.5 rounded-xl border transition-all ${
-                                                        diffSelection.includes(v.run_id)
-                                                        ? 'bg-white text-blue-600 border-white shadow-lg'
-                                                        : selectedRun?.run_id === v.run_id 
-                                                            ? 'bg-blue-400/20 text-white border-blue-400/40'
-                                                            : 'bg-[var(--bg-main)] text-[var(--text-tertiary)] border-[var(--border-light)]'
-                                                    }`}
-                                                >
-                                                    <GitCompare size={16} />
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-end justify-between">
-                                            <div className="space-y-1">
-                                                <div className="flex items-center gap-2">
-                                                    <Calendar size={12} className="opacity-40" />
-                                                    <span className={`text-[11px] font-bold ${selectedRun?.run_id === v.run_id ? 'text-blue-100' : 'text-[var(--text-secondary)]'}`}>
-                                                        {formatDate(v.started_at)}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className={`p-2 rounded-lg ${selectedRun?.run_id === v.run_id ? 'bg-white/10' : 'bg-slate-500/5'} transition-all`}>
-                                                <ArrowRight size={14} className={selectedRun?.run_id === v.run_id ? 'text-white' : 'text-[var(--text-tertiary)]'} />
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {viewMode === 'diff' && (
-                        <DiffView 
-                            diffData={diffData} 
-                            baseRun={versions.find(v => v.run_id === diffSelection[0])}
-                            targetRun={versions.find(v => v.run_id === diffSelection[1])}
-                            onBack={() => setViewMode('history')} 
-                        />
-                    )}
-
-                    {viewMode === 'mappings' && (
-                        <MappingsView 
-                            runId={selectedRun?.run_id} 
-                            projectId={selectedProjectId} 
-                        />
-                    )}
-
-                    {viewMode === 'lineage' && (
-                        <LineageView 
-                            projectId={selectedProjectId} 
-                        />
-                    )}
-
-                    {viewMode === 'stats' && (
-                        <ProjectStatsView 
-                            projectId={selectedProjectId} 
-                        />
-                    )}
-
-                    {viewMode === 'repository' && (
-                        <RepositoryBrowser 
-                            projectId={selectedProjectId} 
-                        />
-                    )}
-                </main>
+                    </select>
+                    <Btn variant="primary" onClick={handleSaveNow} disabled={!selectedProjectId || isSaving}
+                        title="Save the project's current model as a version you can come back to">
+                        {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save a version now
+                    </Btn>
+                </div>
             </div>
 
-            {/* --- Modals & Drawers --- */}
-            {selectedModelHistory && (
+            {projectsLoadError && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13, background: 'var(--color-error-bg)', color: 'var(--color-error)' }}>
+                    <AlertTriangle size={14} /> Could not load projects: {projectsLoadError}
+                    <Btn variant="ghost" onClick={loadProjects} style={{ marginLeft: 'auto' }}><RefreshCw size={13} /> Retry</Btn>
+                </div>
+            )}
+            {notice && (
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13,
+                    background: notice.tone === 'error' ? 'var(--color-error-bg)' : 'var(--color-success-bg)',
+                    color: notice.tone === 'error' ? 'var(--color-error)' : 'var(--color-success)',
+                }}>
+                    {notice.tone === 'error' ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+                    <span style={{ flex: 1 }}>{notice.text}</span>
+                    <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit' }}><X size={14} /></button>
+                </div>
+            )}
+
+            {/* Tabs: Versions | Mappings, plus More */}
+            <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-main)', marginBottom: 16 }}>
+                <button type="button" style={tabStyle(viewMode === 'versions')} onClick={() => setViewMode('versions')} aria-pressed={viewMode === 'versions'}>
+                    Versions <span style={{ marginLeft: 4, fontSize: 12, color: 'var(--text-tertiary)' }}>{versions.length || ''}</span>
+                </button>
+                <button type="button" style={tabStyle(viewMode === 'mappings')} onClick={() => setViewMode('mappings')} aria-pressed={viewMode === 'mappings'}>
+                    Mappings
+                </button>
+                {MORE_VIEWS[viewMode] && (
+                    <span style={{ ...tabStyle(true), cursor: 'default' }}>{MORE_VIEWS[viewMode]}</span>
+                )}
+                <div style={{ marginLeft: 'auto', paddingBottom: 6 }}>
+                    <MenuButton
+                        label="More"
+                        variant="ghost"
+                        items={Object.entries(MORE_VIEWS).map(([id, label]) => ({
+                            key: id,
+                            label,
+                            hint: id === 'repository' ? 'Every stored snapshot, including manual saves' : 'Runs and snapshots over time',
+                            active: viewMode === id,
+                            onClick: () => setViewMode(id),
+                        }))}
+                    />
+                </div>
+            </div>
+
+            {viewMode === 'versions' && (
                 <>
-                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[250] animate-in fade-in" onClick={() => setSelectedModelHistory(null)} />
-                    <ModelHistoryDrawer 
-                        projectId={selectedProjectId} 
-                        modelName={selectedModelHistory} 
-                        onClose={() => setSelectedModelHistory(null)} 
+                    {versionsLoadError && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13, background: 'var(--color-warning-bg)', color: 'var(--color-warning)' }}>
+                            <AlertTriangle size={14} /> Could not load versions: {versionsLoadError}
+                            <Btn variant="ghost" onClick={() => loadVersions(selectedProjectId)} style={{ marginLeft: 'auto' }}><RefreshCw size={13} /> Retry</Btn>
+                        </div>
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 300px) minmax(0, 1fr)', gap: 20, alignItems: 'start' }} className="history-grid">
+                        <Card style={{ overflow: 'hidden' }}>
+                            <VersionList
+                                runs={filteredVersions}
+                                runNumber={runNumber}
+                                selectedId={selectedRunId}
+                                onSelect={handleSelectRun}
+                                summaries={summaries}
+                                pinInfo={pinInfo}
+                                query={searchQuery}
+                                onQuery={setSearchQuery}
+                                loading={isLoading}
+                            />
+                        </Card>
+                        <div style={{ minWidth: 0 }}>
+                            {selectedRun ? (
+                                <VersionDetail
+                                    key={selectedRun.run_id}
+                                    run={selectedRun}
+                                    runNumber={runNumber(selectedRun)}
+                                    pinned={pinInfo(selectedRun).pinned}
+                                    tag={pinInfo(selectedRun).tag}
+                                    compareItems={compareItems}
+                                    baseLabel={activePair?.label}
+                                    diff={activeDiff}
+                                    onModelClick={setSelectedModelHistory}
+                                    onDownload={() => handleDownloadReport(selectedRun)}
+                                    modelReports={selectedRun.model_reports}
+                                    onDownloadModel={(model) => handleDownloadModelReport(selectedRun, model)}
+                                    onTogglePin={() => handleTogglePin(selectedRun)}
+                                    onAddTag={(tag) => handleTagSnapshot(selectedRun, tag)}
+                                    onRestore={() => setRestoreOpen(true)}
+                                    canRestore={Boolean(snapshotOf(selectedRun))}
+                                />
+                            ) : (
+                                <Card style={{ padding: 24, fontSize: 13, color: 'var(--text-tertiary)' }}>
+                                    {isLoading ? 'Loading…' : versions.length === 0 ? 'This project has no versions yet. Run it once, or use “Save a version now”.' : 'Pick a version on the left.'}
+                                </Card>
+                            )}
+                        </div>
+                    </div>
+                    <StorageDisclosure
+                        key={selectedProjectId}
+                        projectId={selectedProjectId}
+                        versionCount={versions.length}
+                        oldestRun={versions[versions.length - 1]}
                     />
                 </>
             )}
 
-            {/* --- Rollback Confirmation Dialog --- */}
-            {rollbackTarget && (
-                <div className="fixed inset-0 z-[150] flex items-center justify-center p-6">
-                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300" onClick={() => setRollbackTarget(null)} />
-                    <GlassCard className="relative p-10 max-w-md w-full border-amber-500/30 animate-in zoom-in-95 shadow-2xl bg-[var(--bg-surface)]">
-                        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20 mb-8 mx-auto shadow-inner">
-                            <RotateCcw size={32} />
-                        </div>
-                        <div className="text-center mb-10">
-                            <h3 className="text-2xl font-black text-[var(--text-primary)] mb-3 tracking-tight">Destructive Rollback</h3>
-                            <p className="text-sm text-[var(--text-secondary)] leading-relaxed px-4">
-                                You are about to restore project <span className="font-bold text-[var(--text-primary)]">{selectedProject?.name}</span> to checkpoint <span className="font-mono font-bold text-blue-500">{rollbackTarget.run_id?.substring(0, 10)}</span>. 
-                                <br/><br/>
-                                This will overwrite current semantic definitions and may affect downstream datasets.
-                            </p>
-                        </div>
-                        <div className="flex gap-4">
-                            <ActionButton onClick={() => setRollbackTarget(null)} className="flex-1 py-3.5 font-black uppercase tracking-widest text-[11px] hover:bg-slate-500/5">Aborted</ActionButton>
-                            <ActionButton 
-                                variant="primary"
-                                onClick={() => handleRestore(rollbackTarget)} 
-                                disabled={isRollingBack} 
-                                className="flex-1 py-3.5 font-black uppercase tracking-widest text-[11px]"
-                            >
-                                {isRollingBack ? <Loader2 size={16} className="animate-spin" /> : 'Confirm Mutation'}
-                            </ActionButton>
-                        </div>
-                    </GlassCard>
-                </div>
+            {viewMode === 'mappings' && selectedProjectId && (
+                <MappingsView key={selectedProjectId} projectId={selectedProjectId} onSelectModel={setSelectedModelHistory} />
             )}
-            {/* --- Restore Preview Modal --- */}
-            {showRestorePreview && (
-                <RestorePreviewModal 
+
+            {viewMode === 'lineage' && selectedProjectId && (
+                <LineageView key={selectedProjectId} projectId={selectedProjectId} />
+            )}
+
+            {viewMode === 'repository' && selectedProjectId && (
+                <RepositoryBrowser projectId={selectedProjectId} />
+            )}
+
+            {/* --- Drawer & dialog --- */}
+            {selectedModelHistory && (
+                <>
+                    <div onClick={() => setSelectedModelHistory(null)} style={{ position: 'fixed', inset: 0, zIndex: 250, background: 'var(--bg-backdrop, rgba(0,0,0,0.35))' }} />
+                    <ModelHistoryDrawer
+                        projectId={selectedProjectId}
+                        modelName={selectedModelHistory}
+                        onClose={() => setSelectedModelHistory(null)}
+                    />
+                </>
+            )}
+
+            {restoreOpen && selectedRun && snapshotOf(selectedRun) && (
+                <RestoreDialog
                     projectId={selectedProjectId}
-                    snapshotId={showRestorePreview}
-                    onConfirm={() => {
-                        handleRestore(versions.find(v => (v.after_tgt_snapshots?.[0] || v.before_tgt_snapshots?.[0]) === showRestorePreview));
-                        setShowRestorePreview(null);
-                    }}
-                    onCancel={() => setShowRestorePreview(null)}
+                    projectName={selectedProject?.name}
+                    snapshotId={snapshotOf(selectedRun)}
+                    versionLabel={`Run #${runNumber(selectedRun)}`}
+                    busy={isRestoring}
+                    onConfirm={() => handleRestore(selectedRun)}
+                    onCancel={() => setRestoreOpen(false)}
                 />
             )}
         </div>

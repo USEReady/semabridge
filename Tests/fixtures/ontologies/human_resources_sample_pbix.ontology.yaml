@@ -1,0 +1,978 @@
+domain: Human Resources Sample PBIX
+id: human_resources_sample_pbix
+version: 1.0.0
+source_project_id: proj-human-resource
+semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+concepts:
+- name: AgeGroup
+  logical_name: AGEGROUP
+  label: AgeGroup
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: AgeGroup
+  attributes:
+  - name: AgeGroupID
+    logical_name: AGEGROUP_AGEGROUPID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: AgeGroup
+    logical_name: AGEGROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: BU
+  logical_name: BU
+  label: BU
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: BU
+  attributes:
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: RegionSeq
+    logical_name: REGIONSEQ
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: VP
+    logical_name: VP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Date
+  logical_name: COL_DATE
+  label: Date
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    logical_name: COL_DATE
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: MonthNumber
+    logical_name: MONTHNUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Period
+    logical_name: PERIOD
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: PeriodNumber
+    logical_name: PERIODNUMBER
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Qtr
+    logical_name: QTR
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: QtrNumber
+    logical_name: QTRNUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Day
+    logical_name: DAY
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: MonthStartDate
+    logical_name: MONTHSTARTDATE
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: MonthEndDate
+    logical_name: MONTHENDDATE
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: MonthIncrementNumber
+    logical_name: MONTHINCREMENTNUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Employee
+  logical_name: EMPLOYEE
+  label: Employee
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: Employee
+  attributes:
+  - name: date
+    logical_name: COL_DATE
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: EmplID
+    logical_name: EMPLID
+    data_type: INTEGER
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Gender
+    logical_name: EMPLOYEE_GENDER
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Age
+    logical_name: AGE
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: EthnicGroup
+    logical_name: ETHNICGROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: FP
+    logical_name: EMPLOYEE_FP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: TermDate
+    logical_name: TERMDATE
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: isNewHire
+    logical_name: ISNEWHIRE
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: BU
+    logical_name: EMPLOYEE_BU
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: HireDate
+    logical_name: HIREDATE
+    data_type: DATE
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: PayTypeID
+    logical_name: EMPLOYEE_PAYTYPEID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: TermReason
+    logical_name: TERMREASON
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: AgeGroupID
+    logical_name: EMPLOYEE_AGEGROUPID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: TenureDays
+    logical_name: TENUREDAYS
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: TenureMonths
+    logical_name: TENUREMONTHS
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: BadHires
+    logical_name: BADHIRES
+    data_type: FLOAT
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Ethnicity
+  logical_name: ETHNICITY
+  label: Ethnicity
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: Ethnicity
+  attributes:
+  - name: Ethnic Group
+    logical_name: ETHNIC_GROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Ethnicity
+    logical_name: ETHNICITY
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: FP
+  logical_name: FP
+  label: FP
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: FP
+  attributes:
+  - name: FP
+    logical_name: FP
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: FPDesc
+    logical_name: FPDESC
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: Gender
+  logical_name: GENDER
+  label: Gender
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: Gender
+  attributes:
+  - name: ID
+    logical_name: ID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: Gender
+    logical_name: GENDER
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  - name: Sort
+    logical_name: SORT
+    data_type: INTEGER
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: PayType
+  logical_name: PAYTYPE
+  label: PayType
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: PayType
+  attributes:
+  - name: PayTypeID
+    logical_name: PAYTYPE_PAYTYPEID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: PayType
+    logical_name: PAYTYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+- name: SeparationReason
+  logical_name: SEPARATIONREASON
+  label: SeparationReason
+  concept_type: DIMENSION
+  domain: Human Resources Sample PBIX
+  synonyms: []
+  business_rules: []
+  physical_table: SeparationReason
+  attributes:
+  - name: SeparationTypeID
+    logical_name: SEPARATIONTYPEID
+    data_type: VARCHAR
+    is_primary_key: true
+    synonyms: []
+    origin: bi
+  - name: SeparationReason
+    logical_name: SEPARATIONREASON
+    data_type: VARCHAR
+    is_primary_key: false
+    synonyms: []
+    origin: bi
+  tags: []
+  origin: bi
+metrics:
+- name: COUNT_OF_BU
+  logical_name: COUNT_OF_BU
+  label: Count of BU
+  sql_expression: COUNT(BU."BU")
+  dax_expression: COUNTA('BU'[BU])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of BU
+  - COUNT_OF_BU
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: BU
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: COUNT_OF_DATE
+  logical_name: COUNT_OF_DATE
+  label: Count of Date
+  sql_expression: COUNT(COL_DATE."COL_DATE")
+  dax_expression: COUNTA('Date'[Date])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of Date
+  - COUNT_OF_DATE
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Date
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: EMPCOUNT
+  logical_name: EMPCOUNT
+  label: EmpCount
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber]
+    = MAX('Date'[PeriodNumber])))
+  deploy_reason: 'not applicable: semi-additive metric needs NON ADDITIVE BY dimension
+    ''COL_DATE.PeriodNumber'', which is not emitted in DIMENSIONS'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SEPS
+  logical_name: SEPS
+  label: Seps
+  sql_expression: COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN EMPLOYEE."EMPLID"
+    END)
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: ACTIVES
+  logical_name: ACTIVES
+  label: Actives
+  dax_expression: CALCULATE([EMPCOUNT], FILTER(Employee, ISBLANK(Employee[TermDate])))
+  deploy_reason: 'not applicable: semi-additive metric needs NON ADDITIVE BY dimension
+    ''COL_DATE.PeriodNumber'', which is not emitted in DIMENSIONS'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEW_HIRES
+  logical_name: NEW_HIRES
+  label: New Hires
+  sql_expression: SUM(EMPLOYEE."ISNEWHIRE")
+  dax_expression: SUM([isNewHire])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires
+  - NEW_HIRES
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: AVG_TENURE_DAYS
+  logical_name: AVG_TENURE_DAYS
+  label: AVG Tenure Days
+  sql_expression: AVG(EMPLOYEE."TENUREDAYS")
+  dax_expression: AVERAGE([TenureDays])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG Tenure Days
+  - AVG_TENURE_DAYS
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: AVG_TENURE_MONTHS
+  logical_name: AVG_TENURE_MONTHS
+  label: AVG Tenure Months
+  sql_expression: CASE WHEN (ROUND((AVG(EMPLOYEE."TENUREDAYS")) / 30, 1)) IS NULL
+    AND (1) IS NULL THEN NULL ELSE COALESCE(ROUND((AVG(EMPLOYEE."TENUREDAYS")) / 30,
+    1), 0) - 1 END
+  dax_expression: ROUND([AVG_TENURE_DAYS]/30, 1)-1
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG Tenure Months
+  - AVG_TENURE_MONTHS
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: AVG_AGE
+  logical_name: AVG_AGE
+  label: AVG Age
+  sql_expression: ROUND(AVG(EMPLOYEE."AGE"::FLOAT), 0)
+  dax_expression: ROUND(AVERAGE([Age]), 0)
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG Age
+  - AVG_AGE
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SUM_OF_BADHIRES
+  logical_name: SUM_OF_BADHIRES
+  label: Sum of BadHires
+  sql_expression: SUM(EMPLOYEE."BADHIRES")
+  dax_expression: SUM([BadHires])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of BadHires
+  - SUM_OF_BADHIRES
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEW_HIRES_SPLY
+  logical_name: NEW_HIRES_SPLY
+  label: New Hires SPLY
+  sql_expression: SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR" THEN EMPLOYEE."ISNEWHIRE"
+    ELSE NULL END)
+  dax_expression: CALCULATE([NEW_HIRES],SAMEPERIODLASTYEAR('Date'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires SPLY
+  - NEW_HIRES_SPLY
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: ACTIVES_SPLY
+  logical_name: ACTIVES_SPLY
+  label: Actives SPLY
+  dax_expression: CALCULATE([ACTIVES],SAMEPERIODLASTYEAR('Date'[Date]))
+  deploy_reason: 'not applicable: depends on non-additive metric [ACTIVES]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives SPLY
+  - ACTIVES_SPLY
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SEPS_SPLY
+  logical_name: SEPS_SPLY
+  label: Seps SPLY
+  sql_expression: COUNT(CASE WHEN EMPLOYEE."IS_SPLY_YEAR" THEN CASE WHEN (EMPLOYEE."TERMDATE"
+    IS NOT NULL) THEN EMPLOYEE."EMPLID" END ELSE NULL END)
+  dax_expression: CALCULATE([SEPS],SAMEPERIODLASTYEAR('Date'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps SPLY
+  - SEPS_SPLY
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: EMPCOUNT_SPLY
+  logical_name: EMPCOUNT_SPLY
+  label: EmpCount SPLY
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber]
+    = MAX('Date'[PeriodNumber])),SAMEPERIODLASTYEAR('Date'[Date]))
+  deploy_reason: 'not applicable: depends on non-additive metric'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount SPLY
+  - EMPCOUNT_SPLY
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SEPS_YOY_VAR
+  logical_name: SEPS_YOY_VAR
+  label: Seps YoY Var
+  sql_expression: (COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN EMPLOYEE."EMPLID"
+    END)) - (COUNT(CASE WHEN EMPLOYEE."IS_SPLY_YEAR" THEN CASE WHEN (EMPLOYEE."TERMDATE"
+    IS NOT NULL) THEN EMPLOYEE."EMPLID" END ELSE NULL END))
+  dax_expression: '[SEPS]-[SEPS_SPLY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps YoY Var
+  - SEPS_YOY_VAR
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: ACTIVES_YOY_VAR
+  logical_name: ACTIVES_YOY_VAR
+  label: Actives YoY Var
+  dax_expression: '[ACTIVES]-[ACTIVES_SPLY]'
+  deploy_reason: 'Cannot compute — depends on unresolved metric(s): ''ACTIVES_SPLY''
+    (not applicable: depends on non-additive metric [ACTIVES]). This metric''s own
+    DAX has no translation issue of its own.'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives YoY Var
+  - ACTIVES_YOY_VAR
+  business_rules: []
+  derives_from:
+  - ACTIVES
+  - ACTIVES_SPLY
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEW_HIRES_YOY_VAR
+  logical_name: NEW_HIRES_YOY_VAR
+  label: New Hires YoY Var
+  sql_expression: CASE WHEN (SUM(EMPLOYEE."ISNEWHIRE")) IS NULL AND (SUM(CASE WHEN
+    EMPLOYEE."IS_SPLY_YEAR" THEN EMPLOYEE."ISNEWHIRE" ELSE NULL END)) IS NULL THEN
+    NULL ELSE COALESCE((SUM(EMPLOYEE."ISNEWHIRE")), 0) - COALESCE((SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR"
+    THEN EMPLOYEE."ISNEWHIRE" ELSE NULL END)), 0) END
+  dax_expression: '[NEW_HIRES]-[NEW_HIRES_SPLY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires YoY Var
+  - NEW_HIRES_YOY_VAR
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SEPS_YOY_PCT_CHANGE
+  logical_name: SEPS_YOY_PCT_CHANGE
+  label: Seps YoY % Change
+  sql_expression: ((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN EMPLOYEE."EMPLID"
+    END)) - (COUNT(CASE WHEN EMPLOYEE."IS_SPLY_YEAR" THEN CASE WHEN (EMPLOYEE."TERMDATE"
+    IS NOT NULL) THEN EMPLOYEE."EMPLID" END ELSE NULL END))) / NULLIF((COUNT(CASE
+    WHEN EMPLOYEE."IS_SPLY_YEAR" THEN CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL)
+    THEN EMPLOYEE."EMPLID" END ELSE NULL END)), 0)
+  dax_expression: DIVIDE([SEPS_YOY_VAR], [SEPS_SPLY])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps YoY % Change
+  - SEPS_YOY_PCT_CHANGE
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: ACTIVES_YOY_PCT_CHANGE
+  logical_name: ACTIVES_YOY_PCT_CHANGE
+  label: Actives YoY % Change
+  dax_expression: DIVIDE([ACTIVES_YOY_VAR], [ACTIVES_SPLY])
+  deploy_reason: 'Cannot compute — depends on unresolved metric(s): ''ACTIVES_YOY_VAR''
+    (Cannot compute — depends on unresolved metric(s): ''ACTIVES_SPLY'' (not applicable:
+    depends on non-additive metric [ACTIVES]). This metric''s own DAX has no translation
+    issue of its own.); ''ACTIVES_SPLY'''
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Actives YoY % Change
+  - ACTIVES_YOY_PCT_CHANGE
+  business_rules: []
+  derives_from:
+  - ACTIVES_YOY_VAR
+  - ACTIVES_SPLY
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: NEW_HIRES_YOY_PCT_CHANGE
+  logical_name: NEW_HIRES_YOY_PCT_CHANGE
+  label: New Hires YoY % Change
+  sql_expression: (CASE WHEN (SUM(EMPLOYEE."ISNEWHIRE")) IS NULL AND (SUM(CASE WHEN
+    EMPLOYEE."IS_SPLY_YEAR" THEN EMPLOYEE."ISNEWHIRE" ELSE NULL END)) IS NULL THEN
+    NULL ELSE COALESCE((SUM(EMPLOYEE."ISNEWHIRE")), 0) - COALESCE((SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR"
+    THEN EMPLOYEE."ISNEWHIRE" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR"
+    THEN EMPLOYEE."ISNEWHIRE" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([NEW_HIRES_YOY_VAR], [NEW_HIRES_SPLY])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - New Hires YoY % Change
+  - NEW_HIRES_YOY_PCT_CHANGE
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: BAD_HIRES_SPLY
+  logical_name: BAD_HIRES_SPLY
+  label: Bad Hires SPLY
+  sql_expression: SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR" THEN EMPLOYEE."BADHIRES" ELSE
+    NULL END)
+  dax_expression: CALCULATE([SUM_OF_BADHIRES],SAMEPERIODLASTYEAR('Date'[Date]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Bad Hires SPLY
+  - BAD_HIRES_SPLY
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: BAD_HIRES_YOY_VAR
+  logical_name: BAD_HIRES_YOY_VAR
+  label: Bad Hires YoY Var
+  sql_expression: CASE WHEN (SUM(EMPLOYEE."BADHIRES")) IS NULL AND (SUM(CASE WHEN
+    EMPLOYEE."IS_SPLY_YEAR" THEN EMPLOYEE."BADHIRES" ELSE NULL END)) IS NULL THEN
+    NULL ELSE COALESCE((SUM(EMPLOYEE."BADHIRES")), 0) - COALESCE((SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR"
+    THEN EMPLOYEE."BADHIRES" ELSE NULL END)), 0) END
+  dax_expression: '[SUM_OF_BADHIRES]-[BAD_HIRES_SPLY]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Bad Hires YoY Var
+  - BAD_HIRES_YOY_VAR
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: BAD_HIRES_YOY_PCT_CHANGE
+  logical_name: BAD_HIRES_YOY_PCT_CHANGE
+  label: Bad Hires YoY % Change
+  sql_expression: (CASE WHEN (SUM(EMPLOYEE."BADHIRES")) IS NULL AND (SUM(CASE WHEN
+    EMPLOYEE."IS_SPLY_YEAR" THEN EMPLOYEE."BADHIRES" ELSE NULL END)) IS NULL THEN
+    NULL ELSE COALESCE((SUM(EMPLOYEE."BADHIRES")), 0) - COALESCE((SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR"
+    THEN EMPLOYEE."BADHIRES" ELSE NULL END)), 0) END) / NULLIF((SUM(CASE WHEN EMPLOYEE."IS_SPLY_YEAR"
+    THEN EMPLOYEE."BADHIRES" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([BAD_HIRES_YOY_VAR], [BAD_HIRES_SPLY])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Bad Hires YoY % Change
+  - BAD_HIRES_YOY_PCT_CHANGE
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: TO_PCT
+  logical_name: TO_PCT
+  label: TO %
+  sql_expression: (COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN EMPLOYEE."EMPLID"
+    END)) / NULLIF((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NULL) THEN EMPLOYEE."EMPLID"
+    ELSE NULL END)), 0)
+  dax_expression: DIVIDE([SEPS], [ACTIVES])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO %
+  - TO_PCT
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: TO_PCT_NORM
+  logical_name: TO_PCT_NORM
+  label: TO % Norm
+  sql_expression: SUM(EMPLOYEE."TO_PCT_NUM"::FLOAT) OVER (PARTITION BY EXCLUDING GENDER."GENDER",
+    ETHNICITY."ETHNICITY") / NULLIF(SUM(EMPLOYEE."TO_PCT_DEN"::FLOAT) OVER (PARTITION
+    BY EXCLUDING GENDER."GENDER", ETHNICITY."ETHNICITY"), 0)
+  dax_expression: CALCULATE([TO_PCT], all(Gender[Gender]), ALL(Ethnicity[Ethnicity]))
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO % Norm
+  - TO_PCT_NORM
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: TO_PCT_VAR
+  logical_name: TO_PCT_VAR
+  label: TO % Var
+  sql_expression: CASE WHEN ((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN
+    EMPLOYEE."EMPLID" END)) / NULLIF((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NULL)
+    THEN EMPLOYEE."EMPLID" ELSE NULL END)), 0)) IS NULL AND (SUM(EMPLOYEE."TO_PCT_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING GENDER."GENDER", ETHNICITY."ETHNICITY") / NULLIF(SUM(EMPLOYEE."TO_PCT_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING GENDER."GENDER", ETHNICITY."ETHNICITY"), 0)) IS NULL
+    THEN NULL ELSE COALESCE(((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN
+    EMPLOYEE."EMPLID" END)) / NULLIF((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NULL)
+    THEN EMPLOYEE."EMPLID" ELSE NULL END)), 0)), 0) - COALESCE((SUM(EMPLOYEE."TO_PCT_NUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING GENDER."GENDER", ETHNICITY."ETHNICITY") / NULLIF(SUM(EMPLOYEE."TO_PCT_DEN"::FLOAT)
+    OVER (PARTITION BY EXCLUDING GENDER."GENDER", ETHNICITY."ETHNICITY"), 0)), 0)
+    END
+  dax_expression: '[TO_PCT]-[TO_PCT_NORM]'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO % Var
+  - TO_PCT_VAR
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SEPPCTOFACTIVE
+  logical_name: SEPPCTOFACTIVE
+  label: Sep%ofActive
+  sql_expression: (COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NOT NULL) THEN EMPLOYEE."EMPLID"
+    END)) / NULLIF((COUNT(CASE WHEN (EMPLOYEE."TERMDATE" IS NULL) THEN EMPLOYEE."EMPLID"
+    ELSE NULL END)), 0)
+  dax_expression: DIVIDE([SEPS],[ACTIVES])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sep%ofActive
+  - SEPPCTOFACTIVE
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: SEPPCTOFSMLYACTIVES
+  logical_name: SEPPCTOFSMLYACTIVES
+  label: Sep%ofSMLYActives
+  dax_expression: DIVIDE([SEPS_SPLY],[ACTIVES_SPLY])
+  deploy_reason: 'Cannot compute — depends on unresolved metric(s): ''ACTIVES_SPLY''
+    (not applicable: depends on non-additive metric [ACTIVES]). This metric''s own
+    DAX has no translation issue of its own.'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sep%ofSMLYActives
+  - SEPPCTOFSMLYACTIVES
+  business_rules: []
+  derives_from:
+  - SEPS_SPLY
+  - ACTIVES_SPLY
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: BADHIREPCTOFACTIVES
+  logical_name: BADHIREPCTOFACTIVES
+  label: BadHire%ofActives
+  sql_expression: (SUM(EMPLOYEE."BADHIRES")) / NULLIF((COUNT(CASE WHEN (EMPLOYEE."TERMDATE"
+    IS NULL) THEN EMPLOYEE."EMPLID" ELSE NULL END)), 0)
+  dax_expression: DIVIDE([SUM_OF_BADHIRES],[ACTIVES])
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - BadHire%ofActives
+  - BADHIREPCTOFACTIVES
+  business_rules: []
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+- name: BADHIREPCTOFACTIVESPLY
+  logical_name: BADHIREPCTOFACTIVESPLY
+  label: BadHire%ofActiveSPLY
+  dax_expression: DIVIDE([BAD_HIRES_SPLY],[ACTIVES_SPLY])
+  deploy_reason: 'Cannot compute — depends on unresolved metric(s): ''ACTIVES_SPLY''
+    (not applicable: depends on non-additive metric [ACTIVES]). This metric''s own
+    DAX has no translation issue of its own.'
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - BadHire%ofActiveSPLY
+  - BADHIREPCTOFACTIVESPLY
+  business_rules: []
+  derives_from:
+  - BAD_HIRES_SPLY
+  - ACTIVES_SPLY
+  domain: Human Resources Sample PBIX
+  concept: Employee
+  semantic_view_name: SEMABRIDGE.ARTIFICIAL_INTELLIGENCE.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC
+  tags: []
+  origin: bi
+relationships:
+- name: REL_EMPLOYEE_DATE__DATE_DATE
+  from_concept: Employee
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Employee.date = Date.Date
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_FP__FP_FP
+  from_concept: Employee
+  to_concept: FP
+  cardinality: N:1
+  join_expression: Employee.FP = FP.FP
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_ETHNICGROUP__ETHNICITY_ETHNIC_GROUP
+  from_concept: Employee
+  to_concept: Ethnicity
+  cardinality: N:1
+  join_expression: Employee.EthnicGroup = Ethnicity."Ethnic Group"
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_GENDER__GENDER_ID
+  from_concept: Employee
+  to_concept: Gender
+  cardinality: N:1
+  join_expression: Employee.Gender = Gender.ID
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_PAYTYPEID__PAYTYPE_PAYTYPEID
+  from_concept: Employee
+  to_concept: PayType
+  cardinality: N:1
+  join_expression: Employee.PayTypeID = PayType.PayTypeID
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_BU__BU_BU
+  from_concept: Employee
+  to_concept: BU
+  cardinality: N:1
+  join_expression: Employee.BU = BU.BU
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_AGEGROUPID__AGEGROUP_AGEGROUPID
+  from_concept: Employee
+  to_concept: AgeGroup
+  cardinality: N:1
+  join_expression: Employee.AgeGroupID = AgeGroup.AgeGroupID
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_TERMREASON__SEPARATIONREASON_SEPARATIONTYPEID
+  from_concept: Employee
+  to_concept: SeparationReason
+  cardinality: N:1
+  join_expression: Employee.TermReason = SeparationReason.SeparationTypeID
+  is_active: true
+  origin: bi

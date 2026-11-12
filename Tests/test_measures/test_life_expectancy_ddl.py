@@ -1,11 +1,17 @@
 import os
+import pytest
 from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
 from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
 from semabridge.converter.osi_to_sml import OSIToSMLConverter
 from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
 from semabridge.core.settings import SnowflakeConfig
 
-pbix_path = r"C:\Users\manoj.s\Downloads\PBIX Files\Life expectancy v202009.pbix"
+pbix_path = os.environ.get(
+    "SEMABRIDGE_LIFE_EXPECTANCY_PBIX",
+    os.path.join(os.environ.get("SEMABRIDGE_PBIX_DIR", ""), "Life expectancy v202009.pbix"),
+)
+if not os.path.isfile(pbix_path):
+    pytest.skip(f"PBIX file not found at {pbix_path}", allow_module_level=True)
 conn = LocalPBIXConnector({"pbix_path": pbix_path})
 discovery = conn.discover()
 raw_tmsl = discovery.get("raw_tmsl") or {}

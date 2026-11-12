@@ -238,7 +238,7 @@ python Scripts/sfdc_cpq_remediation.py validate-yaml
 
 # 4. Restart Semabridge API
 #    - Kill current process (Ctrl+C)
-#    - Run: uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8001
+#    - Run: uv run uvicorn semabridge.api.main:app --host 127.0.0.1 --port 8002
 #    - Monitor logs for success messages
 
 # 5. Test measure views

@@ -292,6 +292,11 @@ class ModelRepository:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN target_schema VARCHAR(255)")
                         if "view_name" not in snapshot_columns:
                             conn.exec_driver_sql("ALTER TABLE snapshots ADD COLUMN view_name VARCHAR(255)")
+                    if _tbl_exists("table_bindings"):
+                        binding_columns = _col_names("table_bindings")
+                        for _bc in ("target_database", "target_schema"):
+                            if _bc not in binding_columns:
+                                conn.exec_driver_sql(f"ALTER TABLE table_bindings ADD COLUMN {_bc} VARCHAR(255)")
                     if _tbl_exists("runs"):
                         run_columns = _col_names("runs")
                         if "sync_mode" not in run_columns:
@@ -666,6 +671,8 @@ class ModelRepository:
                         )
                     )
                 ).scalars().first()
+                db = (str(entry.get("database") or "").strip().strip('"').upper() or None)
+                sc = (str(entry.get("schema") or "").strip().strip('"').upper() or None)
                 if row is None:
                     session.add(TableBinding(
                         binding_id=str(uuid.uuid4()),
@@ -674,17 +681,98 @@ class ModelRepository:
                         dataset_key=entry["dataset_key"],
                         dataset_name=entry["dataset"],
                         table_name=entry["table"],
+                        target_database=db,
+                        target_schema=sc,
                         matched_by=entry.get("matched_by"),
                     ))
-                elif row.table_name != entry["table"]:
+                elif (
+                    row.table_name != entry["table"]
+                    or (db and row.target_database != db)
+                    or (sc and row.target_schema != sc)
+                ):
+                    same_table = row.table_name == entry["table"]
                     row.table_name = entry["table"]
-                    row.matched_by = entry.get("matched_by")
+                    if db:
+                        row.target_database = db
+                    if sc:
+                        row.target_schema = sc
+                    # Keep "created" ownership when a later sync re-binds the
+                    # same placeholder table it created.
+                    if not (row.matched_by == "created" and same_table):
+                        row.matched_by = entry.get("matched_by")
                     row.updated_at = datetime.utcnow()
                 else:
                     continue
                 saved += 1
             session.commit()
         return saved
+
+    def find_other_project_table_bindings(
+        self,
+        project_id: Optional[str],
+        table_names: List[Any],
+        database: Optional[str] = None,
+        schema: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return saved bindings from OTHER projects pointing to the same physical table.
+
+        ``table_names`` items are bare names (qualified by ``database``/``schema``)
+        or ``"DB.SCHEMA.TABLE"`` strings / ``{"table", "database", "schema"}``
+        dicts. A match needs the same fully-qualified DB.SCHEMA.TABLE; a table
+        with the same name in another database/schema is a different table.
+        Bindings saved before database/schema were recorded only match by name
+        and are flagged ``qualified=False`` so the caller can say so.
+        """
+        from semabridge.repository.orm.models import TableBinding
+
+        def _norm(v: Any) -> str:
+            return str(v or "").strip().strip('"').upper()
+
+        targets: set = set()
+        for t in table_names or []:
+            if isinstance(t, dict):
+                tb, db, sc = _norm(t.get("table")), _norm(t.get("database") or database), _norm(t.get("schema") or schema)
+            else:
+                parts = [_norm(p) for p in str(t).split(".") if _norm(p)]
+                if not parts:
+                    continue
+                tb = parts[-1]
+                sc = parts[-2] if len(parts) >= 2 else _norm(schema)
+                db = parts[-3] if len(parts) >= 3 else _norm(database)
+            if tb:
+                targets.add((db, sc, tb))
+        if not targets:
+            return []
+        by_name: Dict[str, List[tuple]] = {}
+        for db, sc, tb in targets:
+            by_name.setdefault(tb, []).append((db, sc))
+        with self._session() as session:
+            rows = session.execute(select(TableBinding)).scalars().all()
+            conflicts: List[Dict[str, Any]] = []
+            for row in rows:
+                if project_id and str(row.project_id) == str(project_id):
+                    continue
+                tb = _norm(row.table_name)
+                if tb not in by_name:
+                    continue
+                r_db, r_sc = _norm(getattr(row, "target_database", None)), _norm(getattr(row, "target_schema", None))
+                qualified = bool(r_db and r_sc)
+                if qualified:
+                    match = next(((db, sc) for db, sc in by_name[tb] if db and sc and db == r_db and sc == r_sc), None)
+                    if match is None:
+                        continue  # same name, different database/schema: another table
+                conflicts.append({
+                    "project_id": row.project_id,
+                    "model_key": row.model_key,
+                    "dataset_key": row.dataset_key,
+                    "dataset_name": row.dataset_name,
+                    "table_name": row.table_name,
+                    "database": r_db or None,
+                    "schema": r_sc or None,
+                    "qualified": qualified,
+                    "created_by_other_project": (row.matched_by == "created"),
+                })
+            return conflicts
 
     def mark_snapshot_deployed(
         self,
@@ -844,6 +932,99 @@ class ModelRepository:
                 return self._row_to_snapshot(row)
 
         return None
+
+    def get_project_deployment_info(self, project_id: str) -> Dict[str, Optional[str]]:
+        """Resolve fully qualified db.schema.view, deployment status/error, and DDL path from deployment records."""
+        import re
+        from pathlib import Path
+        from sqlalchemy import text
+
+        info: Dict[str, Optional[str]] = {
+            "semantic_view": None,
+            "view_name": None,
+            "database": None,
+            "schema": None,
+            "deploy_error": None,
+            "ddl": None,
+            "model_name": None,
+        }
+        if not project_id:
+            return info
+
+        def _q_part(part: str) -> str:
+            p = str(part or "").strip().strip('"')
+            return f'"{p}"' if re.search(r"[^A-Za-z0-9_]", p) else p
+
+        with self._session() as session:
+            rows = session.execute(
+                select(SnapshotRow, Project.database, Project.schema, Project.name)
+                .outerjoin(Project, Project.project_id == SnapshotRow.project_id)
+                .where(
+                    and_(
+                        SnapshotRow.project_id == project_id,
+                        SnapshotRow.deleted_at.is_(None),
+                    )
+                )
+                .order_by(SnapshotRow.timestamp.desc())
+                .limit(25)
+            ).all()
+
+            for row, proj_db, proj_schema, proj_name in rows:
+                if not info["model_name"]:
+                    if row.sml_blob:
+                        blob = _deserialize_sml_blob(row.sml_blob)
+                        if isinstance(blob, dict):
+                            info["model_name"] = blob.get("unique_name") or blob.get("label") or proj_name
+                    elif proj_name:
+                        info["model_name"] = proj_name
+                if not info["deploy_error"] and row.status == "failed" and row.error_message:
+                    info["deploy_error"] = row.error_message
+
+                if row.deployed_at is not None and row.status == "success" and row.view_name:
+                    db = row.target_database or proj_db
+                    schema = row.target_schema or proj_schema
+                    view = row.view_name.strip().strip('"')
+                    info["database"] = db
+                    info["schema"] = schema
+                    info["view_name"] = view
+                    parts = [_q_part(p) for p in (db, schema, view) if p]
+                    info["semantic_view"] = ".".join(parts) if parts else None
+                    break
+
+            try:
+                rmr = session.execute(
+                    text(
+                        "SELECT status, view_name, physical_namespace, error_message, model "
+                        "FROM run_model_results WHERE project_id = :pid "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"pid": project_id},
+                ).fetchone()
+                if rmr:
+                    r_status, r_view, r_ns, r_err, r_model = rmr
+                    if not info["model_name"] and r_model:
+                        info["model_name"] = r_model
+                    if not info["deploy_error"] and str(r_status or "").lower() == "failed" and r_err:
+                        info["deploy_error"] = r_err
+                    if not info["semantic_view"] and str(r_status or "").lower() == "success" and r_view:
+                        ns_parts = [p.strip().strip('"') for p in str(r_ns or "").split(".") if p.strip()]
+                        parts = [_q_part(p) for p in (*ns_parts, r_view) if p]
+                        info["semantic_view"] = ".".join(parts) if parts else None
+            except Exception:
+                pass
+
+        for candidate in (
+            Path("output") / "reverse" / project_id / "semantic_view.sql",
+            Path("output") / "reverse" / ".staging" / project_id / "semantic_view.sql",
+        ):
+            if candidate.is_file():
+                try:
+                    info["ddl"] = candidate.read_text(encoding="utf-8")
+                    break
+                except Exception:
+                    pass
+
+        return info
 
     def rollback(
         self,

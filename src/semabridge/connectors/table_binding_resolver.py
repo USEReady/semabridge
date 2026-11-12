@@ -116,6 +116,11 @@ class LiveSchemaMetadata(dict):
 
         self.binding_log: Dict[str, Dict[str, Any]] = {}
 
+        # TABLE -> {COLUMN: DATA_TYPE} from information_schema (e.g. TEXT, DATE,
+        # NUMBER). Lets DDL generation adapt to an existing table whose column
+        # type differs from the model (a date stored as TEXT, ...).
+        self.column_types: Dict[str, Dict[str, str]] = {}
+
 
 
     def clear(self) -> None:
@@ -213,7 +218,7 @@ def compute_column_compatibility(
 
     """Compute fraction [0.0 - 1.0] of model columns contained in the live table."""
 
-    if not model_col_names or not live_cols:
+    if not model_col_names or len(model_col_names) == 0 or not live_cols:
 
         return 0.0
 
@@ -297,15 +302,30 @@ def rank_table_candidates(
 
         # Name matching score [0 - 100]
 
+        from semabridge.utils.identifiers import IdentifierSanitizer
+
+        norm_ds_raw = IdentifierSanitizer(suppress_reserved=False).to_alias(dataset_name)
+        tbl_norm_raw = IdentifierSanitizer(suppress_reserved=False).to_alias(tbl_name)
+        alnum_ds = re.sub(r"[^A-Z0-9]", "", norm_ds_raw.upper())
+        alnum_tbl = re.sub(r"[^A-Z0-9]", "", tbl_norm_raw.upper())
+
         name_score = 0
 
         if norm_ds == tbl_norm:
 
             name_score = 100
 
+        elif alnum_ds and alnum_ds == alnum_tbl:
+
+            name_score = 90
+
         elif tbl_norm.endswith(norm_ds) or norm_ds.endswith(tbl_norm):
 
             name_score = 75
+
+        elif norm_ds_raw and tbl_norm_raw and (tbl_norm_raw.endswith(norm_ds_raw) or norm_ds_raw.endswith(tbl_norm_raw)):
+
+            name_score = 70
 
         elif tbl_norm.startswith(norm_ds) or norm_ds.startswith(tbl_norm):
 
@@ -347,7 +367,7 @@ def rank_table_candidates(
 
 def _is_viable(candidate: Dict[str, Any]) -> bool:
 
-    return candidate["col_compat"] >= 0.8 or candidate["name_score"] == 100
+    return candidate["col_compat"] >= 0.8
 
 
 
@@ -363,17 +383,23 @@ def _log_binding(live_schema_metadata: Any, dataset_name: str, table: str, match
 
         return
 
-    log[clean_ident(dataset_name)] = {
-
+    key = clean_ident(dataset_name)
+    prev = log.get(key) or {}
+    entry = {
         "dataset": dataset_name,
-
         "table": table,
-
         "matched_by": matched_by,
-
         "tie": tie or [],
-
     }
+    if str(prev.get("table") or "").upper() == str(table or "").upper():
+        # Same table re-resolved later in the deploy: keep the namespace and
+        # the fact that this sync created it (ownership for other projects).
+        for k in ("database", "schema"):
+            if prev.get(k):
+                entry[k] = prev[k]
+        if prev.get("matched_by") == "created":
+            entry["matched_by"] = "created"
+    log[key] = entry
 
 
 
@@ -403,7 +429,7 @@ def resolve_dataset_to_physical_table(
 
     exactly like the dataset (if its columns match), then the best existing
 
-    table by columns (>= 0.8) or normalized name. Otherwise the table counts
+    table by columns (>= 0.8). Otherwise the table counts
 
     as missing. Raises TableBindingAmbiguityError when the best match is tied.
 
@@ -491,7 +517,7 @@ def resolve_dataset_to_physical_table(
 
             best["table"],
 
-            "columns" if best["col_compat"] >= 0.8 else "name",
+            "columns",
 
         )
 

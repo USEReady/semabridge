@@ -12,7 +12,7 @@ from semabridge.intermediate.models import (
 )
 
 
-def test_from_osi_auto_detects_metrics_when_source_has_none():
+def test_from_osi_never_invents_metrics_when_source_has_none():
     converter = OSIToSMLConverter()
     osi_model = OSIModel(
         unique_name="client-data",
@@ -51,10 +51,9 @@ def test_from_osi_auto_detects_metrics_when_source_has_none():
 
     sml_model = converter.from_osi(osi_model)
 
-    metric_names = {metric.unique_name for metric in sml_model.metrics}
-    assert sml_model.metric_count >= 2
-    assert "Factsales - Sum of Revenue" in metric_names
-    assert "Factsales - Sum of Quantity" in metric_names
+    # Metrics come only from the model (measures + Power BI summarization);
+    # a model with neither gets no guessed "Sum of <column>" metrics.
+    assert sml_model.metric_count == 0
 
 
 def test_from_osi_keeps_explicit_metrics_without_auto_generating_duplicates():

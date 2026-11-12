@@ -39,7 +39,7 @@ class RelationshipsClauseBuilder:
         """Build RELATIONSHIPS clause for SML model."""
         return self._build_relationships(
             sml.relationships, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=False
+            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=False, model=sml
         )
 
     def build_for_osi(
@@ -54,7 +54,7 @@ class RelationshipsClauseBuilder:
         """Build RELATIONSHIPS clause for OSI model."""
         return self._build_relationships(
             osi.relationships, dataset_aliases, dataset_by_name, 
-            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=True
+            dataset_col_lookup, declared_pk_by_alias, relationship_target_alias, is_osi=True, model=osi
         )
 
     def _build_relationships(
@@ -65,14 +65,29 @@ class RelationshipsClauseBuilder:
         dataset_col_lookup: Dict[str, Set[str]],
         declared_pk_by_alias: Dict[str, List[str]],
         relationship_target_alias: Dict[Tuple[str, str], str],
-        is_osi: bool
+        is_osi: bool,
+        model: Any = None,
     ) -> List[str]:
+        from semabridge.utils.identifiers import (
+            inactive_relationship_used_by_measures,
+            inactive_role_alias_map,
+            _relationship_signature,
+        )
+
+        role_aliases = inactive_role_alias_map(relationships, model)
         rel_lines = []
         rel_meta: List[Tuple[str, str, bool, Any]] = []
         for rel in relationships:
-            if not rel.is_active:
+            if not getattr(rel, "is_active", True):
+                if not inactive_relationship_used_by_measures(rel, model):
+                    logger.info(
+                        "Skipping inactive relationship '%s' -> '%s': no measure uses USERELATIONSHIP.",
+                        rel.from_dataset,
+                        rel.to_dataset,
+                    )
+                    continue
                 logger.info(
-                    "Including inactive Fabric relationship '%s' -> '%s' for Snowflake metadata parity.",
+                    "Including inactive Fabric relationship '%s' -> '%s' referenced by USERELATIONSHIP.",
                     rel.from_dataset,
                     rel.to_dataset,
                 )
@@ -81,16 +96,32 @@ class RelationshipsClauseBuilder:
             to_alias = dataset_aliases.get(rel.to_dataset)
 
             if not getattr(rel, "is_active", True):
-                from_cols_raw = getattr(rel, "from_columns", None) or []
-                fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
-                if fk_col_raw:
-                    to_alias = derive_alias(rel.to_dataset, fk_col_raw)
+                role_alias = role_aliases.get(_relationship_signature(rel))
+                if role_alias:
+                    to_alias = role_alias
 
             if not from_alias or not to_alias or not rel.from_columns:
                 logger.warning(
                     f"Skipping relationship '{rel.from_dataset}' -> '{rel.to_dataset}': "
                     f"Unresolvable aliases (from={from_alias}, to={to_alias}) or missing from_columns."
                 )
+                _missing_tables = [
+                    ds for ds, al in ((rel.from_dataset, from_alias), (rel.to_dataset, to_alias))
+                    if not al and ds not in dataset_by_name
+                ]
+                if _missing_tables and rel.from_columns:
+                    # The table itself is not part of the semantic view (it was
+                    # excluded upstream, e.g. an unmaterialized calculated
+                    # table, with its own drop record) -- the relationship
+                    # cannot exist without it.
+                    self.drop_ledger.record(
+                        "relationship", f"{rel.from_dataset} -> {rel.to_dataset}", DropStage.DDL_EMISSION,
+                        f"Related table {', '.join(map(str, _missing_tables))} is not in the semantic view "
+                        "(excluded earlier -- see its table drop), so this relationship cannot be emitted.",
+                        dataset=rel.from_dataset,
+                        by_design=True,
+                    )
+                    continue
                 self.drop_ledger.record(
                     "relationship", f"{rel.from_dataset} -> {rel.to_dataset}", DropStage.DDL_EMISSION,
                     f"Unresolvable dataset aliases (from={from_alias}, to={to_alias}) or "
@@ -157,6 +188,22 @@ class RelationshipsClauseBuilder:
                     for key in all_target_keys
                 )
                 if not is_valid_target:
+                    _card = getattr(rel, "cardinality", None)
+                    _card_str = str(getattr(_card, "value", _card) or "").lower().replace("_", "-").replace(" ", "")
+                    if _card_str in ("many-to-many", "manytomany", "m:n", "n:n", "*:*", "m:m"):
+                        # Power BI many-to-many: neither side is unique by the
+                        # model's own rule, and a semantic-view relationship must
+                        # reference a PRIMARY KEY/UNIQUE key -- not expressible.
+                        self.drop_ledger.record(
+                            "relationship",
+                            f"{rel.from_dataset} -> {rel.to_dataset}",
+                            DropStage.DDL_EMISSION,
+                            f"Many-to-many relationship on {to_cols}: neither side is unique in the model, and a "
+                            "Snowflake semantic-view relationship must reference a PRIMARY KEY or UNIQUE key.",
+                            dataset=rel.from_dataset,
+                            by_design=True,
+                        )
+                        continue
                     logger.warning(
                         "Dropping relationship '%s' -> '%s' on %s: target columns are not a declared PRIMARY KEY or UNIQUE on '%s'.",
                         rel.from_dataset, rel.to_dataset, to_cols, to_alias,

@@ -31,6 +31,14 @@ const VersionControlPage = lazy(() => import('./pages/VersionControlPage'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
 const ResetPasswordPage  = lazy(() => import('./pages/ResetPasswordPage'));
 const UnauthorizedPage   = lazy(() => import('./pages/UnauthorizedPage'));
+const AskAiPage          = lazy(() => import('./pages/AskAiPage'));
+const GovernanceSuitePage = lazy(() => import('./pages/GovernanceSuitePage'));
+
+// Old route names redirect to the new ones, keeping any ?query (bookmarks, links in run reports).
+function RedirectKeepQuery({ to }) {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+}
 
 function PageFallback() {
   return (
@@ -101,21 +109,32 @@ export default function App() {
             </ConfigurationProvider>
           }>
             <Route index element={<Navigate to="/projects" replace />} />
-            <Route path="/explore"       element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ExplorePage /></Suspense></ErrorBoundary>} />
-            <Route path="/ontology"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage /></Suspense></ErrorBoundary>} />
+            <Route path="/map"           element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ExplorePage /></Suspense></ErrorBoundary>} />
+            <Route path="/explore"       element={<RedirectKeepQuery to="/map" />} />
+            <Route path="/ask"           element={<ErrorBoundary><Suspense fallback={<PageFallback />}><AskAiPage /></Suspense></ErrorBoundary>} />
+            <Route path="/ontology"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="explorer" /></Suspense></ErrorBoundary>} />
+            <Route path="/metric-comparator" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="comparator" /></Suspense></ErrorBoundary>} />
+            <Route path="/blast-radius"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="blast-radius" /></Suspense></ErrorBoundary>} />
+            <Route path="/drift"             element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="drift" /></Suspense></ErrorBoundary>} />
+            <Route path="/reverse-sync"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="reverse-sync" /></Suspense></ErrorBoundary>} />
+            <Route path="/bi-truth"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="bi-truth" /></Suspense></ErrorBoundary>} />
+            <Route path="/cross-platform"    element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="cross-platform" /></Suspense></ErrorBoundary>} />
             <Route path="/projects"      element={<ProjectsPage />} />
             <Route path="/projects/new"  element={<ErrorBoundary><Suspense fallback={<PageFallback />}><CreateProjectPage /></Suspense></ErrorBoundary>} />
             <Route path="/projects/:id" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectDetailPage /></Suspense></ErrorBoundary>} />
             <Route path="/projects/:id/edit" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><EditProjectPage /></Suspense></ErrorBoundary>} />
             <Route path="/projects/:id/config" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectConfigPage /></Suspense></ErrorBoundary>} />
-            <Route path="/jobs"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectJobsPage /></Suspense></ErrorBoundary>} />
-            <Route path="/model-mapping" element={<Navigate to="/projects/new?step=4" replace />} />
-            <Route path="/comparator"    element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ComparatorPage /></Suspense></ErrorBoundary>} />
+            <Route path="/runs"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ProjectJobsPage /></Suspense></ErrorBoundary>} />
+            <Route path="/jobs"          element={<RedirectKeepQuery to="/runs" />} />
+            <Route path="/model-mapping" element={<Navigate to="/projects/new" replace />} />
+            <Route path="/compare"       element={<ErrorBoundary><Suspense fallback={<PageFallback />}><ComparatorPage /></Suspense></ErrorBoundary>} />
+            <Route path="/comparator"    element={<RedirectKeepQuery to="/compare" />} />
             <Route element={<ProtectedRoute requiredRole="admin" />}>
               <Route path="/settings"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><SettingsPage /></Suspense></ErrorBoundary>} />
               <Route path="/global-config" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GlobalConfigPage /></Suspense></ErrorBoundary>} />
             </Route>
-            <Route path="/version-control" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><VersionControlPage /></Suspense></ErrorBoundary>} />
+            <Route path="/history"       element={<ErrorBoundary><Suspense fallback={<PageFallback />}><VersionControlPage /></Suspense></ErrorBoundary>} />
+            <Route path="/version-control" element={<RedirectKeepQuery to="/history" />} />
           </Route>
         </Route>
 

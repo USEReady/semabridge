@@ -10,6 +10,7 @@ const KINDS = [
   ['dimensions', 'dimension', 'dimensions'],
   ['relationships', 'relationship', 'relationships'],
   ['tables', 'table', 'tables'],
+  ['verified_queries', 'verified query', 'verified queries'],
 ];
 
 const asList = (value) => (Array.isArray(value) ? value.filter(item => item && typeof item === 'object') : []);
@@ -94,10 +95,25 @@ function ChangeItem({ item, kindLabel, change, runContext }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <strong style={{ color: 'var(--text-primary)' }}>{text(item.name)}</strong>
         <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', fontWeight: 700 }}>{kindLabel}</span>
+        {item.metadata_changed && (
+          <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 700, color: '#06b6d4', border: '1px solid #06b6d4' }}>
+            metadata changed
+          </span>
+        )}
         {item.table && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>in <span style={{ fontFamily: MONO }}>{text(item.table)}</span></span>}
         <StatusPill item={item} />
         {isMetric && change !== 'removed' && <ShowValue runContext={runContext} item={item} />}
       </div>
+      {change === 'modified' && item.old_description != null && item.old_description !== item.new_description && (
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          description: {text(item.old_description) || '—'} → {text(item.new_description) || '—'}
+        </div>
+      )}
+      {change === 'modified' && Array.isArray(item.new_synonyms) && (
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          synonyms: {(item.old_synonyms || []).join(', ') || '—'} → {(item.new_synonyms || []).join(', ') || '—'}
+        </div>
+      )}
       {item.status === 'placeholder' && item.status_reason && (
         <div style={{ fontSize: 11, color: '#f59e0b' }}>{text(item.status_reason)}</div>
       )}
@@ -155,7 +171,78 @@ function Collapsible({ title, defaultOpen = false, children }) {
   );
 }
 
-function DeltaBody({ delta, modelLabel, isDryRun, runContext }) {
+/** "Applied to 3 tables · 5 columns · 2 metrics" from the ontology report's `applied` counts. */
+function ontologyAppliedSummary(applied) {
+  if (!applied || typeof applied !== 'object') return '';
+  const parts = [['tables', 'table'], ['columns', 'column'], ['metrics', 'metric']]
+    .map(([k, one]) => [Number(applied[k]) || 0, one])
+    .filter(([n]) => n > 0)
+    .map(([n, one]) => `${n} ${one}${n === 1 ? '' : 's'}`);
+  return parts.join(' · ');
+}
+
+/** True when `changes` has anything worth showing in OntologyChangesList. */
+function hasOntologyChanges(changes) {
+  if (!changes || typeof changes !== 'object') return false;
+  return Boolean(
+    ontologyAppliedSummary(changes.applied) ||
+    asList(changes.descriptions).length ||
+    asList(changes.synonyms).length ||
+    asList(changes.verified_queries).length ||
+    asList(changes.formula_overrides_ignored).length
+  );
+}
+
+/** Ontology changes of a run / dry run: applied counts, description / synonym / verified-query changes. */
+export function OntologyChangesList({ changes }) {
+  if (!hasOntologyChanges(changes)) return null;
+  const descriptions = asList(changes.descriptions);
+  const synonyms = asList(changes.synonyms);
+  const vqs = asList(changes.verified_queries);
+  const ignored = asList(changes.formula_overrides_ignored);
+  const appliedText = ontologyAppliedSummary(changes.applied);
+  const domains = Array.isArray(changes.domains) ? changes.domains.filter(Boolean) : [];
+  return (
+    <div style={{ display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+      {appliedText && (
+        <div>
+          Ontology applied to {appliedText}{domains.length ? ` (domains: ${domains.join(', ')})` : ''}
+        </div>
+      )}
+      {descriptions.map((d, idx) => (
+        <div key={`desc-${idx}`}>
+          Description ({text(d.name)}): {text(d.old) || '—'} → {text(d.new) || '—'}
+        </div>
+      ))}
+      {synonyms.map((s, idx) => (
+        <div key={`syn-${idx}`}>
+          Synonyms ({text(s.name)}): {(s.old || []).join(', ') || '—'} → {(s.new || []).join(', ') || '—'}
+        </div>
+      ))}
+      {vqs.map((vq, idx) => (
+        <div key={`vq-${idx}`}>
+          Verified query ({text(vq.action)}): <span style={{ fontFamily: MONO }}>{text(vq.name)}</span>
+        </div>
+      ))}
+      {ignored.map((f, idx) => (
+        <div key={`fx-${idx}`} style={{ color: 'var(--color-warning, #b45309)' }}>
+          Formula ignored: {text(f.message)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OntologyChangesSection({ changes }) {
+  if (!hasOntologyChanges(changes)) return null;
+  return (
+    <Collapsible title="Ontology changes" defaultOpen>
+      <OntologyChangesList changes={changes} />
+    </Collapsible>
+  );
+}
+
+function DeltaBody({ delta, modelLabel, isDryRun, runContext, ontologyChanges }) {
   if (delta.error) {
     return <div style={{ fontSize: 12, color: 'var(--color-error)', margin: '10px 0' }}>UPSERT: {text(delta.error)}</div>;
   }
@@ -227,6 +314,7 @@ function DeltaBody({ delta, modelLabel, isDryRun, runContext }) {
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10 }}>
         Unchanged: {unchangedByKind.map(([plural, n]) => `${n} ${plural}`).join(' · ')}
       </div>
+      <OntologyChangesSection changes={ontologyChanges || delta.ontology_changes} />
     </>
   );
 }
@@ -238,12 +326,12 @@ function DeltaBody({ delta, modelLabel, isDryRun, runContext }) {
  * "Full run details" section at the bottom. A rendering error in the delta
  * part never takes the page (or the regular details) down with it.
  */
-export default function UpsertChangesView({ delta, modelLabel, isDryRun = false, runContext = null, children }) {
+export default function UpsertChangesView({ delta, modelLabel, isDryRun = false, runContext = null, ontologyChanges = null, children }) {
   if (!delta || typeof delta !== 'object') return children ?? null;
   return (
     <div>
       <PanelBoundary name="UPSERT changes">
-        <DeltaBody delta={delta} modelLabel={modelLabel} isDryRun={isDryRun} runContext={runContext} />
+        <DeltaBody delta={delta} modelLabel={modelLabel} isDryRun={isDryRun} runContext={runContext} ontologyChanges={ontologyChanges} />
       </PanelBoundary>
       {children && (
         <Collapsible title={isDryRun ? 'Full dry-run details' : 'Full run details'}>{children}</Collapsible>

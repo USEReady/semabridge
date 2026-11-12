@@ -1,11 +1,18 @@
 import sys, os, re
+import pytest
 sys.path.insert(0, ".")
-import openpyxl
 
 from semabridge.converter.dax_ast_parser import DaxAstParser, DaxSqlRenderer
 from semabridge.converter.dax_translator import DAXTranslator
 
-wb = openpyxl.load_workbook(r"C:\Users\manoj.s\Downloads\PowerBI_Measures_Report_Model_wise.xlsx", read_only=True, data_only=True)
+_report_path = os.environ.get(
+    "SEMABRIDGE_TEST_MEASURES_XLSX",
+    "",
+)
+if not os.path.isfile(_report_path):
+    pytest.skip(f"Measures Excel report not found at {_report_path}", allow_module_level=True)
+openpyxl = pytest.importorskip("openpyxl")
+wb = openpyxl.load_workbook(_report_path, read_only=True, data_only=True)
 ws = wb["Measures Report"]
 ai_measures = []
 current_model = None

@@ -16,7 +16,7 @@
  * a per-model Retry; other models are never hidden by a sibling's failure.
  */
 import { useCallback, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, RotateCcw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, RotateCcw, X } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import DryRunMappingTable from '../DryRunMappingTable';
 import UpsertChangesView from '../UpsertChangesView';
@@ -66,6 +66,7 @@ export default function MultiFileDryRunStatus({
   onBulkResolved,     // (fileId, resolvedMap) => void
   onSynonymUpdate,    // (fileId, rowId, synonyms) => void
   onRetryFile,        // (fileId) => void
+  onRemoveFile,       // (fileId) => void
 }) {
   const [expanded, setExpanded] = useState(() => new Set());
 
@@ -168,6 +169,20 @@ export default function MultiFileDryRunStatus({
                   }}
                 >
                   <RotateCcw size={11} /> Retry
+                </button>
+              )}
+              {canRetry && onRemoveFile && sections.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(evt) => { evt.stopPropagation(); onRemoveFile(section.fileId); }}
+                  title="Remove failed model and continue with the remaining models"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    background: 'none', border: '1px solid var(--color-error)', borderRadius: 6,
+                    padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--color-error)', cursor: 'pointer',
+                  }}
+                >
+                  <X size={11} /> Remove
                 </button>
               )}
             </div>

@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { AlertTriangle, FolderOpen, Layers, Box, BarChart3, Database, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, FolderOpen, Layers, Box, BarChart3, Database, RefreshCw, X, Maximize2, Minimize2 } from 'lucide-react';
 import { authFetch } from '../utils/api';
 
 // Connection Map: projects -> domains -> concepts / metrics -> bound BI objects.
@@ -129,9 +129,20 @@ export default function OntologyGraph({ projects = [] }) {
   const [projectFilter, setProjectFilter] = useState('');
   const [showBindings, setShowBindings] = useState(true);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  // Track full-screen state for the Connection Map viewer and exit cleanly on Escape
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  useEffect(() => {
+    if (!isFullscreen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isFullscreen]);
 
   const projectNames = useMemo(() => {
     const m = {};
@@ -200,7 +211,10 @@ export default function OntologyGraph({ projects = [] }) {
   const selIssues = selected ? issuesOf(selected) : [];
 
   return (
-    <div className="space-y-4">
+    <div
+      className={isFullscreen ? 'fixed inset-0 z-50 p-4 flex flex-col gap-3 overflow-hidden' : 'space-y-4'}
+      style={isFullscreen ? { background: 'var(--bg-primary, var(--bg-surface, #0b1020))' } : undefined}
+    >
       <div className="p-4 rounded-xl bg-surface border border-main flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold text-primary m-0">Connection Map</h2>
@@ -232,6 +246,16 @@ export default function OntologyGraph({ projects = [] }) {
           <button type="button" onClick={reload} className="p-1.5 rounded-lg border border-main text-secondary hover:text-primary" title="Reload">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
+          {/* Compact full-screen toggle to inspect wide connection graphs cleanly */}
+          <button
+            type="button"
+            onClick={() => setIsFullscreen((v) => !v)}
+            className="p-1.5 rounded-lg border border-main text-secondary hover:text-primary"
+            title={isFullscreen ? 'Exit full screen (Esc)' : 'Full screen'}
+            aria-label={isFullscreen ? 'Exit full screen' : 'Full screen'}
+          >
+            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
         </div>
       </div>
 
@@ -259,7 +283,10 @@ export default function OntologyGraph({ projects = [] }) {
         </div>
       )}
 
-      <div className="flex gap-4" style={{ height: 'max(520px, calc(100vh - 340px))' }}>
+      <div
+        className={isFullscreen ? 'flex gap-4 flex-1 min-h-0' : 'flex gap-4'}
+        style={isFullscreen ? undefined : { height: 'max(520px, calc(100vh - 340px))' }}
+      >
         <div className="flex-1 min-w-0 rounded-xl border border-main bg-surface-raised overflow-hidden relative">
           {graph && graph.nodes.length === 0 ? (
             <div className="h-full flex items-center justify-center text-center p-8">
@@ -364,7 +391,11 @@ export default function OntologyGraph({ projects = [] }) {
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-tertiary">Attributes</div>
                 {selected.attributes.map((a, i) => (
                   <div key={i} className="p-1.5 rounded border border-main text-[11px] flex justify-between gap-2">
-                    <span className="text-primary">{a.name}{a.stale ? ' (stale)' : ''}</span>
+                    <span className="text-primary">
+                      {a.name}
+                      {a.is_hidden ? <span className="ml-1 text-[10px] text-amber-500 font-normal">(hidden)</span> : null}
+                      {a.stale ? ' (stale)' : ''}
+                    </span>
                     <span className="text-tertiary font-mono truncate">{a.maps_to.length ? `→ ${a.maps_to.join(', ')}` : 'unbound'}</span>
                   </div>
                 ))}

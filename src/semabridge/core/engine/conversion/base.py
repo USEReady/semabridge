@@ -233,6 +233,22 @@ def _upsert_delta_preview_model(self, context: RunContext, preview_overrides: Di
                 converted, shadow.config_path, config_payload=shadow.config_payload
             )
         self._normalize_relationships_for_target(converted)
+        baseline_pid = (
+            (context.config_payload or {}).get("delta_baseline_project_id")
+            or (context.config_payload or {}).get("binding_project_id")
+            or context.project_id
+        )
+        try:
+            from semabridge.ontology.apply import _attach_project_verified_queries, apply_project_ontology
+
+            apply_project_ontology(
+                baseline_pid,
+                converted,
+                model_names=[getattr(converted, "unique_name", None), getattr(converted, "label", None)],
+            )
+            _attach_project_verified_queries(baseline_pid, converted)
+        except Exception as exc:
+            logger.debug("Dry-run delta ontology preview skipped: %s", exc)
     finally:
         self._summary, self._current_step = saved_summary, saved_step
     return converted

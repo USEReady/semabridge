@@ -295,6 +295,9 @@ function DroppedItemDetail({ detail, reason }) {
 
 function DroppedFieldsSection({ droppedEntities }) {
   const count = droppedEntities?.length || 0;
+  // Hook before the early return: the list can go from empty to non-empty
+  // between renders, and hooks must run in the same order every render.
+  const [openOverride, setOpenOverride] = useState(null);
   if (!count) return null;
 
   // Metric issues are warnings (yellow): the metric is a NULL placeholder or
@@ -311,7 +314,8 @@ function DroppedFieldsSection({ droppedEntities }) {
 
   // Default open ONLY when there are real errors or warnings to review.
   // If all exclusions are intentional system tables (by design), default collapsed!
-  const [open, setOpen] = useState(!isAllByDesign);
+  const open = openOverride ?? !isAllByDesign;
+  const setOpen = (fn) => setOpenOverride((prev) => fn(prev ?? !isAllByDesign));
 
   const accentColor = hasErrors
     ? 'var(--color-error, #ef4444)'

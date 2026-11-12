@@ -101,6 +101,54 @@ class DeployIsolationMixin:
     # ------------------------------------------------------------------
     # 1. Static pre-deploy check (INFORMATION_SCHEMA)
     # ------------------------------------------------------------------
+    def _coerce_text_date_columns(self, cur: Any, ddls: List[str]) -> List[str]:
+        """Wrap TEXT columns used inside date functions in TRY_TO_TIMESTAMP.
+
+        Existing tables are never altered, so a Power BI date that lives in
+        Snowflake as TEXT would otherwise fail the whole view ("Function
+        EXTRACT does not support VARCHAR argument type"). Types are read fresh
+        here because enriched views are created during this same deploy.
+        Never blocks a deploy: on any lookup error the DDL is returned as is.
+        """
+        from semabridge.connectors.date_column_coercion import coerce_ddls
+
+        target_db = str(self.config.database or "").strip().upper()
+        target_schema = str(self.config.schema_name or "").strip().upper()
+        if not target_schema or not any(ddls):
+            return list(ddls)
+        column_types: Dict[str, Dict[str, str]] = {}
+        try:
+            if target_db:
+                cur.execute(
+                    "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE UPPER(TABLE_CATALOG) = %s AND UPPER(TABLE_SCHEMA) = %s",
+                    (target_db, target_schema),
+                )
+            else:
+                cur.execute(
+                    "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE UPPER(TABLE_SCHEMA) = %s",
+                    (target_schema,),
+                )
+            for t, c, dt in cur.fetchall() or []:
+                column_types.setdefault(str(t).upper(), {})[str(c).upper()] = str(dt or "").upper()
+        except Exception as exc:
+            logger.warning("Text-date coercion skipped: could not read column types (%s)", exc)
+            return list(ddls)
+        out, wrapped = coerce_ddls(ddls, column_types)
+        if wrapped:
+            cols = ", ".join(f"{a}.{c}" for a, c in wrapped)
+            logger.warning(
+                "Date column(s) stored as TEXT in Snowflake: %s. Date functions on them now use "
+                "TRY_TO_TIMESTAMP(); values that are not valid dates become NULL. Store them as "
+                "DATE/TIMESTAMP in the source table to avoid the conversion.",
+                cols,
+            )
+            notes = getattr(self, "_type_coercion_notes", None)
+            if isinstance(notes, list):
+                notes.extend(f"{a}.{c}" for a, c in wrapped)
+        return out
+
     def _fetch_information_schema_columns(self, cur: Any) -> Optional[Dict[str, Set[str]]]:
         table_columns: Dict[str, Set[str]] = {}
         target_db = str(self.config.database or "").strip().upper()

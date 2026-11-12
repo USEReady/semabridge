@@ -1,67 +1,124 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  ArrowLeft, Edit3, Trash2, Play, Calendar, 
-  Clock, Tag, Info, Layers, ExternalLink,
-  ChevronRight, BarChart3, Cloud, Snowflake, Database, Sparkles
-} from 'lucide-react';
+/**
+ * /projects/:id — one project page with tabs:
+ * Overview · Runs · Mappings · Ontology · Settings (tab kept in ?tab=).
+ * "Run now" is the only primary button.
+ */
+import { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { ArrowLeft, Play, Loader2, MoreHorizontal, Copy, Download, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
-import StatusBadge from '../components/common/StatusBadge';
-import ProjectOntologyDomains from '../components/ProjectOntologyDomains';
-import PageHeader from '../components/common/PageHeader';
+import OntologyDomainManager from '../components/OntologyDomainManager';
+import { ReverseSyncView } from './GovernanceSuitePage';
+import ProjectConfigPage from './ProjectConfigPage';
+import ProjectOverviewTab from '../components/project/ProjectOverviewTab';
+import ProjectRunsTab from '../components/project/ProjectRunsTab';
+import ProjectMappingsTab from '../components/project/ProjectMappingsTab';
+import { useProjectPageData, runId, scheduleText } from '../components/project/projectData';
+import { Pill, Chip } from '../components/project/projectUi';
+import { btn, btnPrimary } from '../components/project/projectStyles';
 import { useUIStore } from '../store/uiStore';
 
-function normalizeSourceKey(value) {
-  if (!value) return '';
-  let key = '';
-  if (typeof value === 'string') key = value.toLowerCase().trim();
-  else if (typeof value === 'object') {
-    key = String(value.type || value.adapter || value.source || value.source_type || value.connector || '').toLowerCase().trim();
-  }
-  if (key.includes('pbix') || key.includes('powerbi') || key === 'pbi') return 'pbix';
-  if (key.includes('fabric')) return 'fabric';
-  if (key.includes('snowflake')) return 'snowflake';
-  if (key.includes('databricks')) return 'databricks';
-  return key;
+const TABS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'runs', label: 'Runs' },
+  { key: 'mappings', label: 'Mappings' },
+  { key: 'ontology', label: 'Ontology' },
+  { key: 'reverse-sync', label: 'Reverse Sync' },
+  { key: 'settings', label: 'Settings' },
+];
+
+const SOURCE_NAMES = {
+  pbix: 'Power BI', powerbi: 'Power BI', pbi: 'Power BI', fabric: 'Fabric',
+  snowflake: 'Snowflake', databricks: 'Databricks', tableau: 'Tableau',
+};
+
+function systemName(value) {
+  if (!value) return null;
+  const raw = typeof value === 'object'
+    ? String(value.type || value.adapter || value.source || '')
+    : String(value);
+  const key = raw.toLowerCase().trim();
+  if (!key) return null;
+  const hit = Object.keys(SOURCE_NAMES).find(k => key.includes(k));
+  return hit ? SOURCE_NAMES[hit] : raw;
 }
 
-function renderSourceIcon(sourceType, size = 18) {
-  const source = normalizeSourceKey(sourceType);
-  if (source.includes('pbix')) return <BarChart3 size={size} color="#F2C811" />;
-  if (source.includes('fabric')) return <Cloud size={size} color="#3b82f6" />;
-  if (source.includes('snowflake')) return <Snowflake size={size} color="#38bdf8" />;
-  if (source.includes('databricks')) return <Database size={size} color="#f97316" />;
-  return <Layers size={size} color="var(--text-tertiary)" />;
+function MoreMenu({ onDuplicate, onExport, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  const item = {
+    display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', border: 'none',
+    background: 'transparent', color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer', borderRadius: 6, textAlign: 'left',
+  };
+  const pick = (fn) => () => { setOpen(false); fn(); };
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" style={{ ...btn, padding: '7px 9px' }} aria-label="More actions" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div role="menu" style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 50, width: 180, padding: 4,
+          background: 'var(--bg-surface)', border: '1px solid var(--border-main)', borderRadius: 10, boxShadow: 'var(--shadow-md)',
+        }}>
+          <button type="button" role="menuitem" style={item} onClick={pick(onDuplicate)}><Copy size={14} /> Duplicate</button>
+          <button type="button" role="menuitem" style={item} onClick={pick(onExport)}><Download size={14} /> Export</button>
+          <div style={{ height: 1, background: 'var(--border-main)', margin: '4px 0' }} />
+          <button type="button" role="menuitem" style={{ ...item, color: 'var(--color-error)' }} onClick={pick(onDelete)}><Trash2 size={14} /> Delete</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [project, setProject] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Keyed by id so "loading" is derived rather than reset inside the effect.
+  const [loaded, setLoaded] = useState({ id: null, project: null });
   const [running, setRunning] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab = TABS.some(t => t.key === tabParam) ? tabParam : 'overview';
   const setActiveProjectId = useUIStore(state => state.setActiveProjectId);
 
   useEffect(() => {
-    const fetchProject = async () => {
-      try {
-        const data = await api.getProject(id);
-        setProject(data);
-        setActiveProjectId(data?.id || id);
-      } catch (err) {
+    let cancelled = false;
+    api.getProject(id)
+      .then((p) => {
+        if (cancelled) return;
+        setLoaded({ id, project: p });
+        setActiveProjectId(p?.id || id);
+      })
+      .catch((err) => {
         console.error('Failed to fetch project:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchProject();
-  }, [id]);
+        if (!cancelled) setLoaded({ id, project: null });
+      });
+    return () => { cancelled = true; };
+  }, [id, setActiveProjectId]);
+  const loading = loaded.id !== id;
+  const project = loading ? null : loaded.project;
+
+  const data = useProjectPageData(id, project);
+  const { runs, summaries, schedule } = data;
+
+  const setTab = (key) => {
+    const next = new URLSearchParams(searchParams);
+    if (key === 'overview') next.delete('tab'); else next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
 
   const handleRunNow = async () => {
     setRunning(true);
     try {
       await api.syncProject(id);
-      navigate('/jobs');
+      navigate('/runs');
     } catch (err) {
       alert(`Run failed: ${err.message}`);
     } finally {
@@ -70,7 +127,7 @@ export default function ProjectDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Are you sure you want to delete this project?')) return;
+    if (!window.confirm(`Delete project "${project?.name || id}"?`)) return;
     try {
       await api.deleteProject(id);
       navigate('/projects');
@@ -79,200 +136,118 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const handleDuplicate = async () => {
+    try {
+      await api.createProject({
+        name: `${project.name} (copy)`,
+        description: project.description,
+        source: project.source ? { type: project.source, workspace_id: project.workspace_id } : undefined,
+        target: project.target_type ? { type: project.target_type } : undefined,
+      });
+      navigate('/projects');
+    } catch (err) {
+      alert(`Duplicate failed: ${err.message}`);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      await api.exportProject(id);
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    }
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-tertiary animate-pulse">Loading project details...</div>
+      <div style={{ padding: 36, color: 'var(--text-tertiary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Loader2 size={14} className="animate-spin" /> Loading project…
       </div>
     );
   }
 
   if (!project) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4">
-        <div className="text-secondary text-lg">Project not found</div>
-        <button onClick={() => navigate('/projects')} className="text-accent hover:underline flex items-center gap-2">
-          <ArrowLeft size={16} /> Back to Projects
-        </button>
+      <div style={{ padding: 36, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Project not found</div>
+        <button type="button" style={btn} onClick={() => navigate('/projects')}><ArrowLeft size={14} /> Back to Projects</button>
       </div>
     );
   }
 
-  const sourceKey = normalizeSourceKey(project.source || project.adapter || project.source_type);
+  const source = systemName(project.source || project.adapter || project.source_type || project.source_config);
+  const target = systemName(project.target_type || project.target);
+  // Latest run with a usable report decides the "to review" count.
+  const reported = runs.map(r => summaries[runId(r)]).find(s => s && !s.crashed && s.counts);
+  const toReview = Number(reported?.counts?.needs_review) || 0;
+  const scheduleLine = scheduleText(schedule);
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 1200, margin: '0 auto' }}>
-      {/* Breadcrumbs */}
-      <nav className="flex items-center gap-2 mb-6 text-sm">
-        <button onClick={() => navigate('/projects')} className="text-tertiary hover:text-primary transition-colors">Projects</button>
-        <ChevronRight size={14} className="text-tertiary" />
-        <span className="text-primary font-medium truncate">{project.name}</span>
-      </nav>
-
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-8">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-2xl font-bold text-primary truncate" style={{ margin: 0 }}>
-              {project.name}
-            </h1>
-            <StatusBadge status={project.status || 'draft'} />
-          </div>
-          <p className="text-secondary leading-relaxed max-w-3xl" style={{ fontSize: 15 }}>
-            {project.description || 'No description provided for this project.'}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <button 
-            onClick={handleRunNow}
-            disabled={running}
-            className="flex items-center gap-2 rounded-lg font-semibold px-5 py-2.5 transition-all"
-            style={{ 
-              background: 'var(--accent-blue)', 
-              color: '#fff',
-              opacity: running ? 0.7 : 1,
-              cursor: running ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {running ? <Layers size={18} className="animate-spin" /> : <Play size={18} fill="currentColor" />}
-            {running ? 'Running...' : 'Run Now'}
+    <div style={{ padding: '24px 32px 40px', maxWidth: 1280, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      {/* Page head: name, route, review count, schedule, actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em', minWidth: 0, overflowWrap: 'anywhere' }}>
+          {project.name}
+        </h1>
+        {(source || target) && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Chip>{source || '?'}</Chip>
+            <span style={{ color: 'var(--text-tertiary)' }}>→</span>
+            <Chip>{target || '?'}</Chip>
+          </span>
+        )}
+        {toReview > 0 && (
+          <button type="button" onClick={() => setTab('overview')} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer' }} title="Measures from the last run that need a human check">
+            <Pill tone="warn">{toReview.toLocaleString()} to review</Pill>
           </button>
-          
-          <button 
-            onClick={() => navigate('/ontology')}
-            className="flex items-center gap-2 rounded-lg font-semibold px-4 py-2.5 transition-all"
-            style={{ 
-              background: 'rgba(245, 158, 11, 0.12)', 
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              color: '#f59e0b'
-            }}
-            title="Test conversational analytics in Cortex Analyst & Databricks Genie Studio"
-          >
-            <Sparkles size={16} />
-            AI Studio
-          </button>
-
-          <button 
-            onClick={() => navigate(`/projects/${id}/edit`)}
-            className="flex items-center gap-2 rounded-lg font-semibold px-4 py-2.5 transition-all"
-            style={{ 
-              background: 'var(--bg-surface)', 
-              border: '1px solid var(--border-main)',
-              color: 'var(--text-primary)'
-            }}
-          >
-            <Edit3 size={18} />
-            Edit
-          </button>
-
-          <button 
-            onClick={handleDelete}
-            className="flex items-center justify-center rounded-lg p-2.5 transition-all text-tertiary hover:text-error hover:bg-error-faint border border-transparent hover:border-error-subtle"
-          >
-            <Trash2 size={18} />
-          </button>
-        </div>
+        )}
+        <span style={{ flex: 1 }} />
+        {scheduleLine && <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{scheduleLine}</span>}
+        <button type="button" style={btn} onClick={() => navigate(`/projects/${id}/edit`)}>Edit</button>
+        <MoreMenu onDuplicate={handleDuplicate} onExport={handleExport} onDelete={handleDelete} />
+        <button type="button" style={{ ...btnPrimary, opacity: running ? 0.7 : 1, cursor: running ? 'not-allowed' : 'pointer' }} disabled={running} onClick={handleRunNow}>
+          {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+          {running ? 'Starting…' : 'Run now'}
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Main Info Column */}
-        <div className="lg:col-span-2 flex flex-col gap-8">
-          
-          {/* Tags Section */}
-          <div className="bg-surface rounded-xl border border-main p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Tag size={16} className="text-accent" />
-              <h2 className="text-primary font-semibold text-sm m-0">Labels & Tags</h2>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {project.tags && project.tags.length > 0 ? (
-                project.tags.map((tag, idx) => (
-                  <span 
-                    key={idx} 
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold"
-                    style={{ background: 'var(--accent-blue)15', color: 'var(--accent-blue)' }}
-                  >
-                    {tag}
-                  </span>
-                ))
-              ) : (
-                <span className="text-tertiary text-xs italic">No tags assigned</span>
-              )}
-            </div>
-          </div>
-
-          {/* Details Section */}
-          <div className="bg-surface rounded-xl border border-main p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Info size={16} className="text-accent" />
-              <h2 className="text-primary font-semibold text-sm m-0">Project Details</h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="flex flex-col gap-1">
-                <span className="text-tertiary text-[11px] uppercase font-bold tracking-wider">Source Type</span>
-                <div className="flex items-center gap-2 text-primary font-medium">
-                  {renderSourceIcon(sourceKey)}
-                  <span className="capitalize">{sourceKey || 'Not configured'}</span>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-tertiary text-[11px] uppercase font-bold tracking-wider">Target Type</span>
-                <div className="flex items-center gap-2 text-primary font-medium text-sm">
-                   {project.target_type ? (
-                     <>
-                        {renderSourceIcon(project.target_type)}
-                        <span className="capitalize">{project.target_type}</span>
-                     </>
-                   ) : 'Internal Semantic Store'}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-tertiary text-[11px] uppercase font-bold tracking-wider">Workspace ID</span>
-                <span className="text-primary font-mono text-xs">{project.workspace_id || 'N/A'}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-tertiary text-[11px] uppercase font-bold tracking-wider">Created Date</span>
-                <div className="flex items-center gap-2 text-secondary text-sm">
-                  <Calendar size={14} />
-                  {project.created_at ? new Date(project.created_at).toLocaleDateString() : 'N/A'}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Sidebar Info Column */}
-        <div className="flex flex-col gap-8">
-           {/* Recent Activity Mini-Card */}
-           <div className="bg-surface rounded-xl border border-main p-6">
-            <h2 className="text-primary font-semibold text-sm mb-4">Status & Activity</h2>
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-secondary text-xs">Current Status</span>
-                <StatusBadge status={project.status || 'draft'} size="sm" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-secondary text-xs">Last Run</span>
-                <div className="flex items-center gap-1.5 text-xs text-primary font-medium">
-                  <Clock size={12} />
-                  {project.last_run_at ? new Date(project.last_run_at).toLocaleDateString() : 'Never'}
-                </div>
-              </div>
-              <div className="mt-2">
-                 <button 
-                  onClick={() => navigate('/jobs')}
-                  className="w-full flex items-center justify-center gap-2 text-xs font-semibold py-2 rounded-lg border border-main hover:bg-surface-raised transition-colors text-secondary"
-                 >
-                   View Run History <ExternalLink size={12} />
-                 </button>
-              </div>
-            </div>
-          </div>
-
-          <ProjectOntologyDomains projectId={id} />
-        </div>
+      {/* Tabs */}
+      <div role="tablist" style={{ display: 'flex', gap: 4, marginTop: 14, marginBottom: 18, borderBottom: '1px solid var(--border-main)', overflowX: 'auto' }}>
+        {TABS.map(t => {
+          const on = t.key === tab;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => setTab(t.key)}
+              style={{
+                padding: '8px 12px', marginBottom: -1, border: 'none', background: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+                borderBottom: `2px solid ${on ? 'var(--accent-blue)' : 'transparent'}`,
+                color: on ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize: 13, fontWeight: on ? 600 : 500,
+              }}
+            >
+              {t.label}
+              {t.key === 'runs' && runs.length > 0 && <span style={{ marginLeft: 6, color: 'var(--text-tertiary)', fontWeight: 500 }}>{runs.length}</span>}
+            </button>
+          );
+        })}
       </div>
+
+      {tab === 'overview' && <ProjectOverviewTab project={project} {...data} />}
+      {tab === 'runs' && <ProjectRunsTab {...data} />}
+      {tab === 'mappings' && <ProjectMappingsTab projectId={id} />}
+      {tab === 'ontology' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Link to="/ontology" style={{ fontSize: 12, color: 'var(--accent-blue)', textDecoration: 'none' }}>Open the full Ontology page →</Link>
+          </div>
+          <OntologyDomainManager projectId={id} />
+        </div>
+      )}
+      {tab === 'reverse-sync' && <ReverseSyncView projectId={id} />}
+      {tab === 'settings' && <ProjectConfigPage embedded />}
     </div>
   );
 }

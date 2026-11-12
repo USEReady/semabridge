@@ -138,6 +138,8 @@ def build_ontology_graph(
                     "maps_to": list(a.maps_to or []),
                     "synonyms": list(a.synonyms or []),
                     "description": a.description,
+                    "is_hidden": bool(getattr(a, "is_hidden", False)),
+                    "format_string": getattr(a, "format_string", None),
                     "stale": bool(getattr(a, "stale", False)),
                 }
                 for a in (c.attributes or [])

@@ -75,7 +75,7 @@ if [ ! -f "$PYTEST_BIN" ]; then
     PYTEST_BIN="pytest"
 fi
 
-if $PYTEST_BIN Tests/test_scheduler_and_sync_modes.py Tests/test_job_runs_listing.py -q; then
+if $PYTEST_BIN Tests/test_scheduler_and_sync_modes.py Tests/test_job_runs_listing.py Tests/test_blast_radius_and_linter.py Tests/test_golden_verifier.py Tests/test_nl_gold_benchmark.py Tests/test_governance_scope_and_quality.py -q; then
     echo -e "${GREEN}✓ Core engine, scheduler, and sync mode tests passed.${NC}"
 else
     echo -e "${RED}❌ FAILED: Pytest regression suite failed.${NC}"
@@ -85,11 +85,22 @@ fi
 # ------------------------------------------------------------------------------
 # Gate 5: Frontend Production Bundle Compilation
 # ------------------------------------------------------------------------------
-echo -e "\n${YELLOW}Gate 5/5: Compiling Vite frontend production bundle...${NC}"
+echo -e "\n${YELLOW}Gate 5/6: Compiling Vite frontend production bundle...${NC}"
 if (cd frontend && npm run build > /dev/null 2>&1); then
     echo -e "${GREEN}✓ Frontend compiled cleanly (3,000+ modules verified with 0 errors).${NC}"
 else
     echo -e "${RED}❌ FAILED: Vite frontend build failed.${NC}"
+    ERRORS=$((ERRORS + 1))
+fi
+
+# ------------------------------------------------------------------------------
+# Gate 6: Ontology Governance & Semantic Linter Gate
+# ------------------------------------------------------------------------------
+echo -e "\n${YELLOW}Gate 6/6: Running Ontology Governance Quality Gate...${NC}"
+if $PYTHON_BIN Tests/governance_tests/g09_cicd_gate.py --gate-only --direct --ontologies-dir Config/ontologies --max-errors 0 --steward-level warning --check-certifications; then
+    echo -e "${GREEN}✓ Ontology governance gate passed.${NC}"
+else
+    echo -e "${RED}❌ FAILED: Ontology governance gate reported errors (an empty ontology store passes with a notice).${NC}"
     ERRORS=$((ERRORS + 1))
 fi
 

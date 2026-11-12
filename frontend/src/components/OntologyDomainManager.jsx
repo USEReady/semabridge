@@ -1,35 +1,133 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Layers, Upload, FileCode, Sparkles, CheckCircle2,
-  AlertTriangle, RefreshCw, Copy, Check, Trash2, Plus,
-  Search, Database, Network, ShieldCheck, ChevronRight,
-  Play, Snowflake, Star, Table, CheckCheck, Code2, Server,
-  HelpCircle, X, Info, ChevronDown, ChevronUp, ExternalLink,
-  BookOpen, Compass, Cpu, Tag, ArrowRight
+  AlertTriangle, RefreshCw, Check, Plus,
+  Search, Database, Network, ShieldCheck,
+  Table, CheckCheck, Code2,
+  X, GitBranch, Lock, Activity
 } from 'lucide-react';
 import { authFetch } from '../utils/api';
 import OntologyGraph from './OntologyGraph';
+import OverviewView from './ontology/OverviewView';
+import DomainsView from './ontology/DomainsView';
+import MetricDrawer from './ontology/MetricDrawer';
+import HealthView from './ontology/HealthView';
+import { WhatIfSimulator, ImpactReport } from './ontology/GovernancePanels';
+import { Pill } from './ontology/ui';
+import { describeApiError, timeAgo, BTN, BTN_PRIMARY } from './ontology/styles';
+import {
+  buildHealthResults,
+  domainIssueCount,
+  guardrailText,
+  lintIssuesFor,
+  metricStatus,
+  scopeCollisions,
+  usedInText,
+} from './ontology/healthChecks';
 
-// Turn a FastAPI error body into readable text (detail may be a string,
-// {message, errors[]} or a pydantic error list).
-function describeApiError(data, fallback) {
-  const detail = data && data.detail !== undefined ? data.detail : data;
-  if (!detail) return fallback;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) return detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
-  if (Array.isArray(detail.file_errors) && detail.file_errors.length) {
-    return detail.file_errors.map((e) => `${e.file}: ${e.error}`).join('\n');
-  }
-  if (Array.isArray(detail.errors) && detail.errors.length) return detail.errors.join('\n');
-  return detail.message || fallback;
+// ?tab= values (old and new names) → internal tab ids
+const TAB_ALIASES = {
+  overview: 'overview',
+  mesh: 'mesh',
+  domains: 'mesh',
+  graph: 'graph',
+  map: 'graph',
+  governance: 'governance',
+  health: 'governance',
+};
+
+// Run async jobs with a small concurrency limit
+async function runPool(items, limit, fn) {
+  const out = [];
+  let i = 0;
+  const worker = async () => {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
-export default function OntologyDomainManager() {
-  // Main Tab Navigation: 'mesh' | 'ai'
-  const [activeTab, setActiveTab] = useState('mesh');
+const PILL_BTN_DARK = {
+  background: '#0F172A',
+  color: '#FFFFFF',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: 999,
+  padding: '9px 18px',
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  whiteSpace: 'nowrap',
+};
+
+const SELECT_STYLE = {
+  padding: '8px 12px',
+  borderRadius: 10,
+  background: 'var(--bg-surface)',
+  border: '1px solid var(--border-main)',
+  color: 'var(--text-primary)',
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+  outline: 'none',
+};
+
+const INPUT_STYLE = {
+  padding: '8px 12px',
+  borderRadius: 10,
+  background: 'var(--bg-surface)',
+  border: '1px solid var(--border-main)',
+  color: 'var(--text-primary)',
+  fontSize: 12,
+  outline: 'none',
+};
+
+/**
+ * /ontology and the project Ontology tab: Overview, Domains, Map, Health.
+ * Asking lives on its own page (AskAiPage, /ask); /ontology?tab=ai and
+ * "Ask AI about this metric" links go there.
+ */
+export default function OntologyDomainManager({ projectId: propProjectId = null, mode = 'explorer' }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Main tabs: 'overview' | 'mesh' | 'graph' | 'governance' | 'blast-radius'.
+  // On /ontology the tab lives in ?tab=; embedded on a project page it is local state.
+  const [localTab, setLocalTab] = useState('overview');
+  const urlTab = TAB_ALIASES[new URLSearchParams(location.search).get('tab')];
+  const activeTab = mode === 'comparator'
+    ? 'governance'
+    : mode === 'blast-radius'
+    ? 'blast-radius'
+    : (propProjectId ? localTab : urlTab || 'overview');
+
+  const selectTab = (tab) => {
+    if (propProjectId) {
+      setLocalTab(tab);
+      return;
+    }
+    const params = new URLSearchParams(location.search);
+    if (tab === 'overview') params.delete('tab');
+    else params.set('tab', tab);
+    const qs = params.toString();
+    navigate({ search: qs ? `?${qs}` : '' }, { replace: true });
+  };
+
+  useEffect(() => {
+    if (propProjectId) return;
+    if (new URLSearchParams(location.search).get('tab') === 'ai') {
+      navigate('/ask', { replace: true });
+    }
+  }, [location.search, propProjectId, navigate]);
+
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
-  const [showHowItWorks, setShowHowItWorks] = useState(true);
 
   // Domains & Governance State
   const [domainData, setDomainData] = useState({
@@ -37,24 +135,35 @@ export default function OntologyDomainManager() {
     total_concepts: 0,
     total_metrics: 0,
     total_relationships: 0,
+    total_policies: 0,
     collisions: [],
     unresolved_references: [],
     load_errors: [],
   });
 
-  // Domain Glossary Inspector Drawer State
+  // Project Scope State (supports per-project filtering or embedded project mode)
+  const [projectsList, setProjectsList] = useState([]);
+  const [selectedProjectSlug, setSelectedProjectSlug] = useState(() => {
+    if (propProjectId) return propProjectId;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('project') || '';
+  });
+  const [attachedDomainIds, setAttachedDomainIds] = useState(null); // null = all domains
+
+  // Domain Glossary State (Section 1)
   const [inspectingDomain, setInspectingDomain] = useState(null);
   const [inspectingDomainData, setInspectingDomainData] = useState(null);
-  const [inspectorActiveTab, setInspectorActiveTab] = useState('metrics'); // 'metrics' | 'concepts' | 'yaml'
+  const [inspectorActiveTab, setInspectorActiveTab] = useState('metrics'); // 'metrics' | 'concepts' | 'policies' | 'yaml'
+  const [glossarySearchQuery, setGlossarySearchQuery] = useState('');
+  const [selectedGlossaryItem, setSelectedGlossaryItem] = useState(null); // opens detail modal
   const [editorYaml, setEditorYaml] = useState('');
   const [validationResult, setValidationResult] = useState(null);
+  const [showCollisionsModal, setShowCollisionsModal] = useState(false);
 
   // Upload Modal State
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState(null);
-  // Validation errors for the files in the open upload modal. Shown inside the
-  // modal (the page banner sits behind the modal backdrop and is unreadable).
   const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -64,89 +173,170 @@ export default function OntologyDomainManager() {
   const [bootstrapDomain, setBootstrapDomain] = useState('');
   const [bootstrapping, setBootstrapping] = useState(false);
 
-  // Multi-Target AI/BI Playground State
-  const [selectedTarget, setSelectedTarget] = useState('SNOWFLAKE'); // 'SNOWFLAKE' | 'DATABRICKS' | 'LOCAL'
-  const [projectsList, setProjectsList] = useState([]);
-  const [selectedProjectSlug, setSelectedProjectSlug] = useState('');
-  const [nlPrompt, setNlPrompt] = useState('What is the gross margin and ARR by Customer in 2024?');
-  const [nlResolutionPlan, setNlResolutionPlan] = useState(null);
-  const [customSql, setCustomSql] = useState('');
-  const [copiedSql, setCopiedSql] = useState(false);
-  const [aiStatus, setAiStatus] = useState(null);
+  // Domains: every domain's detail (for overview counts and Run all checks), and the drawer
+  const [domainDetails, setDomainDetails] = useState({});
+  const [drawerMetric, setDrawerMetric] = useState(null);
 
-  // Query Execution & Verified Queries State
-  const [executingQuery, setExecutingQuery] = useState(false);
-  const [executionResult, setExecutionResult] = useState(null);
-  const [savingVerified, setSavingVerified] = useState(false);
-  const [verifiedSuccessMsg, setVerifiedSuccessMsg] = useState(null);
+  // Health: results list
+  const [healthFilter, setHealthFilter] = useState('all');
+  const [healthExpanded, setHealthExpanded] = useState(null);
+  const [impactReports, setImpactReports] = useState({}); // metric name -> blast-radius report
+  const [impactLoading, setImpactLoading] = useState({});
+  const [checksRanAt, setChecksRanAt] = useState(null);
+  const [runningChecks, setRunningChecks] = useState(false);
 
-  // ── Governance, Blast Radius, Reconciliation & RLS State ──
-  // 1. Blast Radius Simulator
-  const [blastTarget, setBlastTarget] = useState('revenue');
+  // 1. Impact ("What if…" blast-radius simulator) & Governance scope
+  const [govProjectId, setGovProjectId] = useState('');
+  const [blastTarget, setBlastTarget] = useState('');
   const [blastType, setBlastType] = useState('METRIC');
   const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
+  const [blastTableContext, setBlastTableContext] = useState('');
   const [blastReport, setBlastReport] = useState(null);
   const [runningBlast, setRunningBlast] = useState(false);
 
-  // 2. Semantic Quality Linter
+  // 2. Semantic Quality Linter (Steward defaults to WARNING for BI-derived models)
   const [lintRequireSteward, setLintRequireSteward] = useState(true);
   const [lintRequireDesc, setLintRequireDesc] = useState(true);
   const [lintSnakeCase, setLintSnakeCase] = useState(true);
+  const [lintStewardSeverity, setLintStewardSeverity] = useState('WARNING');
   const [lintReport, setLintReport] = useState(null);
   const [runningLint, setRunningLint] = useState(false);
 
-  // 3. Golden Data Reconciliation (DAX vs. SQL Parity)
-  const [reconMetric, setReconMetric] = useState('Gross Margin');
-  const [reconExpr, setReconExpr] = useState('SUM(REVENUE) - SUM(COGS)');
-  const [reconTable, setReconTable] = useState('FACT_FINANCIALS');
-  const [reconDims, setReconDims] = useState('Customer_Tier, Fiscal_Year');
-  const [reconScenario, setReconScenario] = useState('certified'); // 'certified' | 'drift'
+  // 3. Golden Data Reconciliation (live SQL + DAX execution/upload parity)
+  const [reconMetric, setReconMetric] = useState('');
+  const [reconExpr, setReconExpr] = useState('');
+  const [reconTable, setReconTable] = useState('');
+  const [reconTargetKind, setReconTargetKind] = useState('semantic_view');
+  const [reconDims, setReconDims] = useState('');
+  const [reconDaxText, setReconDaxText] = useState('');
+  const [reconSqlText, setReconSqlText] = useState('');
+  const [reconAbsTol, setReconAbsTol] = useState('0.01');
+  const [reconRelTol, setReconRelTol] = useState('0.0001');
+  const [reconMaxMismatchPct, setReconMaxMismatchPct] = useState('0');
+  const [reconRegisterVerified, setReconRegisterVerified] = useState(false);
   const [reconQueries, setReconQueries] = useState(null);
   const [reconResult, setReconResult] = useState(null);
+  const [reconSliceRows, setReconSliceRows] = useState([]);
+  const [reconError, setReconError] = useState(null);
   const [runningRecon, setRunningRecon] = useState(false);
+  const [certificationsByMetric, setCertificationsByMetric] = useState({});
 
-  // 4. Bidirectional RLS Policy Translator
-  const [rlsRoleName, setRlsRoleName] = useState('EMEA_Regional_Managers');
-  const [rlsTableName, setRlsTableName] = useState('DIM_CUSTOMER');
-  const [rlsDaxExpr, setRlsDaxExpr] = useState('[Region] = "EMEA" && [Status] = "ACTIVE"');
-  const [rlsTargetDb, setRlsTargetDb] = useState('ANALYTICS_DB');
-  const [rlsTargetSchema, setRlsTargetSchema] = useState('SEMANTIC');
+  // 4. Bidirectional RLS Policy Translator (explicit target DB/schema, no defaults)
+  const [rlsRoleName, setRlsRoleName] = useState('');
+  const [rlsTableName, setRlsTableName] = useState('');
+  const [rlsDaxExpr, setRlsDaxExpr] = useState('');
+  const [rlsTargetDb, setRlsTargetDb] = useState('');
+  const [rlsTargetSchema, setRlsTargetSchema] = useState('');
   const [rlsDdl, setRlsDdl] = useState('');
+  const [rlsStatus, setRlsStatus] = useState(null);
+  const [rlsReason, setRlsReason] = useState('');
   const [runningRls, setRunningRls] = useState(false);
 
-  // Initial Load
+  const [bootstrapDuplicateError, setBootstrapDuplicateError] = useState(null);
+
+  const fetchCertifications = async (projectId, domainName) => {
+    try {
+      const qs = new URLSearchParams();
+      if (projectId) qs.set('project_id', projectId);
+      if (domainName) qs.set('domain', domainName);
+      const qStr = qs.toString() ? `?${qs.toString()}` : '';
+      const res = await authFetch(`/api/reconciliation/certifications${qStr}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const map = {};
+      for (const rec of data?.certifications || []) {
+        const key = String(rec.metric_name || '').toLowerCase();
+        if (key && !map[key]) map[key] = rec;
+      }
+      setCertificationsByMetric(map);
+    } catch {
+      /* ignore certification fetch failure */
+    }
+  };
+
   useEffect(() => {
-    fetchDomains();
-    fetchAiStatus();
+    fetchDomains(true);
     fetchProjects();
+    fetchCertifications();
   }, []);
 
-  const fetchDomains = async () => {
+  // When selectedProjectSlug changes, load that project's attached domains
+  useEffect(() => {
+    if (!selectedProjectSlug) {
+      setAttachedDomainIds(null);
+      return;
+    }
+    authFetch(`/api/ontology/projects/${encodeURIComponent(selectedProjectSlug)}/domains`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.domains) && data.domains.length > 0) {
+          setAttachedDomainIds(data.domains.map((d) => d.id || d.domain));
+        } else {
+          setAttachedDomainIds(null);
+        }
+      })
+      .catch(() => setAttachedDomainIds(null));
+  }, [selectedProjectSlug]);
+
+  // Governance scope follows the selected project; cached impact is scope-specific so drop it on change
+  useEffect(() => {
+    setGovProjectId(selectedProjectSlug || '');
+  }, [selectedProjectSlug]);
+
+  const resetParityState = () => {
+    setReconSliceRows([]);
+    setReconQueries(null);
+    setReconResult(null);
+    setReconError(null);
+    setReconDaxText('');
+    setReconSqlText('');
+  };
+
+  const effectiveGovProjectId = govProjectId || selectedProjectSlug || '';
+  useEffect(() => {
+    setImpactReports({});
+    setImpactLoading({});
+    setBlastReport(null);
+    setLintReport(null);
+    setHealthExpanded(null);
+    resetParityState();
+  }, [effectiveGovProjectId]);
+
+  const fetchDomains = async (autoSelectFirst = false) => {
     setLoading(true);
     try {
       const res = await authFetch('/api/ontology/domains');
       if (res.ok) {
         const data = await res.json();
         setDomainData(data);
+        if ((autoSelectFirst || !inspectingDomain) && data.domains?.length > 0) {
+          handleOpenDomainInspector(data.domains[0].domain, 'metrics');
+        }
+        return { data, details: await loadDomainDetails(data.domains || []) };
       }
     } catch (err) {
       console.error('Failed to load domains:', err);
     } finally {
       setLoading(false);
     }
+    return null;
   };
 
-  const fetchAiStatus = async () => {
-    try {
-      const res = await authFetch('/api/ai/status');
-      if (res.ok) {
-        const data = await res.json();
-        setAiStatus(data);
+  // Load every domain's metrics and concepts (overview counts, Run all checks)
+  const loadDomainDetails = async (domains) => {
+    const entries = await runPool(domains.slice(0, 100), 6, async (d) => {
+      try {
+        const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(d.domain)}`);
+        return res.ok ? [d.domain, await res.json()] : null;
+      } catch {
+        return null;
       }
-    } catch (err) {
-      console.warn('Could not load AI status:', err);
-    }
+    });
+    const map = Object.fromEntries(entries.filter(Boolean));
+    setDomainDetails(map);
+    return map;
   };
+
 
   const fetchProjects = async () => {
     try {
@@ -155,26 +345,26 @@ export default function OntologyDomainManager() {
         const data = await res.json();
         const list = Array.isArray(data) ? data : data.projects || [];
         setProjectsList(list);
-        if (list.length > 0 && !selectedProjectSlug) {
-          setSelectedProjectSlug(list[0].id || list[0].name);
+        if (list.length > 0 && !bootstrapProject) {
+          setBootstrapProject(list[0].id || list[0].name);
         }
       }
     } catch (err) {
-      console.warn('Could not load projects for AI playground:', err);
+      console.warn('Could not load projects:', err);
     }
   };
 
   const handleOpenDomainInspector = async (domainName, initialTab = 'metrics') => {
+    if (!domainName) return;
     setInspectingDomain(domainName);
     setInspectorActiveTab(initialTab);
-    setInspectingDomainData(null);
     setValidationResult(null);
     try {
       const res = await authFetch(`/api/ontology/domains/${encodeURIComponent(domainName)}`);
       if (res.ok) {
         const data = await res.json();
         setInspectingDomainData(data);
-        setEditorYaml(data.yaml_content || '');
+        setEditorYaml(data.yaml_content || data.yaml || '');
       }
     } catch (err) {
       console.error('Failed to load domain detail:', err);
@@ -190,7 +380,7 @@ export default function OntologyDomainManager() {
       });
       const data = await res.json();
       setValidationResult(data);
-    } catch (err) {
+    } catch {
       setStatusMessage({ type: 'error', text: 'Validation request failed' });
     }
   };
@@ -208,13 +398,13 @@ export default function OntologyDomainManager() {
         const savedName = data.domain || inspectingDomain;
         setStatusMessage({
           type: 'success',
-          text: savedName !== inspectingDomain
-            ? `Domain '${inspectingDomain}' renamed to '${savedName}' and saved.`
-            : `Domain '${savedName}' saved and synchronized!`,
+          text:
+            savedName !== inspectingDomain
+              ? `Domain '${inspectingDomain}' renamed to '${savedName}' and saved.`
+              : `Domain '${savedName}' saved and synchronized!`,
         });
         fetchDomains();
-        fetchAiStatus();
-        handleOpenDomainInspector(savedName, 'metrics');
+        handleOpenDomainInspector(savedName, inspectorActiveTab);
       } else {
         setStatusMessage({ type: 'error', text: describeApiError(data, 'Save failed.') });
       }
@@ -247,13 +437,20 @@ export default function OntologyDomainManager() {
         const fileErrors = data.file_errors || [];
         setStatusMessage({
           type: fileErrors.length ? 'error' : 'success',
-          text: `Ingested ${data.uploaded_domains.length} domain ontolog${data.uploaded_domains.length === 1 ? 'y' : 'ies'} (${data.uploaded_domains.join(', ')}).`
-            + (fileErrors.length ? `\nRejected ${fileErrors.length} file(s):\n${fileErrors.map((e) => `${e.file}: ${e.error}`).join('\n')}` : ''),
+          text:
+            `Ingested ${data.uploaded_domains.length} domain ontolog${
+              data.uploaded_domains.length === 1 ? 'y' : 'ies'
+            } (${data.uploaded_domains.join(', ')}).` +
+            (fileErrors.length
+              ? `\nRejected ${fileErrors.length} file(s):\n${fileErrors
+                  .map((e) => `${e.file}: ${e.error}`)
+                  .join('\n')}`
+              : ''),
         });
         setSelectedFiles([]);
         setUploadModalOpen(false);
         fetchDomains();
-        fetchAiStatus();
+        handleOpenDomainInspector(data.uploaded_domains[0], 'metrics');
       } else {
         setUploadError(describeApiError(data, 'Upload failed: no file was ingested.'));
       }
@@ -266,9 +463,10 @@ export default function OntologyDomainManager() {
     }
   };
 
-  const handleBootstrapFromOsi = async () => {
+  const handleBootstrapFromOsi = async (syncExisting = false) => {
     if (!bootstrapProject) return;
     setBootstrapping(true);
+    setBootstrapDuplicateError(null);
     try {
       const res = await authFetch('/api/ontology/domains/from-osi', {
         method: 'POST',
@@ -277,18 +475,21 @@ export default function OntologyDomainManager() {
           project_id: bootstrapProject,
           domain_name: bootstrapDomain.trim() || undefined,
           save_to_disk: true,
+          sync_existing: Boolean(syncExisting),
         }),
       });
       const data = await res.json();
       if (res.ok) {
         setStatusMessage({
           type: 'success',
-          text: `Successfully generated ontology domain '${data.domain}' from OSI model (${data.concept_count} concepts, ${data.metric_count} metrics)!`,
+          text: `Generated ontology domain '${data.domain}' from OSI model (${data.concept_count} concepts, ${data.metric_count} metrics)!`,
         });
+        setBootstrapDuplicateError(null);
         setBootstrapModalOpen(false);
         fetchDomains();
-        fetchAiStatus();
         handleOpenDomainInspector(data.domain, 'metrics');
+      } else if (res.status === 409) {
+        setBootstrapDuplicateError(describeApiError(data, 'This project already has a domain.'));
       } else {
         setStatusMessage({ type: 'error', text: describeApiError(data, 'Failed to generate ontology from OSI.') });
       }
@@ -300,13 +501,33 @@ export default function OntologyDomainManager() {
     }
   };
 
+  const handleUpdateMetricMeta = async (metricName, updates) => {
+    if (!inspectingDomain || !metricName) return;
+    const res = await authFetch(
+      `/api/ontology/domains/${encodeURIComponent(inspectingDomain)}/metrics/${encodeURIComponent(metricName)}/metadata`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      }
+    );
+    const data = await res.json();
+    if (res.ok) {
+      setStatusMessage({ type: 'success', text: `Updated metadata for '${metricName}'.` });
+      fetchDomains();
+      handleOpenDomainInspector(data.domain || inspectingDomain, inspectorActiveTab);
+    } else {
+      setStatusMessage({ type: 'error', text: describeApiError(data, 'Failed to update metric metadata.') });
+    }
+  };
+
   const handleSyncWithOsi = async (domainName) => {
+    if (!domainName) return;
     setLoading(true);
     try {
       const res = await authFetch('/api/ontology/domains/from-osi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // The backend re-syncs from the project this domain was built from.
         body: JSON.stringify({
           domain_name: domainName,
           save_to_disk: true,
@@ -316,11 +537,10 @@ export default function OntologyDomainManager() {
       if (res.ok) {
         setStatusMessage({
           type: 'success',
-          text: `Synchronized '${domainName}' with latest OSI model while preserving your human-authored edits!`,
+          text: `Synchronized '${domainName}' with latest OSI model while preserving human-authored edits!`,
         });
         fetchDomains();
-        fetchAiStatus();
-        handleOpenDomainInspector(domainName, 'metrics');
+        handleOpenDomainInspector(domainName, inspectorActiveTab);
       } else {
         setStatusMessage({ type: 'error', text: describeApiError(data, 'OSI sync failed.') });
       }
@@ -332,154 +552,180 @@ export default function OntologyDomainManager() {
     }
   };
 
-  const handleResolveNlQuery = async () => {
-    if (!nlPrompt.trim()) return;
-    setLoading(true);
-    setExecutionResult(null);
-    setVerifiedSuccessMsg(null);
+  const handleJumpToAiTest = (metricName) => {
+    const domConcepts = inspectingDomainData?.parsed?.concepts || allConcepts || [];
+    const firstDim = domConcepts
+      .flatMap((c) => c.attributes || [])
+      .find((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''));
+    const question = firstDim ? `What is ${metricName} by ${firstDim.label || firstDim.name}?` : `What is ${metricName}?`;
+    const projQuery = selectedProjectSlug ? `&project=${encodeURIComponent(selectedProjectSlug)}` : '';
+    navigate(`/ask?q=${encodeURIComponent(question)}${projQuery}`);
+  };
+
+  // Impact (blast radius) for one object; throws with a readable message on failure
+  const fetchImpact = async (name, type = 'METRIC', changeType = 'MODIFY_EXPRESSION', tableCtx = '') => {
+    const res = await authFetch('/api/governance/blast-radius', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_name: name,
+        target_type: type,
+        change_type: changeType,
+        table_context: tableCtx || undefined,
+        project_id: effectiveGovProjectId || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(describeApiError(data, 'Impact check failed.'));
+    return data;
+  };
+
+  // Drawer "Impact → View": open Health's What if… with this metric filled in
+  const handleJumpToBlastRadius = (name, type = 'METRIC') => {
+    setBlastTarget(name);
+    setBlastType(type);
+    setBlastChangeType('MODIFY_EXPRESSION');
+    setBlastReport(type === 'METRIC' ? impactReports[name] || null : null);
+    setHealthFilter('all');
+    setHealthExpanded('whatif');
+    selectTab('governance');
+  };
+
+  // Impact runs automatically for the metric selected in the drawer
+  const ensureImpact = async (name) => {
+    if (!name || impactReports[name] || impactLoading[name]) return;
+    setImpactLoading((prev) => ({ ...prev, [name]: true }));
     try {
-      const res = await authFetch('/api/ai/nl-query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: nlPrompt,
-          dialect: selectedTarget,
-          target: selectedTarget,
-          project_id: selectedProjectSlug,
-        }),
-      });
-      if (res.ok) {
-        const plan = await res.json();
-        setNlResolutionPlan(plan);
-        setCustomSql(plan.generated_sql || '');
-      }
+      const report = await fetchImpact(name);
+      setImpactReports((prev) => ({ ...prev, [name]: report }));
     } catch (err) {
-      console.error('NL resolution failed:', err);
+      console.warn('Impact check failed:', err);
     } finally {
-      setLoading(false);
+      setImpactLoading((prev) => ({ ...prev, [name]: false }));
     }
   };
 
-  const handleExecuteQuery = async () => {
-    const sqlToRun = customSql || nlResolutionPlan?.generated_sql;
-    if (!sqlToRun) return;
-    setExecutingQuery(true);
-    setExecutionResult(null);
-    try {
-      const res = await authFetch('/api/ai/execute-query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sql: sqlToRun,
-          target: selectedTarget,
-          project_id: selectedProjectSlug,
-          limit: 25,
-        }),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setExecutionResult(result);
-      } else {
-        const errData = await res.json();
-        setExecutionResult({
-          success: false,
-          error: errData.detail || 'Query execution failed',
-          columns: [],
-          rows: [],
-          execution_time_ms: 0,
-        });
-      }
-    } catch (err) {
-      setExecutionResult({
-        success: false,
-        error: String(err),
-        columns: [],
-        rows: [],
-        execution_time_ms: 0,
-      });
-    } finally {
-      setExecutingQuery(false);
+  const handleSelectMetric = (name) => {
+    setDrawerMetric(name);
+    ensureImpact(name);
+    if (!lintReport && !runningLint) handleRunLinter();
+  };
+
+  // Health "Open" on a finding: go to the metric in Domains and open its drawer
+  const handleOpenMetricFromHealth = (name, domain) => {
+    let target = domain;
+    if (!target || !domainDetails[target]) {
+      target = Object.keys(domainDetails).find((d) =>
+        (domainDetails[d]?.parsed?.metrics || []).some((m) => m.name === name)
+      ) || target;
     }
+    if (target && target !== inspectingDomain) handleOpenDomainInspector(target, 'metrics');
+    else setInspectorActiveTab('metrics');
+    setGlossarySearchQuery('');
+    handleSelectMetric(name);
+    selectTab('mesh');
   };
 
-  const handleSaveVerifiedQuery = async () => {
-    const sqlToSave = customSql || nlResolutionPlan?.generated_sql;
-    if (!sqlToSave || !nlPrompt) return;
-    setSavingVerified(true);
-    try {
-      const res = await authFetch('/api/ai/save-verified-query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: nlPrompt,
-          sql: sqlToSave,
-          target: selectedTarget,
-          project_id: selectedProjectSlug,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setVerifiedSuccessMsg(data.message);
-        setTimeout(() => setVerifiedSuccessMsg(null), 5000);
-      }
-    } catch (err) {
-      console.error('Failed to save verified query:', err);
-    } finally {
-      setSavingVerified(false);
+  const openBootstrap = () => {
+    if (projectsList.length > 0 && !bootstrapProject) {
+      setBootstrapProject(selectedProjectSlug || projectsList[0].id || projectsList[0].name);
     }
+    setBootstrapModalOpen(true);
   };
 
-  const handleCopySql = (sqlText) => {
-    navigator.clipboard.writeText(sqlText);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 2000);
-  };
-
-  const handleJumpToAiTest = (metricName, formula) => {
-    setNlPrompt(`Calculate ${metricName} by Customer in 2024`);
-    setActiveTab('ai');
-    setInspectingDomain(null);
-    setExecutionResult(null);
-  };
-
-  // ── Governance, Blast Radius, Reconciliation & RLS Handlers ──
-  const handleRunBlastRadius = async () => {
-    if (!blastTarget.trim()) return;
+  // Governance Handlers
+  const handleRunBlastRadius = async (targetOverride) => {
+    const target = (typeof targetOverride === 'string' ? targetOverride : blastTarget).trim();
+    if (!target) return;
     setRunningBlast(true);
     try {
-      const res = await authFetch('/api/governance/blast-radius', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target_name: blastTarget.trim(),
-          target_type: blastType,
-          change_type: blastChangeType,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBlastReport(data);
-      } else {
-        const err = await res.json();
-        setStatusMessage({ type: 'error', text: describeApiError(err, 'Blast radius simulation failed.') });
-      }
+      setBlastReport(await fetchImpact(target, blastType, blastChangeType, blastTableContext.trim()));
     } catch (err) {
-      setStatusMessage({ type: 'error', text: String(err) });
+      setStatusMessage({ type: 'error', text: String(err.message || err) });
     } finally {
       setRunningBlast(false);
     }
   };
 
-  const handleRunLinter = async () => {
+  // "Run all checks": refresh domains (collisions), impact for every metric, quality lint
+  const handleRunAllChecks = async (scopeDomains) => {
+    setRunningChecks(true);
+    try {
+      const fresh = await fetchDomains(false);
+      const details = fresh?.details || domainDetails;
+      const names = [
+        ...new Set(
+          scopeDomains.flatMap((d) => (details[d.domain]?.parsed?.metrics || []).map((m) => m.name))
+        ),
+      ].slice(0, 300);
+      const lintPromise = handleRunLinter();
+      const reports = await runPool(names, 6, async (n) => {
+        try {
+          return [n, await fetchImpact(n)];
+        } catch {
+          return null;
+        }
+      });
+      setImpactReports(Object.fromEntries(reports.filter(Boolean)));
+      await lintPromise;
+      setChecksRanAt(Date.now());
+    } finally {
+      setRunningChecks(false);
+    }
+  };
+
+  const prefillParity = (m) => {
+    if (!m) return;
+    if (m.name !== reconMetric) {
+      setReconSliceRows([]);
+      setReconQueries(null);
+      setReconResult(null);
+      setReconError(null);
+      setReconDaxText('');
+      setReconSqlText('');
+    }
+    const concept = Object.values(domainDetails)
+      .flatMap((d) => d?.parsed?.concepts || [])
+      .find((c) => c.name === m.concept);
+    const logicalMetric = m.logical_name && concept?.logical_name
+      ? `${concept.logical_name}.${m.logical_name}`
+      : (m.logical_name || m.name);
+    setReconMetric(logicalMetric);
+    setReconExpr(logicalMetric);
+    const svName = m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || concept?.physical_table || m.concept || '';
+    setReconTable(svName);
+    setReconTargetKind(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name ? 'semantic_view' : 'table');
+    if (concept?.attributes?.length) {
+      const firstDim = concept.attributes.find((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''));
+      if (firstDim) {
+        const dName = firstDim.logical_name && concept.logical_name
+          ? `${concept.logical_name}.${firstDim.logical_name}`
+          : firstDim.name;
+        setReconDims(dName);
+      }
+    }
+  };
+
+  const openParityFor = (m) => {
+    prefillParity(m);
+    setHealthFilter('all');
+    setHealthExpanded('parity');
+    selectTab('governance');
+  };
+
+  const handleRunLinter = async (stewardOverride) => {
+    const activeSteward = stewardOverride || lintStewardSeverity;
     setRunningLint(true);
     try {
       const res = await authFetch('/api/governance/lint', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          require_steward: lintRequireSteward,
+          require_steward: activeSteward !== 'OFF',
+          steward_severity: activeSteward,
           require_description: lintRequireDesc,
           enforce_snake_case_metrics: lintSnakeCase,
+          project_id: govProjectId || selectedProjectSlug || undefined,
         }),
       });
       if (res.ok) {
@@ -496,71 +742,177 @@ export default function OntologyDomainManager() {
     }
   };
 
-  const handleRunReconciliation = async (scenarioOverride) => {
-    const activeScenario = scenarioOverride || reconScenario;
+  const _reconDimList = () => reconDims.split(',').map((d) => d.trim()).filter(Boolean);
+
+  const _reconTolerancePayload = () => ({
+    absolute_tolerance: Math.max(0, Number(reconAbsTol) || 0),
+    relative_tolerance: Math.max(0, Number(reconRelTol) || 0),
+    max_mismatch_percentage: Math.max(0, Number(reconMaxMismatchPct) || 0),
+  });
+
+  const _updateParityView = (vData) => {
+    setReconResult(vData);
+    const dimKey = _reconDimList()[0];
+    const samples = vData?.mismatch_samples || [];
+    if (samples.length) {
+      setReconSliceRows(samples.map((s) => ({
+        slice: s.dimension_key ? (dimKey && typeof s.dimension_key === 'object' ? s.dimension_key[dimKey] : JSON.stringify(s.dimension_key)) : 'Total',
+        daxValue: s.dax_value ?? 0,
+        sqlValue: s.sql_value ?? 0,
+        deltaPct: Number(s.percentage_delta ?? 0).toFixed(2),
+        matched: Boolean(s.matched),
+      })));
+    } else {
+      setReconSliceRows([]);
+    }
+    fetchCertifications(govProjectId || selectedProjectSlug || undefined, inspectingDomain || undefined);
+  };
+
+  const _reconProjectId = () => (
+    govProjectId
+    || selectedProjectSlug
+    || inspectingDomainData?.source_project_id
+    || domainDetails[inspectingDomain]?.source_project_id
+    || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
+    || undefined
+  );
+
+  const handleGenerateReconQueries = async () => {
+    if (!reconMetric.trim() || !reconTable.trim()) return;
     setRunningRecon(true);
+    setReconError(null);
     try {
-      const dimList = reconDims
-        .split(',')
-        .map((d) => d.trim())
-        .filter(Boolean);
-      const qRes = await authFetch('/api/reconciliation/generate-queries', {
+      const res = await authFetch('/api/reconciliation/generate-queries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          metric_name: reconMetric,
-          metric_sql_expression: reconExpr,
-          target_table_or_view: reconTable,
-          dimensions: dimList.length ? dimList : ['Customer_Tier'],
+          metric_name: reconMetric.trim(),
+          metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+          target_table_or_view: reconTable.trim(),
+          target_kind: reconTargetKind,
+          dimensions: _reconDimList(),
           filters: [],
+          project_id: _reconProjectId(),
         }),
       });
-      let generated = { dax_query: '', sql_query: '' };
-      if (qRes.ok) {
-        generated = await qRes.json();
-        setReconQueries(generated);
+      const data = await res.json();
+      if (!res.ok) {
+        setReconError(describeApiError(data, 'Could not generate reconciliation queries.'));
+        return;
       }
+      setReconQueries(data);
+    } catch (err) {
+      setReconError(String(err));
+    } finally {
+      setRunningRecon(false);
+    }
+  };
 
-      const primaryDim = dimList[0] || 'Customer_Tier';
-      const daxRows = [
-        { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
-        { [primaryDim]: 'Mid-Market', metric_value: 820400.0 },
-        { [primaryDim]: 'SMB', metric_value: 312900.25 },
-        { [primaryDim]: 'Strategic', metric_value: 2190000.0 },
-      ];
-      const sqlRows =
-        activeScenario === 'certified'
-          ? [
-              { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
-              { [primaryDim]: 'Mid-Market', metric_value: 820400.0 },
-              { [primaryDim]: 'SMB', metric_value: 312900.25 },
-              { [primaryDim]: 'Strategic', metric_value: 2190000.0 },
-            ]
-          : [
-              { [primaryDim]: 'Enterprise', metric_value: 1450200.5 },
-              { [primaryDim]: 'Mid-Market', metric_value: 794150.0 }, // Intentional filter/rounding drift
-              { [primaryDim]: 'SMB', metric_value: 312900.25 },
-              { [primaryDim]: 'Strategic', metric_value: 2105400.0 }, // Intentional drift
-            ];
+  const handleRunLiveSql = async () => {
+    if (!reconQueries?.sql_query) return;
+    setRunningRecon(true);
+    setReconError(null);
+    try {
+      const res = await authFetch('/api/ai/execute-query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sql: reconQueries.sql_query,
+          target: 'SNOWFLAKE',
+          project_id: _reconProjectId(),
+          limit: 500,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        setReconError(data.error || data.message || describeApiError(data, 'Live SQL execution failed.'));
+        return;
+      }
+      const cols = data.columns || [];
+      const rowObjs = (data.rows || []).map((r) => Object.fromEntries(cols.map((c, idx) => [c, r[idx]])));
+      setReconSqlText(JSON.stringify(rowObjs, null, 2));
+    } catch (err) {
+      setReconError(String(err));
+    } finally {
+      setRunningRecon(false);
+    }
+  };
 
+  const handleRunAutoDaxCertify = async () => {
+    if (!reconMetric.trim() || !reconTable.trim()) return;
+    setRunningRecon(true);
+    setReconError(null);
+    try {
+      let parsedDax = undefined;
+      if (reconDaxText.trim()) {
+        parsedDax = JSON.parse(reconDaxText);
+      }
+      const res = await authFetch('/api/reconciliation/certify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: _reconProjectId(),
+          domain: inspectingDomain || undefined,
+          metric_name: reconMetric.trim(),
+          view_metric: reconMetric.trim(),
+          metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+          target_table_or_view: reconTable.trim(),
+          target_kind: reconTargetKind,
+          dimensions: _reconDimList(),
+          dax_results: parsedDax,
+          tolerance: _reconTolerancePayload(),
+          register_verified_query: Boolean(reconRegisterVerified),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReconError(describeApiError(data, 'Auto-Run DAX & Certify failed.'));
+        return;
+      }
+      if (data.verification) {
+        _updateParityView(data.verification);
+        setReconQueries({
+          dax_query: data.certification?.dax_query || reconQueries?.dax_query || '',
+          sql_query: data.certification?.sql_query || reconQueries?.sql_query || '',
+        });
+      }
+    } catch (err) {
+      setReconError(String(err));
+    } finally {
+      setRunningRecon(false);
+    }
+  };
+
+  const handleRunReconciliation = async () => {
+    setRunningRecon(true);
+    setReconError(null);
+    try {
+      const daxRows = JSON.parse(reconDaxText || '[]');
+      const sqlRows = JSON.parse(reconSqlText || '[]');
       const vRes = await authFetch('/api/reconciliation/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          metric_name: reconMetric,
+          metric_name: reconMetric.trim(),
           dax_results: daxRows,
           sql_results: sqlRows,
-          dimension_keys: [primaryDim],
-          dax_query: generated.dax_query,
-          sql_query: generated.sql_query,
+          dimension_keys: _reconDimList(),
+          dax_query: reconQueries?.dax_query || '',
+          sql_query: reconQueries?.sql_query || '',
+          tolerance: _reconTolerancePayload(),
+          project_id: govProjectId || selectedProjectSlug || undefined,
+          domain: inspectingDomain || undefined,
+          view_metric: reconMetric.trim(),
         }),
       });
-      if (vRes.ok) {
-        const vData = await vRes.json();
-        setReconResult(vData);
+      const vData = await vRes.json();
+      if (!vRes.ok) {
+        setReconError(describeApiError(vData, 'Verification failed.'));
+        return;
       }
+      _updateParityView(vData);
     } catch (err) {
-      setStatusMessage({ type: 'error', text: String(err) });
+      setReconError(String(err));
     } finally {
       setRunningRecon(false);
     }
@@ -568,6 +920,8 @@ export default function OntologyDomainManager() {
 
   const handleTranslateRls = async () => {
     setRunningRls(true);
+    setRlsStatus(null);
+    setRlsReason('');
     try {
       const res = await authFetch('/api/security/rls/tmdl-to-snowflake', {
         method: 'POST',
@@ -582,1675 +936,707 @@ export default function OntologyDomainManager() {
                 dax_filter_expression: rlsDaxExpr,
               },
             ],
-            members: ['analyst_emea@company.com'],
+            members: [],
           },
           target_database: rlsTargetDb,
           target_schema: rlsTargetSchema,
         }),
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
+        setRlsStatus(data.status || (data.ddl ? 'translated' : 'not translated'));
+        setRlsReason(data.reason || '');
         setRlsDdl(data.ddl || '');
       } else {
-        const err = await res.json();
-        setStatusMessage({ type: 'error', text: describeApiError(err, 'RLS translation failed.') });
+        setRlsStatus('not translated');
+        setRlsReason(describeApiError(data, 'RLS translation failed.'));
+        setRlsDdl('');
       }
     } catch (err) {
-      setStatusMessage({ type: 'error', text: String(err) });
+      setRlsStatus('not translated');
+      setRlsReason(String(err));
     } finally {
       setRunningRls(false);
     }
   };
 
+  // Filtered domains (by project scope if selected)
+  const visibleDomains = useMemo(() => {
+    const all = domainData.domains || [];
+    if (!selectedProjectSlug) return all;
+    const filteredByProject = all.filter(
+      (d) =>
+        d.source_project_id === selectedProjectSlug ||
+        (attachedDomainIds && (attachedDomainIds.includes(d.id) || attachedDomainIds.includes(d.domain)))
+    );
+    return filteredByProject.length > 0 ? filteredByProject : all;
+  }, [domainData.domains, selectedProjectSlug, attachedDomainIds]);
+
+  const activeMetrics = useMemo(() => {
+    const list = inspectingDomainData?.parsed?.metrics || [];
+    if (!glossarySearchQuery.trim()) return list;
+    const q = glossarySearchQuery.toLowerCase();
+    return list.filter(
+      (m) =>
+        (m.name || '').toLowerCase().includes(q) ||
+        (m.label || '').toLowerCase().includes(q) ||
+        (m.sql_expression || '').toLowerCase().includes(q) ||
+        (m.description || '').toLowerCase().includes(q)
+    );
+  }, [inspectingDomainData, glossarySearchQuery]);
+
+  const activeConcepts = useMemo(() => {
+    const list = inspectingDomainData?.parsed?.concepts || [];
+    if (!glossarySearchQuery.trim()) return list;
+    const q = glossarySearchQuery.toLowerCase();
+    return list.filter(
+      (c) =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.physical_table || '').toLowerCase().includes(q) ||
+        (c.description || '').toLowerCase().includes(q)
+    );
+  }, [inspectingDomainData, glossarySearchQuery]);
+
+  const activePolicies = useMemo(() => {
+    const list = inspectingDomainData?.parsed?.policies || [];
+    if (!glossarySearchQuery.trim()) return list;
+    const q = glossarySearchQuery.toLowerCase();
+    return list.filter(
+      (p) =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.filter_expression || '').toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q)
+    );
+  }, [inspectingDomainData, glossarySearchQuery]);
+
+  const activeProjectName = useMemo(() => {
+    if (!selectedProjectSlug) return 'All Projects (Enterprise)';
+    const found = projectsList.find((p) => (p.id || p.name) === selectedProjectSlug);
+    return found ? found.name || found.id : selectedProjectSlug;
+  }, [selectedProjectSlug, projectsList]);
+
+  // ── Derived data for Overview, Domains and Health ──────────────────────────
+  const visibleNames = visibleDomains.map((d) => d.domain);
+  const scopedCollisions = scopeCollisions(domainData.collisions, visibleNames);
+  const collisionNames = new Set(scopedCollisions.map((c) => c.item_name));
+  const reconDriftRows = reconSliceRows.filter((r) => !r.matched);
+  const driftMetric = reconDriftRows.length ? reconMetric : null;
+  const reconDimension = reconDims.split(',').map((d) => d.trim()).filter(Boolean)[0] || '';
+  const allMetrics = visibleDomains.flatMap((d) => domainDetails[d.domain]?.parsed?.metrics || []);
+  const allMetricNames = [...new Set(allMetrics.map((m) => m.name))];
+  const allConcepts = visibleDomains.flatMap((d) => domainDetails[d.domain]?.parsed?.concepts || []);
+  const allDimensions = [
+    ...new Set(
+      allConcepts.flatMap((c) =>
+        (c.attributes || [])
+          .filter((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''))
+          .map((a) => (a.logical_name && c.logical_name ? `${c.logical_name}.${a.logical_name}` : a.name))
+      )
+    ),
+  ];
+  const allSemanticViews = [
+    ...new Set(
+      visibleDomains
+        .map((d) => domainDetails[d.domain]?.parsed?.semantic_view_name)
+        .filter(Boolean)
+    ),
+  ];
+  const sumOf = (key) => visibleDomains.reduce((n, d) => n + (d[key] || 0), 0);
+
+  const overviewStats = {
+    metrics: sumOf('metric_count'),
+    concepts: sumOf('concept_count'),
+    relationships: sumOf('relationship_count'),
+    boundMetrics: allMetrics.filter((m) => (m.maps_to || []).length > 0).length,
+    tables: new Set(allConcepts.map((c) => c.physical_table).filter(Boolean)).size,
+    detailsLoaded: visibleDomains.length > 0 && visibleDomains.every((d) => domainDetails[d.domain]),
+  };
+
+  const unresolvedRefs = domainData.unresolved_references || [];
+  const attention = {
+    collisions: scopedCollisions.length,
+    unresolved: unresolvedRefs.length,
+    parityDrift: driftMetric ? 1 : 0,
+  };
+  attention.total = attention.collisions + attention.unresolved + attention.parityDrift;
+
+  // Lint runs on the whole federation; keep only the visible domains' findings
+  const scopedLint =
+    lintReport && selectedProjectSlug
+      ? {
+          ...lintReport,
+          issues: (lintReport.issues || []).filter((i) =>
+            (i.domain || '').split(',').some((d) => visibleNames.includes(d.trim()))
+          ),
+        }
+      : lintReport;
+
+  const healthRows = buildHealthResults({
+    collisions: scopedCollisions,
+    unresolved: unresolvedRefs,
+    loadErrors: domainData.load_errors || [],
+    lintReport: scopedLint,
+    impactReports: checksRanAt
+      ? Object.fromEntries(Object.entries(impactReports).filter(([n]) => allMetricNames.includes(n)))
+      : {},
+    impactRan: !!checksRanAt,
+    recon: { rows: reconSliceRows, metric: reconMetric, dimension: reconDimension },
+    policyCount: sumOf('policy_count'),
+    rls: { ddl: rlsDdl, role: rlsRoleName, table: rlsTableName },
+  });
+  const healthIssueCount = healthRows.filter((r) => r.severity === 'breaking' || r.severity === 'warning').length;
+
+  const domainPolicies = inspectingDomainData?.parsed?.policies || [];
+  const metricRowInfo = (m) => {
+    const certKey = String(m.logical_name || m.name || '').toLowerCase();
+    const altKey = String(m.name || '').toLowerCase();
+    const cert = certificationsByMetric[certKey] || certificationsByMetric[altKey] || null;
+    return {
+      status: metricStatus(m, { collisionNames, driftMetric }),
+      cert,
+      usedIn: usedInText(m, impactReports[m.name]),
+      guardrail: guardrailText(m, domainPolicies),
+    };
+  };
+  const domainMetricList = inspectingDomainData?.parsed?.metrics || [];
+  const domainMetricNames = new Set(domainMetricList.map((m) => m.name));
+  const drawerMetricObj = drawerMetric ? domainMetricList.find((m) => m.name === drawerMetric) : null;
+  const drawerParity =
+    drawerMetricObj && reconMetric === drawerMetricObj.name && reconSliceRows.length
+      ? (() => {
+          if (!reconDriftRows.length) return { drift: false };
+          const worst = reconDriftRows.reduce((a, b) => (Number(b.deltaPct) > Number(a.deltaPct) ? b : a));
+          return { drift: true, deltaPct: worst.deltaPct, slice: `${reconDimension} = ${worst.slice}` };
+        })()
+      : null;
+
   return (
-    <div className="flex flex-col h-full bg-app text-primary overflow-hidden">
-      {/* ── Top Header Banner ── */}
-      <div className="px-6 py-4 border-b border-main bg-surface flex flex-col md:flex-row md:items-center justify-between gap-4 flex-shrink-0">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-accent-blue/10 text-accent-blue">
-              <Network size={20} strokeWidth={2.2} />
-            </div>
-            <h1 className="text-lg font-bold tracking-tight text-primary m-0">
-              Enterprise Semantic Mesh & Domain Ontologies
-            </h1>
-            <span className="px-2.5 py-0.5 text-[11px] font-semibold rounded-full bg-surface-raised border border-main text-secondary">
-              Federated Architecture
-            </span>
-          </div>
-          <p className="text-xs text-secondary mt-1 max-w-3xl leading-relaxed">
-            Centralize cross-department business definitions (Finance, Sales, Operations) into an authoritative semantic graph.
-            Eliminates metric conflicts and ensures AI agents (Snowflake Cortex & Databricks Genie) generate 100% accurate SQL.
-          </p>
-        </div>
-
-        {/* Action Controls & KPI Badges */}
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2">
-            <div className="px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-center" title="Active business domain boundaries">
-              <span className="text-[10px] text-tertiary uppercase tracking-wider block font-semibold">Domains</span>
-              <span className="font-bold text-sm text-primary">{domainData.domains.length}</span>
-            </div>
-            <div className="px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-center" title="Entities, dimensions, and physical tables mapped">
-              <span className="text-[10px] text-tertiary uppercase tracking-wider block font-semibold">Concepts</span>
-              <span className="font-bold text-sm text-primary">{domainData.total_concepts}</span>
-            </div>
-            <div className="px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-center" title="Authoritative formulas governed across all teams">
-              <span className="text-[10px] text-tertiary uppercase tracking-wider block font-semibold">Metrics</span>
-              <span className="font-bold text-sm text-emerald-400">{domainData.total_metrics}</span>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (projectsList.length > 0 && !bootstrapProject) {
-                setBootstrapProject(projectsList[0].id || projectsList[0].name);
-              }
-              setBootstrapModalOpen(true);
-            }}
-            className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
-            title="Auto-generate a domain ontology from translated BI reports or OSI models"
-          >
-            <Sparkles size={14} className="text-amber-200" />
-            <span>Generate from OSI</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setUploadModalOpen(true)}
-            className="px-3 py-2 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-xs font-semibold text-primary flex items-center gap-1.5 transition-all"
-            title="Upload department-authored domain ontology YAML files"
-          >
-            <Upload size={14} className="text-accent-blue" />
-            <span>Ingest YAML</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={fetchDomains}
-            className="p-2 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary transition-all"
-            title="Refresh semantic mesh metadata"
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
-      </div>
-
-      {/* ── Status Toast ── */}
-      {statusMessage && (
+    <div
+      style={{
+        height: '100%',
+        overflowY: 'auto',
+        background: 'var(--bg-app)',
+        color: 'var(--text-primary)',
+        padding: propProjectId ? '16px 0' : '28px 36px 40px',
+      }}
+    >
+      <div style={{ maxWidth: 1320, margin: '0 auto' }}>
+        {/* Header: title, subtitle and at most two actions */}
         <div
-          className={`px-6 py-2.5 text-xs font-medium flex items-center gap-2 border-b transition-all ${
-            statusMessage.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-              : 'bg-red-500/10 text-red-300 border-red-500/20'
-          }`}
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            marginBottom: 14,
+          }}
         >
-          {statusMessage.type === 'success' ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-          <span style={{ whiteSpace: 'pre-line' }}>{statusMessage.text}</span>
-        </div>
-      )}
-
-      {/* ── Clean 2-Tab Navigation ── */}
-      <div className="flex items-center justify-between px-6 border-b border-main bg-surface flex-shrink-0">
-        <div className="flex items-center gap-1 text-xs">
-          <button
-            type="button"
-            onClick={() => setActiveTab('mesh')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'mesh'
-                ? 'border-accent-blue text-accent-blue'
-                : 'border-transparent text-secondary hover:text-primary'
-            }`}
-          >
-            <Network size={15} />
-            <span>Domain Mesh & Business Glossary</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-surface-raised text-secondary border border-main">
-              {domainData.domains.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('graph')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'graph'
-                ? 'border-accent-blue text-accent-blue'
-                : 'border-transparent text-secondary hover:text-primary'
-            }`}
-          >
-            <Network size={15} />
-            <span>Connection Map</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('ai')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'ai'
-                ? 'border-accent-blue text-accent-blue'
-                : 'border-transparent text-secondary hover:text-primary'
-            }`}
-          >
-            <Sparkles size={15} className="text-amber-400" />
-            <span>AI/BI Conversational Studio</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-              Cortex & Genie
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('governance')}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'governance'
-                ? 'border-accent-blue text-accent-blue'
-                : 'border-transparent text-secondary hover:text-primary'
-            }`}
-          >
-            <ShieldCheck size={15} className="text-emerald-400" />
-            <span>Governance, Blast Radius & Reconciliation</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-              CI/CD & Parity
-            </span>
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setShowHowItWorks((prev) => !prev)}
-          className="text-[11px] text-tertiary hover:text-secondary flex items-center gap-1 transition-colors py-1"
-        >
-          <Info size={13} />
-          <span>{showHowItWorks ? 'Hide Architecture Guide' : 'How Semantic Mesh Works'}</span>
-          {showHowItWorks ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-        </button>
-      </div>
-
-      {/* ── Main Scroll Area ── */}
-      <div className="flex-1 overflow-y-auto p-6 min-h-0 bg-app">
-        {/* Collapsible Architecture Guide */}
-        {showHowItWorks && (
-          <div className="max-w-6xl mx-auto mb-6 p-4 rounded-xl bg-surface border border-main relative transition-all">
-            <button
-              onClick={() => setShowHowItWorks(false)}
-              className="absolute right-3 top-3 text-tertiary hover:text-primary p-1"
-              title="Dismiss guide"
-            >
-              <X size={14} />
-            </button>
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-accent-blue/10 text-accent-blue mt-0.5">
-                <BookOpen size={18} />
+          <div style={{ minWidth: 0 }}>
+            {selectedProjectSlug && !propProjectId && (
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-blue)', marginBottom: 4 }}>
+                Project: {activeProjectName}
               </div>
-              <div className="space-y-1.5">
-                <h3 className="font-bold text-xs text-primary">How Enterprise Semantic Ontologies Work in SemaBridge</h3>
-                <p className="text-[11px] text-secondary leading-relaxed">
-                  Different departments author business terms and formulas in their respective domains. SemaBridge's engine merges them, monitors for cross-department naming conflicts, and compiles a unified semantic graph for AI query engines.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
-                  <div className="p-2.5 rounded-lg bg-surface-raised border border-main">
-                    <span className="font-semibold text-primary block text-[11px] mb-0.5">1. Federated Boundaries</span>
-                    <span className="text-[11px] text-tertiary">Finance, Sales, and Ops manage their own metric formulas independently.</span>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-surface-raised border border-main">
-                    <span className="font-semibold text-primary block text-[11px] mb-0.5">2. Collision Governance</span>
-                    <span className="text-[11px] text-tertiary">Detects when 2 teams define the same metric name differently before deployment.</span>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-surface-raised border border-main">
-                    <span className="font-semibold text-primary block text-[11px] mb-0.5">3. Multi-Target AI Parity</span>
-                    <span className="text-[11px] text-tertiary">Snowflake Cortex Analyst and Databricks Genie query verified definitions with 0 hallucinations.</span>
-                  </div>
-                </div>
-              </div>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 12px' }}>
+              <h1
+                style={{
+                  fontSize: propProjectId ? 20 : 24,
+                  fontWeight: 800,
+                  margin: 0,
+                  color: 'var(--text-primary)',
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                {mode === 'comparator'
+                  ? 'Metric Comparator'
+                  : mode === 'blast-radius'
+                  ? 'Blast Radius'
+                  : 'Explorer'}
+              </h1>
+              <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                {mode === 'comparator'
+                  ? 'Golden parity reconciliation, quality linter, and access checks'
+                  : mode === 'blast-radius'
+                  ? 'What-if impact simulator for metric renames, drops, and formula changes'
+                  : 'Shared business definitions every BI tool and AI agent uses'}
+              </span>
             </div>
           </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            {!propProjectId && (
+              <select
+                value={selectedProjectSlug}
+                onChange={(e) => setSelectedProjectSlug(e.target.value)}
+                style={SELECT_STYLE}
+                aria-label="Project scope"
+              >
+                <option value="">All projects</option>
+                {projectsList.map((p) => (
+                  <option key={p.id || p.name} value={p.id || p.name}>
+                    {p.name || p.id}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {activeTab === 'governance' && (
+              <>
+                {checksRanAt && (
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Last run {timeAgo(checksRanAt)}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleRunAllChecks(visibleDomains)}
+                  disabled={runningChecks}
+                  style={{ ...BTN_PRIMARY, opacity: runningChecks ? 0.7 : 1 }}
+                >
+                  <RefreshCw size={13} style={runningChecks ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  {runningChecks ? 'Running checks…' : 'Run all checks'}
+                </button>
+              </>
+            )}
+            {activeTab !== 'governance' && (
+              <>
+                <button type="button" onClick={() => setUploadModalOpen(true)} style={BTN}>
+                  <Upload size={13} /> Import YAML
+                </button>
+                <button type="button" onClick={openBootstrap} style={BTN_PRIMARY}>
+                  <Sparkles size={13} /> Generate from OSI
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Tabs: Overview · Domains · Map (Health / Blast Radius live on their own nav tabs) */}
+        {mode === 'explorer' && (
+          <div
+            role="tablist"
+            style={{
+              display: 'flex',
+              gap: 22,
+              borderBottom: '1px solid var(--border-main)',
+              marginBottom: 20,
+              overflowX: 'auto',
+            }}
+          >
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'mesh', label: 'Models', count: visibleDomains.length },
+              { id: 'graph', label: 'Map' },
+              ...(propProjectId ? [{ id: 'governance', label: 'Metric Comparator', badge: healthIssueCount }] : []),
+            ].map((t) => {
+            const on = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => selectTab(t.id)}
+                style={{
+                  padding: '8px 0 10px',
+                  marginBottom: -1,
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: `2px solid ${on ? 'var(--accent-blue)' : 'transparent'}`,
+                  color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontWeight: on ? 700 : 500,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {t.label}
+                {t.count !== undefined && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>{t.count}</span>}
+                {t.badge > 0 && <Pill tone="warn">{t.badge}</Pill>}
+              </button>
+            );
+          })}
+          </div>
+        )}
+
+        {/* Status Banner */}
+        {statusMessage && (
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '10px 14px',
+              borderRadius: 10,
+              background: statusMessage.type === 'success' ? 'var(--color-success-bg)' : 'var(--color-error-bg)',
+              border: `1px solid ${statusMessage.type === 'success' ? 'var(--color-success)' : 'var(--color-error)'}`,
+              color: statusMessage.type === 'success' ? 'var(--color-success)' : 'var(--color-error)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {statusMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+              <span style={{ whiteSpace: 'pre-line' }}>{statusMessage.text}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStatusMessage(null)}
+              style={{ background: 'transparent', border: 'none', color: 'inherit', padding: 4, cursor: 'pointer' }}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'overview' && (
+          <OverviewView
+            domains={visibleDomains}
+            stats={overviewStats}
+            attention={attention}
+            healthIssues={healthIssueCount}
+            onGo={selectTab}
+            onAsk={() => navigate('/ask')}
+            onGenerate={openBootstrap}
+            onImport={() => setUploadModalOpen(true)}
+          />
+        )}
+
+        {activeTab === 'mesh' && (
+          <DomainsView
+            domains={visibleDomains}
+            selectedDomain={inspectingDomain}
+            domainDetail={inspectingDomainData}
+            onSelectDomain={(name) => {
+              setDrawerMetric(null);
+              handleOpenDomainInspector(name, inspectorActiveTab === 'yaml' ? 'metrics' : inspectorActiveTab);
+            }}
+            issueCountFor={(d) => domainIssueCount(d, { collisions: scopedCollisions, lintReport })}
+            subTab={inspectorActiveTab}
+            setSubTab={(t) => {
+              setInspectorActiveTab(t);
+              if (t !== 'metrics') setDrawerMetric(null);
+            }}
+            search={glossarySearchQuery}
+            setSearch={setGlossarySearchQuery}
+            metrics={activeMetrics}
+            concepts={activeConcepts}
+            policies={activePolicies}
+            rowInfo={metricRowInfo}
+            selectedMetricName={drawerMetricObj ? drawerMetric : null}
+            onSelectMetric={handleSelectMetric}
+            onShowMap={() => selectTab('graph')}
+            onOpenItem={setSelectedGlossaryItem}
+            onSync={() => handleSyncWithOsi(inspectingDomain)}
+            yaml={{
+              value: editorYaml,
+              onChange: setEditorYaml,
+              validationResult,
+              onValidate: handleValidateYaml,
+              onSave: handleSaveDomain,
+            }}
+            drawer={
+              drawerMetricObj && inspectorActiveTab === 'metrics' ? (
+                <MetricDrawer
+                  metric={drawerMetricObj}
+                  status={metricRowInfo(drawerMetricObj).status}
+                  certification={metricRowInfo(drawerMetricObj).cert}
+                  guardrail={metricRowInfo(drawerMetricObj).guardrail}
+                  domainMetricNames={domainMetricNames}
+                  impact={impactReports[drawerMetricObj.name]}
+                  impactLoading={!!impactLoading[drawerMetricObj.name]}
+                  lintIssues={lintIssuesFor(lintReport, { domain: inspectingDomain, objectName: drawerMetricObj.name })}
+                  lintLoading={runningLint}
+                  lintRan={!!lintReport}
+                  parity={drawerParity}
+                  onClose={() => setDrawerMetric(null)}
+                  onSelectMetric={handleSelectMetric}
+                  onUpdateMeta={handleUpdateMetricMeta}
+                  onImpactView={() => handleJumpToBlastRadius(drawerMetricObj.name, 'METRIC')}
+                  onParity={() => openParityFor(drawerMetricObj)}
+                  onLintView={() => {
+                    if (!lintReport) {
+                      handleRunLinter();
+                      return;
+                    }
+                    setHealthFilter('quality');
+                    setHealthExpanded(null);
+                    selectTab('governance');
+                  }}
+                  onAsk={() => handleJumpToAiTest(drawerMetricObj.name)}
+                  onEditYaml={() => {
+                    setDrawerMetric(null);
+                    setInspectorActiveTab('yaml');
+                  }}
+                  onShowMap={() => selectTab('graph')}
+                />
+              ) : null
+            }
+          />
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════════
-            TAB 1: DOMAIN MESH & BUSINESS GLOSSARY
+            TAB 2: CONNECTION MAP (Interactive Lineage DAG)
            ══════════════════════════════════════════════════════════════════════════ */}
-        {activeTab === 'mesh' && (
-          <div className="max-w-6xl mx-auto space-y-6">
-            {/* Executive Governance Status Card */}
-            {(domainData.load_errors || []).length > 0 && (
-              <div
-                role="alert"
-                style={{
-                  marginBottom: 12, padding: '10px 14px', borderRadius: 8,
-                  border: '1px solid #f59e0b', background: 'rgba(245,158,11,0.08)', fontSize: 12,
-                }}
-              >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                  {domainData.load_errors.length} ontology file(s) could not be loaded
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {domainData.load_errors.map((e, i) => (
-                    <li key={i}><code>{e.file}</code>: {e.error}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {domainData.collisions.length > 0 ? (
-              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
-                    <AlertTriangle size={16} />
-                    Cross-Domain Metric Collisions Detected ({domainData.collisions.length})
-                  </div>
-                  <span className="text-[11px] text-amber-300">Action Recommended</span>
-                </div>
-                <p className="text-xs text-secondary mb-3">
-                  Multiple domains define competing mathematical formulas or join expressions for the same business term.
-                  AI conversational queries will encounter ambiguity unless domain precedence is defined.
-                </p>
-                <div className="space-y-2">
-                  {domainData.collisions.map((col, idx) => (
-                    <div key={idx} className="p-3 rounded-lg bg-surface border border-main text-xs space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-primary">{col.item_name}</span>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300">
-                          {col.severity} Severity
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono bg-surface-raised p-2.5 rounded-lg border border-main">
-                        {Object.entries(col.expressions || {}).map(([dom, expr]) => (
-                          <div key={dom}>
-                            <span className="text-accent-blue font-bold block">{dom} Definition:</span>
-                            <span className="text-primary">{expr || 'N/A'}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="p-4 rounded-xl bg-surface border border-main flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                    <ShieldCheck size={20} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-xs text-primary flex items-center gap-2">
-                      100% Conflict-Free Semantic Governance
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        CLEAN MESH
-                      </span>
-                    </h3>
-                    <p className="text-[11px] text-secondary mt-0.5">
-                      All {domainData.total_metrics} enterprise metrics and join paths are reconciled. AI conversational queries will resolve deterministically.
-                    </p>
-                  </div>
-                </div>
-                <span className="text-[11px] text-tertiary hidden md:inline">Automated Pre-Deploy Check</span>
-              </div>
-            )}
-
-            {/* Section Header */}
-            <div className="flex items-center justify-between pt-2">
-              <div>
-                <h2 className="text-sm font-bold text-primary">Registered Business Domains</h2>
-                <p className="text-xs text-secondary">
-                  Click any domain card to inspect metrics, mathematical formulas, synonyms, and physical tables.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setUploadModalOpen(true)}
-                className="text-xs font-semibold text-accent-blue hover:underline flex items-center gap-1"
-              >
-                <Plus size={14} /> Add Domain
-              </button>
-            </div>
-
-            {/* Domain Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {domainData.domains.map((d) => (
-                <div
-                  key={d.domain}
-                  className="rounded-xl border border-main bg-surface p-5 hover:border-accent-blue/40 transition-all flex flex-col justify-between shadow-sm group"
-                >
-                  <div>
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h3 className="font-bold text-sm text-primary flex items-center gap-2">
-                          {d.domain}
-                          <span className="text-[10px] px-1.5 py-0.2 font-mono rounded bg-surface-raised text-secondary border border-main">
-                            v{d.version || '1.0'}
-                          </span>
-                        </h3>
-                        <p className="text-xs text-secondary mt-1 line-clamp-2 leading-relaxed">
-                          {d.description || 'Enterprise domain definitions and authoritative metrics.'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 my-4 text-center">
-                      <div className="p-2 rounded-lg bg-surface-raised border border-main">
-                        <span className="text-[10px] text-tertiary uppercase font-semibold block">Concepts</span>
-                        <span className="font-bold text-xs text-primary">{d.concept_count}</span>
-                      </div>
-                      <div className="p-2 rounded-lg bg-surface-raised border border-main">
-                        <span className="text-[10px] text-tertiary uppercase font-semibold block">Metrics</span>
-                        <span className="font-bold text-xs text-emerald-400">{d.metric_count}</span>
-                      </div>
-                      <div className="p-2 rounded-lg bg-surface-raised border border-main">
-                        <span className="text-[10px] text-tertiary uppercase font-semibold block">Joins</span>
-                        <span className="font-bold text-xs text-primary">{d.relationship_count}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-xs text-secondary flex items-center gap-1.5 mb-4">
-                      <span className="text-tertiary">Steward:</span>
-                      <span className="text-primary font-medium text-[11px] truncate">{d.owner || 'Enterprise Data Team'}</span>
-                    </div>
-                  </div>
-
-                  {/* Card Actions */}
-                  <div className="flex items-center gap-2 pt-3 border-t border-main">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenDomainInspector(d.domain, 'metrics')}
-                      className="flex-1 py-1.5 px-3 rounded-lg bg-accent-blue/10 hover:bg-accent-blue/20 text-accent-blue font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
-                      title="Inspect metrics, formulas, synonyms, and physical tables"
-                    >
-                      <BookOpen size={13} />
-                      Inspect Glossary
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenDomainInspector(d.domain, 'yaml')}
-                      className="py-1.5 px-3 rounded-lg bg-surface-raised hover:bg-surface-hover text-secondary hover:text-primary text-xs font-medium border border-main transition-colors"
-                      title="View or edit raw YAML schema"
-                    >
-                      <Code2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-
-              {/* Add Domain Trigger Card */}
-              <button
-                type="button"
-                onClick={() => setUploadModalOpen(true)}
-                className="rounded-xl border-2 border-dashed border-main hover:border-accent-blue/50 bg-surface/40 p-6 flex flex-col items-center justify-center gap-2 text-secondary hover:text-primary transition-all text-center min-h-[220px]"
-              >
-                <div className="p-3 rounded-xl bg-surface-raised border border-main text-secondary group-hover:text-primary">
-                  <Plus size={20} />
-                </div>
-                <div>
-                  <span className="font-bold text-xs text-primary block">Ingest New Domain</span>
-                  <span className="text-[11px] text-tertiary mt-0.5 block">
-                    Upload .yaml or .yml domain definitions
-                  </span>
-                </div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* CONNECTION MAP: projects -> domains -> concepts / metrics -> BI objects */}
         {activeTab === 'graph' && (
-          <div className="max-w-7xl mx-auto pb-6">
+          <div
+            style={{
+              height: 640,
+              borderRadius: 18,
+              overflow: 'hidden',
+              border: '1px solid var(--border-main)',
+              background: 'var(--bg-surface)',
+            }}
+          >
             <OntologyGraph projects={projectsList} />
           </div>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════════════
-            TAB 2: MULTI-TARGET AI/BI CONVERSATIONAL STUDIO (CORTEX & GENIE)
-           ══════════════════════════════════════════════════════════════════════════ */}
-        {activeTab === 'ai' && (
-          <div className="max-w-6xl mx-auto space-y-6 pb-12">
-            {/* Target & Engine Switcher Bar */}
-            <div className="p-4 rounded-xl bg-surface border border-main flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-accent-blue/10 text-accent-blue">
-                  <Sparkles size={20} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-primary text-sm flex items-center gap-2 m-0">
-                    Multi-Target Conversational Analytics Studio
-                  </h3>
-                  <p className="text-xs text-secondary m-0 mt-0.5">
-                    Test plain-English questions before deploying semantic views to enterprise business users.
-                  </p>
-                </div>
-              </div>
-
-              {/* Target Selector Segmented Buttons */}
-              <div className="flex items-center bg-surface-raised p-1 rounded-xl border border-main gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedTarget('SNOWFLAKE');
-                    setExecutionResult(null);
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedTarget === 'SNOWFLAKE'
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-secondary hover:text-primary hover:bg-surface'
-                  }`}
-                  title="Target Snowflake Cortex Analyst and Semantic Views"
-                >
-                  <Snowflake size={14} className={selectedTarget === 'SNOWFLAKE' ? 'text-cyan-200' : 'text-cyan-400'} />
-                  Snowflake Cortex Analyst
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedTarget('DATABRICKS');
-                    setExecutionResult(null);
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedTarget === 'DATABRICKS'
-                      ? 'bg-amber-600 text-white shadow-sm'
-                      : 'text-secondary hover:text-primary hover:bg-surface'
-                  }`}
-                  title="Target Databricks AI/BI Genie and Unity Catalog Metric Views"
-                >
-                  <Database size={14} className={selectedTarget === 'DATABRICKS' ? 'text-amber-200' : 'text-amber-400'} />
-                  Databricks AI/BI Genie
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedTarget('LOCAL');
-                    setExecutionResult(null);
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedTarget === 'LOCAL'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'text-secondary hover:text-primary hover:bg-surface'
-                  }`}
-                  title="In-memory local compiler with zero cloud warehouse credit cost"
-                >
-                  <Server size={14} className={selectedTarget === 'LOCAL' ? 'text-emerald-200' : 'text-emerald-400'} />
-                  Local (0 Credits)
-                </button>
-              </div>
-            </div>
-
-            {/* Target Capability Info & Model Context */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-2 p-3.5 rounded-xl bg-surface-raised/70 border border-main flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-primary">Active Engine:</span>
-                  <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-surface border border-main text-accent-blue font-medium">
-                    {selectedTarget === 'SNOWFLAKE'
-                      ? 'Snowflake Cortex Analyst · Semantic Views & Cortex YAML'
-                      : selectedTarget === 'DATABRICKS'
-                      ? 'Databricks AI/BI Genie · Unity Catalog Metric Views'
-                      : 'SemaBridge Local Engine · In-Memory AST Compiler'}
-                  </span>
-                </div>
-                <span className="text-[11px] text-tertiary">
-                  {selectedTarget === 'LOCAL' ? '0 Compute Credits' : 'Multi-Dialect Ready'}
-                </span>
-              </div>
-
-              {/* Project Model Scope Selector */}
-              <div className="p-2.5 rounded-xl bg-surface border border-main flex items-center justify-between text-xs">
-                <span className="text-secondary font-medium">Model Context:</span>
-                <select
-                  value={selectedProjectSlug}
-                  onChange={(e) => setSelectedProjectSlug(e.target.value)}
-                  className="bg-surface-raised border border-main rounded-lg px-2.5 py-1 text-xs text-primary font-medium focus:outline-none focus:border-accent-blue"
-                  title="Scope AI query resolution to a specific project or the global enterprise mesh"
-                >
-                  <option value="">Enterprise Federated Mesh</option>
-                  {projectsList.map((p) => (
-                    <option key={p.id || p.name} value={p.id || p.name}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Natural Language Question Input */}
-            <div className="p-5 rounded-xl bg-surface border border-main space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <label className="text-xs font-bold text-secondary uppercase tracking-wider block">
-                    Natural Language Analytical Question
-                  </label>
-                  <span className="text-[11px] text-tertiary block mt-0.5">
-                    Type a question in plain business terms. SemaBridge maps it to governed formulas and compiles SQL.
-                  </span>
-                </div>
-                <span className="text-[11px] text-tertiary">
-                  Target: <strong className="text-primary">{selectedTarget}</strong>
-                </span>
-              </div>
-
-              {/* Dynamic Preset Prompt Chips */}
-              <div className="flex flex-wrap gap-2 text-xs">
-                {(selectedTarget === 'DATABRICKS'
-                  ? [
-                      'Compare monthly MRR and customer churn rate by tier in 2024',
-                      'Show top 10 customers by annual sales in Unity Catalog',
-                      'Calculate net profit margin and COGS by product category',
-                    ]
-                  : [
-                      'What is the gross margin and ARR by Customer in 2024?',
-                      'Show me ebitda and revenue by region',
-                      'Calculate total gross margin for all customers',
-                    ]
-                ).map((chip, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setNlPrompt(chip);
-                      setExecutionResult(null);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary text-[11px] transition-colors"
-                  >
-                    "{chip}"
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={nlPrompt}
-                  onChange={(e) => setNlPrompt(e.target.value)}
-                  placeholder={
-                    selectedTarget === 'DATABRICKS'
-                      ? "Ask a question in plain English (e.g. 'Show total revenue by region in Databricks')..."
-                      : "Ask a question in plain English (e.g. 'What is the gross margin by customer in Snowflake?')..."
-                  }
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-surface-raised border border-main text-xs text-primary focus:outline-none focus:border-accent-blue font-medium"
-                />
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleResolveNlQuery}
-                  className={`px-5 py-2.5 rounded-xl text-white font-semibold text-xs flex items-center gap-2 transition-colors disabled:opacity-50 ${
-                    selectedTarget === 'DATABRICKS'
-                      ? 'bg-amber-600 hover:bg-amber-500'
-                      : 'bg-blue-600 hover:bg-blue-500'
-                  }`}
-                  title="Parse natural language prompt and generate governed SQL"
-                >
-                  {loading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                  Generate Governed Query
-                </button>
-              </div>
-            </div>
-
-            {/* Entity Disambiguation & Generated SQL Card */}
-            {nlResolutionPlan && (
-              <div className="p-5 rounded-xl bg-surface border border-main space-y-4">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-primary">Semantic Disambiguation & Entity Resolution</span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400">
-                      Confidence: {(nlResolutionPlan.confidence_score * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <span className="text-tertiary text-[11px]">
-                    Primary Table: <strong className="text-secondary">{nlResolutionPlan.resolved_tables?.[0] || 'FACT'}</strong>
-                  </span>
-                </div>
-
-                {/* Disambiguation Token Badges */}
-                <div className="flex flex-wrap items-center gap-4 text-xs p-3 rounded-lg bg-surface-raised border border-main">
-                  <div>
-                    <span className="text-tertiary mr-1.5 font-medium">Metrics:</span>
-                    {nlResolutionPlan.detected_metrics?.length > 0 ? (
-                      nlResolutionPlan.detected_metrics.map((m) => (
-                        <span key={m} className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono text-[11px] mr-1.5 border border-emerald-500/20 font-semibold">
-                          {m}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-tertiary italic text-[11px]">None detected</span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-tertiary mr-1.5 font-medium">Dimensions:</span>
-                    {nlResolutionPlan.detected_dimensions?.length > 0 ? (
-                      nlResolutionPlan.detected_dimensions.map((d) => (
-                        <span key={d} className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono text-[11px] mr-1.5 border border-blue-500/20 font-semibold">
-                          {d}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-tertiary italic text-[11px]">None detected</span>
-                    )}
-                  </div>
-                  {nlResolutionPlan.derived_from_metrics?.length > 0 && (
-                    <div>
-                      <span className="text-tertiary mr-1.5 font-medium">Derived From:</span>
-                      {nlResolutionPlan.derived_from_metrics.map((dm) => (
-                        <span key={dm} className="px-2 py-0.5 rounded bg-violet-500/10 text-violet-400 font-mono text-[11px] mr-1.5 border border-violet-500/20 font-semibold">
-                          {dm}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {nlResolutionPlan.applied_policies?.length > 0 && (
-                    <div>
-                      <span className="text-tertiary mr-1.5 font-medium">Enforced Policies:</span>
-                      {nlResolutionPlan.applied_policies.map((pol) => (
-                        <span key={pol} className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono text-[11px] mr-1.5 border border-amber-500/20 font-semibold">
-                          {pol}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {nlResolutionPlan.filters?.length > 0 && (
-                    <div>
-                      <span className="text-tertiary mr-1.5 font-medium">Filters:</span>
-                      {nlResolutionPlan.filters.map((f, i) => (
-                        <span key={i} className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 font-mono text-[11px] mr-1.5 border border-purple-500/20">
-                          {f}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* SQL Editor / Viewer Box */}
-                <div className="relative rounded-lg bg-surface-raised border border-main p-4 overflow-hidden">
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-main text-xs">
-                    <span className="text-secondary font-mono flex items-center gap-1.5">
-                      <Code2 size={13} className="text-accent-blue" />
-                      Compiled {selectedTarget} SQL
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopySql(customSql || nlResolutionPlan.generated_sql)}
-                      className="px-2.5 py-1 rounded bg-surface hover:bg-surface-hover text-secondary hover:text-primary border border-main text-xs flex items-center gap-1 transition-colors"
-                      title="Copy SQL to clipboard"
-                    >
-                      {copiedSql ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
-                      {copiedSql ? 'Copied' : 'Copy SQL'}
-                    </button>
-                  </div>
-                  <textarea
-                    value={customSql}
-                    onChange={(e) => setCustomSql(e.target.value)}
-                    rows={8}
-                    className="w-full bg-transparent font-mono text-xs text-primary focus:outline-none resize-y leading-relaxed"
-                    spellCheck={false}
-                  />
-                </div>
-
-                {/* Execution Trigger Bar */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
-                  <p className="text-xs text-secondary italic m-0">
-                    Resolution: {nlResolutionPlan.explanation}
-                  </p>
-
-                  <button
-                    type="button"
-                    disabled={executingQuery}
-                    onClick={handleExecuteQuery}
-                    className={`px-5 py-2.5 rounded-xl text-white font-semibold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 ${
-                      selectedTarget === 'DATABRICKS'
-                        ? 'bg-amber-600 hover:bg-amber-500'
-                        : selectedTarget === 'LOCAL'
-                        ? 'bg-emerald-600 hover:bg-emerald-500'
-                        : 'bg-blue-600 hover:bg-blue-500'
-                    }`}
-                  >
-                    {executingQuery ? (
-                      <RefreshCw size={14} className="animate-spin" />
-                    ) : (
-                      <Play size={14} fill="currentColor" />
-                    )}
-                    {selectedTarget === 'SNOWFLAKE'
-                      ? 'Execute on Snowflake'
-                      : selectedTarget === 'DATABRICKS'
-                      ? 'Execute on Databricks'
-                      : 'Run Local Query'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Live Query Results Table */}
-            {executionResult && (
-              <div className="p-5 rounded-xl bg-surface border border-main space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-main pb-3">
-                  <div className="flex items-center gap-2">
-                    <Table size={16} className="text-accent-blue" />
-                    <span className="font-bold text-primary text-sm">Query Results & Data Preview</span>
-                    <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-accent-blue/10 text-accent-blue border border-accent-blue/20">
-                      {executionResult.row_count} rows · {executionResult.execution_time_ms}ms
-                    </span>
-                    {executionResult.is_simulated && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-surface-raised text-secondary border border-main">
-                        Verified Preview
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Accuracy Multiplier Action Button */}
-                  <button
-                    type="button"
-                    disabled={savingVerified}
-                    onClick={handleSaveVerifiedQuery}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50"
-                    title={
-                      selectedTarget === 'DATABRICKS'
-                        ? 'Save as a verified benchmark query in Databricks AI/BI Genie Space'
-                        : 'Save as a verified query in Snowflake Cortex Analyst YAML'
-                    }
-                  >
-                    {savingVerified ? (
-                      <RefreshCw size={13} className="animate-spin" />
-                    ) : (
-                      <Star size={13} fill="currentColor" />
-                    )}
-                    {selectedTarget === 'DATABRICKS'
-                      ? 'Save to Databricks Genie Benchmark'
-                      : 'Add to Verified Queries (Cortex YAML)'}
-                  </button>
-                </div>
-
-                {executionResult.message && (
-                  <div className="text-xs p-2.5 rounded-lg bg-surface-raised border border-main text-secondary flex items-center gap-2">
-                    <CheckCircle2 size={14} className="text-emerald-400 flex-shrink-0" />
-                    <span>{executionResult.message}</span>
-                  </div>
-                )}
-
-                {verifiedSuccessMsg && (
-                  <div className="text-xs p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CheckCheck size={16} />
-                      <span className="font-semibold">{verifiedSuccessMsg}</span>
-                    </div>
-                    <span className="text-[10px] uppercase font-bold text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded">
-                      Accuracy Multiplier Active
-                    </span>
-                  </div>
-                )}
-
-                {/* Data Preview Table */}
-                {executionResult.columns?.length > 0 ? (
-                  <div className="rounded-lg border border-main overflow-x-auto bg-surface-raised">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-main bg-surface text-secondary uppercase font-mono text-[10px] tracking-wider">
-                          {executionResult.columns.map((col, idx) => (
-                            <th key={idx} className="px-4 py-2.5 font-bold">
-                              {col}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-main">
-                        {executionResult.rows.map((row, rIdx) => (
-                          <tr key={rIdx} className="hover:bg-surface-hover/50 transition-colors">
-                            {row.map((val, cIdx) => (
-                              <td key={cIdx} className="px-4 py-2.5 text-primary font-mono">
-                                {val !== null && val !== undefined ? String(val) : '—'}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-center py-6 text-xs text-tertiary">
-                    {executionResult.error || 'No rows returned.'}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+        {activeTab === 'governance' && (
+          <HealthView
+            hideWhatIf={mode === 'comparator'}
+            rows={healthRows}
+            filter={healthFilter}
+            setFilter={setHealthFilter}
+            expandedId={healthExpanded}
+            setExpandedId={setHealthExpanded}
+            metricOptions={allMetricNames}
+            onRunLint={handleRunLinter}
+            onExpandParity={() => {
+              if (!reconMetric.trim()) {
+                const first = allMetrics.find((m) => m.sql_expression) || allMetrics[0];
+                if (first) prefillParity(first);
+              }
+            }}
+            onOpenMetric={handleOpenMetricFromHealth}
+            gov={{
+              govProjectId, setGovProjectId, projectsList,
+              blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
+              blastTableContext, setBlastTableContext,
+              runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+              lintStewardSeverity, setLintStewardSeverity,
+              onRunLintWithSteward: (sev) => handleRunLinter(sev),
+              dimensionOptions: allDimensions,
+              semanticViewOptions: allSemanticViews,
+              reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
+              reconTargetKind, setReconTargetKind, reconDims, setReconDims,
+              reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
+              reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
+              reconMaxMismatchPct, setReconMaxMismatchPct,
+              reconRegisterVerified, setReconRegisterVerified,
+              runningRecon,
+              onGenerateReconQueries: handleGenerateReconQueries,
+              onRunLiveSql: handleRunLiveSql,
+              onRunAutoDaxCertify: handleRunAutoDaxCertify,
+              onRunRecon: handleRunReconciliation,
+              onResetRecon: resetParityState,
+              reconResult, reconSliceRows, reconQueries, reconError,
+              rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
+              rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
+              runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
+            }}
+          />
         )}
 
-        {/* ════════════════════════════════════════════════════════════════════════
-            TAB 4: GOVERNANCE, BLAST RADIUS, RECONCILIATION & RLS SYNC
-           ════════════════════════════════════════════════════════════════════════ */}
-        {activeTab === 'governance' && (
-          <div className="max-w-7xl mx-auto p-6 space-y-6">
-            {/* Top Overview Banner */}
-            <div className="p-4 rounded-xl bg-surface border border-main flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-bold text-primary m-0 flex items-center gap-2">
-                  <ShieldCheck size={17} className="text-emerald-400" />
-                  Enterprise Governance, Impact Simulation & Data Parity Suite
-                </h2>
-                <p className="text-xs text-secondary mt-1 m-0">
-                  Simulate schema & metric breaking changes before deployment, audit ontology quality, mathematically certify Power BI DAX vs. Warehouse SQL parity, and compile row-level security policies.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleRunBlastRadius();
-                    handleRunLinter();
-                    handleRunReconciliation('certified');
-                    handleTranslateRls();
-                  }}
-                  className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
-                >
-                  <Play size={13} />
-                  Run All Governance Checks
-                </button>
-              </div>
+        {activeTab === 'blast-radius' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{
+              padding: 18,
+              borderRadius: 12,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-main)',
+            }}>
+              <WhatIfSimulator
+                gov={{
+                  govProjectId, setGovProjectId, projectsList,
+                  blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
+                  blastTableContext, setBlastTableContext,
+                  runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+                }}
+                metricOptions={allMetricNames}
+              />
             </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* ── 1. BLAST RADIUS & CHANGE IMPACT SIMULATOR ── */}
-              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                        Pre-Deployment Impact Analysis
-                      </span>
-                      <h3 className="text-sm font-bold text-primary mt-2 m-0">
-                        1. Blast Radius Simulator
-                      </h3>
-                      <p className="text-xs text-secondary mt-0.5 m-0">
-                        Predict which downstream KPIs, Power BI reports, and AI Cortex/Genie agents break if a column, table, or metric changes.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Quick Preset Targets */}
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className="text-tertiary font-medium">Quick Presets:</span>
-                    {[
-                      { label: 'Metric: revenue', name: 'revenue', type: 'METRIC', change: 'MODIFY_EXPRESSION' },
-                      { label: 'Metric: gross_margin', name: 'gross_margin', type: 'METRIC', change: 'DROP' },
-                      { label: 'Column: AMOUNT', name: 'AMOUNT', type: 'COLUMN', change: 'RENAME' },
-                    ].map((preset, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => {
-                          setBlastTarget(preset.name);
-                          setBlastType(preset.type);
-                          setBlastChangeType(preset.change);
-                        }}
-                        className="px-2 py-0.5 rounded bg-surface-raised hover:bg-surface-hover border border-main text-secondary hover:text-primary transition-colors"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Target Object
-                      </label>
-                      <input
-                        type="text"
-                        value={blastTarget}
-                        onChange={(e) => setBlastTarget(e.target.value)}
-                        placeholder="e.g. revenue or AMOUNT"
-                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Object Type
-                      </label>
-                      <select
-                        value={blastType}
-                        onChange={(e) => setBlastType(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary"
-                      >
-                        <option value="METRIC">METRIC</option>
-                        <option value="COLUMN">COLUMN</option>
-                        <option value="TABLE">TABLE</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Simulated Change
-                      </label>
-                      <select
-                        value={blastChangeType}
-                        onChange={(e) => setBlastChangeType(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-surface-raised border border-main text-xs text-primary"
-                      >
-                        <option value="MODIFY_EXPRESSION">MODIFY_EXPRESSION</option>
-                        <option value="RENAME">RENAME</option>
-                        <option value="DROP">DROP</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={runningBlast}
-                    onClick={handleRunBlastRadius}
-                    className="w-full py-2 px-4 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                  >
-                    {runningBlast ? <RefreshCw size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
-                    Simulate Downstream Blast Radius
-                  </button>
-
-                  {blastReport && (
-                    <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
-                      <div className="flex items-center justify-between border-b border-main pb-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
-                              blastReport.severity === 'BREAKING'
-                                ? 'bg-red-500/20 text-red-300 border border-red-500/40'
-                                : blastReport.severity === 'DEGRADED'
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            }`}
-                          >
-                            {blastReport.severity}
-                          </span>
-                          <span className="font-mono font-semibold text-primary">
-                            {blastReport.target_type}: {blastReport.target_object}
-                          </span>
-                        </div>
-                        <span className="text-secondary font-semibold">
-                          {blastReport.total_impacted_items} Impacted Asset(s)
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <div className="p-2 rounded bg-surface border border-main">
-                          <span className="text-[10px] text-tertiary block uppercase">Metrics</span>
-                          <span className="text-sm font-bold text-amber-400">
-                            {blastReport.affected_metrics?.length || 0}
-                          </span>
-                        </div>
-                        <div className="p-2 rounded bg-surface border border-main">
-                          <span className="text-[10px] text-tertiary block uppercase">BI Reports</span>
-                          <span className="text-sm font-bold text-rose-400">
-                            {blastReport.affected_bi_reports?.length || 0}
-                          </span>
-                        </div>
-                        <div className="p-2 rounded bg-surface border border-main">
-                          <span className="text-[10px] text-tertiary block uppercase">AI Agents</span>
-                          <span className="text-sm font-bold text-purple-400">
-                            {blastReport.affected_ai_tools?.length || 0}
-                          </span>
-                        </div>
-                      </div>
-
-                      {blastReport.affected_metrics?.length > 0 && (
-                        <div>
-                          <span className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                            Impacted Downstream Metrics & Stewards:
-                          </span>
-                          <div className="space-y-1 max-h-32 overflow-y-auto">
-                            {blastReport.affected_metrics.map((m, idx) => (
-                              <div
-                                key={idx}
-                                className="px-2.5 py-1.5 rounded bg-surface border border-main flex items-center justify-between text-[11px]"
-                              >
-                                <span className="font-mono font-semibold text-primary">{m.name}</span>
-                                <span className="text-tertiary">{m.details}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {blastReport.remediation_steps?.length > 0 && (
-                        <div className="p-2.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-200 text-[11px] space-y-1">
-                          <span className="font-bold block text-amber-300">Recommended Remediation Plan:</span>
-                          <ul className="list-disc pl-4 space-y-0.5 m-0">
-                            {blastReport.remediation_steps.map((step, idx) => (
-                              <li key={idx}>{step}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── 2. SEMANTIC MODEL QUALITY LINTER ── */}
-              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
-                <div className="space-y-4">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
-                      Automated CI/CD Quality Gate
-                    </span>
-                    <h3 className="text-sm font-bold text-primary mt-2 m-0">
-                      2. Semantic Quality & Governance Linter
-                    </h3>
-                    <p className="text-xs text-secondary mt-0.5 m-0">
-                      Audit all loaded domain ontologies for naming standards, orphan concepts, missing stewards, and circular dependencies.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap gap-4 p-3 rounded-lg bg-surface-raised border border-main text-xs">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={lintRequireSteward}
-                        onChange={(e) => setLintRequireSteward(e.target.checked)}
-                      />
-                      <span>Require Data Steward</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={lintRequireDesc}
-                        onChange={(e) => setLintRequireDesc(e.target.checked)}
-                      />
-                      <span>Require Descriptions</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={lintSnakeCase}
-                        onChange={(e) => setLintSnakeCase(e.target.checked)}
-                      />
-                      <span>Enforce snake_case IDs</span>
-                    </label>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={runningLint}
-                    onClick={handleRunLinter}
-                    className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                  >
-                    {runningLint ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                    Run Semantic Quality Audit
-                  </button>
-
-                  {lintReport && (
-                    <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
-                      <div className="flex items-center justify-between border-b border-main pb-2">
-                        <span
-                          className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
-                            lintReport.passed
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                          }`}
-                        >
-                          {lintReport.passed ? 'PASSED GATE' : 'FAILED GATE'}
-                        </span>
-                        <div className="flex items-center gap-3 text-[11px]">
-                          <span className="text-red-400 font-semibold">{lintReport.error_count} Errors</span>
-                          <span className="text-amber-400 font-semibold">{lintReport.warning_count} Warnings</span>
-                        </div>
-                      </div>
-
-                      <p className="text-[11px] text-secondary m-0">{lintReport.summary}</p>
-
-                      {lintReport.issues?.length > 0 && (
-                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                          {lintReport.issues.slice(0, 12).map((issue, idx) => (
-                            <div
-                              key={idx}
-                              className="p-2 rounded bg-surface border border-main flex flex-col gap-0.5 text-[11px]"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-mono font-bold text-primary">
-                                  [{issue.rule_id}] {issue.object_name}
-                                </span>
-                                <span
-                                  className={`text-[10px] font-bold uppercase ${
-                                    issue.severity === 'ERROR'
-                                      ? 'text-red-400'
-                                      : issue.severity === 'WARNING'
-                                      ? 'text-amber-400'
-                                      : 'text-blue-400'
-                                  }`}
-                                >
-                                  {issue.severity}
-                                </span>
-                              </div>
-                              <span className="text-secondary">{issue.message}</span>
-                              {issue.remediation && (
-                                <span className="text-emerald-400/90 text-[10px]">
-                                  Fix: {issue.remediation}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── 3. GOLDEN DATA RECONCILIATION (DAX vs SQL PARITY) ── */}
-              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                        Mathematical Parity Verifier
-                      </span>
-                      <h3 className="text-sm font-bold text-primary mt-2 m-0">
-                        3. Golden Data Reconciliation (Power BI DAX vs. SQL)
-                      </h3>
-                      <p className="text-xs text-secondary mt-0.5 m-0">
-                        Generate paired DAX `SUMMARIZECOLUMNS` and Warehouse `GROUP BY` queries and verify cell-by-cell numerical parity.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Metric Name
-                      </label>
-                      <input
-                        type="text"
-                        value={reconMetric}
-                        onChange={(e) => setReconMetric(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Target Fact Table / View
-                      </label>
-                      <input
-                        type="text"
-                        value={reconTable}
-                        onChange={(e) => setReconTable(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        SQL Formula Expression
-                      </label>
-                      <input
-                        type="text"
-                        value={reconExpr}
-                        onChange={(e) => setReconExpr(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Slice Dimensions (comma-separated)
-                      </label>
-                      <input
-                        type="text"
-                        value={reconDims}
-                        onChange={(e) => setReconDims(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={runningRecon}
-                      onClick={() => {
-                        setReconScenario('certified');
-                        handleRunReconciliation('certified');
-                      }}
-                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
-                    >
-                      <CheckCheck size={14} />
-                      Verify Parity (100% Match)
-                    </button>
-                    <button
-                      type="button"
-                      disabled={runningRecon}
-                      onClick={() => {
-                        setReconScenario('drift');
-                        handleRunReconciliation('drift');
-                      }}
-                      className="flex-1 py-2 px-3 rounded-lg bg-amber-600/80 hover:bg-amber-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
-                    >
-                      <AlertTriangle size={14} />
-                      Simulate Formula Drift
-                    </button>
-                  </div>
-
-                  {reconResult && (
-                    <div className="p-3.5 rounded-xl bg-surface-raised border border-main space-y-3 text-xs">
-                      <div className="flex items-center justify-between border-b border-main pb-2">
-                        <span
-                          className={`px-2.5 py-0.5 rounded font-bold text-[10px] uppercase ${
-                            reconResult.status === 'CERTIFIED'
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                          }`}
-                        >
-                          {reconResult.certification_badge}
-                        </span>
-                        <span className="text-[11px] text-secondary">
-                          Matched {reconResult.matched_rows}/{reconResult.total_rows_compared} slices (Max Δ:{' '}
-                          {reconResult.max_percentage_delta}%)
-                        </span>
-                      </div>
-
-                      {reconQueries && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div className="p-2 rounded bg-surface border border-main">
-                            <span className="text-[10px] font-bold uppercase text-amber-400 block mb-1">
-                              Power BI DAX Query
-                            </span>
-                            <pre className="text-[10px] font-mono text-secondary overflow-x-auto whitespace-pre-wrap m-0">
-                              {reconQueries.dax_query}
-                            </pre>
-                          </div>
-                          <div className="p-2 rounded bg-surface border border-main">
-                            <span className="text-[10px] font-bold uppercase text-blue-400 block mb-1">
-                              Snowflake / Databricks SQL
-                            </span>
-                            <pre className="text-[10px] font-mono text-secondary overflow-x-auto whitespace-pre-wrap m-0">
-                              {reconQueries.sql_query}
-                            </pre>
-                          </div>
-                        </div>
-                      )}
-
-                      {reconResult.sample_mismatches?.length > 0 && (
-                        <div className="p-2.5 rounded bg-red-500/10 border border-red-500/30 space-y-1.5">
-                          <span className="text-[10px] font-bold uppercase text-red-300 block">
-                            Detected Numerical Drift Slices:
-                          </span>
-                          {reconResult.sample_mismatches.map((m, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between text-[11px] font-mono text-red-200"
-                            >
-                              <span>{m.dimension_key}</span>
-                              <span>
-                                DAX: {m.dax_value.toLocaleString()} vs SQL: {m.sql_value.toLocaleString()} (Δ{' '}
-                                {m.percentage_delta}%)
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ── 4. BIDIRECTIONAL RLS SECURITY POLICY TRANSLATOR ── */}
-              <div className="p-5 rounded-xl bg-surface border border-main flex flex-col justify-between space-y-4">
-                <div className="space-y-4">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                      Zero-Trust Row-Level Security
-                    </span>
-                    <h3 className="text-sm font-bold text-primary mt-2 m-0">
-                      4. Bidirectional RLS Policy Compiler (TMDL ⇄ Snowflake)
-                    </h3>
-                    <p className="text-xs text-secondary mt-0.5 m-0">
-                      Translate Power BI DAX row-level security roles directly into native Snowflake `ROW ACCESS POLICY` DDL.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Security Role Name
-                      </label>
-                      <input
-                        type="text"
-                        value={rlsRoleName}
-                        onChange={(e) => setRlsRoleName(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Protected Table
-                      </label>
-                      <input
-                        type="text"
-                        value={rlsTableName}
-                        onChange={(e) => setRlsTableName(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-primary font-mono"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="text-[10px] font-bold uppercase text-tertiary block mb-1">
-                        Power BI TMDL DAX Filter Expression
-                      </label>
-                      <input
-                        type="text"
-                        value={rlsDaxExpr}
-                        onChange={(e) => setRlsDaxExpr(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg bg-surface-raised border border-main text-xs text-amber-300 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={runningRls}
-                    onClick={handleTranslateRls}
-                    className="w-full py-2 px-4 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                  >
-                    {runningRls ? <RefreshCw size={14} className="animate-spin" /> : <Code2 size={14} />}
-                    Compile Snowflake Row Access Policy DDL
-                  </button>
-
-                  {rlsDdl && (
-                    <div className="p-3 rounded-xl bg-surface-raised border border-main space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold uppercase text-purple-300">
-                          Generated Snowflake Row Access Policy DDL
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopySql(rlsDdl)}
-                          className="text-[11px] text-secondary hover:text-primary flex items-center gap-1"
-                        >
-                          {copiedSql ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                          <span>{copiedSql ? 'Copied' : 'Copy DDL'}</span>
-                        </button>
-                      </div>
-                      <pre className="text-[11px] font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap max-h-48 m-0">
-                        {rlsDdl}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            {blastReport && (
+              <ImpactReport
+                report={blastReport}
+                onPickSuggestion={(s) => handleRunBlastRadius(s)}
+              />
+            )}
           </div>
         )}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════════
-          SLIDE-OVER DOMAIN GLOSSARY INSPECTOR DRAWER
+          ITEM DETAIL DRAWER / MODAL (When clicking "View Details" on a row)
          ══════════════════════════════════════════════════════════════════════════ */}
-      {inspectingDomain && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-opacity">
-          <div className="w-full max-w-2xl bg-surface border-l border-main h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
-            {/* Drawer Header */}
-            <div className="p-5 border-b border-main flex items-center justify-between bg-surface-raised">
+      {selectedGlossaryItem && (
+        <div
+          onClick={() => setSelectedGlossaryItem(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 60,
+            background: 'rgba(2, 6, 23, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 580,
+              borderRadius: 20,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-main)',
+              padding: 24,
+              boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-base text-primary m-0">{inspectingDomain} Domain Glossary</h3>
-                  <span className="text-[10px] px-2 py-0.5 font-mono rounded bg-surface border border-main text-secondary">
-                    v{inspectingDomainData?.version || '1.0'}
-                  </span>
-                </div>
-                <p className="text-xs text-secondary mt-1 m-0">
-                  Steward: <strong className="text-primary">{inspectingDomainData?.owner || 'Enterprise Team'}</strong>
-                </p>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#0284C7', textTransform: 'uppercase' }}>
+                  {selectedGlossaryItem.type} Inspector
+                </span>
+                <h3 style={{ fontSize: 18, fontWeight: 800, margin: '4px 0 0' }}>
+                  {selectedGlossaryItem.data.name}
+                </h3>
               </div>
-
               <button
                 type="button"
-                onClick={() => setInspectingDomain(null)}
-                className="p-1.5 rounded-lg text-tertiary hover:text-primary hover:bg-surface transition-colors"
-                title="Close glossary inspector"
+                onClick={() => setSelectedGlossaryItem(null)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
               >
                 <X size={18} />
               </button>
             </div>
 
-            {/* Drawer Inner Tabs */}
-            <div className="flex items-center gap-1 px-5 border-b border-main bg-surface text-xs">
-              <button
-                type="button"
-                onClick={() => setInspectorActiveTab('metrics')}
-                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${
-                  inspectorActiveTab === 'metrics'
-                    ? 'border-accent-blue text-accent-blue'
-                    : 'border-transparent text-secondary hover:text-primary'
-                }`}
-              >
-                Metrics & Formulas ({inspectingDomainData?.parsed?.metrics?.length || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setInspectorActiveTab('concepts')}
-                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${
-                  inspectorActiveTab === 'concepts'
-                    ? 'border-accent-blue text-accent-blue'
-                    : 'border-transparent text-secondary hover:text-primary'
-                }`}
-              >
-                Entities & Tables ({inspectingDomainData?.parsed?.concepts?.length || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setInspectorActiveTab('yaml')}
-                className={`py-2.5 px-3 font-semibold border-b-2 transition-colors ${
-                  inspectorActiveTab === 'yaml'
-                    ? 'border-accent-blue text-accent-blue'
-                    : 'border-transparent text-secondary hover:text-primary'
-                }`}
-              >
-                YAML Definition
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
+              {selectedGlossaryItem.data.description && (
+                <div>
+                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>DESCRIPTION</strong>
+                  <span>{selectedGlossaryItem.data.description}</span>
+                </div>
+              )}
+              {selectedGlossaryItem.data.sql_expression && (
+                <div>
+                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>SQL FORMULA</strong>
+                  <code style={{ color: '#10B981', fontWeight: 700 }}>{selectedGlossaryItem.data.sql_expression}</code>
+                </div>
+              )}
+              {selectedGlossaryItem.data.filter_expression && (
+                <div>
+                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>
+                    ENFORCED WHERE POLICY
+                  </strong>
+                  <code style={{ color: '#F59E0B', fontWeight: 700 }}>{selectedGlossaryItem.data.filter_expression}</code>
+                </div>
+              )}
+              {selectedGlossaryItem.data.derives_from?.length > 0 && (
+                <div>
+                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>
+                    DERIVED FROM METRICS
+                  </strong>
+                  <span>{selectedGlossaryItem.data.derives_from.join(', ')}</span>
+                </div>
+              )}
+              {selectedGlossaryItem.data.attributes?.length > 0 && (
+                <div>
+                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11, marginBottom: 6 }}>
+                    ATTRIBUTES ({selectedGlossaryItem.data.attributes.length})
+                  </strong>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {selectedGlossaryItem.data.attributes.map((a) => (
+                      <span
+                        key={a.name}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 8,
+                          background: 'var(--bg-app)',
+                          border: '1px solid var(--border-main)',
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                        }}
+                      >
+                        {a.name} ({a.data_type || 'VARCHAR'})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Drawer Body Content */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Metrics Tab */}
-              {inspectorActiveTab === 'metrics' && (
-                <div className="space-y-3">
-                  <div className="text-xs text-secondary">
-                    Authoritative KPIs owned by the <strong className="text-primary">{inspectingDomain}</strong> team.
-                  </div>
-                  {inspectingDomainData?.parsed?.metrics?.length > 0 ? (
-                    inspectingDomainData.parsed.metrics.map((m) => (
-                      <div key={m.name} className="p-4 rounded-xl bg-surface-raised border border-main text-xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-primary text-sm flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                            {m.label || m.name}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface border border-main text-secondary uppercase">
-                            {m.aggregation_type || 'SUM'}
-                          </span>
-                        </div>
-                        <p className="text-secondary text-[11px] m-0">{m.description || 'No description provided.'}</p>
-                        {m.sql_expression ? (
-                          <div className="p-2 rounded bg-surface border border-main font-mono text-[11px] text-emerald-400">
-                            {m.sql_expression}
-                          </div>
-                        ) : (
-                          <p className="text-tertiary text-[11px] italic m-0">
-                            No formula in the ontology — the SQL comes from the mapped BI measure.
-                          </p>
-                        )}
-                        {m.derives_from?.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1 pt-1">
-                            <span className="text-[10px] text-tertiary font-semibold mr-1">Derives from:</span>
-                            {m.derives_from.map((dep, dIdx) => (
-                              <span key={dIdx} className="px-2 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-[10px] font-mono text-violet-400">
-                                {dep}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {m.filter_expression && (
-                          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 font-mono text-[10px] text-amber-400">
-                            Enforced Filter: {m.filter_expression}
-                          </div>
-                        )}
-                        {m.synonyms?.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1 pt-1">
-                            <span className="text-[10px] text-tertiary font-semibold mr-1">Synonyms:</span>
-                            {m.synonyms.map((s, sIdx) => (
-                              <span key={sIdx} className="px-2 py-0.5 rounded bg-surface border border-main text-[10px] text-secondary">
-                                {s}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <div className="pt-2 flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => handleJumpToAiTest(m.label || m.name, m.sql_expression)}
-                            className="px-2.5 py-1 rounded bg-accent-blue/10 hover:bg-accent-blue/20 text-accent-blue text-[11px] font-semibold flex items-center gap-1 transition-colors"
-                          >
-                            <Sparkles size={12} /> Test in AI Studio
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-8 text-xs text-tertiary">No metrics defined for this domain.</div>
-                  )}
-                </div>
-              )}
-
-              {/* Concepts Tab */}
-              {inspectorActiveTab === 'concepts' && (
-                <div className="space-y-3">
-                  <div className="text-xs text-secondary">
-                    Physical tables and entity structures mapped in <strong className="text-primary">{inspectingDomain}</strong>.
-                  </div>
-                  {inspectingDomainData?.parsed?.concepts?.length > 0 ? (
-                    inspectingDomainData.parsed.concepts.map((c) => (
-                      <div key={c.name} className="p-4 rounded-xl bg-surface-raised border border-main text-xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-primary text-sm flex items-center gap-1.5">
-                            <Table size={14} className="text-accent-blue" />
-                            {c.name}
-                          </span>
-                          {(c.physical_table || c.maps_to?.length > 0) && (
-                            <span
-                              className="font-mono text-[11px] px-2 py-0.5 rounded bg-surface border border-main text-secondary"
-                              title="Model table this concept is bound to"
-                            >
-                              {c.physical_table || c.maps_to.join(', ')}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-secondary text-[11px] m-0">{c.description || 'Core physical concept'}</p>
-                        {c.filter_expression && (
-                          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 font-mono text-[10px] text-amber-400">
-                            Enforced Filter: {c.filter_expression}
-                          </div>
-                        )}
-                        {c.attributes?.length > 0 && (
-                          <div className="space-y-1 pt-1">
-                            <span className="text-[10px] text-tertiary font-semibold uppercase block">Attributes & Columns</span>
-                            <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
-                              {c.attributes.map((attr, aIdx) => (
-                                <div key={aIdx} className="p-1.5 rounded bg-surface border border-main flex items-center justify-between">
-                                  <span className="text-primary">{attr.name}</span>
-                                  {/* The column binding is what decides where the ontology lands;
-                                      data_type defaults to VARCHAR when the YAML omits it, so it
-                                      is only shown when there is no binding. */}
-                                  <span className="text-tertiary text-[10px]" title={attr.maps_to?.length ? 'Bound model column' : 'Declared type'}>
-                                    {attr.maps_to?.length ? `→ ${attr.maps_to.join(', ')}` : attr.data_type}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-8 text-xs text-tertiary">No concepts mapped for this domain.</div>
-                  )}
-                </div>
-              )}
-
-              {/* YAML Editor Tab */}
-              {inspectorActiveTab === 'yaml' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-secondary font-mono">{inspectingDomain.toLowerCase()}.ontology.yaml</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleValidateYaml}
-                        className="px-3 py-1 rounded bg-surface hover:bg-surface-hover border border-main text-xs text-secondary hover:text-primary transition-colors flex items-center gap-1"
-                      >
-                        <ShieldCheck size={13} className="text-accent-blue" /> Validate Schema
-                      </button>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => handleSyncWithOsi(inspectingDomain)}
-                        className="px-3 py-1 rounded bg-surface hover:bg-surface-hover border border-main text-xs text-secondary hover:text-primary transition-colors flex items-center gap-1"
-                        title="Re-sync tables and calculation expressions from source OSI model while preserving your comments and governance definitions"
-                      >
-                        <RefreshCw size={12} className={loading ? 'animate-spin' : 'text-amber-400'} /> Sync from OSI
-                      </button>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={handleSaveDomain}
-                        title="Saves the domain. Projects that attach it pick up the change on their next run."
-                        className="px-3.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center gap-1 transition-colors disabled:opacity-50"
-                      >
-                        {loading ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />} Save domain
-                      </button>
-                    </div>
-                  </div>
-
-                  {validationResult && (
-                    <div className={`p-3 rounded-lg text-xs border ${
-                      validationResult.valid ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
-                    }`}>
-                      {validationResult.valid ? (
-                        <span>Valid schema: {validationResult.concept_count} concepts, {validationResult.metric_count} metrics.</span>
-                      ) : (
-                        <span>Validation errors: {validationResult.errors?.join(', ')}</span>
-                      )}
-                    </div>
-                  )}
-
-                  <textarea
-                    value={editorYaml}
-                    onChange={(e) => setEditorYaml(e.target.value)}
-                    rows={22}
-                    className="w-full p-4 rounded-xl bg-surface-raised border border-main text-primary font-mono text-xs focus:outline-none focus:border-accent-blue resize-none leading-relaxed"
-                    spellCheck={false}
-                  />
-                </div>
-              )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const name = selectedGlossaryItem.data.name;
+                  setSelectedGlossaryItem(null);
+                  handleJumpToAiTest(name);
+                }}
+                style={PILL_BTN_DARK}
+              >
+                Ask AI about this
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════════════════
-          INGEST DOMAIN YAML MODAL
-         ══════════════════════════════════════════════════════════════════════════ */}
+      {/* Upload YAML Modal */}
       {uploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg bg-surface border border-main rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-main">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-accent-blue/10 text-accent-blue">
-                  <Upload size={18} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-primary m-0">Ingest Domain YAML</h3>
-                  <p className="text-[11px] text-secondary m-0 mt-0.5">Upload departmental semantic definitions into the mesh.</p>
-                </div>
-              </div>
+        <div
+          onClick={() => setUploadModalOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 60,
+            background: 'rgba(2, 6, 23, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 480,
+              borderRadius: 20,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-main)',
+              padding: 24,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Upload Domain YAML</h3>
               <button
                 type="button"
-                onClick={() => {
-                  setUploadError(null);
-                  setUploadModalOpen(false);
-                }}
-                className="p-1 rounded-lg text-tertiary hover:text-primary transition-colors"
+                onClick={() => setUploadModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
 
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-main hover:border-accent-blue/50 rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer bg-surface-raised/40 hover:bg-surface-raised/70 transition-all"
+              style={{
+                border: '2px dashed var(--border-main)',
+                borderRadius: 14,
+                padding: 32,
+                textAlign: 'center',
+                cursor: 'pointer',
+                marginBottom: 16,
+              }}
             >
               <input
                 ref={fileInputRef}
@@ -2261,49 +1647,35 @@ export default function OntologyDomainManager() {
                   setSelectedFiles(Array.from(e.target.files || []));
                   setUploadError(null);
                 }}
-                className="hidden"
+                style={{ display: 'none' }}
               />
-              <FileCode size={32} className="text-accent-blue mb-2" />
-              <span className="font-bold text-xs text-primary block">Click or Drag & Drop YAML Files</span>
-              <span className="text-[11px] text-tertiary mt-1 block">Supports .yaml and .yml files authored by domain teams</span>
+              <FileCode size={28} color="#0284C7" style={{ marginBottom: 8 }} />
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Click to select .yaml or .yml files</div>
+              {selectedFiles.length > 0 && (
+                <div style={{ fontSize: 12, color: '#10B981', marginTop: 8 }}>
+                  Selected: {selectedFiles.map((f) => f.name).join(', ')}
+                </div>
+              )}
             </div>
 
-            {selectedFiles.length > 0 && (
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                <span className="text-[10px] text-tertiary uppercase font-bold tracking-wider">
-                  Selected Files ({selectedFiles.length})
-                </span>
-                {selectedFiles.map((file, fIdx) => (
-                  <div key={fIdx} className="p-2 rounded-lg bg-surface-raised border border-main text-xs flex items-center justify-between">
-                    <span className="font-medium text-primary truncate max-w-xs">{file.name}</span>
-                    <span className="text-emerald-400 font-semibold text-[11px]">Ready</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {uploadError && (
-              <div
-                role="alert"
-                className="p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-xs text-red-500 flex items-start gap-2 max-h-48 overflow-y-auto"
-              >
-                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold block mb-1">The file was rejected. Fix it and upload again:</span>
-                  <span style={{ whiteSpace: 'pre-line' }}>{uploadError}</span>
-                </div>
+              <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 12, whiteSpace: 'pre-line' }}>
+                {uploadError}
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-main">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedFiles([]);
-                  setUploadError(null);
-                  setUploadModalOpen(false);
+                onClick={() => setUploadModalOpen(false)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 999,
+                  background: 'transparent',
+                  border: '1px solid var(--border-main)',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
                 }}
-                className="px-4 py-2 rounded-lg border border-main text-xs font-semibold text-secondary hover:text-primary transition-colors"
               >
                 Cancel
               </button>
@@ -2311,106 +1683,189 @@ export default function OntologyDomainManager() {
                 type="button"
                 disabled={loading || selectedFiles.length === 0}
                 onClick={handleFileUpload}
-                className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                style={PILL_BTN_DARK}
               >
-                {loading ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
-                Ingest & Compile
+                Upload &amp; Compile
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════════════════
-          GENERATE / SYNC FROM OSI MODAL
-         ══════════════════════════════════════════════════════════════════════════ */}
+      {/* Auto-Generate from OSI Modal */}
       {bootstrapModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg bg-surface border border-main rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-main">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-accent-blue/10 text-accent-blue">
-                  <Sparkles size={18} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-primary m-0">Generate Ontology from OSI Model</h3>
-                  <p className="text-[11px] text-secondary m-0 mt-0.5">
-                    Extract concepts, attributes, metrics, and relationships from existing BI models.
-                  </p>
-                </div>
-              </div>
+        <div
+          onClick={() => setBootstrapModalOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 60,
+            background: 'rgba(2, 6, 23, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 480,
+              borderRadius: 20,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-main)',
+              padding: 24,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Auto-Generate Ontology from Project</h3>
               <button
                 type="button"
                 onClick={() => setBootstrapModalOpen(false)}
-                className="p-1 rounded-lg text-tertiary hover:text-primary transition-colors"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
 
-            <div className="space-y-4 text-xs">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
               <div>
-                <label className="font-bold text-secondary uppercase tracking-wider block text-[11px] mb-1">
-                  Source BI Project / Model
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+                  SOURCE PROJECT
                 </label>
                 <select
                   value={bootstrapProject}
                   onChange={(e) => setBootstrapProject(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-surface-raised border border-main text-primary text-xs font-medium focus:outline-none focus:border-accent-blue"
+                  style={{ ...SELECT_STYLE, width: '100%' }}
                 >
-                  <option value="">Select a translated BI project...</option>
+                  <option value="">Select a project...</option>
                   {projectsList.map((p) => (
                     <option key={p.id || p.name} value={p.id || p.name}>
                       {p.name || p.id}
                     </option>
                   ))}
                 </select>
-                <span className="text-[11px] text-tertiary block mt-1">
-                  Uses the latest OSI intermediate snapshot compiled from Power BI, Fabric, or Snowflake.
-                </span>
               </div>
-
               <div>
-                <label className="font-bold text-secondary uppercase tracking-wider block text-[11px] mb-1">
-                  Target Domain Name (Optional)
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+                  MODEL NAME (OPTIONAL)
                 </label>
                 <input
                   type="text"
                   value={bootstrapDomain}
                   onChange={(e) => setBootstrapDomain(e.target.value)}
-                  placeholder="e.g. Finance, Sales, SupplyChain (Defaults to project name)"
-                  className="w-full p-2.5 rounded-xl bg-surface-raised border border-main text-primary text-xs focus:outline-none focus:border-accent-blue"
+                  placeholder="Defaults to project name"
+                  style={{ ...INPUT_STYLE, width: '100%' }}
                 />
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-surface-raised/70 border border-main space-y-1.5 text-[11px]">
-                <span className="font-bold text-primary flex items-center gap-1.5">
-                  <ShieldCheck size={14} className="text-emerald-400" />
-                  Human-Enrichment Preserving Merge
-                </span>
-                <p className="text-secondary leading-relaxed m-0">
-                  If this domain already exists, your manually authored business rules, data stewards, custom synonyms, and metric overrides will be <strong>preserved</strong>. Only updated calculations, new tables, and columns will be refreshed.
-                </p>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-main">
+            {bootstrapDuplicateError && (
+              <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--color-warning-bg)', color: 'var(--color-warning)', fontSize: 12, marginBottom: 14 }}>
+                <div>{bootstrapDuplicateError}</div>
+                <button
+                  type="button"
+                  disabled={bootstrapping}
+                  onClick={() => handleBootstrapFromOsi(true)}
+                  style={{ ...BTN_PRIMARY, marginTop: 8 }}
+                >
+                  Sync Existing Domain
+                </button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button
                 type="button"
-                onClick={() => setBootstrapModalOpen(false)}
-                className="px-4 py-2 rounded-lg border border-main text-xs font-semibold text-secondary hover:text-primary transition-colors"
+                onClick={() => {
+                  setBootstrapDuplicateError(null);
+                  setBootstrapModalOpen(false);
+                }}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 999,
+                  background: 'transparent',
+                  border: '1px solid var(--border-main)',
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                }}
               >
                 Cancel
               </button>
               <button
                 type="button"
                 disabled={bootstrapping || !bootstrapProject}
-                onClick={handleBootstrapFromOsi}
-                className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                onClick={() => handleBootstrapFromOsi(false)}
+                style={PILL_BTN_DARK}
               >
-                {bootstrapping ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                Generate & Save Domain
+                {bootstrapping ? 'Generating...' : 'Generate Ontology'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Collisions Modal */}
+      {showCollisionsModal && (
+        <div
+          onClick={() => setShowCollisionsModal(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 60,
+            background: 'rgba(2, 6, 23, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 560,
+              borderRadius: 20,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-main)',
+              padding: 24,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#F59E0B' }}>
+                Cross-Domain Metric Collisions ({domainData.collisions.length})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCollisionsModal(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
+              {domainData.collisions.map((col, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    padding: 14,
+                    borderRadius: 12,
+                    background: 'var(--bg-app)',
+                    border: '1px solid var(--border-main)',
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{col.item_name}</div>
+                  {Object.entries(col.expressions || {}).map(([dom, expr]) => (
+                    <div key={dom} style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4 }}>
+                      <strong style={{ color: '#0284C7' }}>{dom}:</strong> {expr || 'N/A'}
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -2418,4 +1873,3 @@ export default function OntologyDomainManager() {
     </div>
   );
 }
-

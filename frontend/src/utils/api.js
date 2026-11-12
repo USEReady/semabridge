@@ -782,6 +782,49 @@ export const api = {
         return handleResponse(res);
     },
 
+    /** Migration summary across the caller's projects (Projects page summary band). */
+    async getPortfolioSummary(days = 30) {
+        const res = await authFetch(`${API_BASE_URL}/portfolio/summary?days=${encodeURIComponent(days)}`);
+        return handleResponse(res);
+    },
+
+    /** Ontology health (0-100 score, duplicates, conflicts, glossary) for several projects. */
+    async getProjectsOntologyHealth(projectIds = []) {
+        const ids = projectIds.filter(Boolean).map(String).join(',');
+        const res = await authFetch(`${API_BASE_URL}/ontology/projects/health?project_ids=${encodeURIComponent(ids)}`);
+        return handleResponse(res);
+    },
+
+    /** Wizard Ontology step: read the selected models and find duplicates / conflicts / gaps. */
+    async analyzeOntologyReview(payload) {
+        const res = await authFetch(`${API_BASE_URL}/ontology/review/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    /** Wizard Ontology step: save the reviewed definitions as a new domain. */
+    async applyOntologyReview(payload) {
+        const res = await authFetch(`${API_BASE_URL}/ontology/review/apply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
+    /** Wizard Ontology step: check if incoming metrics already exist or are similar in Snowflake. */
+    async checkSnowflakeSimilarity(payload) {
+        const res = await authFetch(`${API_BASE_URL}/ontology/review/snowflake-similarity`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return handleResponse(res);
+    },
+
     async saveSynonymOverride(payload) {
         const res = await authFetch(`${API_BASE_URL}/synonyms/`, {
             method: 'POST',

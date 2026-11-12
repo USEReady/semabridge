@@ -527,6 +527,7 @@ class SMLModel(BaseModel):
     dimensions: list[SMLDimension] = Field(default_factory=list, description="Dimensions")
     metrics: list[SMLMetric] = Field(default_factory=list, description="Metrics (measures)")
     relationships: list[SMLRelationship] = Field(default_factory=list, description="Relationships")
+    verified_queries: list[dict[str, Any]] = Field(default_factory=list, description="Verified queries for AI accuracy")
     
     # Metadata
     source_system: str = Field(default="snowflake", description="Source system identifier")

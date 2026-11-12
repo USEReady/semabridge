@@ -216,58 +216,21 @@ class PrimaryKeyResolver:
                     f"({rel_pk_cols})"
                 )
 
-        # ── Strategy 3: Heuristic detection ───────────────────────────
-        candidates = self._heuristic_detect(dataset, physical_cols)
-        if candidates:
-            result.pk_columns = candidates
-            result.source = "heuristic"
-            result.is_valid = True
-            result.warnings.append(
-                f"PK auto-detected by naming convention: {candidates}"
-            )
-            return result
-
-        # ── Strategy 4: Fallback ──────────────────────────────────────
+        # ── Strategy 3: No heuristic or columns[0] fallback ───────────
+        result.pk_columns = []
+        result.source = "none"
         if self._mode == "strict":
             result.is_valid = False
-            result.source = "none"
             result.errors.append(
                 f"No primary key found for dataset '{ds_name}' "
                 f"(pk_resolution_mode=strict). Mark a column as is_key "
                 f"or define a relationship pointing to this table."
             )
-            return result
-
-        # Permissive fallback — use first physical column
-        if physical_cols:
-            fallback = sorted(physical_cols)[0]
-            result.pk_columns = [fallback]
-            result.source = "fallback"
+        else:
             result.is_valid = True
             result.warnings.append(
-                f"No explicit PK; using first physical column "
-                f"'{fallback}' as fallback"
+                f"No explicit PK or relationship target found for dataset '{ds_name}'; omitting PRIMARY KEY."
             )
-        else:
-            # Absolute last resort — first column of any kind
-            columns = getattr(dataset, "columns", [])
-            if columns:
-                col_name = self._id.sanitize_column(columns[0].unique_name)
-                result.pk_columns = [col_name]
-                result.source = "fallback"
-                result.is_valid = True
-                result.warnings.append(
-                    f"No physical columns found; using '{col_name}' as "
-                    f"last-resort fallback"
-                )
-            else:
-                result.pk_columns = ["ID"]
-                result.source = "fallback"
-                result.is_valid = True
-                result.warnings.append(
-                    "Dataset has no columns; using synthetic 'ID'"
-                )
-
         return result
 
     def _heuristic_detect(

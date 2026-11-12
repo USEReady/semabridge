@@ -1,0 +1,863 @@
+<title>Semabridge App Redesign</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: proposal document with a sticky contents rail; each screen is a framed app window that scrolls sideways on phones. */
+:root{
+  --bg:#F4F5FA; --paper:#FFFFFF; --ink:#141827; --ink2:#4A5168; --ink3:#7D849A; --line:#E1E4EE;
+  --accent:#5457E0; --accent-soft:#E9E9FC; --accent2:#0E9CB4;
+  --ok:#0F9D6E; --ok-soft:#DDF4EA; --warn:#C27A0A; --warn-soft:#FBEFD6; --bad:#D63B4E; --bad-soft:#FBE3E6; --ai:#9A4FE0; --ai-soft:#F1E6FC;
+  --m-app:#F8FAFC; --m-surface:#FFFFFF; --m-raised:#F1F4F9; --m-line:#E2E8F0; --m-text:#0F172A; --m-text2:#64748B; --m-text3:#94A3B8;
+  --display:"Fraunces",Georgia,serif; --sans:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0B0E17; --paper:#121726; --ink:#EEF0F7; --ink2:#AAB1C5; --ink3:#727A92; --line:#232A3D;
+  --accent:#8B8EF5; --accent-soft:#23254A; --accent2:#3CC6DC;
+  --ok:#34D399; --ok-soft:#0F2E25; --warn:#F5B544; --warn-soft:#33270F; --bad:#F87185; --bad-soft:#3A1720; --ai:#C08BF5; --ai-soft:#2C1C42;
+  --m-app:#090D16; --m-surface:#0F172A; --m-raised:#141E33; --m-line:rgba(255,255,255,.09); --m-text:#F8FAFC; --m-text2:#94A3B8; --m-text3:#64748B;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0B0E17; --paper:#121726; --ink:#EEF0F7; --ink2:#AAB1C5; --ink3:#727A92; --line:#232A3D;
+  --accent:#8B8EF5; --accent-soft:#23254A; --accent2:#3CC6DC;
+  --ok:#34D399; --ok-soft:#0F2E25; --warn:#F5B544; --warn-soft:#33270F; --bad:#F87185; --bad-soft:#3A1720; --ai:#C08BF5; --ai-soft:#2C1C42;
+  --m-app:#090D16; --m-surface:#0F172A; --m-raised:#141E33; --m-line:rgba(255,255,255,.09); --m-text:#F8FAFC; --m-text2:#94A3B8; --m-text3:#64748B;
+  color-scheme:dark}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55}
+.layout{max-width:1260px;margin:0 auto;padding-block:40px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;grid-template-columns:180px minmax(0,1fr);gap:40px}
+.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;display:flex;flex-direction:column;gap:2px;font-size:13px}
+.toc b{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);padding:12px 8px 4px;font-weight:500}
+.toc a{color:var(--ink2);text-decoration:none;padding:4px 8px;border-radius:6px}
+.toc a:hover,.toc a:focus-visible{background:var(--paper);color:var(--ink);outline:none}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)}.toc{display:none}}
+.doc{display:flex;flex-direction:column;gap:72px;min-width:0}
+h1,h2{font-family:var(--display);font-weight:600;letter-spacing:-.01em;text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.1}
+h2{font-size:clamp(22px,3vw,28px);line-height:1.2}
+h3{font-size:16px;margin:0;font-weight:600}
+p{margin:0;max-width:70ch;color:var(--ink2)}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+section{display:flex;flex-direction:column;gap:20px;scroll-margin-top:24px}
+.head{display:flex;flex-direction:column;gap:10px}
+code{font-family:var(--mono);font-size:.86em;background:var(--paper);border:1px solid var(--line);padding:0 4px;border-radius:4px}
+
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.vcard{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:6px}
+.vcard b{font-size:14.5px}
+.vcard span{font-size:13.5px;color:var(--ink2)}
+.vcard .k{font-family:var(--mono);font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em}
+.answer{background:var(--paper);border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+.answer p{color:var(--ink)}
+
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.note{display:grid;grid-template-columns:22px 1fr;gap:10px;font-size:13.5px;color:var(--ink2)}
+.note::before{content:"";width:8px;height:8px;margin:7px 0 0 6px;border-radius:50%;background:var(--accent)}
+.note b{color:var(--ink)}
+
+.tablewrap{overflow-x:auto}
+.dtable{border-collapse:collapse;width:100%;min-width:620px;font-size:14px;background:var(--paper);border:1px solid var(--line)}
+.dtable th,.dtable td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+.dtable th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);font-weight:600}
+.dtable td{color:var(--ink2)}
+.dtable td:first-child{color:var(--ink);font-weight:600}
+.dtable.ren td:first-child{color:var(--ink3);font-weight:400;text-decoration:line-through;text-decoration-color:var(--bad)}
+.dtable.ren td:nth-child(2){color:var(--ink);font-weight:600}
+.tag{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.tag.ok{background:var(--ok-soft);color:var(--ok)} .tag.warn{background:var(--warn-soft);color:var(--warn)} .tag.bad{background:var(--bad-soft);color:var(--bad)}
+
+.steps{display:flex;flex-direction:column;margin:0;padding:0;list-style:none;counter-reset:s}
+.steps li{display:grid;grid-template-columns:34px 1fr;gap:12px;padding:12px 0;border-top:1px solid var(--line);font-size:14px;color:var(--ink2)}
+.steps li::before{counter-increment:s;content:counter(s);font-family:var(--mono);color:var(--accent);font-weight:500}
+.steps b{color:var(--ink)}
+
+/* ── mock app ── */
+.scroller{overflow-x:auto;border-radius:12px;border:1px solid var(--line);background:var(--paper);box-shadow:0 18px 40px -26px rgba(20,24,39,.4)}
+.frame{min-width:980px;font-size:12px;color:var(--m-text);background:var(--m-app);line-height:1.45}
+.chrome{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--m-raised);border-bottom:1px solid var(--m-line)}
+.chrome i{width:9px;height:9px;border-radius:50%;background:var(--m-line)}
+.chrome .url{margin-left:12px;font-family:var(--mono);font-size:11px;color:var(--m-text2);background:var(--m-surface);border:1px solid var(--m-line);border-radius:5px;padding:2px 10px}
+.app{display:grid;grid-template-columns:176px minmax(0,1fr);min-height:500px}
+.side{background:var(--m-surface);border-right:1px solid var(--m-line);padding:12px 8px;display:flex;flex-direction:column;gap:1px}
+.side .brand{font-weight:700;font-size:13px;padding:2px 8px 12px;display:flex;align-items:center;gap:7px}
+.side .brand::before{content:"";width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.side .grp{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--m-text3);font-weight:600;padding:12px 8px 4px}
+.nav{padding:6px 8px;border-radius:6px;color:var(--m-text2);display:flex;align-items:center;gap:8px}
+.nav.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav .ic{width:12px;height:12px;border-radius:3px;border:1.5px solid currentColor;flex:none}
+.nav .cnt{margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--m-text3)}
+.side .foot{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding:10px 8px 0;border-top:1px solid var(--m-line)}
+.health{display:flex;align-items:center;gap:6px;color:var(--m-text2);font-size:11px}
+.me{display:flex;align-items:center;gap:8px}
+.av{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-size:10px;font-weight:700;flex:none}
+.main{display:flex;flex-direction:column;min-width:0}
+.top{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--m-line);background:var(--m-surface)}
+.crumb{color:var(--m-text2)} .crumb b{color:var(--m-text)}
+.search{margin-left:auto;width:260px;border:1px solid var(--m-line);border-radius:6px;padding:4px 10px;color:var(--m-text3);display:flex;justify-content:space-between;background:var(--m-app)}
+.kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--m-line);border-radius:3px;padding:0 4px}
+.iconbtn{width:24px;height:24px;border-radius:6px;border:1px solid var(--m-line);display:grid;place-items:center;color:var(--m-text2);position:relative;font-size:11px}
+.iconbtn .badge{position:absolute;top:-4px;right:-4px;background:var(--bad);color:#fff;font-size:9px;border-radius:999px;padding:0 4px;line-height:13px}
+.pagehead{padding:16px 22px 0;display:flex;flex-direction:column;gap:12px}
+.pagehead.pb{padding-bottom:4px}
+.ph-row{display:flex;align-items:center;gap:12px}
+.ph-row .t{font-size:17px;font-weight:700}
+.ph-row .sub{color:var(--m-text2)}
+.sp{flex:1}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--m-line)}
+.tab{padding:6px 0 9px;color:var(--m-text2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--m-text);border-color:var(--accent);font-weight:600}
+.btn{border:1px solid var(--m-line);background:var(--m-surface);border-radius:6px;padding:5px 11px;font-weight:600;color:var(--m-text);white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.sm{padding:2px 8px;font-size:11px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--m-text2)}
+.body{padding:16px 22px 22px;display:flex;flex-direction:column;gap:14px;flex:1;min-width:0}
+.muted{color:var(--m-text2)} .faint{color:var(--m-text3)}
+.card{background:var(--m-surface);border:1px solid var(--m-line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.card .lbl,.lbl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--m-text3);font-weight:600}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.g4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.g5{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.num{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.num small{font-size:12px;font-weight:500;color:var(--m-text2)}
+.delta{font-size:11px;color:var(--ok);font-weight:600}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.n{background:var(--m-raised);color:var(--m-text2)} .pill.ai{background:var(--ai-soft);color:var(--ai)} .pill.acc{background:var(--accent-soft);color:var(--accent)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+.tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.tbl th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--m-text3);font-weight:600;padding:7px 10px;border-bottom:1px solid var(--m-line);white-space:nowrap}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--m-line);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tr.sel td{background:var(--accent-soft)}
+.tbl .r{text-align:right}
+.chip{font-family:var(--mono);font-size:10.5px;border:1px solid var(--m-line);background:var(--m-surface);padding:1px 6px;border-radius:5px;white-space:nowrap}
+.flow{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.flow .arr{color:var(--m-text3)}
+/* stacked conversion bar */
+.stack{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--m-raised)}
+.stack.lg{height:14px;border-radius:5px}
+.stack i{display:block;height:100%}
+.c-std{background:var(--ok)} .c-ai{background:var(--ai)} .c-rev{background:var(--warn)} .c-drop{background:var(--bad)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--m-text2)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.minibar{display:flex;align-items:center;gap:8px}
+.minibar .stack{flex:1;min-width:70px}
+.spark{width:100%;height:34px;display:block}
+.attn{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--m-line)}
+.attn:first-of-type{border-top:0}
+.hbar{display:grid;grid-template-columns:150px 1fr 30px;gap:8px;align-items:center;font-variant-numeric:tabular-nums}
+.hbar i{display:block;height:8px;border-radius:3px;background:var(--accent)}
+.hbar span:last-child{text-align:right;color:var(--m-text2)}
+.collapse{display:flex;align-items:center;gap:6px;color:var(--m-text2);font-size:11px}
+.drawer{border-left:1px solid var(--m-line);background:var(--m-surface);padding:14px;display:flex;flex-direction:column;gap:12px;box-shadow:-12px 0 24px -20px rgba(0,0,0,.4)}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 300px;flex:1;min-height:0}
+.timeline{display:flex;flex-direction:column}
+.tl{display:grid;grid-template-columns:16px 1fr auto;gap:10px;padding:8px 0;align-items:start}
+.tl .bul{width:10px;height:10px;border-radius:50%;margin-top:3px;border:2px solid currentColor}
+.formula{font-family:var(--mono);font-size:11px;background:var(--m-raised);border:1px solid var(--m-line);border-radius:6px;padding:8px;color:var(--m-text)}
+.seg{display:inline-flex;gap:2px;background:var(--m-raised);padding:2px;border-radius:7px;border:1px solid var(--m-line)}
+.seg span{padding:3px 9px;border-radius:5px;font-weight:600;color:var(--m-text2)}
+.seg span.on{background:var(--m-surface);color:var(--m-text);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.input{border:1px solid var(--m-line);border-radius:6px;padding:6px 9px;background:var(--m-surface);color:var(--m-text3)}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-weight:600;font-size:11.5px}
+.toggle{width:26px;height:14px;border-radius:999px;background:var(--accent);position:relative;flex:none}
+.toggle::after{content:"";position:absolute;right:2px;top:2px;width:10px;height:10px;border-radius:50%;background:#fff}
+.toggle.off{background:var(--m-line)} .toggle.off::after{right:auto;left:2px}
+.stepper{display:flex;align-items:center;gap:8px}
+.st{display:flex;align-items:center;gap:6px;color:var(--m-text3);font-weight:600}
+.st .n{width:18px;height:18px;border-radius:50%;border:1.5px solid currentColor;display:grid;place-items:center;font-size:10px}
+.st.done{color:var(--ok)} .st.done .n{background:var(--ok);color:#fff;border-color:var(--ok)}
+.st.on{color:var(--accent)} .st.on .n{background:var(--accent);color:#fff;border-color:var(--accent)}
+.stline{width:28px;height:1.5px;background:var(--m-line)}
+.drop{border:1.5px dashed var(--m-line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:6px;align-items:flex-start;background:var(--m-surface)}
+.drop.filled{border-style:solid}
+.ask{align-self:flex-end;background:var(--accent);color:#fff;border-radius:12px 12px 3px 12px;padding:8px 12px;max-width:60%;font-weight:500}
+.bars{display:flex;flex-direction:column;gap:5px}
+.bar{display:grid;grid-template-columns:90px 1fr 50px;gap:8px;align-items:center;font-variant-numeric:tabular-nums}
+.bar i{height:10px;border-radius:3px;background:var(--accent);display:block}
+.bar span:last-child{text-align:right;font-family:var(--mono);font-size:11px}
+.sub-nav{display:flex;flex-direction:column;gap:2px;padding:14px 10px;border-right:1px solid var(--m-line);background:var(--m-surface)}
+.sub-nav .nav{padding:7px 10px}
+.diffrow{display:grid;grid-template-columns:16px 1fr auto;gap:10px;padding:7px 0;border-top:1px solid var(--m-line);align-items:center}
+.diffrow b{font-family:var(--mono);font-size:11px;font-weight:500}
+.sym{font-family:var(--mono);font-weight:700;text-align:center}
+.login{display:grid;grid-template-columns:1.1fr 1fr;min-height:440px}
+.login .art{background:linear-gradient(150deg,var(--accent),var(--accent2));color:#fff;padding:36px;display:flex;flex-direction:column;justify-content:space-between;gap:20px}
+.login .art h4{font-family:var(--display);font-size:24px;line-height:1.2;margin:0;font-weight:600;max-width:20ch}
+.login .art .fl{display:flex;flex-direction:column;gap:8px;font-size:12px;opacity:.92}
+.login .form{padding:44px 48px;display:flex;flex-direction:column;gap:14px;justify-content:center;background:var(--m-surface)}
+.oscore{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;border:2.5px solid currentColor;flex:none}
+.oscore.good{color:var(--ok)} .oscore.mid{color:var(--warn)} .oscore.low{color:var(--bad)} .oscore.none{color:var(--m-text3);border-style:dashed}
+.ocell{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.ocell span:last-child{display:flex;flex-direction:column;line-height:1.25}
+.oexp td{background:var(--m-raised);padding:10px 14px}
+.ostrip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:14px;align-items:center}
+.ostrip div{display:flex;flex-direction:column;gap:2px}
+.ostrip b{font-size:13px;font-variant-numeric:tabular-nums}
+.dupgrp{border:1px solid var(--m-line);border-radius:7px;padding:10px 12px;display:flex;flex-direction:column;gap:7px;background:var(--m-surface)}
+.dupitems{display:flex;flex-direction:column;gap:3px}
+.dupitems div{display:grid;grid-template-columns:150px 150px 1fr;gap:10px;align-items:center}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.vs > div{border:1px solid var(--m-line);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px}
+.graph{background:var(--m-app);border-radius:8px;border:1px solid var(--m-line);position:relative;min-height:330px}
+.graph svg{width:100%;height:330px;display:block}
+</style>
+
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <b>Proposal</b>
+  <a href="#summary">Summary</a>
+  <a href="#dashboard-q">Projects dashboard</a>
+  <a href="#nav">Navigation</a>
+  <b>Screens</b>
+  <a href="#s-login">Sign in</a>
+  <a href="#s-projects">Projects</a>
+  <a href="#s-onto-step">New project · Ontology</a>
+  <a href="#s-new">New project · Check</a>
+  <a href="#s-project">Project</a>
+  <a href="#s-runs">Runs</a>
+  <a href="#s-ask">Ask AI</a>
+  <a href="#s-ontology">Ontology</a>
+  <a href="#s-map">Model map</a>
+  <a href="#s-history">History</a>
+  <a href="#s-compare">Compare</a>
+  <a href="#s-settings">Settings</a>
+  <b>Plan</b>
+  <a href="#copy">Renames</a>
+  <a href="#build">Build order</a>
+</nav>
+
+<div class="doc">
+
+<header class="head" id="summary">
+  <div class="eyebrow">Semabridge · UX proposal · whole app</div>
+  <h1>One calm shell, nine pages, and a Projects page that shows progress</h1>
+  <p>This applies the Ontology approach to every screen: one job per page, short plain names, summary before detail, and power-user controls one click away instead of always visible. All numbers in the mockups are example data.</p>
+  <div class="verdict">
+    <div class="vcard"><span class="k">Navigation</span><b>7 items, two groups</b><span>Version Control, Explore and Comparator stop overlapping. Ask AI gets its own entry.</span></div>
+    <div class="vcard"><span class="k">Projects</span><b>Portfolio summary on top</b><span>Measures migrated, conversion %, AI help and run health, above the list.</span></div>
+    <div class="vcard"><span class="k">One project</span><b>One home per project</b><span>Detail, Config and Edit merge into one project page with tabs.</span></div>
+    <div class="vcard"><span class="k">Ontology first</span><b>Definitions before dry run</b><span>A new wizard step merges duplicate metrics and fills glossary gaps before anything is converted.</span></div>
+    <div class="vcard"><span class="k">Language</span><b>Outcome names</b><span>No “Abort Mission”, “Context Pulse” or “Pruning Intelligence”.</span></div>
+  </div>
+</header>
+
+<!-- ───────── DASHBOARD QUESTION ───────── -->
+<section id="dashboard-q">
+  <div class="head">
+    <div class="eyebrow">Your question</div>
+    <h2>Will a migration dashboard on the Projects page add value?</h2>
+  </div>
+  <div class="answer">
+    <p><b>Yes. It is the most useful addition in this proposal,</b> because today nothing in the app answers “how far along is our migration?” Project cards show only name, source, target, tags and status. A sponsor or team lead has to open every run report to add it up.</p>
+    <p>Put it <b>above</b> the list, not below. Below the list, nobody scrolls to it once there are 20+ projects. Keep it to one band of 4 numbers plus one “needs attention” row, and let people collapse it. The full breakdown can live on each project's Overview tab.</p>
+  </div>
+  <p>Most of the data already exists. Each run's report summary (<code>/api/projects/:id/runs/:run/report-summary</code>) returns tables, columns, measures, relationships, and counts of items converted cleanly, converted with AI help, needing review, dropped and excluded. What's missing is one endpoint that adds up the latest run of every project, and tracking for Ask AI usage.</p>
+  <div class="tablewrap"><table class="dtable">
+    <tr><th>Dashboard number</th><th>Where it comes from</th><th>Status</th></tr>
+    <tr><td>Projects by status (active, draft, failing)</td><td>Projects list API</td><td><span class="tag ok">Available</span></td></tr>
+    <tr><td>Tables, columns, measures, relationships migrated</td><td>Latest run report summary per project: <code>tables</code>, <code>columns</code>, <code>calculations</code>, <code>relationships</code></td><td><span class="tag warn">Needs aggregate endpoint</span></td></tr>
+    <tr><td>Conversion % (clean / AI-assisted / needs review / dropped)</td><td><code>standard</code>, <code>ai_assisted</code>, <code>needs_review</code>, <code>dropped</code>, <code>excluded_by_design</code></td><td><span class="tag warn">Needs aggregate endpoint</span></td></tr>
+    <tr><td>Measures converted with AI help, and AI confidence</td><td><code>ai_assisted</code> items, <code>llm_self_reported_confidence</code></td><td><span class="tag warn">Needs aggregate endpoint</span></td></tr>
+    <tr><td>Reports / models migrated</td><td>Run models list (<code>/runs/:run/models</code>)</td><td><span class="tag warn">Needs aggregate endpoint</span></td></tr>
+    <tr><td>Run success rate, last 30 days</td><td><code>/api/jobs/runs</code></td><td><span class="tag ok">Available</span></td></tr>
+    <tr><td>Ontology per project: domains, metrics governed</td><td>Domains attached to the project (<code>/ontology/projects/:id/domains</code>), each domain's <code>source_project_id</code></td><td><span class="tag ok">Available</span></td></tr>
+    <tr><td>Ontology per project: name conflicts, broken references</td><td>Federated loader <code>collisions</code> and <code>unresolved_references</code>, filtered to the project's domains</td><td><span class="tag ok">Available</span></td></tr>
+    <tr><td>Ontology per project: duplicate formulas, glossary coverage, overall score</td><td>Formula matching and a coverage score over <code>description</code>, <code>synonyms</code>, <code>data_steward</code> fields</td><td><span class="tag bad">New check needed</span></td></tr>
+    <tr><td>Ask AI questions, people using it, certified answers</td><td>Nothing records this yet</td><td><span class="tag bad">Needs usage logging</span></td></tr>
+  </table></div>
+</section>
+
+<!-- ───────── NAV ───────── -->
+<section id="nav">
+  <div class="head">
+    <div class="eyebrow">Shell</div>
+    <h2>New navigation and top bar</h2>
+    <p>Today the sidebar has 7 items with three overlapping “look at a model” pages (Explore, Version Control, Comparator), plus a header that opens Version Control a second way and a status bar with a hardcoded timezone. The new shell groups pages by job and moves system status into the sidebar footer.</p>
+  </div>
+  <div class="tablewrap"><table class="dtable">
+    <tr><th>New sidebar</th><th>Replaces</th><th>Job</th></tr>
+    <tr><td>Projects</td><td>Projects + project Detail / Config / Edit</td><td>Set up and track migrations</td></tr>
+    <tr><td>Runs</td><td>Runs (/jobs)</td><td>See what ran, what failed, what's scheduled</td></tr>
+    <tr><td>Ask AI</td><td>AI/BI Conversational Studio tab</td><td>Get governed answers in plain language</td></tr>
+    <tr><td>Ontology</td><td>Ontology &amp; AI (minus the AI studio)</td><td>Own business definitions</td></tr>
+    <tr><td>Model map</td><td>Explore / Repository Map</td><td>See tables, relationships and measures as a diagram</td></tr>
+    <tr><td>History</td><td>Version Control page + header slide-over</td><td>See versions and restore one</td></tr>
+    <tr><td>Compare</td><td>Comparator</td><td>Diff two model files</td></tr>
+    <tr><td>Settings</td><td>Settings + Global Config</td><td>Connections, AI providers, preferences</td></tr>
+  </table></div>
+  <div class="notes">
+    <div class="note"><span><b>Top bar:</b> breadcrumb, search (⌘K), activity bell, avatar. The Version Control icon and the bottom status bar go away.</span></div>
+    <div class="note"><span><b>Sidebar footer:</b> one line “All systems OK” that turns amber when the API or a connector is down. It replaces “Context Pulse”.</span></div>
+    <div class="note"><span><b>Command palette:</b> drop “Toggle Terminal” and “Save Configuration”, which do nothing visible. Add “New project”, “Run project…” and “Ask AI…”.</span></div>
+  </div>
+</section>
+
+<!-- ───────── LOGIN ───────── -->
+<section id="s-login">
+  <div class="head"><div class="eyebrow">Screen 1 · /login</div><h2>Sign in</h2><p>The form stays as it is. The left panel says in one sentence what the product does, which matters for first-time users invited by a teammate.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/login</span></div>
+    <div class="login">
+      <div class="art">
+        <div style="font-weight:700;font-size:14px">Semabridge</div>
+        <h4>Move your semantic models between BI platforms without losing a single definition.</h4>
+        <div class="fl"><span>Power BI · Fabric → Snowflake · Databricks</span><span>Governed metrics shared by every dashboard and AI agent</span></div>
+      </div>
+      <div class="form">
+        <div style="font-size:18px;font-weight:700">Sign in</div>
+        <div class="field"><label>Username</label><div class="input">priya.n</div></div>
+        <div class="field"><label>Password</label><div class="input">••••••••••</div></div>
+        <div class="row"><span class="sp"></span><span class="faint">Forgot password?</span></div>
+        <span class="btn pri" style="justify-content:center;padding:8px">Sign in</span>
+        <span class="muted" style="text-align:center">New here? <b style="color:var(--accent)">Create an account</b></span>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── PROJECTS ───────── -->
+<section id="s-projects">
+  <div class="head"><div class="eyebrow">Screen 2 · /projects</div><h2>Projects, with the migration summary on top</h2><p>The summary band answers “how far along are we?” in five numbers, including ontology coverage. Each project row gets an ontology score, and expanding a row shows that project's ontology at a glance: domains, governed metrics, duplicates, conflicts and glossary coverage. The “needs attention” row turns it into a to-do list. The project list switches from cards to a table, so the same numbers can be compared row by row. Folders become a filter instead of a resizable side panel.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/projects</span></div>
+    <div class="app">
+      <div class="side" data-on="Projects"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Projects</b></span><span class="search">Search projects, models, measures… <span class="kbd">⌘K</span></span><span class="iconbtn">◐</span><span class="iconbtn">🔔<span class="badge">2</span></span></div>
+        <div class="pagehead pb">
+          <div class="ph-row"><span class="t">Projects</span><span class="sub">24 projects across 4 folders</span><span class="sp"></span><span class="btn">Import</span><span class="btn pri">+ New project</span></div>
+        </div>
+        <div class="body">
+          <div class="row"><span class="lbl">Migration summary</span><span class="faint">· latest run of each project</span><span class="sp"></span><span class="seg"><span>7d</span><span class="on">30d</span><span>All</span></span><span class="collapse">▾ Hide</span></div>
+          <div class="g5">
+            <div class="card"><span class="lbl">Measures migrated</span><span class="num">3,912 <small>/ 4,180</small></span>
+              <div class="stack"><i class="c-std" style="width:78%"></i><i class="c-ai" style="width:15.6%"></i><i class="c-rev" style="width:2.2%"></i><i class="c-drop" style="width:4.2%"></i></div>
+              <span class="muted"><b style="color:var(--m-text)">93.6%</b> converted · <span class="delta">+4.1 pts</span></span></div>
+            <div class="card"><span class="lbl">Reports &amp; models</span><span class="num">186</span><span class="muted">1,284 tables · 2,107 relationships</span><span class="delta">+22 this month</span></div>
+            <div class="card"><span class="lbl">AI help</span><span class="num" style="color:var(--ai)">652</span><span class="muted">measures converted with AI · avg confidence 0.91</span><span class="muted">Ask AI: <b style="color:var(--m-text)">318</b> questions by 22 people</span></div>
+            <div class="card"><span class="lbl">Run health</span><span class="num">96% <small>success</small></span>
+              <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path d="M0 22 L20 18 L40 20 L60 12 L80 14 L100 9 L120 16 L140 8 L160 10 L180 6 L200 7 L200 34 L0 34Z" fill="var(--accent-soft)"/><path d="M0 22 L20 18 L40 20 L60 12 L80 14 L100 9 L120 16 L140 8 L160 10 L180 6 L200 7" fill="none" stroke="var(--accent)" stroke-width="1.6"/><circle cx="200" cy="7" r="2.5" fill="var(--accent)"/></svg>
+              <span class="muted">142 runs · 6 failed</span></div>
+            <div class="card"><span class="lbl">Ontology coverage</span><span class="num">81% <small>governed</small></span><span class="muted">3,170 of 3,912 measures tied to a business metric</span><span class="muted"><b style="color:var(--warn)">57</b> duplicates · <b style="color:var(--bad)">6</b> conflicts</span></div>
+          </div>
+          <div class="g2" style="grid-template-columns:1.3fr 1fr">
+            <div class="card"><div class="row"><span class="lbl">Needs attention</span><span class="pill warn">3</span></div>
+              <div class="attn"><span class="dot" style="background:var(--bad)"></span><span><b>Finance Close</b> · last run failed: Snowflake warehouse suspended</span><span class="btn sm">Open run</span></div>
+              <div class="attn"><span class="dot" style="background:var(--warn)"></span><span><b>Sales Pipeline</b> · 41 measures need review</span><span class="btn sm">Review</span></div>
+              <div class="attn"><span class="dot" style="background:var(--warn)"></span><span><b>HR Headcount</b> · draft for 12 days, never run</span><span class="btn sm">Finish setup</span></div>
+            </div>
+            <div class="card"><span class="lbl">By route</span>
+              <div class="hbar"><span>Power BI → Snowflake</span><i style="width:100%"></i><span>11</span></div>
+              <div class="hbar"><span>Fabric → Snowflake</span><i style="width:55%"></i><span>6</span></div>
+              <div class="hbar"><span>Fabric → Databricks</span><i style="width:36%"></i><span>4</span></div>
+              <div class="hbar"><span>Snowflake → Fabric</span><i style="width:27%"></i><span>3</span></div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:4px"><span class="input" style="width:240px">Filter projects…</span><span class="btn sm">Folder: All ▾</span><span class="btn sm">Source ▾</span><span class="btn sm">Target ▾</span><span class="btn sm">Status ▾</span><span class="sp"></span><span class="seg"><span class="on">Table</span><span>Cards</span></span></div>
+          <div class="card" style="padding:0">
+            <table class="tbl">
+              <tr><th>Project</th><th>Last run</th><th style="width:190px">Converted</th><th class="r">AI</th><th class="r">Review</th><th>Ontology</th><th>Status</th><th></th></tr>
+              <tr class="sel"><td><b>▾ Sales Pipeline</b><div class="faint">Power BI → Snowflake · 18 models</div></td><td>2h ago</td><td><div class="minibar"><div class="stack"><i class="c-std" style="width:70%"></i><i class="c-ai" style="width:17%"></i><i class="c-rev" style="width:9%"></i><i class="c-drop" style="width:4%"></i></div><span>87%</span></div></td><td class="r">96</td><td class="r" style="color:var(--warn)">41</td><td><div class="ocell"><span class="oscore mid">72</span><span><b>2 domains</b><span class="faint">3 duplicates</span></span></div></td><td><span class="pill warn">Review</span></td><td><span class="btn sm">Run</span></td></tr>
+              <tr class="oexp"><td colspan="8">
+                <div class="ostrip">
+                  <div><span class="lbl">Domains</span><b>Sales, Finance</b><span class="faint">owner: RevOps</span></div>
+                  <div><span class="lbl">Metrics governed</span><b>118 / 134 · 88%</b><span class="faint">16 not in any domain</span></div>
+                  <div><span class="lbl">Duplicates</span><b style="color:var(--warn)">3 groups</b><span class="faint">e.g. Revenue = Sales Amount</span></div>
+                  <div><span class="lbl">Conflicts</span><b style="color:var(--bad)">1</b><span class="faint">Gross Margin ≠ Finance</span></div>
+                  <div><span class="lbl">Glossary</span><b>74% described</b><span class="faint">35 metrics need text</span></div>
+                  <span class="btn sm">Open ontology →</span>
+                </div>
+              </td></tr>
+              <tr><td><b>▸ Finance Close</b><div class="faint">Fabric → Snowflake · 9 models</div></td><td>5h ago</td><td><div class="minibar"><div class="stack"><i class="c-std" style="width:84%"></i><i class="c-ai" style="width:10%"></i><i class="c-drop" style="width:6%"></i></div><span>94%</span></div></td><td class="r">31</td><td class="r">0</td><td><div class="ocell"><span class="oscore good">94</span><span><b>1 domain</b><span class="faint">clean</span></span></div></td><td><span class="pill bad">Failed</span></td><td><span class="btn sm">Run</span></td></tr>
+              <tr><td><b>▸ Supply Chain KPIs</b><div class="faint">Fabric → Databricks · 7 models</div></td><td>Yesterday</td><td><div class="minibar"><div class="stack"><i class="c-std" style="width:90%"></i><i class="c-ai" style="width:9%"></i><i class="c-drop" style="width:1%"></i></div><span>99%</span></div></td><td class="r">12</td><td class="r">0</td><td><div class="ocell"><span class="oscore low">48</span><span><b>1 domain</b><span class="faint">40% described</span></span></div></td><td><span class="pill ok">Healthy</span></td><td><span class="btn sm">Run</span></td></tr>
+              <tr><td><b>▸ HR Headcount</b><div class="faint">Power BI → Snowflake · draft</div></td><td class="faint">Never</td><td class="faint">—</td><td class="r faint">—</td><td class="r faint">—</td><td><div class="ocell"><span class="oscore none">–</span><span class="faint">Not built yet</span></div></td><td><span class="pill n">Draft</span></td><td><span class="btn sm">Set up</span></td></tr>
+            </table>
+          </div>
+          <div class="legend"><span><i class="c-std"></i>Converted cleanly</span><span><i class="c-ai"></i>Converted with AI help</span><span><i class="c-rev"></i>Needs review</span><span><i class="c-drop"></i>Dropped</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>One colour code everywhere.</b> Green clean, purple AI, amber review, red dropped. The same bar appears on the project page and in run detail.</span></div>
+    <div class="note"><span><b>Every number is a link.</b> “41 to review” opens the project's review list. “6 failed” opens Runs filtered to failures.</span></div>
+    <div class="note"><span><b>Collapsible and per-user.</b> Engineers who live in the list can hide the band. Leads keep it open.</span></div>
+    <div class="note"><span><b>Ontology score (0–100)</b> = metrics tied to a domain, minus duplicates and conflicts, plus glossary coverage. Green 85+, amber 60–84, red below 60. Hover shows the breakdown.</span></div>
+    <div class="note"><span><b>Migration and meaning side by side.</b> Supply Chain converts 99% but scores 48: the numbers moved, but most metrics have no business description. The row makes that visible.</span></div>
+  </div>
+</section>
+
+<!-- ───────── WIZARD: ONTOLOGY STEP ───────── -->
+<section id="s-onto-step">
+  <div class="head"><div class="eyebrow">Screen 3a · /projects/new?step=4 · new step</div><h2>Ontology review, before the dry run</h2><p>A new step between “Choose models” and “Check”. Semabridge reads the selected models, builds a draft ontology, and shows what would otherwise be migrated twice or with the wrong meaning. Fixing it here means the dry run converts each business metric once, under one agreed name and definition.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/projects/new?step=4</span></div>
+    <div style="display:flex;flex-direction:column;min-height:560px">
+      <div class="top"><span class="iconbtn">✕</span><b style="font-size:13px">New project</b><span class="pill n">Sales Pipeline</span><span class="sp"></span>
+        <div class="stepper"><span class="st done"><span class="n">✓</span>Basics</span><span class="stline"></span><span class="st done"><span class="n">✓</span>Connect</span><span class="stline"></span><span class="st done"><span class="n">✓</span>Choose models</span><span class="stline"></span><span class="st on"><span class="n">4</span>Ontology</span><span class="stline"></span><span class="st"><span class="n">5</span>Check</span><span class="stline"></span><span class="st"><span class="n">6</span>Review</span></div></div>
+      <div style="max-width:1040px;width:100%;margin:0 auto;padding:22px;display:flex;flex-direction:column;gap:14px;flex:1">
+        <div class="row"><div><div style="font-size:17px;font-weight:700">Review business definitions</div><div class="muted">We read 765 measures from 18 Power BI models and compared them with each other and with your existing ontology.</div></div><span class="sp"></span><span class="btn">Domain: Sales ▾</span></div>
+        <div class="g5">
+          <div class="card"><span class="lbl">Measures found</span><span class="num">765</span><span class="faint">→ 512 unique business metrics</span></div>
+          <div class="card"><span class="lbl">Duplicates</span><span class="num" style="color:var(--warn)">38</span><span class="faint">same formula, different names</span></div>
+          <div class="card"><span class="lbl">Conflicts</span><span class="num" style="color:var(--bad)">6</span><span class="faint">same name, different formula</span></div>
+          <div class="card"><span class="lbl">Glossary</span><span class="num">61%</span><span class="faint">have a business description</span></div>
+          <div class="card"><span class="lbl">Already governed</span><span class="num" style="color:var(--ok)">142</span><span class="faint">match a certified metric</span></div>
+        </div>
+        <div class="tabs"><span class="tab on">Duplicates <span class="pill warn">38</span></span><span class="tab">Conflicts <span class="pill bad">6</span></span><span class="tab">Glossary gaps <span class="faint">199</span></span><span class="tab">Domain assignment <span class="faint">44</span></span></div>
+        <div class="g2" style="grid-template-columns:1.35fr 1fr">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="dupgrp">
+              <div class="row"><b>Revenue</b><span class="pill warn">3 copies in 3 reports</span><span class="sp"></span><span class="faint">Formula:</span><span class="chip">SUM(Sales[Amount])</span></div>
+              <div class="dupitems">
+                <div><span>Total Revenue</span><span class="faint">Exec Dashboard.pbix</span><span class="faint">used in 12 visuals</span></div>
+                <div><span>Revenue</span><span class="faint">Sales Ops.pbix</span><span class="faint">used in 7 visuals</span></div>
+                <div><span>Sales Amount</span><span class="faint">Regional KPIs.pbix</span><span class="faint">used in 4 visuals</span></div>
+              </div>
+              <div class="row"><span class="muted">Keep as</span><span class="input" style="color:var(--m-text)">revenue</span><span class="muted">with synonyms Total Revenue, Sales Amount</span><span class="sp"></span><span class="btn sm">Keep separate</span><span class="btn sm pri">Merge</span></div>
+            </div>
+            <div class="dupgrp">
+              <div class="row"><b>Win rate</b><span class="pill warn">2 copies</span><span class="sp"></span><span class="chip">DIVIDE([Won],[Closed])</span></div>
+              <div class="dupitems">
+                <div><span>Win Rate</span><span class="faint">Sales Ops.pbix</span><span class="faint">used in 5 visuals</span></div>
+                <div><span>Win %</span><span class="faint">Exec Dashboard.pbix</span><span class="faint">used in 2 visuals</span></div>
+              </div>
+              <div class="row"><span class="pill ok">Merged as win_rate</span><span class="sp"></span><span class="btn sm ghost">Undo</span></div>
+            </div>
+            <div class="row"><span class="muted">36 more groups</span><span class="sp"></span><span class="btn sm">Merge all exact matches (31)</span></div>
+          </div>
+          <div class="card">
+            <div class="row"><span class="lbl">Conflict preview</span><span class="pill bad">Gross Margin</span></div>
+            <span class="muted">Your Finance domain already defines Gross Margin differently.</span>
+            <div class="vs">
+              <div><span class="lbl">Finance domain · certified</span><span class="formula">(revenue − cogs) / revenue</span><span class="faint">Owner: CFO Office</span></div>
+              <div><span class="lbl">Sales Ops.pbix</span><span class="formula">(revenue − cogs − freight) / revenue</span><span class="faint">used in 9 visuals</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span class="btn sm" style="justify-content:flex-start">Use the Finance definition</span>
+              <span class="btn sm" style="justify-content:flex-start">Keep as new metric “gross_margin_after_freight”</span>
+              <span class="btn sm" style="justify-content:flex-start">Ask the Finance owner to decide</span>
+            </div>
+            <div class="row" style="border-top:1px solid var(--m-line);padding-top:8px"><span class="lbl">Glossary gaps</span><span class="sp"></span><span class="pill ai">AI drafted 199</span></div>
+            <span class="muted">Descriptions and synonyms drafted from report titles, visuals and column names. Review in the Glossary tab.</span>
+          </div>
+        </div>
+        <span class="sp"></span>
+        <div class="row" style="border-top:1px solid var(--m-line);padding-top:12px"><span class="btn">Back</span><span class="sp"></span><span class="muted">7 of 44 decisions made · conflicts must be resolved or deferred</span><span class="btn ghost">Skip for now</span><span class="btn pri">Save ontology &amp; run dry run</span></div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>Duplicates</b> are found by comparing normalised formulas, not just names. Exact matches can be merged in one click; near matches need a person.</span></div>
+    <div class="note"><span><b>Conflicts</b> use the existing collision check against domains already in the ontology, so a new project can't quietly redefine a certified metric.</span></div>
+    <div class="note"><span><b>Glossary gaps</b> are filled with AI drafts that a person accepts or edits. Accepted text goes to the target as column and metric comments.</span></div>
+    <div class="note"><span><b>Skippable, but tracked.</b> “Skip for now” creates the project with an ontology score of “Not reviewed”, shown on the Projects list.</span></div>
+  </div>
+  <div class="answer" style="border-left-color:var(--accent)">
+    <p><b>What this changes in the flow.</b> Today the dry run converts every measure it finds, so 3 copies of Revenue become 3 Snowflake metrics, and the ontology is generated afterwards from the result. With this step:</p>
+    <p>Choose models → <b>read models</b> (quick parse, no target calls) → <b>Ontology review</b> → dry run against the target using the merged list → Review → create. The dry run converts fewer measures, uses less AI, and the target gets one name per business metric with descriptions attached.</p>
+    <p>One technical dependency: the step needs the source models parsed before the dry run. If parsing currently happens only inside the dry-run job, it needs to be split out as its own fast call. The existing <code>/ontology/domains/from-osi</code> endpoint can then build the draft from that parsed model.</p>
+  </div>
+</section>
+
+<!-- ───────── NEW PROJECT ───────── -->
+<section id="s-new">
+  <div class="head"><div class="eyebrow">Screen 3b · /projects/new?step=5</div><h2>Check step (the dry run), simplified</h2><p>The wizard becomes six steps: Basics, Connect, Choose models, Ontology, Check and Review. Today's step 4 mixes AI toggles, scope stats, a check runner and a mapping grid. It becomes a readiness summary with the mapping grid behind “See all mappings”. The ALL CAPS footer buttons go, and the sync mode pill moves into Review.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/projects/new?step=5</span></div>
+    <div style="display:flex;flex-direction:column;min-height:500px">
+      <div class="top"><span class="iconbtn">✕</span><b style="font-size:13px">New project</b><span class="pill n">Sales Pipeline</span><span class="sp"></span>
+        <div class="stepper"><span class="st done"><span class="n">✓</span>Basics</span><span class="stline"></span><span class="st done"><span class="n">✓</span>Connect</span><span class="stline"></span><span class="st done"><span class="n">✓</span>Choose models</span><span class="stline"></span><span class="st done"><span class="n">✓</span>Ontology</span><span class="stline"></span><span class="st on"><span class="n">5</span>Check</span><span class="stline"></span><span class="st"><span class="n">6</span>Review</span></div></div>
+      <div style="max-width:980px;width:100%;margin:0 auto;padding:22px;display:flex;flex-direction:column;gap:14px;flex:1">
+        <div><div style="font-size:17px;font-weight:700">Check before you migrate</div><div class="muted">We test every table, column and the 512 business metrics you agreed in the Ontology step against Snowflake.</div></div>
+        <div class="g3" style="grid-template-columns:1.4fr 1fr 1fr">
+          <div class="card"><span class="lbl">Readiness</span><div class="row"><span class="num">94%</span><span class="pill ok">Ready to migrate</span></div>
+            <div class="stack lg"><i class="c-std" style="width:80%"></i><i class="c-ai" style="width:14%"></i><i class="c-rev" style="width:4%"></i><i class="c-drop" style="width:2%"></i></div>
+            <div class="legend"><span><i class="c-std"></i>612 map directly</span><span><i class="c-ai"></i>108 need AI</span><span><i class="c-rev"></i>31 unclear</span><span><i class="c-drop"></i>14 unsupported</span></div></div>
+          <div class="card"><span class="lbl">What's included</span><span>18 models · 142 tables</span><span>765 measures · 210 relationships</span><span class="faint">~2.3M rows to validate</span></div>
+          <div class="card"><span class="lbl">AI assistance</span>
+            <div class="row"><span class="toggle"></span>Fill gaps in column mapping</div>
+            <div class="row"><span class="toggle"></span>Find missing relationships</div>
+            <div class="row"><span class="toggle off"></span>Write descriptions</div></div>
+        </div>
+        <div class="card"><div class="row"><span class="lbl">To decide before continuing</span><span class="pill warn">2</span><span class="sp"></span><span class="btn sm ghost">See all 765 mappings →</span></div>
+          <div class="attn"><span class="dot" style="background:var(--warn)"></span><span><b>31 columns have no clear match</b> · e.g. <span class="chip">Sales[Region Code]</span> → ?</span><span class="btn sm">Map now</span></div>
+          <div class="attn"><span class="dot" style="background:var(--bad)"></span><span><b>14 measures use unsupported DAX</b> · TREATAS, USERELATIONSHIP. They will be skipped.</span><span class="btn sm">I understand</span></div>
+        </div>
+        <span class="sp"></span>
+        <div class="row" style="border-top:1px solid var(--m-line);padding-top:12px"><span class="btn">Back</span><span class="sp"></span><span class="faint">Last checked 1 min ago · </span><span class="btn ghost">Re-run check</span><span class="btn pri">Continue to review</span></div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>Edit uses the same wizard,</b> titled “Edit Sales Pipeline” instead of “Modernize Project”. The Copy/Upsert choice moves into Review as “Replace target” or “Update changes only”.</span></div>
+    <div class="note"><span><b>“Intermediate Format” goes to Advanced</b> with OSI as the default. Most users never need to pick it.</span></div>
+    <div class="note"><span><b>The acknowledgement checkbox becomes inline buttons</b> next to each problem, so it's clear what you're agreeing to.</span></div>
+  </div>
+</section>
+
+<!-- ───────── PROJECT ───────── -->
+<section id="s-project">
+  <div class="head"><div class="eyebrow">Screen 4 · /projects/:id</div><h2>One project page instead of three</h2><p>Detail, Config (3,200 lines) and Edit become tabs on one page: Overview, Runs, Mappings, Ontology, Settings. “Run now” is the only primary button. Snapshot, Restore and Compare move to History, where they belong. The YAML view becomes a toggle inside Settings.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/projects/sales-pipeline</span></div>
+    <div class="app">
+      <div class="side" data-on="Projects"></div>
+      <div class="main">
+        <div class="top"><span class="crumb">Projects / <b>Sales Pipeline</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead">
+          <div class="ph-row"><span class="t">Sales Pipeline</span><span class="flow"><span class="chip">Power BI</span><span class="arr">→</span><span class="chip">Snowflake</span></span><span class="pill warn">41 to review</span><span class="sp"></span><span class="faint">Every weekday 06:00 IST</span><span class="btn">Edit</span><span class="btn">⋯</span><span class="btn pri">▶ Run now</span></div>
+          <div class="tabs"><span class="tab on">Overview</span><span class="tab">Runs <span class="faint">38</span></span><span class="tab">Mappings</span><span class="tab">Ontology</span><span class="tab">Settings</span></div>
+        </div>
+        <div class="body">
+          <div class="g3" style="grid-template-columns:1.5fr 1fr 1fr">
+            <div class="card"><div class="row"><span class="lbl">Last run · #142 · 2h ago</span><span class="pill ok">Succeeded</span><span class="sp"></span><span class="muted">4m 12s</span></div>
+              <div class="row"><span class="num">87%</span><span class="muted">of 765 measures converted</span></div>
+              <div class="stack lg"><i class="c-std" style="width:70%"></i><i class="c-ai" style="width:17%"></i><i class="c-rev" style="width:9%"></i><i class="c-drop" style="width:4%"></i></div>
+              <div class="legend"><span><i class="c-std"></i>535 clean</span><span><i class="c-ai"></i>130 with AI</span><span><i class="c-rev"></i>69 review</span><span><i class="c-drop"></i>31 dropped</span></div></div>
+            <div class="card"><span class="lbl">Conversion over time</span>
+              <svg class="spark" style="height:58px" viewBox="0 0 200 58" preserveAspectRatio="none" aria-hidden="true"><path d="M0 50 L30 44 L60 40 L90 30 L120 26 L150 22 L180 15 L200 13" fill="none" stroke="var(--ok)" stroke-width="1.8"/><circle cx="200" cy="13" r="3" fill="var(--ok)"/></svg>
+              <span class="muted">62% → 87% over 8 runs</span></div>
+            <div class="card"><span class="lbl">Migrated</span><span>18 models · 142 tables</span><span>1,104 columns · 210 relationships</span><span class="muted">Target: <span class="chip">SALES_DB.SEMANTIC</span></span></div>
+          </div>
+          <div class="g2" style="grid-template-columns:1.5fr 1fr">
+            <div class="card" style="padding:0">
+              <div class="row" style="padding:10px 14px 4px"><span class="lbl">Needs review</span><span class="pill warn">41</span><span class="sp"></span><span class="btn sm ghost">Open all →</span></div>
+              <table class="tbl">
+                <tr><th>Measure</th><th>Why</th><th>AI confidence</th><th></th></tr>
+                <tr><td><b>YoY Revenue %</b></td><td class="muted">Time intelligence rewritten by AI</td><td><span class="pill ai">0.72</span></td><td><span class="btn sm">Check</span></td></tr>
+                <tr><td><b>Win Rate (Rolling)</b></td><td class="muted">Uses CALCULATE with ALLEXCEPT</td><td><span class="pill ai">0.64</span></td><td><span class="btn sm">Check</span></td></tr>
+                <tr><td><b>Pipeline Coverage</b></td><td class="muted">Column Region Code unmapped</td><td class="faint">—</td><td><span class="btn sm">Map</span></td></tr>
+              </table>
+            </div>
+            <div class="card"><span class="lbl">About</span>
+              <div class="row"><span class="muted" style="width:80px">Owner</span>Priya N.</div>
+              <div class="row"><span class="muted" style="width:80px">Folder</span>Sales</div>
+              <div class="row"><span class="muted" style="width:80px">Tags</span><span class="pill n">quarterly</span><span class="pill n">exec</span></div>
+              <div class="row"><span class="muted" style="width:80px">Ontology</span><span class="oscore mid" style="width:20px;height:20px;font-size:9px;border-width:2px">72</span>Sales, Finance · 3 duplicates</div>
+              <div class="row"><span class="muted" style="width:80px">Created</span>3 Sep 2026</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>Settings tab</b> holds what Config held (source, target, update mode, schedule, AI options, validation), as a form with a “View as YAML” switch.</span></div>
+    <div class="note"><span><b>“Run now” everywhere.</b> No more Run Now / Sync Now / Confirm Sync Run.</span></div>
+    <div class="note"><span><b>Ontology tab</b> shows only this project's domains, and links to the full Ontology page.</span></div>
+  </div>
+</section>
+
+<!-- ───────── RUNS ───────── -->
+<section id="s-runs">
+  <div class="head"><div class="eyebrow">Screen 5 · /runs</div><h2>Runs: a list with a detail drawer</h2><p>Runs across all projects, with the same conversion bar in each row. Clicking a row opens a drawer with the stage timeline and report downloads. Schedules get their own tab and plain-language times instead of cron strings.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/runs?run=142</span></div>
+    <div class="app">
+      <div class="side" data-on="Runs"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Runs</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead">
+          <div class="ph-row"><span class="t">Runs</span><span class="sub">142 in the last 30 days · 96% succeeded</span><span class="sp"></span><span class="btn pri">▶ Run a project</span></div>
+          <div class="tabs"><span class="tab on">History</span><span class="tab">Schedules <span class="faint">9</span></span></div>
+        </div>
+        <div class="split">
+          <div class="body">
+            <div class="row"><span class="input" style="width:220px">Filter by project or run…</span><span class="seg"><span class="on">All</span><span>Running</span><span>Failed</span><span>Succeeded</span></span></div>
+            <div class="card" style="padding:0">
+              <table class="tbl">
+                <tr><th>Run</th><th>Project</th><th>Started</th><th>Took</th><th style="width:150px">Result</th><th>Status</th></tr>
+                <tr><td class="faint">#143</td><td><b>Supply Chain KPIs</b></td><td>now</td><td>1m 02s</td><td class="faint">running…</td><td><span class="pill acc">Running</span></td></tr>
+                <tr class="sel"><td class="faint">#142</td><td><b>Sales Pipeline</b></td><td>2h ago</td><td>4m 12s</td><td><div class="stack"><i class="c-std" style="width:70%"></i><i class="c-ai" style="width:17%"></i><i class="c-rev" style="width:9%"></i><i class="c-drop" style="width:4%"></i></div></td><td><span class="pill ok">Succeeded</span></td></tr>
+                <tr><td class="faint">#141</td><td><b>Finance Close</b></td><td>5h ago</td><td>0m 48s</td><td class="muted">Warehouse suspended</td><td><span class="pill bad">Failed</span></td></tr>
+                <tr><td class="faint">#140</td><td><b>Finance Close</b></td><td>Yesterday</td><td>3m 30s</td><td><div class="stack"><i class="c-std" style="width:84%"></i><i class="c-ai" style="width:10%"></i><i class="c-drop" style="width:6%"></i></div></td><td><span class="pill ok">Succeeded</span></td></tr>
+                <tr><td class="faint">#139</td><td><b>Marketing Mix</b></td><td>Yesterday</td><td>2m 05s</td><td><div class="stack"><i class="c-std" style="width:88%"></i><i class="c-ai" style="width:8%"></i><i class="c-rev" style="width:4%"></i></div></td><td><span class="pill ok">Succeeded</span></td></tr>
+              </table>
+            </div>
+          </div>
+          <div class="drawer">
+            <div class="row"><b style="font-size:13px">Run #142 · Sales Pipeline</b><span class="sp"></span><span class="faint">✕</span></div>
+            <div class="row"><span class="pill ok">Succeeded</span><span class="muted">Update changes only · 4m 12s</span></div>
+            <div class="lbl">What changed</div>
+            <div class="row"><span class="pill ok">+3 models</span><span class="pill n">15 kept</span><span class="pill bad">−1 table</span></div>
+            <div class="lbl">Stages</div>
+            <div class="timeline">
+              <div class="tl" style="color:var(--ok)"><span class="bul"></span><span style="color:var(--m-text)">Read Power BI models</span><span class="faint">0:21</span></div>
+              <div class="tl" style="color:var(--ok)"><span class="bul"></span><span style="color:var(--m-text)">Convert measures <span class="pill ai">130 AI</span></span><span class="faint">2:40</span></div>
+              <div class="tl" style="color:var(--ok)"><span class="bul"></span><span style="color:var(--m-text)">Deploy to Snowflake</span><span class="faint">0:52</span></div>
+              <div class="tl" style="color:var(--warn)"><span class="bul"></span><span style="color:var(--m-text)">Validate numbers <span class="muted">· 2 mismatches</span></span><span class="faint">0:19</span></div>
+            </div>
+            <div class="row"><span class="btn sm">Full report</span><span class="btn sm">Logs</span><span class="btn sm">Download .md</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>Schedules tab:</b> “Every weekday at 06:00 IST · next in 14h” with an Edit button. The cron string only appears in Advanced.</span></div>
+    <div class="note"><span><b>No emoji in filters.</b> The status filter becomes a segmented control.</span></div>
+    <div class="note"><span><b>Route matches the label:</b> <code>/jobs</code> becomes <code>/runs</code>, with a redirect.</span></div>
+  </div>
+</section>
+
+<!-- ───────── ASK AI ───────── -->
+<section id="s-ask">
+  <div class="head"><div class="eyebrow">Screen 6 · /ask</div><h2>Ask AI</h2><p>This is the page from the Ontology proposal: question first, answer with a trust label, and SQL behind “How this was answered”. Usage from this page feeds the “Ask AI” number on Projects.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ask</span></div>
+    <div class="app">
+      <div class="side" data-on="Ask AI"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Ask AI</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead pb"><div class="ph-row"><span class="t">Ask AI</span><span class="sub">Answers use your governed metrics and access rules</span><span class="sp"></span><span class="faint">Run on</span><span class="seg"><span class="on">Snowflake Cortex</span><span>Databricks Genie</span><span>Local</span></span></div></div>
+        <div class="split" style="grid-template-columns:minmax(0,1fr) 240px">
+          <div class="body">
+            <div class="ask">What was gross margin by region in 2024?</div>
+            <div class="card">
+              <div class="row"><b>Gross margin, 2024</b><span class="pill ok">Uses certified metric</span><span class="sp"></span><span class="btn sm">Certify answer</span></div>
+              <div class="bars"><div class="bar"><span>AMER</span><i style="width:100%"></i><span>41.2%</span></div><div class="bar"><span>EMEA</span><i style="width:91%"></i><span>37.6%</span></div><div class="bar"><span>APAC</span><i style="width:87%"></i><span>35.9%</span></div></div>
+              <div style="border-top:1px solid var(--m-line);padding-top:8px" class="muted"><b style="color:var(--m-text)">▸ How this was answered</b> · matched <span class="chip">finance.gross_margin</span> · region row filter applied · 12 lines of SQL</div>
+            </div>
+            <span class="sp"></span>
+            <div class="row" style="border:1px solid var(--m-line);border-radius:10px;padding:10px 12px;background:var(--m-surface)"><span class="faint sp">Ask a business question…</span><span class="btn pri">Ask</span></div>
+          </div>
+          <div class="drawer" style="box-shadow:none"><span class="lbl">Try asking</span><span class="muted">Revenue trend, last 12 months</span><span class="muted">Top 10 customers by margin</span><span class="lbl">Certified questions</span><span class="muted">Quarterly EBITDA <span class="pill ok">✓</span></span><span class="muted">Churned ARR by segment <span class="pill ok">✓</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── ONTOLOGY ───────── -->
+<section id="s-ontology">
+  <div class="head"><div class="eyebrow">Screen 7 · /ontology</div><h2>Ontology</h2><p>As proposed earlier: Overview, Domains, Map and Health tabs, with governance checks shown as results instead of forms. The Domains, Health and Ask AI screens are drawn in detail in the separate Ontology proposal.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ontology</span></div>
+    <div class="app">
+      <div class="side" data-on="Ontology"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Ontology</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead"><div class="ph-row"><span class="t">Ontology</span><span class="sub">Shared business definitions every BI tool and AI agent uses</span><span class="sp"></span><span class="btn">Import YAML</span><span class="btn pri">Generate from OSI</span></div>
+          <div class="tabs"><span class="tab on">Overview</span><span class="tab">Domains <span class="faint">6</span></span><span class="tab">Map</span><span class="tab">Health <span class="pill warn">3</span></span></div></div>
+        <div class="body">
+          <div class="g4">
+            <div class="card"><span class="lbl">Domains</span><span class="num">6</span><span class="faint">Finance, Sales, Supply…</span></div>
+            <div class="card"><span class="lbl">Governed metrics</span><span class="num">84</span><span class="faint">71 bound to BI measures</span></div>
+            <div class="card"><span class="lbl">Business concepts</span><span class="num">212</span><span class="faint">mapped to 148 tables</span></div>
+            <div class="card"><span class="lbl">Needs attention</span><span class="num" style="color:var(--warn)">3</span><span class="faint">2 collisions · 1 parity drift</span></div>
+          </div>
+          <div class="g3">
+            <div class="card"><b>One definition per metric</b><span class="muted">Each domain team owns its glossary. “Revenue” means the same thing in Power BI and Snowflake.</span><span style="color:var(--accent);font-weight:600">Browse domains →</span></div>
+            <div class="card"><b>See what depends on what</b><span class="muted">Trace a metric from source tables to every dashboard that uses it.</span><span style="color:var(--accent);font-weight:600">Open map →</span></div>
+            <div class="card"><b>Catch breaks before they ship</b><span class="muted">Impact, parity, quality and access checks in one list.</span><span style="color:var(--accent);font-weight:600">Review 3 issues →</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── MODEL MAP ───────── -->
+<section id="s-map">
+  <div class="head"><div class="eyebrow">Screen 8 · /map</div><h2>Model map (was Explore)</h2><p>Today's toolbar has about ten controls in one row and three overlapping panels (Inspector, Explorer, Schema Inspector). The new version keeps a model picker, search and a view switch (Diagram / Table). Layout options move under “View”. The snapshot time machine goes to History, which already does version diffs.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/map?model=sales_pipeline</span></div>
+    <div class="app">
+      <div class="side" data-on="Model map"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Model map</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead pb"><div class="ph-row"><span class="t">Model map</span><span class="btn">Sales Pipeline ▾</span><span class="btn">Opportunities ▾</span><span class="input" style="width:200px">Find table or measure…</span><span class="sp"></span><span class="pill bad">2 broken references</span><span class="seg"><span class="on">Diagram</span><span>Table</span></span><span class="btn">View ▾</span></div></div>
+        <div class="split">
+          <div class="body">
+            <div class="graph">
+              <svg viewBox="0 0 640 330" aria-label="Diagram of tables and relationships">
+                <g stroke="var(--m-text3)" stroke-width="1.3" fill="none">
+                  <path d="M300 165 L140 80"/><path d="M300 165 L140 250"/><path d="M300 165 L480 70"/><path d="M300 165 L500 255"/>
+                  <path d="M500 255 L590 180" stroke="var(--bad)" stroke-dasharray="4 3"/>
+                </g>
+                <g font-family="IBM Plex Sans, system-ui, sans-serif" font-size="11">
+                  <rect x="240" y="140" width="120" height="50" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><text x="300" y="161" text-anchor="middle" fill="var(--m-text)" font-weight="700">fact_opportunity</text><text x="300" y="177" text-anchor="middle" fill="var(--m-text2)">18 cols · 24 measures</text>
+                  <rect x="80" y="58" width="120" height="44" rx="7" fill="var(--m-surface)" stroke="var(--m-line)"/><text x="140" y="78" text-anchor="middle" fill="var(--m-text)" font-weight="600">dim_account</text><text x="140" y="93" text-anchor="middle" fill="var(--m-text2)">12 cols</text>
+                  <rect x="80" y="228" width="120" height="44" rx="7" fill="var(--m-surface)" stroke="var(--m-line)"/><text x="140" y="248" text-anchor="middle" fill="var(--m-text)" font-weight="600">dim_date</text><text x="140" y="263" text-anchor="middle" fill="var(--m-text2)">9 cols</text>
+                  <rect x="420" y="48" width="120" height="44" rx="7" fill="var(--m-surface)" stroke="var(--m-line)"/><text x="480" y="68" text-anchor="middle" fill="var(--m-text)" font-weight="600">dim_owner</text><text x="480" y="83" text-anchor="middle" fill="var(--m-text2)">7 cols</text>
+                  <rect x="440" y="233" width="120" height="44" rx="7" fill="var(--m-surface)" stroke="var(--m-line)"/><text x="500" y="253" text-anchor="middle" fill="var(--m-text)" font-weight="600">dim_region</text><text x="500" y="268" text-anchor="middle" fill="var(--m-text2)">5 cols</text>
+                  <rect x="560" y="158" width="72" height="40" rx="7" fill="var(--bad-soft)" stroke="var(--bad)"/><text x="596" y="182" text-anchor="middle" fill="var(--bad)" font-weight="600">territory?</text>
+                </g>
+              </svg>
+            </div>
+            <div class="row"><span class="muted">6 tables · 5 relationships · 24 measures</span><span class="sp"></span><span class="faint">Scroll to zoom · drag to pan</span></div>
+          </div>
+          <div class="drawer">
+            <div class="row"><b style="font-size:13px;font-family:var(--mono)">fact_opportunity</b><span class="sp"></span><span class="faint">✕</span></div>
+            <div class="seg"><span class="on">Columns</span><span>Measures</span><span>Lineage</span></div>
+            <table class="tbl"><tr><th>Column</th><th>Type</th></tr><tr><td>opportunity_id</td><td class="faint">NUMBER</td></tr><tr><td>account_id</td><td class="faint">NUMBER</td></tr><tr><td>amount</td><td class="faint">DECIMAL</td></tr><tr><td>stage</td><td class="faint">VARCHAR</td></tr><tr><td>close_date</td><td class="faint">DATE</td></tr></table>
+            <div class="muted">From Power BI table <span class="chip">Opportunities</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── HISTORY ───────── -->
+<section id="s-history">
+  <div class="head"><div class="eyebrow">Screen 9 · /history</div><h2>History (was Version Control)</h2><p>Six tabs become two: Versions and Mappings. Comparing two versions happens in place: pick a version, then “Compare with…”. Storage and pruning move to Settings. “Rollback”, “Execute Restore”, “Confirm Mutation” and “Abort Mission” become one action, “Restore this version”, with a clear impact summary.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/history?project=sales-pipeline&amp;v=142</span></div>
+    <div class="app">
+      <div class="side" data-on="History"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>History</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead"><div class="ph-row"><span class="t">History</span><span class="btn">Sales Pipeline ▾</span><span class="sp"></span><span class="btn">Save a version now</span></div>
+          <div class="tabs"><span class="tab on">Versions <span class="faint">38</span></span><span class="tab">Mappings</span></div></div>
+        <div class="split" style="grid-template-columns:300px minmax(0,1fr)">
+          <div class="body" style="border-right:1px solid var(--m-line);background:var(--m-surface)">
+            <span class="input">Filter by run or tag…</span>
+            <span class="lbl">Today</span>
+            <div class="card" style="border-color:var(--accent);background:var(--accent-soft)"><div class="row"><b>Run #142</b><span class="sp"></span><span class="faint">2h ago</span></div><span class="muted">+3 models · 1 table removed</span></div>
+            <span class="lbl">Yesterday</span>
+            <div class="card"><div class="row"><b>Run #138</b><span class="pill n">📌 Q3 baseline</span><span class="sp"></span><span class="faint">09:10</span></div><span class="muted">12 measures changed</span></div>
+            <div class="card"><div class="row"><b>Run #135</b><span class="sp"></span><span class="faint">06:00</span></div><span class="muted">No changes</span></div>
+          </div>
+          <div class="body">
+            <div class="row"><span style="font-size:15px;font-weight:700">Run #142</span><span class="pill ok">Succeeded</span><span class="muted">11 Nov, 10:42 · by schedule</span><span class="sp"></span><span class="btn">Compare with… ▾</span><span class="btn">Download</span><span class="btn">Pin</span><span class="btn" style="color:var(--bad)">Restore this version</span></div>
+            <div class="g4">
+              <div class="card"><span class="lbl">Added</span><span class="num" style="color:var(--ok)">3</span><span class="faint">models</span></div>
+              <div class="card"><span class="lbl">Changed</span><span class="num" style="color:var(--warn)">17</span><span class="faint">measures</span></div>
+              <div class="card"><span class="lbl">Removed</span><span class="num" style="color:var(--bad)">1</span><span class="faint">table</span></div>
+              <div class="card"><span class="lbl">Unchanged</span><span class="num">15</span><span class="faint">models</span></div>
+            </div>
+            <div class="card"><div class="row"><span class="lbl">Changes vs Run #138</span><span class="sp"></span><span class="seg"><span class="on">All</span><span>Added</span><span>Changed</span><span>Removed</span></span></div>
+              <div class="diffrow"><span class="sym" style="color:var(--ok)">+</span><b>Forecast Accuracy</b><span class="muted">new model</span></div>
+              <div class="diffrow"><span class="sym" style="color:var(--warn)">~</span><b>Win Rate</b><span class="muted">formula changed</span></div>
+              <div class="diffrow"><span class="sym" style="color:var(--warn)">~</span><b>dim_owner.region</b><span class="muted">VARCHAR(20) → VARCHAR(50)</span></div>
+              <div class="diffrow"><span class="sym" style="color:var(--bad)">−</span><b>stg_legacy_quota</b><span class="muted">table removed</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── COMPARE ───────── -->
+<section id="s-compare">
+  <div class="head"><div class="eyebrow">Screen 10 · /compare</div><h2>Compare two model files</h2><p>The file format is detected automatically, and the 17-entry AI model list moves into Settings › AI providers, with one default. The page is just two drop zones and a result.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/compare</span></div>
+    <div class="app">
+      <div class="side" data-on="Compare"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Compare</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div class="pagehead pb"><div class="ph-row"><span class="t">Compare</span><span class="sub">Check two semantic model files side by side, or inspect one</span></div></div>
+        <div class="body">
+          <div class="g2" style="grid-template-columns:1fr auto 1fr;align-items:center">
+            <div class="drop filled"><b>sales_v1.yaml</b><span class="muted">Detected: OSI · 142 tables · 765 measures</span><span class="btn sm">Change</span></div>
+            <span class="faint" style="font-size:16px">⇄</span>
+            <div class="drop filled"><b>sales_snowflake.yaml</b><span class="muted">Detected: Snowflake semantic view · 140 tables · 751 measures</span><span class="btn sm">Change</span></div>
+          </div>
+          <div class="g4">
+            <div class="card"><span class="lbl">Identical</span><span class="num" style="color:var(--ok)">1,812</span></div>
+            <div class="card"><span class="lbl">Changed</span><span class="num" style="color:var(--warn)">46</span></div>
+            <div class="card"><span class="lbl">Only in file 1</span><span class="num">16</span></div>
+            <div class="card"><span class="lbl">Only in file 2</span><span class="num">2</span></div>
+          </div>
+          <div class="card" style="padding:0">
+            <div class="row" style="padding:10px 14px 4px"><span class="seg"><span>Tables</span><span>Columns</span><span class="on">Measures</span><span>Relationships</span></span><span class="sp"></span><span class="seg"><span class="on">Changed</span><span>All</span></span></div>
+            <table class="tbl"><tr><th>Measure</th><th>Property</th><th>File 1</th><th>File 2</th></tr>
+              <tr><td><b>Total Revenue</b></td><td class="muted">expression</td><td><span class="chip">SUM(Sales[Amount])</span></td><td><span class="chip">SUM(amount)</span></td></tr>
+              <tr><td><b>Win Rate</b></td><td class="muted">format</td><td>0.0%</td><td>0.00</td></tr>
+              <tr><td><b>Avg Deal Size</b></td><td class="muted">description</td><td class="faint">—</td><td>Mean closed-won amount</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── SETTINGS ───────── -->
+<section id="s-settings">
+  <div class="head"><div class="eyebrow">Screen 11 · /settings</div><h2>Settings with sections</h2><p>Settings becomes one page with a left menu: Connections, AI providers, Preferences, Storage &amp; history, Advanced. Global Config's raw YAML editor moves under Advanced, so regular users don't land on a file editor.</p></div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/settings/connections</span></div>
+    <div class="app">
+      <div class="side" data-on="Settings"></div>
+      <div class="main">
+        <div class="top"><span class="crumb"><b>Settings</b></span><span class="search">Search… <span class="kbd">⌘K</span></span><span class="iconbtn">🔔</span></div>
+        <div style="display:grid;grid-template-columns:180px minmax(0,1fr);flex:1">
+          <div class="sub-nav">
+            <div class="nav on">Connections</div><div class="nav">AI providers</div><div class="nav">Preferences</div><div class="nav">Storage &amp; history</div><div class="nav">Advanced</div>
+          </div>
+          <div class="body">
+            <div class="row"><span style="font-size:15px;font-weight:700">Connections</span><span class="muted">Where Semabridge reads from and deploys to</span><span class="sp"></span><span class="btn pri">+ Add connection</span></div>
+            <div class="g3">
+              <div class="card"><div class="row"><b>Snowflake · PROD</b><span class="sp"></span><span class="pill ok">Connected</span></div><span class="muted">acme.eu-west-1 · ANALYTICS_WH</span><span class="faint">Used by 14 projects</span><div class="row"><span class="btn sm">Test</span><span class="btn sm">Edit</span></div></div>
+              <div class="card"><div class="row"><b>Microsoft Fabric</b><span class="sp"></span><span class="pill ok">Connected</span></div><span class="muted">Tenant acme.onmicrosoft.com</span><span class="faint">Used by 10 projects</span><div class="row"><span class="btn sm">Test</span><span class="btn sm">Edit</span></div></div>
+              <div class="card"><div class="row"><b>Databricks</b><span class="sp"></span><span class="pill bad">Token expired</span></div><span class="muted">adb-4421.azuredatabricks.net</span><span class="faint">Used by 4 projects</span><div class="row"><span class="btn sm pri">Reconnect</span></div></div>
+              <div class="card"><div class="row"><b>Power BI files</b><span class="sp"></span><span class="pill ok">Ready</span></div><span class="muted">2 folders · 38 .pbix files</span><span class="faint">Used by 6 projects</span><div class="row"><span class="btn sm">Manage folders</span></div></div>
+              <div class="card"><div class="row"><b>PostgreSQL</b><span class="sp"></span><span class="pill n">Not set up</span></div><span class="muted">Store project metadata</span><div class="row"><span class="btn sm">Connect</span></div></div>
+              <div class="card"><div class="row"><b>Salesforce</b><span class="sp"></span><span class="pill n">Not set up</span></div><span class="muted">Coming soon</span></div>
+            </div>
+            <div class="card" style="flex-direction:row;align-items:center;gap:12px"><span class="dot" style="background:var(--ok)"></span><b>Backend service</b><span class="muted">Healthy · v2.4.1 · PostgreSQL</span><span class="sp"></span><span class="faint">Timezone: Asia/Kolkata (Preferences)</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ───────── COPY ───────── -->
+<section id="copy">
+  <div class="head"><div class="eyebrow">Copy</div><h2>Renames across the app</h2></div>
+  <div class="tablewrap"><table class="dtable ren">
+    <tr><th>Today</th><th>Proposed</th><th>Where</th></tr>
+    <tr><td>Run Now / Sync Now / Confirm Sync Run</td><td>Run now</td><td>Project, Runs</td></tr>
+    <tr><td>Copy (Replace) / Upsert (Delta) / BASELINE COPY</td><td>Replace target / Update changes only</td><td>Wizard, project settings</td></tr>
+    <tr><td>Modernize Project</td><td>Edit &lt;project name&gt;</td><td>Edit wizard</td></tr>
+    <tr><td>Pre-migration Integrity Check · Scope Verification</td><td>Check before you migrate</td><td>Wizard step 4</td></tr>
+    <tr><td>Intermediate Format</td><td>Exchange format (Advanced)</td><td>Wizard, settings</td></tr>
+    <tr><td>Explore · Repository Map · Semantic ER Diagram</td><td>Model map</td><td>Sidebar</td></tr>
+    <tr><td>Version Control · Checkpoint · Snapshot</td><td>History · Version</td><td>Sidebar, History</td></tr>
+    <tr><td>Rollback · Execute Restore · Confirm Mutation · Abort Mission</td><td>Restore this version · Cancel</td><td>History</td></tr>
+    <tr><td>Pruning Intelligence · Drift Analysis</td><td>Storage · Changes</td><td>Settings, History</td></tr>
+    <tr><td>Semantic Comparator · Primary YAML / Secondary YAML</td><td>Compare · File 1 / File 2</td><td>Compare</td></tr>
+    <tr><td>Context Pulse · Index Status</td><td>All systems OK</td><td>Sidebar footer</td></tr>
+    <tr><td>Global Configuration</td><td>Settings › Advanced</td><td>Settings</td></tr>
+  </table></div>
+</section>
+
+<!-- ───────── BUILD ───────── -->
+<section id="build">
+  <div class="head"><div class="eyebrow">Build order</div><h2>How to roll it out</h2><p>The order puts the most visible value first, and each step ships on its own.</p></div>
+  <ol class="steps">
+    <li><span><b>Shell and renames.</b> New sidebar groups, top bar without the status bar or Version Control icon, route redirects (<code>/jobs</code>→<code>/runs</code>, <code>/explore</code>→<code>/map</code>, <code>/version-control</code>→<code>/history</code>). Delete the unused <code>components/Header.jsx</code> and <code>components/LoginPage.jsx</code>.</span></li>
+    <li><span><b>Projects summary.</b> Add <code>GET /api/projects/summary</code>, which totals the latest run report summary for each project, and the summary band and table view on Projects. This answers the dashboard question.</span></li>
+    <li><span><b>Ontology step in the wizard.</b> Split source parsing out of the dry-run job, add formula-based duplicate detection and a glossary coverage score next to the existing collision check, and insert the Ontology step before Check. The same score feeds the Ontology column on Projects.</span></li>
+    <li><span><b>One project page.</b> Merge <code>ProjectDetailPage</code> and <code>ProjectConfigPage</code> into tabs. Add the Overview with last-run breakdown and the needs-review list.</span></li>
+    <li><span><b>Ontology split and Ask AI page,</b> as in the Ontology proposal. Add usage logging for questions so the Projects band can show Ask AI numbers.</span></li>
+    <li><span><b>Runs drawer and schedules in plain language.</b></span></li>
+    <li><span><b>History, Model map, Compare and Settings</b> clean-ups: fewer tabs and fewer toolbar buttons, with the AI model list and YAML editor moved to Settings.</span></li>
+    <li><span><b>Wizard step 4</b> becomes the readiness summary, with the grid behind a link.</span></li>
+  </ol>
+</section>
+
+</div>
+</div>
+
+<script>
+(function(){
+  var groups=[["", [["Projects","24"],["Runs",""],["Ask AI",""]]],["Semantic layer",[["Ontology",""],["Model map",""],["History",""],["Compare",""]]]];
+  document.querySelectorAll('.side[data-on]').forEach(function(el){
+    var on=el.getAttribute('data-on'), h='<div class="brand">Semabridge</div>';
+    groups.forEach(function(g){ if(g[0]) h+='<div class="grp">'+g[0]+'</div>';
+      g[1].forEach(function(it){ h+='<div class="nav'+(it[0]===on?' on':'')+'"><span class="ic"></span>'+it[0]+(it[1]?'<span class="cnt">'+it[1]+'</span>':'')+'</div>'; }); });
+    h+='<div class="foot"><div class="nav'+(on==='Settings'?' on':'')+'" style="padding:6px 0"><span class="ic"></span>Settings</div><div class="health"><span class="dot" style="background:var(--ok)"></span>All systems OK</div><div class="me"><span class="av">PN</span><span>Priya N.</span></div></div>';
+    el.innerHTML=h;
+  });
+})();
+</script>

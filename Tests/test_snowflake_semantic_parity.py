@@ -73,8 +73,27 @@ def test_relationship_builder_keeps_inactive_fabric_relationships():
         to_columns=["LY_CAL_DT"],
     )
 
+    # Without any measure referencing USERELATIONSHIP, inactive relationship is skipped
+    lines_unused = builder.build_for_osi(
+        SimpleNamespace(relationships=[rel], metrics=[]),
+        dataset_aliases={"spend_fact": "SPEND_FACT", "date": "COL_DATE"},
+        dataset_by_name={"spend_fact": SimpleNamespace(), "date": SimpleNamespace()},
+        dataset_col_lookup={"spend_fact": {"POSTING_DATE"}, "date": {"LY_CAL_DT"}},
+        declared_pk_by_alias={"__keys__DATE_POSTING_DATE": [["LY_CAL_DT"]]},
+        relationship_target_alias={},
+    )
+    assert lines_unused == []
+
+    # When a measure uses USERELATIONSHIP on those columns, inactive relationship is emitted
     lines = builder.build_for_osi(
-        SimpleNamespace(relationships=[rel]),
+        SimpleNamespace(
+            relationships=[rel],
+            metrics=[
+                SimpleNamespace(
+                    expression="CALCULATE(SUM('spend_fact'[Amount]), USERELATIONSHIP('spend_fact'[Posting_Date], 'date'[LY_CAL_DT]))"
+                )
+            ],
+        ),
         dataset_aliases={"spend_fact": "SPEND_FACT", "date": "COL_DATE"},
         dataset_by_name={"spend_fact": SimpleNamespace(), "date": SimpleNamespace()},
         dataset_col_lookup={"spend_fact": {"POSTING_DATE"}, "date": {"LY_CAL_DT"}},

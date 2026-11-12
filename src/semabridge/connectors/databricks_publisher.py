@@ -1256,7 +1256,7 @@ class DatabricksPublisher:
                 existing_edges.add((rel.to_dataset.lower(), rel.from_dataset.lower()))
 
         datasets = sml_model.datasets
-        fact_datasets = [d for d in datasets if d.is_fact or is_fact_like_name(d.unique_name)]
+        fact_datasets = [d for d in datasets if d.is_fact]
         if not fact_datasets:
             fact_datasets = datasets
 
@@ -3336,7 +3336,8 @@ class DatabricksPublisher:
                         if agg_func == "DISTINCTCOUNT":
                             agg_sql = f"COUNT(DISTINCT `{column_sql}`)"
                         else:
-                            agg_sql = f"{agg_func}(CASE WHEN 1=1 THEN `{column_sql}` ELSE NULL END)" if agg_func in {"AVERAGE", "COUNT", "MIN", "MAX"} else f"SUM(`{column_sql}`)"
+                            sql_agg = "AVG" if agg_func == "AVERAGE" else agg_func
+                            agg_sql = f"{sql_agg}(`{column_sql}`)" if agg_func in {"AVERAGE", "COUNT", "MIN", "MAX"} else f"SUM(`{column_sql}`)"
                         return (
                             f"(SELECT {agg_sql} FROM {foreign_source} AS `{alias_by_dataset[foreign_dataset_name]}`)"
                             ,

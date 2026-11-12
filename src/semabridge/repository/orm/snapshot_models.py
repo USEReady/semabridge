@@ -207,6 +207,12 @@ class TableBinding(Base):
     dataset_key: Mapped[str] = mapped_column(String(255), nullable=False)
     dataset_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Database / schema the table lives in, so ownership checks compare the
+    # fully-qualified DB.SCHEMA.TABLE (NULL on bindings saved before this).
+    target_database: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    target_schema: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # "name" / "columns" / "saved" / "mapping" -- or "created" when this
+    # project's sync created the table as an empty placeholder.
     matched_by: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False, server_default=func.now())

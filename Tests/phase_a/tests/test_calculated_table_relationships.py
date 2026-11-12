@@ -2,6 +2,7 @@
 Tests for calculated-table relationship preservation, auto date/time exclusion,
 inferred column name resolution, and drop-ledger diagnostic accounting.
 """
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pandas as pd
@@ -369,7 +370,7 @@ def test_e_preserve_existing_behavior():
 
 def test_f_live_models_calculated_tables_if_available():
     """Verify live reproduction models if present in the local filesystem."""
-    downloads_dir = Path(r"C:\Users\manoj.s\Downloads\PBIX Files")
+    downloads_dir = Path(os.environ.get("SEMABRIDGE_PBIX_DIR", "") or "__no_pbix_dir__")
     life_exp_pbix = downloads_dir / "Life expectancy v202009.pbix"
     ai_sample_pbix = downloads_dir / "Artificial Intelligence Sample.pbix"
 
@@ -403,11 +404,11 @@ def test_f_live_models_calculated_tables_if_available():
 def test_g_sync_execution_pipeline_preserves_calculated_tables():
     """Verify that the actual ExecutionEngine sync pipeline preserves calculated tables
     and emits their relationships in generated Snowflake semantic-view DDL."""
-    downloads_dir = Path(r"C:\Users\manoj.s\Downloads\PBIX Files")
+    downloads_dir = Path(os.environ.get("SEMABRIDGE_PBIX_DIR", "") or "__no_pbix_dir__")
     life_exp_pbix = downloads_dir / "Life expectancy v202009.pbix"
 
     if not life_exp_pbix.exists():
-        pytest.skip("Life expectancy pbix not available in Downloads")
+        pytest.skip("Life expectancy pbix not available (set SEMABRIDGE_PBIX_DIR)")
 
     from semabridge.core.execution_engine import ExecutionEngine
 

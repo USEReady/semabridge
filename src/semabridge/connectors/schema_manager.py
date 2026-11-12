@@ -5,7 +5,7 @@ import time
 import os
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, TypeAlias
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple, TypeAlias
 
 if TYPE_CHECKING:
     import snowflake.connector.cursor
@@ -110,9 +110,18 @@ class SnowflakeSchemaManager:
                 if age > self._schema_cache_ttl_seconds:
                     return None
             metadata = dict(entry.get("metadata") or {})
+            cached_types = dict(entry.get("column_types") or {})
         if metadata:
             self._live_schema_metadata.update(metadata)
+            self._record_column_types(cached_types)
         return metadata
+
+    def _record_column_types(self, column_types: Dict[str, Dict[str, str]]) -> None:
+        """Merge TABLE -> {COLUMN: TYPE} into the shared live metadata (if it carries types)."""
+        target = getattr(self._live_schema_metadata, "column_types", None)
+        if isinstance(target, dict) and column_types:
+            for table, cols in column_types.items():
+                target.setdefault(table, {}).update(cols)
 
     def refresh_schema_cache(self) -> None:
         key = _schema_cache_key(self.config.database, self.config.schema_name)
@@ -151,6 +160,16 @@ class SnowflakeSchemaManager:
         """Quote a Snowflake identifier safely."""
         raw = str(value or "").replace('"', '""')
         return f'"{raw}"'
+
+    def _target_namespace(self) -> Tuple[str, str]:
+        """(DATABASE, SCHEMA) the source tables live in, upper-cased, unquoted."""
+        db_name = str(self.config.database or "").strip().strip('"')
+        schema_name = str(self.config.schema_name or "").strip().strip('"')
+        if "." in schema_name and db_name:
+            left, right = schema_name.split(".", 1)
+            if left.strip().upper() == db_name.upper():
+                schema_name = right.strip()
+        return db_name.upper(), schema_name.upper()
 
     def _schema_fqn(self) -> str:
         """Return fully-qualified schema name as "DB"."SCHEMA"."""
@@ -284,9 +303,10 @@ class SnowflakeSchemaManager:
         the table saved for it by an earlier sync; an empty table is planned
         for creation only when nothing matches. Read-only.
 
-        Each entry: {dataset, action: "bind"|"create", table, matched_by, tie}.
+        Each entry: {dataset, action: "bind"|"create"|"blocked", table, matched_by, tie}.
         """
         from semabridge.connectors.table_binding_resolver import (
+            check_table_name_collision_blocker,
             clean_ident,
             resolve_dataset_to_physical_table,
         )
@@ -303,10 +323,11 @@ class SnowflakeSchemaManager:
         binding_log = getattr(self._live_schema_metadata, "binding_log", None)
         model_name = getattr(sml, "unique_name", None) or getattr(sml, "name", None)
 
+        target_db, target_schema = self._target_namespace()
         plan: List[Dict[str, Any]] = []
         for dataset in sml.datasets:
             ds_name = dataset.unique_name
-            modeled_cols = [c.unique_name for c in getattr(dataset, "columns", []) or []]
+            modeled_cols = self._physical_model_column_names(dataset)
             bound_table = resolve_dataset_to_physical_table(
                 ds_name,
                 modeled_cols,
@@ -316,22 +337,81 @@ class SnowflakeSchemaManager:
             )
             logged = (binding_log or {}).get(clean_ident(ds_name)) or {}
             safe_target_name = self._safe_table_name(ds_name)
-            if bound_table.upper() in all_existing:
+            was_resolved = bool(logged) or (bound_table.upper() != ds_name.upper())
+            if was_resolved and bound_table.upper() in all_existing:
+                if logged:
+                    # Saved with the binding so ownership checks compare
+                    # the fully-qualified DB.SCHEMA.TABLE.
+                    logged.setdefault("database", target_db)
+                    logged.setdefault("schema", target_schema)
                 plan.append({
                     "dataset": ds_name,
                     "action": "bind",
                     "table": bound_table,
+                    "database": target_db,
+                    "schema": target_schema,
                     "matched_by": logged.get("matched_by") or "mapping",
                     "tie": logged.get("tie") or [],
                 })
             elif safe_target_name.upper() in all_existing:
-                # Same sanitized name already taken (e.g. by a view): never
-                # create a duplicate next to it.
+                # Same sanitized name already exists in target schema, but did
+                # not pass column compatibility (>= 0.8). Never overwrite or
+                # silently bind an incompatible existing table/view.
+                blocker = check_table_name_collision_blocker(
+                    ds_name, modeled_cols, self._live_schema_metadata
+                )
+                compat = blocker["col_compat"] if blocker else 0.0
+                if compat >= 0.5:
+                    # Partial schema drift on a same-domain table (e.g. 50%-79%):
+                    # dynamically isolate into a model-scoped table so the existing
+                    # Snowflake table is untouched and deployment succeeds.
+                    from semabridge.connectors.table_binding_resolver import compute_column_compatibility
+
+                    prefix = self._safe_table_name(model_name) if model_name else "MODEL"
+                    scoped_name = self._safe_table_name(f"{prefix}_{ds_name}")
+                    if scoped_name.upper() in all_existing:
+                        live_scoped_cols = self._live_schema_metadata.get(scoped_name.upper()) or set()
+                        if compute_column_compatibility(modeled_cols, live_scoped_cols) >= 0.8:
+                            plan.append({
+                                "dataset": ds_name,
+                                "action": "bind",
+                                "table": scoped_name,
+                                "database": target_db,
+                                "schema": target_schema,
+                                "matched_by": "scoped_model",
+                                "tie": [],
+                            })
+                            continue
+                        idx = 2
+                        while f"{scoped_name}_{idx}".upper() in all_existing:
+                            idx += 1
+                        scoped_name = f"{scoped_name}_{idx}"
+                    logger.info(
+                        "Target table '%s' exists with %.1f%% compatibility; dynamically isolating '%s' as '%s'.",
+                        safe_target_name, compat * 100.0, ds_name, scoped_name,
+                    )
+                    plan.append({
+                        "dataset": ds_name,
+                        "action": "create",
+                        "table": scoped_name,
+                        "database": target_db,
+                        "schema": target_schema,
+                        "matched_by": "scoped_isolation",
+                        "tie": [],
+                    })
+                    continue
+
                 plan.append({
                     "dataset": ds_name,
-                    "action": "bind",
-                    "table": safe_target_name,
-                    "matched_by": "name",
+                    "action": "blocked",
+                    "table": blocker["table_name"] if blocker else safe_target_name,
+                    "matched_by": "collision",
+                    "col_compat": compat,
+                    "message": (
+                        blocker["message"]
+                        if blocker
+                        else f"Target object '{safe_target_name}' already exists in Snowflake and its columns do not match PBIX table '{ds_name}'. Cannot bind or create without overwriting."
+                    ),
                     "tie": [],
                 })
             else:
@@ -339,6 +419,8 @@ class SnowflakeSchemaManager:
                     "dataset": ds_name,
                     "action": "create",
                     "table": safe_target_name,
+                    "database": target_db,
+                    "schema": target_schema,
                     "matched_by": None,
                     "tie": [],
                 })
@@ -361,9 +443,12 @@ class SnowflakeSchemaManager:
             return
 
         absent_tables_to_create = []
+        blocked_entries = []
         datasets_by_name = {d.unique_name: d for d in sml.datasets}
         for entry in self.plan_source_tables(cursor, sml):
-            if entry["action"] == "bind":
+            if entry["action"] == "blocked":
+                blocked_entries.append(entry)
+            elif entry["action"] == "bind":
                 if entry["matched_by"] == "name":
                     logger.warning(
                         "Dataset '%s' bound to existing table '%s' by name only (columns differ); not creating a duplicate.",
@@ -374,6 +459,10 @@ class SnowflakeSchemaManager:
                 self._verified_tables.add(self._safe_table_name(entry["table"]))
             else:
                 absent_tables_to_create.append((datasets_by_name[entry["dataset"]], entry["table"]))
+
+        if blocked_entries:
+            msgs = "; ".join(e.get("message") or f"Table collision for {e['dataset']}" for e in blocked_entries)
+            raise ConnectorError(f"Table binding blocked due to incompatible existing table(s): {msgs}")
 
         if not absent_tables_to_create:
             return
@@ -389,6 +478,20 @@ class SnowflakeSchemaManager:
                 self._execute_sql(cursor, create_ddl, context=f"CREATE TABLE {safe_table_name}")
                 logger.info(f"Created empty missing source table: {safe_table_name}")
                 self._verified_tables.add(safe_table_name)
+                # Record the placeholder as created by this project so other
+                # projects are told before they bind to it.
+                log = getattr(self._live_schema_metadata, "binding_log", None)
+                if log is not None:
+                    from semabridge.connectors.table_binding_resolver import clean_ident as _ci
+                    _db, _sc = self._target_namespace()
+                    log[_ci(dataset.unique_name)] = {
+                        "dataset": dataset.unique_name,
+                        "table": safe_table_name,
+                        "matched_by": "created",
+                        "tie": [],
+                        "database": _db,
+                        "schema": _sc,
+                    }
             except Exception as e:
                 logger.error(f"Failed to create missing source table '{safe_table_name}': {e}")
                 raise ConnectorError(f"Cannot create missing source table '{safe_table_name}': {e}") from e
@@ -550,6 +653,21 @@ class SnowflakeSchemaManager:
         
         return insert
 
+    def _physical_model_column_names(self, dataset: Any) -> List[str]:
+        """Return raw names of physical (non-calculated, non-internal) model columns."""
+        cols: List[str] = []
+        for col in getattr(dataset, "columns", []) or []:
+            col_name = getattr(col, "unique_name", "") or ""
+            if not col_name or col_name.startswith(("RowNumber", "_")):
+                continue
+            if getattr(col, "is_calculated", False):
+                continue
+            source_expr = getattr(col, "source_expression", None)
+            if source_expr and not self._is_physical_source_column(source_expr):
+                continue
+            cols.append(col_name)
+        return cols
+
     def _collect_physical_source_columns(self, dataset: SMLDataset) -> dict[str, Any]:
         """Return ordered map of physical Snowflake column name -> SML column.
 
@@ -563,6 +681,9 @@ class SnowflakeSchemaManager:
             col_name = col.unique_name
 
             if col_name.startswith("RowNumber") or col_name.startswith("_"):
+                continue
+
+            if getattr(col, "is_calculated", False):
                 continue
 
             source_expr = getattr(col, 'source_expression', None)
@@ -885,6 +1006,8 @@ class SnowflakeSchemaManager:
         for col in dataset.columns:
             col_name = col.unique_name
             if col_name.startswith("RowNumber") or col_name.startswith("_"):
+                continue
+            if getattr(col, "is_calculated", False):
                 continue
             source_expr = getattr(col, "source_expression", None)
             if source_expr and not self._is_physical_source_column(source_expr):
@@ -2385,23 +2508,27 @@ class SnowflakeSchemaManager:
             self._live_schema_metadata.update(cached)
             return cached
         query = (
-            "SELECT table_name, column_name "
+            "SELECT table_name, column_name, data_type "
             "FROM information_schema.columns "
             "WHERE table_schema = %s"
         )
         self._execute_sql(cursor, query, (self.config.schema_name.upper(),), context="FETCH SCHEMA METADATA")
-        
+
         metadata: Dict[str, set] = {}
+        column_types: Dict[str, Dict[str, str]] = {}
         for row in cursor.fetchall():
             table = row[0].upper()
             column = row[1].upper()
             if table not in metadata:
                 metadata[table] = set()
             metadata[table].add(column)
+            if len(row) > 2 and row[2]:
+                column_types.setdefault(table, {})[column] = str(row[2]).upper()
         self._live_schema_metadata.update(metadata)
+        self._record_column_types(column_types)
         key = _schema_cache_key(self.config.database, self.config.schema_name)
         with _SCHEMA_CACHE_LOCK:
-            _SCHEMA_CACHE[key] = {"loaded_at": time.time(), "metadata": metadata}
+            _SCHEMA_CACHE[key] = {"loaded_at": time.time(), "metadata": metadata, "column_types": column_types}
         return metadata
 
     def _fetch_model_table_metadata(self, cursor, datasets: list[Any]) -> Dict[str, set[str]]:
@@ -2419,7 +2546,7 @@ class SnowflakeSchemaManager:
 
         placeholders = ", ".join(["%s"] * len(table_names))
         query = (
-            f"SELECT table_name, column_name "
+            f"SELECT table_name, column_name, data_type "
             f"FROM information_schema.columns "
             f"WHERE table_schema = %s AND table_name IN ({placeholders})"
         )
@@ -2427,13 +2554,17 @@ class SnowflakeSchemaManager:
         self._execute_sql(cursor, query, params, context="FETCH MODEL METADATA")
 
         metadata: Dict[str, set[str]] = {}
+        column_types: Dict[str, Dict[str, str]] = {}
         for row in cursor.fetchall():
             table = row[0].upper()
             column = row[1].upper()
             if table not in metadata:
                 metadata[table] = set()
             metadata[table].add(column)
+            if len(row) > 2 and row[2]:
+                column_types.setdefault(table, {})[column] = str(row[2]).upper()
         self._live_schema_metadata.update(metadata)
+        self._record_column_types(column_types)
         return metadata
 
     def _preflight_check_osi(self, cursor, osi_model) -> None:

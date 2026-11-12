@@ -77,11 +77,15 @@
 .nav-item {
   display: flex;
   align-items: center;
-  padding: 12px 20px;
+  padding: 11px 16px;
+  margin: 4px 10px;
+  border-radius: 999px;
   color: var(--text-secondary);
   cursor: pointer;
   text-decoration: none;
-  transition: background 0.2s ease, color 0.2s ease;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .nav-item:hover {
@@ -90,8 +94,14 @@
 }
 
 .nav-item.active {
-  background-color: var(--color-accent-faint);
-  color: var(--accent-blue);
+  background: linear-gradient(135deg, #0284C7 0%, #2563EB 100%);
+  color: #FFFFFF;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+}
+
+.nav-item.active .sidebar-icon-container {
+  color: #FFFFFF !important;
 }
 
 /* Icons */
@@ -253,4 +263,38 @@
 
 .animate-shrink {
   animation: shrink linear forwards;
+}
+
+/* Navigation group heading ("Semantic layer") */
+.nav-group-label {
+  padding: 14px 26px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* Compact system status in the sidebar footer (replaces the bottom status bar) */
+.sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 10px 6px;
+  padding: 6px 16px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  border-radius: 8px;
+}
+.sidebar-status .status-dot-wrap {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sidebar.unpinned .sidebar-status {
+  padding: 6px 10px;
 }

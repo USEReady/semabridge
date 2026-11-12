@@ -107,17 +107,26 @@ def test_snowflake_policy_to_tmdl():
 
 
 def test_api_security_rls_endpoints():
+    # Omitting required target_database returns HTTP 400 (no silent PROD_DWH default)
+    missing_db_resp = client.post("/api/security/rls/tmdl-to-snowflake", json={
+        "role": {"name": "US_Sales", "table_permissions": [{"table_name": "Sales", "dax_filter_expression": '[Country] = "US"'}]}
+    })
+    assert missing_db_resp.status_code == 400
+
     role_payload = {
         "role": {
             "name": "US_Sales",
             "table_permissions": [
                 {"table_name": "Sales", "dax_filter_expression": '[Country] = "US"'}
             ],
-        }
+        },
+        "target_database": "TEST_DWH",
+        "target_schema": "TEST_ANALYTICS",
     }
     resp = client.post("/api/security/rls/tmdl-to-snowflake", json=role_payload)
     assert resp.status_code == 200
     assert "CREATE OR REPLACE ROW ACCESS POLICY" in resp.json()["ddl"]
+    assert "TEST_DWH.TEST_ANALYTICS" in resp.json()["ddl"]
 
 
 # =============================================================================

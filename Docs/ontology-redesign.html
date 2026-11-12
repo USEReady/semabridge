@@ -1,0 +1,542 @@
+<title>Ontology & AI Redesign</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: long scroll of annotated proposals; each mockup is a framed app window, scrollable sideways on phones. */
+:root{
+  --bg:#F4F5FA; --paper:#FFFFFF; --ink:#141827; --ink2:#4A5168; --ink3:#7D849A; --line:#E1E4EE;
+  --accent:#5457E0; --accent-soft:#E9E9FC;
+  --ok:#0F9D6E; --ok-soft:#DDF4EA; --warn:#C27A0A; --warn-soft:#FBEFD6; --bad:#D63B4E; --bad-soft:#FBE3E6;
+  /* app-mock tokens (mirror the product's surfaces) */
+  --m-app:#F8FAFC; --m-surface:#FFFFFF; --m-raised:#F1F4F9; --m-line:#E2E8F0; --m-text:#0F172A; --m-text2:#64748B; --m-text3:#94A3B8;
+  --display:"Fraunces",Georgia,serif; --sans:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0B0E17; --paper:#121726; --ink:#EEF0F7; --ink2:#AAB1C5; --ink3:#727A92; --line:#232A3D;
+  --accent:#8B8EF5; --accent-soft:#23254A;
+  --ok:#34D399; --ok-soft:#0F2E25; --warn:#F5B544; --warn-soft:#33270F; --bad:#F87185; --bad-soft:#3A1720;
+  --m-app:#090D16; --m-surface:#0F172A; --m-raised:#141E33; --m-line:rgba(255,255,255,.09); --m-text:#F8FAFC; --m-text2:#94A3B8; --m-text3:#64748B;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0B0E17; --paper:#121726; --ink:#EEF0F7; --ink2:#AAB1C5; --ink3:#727A92; --line:#232A3D;
+  --accent:#8B8EF5; --accent-soft:#23254A;
+  --ok:#34D399; --ok-soft:#0F2E25; --warn:#F5B544; --warn-soft:#33270F; --bad:#F87185; --bad-soft:#3A1720;
+  --m-app:#090D16; --m-surface:#0F172A; --m-raised:#141E33; --m-line:rgba(255,255,255,.09); --m-text:#F8FAFC; --m-text2:#94A3B8; --m-text3:#64748B;
+  color-scheme:dark}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55}
+.wrap{max-width:1120px;margin:0 auto;padding-block:48px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:64px}
+h1,h2{font-family:var(--display);font-weight:600;letter-spacing:-.01em;text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.1}
+h2{font-size:clamp(22px,3vw,28px);line-height:1.2}
+h3{font-size:15px;margin:0;font-weight:600}
+p{margin:0;max-width:68ch;color:var(--ink2)}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+section{display:flex;flex-direction:column;gap:20px}
+.head{display:flex;flex-direction:column;gap:10px}
+code,.mono{font-family:var(--mono);font-size:.88em}
+
+/* verdict */
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.vcard{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:6px}
+.vcard b{font-size:14px}
+.vcard span{font-size:13.5px;color:var(--ink2)}
+.vcard .k{font-family:var(--mono);font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em}
+
+/* problems list */
+.issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px 28px;counter-reset:i;padding:0;margin:0;list-style:none}
+.issues li{display:grid;grid-template-columns:26px 1fr;gap:10px;font-size:14px;color:var(--ink2);padding-block:10px;border-top:1px solid var(--line)}
+.issues li::before{counter-increment:i;content:counter(i);width:22px;height:22px;border-radius:50%;background:var(--bad);color:var(--paper);font:600 12px/22px var(--sans);text-align:center}
+.issues b{color:var(--ink);font-weight:600}
+
+/* mock frame */
+.scroller{overflow-x:auto;border-radius:12px;border:1px solid var(--line);background:var(--paper);box-shadow:0 1px 0 var(--line),0 18px 40px -24px rgba(20,24,39,.35)}
+.frame{min-width:900px;font-size:12px;color:var(--m-text);background:var(--m-app)}
+.chrome{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--m-raised);border-bottom:1px solid var(--m-line)}
+.chrome i{width:9px;height:9px;border-radius:50%;background:var(--m-line)}
+.chrome .url{margin-left:12px;font-family:var(--mono);font-size:11px;color:var(--m-text2);background:var(--m-surface);border:1px solid var(--m-line);border-radius:5px;padding:2px 10px}
+.app{display:grid;grid-template-columns:168px 1fr;min-height:430px}
+.side{background:var(--m-surface);border-right:1px solid var(--m-line);padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+.side .brand{font-weight:700;font-size:12.5px;padding:2px 8px 12px}
+.nav{padding:6px 8px;border-radius:6px;color:var(--m-text2);display:flex;align-items:center;gap:8px}
+.nav.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav .ic{width:12px;height:12px;border-radius:3px;border:1.5px solid currentColor;flex:none}
+.nav.new::after{content:"new";margin-left:auto;font-size:9.5px;font-family:var(--mono);background:var(--ok-soft);color:var(--ok);padding:0 5px;border-radius:4px}
+.sep{height:1px;background:var(--m-line);margin:8px 4px}
+.main{display:flex;flex-direction:column;min-width:0}
+.pagehead{padding:14px 20px 0;background:var(--m-surface);border-bottom:1px solid var(--m-line);display:flex;flex-direction:column;gap:10px}
+.ph-row{display:flex;align-items:center;gap:12px}
+.ph-row .t{font-size:15px;font-weight:700}
+.ph-row .sub{color:var(--m-text2)}
+.ph-row .sp{flex:1}
+.tabs{display:flex;gap:18px}
+.tab{padding:6px 0 9px;color:var(--m-text2);border-bottom:2px solid transparent}
+.tab.on{color:var(--m-text);border-color:var(--accent);font-weight:600}
+.btn{border:1px solid var(--m-line);background:var(--m-surface);border-radius:6px;padding:5px 10px;font-weight:600;color:var(--m-text);white-space:nowrap}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.sm{padding:2px 8px;font-size:11px}
+.body{padding:18px 20px;display:flex;flex-direction:column;gap:14px;flex:1}
+.muted{color:var(--m-text2)} .faint{color:var(--m-text3)}
+.card{background:var(--m-surface);border:1px solid var(--m-line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.num{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.n{background:var(--m-raised);color:var(--m-text2)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--m-text3);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--m-line)}
+.tbl td{padding:7px 10px;border-bottom:1px solid var(--m-line);vertical-align:top}
+.tbl tr.sel td{background:var(--accent-soft)}
+.feat{display:flex;flex-direction:column;gap:6px}
+.feat .fi{width:26px;height:26px;border-radius:7px;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent);font-weight:700;font-size:12px}
+.feat .why{color:var(--m-text2);line-height:1.45}
+.feat a{color:var(--accent);font-weight:600;text-decoration:none;margin-top:auto}
+
+/* callouts on the "today" mock */
+.callout{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--bad);color:#fff;font:600 11px/20px var(--sans);text-align:center;box-shadow:0 0 0 3px var(--m-app)}
+.rel{position:relative}
+.cramped{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--m-surface);border-bottom:1px solid var(--m-line);white-space:nowrap;overflow:hidden}
+.seg{display:flex;gap:3px;background:var(--m-raised);padding:3px;border-radius:7px;border:1px solid var(--m-line)}
+.seg span{padding:3px 9px;border-radius:5px;font-weight:600;color:var(--m-text2)}
+.seg span.on{background:var(--accent);color:#fff}
+.box{border:1px dashed var(--m-line);border-radius:6px;background:var(--m-surface);display:grid;place-items:center;color:var(--m-text3);font-size:11px;text-align:center;padding:6px}
+
+/* drawer */
+.split{display:grid;grid-template-columns:200px 1fr 270px;flex:1;min-height:0}
+.list{border-right:1px solid var(--m-line);background:var(--m-surface);padding:10px 8px;display:flex;flex-direction:column;gap:4px}
+.li{padding:7px 9px;border-radius:6px;display:flex;flex-direction:column;gap:2px}
+.li.on{background:var(--accent-soft)}
+.li b{font-size:12px}
+.drawer{border-left:1px solid var(--m-line);background:var(--m-surface);padding:14px;display:flex;flex-direction:column;gap:12px;box-shadow:-12px 0 24px -18px rgba(0,0,0,.35)}
+.drawer h4{margin:0;font-size:13px;font-family:var(--mono)}
+.formula{font-family:var(--mono);font-size:11px;background:var(--m-raised);border:1px solid var(--m-line);border-radius:6px;padding:8px;color:var(--m-text)}
+.qa{display:flex;flex-direction:column;gap:6px}
+.qa .act{display:flex;align-items:center;gap:8px;border:1px solid var(--m-line);border-radius:6px;padding:7px 9px}
+.qa .act b{font-size:11.5px}
+.qa .act span{color:var(--m-text2);font-size:11px}
+.qa .act em{margin-left:auto;font-style:normal}
+
+/* health */
+.check{display:grid;grid-template-columns:20px 1fr auto auto;gap:12px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--m-line)}
+.check:last-child{border-bottom:0}
+.check .q{font-weight:600}
+.check .d{color:var(--m-text2);font-size:11.5px}
+.ring{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;display:grid;place-items:center;font-size:9px;font-weight:700}
+.expand{background:var(--m-raised);padding:12px 14px 14px 46px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--m-line)}
+.impact{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:10.5px;border:1px solid var(--m-line);background:var(--m-surface);padding:2px 7px;border-radius:5px}
+.arrow{color:var(--m-text3)}
+
+/* ask ai */
+.chat{display:grid;grid-template-columns:1fr 250px;flex:1;min-height:0}
+.thread{padding:18px 26px;display:flex;flex-direction:column;gap:14px}
+.ask{align-self:flex-end;background:var(--accent);color:#fff;border-radius:12px 12px 3px 12px;padding:8px 12px;max-width:60%;font-weight:500}
+.ans{background:var(--m-surface);border:1px solid var(--m-line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.bars{display:flex;flex-direction:column;gap:5px}
+.bar{display:grid;grid-template-columns:110px 1fr 56px;gap:8px;align-items:center;font-variant-numeric:tabular-nums}
+.bar i{height:10px;border-radius:3px;background:var(--accent);display:block}
+.bar span:last-child{text-align:right;font-family:var(--mono);font-size:11px}
+.how{border-top:1px solid var(--m-line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+.how .step{display:grid;grid-template-columns:90px 1fr;gap:10px;font-size:11.5px}
+.how .step span:first-child{color:var(--m-text3);text-transform:uppercase;font-size:10px;letter-spacing:.05em;padding-top:2px}
+.composer{margin:0 26px 18px;border:1px solid var(--m-line);background:var(--m-surface);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:center}
+.composer .ph{flex:1;color:var(--m-text3)}
+.rail{border-left:1px solid var(--m-line);background:var(--m-surface);padding:14px;display:flex;flex-direction:column;gap:12px}
+.rail .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--m-text3);font-weight:600}
+.sugg{border:1px solid var(--m-line);border-radius:6px;padding:6px 8px;color:var(--m-text2)}
+
+/* annotations under mocks */
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.note{display:grid;grid-template-columns:22px 1fr;gap:10px;font-size:13.5px;color:var(--ink2)}
+.note::before{content:"";width:8px;height:8px;margin:7px 0 0 6px;border-radius:50%;background:var(--accent)}
+.note b{color:var(--ink)}
+
+/* IA diagram */
+.ia{display:grid;grid-template-columns:1fr auto 1fr;gap:20px;align-items:center}
+.iacol{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.iacol .ttl{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+.iarow{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;padding:7px 10px;border-radius:6px;background:var(--bg)}
+.iarow span:last-child{color:var(--ink3);font-size:12.5px;text-align:right}
+.iarow.page{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.iarrow{font-size:28px;color:var(--ink3)}
+@media (max-width:760px){.ia{grid-template-columns:1fr}.iarrow{transform:rotate(90deg);justify-self:center}}
+
+.rename{overflow-x:auto}
+.rename table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px;background:var(--paper);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.rename th,.rename td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line)}
+.rename th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);font-weight:600}
+.rename td:first-child{color:var(--ink3);text-decoration:line-through;text-decoration-color:var(--bad)}
+.rename td:nth-child(2){font-weight:600}
+.rename td:last-child{color:var(--ink2)}
+.steps{display:flex;flex-direction:column;gap:0;counter-reset:s;margin:0;padding:0;list-style:none}
+.steps li{display:grid;grid-template-columns:34px 1fr;gap:12px;padding:12px 0;border-top:1px solid var(--line);font-size:14px;color:var(--ink2)}
+.steps li::before{counter-increment:s;content:counter(s);font-family:var(--mono);color:var(--accent);font-weight:500}
+.steps b{color:var(--ink)}
+@media (prefers-reduced-motion:no-preference){.scroller{transition:box-shadow .2s}}
+</style>
+
+<div class="wrap">
+
+<header class="head">
+  <div class="eyebrow">Semabridge · UX proposal · /ontology</div>
+  <h1>Split “Semantic Mesh” into two pages: Ontology and Ask AI</h1>
+  <p>Today one screen holds four separate products: a glossary, a graph, an NL-to-SQL studio and a governance toolkit. Each is aimed at a different person doing a different job. The proposal is to give the AI studio its own page, fold governance into the place where people actually change metrics, and open the Ontology page with a short overview that says what each part is for.</p>
+</header>
+
+<section>
+  <div class="verdict">
+    <div class="vcard"><span class="k">Page 1</span><b>Ontology</b><span>For data stewards and modelers. Overview, Domains, Map, Health.</span></div>
+    <div class="vcard"><span class="k">Page 2</span><b>Ask AI</b><span>For analysts and business users. Ask a question, get a governed answer, see how it was built.</span></div>
+    <div class="vcard"><span class="k">Governance</span><b>Moves into context</b><span>“What breaks if I change this?” lives on the metric itself. A Health tab rolls up every check.</span></div>
+  </div>
+</section>
+
+<!-- ───────── TODAY ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Today</div>
+    <h2>Why it reads as cluttered</h2>
+  </div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ontology?tab=mesh</span></div>
+    <div class="rel">
+      <div class="cramped">
+        <b style="font-size:13px">Semantic Mesh</b><span class="pill n">v2.4</span>
+        <div class="seg"><span class="on">Domain Mesh &amp; Business Glossary 6</span><span>Connection Map</span><span>AI/BI Conversational Studio</span><span>Governance, Blast Radius &amp; Reconciliation</span></div>
+        <span class="muted">6 Domains · 212 Concepts · 84 Metrics · ⚠ 2 Collision(s)</span>
+        <span class="btn pri">Auto-Generate from OSI</span><span class="btn">Upload Domain YAML</span>
+      </div>
+      <span class="callout" style="left:150px;top:-6px">1</span>
+      <span class="callout" style="left:640px;top:-6px">2</span>
+      <span class="callout" style="left:860px;top:24px">3</span>
+    </div>
+    <div class="rel" style="display:grid;grid-template-columns:200px 1fr 260px;gap:8px;padding:8px;height:300px">
+      <div class="box">Domain rail<br>+ search + collision box</div>
+      <div style="display:grid;grid-template-rows:28px 1fr;gap:8px">
+        <div class="box">Metrics | Concepts | Policies | YAML  (2nd row of tabs)</div>
+        <div class="box">Wide table: name · formula SQL · derived from · guardrail · status · BI binding</div>
+      </div>
+      <div class="box">Always-open inspector<br>(340px)</div>
+      <span class="callout" style="left:480px;top:2px">4</span>
+      <span class="callout" style="right:120px;top:120px">5</span>
+    </div>
+    <div class="rel" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 8px 10px">
+      <div class="box">AI tab: engine picker + prompt + trace + SQL editor + VQR + data grid, all at once</div>
+      <div class="box">Gov: Blast radius form + radar</div>
+      <div class="box">Gov: DAX vs SQL parity form</div>
+      <div class="box">Gov: Linter + RLS DDL compiler</div>
+      <span class="callout" style="left:120px;top:-8px">6</span>
+      <span class="callout" style="left:560px;top:-8px">7</span>
+    </div>
+  </div></div>
+  <ol class="issues">
+    <li><span><b>Internal name as the page title.</b> “Semantic Mesh v2.4” tells a new user nothing about what they can do here.</span></li>
+    <li><span><b>Tab labels are sentences.</b> Two tabs are 5 to 6 words with ampersands, so the header overflows on laptops and the tabs scroll sideways.</span></li>
+    <li><span><b>The header carries everything:</b> brand, four tabs, a telemetry strip, two primary actions and refresh, all at the same visual weight.</span></li>
+    <li><span><b>Three panes plus a second tab row</b> on the Domains view. The metrics table has 6 columns, and SQL formulas push it wide.</span></li>
+    <li><span><b>The inspector is always open,</b> so it takes 340px even when nothing is selected.</span></li>
+    <li><span><b>The AI studio is a workbench, not a flow.</b> Engine choice, trace, SQL, certification and results all appear at once, before anyone has asked a question.</span></li>
+    <li><span><b>Governance is four empty forms.</b> Users must type a metric name, a change type and a DAX expression to see anything, and nothing explains when you would want to.</span></li>
+    <li><span><b>No “why”.</b> No view explains what a feature is for or what to do first, so the value of the ontology stays hidden.</span></li>
+  </ol>
+</section>
+
+<!-- ───────── IA ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Proposed structure</div>
+    <h2>Two sidebar entries, short tab names</h2>
+    <p>Split by who is using it and what they came to do. Stewards curate definitions, and analysts consume them. Governance checks act on definitions, so they stay with the Ontology page but get triggered from the metric being changed.</p>
+  </div>
+  <div class="ia">
+    <div class="iacol">
+      <div class="ttl">Today: /ontology</div>
+      <div class="iarow"><span>Domain Mesh &amp; Business Glossary</span><span>3-pane IDE</span></div>
+      <div class="iarow"><span>Connection Map</span><span>graph</span></div>
+      <div class="iarow"><span>AI/BI Conversational Studio</span><span>NL→SQL</span></div>
+      <div class="iarow"><span>Governance, Blast Radius &amp; Reconciliation</span><span>4 forms</span></div>
+    </div>
+    <div class="iarrow" aria-hidden="true">→</div>
+    <div class="iacol">
+      <div class="ttl">Proposed</div>
+      <div class="iarow page"><span>Ontology  /ontology</span><span></span></div>
+      <div class="iarow"><span>· Overview</span><span>what it is, health, next steps</span></div>
+      <div class="iarow"><span>· Domains</span><span>glossary + metric drawer</span></div>
+      <div class="iarow"><span>· Map</span><span>unchanged graph</span></div>
+      <div class="iarow"><span>· Health</span><span>all checks, one list</span></div>
+      <div class="iarow page"><span>Ask AI  /ask</span><span></span></div>
+      <div class="iarow"><span>· Conversation</span><span>question → answer → “how”</span></div>
+      <div class="iarow"><span>· Certified questions</span><span>VQR library</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── OVERVIEW ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Mockup 1 · Ontology › Overview</div>
+    <h2>A landing view that explains the value</h2>
+    <p>This is the new default tab. Mesh health comes first, then one card per capability that says what it does in plain words and links to it. When a project has no domains yet, the cards become a 3-step setup: generate from OSI, review, publish.</p>
+  </div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ontology</span></div>
+    <div class="app">
+      <div class="side">
+        <div class="brand">Semabridge</div>
+        <div class="nav"><span class="ic"></span>Projects</div>
+        <div class="nav"><span class="ic"></span>Translations</div>
+        <div class="nav on"><span class="ic"></span>Ontology</div>
+        <div class="nav new"><span class="ic"></span>Ask AI</div>
+        <div class="sep"></div>
+        <div class="nav"><span class="ic"></span>Settings</div>
+      </div>
+      <div class="main">
+        <div class="pagehead">
+          <div class="ph-row"><span class="t">Ontology</span><span class="sub">Shared business definitions every BI tool and AI agent uses</span><span class="sp"></span><span class="btn">Import YAML</span><span class="btn pri">Generate from OSI</span></div>
+          <div class="tabs"><span class="tab on">Overview</span><span class="tab">Domains <span class="faint">6</span></span><span class="tab">Map</span><span class="tab">Health <span class="pill warn">3</span></span></div>
+        </div>
+        <div class="body">
+          <div class="grid4">
+            <div class="card"><span class="muted">Domains</span><span class="num">6</span><span class="faint">Finance, Sales, Supply…</span></div>
+            <div class="card"><span class="muted">Governed metrics</span><span class="num">84</span><span class="faint">71 bound to BI measures</span></div>
+            <div class="card"><span class="muted">Business concepts</span><span class="num">212</span><span class="faint">mapped to 148 tables</span></div>
+            <div class="card"><span class="muted">Needs attention</span><span class="num" style="color:var(--warn)">3</span><span class="faint">2 collisions · 1 parity drift</span></div>
+          </div>
+          <div class="grid3">
+            <div class="card feat"><span class="fi">D</span><b>One definition per metric</b><span class="why">Each domain team owns its glossary. “Revenue” means the same thing in Power BI, Tableau and Snowflake.</span><a>Browse domains →</a></div>
+            <div class="card feat"><span class="fi">M</span><b>See what depends on what</b><span class="why">Trace a metric from source tables through domains to every dashboard that uses it.</span><a>Open map →</a></div>
+            <div class="card feat"><span class="fi">H</span><b>Catch breaks before they ship</b><span class="why">Impact analysis, DAX-vs-SQL parity, quality lint and row-level security in one checklist.</span><a>Review 3 issues →</a></div>
+          </div>
+          <div class="card" style="flex-direction:row;align-items:center;gap:12px;background:var(--accent-soft);border-color:transparent">
+            <b style="color:var(--accent)">Ask AI uses this ontology.</b><span class="muted">Questions are answered with these governed metrics and policies, so AI answers match your dashboards.</span><span class="sp" style="flex:1"></span><span class="btn sm">Try Ask AI</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>Telemetry becomes cards.</b> The inline “6 Domains · 212 Concepts…” strip moves out of the header into the overview, where it has room for context.</span></div>
+    <div class="note"><span><b>Two actions in the header, max.</b> Refresh moves onto data views. “Auto-Generate from OSI” becomes “Generate from OSI”.</span></div>
+    <div class="note"><span><b>A badge on Health</b> carries the collision count, replacing the amber link in the header.</span></div>
+  </div>
+</section>
+
+<!-- ───────── DOMAINS ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Mockup 2 · Ontology › Domains</div>
+    <h2>Glossary first, details in a drawer</h2>
+    <p>The table keeps only the columns people scan: name, owner, status and where it's used. The SQL formula, lineage and guardrails open in a drawer when you click a row. Governance actions sit in that drawer, already filled in for the selected metric.</p>
+  </div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ontology/domains/finance?metric=gross_margin</span></div>
+    <div class="app">
+      <div class="side">
+        <div class="brand">Semabridge</div>
+        <div class="nav"><span class="ic"></span>Projects</div>
+        <div class="nav"><span class="ic"></span>Translations</div>
+        <div class="nav on"><span class="ic"></span>Ontology</div>
+        <div class="nav"><span class="ic"></span>Ask AI</div>
+      </div>
+      <div class="main">
+        <div class="pagehead">
+          <div class="ph-row"><span class="t">Ontology</span><span class="sp"></span><span class="btn">Import YAML</span><span class="btn pri">Generate from OSI</span></div>
+          <div class="tabs"><span class="tab">Overview</span><span class="tab on">Domains <span class="faint">6</span></span><span class="tab">Map</span><span class="tab">Health <span class="pill warn">3</span></span></div>
+        </div>
+        <div class="split">
+          <div class="list">
+            <div class="box" style="place-items:start;padding:5px 8px">Filter domains…</div>
+            <div class="li on"><b>Finance</b><span class="faint">CFO Office · 22 metrics</span></div>
+            <div class="li"><b>Sales</b><span class="faint">RevOps · 31 metrics</span></div>
+            <div class="li"><b>Supply Chain</b><span class="faint">Ops · 14 metrics</span></div>
+            <div class="li"><b>Marketing</b><span class="faint">Growth · 9 metrics</span></div>
+            <div class="li"><b>HR</b><span class="faint">People · 5 metrics <span class="pill warn">1</span></span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;min-width:0">
+            <div style="padding:12px 16px;display:flex;gap:10px;align-items:center;border-bottom:1px solid var(--m-line);background:var(--m-surface)">
+              <b style="font-size:13px">Finance</b><span class="pill n">v1.3</span><span class="faint">Owner: CFO Office</span><span style="flex:1"></span>
+              <span class="seg"><span class="on">Metrics</span><span>Concepts</span><span>Policies</span><span>YAML</span></span>
+            </div>
+            <div style="padding:6px 8px">
+              <table class="tbl">
+                <tr><th>Metric</th><th>Status</th><th>Used in</th><th>Guardrail</th></tr>
+                <tr><td><b>revenue</b><div class="faint">Net invoiced revenue</div></td><td><span class="pill ok">Certified</span></td><td>4 reports</td><td class="muted">—</td></tr>
+                <tr class="sel"><td><b>gross_margin</b><div class="faint">Revenue minus COGS, %</div></td><td><span class="pill warn">Drift</span></td><td>7 reports · 1 agent</td><td class="muted">region RLS</td></tr>
+                <tr><td><b>opex</b><div class="faint">Operating expense</div></td><td><span class="pill ok">Certified</span></td><td>2 reports</td><td class="muted">—</td></tr>
+                <tr><td><b>ebitda</b><div class="faint">Derived from 3 metrics</div></td><td><span class="pill n">Draft</span></td><td>—</td><td class="muted">—</td></tr>
+              </table>
+            </div>
+          </div>
+          <div class="drawer">
+            <div style="display:flex;align-items:center;gap:8px"><h4>gross_margin</h4><span class="pill warn">Drift</span><span style="flex:1"></span><span class="faint">✕</span></div>
+            <span class="muted">Revenue minus cost of goods sold, as a % of revenue.</span>
+            <div class="formula">(SUM(revenue) - SUM(cogs))<br>&nbsp;&nbsp;/ NULLIF(SUM(revenue),0)</div>
+            <div class="faint">Derived from <span class="chip">revenue</span> <span class="chip">cogs</span></div>
+            <div class="qa">
+              <span class="faint" style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:600">Before you change it</span>
+              <div class="act"><b>Impact</b><span>7 reports, 1 AI agent</span><em class="btn sm">View</em></div>
+              <div class="act"><b>Parity</b><span>Power BI vs SQL: 2.1% off on EMEA</span><em class="btn sm">Fix</em></div>
+              <div class="act"><b>Lint</b><span>Passes</span><em class="pill ok">OK</em></div>
+            </div>
+            <span class="btn" style="text-align:center">Ask AI about gross_margin</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>The drawer is only open when a row is selected.</b> With nothing selected, the table gets the full width.</span></div>
+    <div class="note"><span><b>Blast radius becomes “Impact”</b> and runs automatically for the selected metric. No form to fill in.</span></div>
+    <div class="note"><span><b>“Used in” replaces “Bound to BI measure”</b> and links to the Map, filtered to this metric.</span></div>
+  </div>
+</section>
+
+<!-- ───────── HEALTH ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Mockup 3 · Ontology › Health</div>
+    <h2>Governance as a checklist, not four tools</h2>
+    <p>The four governance panels become one list of results, ordered by severity. Each row says what's wrong and where. Expanding a row shows the detail view that exists today (the impact rings, the parity table, the DDL). “Run all checks” stays as the single action.</p>
+  </div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ontology?tab=health</span></div>
+    <div class="app">
+      <div class="side">
+        <div class="brand">Semabridge</div>
+        <div class="nav"><span class="ic"></span>Projects</div>
+        <div class="nav"><span class="ic"></span>Translations</div>
+        <div class="nav on"><span class="ic"></span>Ontology</div>
+        <div class="nav"><span class="ic"></span>Ask AI</div>
+      </div>
+      <div class="main">
+        <div class="pagehead">
+          <div class="ph-row"><span class="t">Ontology</span><span class="sp"></span><span class="faint">Last run 4 min ago</span><span class="btn pri">Run all checks</span></div>
+          <div class="tabs"><span class="tab">Overview</span><span class="tab">Domains <span class="faint">6</span></span><span class="tab">Map</span><span class="tab on">Health <span class="pill warn">3</span></span></div>
+        </div>
+        <div class="body">
+          <div style="display:flex;gap:8px"><span class="pill bad">1 breaking</span><span class="pill warn">2 warnings</span><span class="pill ok">41 passing</span><span style="flex:1"></span><span class="seg"><span class="on">All</span><span>Impact</span><span>Parity</span><span>Quality</span><span>Access</span></span></div>
+          <div class="card" style="padding:0;gap:0">
+            <div class="check"><span class="ring" style="color:var(--bad)">!</span><div><div class="q">Parity drift on gross_margin</div><div class="d">Power BI DAX and warehouse SQL disagree by 2.1% for Region = EMEA</div></div><span class="pill n">Parity</span><span class="btn sm">Collapse</span></div>
+            <div class="expand">
+              <table class="tbl" style="background:var(--m-surface);border-radius:6px">
+                <tr><th>Slice</th><th>Power BI DAX</th><th>Warehouse SQL</th><th>Δ</th></tr>
+                <tr><td>EMEA</td><td>38.4%</td><td>37.6%</td><td style="color:var(--bad)">2.1%</td></tr>
+                <tr><td>AMER</td><td>41.2%</td><td>41.2%</td><td style="color:var(--ok)">0.0%</td></tr>
+                <tr><td>APAC</td><td>35.9%</td><td>35.9%</td><td style="color:var(--ok)">0.0%</td></tr>
+              </table>
+              <div style="display:flex;gap:8px"><span class="btn sm">Open gross_margin</span><span class="btn sm">Show both queries</span></div>
+            </div>
+            <div class="check"><span class="ring" style="color:var(--warn)">!</span><div><div class="q">“revenue” defined in Finance and Sales</div><div class="d">Two different formulas. Pick an owner, or rename one.</div></div><span class="pill n">Quality</span><span class="btn sm">Resolve</span></div>
+            <div class="check"><span class="ring" style="color:var(--warn)">!</span><div><div class="q">Dropping AMOUNT would break 3 reports</div><div class="d"><span class="impact"><span class="chip">AMOUNT</span><span class="arrow">→</span><span class="chip">revenue</span><span class="arrow">→</span><span class="chip">Exec Dashboard</span><span class="chip">+2</span></span></div></div><span class="pill n">Impact</span><span class="btn sm">Details</span></div>
+            <div class="check"><span class="ring" style="color:var(--ok)">✓</span><div><div class="q">Row-level security in sync</div><div class="d">4 Power BI roles compiled to Snowflake row access policies</div></div><span class="pill n">Access</span><span class="btn sm">View DDL</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>Results, not inputs.</b> The checks run against real domain data. The hardcoded presets (revenue, gross_margin, AMOUNT) go away.</span></div>
+    <div class="note"><span><b>A manual simulator is still there</b> behind “What if…” for people who want to test a hypothetical rename or drop.</span></div>
+    <div class="note"><span><b>Plain filter names:</b> Impact, Parity, Quality, Access replace Blast Radius, Reconciliation, Linter and RLS Compiler.</span></div>
+  </div>
+</section>
+
+<!-- ───────── ASK AI ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Mockup 4 · Ask AI (own page)</div>
+    <h2>Question first, answer second, SQL on request</h2>
+    <p>An analyst comes to get a number, not to compile SQL. The page opens on a composer and suggested questions. The answer shows the result. The grounding trace, SQL and engine choice fold into a “How this was answered” section, and Certify sits next to it.</p>
+  </div>
+  <div class="scroller"><div class="frame">
+    <div class="chrome"><i></i><i></i><i></i><span class="url">/ask</span></div>
+    <div class="app">
+      <div class="side">
+        <div class="brand">Semabridge</div>
+        <div class="nav"><span class="ic"></span>Projects</div>
+        <div class="nav"><span class="ic"></span>Translations</div>
+        <div class="nav"><span class="ic"></span>Ontology</div>
+        <div class="nav on"><span class="ic"></span>Ask AI</div>
+      </div>
+      <div class="main">
+        <div class="pagehead" style="padding-bottom:12px">
+          <div class="ph-row"><span class="t">Ask AI</span><span class="sub">Answers use your governed metrics and access policies</span><span class="sp"></span><span class="faint">Run on</span><span class="seg"><span class="on">Snowflake Cortex</span><span>Databricks Genie</span><span>Local</span></span></div>
+        </div>
+        <div class="chat">
+          <div style="display:flex;flex-direction:column;min-width:0">
+            <div class="thread">
+              <div class="ask">What was gross margin by region in 2024?</div>
+              <div class="ans">
+                <div style="display:flex;align-items:center;gap:8px"><b>Gross margin, 2024</b><span class="pill ok">Uses certified metric</span><span style="flex:1"></span><span class="btn sm">Certify answer</span></div>
+                <div class="bars">
+                  <div class="bar"><span>AMER</span><i style="width:100%"></i><span>41.2%</span></div>
+                  <div class="bar"><span>EMEA</span><i style="width:91%"></i><span>37.6%</span></div>
+                  <div class="bar"><span>APAC</span><i style="width:87%"></i><span>35.9%</span></div>
+                </div>
+                <div class="how">
+                  <b style="font-size:11.5px">▾ How this was answered</b>
+                  <div class="step"><span>Matched</span><span>“gross margin” → <span class="chip">finance.gross_margin</span>, “region” → <span class="chip">dim_region.name</span></span></div>
+                  <div class="step"><span>Policies</span><span>Row filter <span class="chip">region IN user_regions()</span> applied</span></div>
+                  <div class="step"><span>SQL</span><span class="faint">12 lines · <u>show SQL</u> · <u>open in editor</u></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="composer"><span class="ph">Ask a business question…</span><span class="btn pri">Ask</span></div>
+          </div>
+          <div class="rail">
+            <span class="lbl">Try asking</span>
+            <span class="sugg">Revenue trend by month, last 12 months</span>
+            <span class="sugg">Top 10 customers by gross margin</span>
+            <span class="sugg">Opex vs budget by department</span>
+            <span class="lbl">Certified questions</span>
+            <span class="sugg">Quarterly EBITDA <span class="pill ok">VQR</span></span>
+            <span class="sugg">Churned ARR by segment <span class="pill ok">VQR</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="notes">
+    <div class="note"><span><b>The engine picker moves to a small switch in the header.</b> It's a setting, not a step.</span></div>
+    <div class="note"><span><b>The trust signal sits next to the number.</b> “Uses certified metric” plus the expandable trace shows why the AI answer can be trusted, which is the core selling point.</span></div>
+    <div class="note"><span><b>Certified questions (VQR) become a library</b> people can browse and reuse, instead of a button they may never notice.</span></div>
+  </div>
+</section>
+
+<!-- ───────── RENAMES ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Copy</div>
+    <h2>Rename to what people recognize</h2>
+  </div>
+  <div class="rename"><table>
+    <tr><th>Today</th><th>Proposed</th><th>Why</th></tr>
+    <tr><td>Semantic Mesh v2.4</td><td>Ontology</td><td>Matches the sidebar and route. Version moves to Settings.</td></tr>
+    <tr><td>Domain Mesh &amp; Business Glossary</td><td>Domains</td><td>The glossary is what's inside a domain.</td></tr>
+    <tr><td>Connection Map</td><td>Map</td><td>Short, and fits the tab bar.</td></tr>
+    <tr><td>AI/BI Conversational Studio</td><td>Ask AI (own page)</td><td>Says what you do there.</td></tr>
+    <tr><td>Governance, Blast Radius &amp; Reconciliation</td><td>Health</td><td>One word for “is my ontology OK?”</td></tr>
+    <tr><td>Blast Radius · Linter · Reconciliation · RLS Compiler</td><td>Impact · Quality · Parity · Access</td><td>Outcome names, not engine names.</td></tr>
+    <tr><td>Certify &amp; Save to VQR</td><td>Certify answer</td><td>VQR explained once in the Certified questions library.</td></tr>
+  </table></div>
+</section>
+
+<!-- ───────── PLAN ───────── -->
+<section>
+  <div class="head">
+    <div class="eyebrow">Build order</div>
+    <h2>How to get there without a rewrite</h2>
+    <p>Most of the existing panels can be reused. The work is mainly moving them and splitting the 2,800-line component.</p>
+  </div>
+  <ol class="steps">
+    <li><span><b>Split the component.</b> Break <code>OntologyDomainManager.jsx</code> into <code>DomainsView</code>, <code>HealthView</code> and <code>AskAiPage</code>, with domain data moved into a shared hook (<code>useOntologyDomains</code>).</span></li>
+    <li><span><b>Add the /ask route and sidebar entry.</b> Redirect <code>/ontology?tab=ai</code> to <code>/ask</code> so existing links keep working.</span></li>
+    <li><span><b>Rename tabs and slim the header</b> to a title, a subtitle and two actions. This alone fixes most of the overflow.</span></li>
+    <li><span><b>Turn the inspector into a drawer</b> that opens on row click, and add the Impact / Parity / Lint quick actions for the selected metric.</span></li>
+    <li><span><b>Rebuild Health as a results list,</b> reusing the existing blast-radius, parity, lint and RLS panels as the expanded detail of each row.</span></li>
+    <li><span><b>Add the Overview tab last,</b> including the empty-state setup steps for projects with no domains.</span></li>
+  </ol>
+</section>
+
+</div>

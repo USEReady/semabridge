@@ -168,7 +168,44 @@ def preview_table_bindings(context: RunContext) -> Dict[str, Any]:
             physical_namespace=emitter_physical_namespace(context),
         )
         emitter.binding_scope = table_binding_scope(context)
-        return {"tables": emitter.preview_table_bindings(context.sml_model), "error": None}
+        plan = emitter.preview_table_bindings(context.sml_model)
+        blocked = [t for t in plan if t.get("action") == "blocked"]
+        warnings: List[Dict[str, Any]] = []
+        try:
+            scope = emitter.binding_scope
+            cur_project_id = scope[0] if scope else (str(context.project_id) if context.project_id else None)
+            bound_tables = [
+                {"table": t["table"], "database": t.get("database"), "schema": t.get("schema")}
+                for t in plan if t.get("action") == "bind" and t.get("table")
+            ]
+            if bound_tables:
+                for c in ModelRepository().find_other_project_table_bindings(
+                    cur_project_id, bound_tables,
+                    database=getattr(sf_cfg, "database", None), schema=getattr(sf_cfg, "schema_name", None),
+                ):
+                    fq = ".".join(p for p in (c.get("database"), c.get("schema"), c["table_name"]) if p)
+                    if c.get("created_by_other_project"):
+                        msg = (
+                            f"Table '{fq}' is an empty placeholder created by another project "
+                            f"({c['project_id']}/{c['model_key']}), not source data."
+                        )
+                        wtype = "other_project_placeholder_table"
+                    else:
+                        msg = f"Table '{fq}' is already bound by another project ({c['project_id']}/{c['model_key']})."
+                        wtype = "cross_project_table_binding"
+                    if not c.get("qualified", True):
+                        msg += " (That binding predates database/schema tracking; it matched by table name only.)"
+                    warnings.append({
+                        "type": wtype,
+                        "table": fq,
+                        "other_project_id": c["project_id"],
+                        "other_model_key": c["model_key"],
+                        "qualified": bool(c.get("qualified", True)),
+                        "message": msg,
+                    })
+        except Exception as exc:
+            logger.debug("Cross-project table binding check skipped: %s", exc)
+        return {"tables": plan, "blocked": blocked, "warnings": warnings, "error": None}
     except TableBindingAmbiguityError:
         raise
     except Exception as exc:

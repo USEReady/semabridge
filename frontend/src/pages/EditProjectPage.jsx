@@ -2,7 +2,7 @@
  * EditProjectPage — /projects/:id/edit
  *
  * Loads an existing project by ID and feeds it into the shared
- * 5-step CreateProjectPage wizard with editMode=true.
+ * 6-step CreateProjectPage wizard with editMode=true.
  *
  * All the "SAVED" tags, diff highlights, and review changes logic
  * live inside CreateProjectPage and work automatically in edit mode.

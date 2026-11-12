@@ -9,6 +9,15 @@ import { useLogs } from '../context/LogsContext';
 import useProjectSync from '../hooks/useProjectSync';
 import { useSyncStatusStore } from '../context/SyncStatusContext';
 
+// The timezone chosen in Settings (falls back to the browser's own).
+function preferredTimeZone() {
+    try {
+        return localStorage.getItem('semabridge-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    } catch {
+        return 'UTC';
+    }
+}
+
 function extractRunError(run) {
     const direct = [run?.error_message, run?.error].filter(Boolean).join(' | ');
     if (direct) return direct;
@@ -26,7 +35,7 @@ function extractRunError(run) {
     return '';
 }
 
-export default function StatusBar() {
+export default function StatusBar({ variant = 'bar', collapsed = false }) {
     // Remove showSyncBar, always render the bar
     const [connected, setConnected] = useState(false);
     const { wsConnected, addLog } = useLogs();
@@ -91,8 +100,8 @@ export default function StatusBar() {
             const dateStr = ts.includes('Z') || ts.includes('+') ? ts : `${ts}Z`;
             const d = new Date(dateStr);
             if (!isNaN(d.getTime())) {
-                lastSyncLabel = d.toLocaleString('en-IN', {
-                    timeZone: 'Asia/Kolkata',
+                lastSyncLabel = d.toLocaleString(undefined, {
+                    timeZone: preferredTimeZone(),
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric',
@@ -110,6 +119,30 @@ export default function StatusBar() {
     const isSyncing = (currentSyncStatus === 'running' || currentSyncStatus === 'starting' || currentSyncStatus === 'pending') && currentSyncId;
     const isStarting = safeProgress < 5;
     const transitionStyle = isStarting ? 'none' : 'width 1s linear';
+
+    if (variant === 'sidebar') {
+        const tone = !connected ? 'var(--color-danger)' : isSyncing ? 'var(--accent-blue)' : 'var(--color-success)';
+        const text = !connected ? 'API unreachable' : isSyncing ? 'Sync running…' : 'All systems OK';
+        return (
+            <div
+                className="sidebar-status"
+                role="status"
+                title={`${connected ? 'API connected' : 'API unreachable'} \u00b7 Last sync: ${lastSyncLabel}`}
+            >
+                <span className="status-dot-wrap">
+                    {isSyncing
+                        ? <RefreshCw size={11} className="animate-spin" style={{ color: tone }} />
+                        : <span className="w-2 h-2 rounded-full" style={{ background: tone, display: 'inline-block' }} />}
+                </span>
+                {!collapsed && (
+                    <span className="nav-label" style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, minWidth: 0 }}>
+                        <span style={{ color: connected ? 'var(--text-secondary)' : tone, fontWeight: 600 }}>{text}</span>
+                        <span style={{ fontSize: 10.5, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis' }}>Last sync: {lastSyncLabel}</span>
+                    </span>
+                )}
+            </div>
+        );
+    }
 
     // The bar is always visible; only the sync progress section is conditional
     return (

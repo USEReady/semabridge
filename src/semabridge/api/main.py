@@ -35,12 +35,17 @@ from semabridge.api.routers.mapping_router import router as mapping_router
 from semabridge.api.routers.synonyms_router import router as synonyms_router
 from semabridge.api.routers.domain_ontology_router import router as domain_ontology_router
 from semabridge.api.routers.domain_ontology_router import project_router as ontology_project_router
+from semabridge.api.routers.domain_ontology_router import review_router as ontology_review_router
 from semabridge.api.routers.ai_router import router as ai_router
 from semabridge.api.routers.reconciliation_router import router as reconciliation_router
 from semabridge.api.routers.governance_router import router as governance_router
 from semabridge.api.routers.fabric_cloud_router import router as fabric_cloud_router
 from semabridge.api.routers.security_router import router as security_router
 from semabridge.api.routers.databricks_metric_router import router as databricks_metric_router
+from semabridge.api.routers.drift_router import router as drift_router
+from semabridge.api.routers.reverse_sync_router import router as reverse_sync_router
+from semabridge.api.routers.bi_truth_router import router as bi_truth_router
+from semabridge.api.routers.cross_platform_router import router as cross_platform_router
 
 try:
     from semabridge.api.auth_router import router as auth_router
@@ -91,12 +96,17 @@ for router in [
     synonyms_router,
     domain_ontology_router,
     ontology_project_router,
+    ontology_review_router,
     ai_router,
     reconciliation_router,
     governance_router,
     fabric_cloud_router,
     security_router,
     databricks_metric_router,
+    drift_router,
+    reverse_sync_router,
+    bi_truth_router,
+    cross_platform_router,
 ]:
     app.include_router(router)
 
@@ -109,7 +119,7 @@ app.include_router(ui_router, prefix='/api')
 if __name__ == '__main__':
     import uvicorn
 
-    port = int(os.environ.get('API_PORT', '8001'))
+    port = int(os.environ.get('API_PORT', '8002'))
     uvicorn.run(
         # Pass as import string so uvicorn respects the event loop policy
         # already set above. Passing the app object directly causes uvicorn
