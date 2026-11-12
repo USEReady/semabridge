@@ -886,9 +886,55 @@ def validate_multi_model_dry_run_readiness(
                     result_data = {}
                 blockers = _compat_collect_dry_run_blockers(result_data)
                 if blockers:
+                    resolved_paths = _load_project_override_paths(project_id, exp)
+                    blockers = [
+                        b for b in blockers
+                        if (b.get("source_path") or "").strip().lower() not in resolved_paths
+                        and (b.get("id") or "").strip().lower() not in resolved_paths
+                    ]
+                if blockers:
                     raise ValidationError(
                         f"Multi-model project '{project_id}' cannot be synced: "
                         f"model '{matched_file.label or exp}' has {len(blockers)} unresolved dry-run blocker(s). "
                         "Resolve all collisions and blockers before syncing."
                     )
+
+
+def _load_project_override_paths(project_id: str, model_ref: str) -> set[str]:
+    """Return lowercased source_path/id keys already resolved in project mappings_overrides."""
+    overrides: list = []
+    try:
+        from semabridge.api.services.project_shared import _compat_ensure_loaded, _compat_projects
+
+        _compat_ensure_loaded()
+        meta = _compat_projects.get(project_id)
+        if isinstance(meta, dict):
+            overrides = list(meta.get("mappings_overrides") or [])
+    except Exception:
+        pass
+    if not overrides:
+        try:
+            import yaml
+            from pathlib import Path
+
+            p = Path("config/projects") / f"{project_id}.yaml"
+            if p.exists():
+                data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                overrides = list(data.get("mappings_overrides") or [])
+        except Exception:
+            pass
+
+    model_norm = str(model_ref or "").replace("\\", "/").strip().lower()
+    model_stem = PurePath(model_norm).stem.lower() if model_norm else ""
+    out: set[str] = set()
+    for ov in overrides:
+        if not isinstance(ov, dict) or not ov.get("target_name"):
+            continue
+        ov_model = str(ov.get("model") or "").replace("\\", "/").strip().lower()
+        if ov_model and model_norm and ov_model != model_norm and PurePath(ov_model).stem.lower() != model_stem:
+            continue
+        for k in (ov.get("source_path"), ov.get("id")):
+            if k:
+                out.add(str(k).strip().lower())
+    return out
 
