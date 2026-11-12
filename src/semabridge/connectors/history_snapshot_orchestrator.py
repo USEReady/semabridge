@@ -76,6 +76,8 @@ class HistorySnapshotOrchestrator:
             history_view_ddls.append(ddl)
             emitted_views.add(safe_latest_view)
             dataset_source_overrides[dataset.unique_name] = safe_latest_view
+            from semabridge.connectors.sql_guard import get_allowed_model_objects, set_allowed_model_objects
+            set_allowed_model_objects(get_allowed_model_objects() | {safe_latest_view.upper()})
             logger.info(
                 "%s history dataset '%s' mapped to latest-snapshot view '%s' using (%s, %s)",
                 "OSI" if is_osi else "SML",

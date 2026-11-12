@@ -2782,6 +2782,8 @@ class SnowflakeSchemaManager:
             history_view_ddls.append(ddl)
             emitted_views.add(safe_latest_view)
             dataset_source_overrides[dataset.unique_name] = safe_latest_view
+            from semabridge.connectors.sql_guard import get_allowed_model_objects, set_allowed_model_objects
+            set_allowed_model_objects(get_allowed_model_objects() | {safe_latest_view.upper()})
             logger.info(
                 "History dataset '%s' mapped to latest-snapshot view '%s' using (%s, %s)",
                 dataset.unique_name,
@@ -2835,6 +2837,8 @@ class SnowflakeSchemaManager:
             history_view_ddls.append(ddl)
             emitted_views.add(safe_latest_view)
             dataset_source_overrides[dataset.unique_name] = safe_latest_view
+            from semabridge.connectors.sql_guard import get_allowed_model_objects, set_allowed_model_objects
+            set_allowed_model_objects(get_allowed_model_objects() | {safe_latest_view.upper()})
             logger.info(
                 "OSI history dataset '%s' mapped to latest-snapshot view '%s' using (%s, %s)",
                 dataset.unique_name,
