@@ -244,3 +244,6 @@ commit_msg.txt
 
 # Redundant virtual environments
 venv/
+
+# Legacy DaxTranslationEngine cache (unused by production)
+.dax_translation_cache.jsonl
