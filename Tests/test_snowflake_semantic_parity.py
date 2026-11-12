@@ -270,12 +270,11 @@ METRICS (
     assert 'SALESFACT."SALES_DOL" AS SUM(SALESFACT."REVENUE")' in fixed_ddl
 
 
-def test_remediate_invalid_identifier_bare_anchor_token_still_nulls_nothing():
-    """Unchanged control case: the bare-token special case (Snowflake
-    reports plain 'MAX_DATE', not table-qualified) keeps every metric's real
-    semantics by substituting CURRENT_DATE() globally, so
-    nulled_metric_names must stay empty -- this must not regress into
-    treating the anchor substitution as a metric null."""
+def test_remediate_invalid_identifier_bare_anchor_token_nulls_metric_never_current_date():
+    """Bare-token anchor case (Snowflake reports plain 'MAX_DATE', not
+    table-qualified). There is no data-based period anchor, so the metric
+    fails closed: it is nulled (and ledgered via nulled_metric_names) --
+    never re-anchored to CURRENT_DATE(), which DAX would not compute."""
     sanitizer = SemanticDDLSanitizer(IdentifierSanitizer())
 
     ddl = """METRICS (
@@ -285,9 +284,9 @@ def test_remediate_invalid_identifier_bare_anchor_token_still_nulls_nothing():
     fixed_ddl, changed, nulled = sanitizer.remediate_invalid_identifier(ddl, "MAX_DATE")
 
     assert changed is True
-    assert nulled == []
-    assert "CURRENT_DATE()" in fixed_ddl
-    assert "CAST(NULL AS DOUBLE)" not in fixed_ddl
+    assert nulled == ["TOTAL_UNITS_YTD"]
+    assert "CURRENT_DATE()" not in fixed_ddl
+    assert 'SALESFACT."TOTAL_UNITS_YTD" AS CAST(NULL AS DOUBLE)' in fixed_ddl
 
 
 # ---------------------------------------------------------------------------

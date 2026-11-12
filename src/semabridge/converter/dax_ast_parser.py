@@ -52,6 +52,7 @@ from semabridge.utils.naming import to_alias
 import contextlib
 import os
 import re
+import threading
 
 from dataclasses import dataclass, field
 
@@ -120,6 +121,9 @@ _AST_CACHE: dict[tuple, Tuple[Optional[str], Tuple[str, ...]]] = {}
 
 _AST_CACHE_MAX = 1024
 
+# Multi-model sync translates on parallel threads against this one dict.
+_AST_CACHE_LOCK = threading.Lock()
+
 
 
 
@@ -154,6 +158,10 @@ def _ast_cache_key(
 
     allow_window_enrichment: bool = False,
 
+    datasets: Optional[Iterable[Any]] = None,
+    model_metadata: Optional[Any] = None,
+    dataset_col_lookup: Optional[Dict[str, Any]] = None,
+    current_measure_name: Optional[str] = None,
 ) -> tuple:
 
     items = tuple(sorted((measure_sql_map or {}).items()))
@@ -224,6 +232,36 @@ def _ast_cache_key(
 
         allow_window_enrichment,
 
+        _schema_fingerprint(datasets, model_metadata, dataset_col_lookup),
+
+        current_measure_name or "",
+
+    )
+
+
+def _schema_fingerprint(datasets: Any, model_metadata: Any, dataset_col_lookup: Any) -> tuple:
+    # The renderer resolves columns/dates from these, so two models (e.g. the
+    # parallel threads of a multi-model sync) translating the same DAX string
+    # under different schemas must never share a cache entry.
+    def _ds(ds: Any) -> tuple:
+        name = str(getattr(ds, "unique_name", "") or getattr(ds, "name", "")).casefold()
+        cols = tuple(sorted(
+            (str(getattr(c, "unique_name", "") or getattr(c, "name", "")).casefold(), str(getattr(c, "data_type", "")))
+            for c in (getattr(ds, "columns", None) or ())
+        ))
+        return (name, cols)
+
+    meta_ds = getattr(model_metadata, "datasets", None) or ()
+    meta_rels = getattr(model_metadata, "relationships", None) or ()
+    lookup = tuple(sorted(
+        (str(k), tuple(sorted(map(str, v))) if isinstance(v, (dict, list, tuple, set)) else str(v))
+        for k, v in (dataset_col_lookup or {}).items()
+    ))
+    return (
+        tuple(sorted(_ds(d) for d in (datasets or ()))),
+        tuple(sorted(_ds(d) for d in meta_ds)),
+        tuple(sorted(repr(r) for r in meta_rels)),
+        lookup,
     )
 
 from semabridge.utils.naming import sanitize_column, to_alias
@@ -1033,6 +1071,10 @@ class DaxAstParser:
 
         self.pos = 0
 
+        # Why the last parse() returned None, so callers can fail with a
+        # reason instead of a bare None.
+        self.last_error: Optional[str] = None
+
 
 
     def parse(self, dax: str) -> Optional[DaxNode]:
@@ -1049,7 +1091,11 @@ class DaxAstParser:
 
         """
 
+        self.last_error = None
+
         if not dax or not dax.strip():
+
+            self.last_error = "empty DAX expression"
 
             return None
 
@@ -1077,11 +1123,15 @@ class DaxAstParser:
 
             logger.debug(f"DAX parse error (recoverable): {exc} | DAX: {dax[:80]}")
 
+            self.last_error = str(exc)
+
             return None
 
         except Exception as exc:
 
-            logger.debug(f"DAX parse unexpected error: {exc} | DAX: {dax[:80]}")
+            logger.warning(f"DAX parse unexpected error: {type(exc).__name__}: {exc} | DAX: {dax[:80]}")
+
+            self.last_error = f"internal parser error: {type(exc).__name__}: {exc}"
 
             return None
 
@@ -1598,6 +1648,12 @@ ADVISORY_NOTE_TI_ANCHORED_TO_CURRENT_DATE = (
     "Time-intelligence window is anchored to CURRENT_DATE() because no data-anchored "
     "period flag was available; DAX anchors to the last date in the filter context, "
     "so values differ when the data does not extend to today."
+)
+# Translations no longer ship such a window: the metric becomes a placeholder
+# with this reason instead (the advisory above is kept for stored models).
+TI_CURRENT_DATE_ANCHOR_REASON = (
+    "not applicable: time intelligence has no data-based period flag/anchor; "
+    "a window anchored to today's date would not match DAX (anchored to the data's last date)"
 )
 
 
@@ -2337,6 +2393,7 @@ class DaxSqlRenderer:
             return f"MAX({num_lit})"
 
         try:
+            self._check_cross_table_reachability(node)
             self._detect_and_setup_loo(node)
             inlined_for_comparison = self._inline_vars_and_measures(node)
             self._detect_and_setup_comparison(inlined_for_comparison)
@@ -2344,8 +2401,8 @@ class DaxSqlRenderer:
             if not validate_emitted_sql(sql):
                 raise self.DaxRenderError(f"Emitted SQL contains un-translated DAX syntax: {sql}")
             if "CURRENT_DATE()" in sql.upper() and not _ast_contains_func(node, {"TODAY", "NOW"}):
-                if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in self._advisory_categories:
-                    self._advisory_categories.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                # Fail closed: a wall-clock window is not what DAX computes.
+                raise self.DaxRenderError(TI_CURRENT_DATE_ANCHOR_REASON)
             from semabridge.utils.sql_simplifier import simplify_sql_expression
             sql = simplify_sql_expression(sql)
             return sql
@@ -2962,6 +3019,33 @@ class DaxSqlRenderer:
             f"not applicable: measure [{name}] inside a row iterator requires context transition over an "
             "expression that is not a single row-level aggregate of the iterated table"
         )
+
+    def _check_cross_table_reachability(self, node: DaxNode) -> None:
+        """Fail closed when the expression aggregates its own fact table's
+        columns AND references another table that no relationship reaches:
+        that filter/column cannot be applied to the fact rows, so any SQL
+        would silently compute something else. A measure-only home table
+        (its own columns never referenced) keeps resolving through aliases."""
+        if self.relationships is None or not self.primary_table_name:
+            return
+        tables: Dict[str, str] = {}
+        stack: List[DaxNode] = [node]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, ColumnRefNode) and cur.table:
+                name = cur.table.strip().strip("'\"")
+                tables.setdefault(name.casefold(), name)
+            stack.extend(_iter_children(cur))
+        if not any(self._is_primary_table(t) for t in tables.values()):
+            return
+        for name_cf, name in tables.items():
+            if self._is_primary_table(name) or name_cf in self._date_table_names_cf:
+                continue
+            if not has_relationship_path(self.relationships, self.primary_table_name, name):
+                raise self.DaxRenderError(
+                    f"not applicable: column reference to table '{name}' has no relationship path "
+                    f"from '{self.primary_table_name}'"
+                )
 
     def _has_many_to_one_path(self, src: str, dst: str) -> bool:
         src_cf = str(src or "").strip("'\"").casefold()
@@ -6107,6 +6191,10 @@ def try_ast_translate(
 
         allow_window_enrichment,
 
+        datasets=datasets,
+        model_metadata=model_metadata,
+        dataset_col_lookup=dataset_col_lookup,
+        current_measure_name=current_measure_name,
     )
 
     if cache_key in _AST_CACHE:
@@ -6147,8 +6235,9 @@ def try_ast_translate(
     ast = parser.parse(dax)
 
     if ast is None:
-        err = "DAX expression could not be parsed"
-        _AST_CACHE[cache_key] = (None, (), (), err)
+        err = f"DAX expression could not be parsed: {parser.last_error}" if parser.last_error else "DAX expression could not be parsed"
+        with _AST_CACHE_LOCK:
+            _AST_CACHE[cache_key] = (None, (), (), err)
         if render_errors is not None:
             render_errors.append(err)
         return None
@@ -6194,16 +6283,15 @@ def try_ast_translate(
 
     sql = renderer.render(ast)
 
-    if len(_AST_CACHE) >= _AST_CACHE_MAX:
-
-        _AST_CACHE.clear()
-
     # Advisories/dimensions recorded during a FAILED render describe SQL that
     # was never shipped -- never propagate them.
     produced_categories = tuple(renderer._advisory_categories) if sql else ()
     produced_dims = tuple(renderer.non_additive_dimensions) if sql else ()
     produced_err = None if sql else (renderer.last_render_error or "AST renderer declined the expression")
-    _AST_CACHE[cache_key] = (sql, produced_categories, produced_dims, produced_err)
+    with _AST_CACHE_LOCK:
+        if len(_AST_CACHE) >= _AST_CACHE_MAX:
+            _AST_CACHE.clear()
+        _AST_CACHE[cache_key] = (sql, produced_categories, produced_dims, produced_err)
     if render_errors is not None and produced_err:
         render_errors.append(produced_err)
 

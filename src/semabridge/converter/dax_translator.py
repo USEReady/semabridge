@@ -556,6 +556,7 @@ class DAXTranslator:
             return DAXTranslationResult("TRUE", 1, dax, sync_enabled=True, failure_reason=None)
         allow_window_enrichment = bool(allow_window_enrichment)
         self._allow_window_enrichment = allow_window_enrichment
+        self._current_metric_name = metric_name
         if dataset_col_lookup:
             self._dataset_col_lookup = dataset_col_lookup
             self._dataset_aliases = dataset_aliases
@@ -567,7 +568,7 @@ class DAXTranslator:
         self._current_datasets = kwargs.get("datasets")
         from semabridge.converter.dax_ast_parser import (
             ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS,
-            ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE,
+            TI_CURRENT_DATE_ANCHOR_REASON,
             DaxAstParser,
             classify_dax_ast_not_applicable,
             dax_has_overriding_calculate_filter,
@@ -620,8 +621,13 @@ class DAXTranslator:
                     if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in cats:
                         cats.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
                 if "CURRENT_DATE()" in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
-                    if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in cats:
-                        cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                    # Any tier (regex, AST, LLM) -- fail closed, never ship a
+                    # wall-clock time-intelligence window.
+                    return DAXTranslationResult(
+                        None, 4, clean_dax,
+                        failure_reason=TI_CURRENT_DATE_ANCHOR_REASON,
+                        sync_enabled=False,
+                    )
                 result.advisory_categories = cats
                 return result
             if result is not None and result.failure_reason:
@@ -1097,6 +1103,12 @@ class DAXTranslator:
         local_adv: List[str] = []
         if "datasets" not in kwargs and getattr(self, "_current_datasets", None) is not None:
             kwargs["datasets"] = self._current_datasets
+        # Every AST tier honours this translate() call's window permission and
+        # metric name: per-row time intelligence (Option C) emits a window for
+        # the primary metric and keeps anchored flags for its _LATEST companion.
+        kwargs.setdefault("allow_window_enrichment", getattr(self, "_allow_window_enrichment", False))
+        if getattr(self, "_current_metric_name", None):
+            kwargs.setdefault("current_measure_name", self._current_metric_name)
         sql = try_ast_translate(dax, advisory_categories=local_adv, render_errors=errors, **kwargs)
         if sql:
             for cat in local_adv:

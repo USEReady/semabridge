@@ -177,6 +177,11 @@ def rerender_anchor_dependent_metrics(
             anchor_flag_map=flag_map_for_dataset,
             skip_tier5=True,
             metrics_context=metrics,
+            datasets=getattr(model, "datasets", None),
+            # Same rule as the initial translation (osi_to_sml/tmsl_to_sml):
+            # the primary metric stays a per-row window; only its _LATEST
+            # companion is anchored to the flags.
+            allow_window_enrichment=not str(name or "").upper().endswith("_LATEST"),
         )
         if not translation or not translation.is_success or not translation.sql:
             continue

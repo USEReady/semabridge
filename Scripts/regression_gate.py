@@ -92,4 +92,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Windows consoles/pipes default to cp1252, which cannot encode the
+    # status emoji printed above.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())
+

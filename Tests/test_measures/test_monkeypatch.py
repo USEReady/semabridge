@@ -7,7 +7,19 @@ from semabridge.converter.dax_ast_parser import (
     FunctionCallNode, IdentifierNode, VarNode
 )
 
-# Monkey-patch DaxLexer, DaxParser, DaxSqlRenderer to test our enhancements
+import os
+import pytest
+
+openpyxl = pytest.importorskip("openpyxl")
+
+excel_path = os.environ.get(
+    "SEMABRIDGE_MEASURES_REPORT_EXCEL",
+    r"C:\Users\manoj.s\Downloads\PowerBI_Measures_Report_Model_wise.xlsx",
+)
+if not os.path.isfile(excel_path):
+    pytest.skip(f"Measures report not found at {excel_path}", allow_module_level=True)
+
+# Enhancements to DaxLexer, DaxParser, DaxSqlRenderer under test
 orig_skip = DaxLexer._skip_whitespace
 def enhanced_skip(self):
     while self.pos < len(self.text):
@@ -27,7 +39,6 @@ def enhanced_skip(self):
                 self.pos += 2
             continue
         break
-DaxLexer._skip_whitespace = enhanced_skip
 
 orig_read_id = DaxLexer._read_identifier
 def enhanced_read_id(self):
@@ -47,8 +58,8 @@ def enhanced_read_id(self):
         if peek_pos < len(self.text) and self.text[peek_pos] == "(":
             return DaxToken(DaxTokenType.FUNC_NAME, word, start)
         return DaxToken(DaxTokenType.NUMBER, word, start)
+    self.pos = start  # rewind: the original re-reads the word itself
     return orig_read_id(self)
-DaxLexer._read_identifier = enhanced_read_id
 
 orig_parse_primary = DaxAstParser._parse_primary
 def enhanced_parse_primary(self):
@@ -58,7 +69,6 @@ def enhanced_parse_primary(self):
         val = (tok.value.lower() == "true")
         return LiteralNode(value=val, raw=tok.value)
     return orig_parse_primary(self)
-DaxAstParser._parse_primary = enhanced_parse_primary
 
 # Renderer enhancements
 orig_render_node = DaxSqlRenderer._render_node
@@ -83,7 +93,6 @@ def enhanced_render_node(self, node):
         if n_cf in self._var_scope:
             return self._var_scope[n_cf]
     return orig_render_node(self, node)
-DaxSqlRenderer._render_node = enhanced_render_node
 
 orig_render_func = DaxSqlRenderer._render_function
 def enhanced_render_func(self, node):
@@ -144,7 +153,6 @@ def enhanced_render_func(self, node):
             elif func == "MAXX":
                 return f"MAX({val_sql})"
     return orig_render_func(self, node)
-DaxSqlRenderer._render_function = enhanced_render_func
 
 # Also enhance _render_calculate to handle SUMX/COUNTAX base
 orig_render_calc = DaxSqlRenderer._render_calculate
@@ -176,73 +184,77 @@ def enhanced_render_calc(self, args):
             elif f_upper == "MAXX":
                 return f"MAX(CASE WHEN {where} THEN {val_sql} END)"
     return orig_render_calc(self, args)
-DaxSqlRenderer._render_calculate = enhanced_render_calc
 
-# Now test all 22 AI measures!
-import os
-import pytest
-import openpyxl
 
-excel_path = os.environ.get(
-    "SEMABRIDGE_MEASURES_REPORT_EXCEL",
-    r"C:\Users\manoj.s\Downloads\PowerBI_Measures_Report_Model_wise.xlsx",
-)
-if not os.path.isfile(excel_path):
-    pytest.skip(f"Measures report not found at {excel_path}", allow_module_level=True)
+@pytest.fixture(autouse=True, scope="module")
+def _enhanced_dax_classes():
+    # Patch for this module only; a module-level assignment leaked into every
+    # later test in the same process (xdist workers included).
+    mp = pytest.MonkeyPatch()
+    mp.setattr(DaxLexer, "_skip_whitespace", enhanced_skip)
+    mp.setattr(DaxLexer, "_read_identifier", enhanced_read_id)
+    mp.setattr(DaxAstParser, "_parse_primary", enhanced_parse_primary)
+    mp.setattr(DaxSqlRenderer, "_render_node", enhanced_render_node)
+    mp.setattr(DaxSqlRenderer, "_render_function", enhanced_render_func)
+    mp.setattr(DaxSqlRenderer, "_render_calculate", enhanced_render_calc)
+    yield
+    mp.undo()
 
-wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-ws = wb["Measures Report"]
-ai_measures = []
-current_model = None
-for r in ws.iter_rows(values_only=True):
-    c0 = str(r[0]).strip() if r and r[0] is not None else ""
-    c1 = str(r[1]).strip() if r and len(r) > 1 and r[1] is not None else ""
-    m = re.search(r"^(.*?)\s*[\W_]+\s*(\d+)\s*measures\b", c0, re.I)
-    if m:
-        current_model = m.group(1).strip()
-        continue
-    if current_model == "Artificial Intelligence" and c0:
-        table, meas = "", c0
-        m_tm = re.match(r"^'?(.+?)'?\[(.+)\]$", c0)
-        if m_tm:
-            table, meas = m_tm.group(1).replace("''", "'"), m_tm.group(2)
-        ai_measures.append((table, meas, c1))
 
-resolved_map = {}
-for p in range(3):
-    for table, meas, dax in ai_measures:
-        k = meas.upper()
-        if k in resolved_map:
+def test_ai_measures_resolve_with_enhancements():
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    ws = wb["Measures Report"]
+    ai_measures = []
+    current_model = None
+    for r in ws.iter_rows(values_only=True):
+        c0 = str(r[0]).strip() if r and r[0] is not None else ""
+        c1 = str(r[1]).strip() if r and len(r) > 1 and r[1] is not None else ""
+        m = re.search(r"^(.*?)\s*[\W_]+\s*(\d+)\s*measures\b", c0, re.I)
+        if m:
+            current_model = m.group(1).strip()
             continue
-        try:
-            parser = DaxAstParser()
-            ast = parser.parse(dax)
-            renderer = DaxSqlRenderer(
-                table_alias=table.upper() if table else "T",
-                measure_sql_map=resolved_map,
-                table_aliases={
-                    "Cases": "CASES",
-                    "Opportunities": "OPPORTUNITIES",
-                    "Owners": "OWNERS",
-                    "Opportunity Forecast Adjustment": "OPPORTUNITY_FORECAST_ADJUSTMENT",
-                }
-            )
-            sql = renderer._render_node(ast)
-            if sql:
-                resolved_map[k] = sql
-                resolved_map[f"[{k}]"] = sql
-                resolved_map[f"[{meas}]"] = sql
-                resolved_map[meas] = sql
-        except Exception as e:
-            if p == 0:
-                print(f"FAILED [{meas}]: {type(e).__name__}: {e}")
+        if current_model == "Artificial Intelligence" and c0:
+            table, meas = "", c0
+            m_tm = re.match(r"^'?(.+?)'?\[(.+)\]$", c0)
+            if m_tm:
+                table, meas = m_tm.group(1).replace("''", "'"), m_tm.group(2)
+            ai_measures.append((table, meas, c1))
 
-print(f"\n=======================================================")
-print(f"RESULTS: {len(resolved_map)} entries, {len([m for _, m, _ in ai_measures if m.upper() in resolved_map])}/{len(ai_measures)} measures resolved!")
-print(f"=======================================================")
-for idx, (table, meas, dax) in enumerate(ai_measures, 1):
-    sql = resolved_map.get(meas.upper())
-    status = "SUCCESS" if sql else "FAILED"
-    print(f"[{idx:2d}] {table}[{meas}] -> {status}")
-    if sql:
-        print(f"     SQL: {sql[:140]}")
+    resolved_map = {}
+    for p in range(3):
+        for table, meas, dax in ai_measures:
+            k = meas.upper()
+            if k in resolved_map:
+                continue
+            try:
+                parser = DaxAstParser()
+                ast = parser.parse(dax)
+                renderer = DaxSqlRenderer(
+                    table_alias=table.upper() if table else "T",
+                    measure_sql_map=resolved_map,
+                    table_aliases={
+                        "Cases": "CASES",
+                        "Opportunities": "OPPORTUNITIES",
+                        "Owners": "OWNERS",
+                        "Opportunity Forecast Adjustment": "OPPORTUNITY_FORECAST_ADJUSTMENT",
+                    }
+                )
+                sql = renderer._render_node(ast)
+                if sql:
+                    resolved_map[k] = sql
+                    resolved_map[f"[{k}]"] = sql
+                    resolved_map[f"[{meas}]"] = sql
+                    resolved_map[meas] = sql
+            except Exception as e:
+                if p == 0:
+                    print(f"FAILED [{meas}]: {type(e).__name__}: {e}")
+
+    print(f"\n=======================================================")
+    print(f"RESULTS: {len(resolved_map)} entries, {len([m for _, m, _ in ai_measures if m.upper() in resolved_map])}/{len(ai_measures)} measures resolved!")
+    print(f"=======================================================")
+    for idx, (table, meas, dax) in enumerate(ai_measures, 1):
+        sql = resolved_map.get(meas.upper())
+        status = "SUCCESS" if sql else "FAILED"
+        print(f"[{idx:2d}] {table}[{meas}] -> {status}")
+        if sql:
+            print(f"     SQL: {sql[:140]}")

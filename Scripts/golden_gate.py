@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """scripts/golden_gate.py - Automated Golden Mathematical Quality Gate.
 
-Deploys test semantic views to a temporary sandbox schema in Snowflake, verifies
-the 8 known golden metric values, drops the sandbox schema, and enforces zero mathematical drift.
+Builds the three golden models from THIS checkout's code -- PBIX -> TMSL -> OSI ->
+SML -> SnowflakeEmitter.deploy() (enriched views, time-intelligence flags and the
+semantic view) -- into temporary sandbox schemas whose base tables are zero-copy
+clones of the source data, verifies the 8 known golden metric values, then drops
+the sandboxes. Live semantic/enriched views are never copied: a stale or
+hand-patched live view must not be able to make the gate pass.
+
+PBIX locations (override with env vars):
+  GOLDEN_PBIX_COMPETITIVE_MARKETING, GOLDEN_PBIX_CORPORATE_SPEND, GOLDEN_PBIX_HUMAN_RESOURCES
 
 The 8 Verified Golden Values:
   1. Competitive Marketing: Totals (Total Units = 1,299,599)
   2. Competitive Marketing: YTD (Total Units YTD = 49,832)
-  3. Competitive Marketing: SPLY (Total Units SPLY = 47,250)
+  3. Competitive Marketing: SPLY, latest period (Total Units SPLY_LATEST = 47,250)
   4. Competitive Marketing: R12M (Total Units R12Ms = 49,832)
   5. Competitive Marketing: Sentiment Gap (17.2648)
   6. Corporate Spend: Var Plan Infrastructure (23,536,681.48)
@@ -92,6 +99,123 @@ def _get_snowflake_config() -> Optional[SnowflakeConfig]:
     return None
 
 
+_PBIX_ROOT = Path(r"C:\Users\charank\OneDrive - USEReady Technology Private Limited\Desktop")
+
+# (model key, source PBIX, schema holding the model's source tables)
+GOLDEN_MODELS: List[Tuple[str, str, str]] = [
+    (
+        "COMPETITIVE_MARKETING",
+        os.environ.get(
+            "GOLDEN_PBIX_COMPETITIVE_MARKETING",
+            str(_PBIX_ROOT / "powerbi" / "Competitive Marketing Analysis (More Synonyms)_updated.pbix"),
+        ),
+        "SEMABRIDGE_WORKSPACE",
+    ),
+    (
+        "CORPORATE_SPEND",
+        os.environ.get("GOLDEN_PBIX_CORPORATE_SPEND", str(_PBIX_ROOT / "powerbi" / "Corporate Spend.pbix")),
+        "SEMABRIDGE_WORKSPACE",
+    ),
+    (
+        "HUMAN_RESOURCES",
+        os.environ.get(
+            "GOLDEN_PBIX_HUMAN_RESOURCES",
+            str(_PBIX_ROOT / "semabridge" / "pbix_testing" / "Human Resources Sample PBIX 1.pbix"),
+        ),
+        "HUMAN_RESOURCES",
+    ),
+]
+
+
+# Dataset -> physical table bindings, exactly as the production projects that
+# deployed these models resolved them. Pinned so the gate is reproducible on
+# any machine instead of depending on that machine's saved-binding history
+# (Corporate Spend's 'Date' is SPEND_DATE, not the CM model's DATE table).
+GOLDEN_BINDINGS: Dict[str, Dict[str, str]] = {
+    "COMPETITIVE_MARKETING": {
+        "CATEGORY": "CATEGORY", "DATE": "DATE", "GEO": "GEO", "INDICATORS": "INDICATORS", "KPI": "KPI",
+        "MANUFACTURER": "MANUFACTURER", "PRODUCT": "PRODUCT", "SALESFACT": "SALES_FACT", "SENTIMENT": "SENTIMENT",
+    },
+    "CORPORATE_SPEND": {
+        "BUSINESSAREA": "BUSINESS_AREA", "COSTELEMENT": "COST_ELEMENT", "COUNTRYREGION": "COUNTRY_REGION",
+        "DATE": "SPEND_DATE", "DEPARTMENT": "DEPARTMENT", "FACT": "SPEND_FACT", "ITAREA": "IT_AREA",
+        "RANGE": "RANGE", "SCENARIO": "SCENARIO",
+    },
+    "HUMAN_RESOURCES": {
+        "AGEGROUP": "AGEGROUP", "BU": "BU", "DATE": "DATE", "EMPLOYEE": "EMPLOYEE", "ETHNICITY": "ETHNICITY",
+        "FP": "FP", "GENDER": "GENDER", "PAYTYPE": "PAYTYPE", "SEPARATIONREASON": "SEPARATIONREASON",
+    },
+}
+_BINDING_PROJECT = "golden-gate"
+
+
+def _pin_bindings(key: str) -> Tuple[str, str]:
+    """Save GOLDEN_BINDINGS[key] through the same saved-binding path a
+    production deploy uses, and return the emitter binding_scope for it."""
+    from semabridge.connectors.table_binding_resolver import clean_ident
+    from semabridge.repository.model_repository import ModelRepository
+
+    model_key = key.lower()
+    ModelRepository().save_table_bindings(
+        _BINDING_PROJECT,
+        model_key,
+        [
+            # Keyed exactly as the resolver looks pins up (reserved words such
+            # as DATE/RANGE become COL_DATE/COL_RANGE).
+            {"dataset_key": clean_ident(ds), "dataset": ds, "table": table, "matched_by": "golden_gate"}
+            for ds, table in GOLDEN_BINDINGS[key].items()
+        ],
+    )
+    return _BINDING_PROJECT, model_key
+
+
+def _clone_base_tables(cur: Any, database: str, source_schema: str, sandbox_schema: str) -> None:
+    """Zero-copy clone of the source data only. Views (enriched or semantic)
+    are deliberately not cloned: HEAD's deploy must build its own."""
+    cur.execute(
+        f"SELECT TABLE_NAME FROM {database}.INFORMATION_SCHEMA.TABLES "
+        f"WHERE TABLE_SCHEMA = '{source_schema}' AND TABLE_TYPE = 'BASE TABLE'"
+    )
+    tables = [r[0] for r in cur.fetchall()]
+    for table in tables:
+        cur.execute(
+            f'CREATE TABLE {database}.{sandbox_schema}."{table}" CLONE {database}.{source_schema}."{table}"'
+        )
+    print(f"   cloned {len(tables)} base tables")
+
+
+def _semantic_views(cur: Any, database: str, schema: str) -> set:
+    cur.execute(f"SHOW SEMANTIC VIEWS IN SCHEMA {database}.{schema}")
+    name_idx = [d[0] for d in cur.description].index("name")
+    return {r[name_idx] for r in cur.fetchall()}
+
+
+def _build_from_head(
+    cfg: SnowflakeConfig, cur: Any, database: str, sandbox_schema: str, key: str, pbix_path: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """Dry-run the PBIX through this checkout's pipeline and deploy the
+    generated DDL into the sandbox. Returns (fully-qualified view, error)."""
+    from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
+    from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
+    from semabridge.converter.osi_to_sml import OSIToSMLConverter
+    from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
+
+    connector = LocalPBIXConnector({"pbix_path": pbix_path})
+    tmsl = connector.discover().get("raw_tmsl") or connector.extract()
+    osi = TMSLToOSIConverter().to_osi({"tmsl": tmsl, "dataset_id": Path(pbix_path).stem})
+    sml = OSIToSMLConverter().from_osi(osi)
+
+    before = _semantic_views(cur, database, sandbox_schema)
+    emitter = SnowflakeEmitter(cfg.model_copy(update={"database": database, "schema_name": sandbox_schema}))
+    emitter.binding_scope = _pin_bindings(key)
+    if not emitter.deploy(sml):
+        return None, emitter.last_deployment_error or "deploy returned False"
+    created = _semantic_views(cur, database, sandbox_schema) - before
+    if len(created) != 1:
+        return None, f"expected 1 new semantic view in {sandbox_schema}, found {sorted(created)}"
+    return f"{database}.{sandbox_schema}.{created.pop()}", None
+
+
 def run_golden_gate() -> int:
     cfg = _get_snowflake_config()
     if not cfg:
@@ -99,57 +223,57 @@ def run_golden_gate() -> int:
         print("   Configure snowflake_config.json or set SNOWFLAKE_* environment variables.")
         return 0
 
-    sandbox_id = uuid.uuid4().hex[:8].upper()
-    sandbox_schema = f"SANDBOX_GOLDEN_{sandbox_id}"
     database = cfg.database or "SEMABRIDGE"
+
+    missing = [f"{key}: {path}" for key, path, _ in GOLDEN_MODELS if not Path(path).is_file()]
+    if missing:
+        print("❌ GOLDEN GATE FAILED: source PBIX not found (set GOLDEN_PBIX_<MODEL>):")
+        for m in missing:
+            print(f"  ✗ {m}")
+        return 1
 
     print(f"🔒 Connecting to Snowflake {cfg.account} as {cfg.user}...")
     kwargs = get_snowflake_connect_kwargs(cfg)
 
     mismatches: List[str] = []
+    run_id = uuid.uuid4().hex[:8].upper()
+    sandboxes = {src: f"SANDBOX_GOLDEN_{run_id}_{src}" for src in {m[2] for m in GOLDEN_MODELS}}
 
     try:
         with snowflake.connector.connect(**kwargs) as conn:
             cur = conn.cursor()
-            print(f"🛠️  Creating temporary sandbox schema: {database}.{sandbox_schema}...")
-            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {database}.{sandbox_schema}")
 
             try:
                 # -------------------------------------------------------------
-                # 1. Deploy views to sandbox schema from verified definitions
+                # 1. Build every golden model from HEAD into its sandbox
                 # -------------------------------------------------------------
-                print("📦 Deploying semantic views to sandbox schema...")
+                for src, sandbox_schema in sandboxes.items():
+                    print(f"🛠️  Creating sandbox {database}.{sandbox_schema} (base tables cloned from {src})...")
+                    cur.execute(f"CREATE SCHEMA {database}.{sandbox_schema}")
+                    _clone_base_tables(cur, database, src, sandbox_schema)
 
-                views_to_clone = [
-                    ("SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_MORE_SYNONYMS_UPDATED_SEMANTIC", "COMPETITIVE_MARKETING_SEMANTIC"),
-                    ("SEMABRIDGE.SEMABRIDGE_WORKSPACE.CORPORATE_SPEND_SEMANTIC", "CORPORATE_SPEND_SEMANTIC"),
-                    ("SEMABRIDGE.HUMAN_RESOURCES.HUMAN_RESOURCES_SAMPLE_PBIX_SEMANTIC", "HUMAN_RESOURCES_SEMANTIC"),
-                ]
-
-                for src_view, sandbox_view_name in views_to_clone:
-                    cur.execute(f"SELECT GET_DDL('SEMANTIC_VIEW', '{src_view}')")
-                    ddl = cur.fetchone()[0]
-
-                    # Replace view name with sandbox-qualified view name
-                    # e.g., create or replace semantic view CORPORATE_SPEND_SEMANTIC -> create or replace semantic view <database>.<sandbox_schema>.CORPORATE_SPEND_SEMANTIC
-                    sub_ddl = re.sub(
-                        r"(?i)create\s+or\s+replace\s+semantic\s+view\s+(?:\"?[^\s\.]+\"?\.)?\"?([^\s\.\(]+)\"?",
-                        f'CREATE OR REPLACE SEMANTIC VIEW {database}.{sandbox_schema}.{sandbox_view_name}',
-                        ddl,
-                        count=1,
-                    )
-                    cur.execute(sub_ddl)
-
-                print("✓ Sandbox semantic views deployed successfully.")
+                views: Dict[str, str] = {}
+                for key, pbix_path, src in GOLDEN_MODELS:
+                    view, error = _build_from_head(cfg, cur, database, sandboxes[src], key, pbix_path)
+                    if view:
+                        views[key] = view
+                        print(f"✓ {key}: built {view} from HEAD")
+                    else:
+                        mismatches.append(f"Build failed ({key}): {error}")
+                        print(f"✗ {key}: build failed: {error}")
 
                 # -------------------------------------------------------------
                 # 2. Check the 8 Known Golden Values
                 # -------------------------------------------------------------
                 print("\n🔍 Validating 8 Known Golden Values in Sandbox...")
 
+                cm_view = views.get("COMPETITIVE_MARKETING", "<not built>")
+                cs_view = views.get("CORPORATE_SPEND", "<not built>")
+                hr_view = views.get("HUMAN_RESOURCES", "<not built>")
+
                 # 1. Competitive Marketing Totals (Total Units = 1,299,599)
                 cur.execute(f"""
-                    SELECT * FROM SEMANTIC_VIEW({database}.{sandbox_schema}.COMPETITIVE_MARKETING_SEMANTIC METRICS total_units)
+                    SELECT * FROM SEMANTIC_VIEW({cm_view} METRICS total_units)
                 """)
                 row = cur.fetchone()
                 val1 = float(row[0]) if row and row[0] is not None else 0.0
@@ -161,7 +285,7 @@ def run_golden_gate() -> int:
 
                 # 2. Competitive Marketing YTD (Total Units YTD = 49,832)
                 cur.execute(f"""
-                    SELECT * FROM SEMANTIC_VIEW({database}.{sandbox_schema}.COMPETITIVE_MARKETING_SEMANTIC METRICS total_units_ytd)
+                    SELECT * FROM SEMANTIC_VIEW({cm_view} METRICS total_units_ytd)
                 """)
                 row = cur.fetchone()
                 val2 = float(row[0]) if row and row[0] is not None else 0.0
@@ -171,9 +295,12 @@ def run_golden_gate() -> int:
                 else:
                     print(f"  ✓ [2/8] Competitive Marketing YTD: {val2:,.0f} == {exp2:,.0f}")
 
-                # 3. Competitive Marketing SPLY (Total Units SPLY = 47,250)
+                # 3. Competitive Marketing SPLY, ungrouped (Total Units SPLY_LATEST = 47,250).
+                # The primary TOTAL_UNITS_SPLY is a per-row window over the year (it must be
+                # grouped by year); the ungrouped latest-vs-previous value is its _LATEST
+                # companion, anchored on the data's last date.
                 cur.execute(f"""
-                    SELECT * FROM SEMANTIC_VIEW({database}.{sandbox_schema}.COMPETITIVE_MARKETING_SEMANTIC METRICS total_units_sply)
+                    SELECT * FROM SEMANTIC_VIEW({cm_view} METRICS total_units_sply_latest)
                 """)
                 row = cur.fetchone()
                 val3 = float(row[0]) if row and row[0] is not None else 0.0
@@ -185,7 +312,7 @@ def run_golden_gate() -> int:
 
                 # 4. Competitive Marketing R12M (Total Units R12Ms = 49,832)
                 cur.execute(f"""
-                    SELECT * FROM SEMANTIC_VIEW({database}.{sandbox_schema}.COMPETITIVE_MARKETING_SEMANTIC METRICS total_units_r12ms)
+                    SELECT * FROM SEMANTIC_VIEW({cm_view} METRICS total_units_r12ms)
                 """)
                 row = cur.fetchone()
                 val4 = float(row[0]) if row and row[0] is not None else 0.0
@@ -197,7 +324,7 @@ def run_golden_gate() -> int:
 
                 # 5. Competitive Marketing Sentiment Gap (~17.265)
                 cur.execute(f"""
-                    SELECT * FROM SEMANTIC_VIEW({database}.{sandbox_schema}.COMPETITIVE_MARKETING_SEMANTIC METRICS sentiment_gap)
+                    SELECT * FROM SEMANTIC_VIEW({cm_view} METRICS sentiment_gap)
                 """)
                 row = cur.fetchone()
                 val5 = float(row[0]) if row and row[0] is not None else 0.0
@@ -211,7 +338,7 @@ def run_golden_gate() -> int:
                 cur.execute(f"""
                     SELECT business_area, var_plan 
                     FROM SEMANTIC_VIEW(
-                        {database}.{sandbox_schema}.CORPORATE_SPEND_SEMANTIC 
+                        {cs_view} 
                         METRICS var_plan 
                         DIMENSIONS business_area
                     )
@@ -229,7 +356,7 @@ def run_golden_gate() -> int:
                 cur.execute(f"""
                     SELECT year, new_hires_sply 
                     FROM SEMANTIC_VIEW(
-                        {database}.{sandbox_schema}.HUMAN_RESOURCES_SEMANTIC 
+                        {hr_view} 
                         METRICS new_hires_sply 
                         DIMENSIONS year
                     )
@@ -251,7 +378,7 @@ def run_golden_gate() -> int:
                 cur.execute(f"""
                     SELECT year, new_hires_sply 
                     FROM SEMANTIC_VIEW(
-                        {database}.{sandbox_schema}.HUMAN_RESOURCES_SEMANTIC 
+                        {hr_view} 
                         METRICS new_hires_sply 
                         DIMENSIONS year
                     )
@@ -268,11 +395,12 @@ def run_golden_gate() -> int:
 
             finally:
                 # -------------------------------------------------------------
-                # 3. Always drop the sandbox schema
+                # 3. Always drop the sandbox schemas
                 # -------------------------------------------------------------
-                print(f"\n🧹 Dropping temporary sandbox schema: {database}.{sandbox_schema}...")
-                cur.execute(f"DROP SCHEMA IF EXISTS {database}.{sandbox_schema} CASCADE")
-                print("✓ Sandbox schema dropped.")
+                for sandbox_schema in sandboxes.values():
+                    print(f"\n🧹 Dropping temporary sandbox schema: {database}.{sandbox_schema}...")
+                    cur.execute(f"DROP SCHEMA IF EXISTS {database}.{sandbox_schema} CASCADE")
+                print("✓ Sandbox schemas dropped.")
 
     except Exception as exc:
         print(f"❌ ERROR during golden gate execution: {exc}")
@@ -289,4 +417,8 @@ def run_golden_gate() -> int:
 
 
 if __name__ == "__main__":
+    # Windows consoles/pipes default to cp1252, which cannot encode the
+    # status emoji printed above.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(run_golden_gate())

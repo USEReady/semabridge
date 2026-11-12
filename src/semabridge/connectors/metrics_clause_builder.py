@@ -2441,9 +2441,12 @@ class MetricsClauseBuilder:
                                 ref_expr,
                                 flags=re.IGNORECASE,
                             )
-                            pattern = rf'(?:[A-Z0-9_]+\.)?"{re.escape(ref_name)}"'
+                            # A metric named like a table alias (metric "Sentiment",
+                            # table SENTIMENT) must not replace the qualifier in
+                            # SENTIMENT."SCORE": skip tokens directly followed by '.'.
+                            pattern = rf'(?:[A-Z0-9_]+\.)?"{re.escape(ref_name)}"(?!\s*\.)'
                             if not re.search(pattern, expanded_expr):
-                                pattern = rf'\b{re.escape(ref_name)}\b'
+                                pattern = rf'(?<![.\w"]){re.escape(ref_name)}(?![\w"]|\s*\.)'
                             expanded_expr = re.sub(pattern, f'({clean_ref_expr.strip()})', expanded_expr)
                             already_inlined.add(ref_name)
                             substituted = True
@@ -3078,6 +3081,11 @@ class MetricsClauseBuilder:
 
                 if time_shift_required:
                     has_time_shift_sql = any(k in expr_upper for k in ("IS_YTD", "IS_MTD", "IS_QTD", "IS_SPLY", "__SB_", "PARTITION BY", "DATEADD", "CASE", "WHEN", "IFF", "WHERE"))
+                    # Per-row time intelligence: the shift IS the LAG/LEAD window
+                    # over the date dimension.
+                    has_time_shift_sql = has_time_shift_sql or bool(
+                        re.search(r"\b(?:LAG|LEAD)\s*\(.*\bOVER\s*\(", expr_upper, re.S)
+                    )
                     if not has_time_shift_sql:
                         return "DAX time-intelligence filter lost in SQL translation"
 
