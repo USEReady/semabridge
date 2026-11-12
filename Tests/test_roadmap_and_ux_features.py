@@ -115,3 +115,21 @@ def test_dynamic_scoped_table_isolation_on_partial_schema_drift():
     assert plan["Sentiment"]["table"] == "DFV_SENTIMENT"
     clear_schema_cache()
 
+
+def test_unrelated_zero_name_score_column_ties_do_not_block():
+    from Tests.test_table_binding_determinism import LiveSchemaMetadata
+    from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+
+    history_cols = {"ID", "FIELD", "OLDVALUE", "NEWVALUE", "CREATEDDATE"}
+    meta = LiveSchemaMetadata({
+        "REP_SFDC_CUSTOMER_PROJECT_HISTORY_LATEST": history_cols,
+        "REP_SFDC_CUSTOMER_SOLUTIONS_HISTORY_LATEST": history_cols,
+        "REP_SFDC_SBQQ_QUOTE_HISTORY_LATEST": history_cols,
+    })
+    resolved = resolve_dataset_to_physical_table(
+        "REP_SFDC_OPPORTUNITYFIELDHISTORY",
+        ["ID", "FIELD", "OLDVALUE", "NEWVALUE", "CREATEDDATE"],
+        meta,
+    )
+    assert resolved == "REP_SFDC_OPPORTUNITYFIELDHISTORY"
+

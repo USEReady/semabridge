@@ -1787,6 +1787,32 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const isMultiModelRun = Boolean(multiDryRunJob?.job_id) && multiSections.length > 0;
   const updateMultiFileRows = multiJob.updateFileRows;
 
+  const handleRemoveMultiFile = useCallback((fileId) => {
+    const sec = multiSections.find((s) => s.fileId === fileId);
+    const jobFile = (multiJob.jobStatus?.files || []).find((f) => f.file_id === fileId);
+    const label = sec?.label || jobFile?.file_name || jobFile?.display_name || '';
+    const fpath = jobFile?.pbix_path || jobFile?.source_path || jobFile?.path || '';
+
+    setWizardState((prev) => {
+      const lblLow = label.toLowerCase();
+      const baseLow = lblLow.replace(/^[0-9a-f]{24,}_/i, '').replace(/\.pbix$/i, '');
+      const nextEntries = (prev.pbixFileEntries || []).filter((e) => {
+        if (fpath && e.path === fpath) return false;
+        const pLow = String(e.path || '').toLowerCase();
+        const nLow = String(e.name || '').toLowerCase().replace(/\.pbix$/i, '');
+        if (lblLow && (pLow.includes(lblLow) || nLow === lblLow)) return false;
+        if (baseLow && (nLow === baseLow || pLow.includes(baseLow))) return false;
+        return true;
+      });
+      const nextSelected = (prev.selectedModelNames || []).filter((m) => m !== label && m !== fpath);
+      return {
+        pbixFileEntries: nextEntries,
+        selectedModelNames: nextSelected,
+      };
+    });
+    multiJob.removeFile(fileId);
+  }, [multiSections, multiJob, setWizardState]);
+
   // Which dry run / preview project(s) the user's dry-run-time edits (e.g.
   // synonyms) were saved against -- sent on create / edit-save so the backend
   // can migrate them to the real project. Single: preview_project_id from
@@ -2315,7 +2341,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
                 onMultiBulkResolved={handleMultiBulkResolved}
                 onMultiSynonymUpdate={handleMultiSynonymUpdate}
                 onRetryMultiFile={multiJob.rerunFile}
-                onRemoveMultiFile={multiJob.removeFile}
+                onRemoveMultiFile={handleRemoveMultiFile}
               />
             </ErrorBoundary>
           )}

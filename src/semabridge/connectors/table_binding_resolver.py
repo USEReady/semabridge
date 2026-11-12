@@ -498,7 +498,12 @@ def resolve_dataset_to_physical_table(
         ]
 
         if len(tied) > 1:
-
+            if best["name_score"] == 0:
+                logger.info(
+                    "Ignoring %d column-only ties for '%s' with zero name similarity (%s); treating table as missing.",
+                    len(tied), dataset_name, ", ".join(tied),
+                )
+                return dataset_name
             raise TableBindingAmbiguityError(dataset_name, tied)
 
         logger.debug(
