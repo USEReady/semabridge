@@ -274,7 +274,7 @@ def rank_table_candidates(
 
         if not tbl.startswith(("__FIXED", "DATETABLETEMPLATE_", "LOCALDATETABLE_"))
 
-        and not tbl.endswith("_ENRICHED")
+        and not tbl.endswith(("_ENRICHED", "_LATEST"))
 
     }
 
