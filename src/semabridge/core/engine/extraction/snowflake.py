@@ -91,7 +91,15 @@ def _extract_snowflake_scoped(
             # Thread-safe: builds an isolated SnowflakeConfig object rather than
             # mutating os.environ (scoped_account_env), which is unsafe when
             # multiple syncs from the same batch run concurrently.
+            from semabridge.auth.credential_builder import (
+                apply_project_snowflake_target,
+                project_snowflake_target,
+            )
+
             sf_cfg = build_snowflake_config(account, session, context.config.snowflake)
+            proj_target = project_snowflake_target(context.config)
+            if proj_target:
+                sf_cfg = apply_project_snowflake_target(sf_cfg, proj_target)
             logger.info(
                 "Snowflake extraction scoped to account %s (%s) — thread-safe config, no os.environ mutation",
                 account.tag, identity_id,

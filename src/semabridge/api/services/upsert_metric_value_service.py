@@ -52,7 +52,12 @@ def _query_value(account_id: str, view: Dict[str, str], entity: str, metric: str
         f'SELECT {metric} FROM SEMANTIC_VIEW("{view["database"]}"."{view["schema"]}"."{view["name"]}" '
         f"METRICS {entity}.{metric} AS {metric})"
     )
-    conn = snowflake.connector.connect(**get_snowflake_connect_kwargs(cfg))
+    from semabridge.connectors.sql_guard import guard_connection
+
+    conn = guard_connection(
+        snowflake.connector.connect(**get_snowflake_connect_kwargs(cfg)),
+        read_only=True,
+    )
     try:
         cur = conn.cursor()
         cur.execute(sql)

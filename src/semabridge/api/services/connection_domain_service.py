@@ -1304,8 +1304,10 @@ async def test_connection(service: str, user_id: int = 0):
             import snowflake.connector
             from semabridge.connectors.snowflake_connection import get_snowflake_connect_kwargs
 
+            from semabridge.connectors.sql_guard import guard_connection
+
             connect_kwargs = get_snowflake_connect_kwargs(cfg.snowflake)
-            conn = snowflake.connector.connect(**connect_kwargs)
+            conn = guard_connection(snowflake.connector.connect(**connect_kwargs), read_only=True)
             conn.cursor().execute("SELECT CURRENT_VERSION()")
             conn.close()
             return {"status": "success", "message": "Snowflake connection successful"}
@@ -1423,10 +1425,15 @@ async def snowflake_oauth_test(body: Dict[str, Any]) -> Dict[str, Any]:
             sf_pass = os.environ.get("SNOWFLAKE_PASSWORD")
             if sf_pass:
                 try:
-                    ctx = snowflake.connector.connect(
-                        user=user,
-                        password=sf_pass,
-                        account=account
+                    from semabridge.connectors.sql_guard import guard_connection
+
+                    ctx = guard_connection(
+                        snowflake.connector.connect(
+                            user=user,
+                            password=sf_pass,
+                            account=account,
+                        ),
+                        read_only=True,
                     )
                     cur = ctx.cursor()
                     cur.execute(f"SELECT SYSTEM$VERIFY_EXTERNAL_OAUTH_TOKEN('{access_token}')")
@@ -1459,7 +1466,9 @@ async def snowflake_oauth_test(body: Dict[str, Any]) -> Dict[str, Any]:
         if body.get("database"):
             connect_kwargs["database"] = body["database"]
 
-        conn = snowflake.connector.connect(**connect_kwargs)
+        from semabridge.connectors.sql_guard import guard_connection
+
+        conn = guard_connection(snowflake.connector.connect(**connect_kwargs), read_only=True)
         cur = conn.cursor()
         cur.execute("SELECT CURRENT_USER(), CURRENT_ROLE()")
         row = cur.fetchone()

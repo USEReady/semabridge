@@ -47,12 +47,12 @@ def test_rule1_test2_matching_flag_pairs():
         measure_sql_map=measure_sql_map,
         anchor_flag_map={
             ("CURRENT_YEAR",): "IS_CURRENT_YEAR",
-            ("PREV_YEAR",): "IS_PREV_YEAR",
+            ("SPLY_YEAR",): "IS_SPLY_YEAR",
         },
     )
     assert sql_year is not None
     assert 'FACT."IS_CURRENT_YEAR"' in sql_year
-    assert 'FACT."IS_PREV_YEAR"' in sql_year
+    assert 'FACT."IS_SPLY_YEAR"' in sql_year
 
     # 2. -1 QUARTER
     dax_qtr = "[X] - CALCULATE([X], DATEADD('Date'[Date], -1, QUARTER))"
@@ -62,12 +62,12 @@ def test_rule1_test2_matching_flag_pairs():
         measure_sql_map=measure_sql_map,
         anchor_flag_map={
             ("CURRENT_QUARTER",): "IS_CURRENT_QUARTER",
-            ("PREV_QUARTER",): "IS_PREV_QUARTER",
+            ("SPLY_QUARTER",): "IS_SPLY_QUARTER",
         },
     )
     assert sql_qtr is not None
     assert 'FACT."IS_CURRENT_QUARTER"' in sql_qtr
-    assert 'FACT."IS_PREV_QUARTER"' in sql_qtr
+    assert 'FACT."IS_SPLY_QUARTER"' in sql_qtr
 
     # 3. SAMEPERIODLASTYEAR
     dax_sply = "[X] - CALCULATE([X], SAMEPERIODLASTYEAR('Date'[Date]))"

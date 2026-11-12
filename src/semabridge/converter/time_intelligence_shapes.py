@@ -44,6 +44,7 @@ from semabridge.converter.dax_ast_parser import (
     DaxAstParser,
     DaxNode,
     FunctionCallNode,
+    LiteralNode,
     MeasureRefNode,
     UnaryOpNode,
     VarNode,
@@ -514,12 +515,13 @@ def detect_comparison_shapes(node: Optional[DaxNode]) -> Set[Shape]:
     res = set()
     for _, u, amt, mfn in shifted_calls:
         res.add((f"CURRENT_{u}",))
+        n = abs(int(amt))
         if mfn == "SAMEPERIODLASTYEAR":
             res.add(("SPLY_YEAR",))
-        elif abs(amt) == 1:
-            res.add((f"PREV_{u}",))
+        elif mfn in ("PREVIOUSYEAR", "PREVIOUSMONTH", "PREVIOUSQUARTER", "PARALLELPERIOD"):
+            res.add((f"PREV_{u}" if n == 1 else f"PREV_{n}_{u}",))
         else:
-            res.add((f"SPLY_{abs(amt)}_{u}",))
+            res.add((f"SPLY_{u}" if n == 1 else f"SPLY_{n}_{u}",))
     return res
 
 

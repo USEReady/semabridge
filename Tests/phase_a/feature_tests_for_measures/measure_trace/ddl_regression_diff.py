@@ -70,12 +70,14 @@ def parse(text):
                      f"{U(m.group(3))}({','.join(U(c) for c in m.group(4).split(','))})")
     dims = set()
     for d in _split(_block(text, "dimensions")):
-        m = re.match(r'("?\w+"?)\s*\.\s*("?[\w$]+"?)\s+as\s', d, re.I)
+        d_clean = re.sub(r"^(?:PRIVATE|PUBLIC)\s+", "", d.strip(), flags=re.I)
+        m = re.match(r'("?\w+"?)\s*\.\s*("?[\w$]+"?)\s+as\s', d_clean, re.I)
         if m:
             dims.add(f"{U(m.group(1))}.{U(m.group(2))}")
     metrics = {}
     for line in _split(_block(text, "metrics")):
-        m = re.match(r'("?\w+"?)\s*\.\s*("?\w+"?)\s+(non\s+additive\s+by\s*\([^)]*\)\s+)?as\s+(.*)$', line, re.I | re.S)
+        line_clean = re.sub(r"^(?:PRIVATE|PUBLIC)\s+", "", line.strip(), flags=re.I)
+        m = re.match(r'("?\w+"?)\s*\.\s*("?\w+"?)\s+(non\s+additive\s+by\s*\([^)]*\)\s+)?as\s+(.*)$', line_clean, re.I | re.S)
         if m:
             expr = " ".join(re.sub(r"/\*.*?\*/|\s+COMMENT\s*=\s*'(?:[^']|'')*'", "", m.group(4), flags=re.S | re.I).split())
             metrics[U(m.group(2))] = dict(table=U(m.group(1)), expr=expr, na=bool(m.group(3)),

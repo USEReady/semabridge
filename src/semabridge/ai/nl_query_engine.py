@@ -823,6 +823,20 @@ class NLQueryEngine:
         if effective_semantic_view:
             sv_metrics: List[str] = []
             sv_dims: List[str] = []
+            _date_dim_re = re.compile(r"\b(YEAR|MONTH|MONTHNUMBER|QUARTER|QTR|PERIOD|DATE|WEEK|DAY|FISCAL)\b", re.IGNORECASE)
+            _has_date_dim = any(_date_dim_re.search(str(d or "")) for d in dim_names)
+            _lexicon_metric_ids = {
+                re.sub(
+                    r"[^A-Za-z0-9_]",
+                    "_",
+                    str(
+                        getattr(lm, "logical_name", None)
+                        or getattr(lm, "metric_id", None)
+                        or self._to_logical_id(getattr(lm, "name", "") or "")
+                    ),
+                ).upper()
+                for lm in getattr(lexicon, "metrics", []) or []
+            }
             for m in detected_metrics:
                 m_c_name = m.concept or primary_table or ""
                 m_c_obj = concept_by_name.get(m_c_name.casefold())
@@ -830,7 +844,12 @@ class NLQueryEngine:
                     (getattr(m_c_obj, "logical_name", None) if m_c_obj else None)
                     or self._to_logical_id(m_c_name)
                 )
-                met_logical = self._q_ident(getattr(m, "logical_name", None) or self._to_logical_id(m.name))
+                raw_met = getattr(m, "logical_name", None) or self._to_logical_id(m.name)
+                if _has_date_dim:
+                    lag_cand = f"{re.sub(r'[^A-Za-z0-9_]', '_', str(raw_met)).upper()}__BY_PERIOD"
+                    if lag_cand in _lexicon_metric_ids:
+                        raw_met = lag_cand
+                met_logical = self._q_ident(raw_met)
                 sv_metrics.append(f"{tbl_logical}.{met_logical}")
                 if not first_metric_order_col:
                     first_metric_order_col = met_logical

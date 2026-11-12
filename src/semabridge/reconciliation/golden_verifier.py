@@ -225,6 +225,11 @@ ROW(
 )"""
 
     @staticmethod
+    def _has_date_dimension(dimensions: Optional[List[str]]) -> bool:
+        date_re = re.compile(r"(YEAR|MONTH|QUARTER|QTR|PERIOD|DATE|WEEK|DAY|FISCAL)", re.IGNORECASE)
+        return any(date_re.search(str(d or "")) for d in (dimensions or []))
+
+    @staticmethod
     def generate_sql_query(
         metric_name: str,
         metric_sql_expression: str,
@@ -232,6 +237,7 @@ ROW(
         dimensions: Optional[List[str]] = None,
         filters: Optional[List[str]] = None,
         target_kind: Optional[str] = None,
+        available_metrics: Optional[Set[str]] = None,
     ) -> str:
         """Construct corresponding SQL query against a physical table or deployed Semantic View."""
         dims = [d for d in (dimensions or []) if d and d.strip()]
@@ -246,6 +252,17 @@ ROW(
                 and " " not in expr_clean.replace('"', "")
             )
             metric_token = expr_clean if use_expr_metric else metric_name
+            if available_metrics and GoldenQueryVerifier._has_date_dimension(dims):
+                avail_upper = {m.strip().strip('"').upper() for m in available_metrics}
+                tok_clean = metric_token.strip()
+                base_part = tok_clean.split(".")[-1].strip('"')
+                lag_cand = f"{base_part.upper()}__BY_PERIOD"
+                if lag_cand in avail_upper or any(m.endswith(f".{lag_cand}") for m in avail_upper):
+                    if "." in tok_clean:
+                        prefix_tbl = tok_clean.rsplit(".", 1)[0]
+                        metric_token = f"{prefix_tbl}.{base_part}__BY_PERIOD"
+                    else:
+                        metric_token = f"{base_part}__BY_PERIOD"
             metric_ident = _format_sql_identifier(metric_token)
             sv_clauses = [clean_target, f"METRICS {metric_ident}"]
             if dims:

@@ -2611,14 +2611,22 @@ class DaxSqlRenderer:
         curr_shape = (f"CURRENT_{base_unit}",)
         curr_flag = self.anchor_flag_map.get(curr_shape) if self.anchor_flag_map else None
 
-        if base_mfn == "SAMEPERIODLASTYEAR":
-            lag_shape = ("SPLY_YEAR",)
-        elif abs(base_amt) == 1:
-            lag_shape = (f"PREV_{base_unit}",)
-        else:
-            lag_shape = (f"SPLY_{abs(base_amt)}_{base_unit}",)
-
-        lag_flag = self.anchor_flag_map.get(lag_shape) if self.anchor_flag_map else None
+        lag_comp = self.lag_shape_component(base_mfn, base_unit, base_amt)
+        lag_shape = (lag_comp,)
+        lag_candidates = [lag_shape]
+        if base_unit != "YEAR":
+            n = abs(int(base_amt))
+            lag_candidates += [
+                (f"PREV_{base_unit}" if n == 1 else f"PREV_{n}_{base_unit}",),
+                (f"SPLY_{base_unit}" if n == 1 else f"SPLY_{n}_{base_unit}",),
+            ]
+        lag_flag = None
+        if self.anchor_flag_map:
+            for cand_shape in lag_candidates:
+                if self.anchor_flag_map.get(cand_shape):
+                    lag_flag = self.anchor_flag_map[cand_shape]
+                    lag_shape = cand_shape
+                    break
         # Only use flag-based comparison when the enriched view actually
         # declares both flags; never reference a guessed column name.
         if not curr_flag or not lag_flag:
@@ -6860,8 +6868,6 @@ def classify_dax_ast_not_applicable(
 
             is_pure_filtered = False
             if isinstance(node, MeasureRefNode):
-                is_pure_filtered = True
-            elif _is_pure_ratio_or_arithmetic_over_metrics(node):
                 is_pure_filtered = True
             elif (
                 isinstance(node, FunctionCallNode)

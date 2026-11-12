@@ -24,8 +24,9 @@ def _reset_compat_state() -> None:
 def test_project_discovery_returns_display_name(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
-    projects_dir = Path("Config/projects")
+    projects_dir = tmp_path / "Config" / "projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [projects_dir])
     project_id = "proj-1777017550799"
     project_yaml = (
         'project_id: "proj-1777017550799"\n'
@@ -163,8 +164,9 @@ def test_list_projects_keeps_distinct_ids_sharing_same_display_name(monkeypatch,
 def test_list_projects_includes_semantic_models(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
-    projects_dir = Path("Config/projects")
+    projects_dir = tmp_path / "Config" / "projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [projects_dir])
     project_id = "proj-ffnew"
     project_yaml = (
         'project_id: "proj-ffnew"\n'

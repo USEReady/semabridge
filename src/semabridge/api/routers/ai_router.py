@@ -238,7 +238,15 @@ def execute_semantic_query(req: ExecuteQueryRequest) -> ExecuteQueryResponse:
     clean_sql = req.sql.strip().rstrip(";")
     # Strip comments if present for execution
     exec_sql = re.sub(r"^--.*$", "", clean_sql, flags=re.MULTILINE).strip()
-    if not re.search(r"\blimit\s+\d+", exec_sql, re.IGNORECASE):
+
+    from semabridge.connectors.sql_guard import SQLSecurityGuardError, validate_read_only_sql
+
+    try:
+        validate_read_only_sql(exec_sql)
+    except SQLSecurityGuardError as sec_err:
+        raise HTTPException(status_code=400, detail=str(sec_err))
+
+    if re.match(r"^(?:SELECT|WITH)\b", exec_sql, re.IGNORECASE) and not re.search(r"\blimit\s+\d+", exec_sql, re.IGNORECASE):
         exec_sql = f"{exec_sql} LIMIT {min(req.limit, 100)}"
 
     target_upper = req.target.upper()
