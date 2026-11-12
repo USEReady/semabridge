@@ -15,13 +15,14 @@
  * soon as that model's result lands. A failed model shows its real error and
  * a per-model Retry; other models are never hidden by a sibling's failure.
  */
-import { useCallback, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, RotateCcw, X } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Loader2, RotateCcw, X, Zap } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import DryRunMappingTable from '../DryRunMappingTable';
 import UpsertChangesView from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
+import { resolveCollisionsForRows } from '../../utils/projectHelpers';
 
 function pluralize(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -69,6 +70,8 @@ export default function MultiFileDryRunStatus({
   onRemoveFile,       // (fileId) => void
 }) {
   const [expanded, setExpanded] = useState(() => new Set());
+  const [bulkResolvingAll, setBulkResolvingAll] = useState(false);
+  const [allResolvedToast, setAllResolvedToast] = useState(null);
 
   const toggle = useCallback((fileId) => {
     setExpanded((prev) => {
@@ -80,6 +83,54 @@ export default function MultiFileDryRunStatus({
 
   const allExpanded = sections.length > 0 && sections.every((s) => expanded.has(s.fileId));
   const kind = sections.length === 1 ? 'model' : 'models';
+
+  const totalCollisions = useMemo(() => {
+    return sections.reduce((sum, s) => {
+      const c = s.unresolvedCollisions ?? (
+        Array.isArray(s.rows)
+          ? s.rows.filter((r) => String(r.status || '').toLowerCase() === 'collision').length
+          : 0
+      );
+      return sum + c;
+    }, 0);
+  }, [sections]);
+
+  const handleResolveAllModels = useCallback(() => {
+    if (!onBulkResolved || !sections.length) return;
+    setBulkResolvingAll(true);
+    setAllResolvedToast(null);
+
+    try {
+      let resolvedTotal = 0;
+      let affectedSections = 0;
+
+      for (const section of sections) {
+        if (!section.loaded || !Array.isArray(section.rows)) continue;
+        const resolvedMap = resolveCollisionsForRows(section.rows);
+        const count = Object.keys(resolvedMap).length;
+        if (count > 0) {
+          onBulkResolved(section.fileId, resolvedMap);
+          resolvedTotal += count;
+          affectedSections += 1;
+        }
+      }
+
+      if (resolvedTotal > 0) {
+        setAllResolvedToast({
+          type: 'success',
+          msg: `${resolvedTotal} collision${resolvedTotal !== 1 ? 's' : ''} across ${affectedSections} model${affectedSections !== 1 ? 's' : ''} resolved — unique names applied. Review each model to confirm.`,
+        });
+      }
+    } catch (err) {
+      setAllResolvedToast({
+        type: 'error',
+        msg: `Resolve failed: ${err.message}`,
+      });
+    } finally {
+      setBulkResolvingAll(false);
+      setTimeout(() => setAllResolvedToast(null), 6000);
+    }
+  }, [sections, onBulkResolved]);
 
   if (!jobStatus && sections.length === 0) {
     return (
@@ -96,14 +147,82 @@ export default function MultiFileDryRunStatus({
           Multi-model dry run — {sections.length} {kind}
         </div>
         {jobStatus?.status && <StatusBadge status={jobStatus.status} size="sm" />}
-        <button
-          type="button"
-          onClick={() => setExpanded(allExpanded ? new Set() : new Set(sections.map((s) => s.fileId)))}
-          style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
-        >
-          {allExpanded ? 'Collapse all' : 'Expand all'}
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {sections.length > 1 && (totalCollisions > 0 || bulkResolvingAll) && (
+            <button
+              id="bulk-resolve-all-models-btn"
+              data-testid="resolve-all-for-all-models-btn"
+              type="button"
+              disabled={bulkResolvingAll}
+              onClick={handleResolveAllModels}
+              title="Resolve collisions for all models"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 12px',
+                borderRadius: 6,
+                border: '1px solid rgba(251,191,36,0.55)',
+                background: bulkResolvingAll
+                  ? 'rgba(251,191,36,0.06)'
+                  : 'rgba(251,191,36,0.12)',
+                color: '#fbbf24',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: bulkResolvingAll ? 'not-allowed' : 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'background 0.15s, opacity 0.15s',
+                opacity: bulkResolvingAll ? 0.7 : 1,
+              }}
+            >
+              {bulkResolvingAll ? (
+                <>
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      border: '2px solid #fbbf24',
+                      borderTopColor: 'transparent',
+                      borderRadius: '50%',
+                      display: 'inline-block',
+                      animation: 'spin 0.7s linear infinite',
+                    }}
+                  />
+                  Resolving…
+                </>
+              ) : (
+                <>
+                  <Zap size={11} /> Resolve all for all models ({totalCollisions})
+                </>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded(allExpanded ? new Set() : new Set(sections.map((s) => s.fileId)))}
+            style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+          >
+            {allExpanded ? 'Collapse all' : 'Expand all'}
+          </button>
+        </div>
       </div>
+
+      {allResolvedToast && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 12px',
+          borderRadius: 6,
+          fontSize: 12,
+          fontWeight: 600,
+          background: allResolvedToast.type === 'error' ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
+          border: `1px solid ${allResolvedToast.type === 'error' ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)'}`,
+          color: allResolvedToast.type === 'error' ? 'var(--color-error)' : 'var(--color-success)',
+        }}>
+          {allResolvedToast.msg}
+        </div>
+      )}
 
       {pollError && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(239, 68, 68, 0.10)', color: 'var(--color-error)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>

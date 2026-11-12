@@ -17,7 +17,7 @@ import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
-import { suggestCollisionResolutions, sanitizeMappingName, shortDeterministicHash, buildSourceFingerprint } from '../utils/projectHelpers';
+import { suggestCollisionResolutions, sanitizeMappingName, shortDeterministicHash, buildSourceFingerprint, resolveCollisionsForRows } from '../utils/projectHelpers';
 import {
   groupRowsByFieldType,
   normalizeFieldTypeKey,
@@ -1288,45 +1288,7 @@ export default function DryRunMappingTable({
     setBulkToast(null);
 
     try {
-      const resolvedMap = {};
-      const assignedNames = new Set(
-        mappings
-          .filter(r => String(r?.status || '').toLowerCase() !== 'collision')
-          .map(r => String(r?.target_field || r?.target_name || '').trim().toUpperCase())
-          .filter(Boolean)
-      );
-
-      collisionRows.forEach(row => {
-        const { suggestions } = suggestCollisionResolutions(row, mappings);
-        let candidate = '';
-        let suggestionIdx = 0;
-
-        if (suggestions.length > 0) {
-          candidate = suggestions[0].label;
-          while (assignedNames.has(candidate.toUpperCase()) && suggestionIdx < suggestions.length - 1) {
-            suggestionIdx += 1;
-            candidate = suggestions[suggestionIdx].label;
-          }
-        } else {
-          candidate = row.target_field || row.source_field || '';
-        }
-
-        if (assignedNames.has(candidate.toUpperCase())) {
-          const base = candidate;
-          const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6).toUpperCase();
-          candidate = `${base}_${hash}`;
-          
-          let counter = 2;
-          while (assignedNames.has(candidate.toUpperCase())) {
-            candidate = `${base}_${hash}_${counter}`;
-            counter += 1;
-          }
-        }
-
-        resolvedMap[row.id] = candidate;
-        assignedNames.add(candidate.toUpperCase());
-      });
-
+      const resolvedMap = resolveCollisionsForRows(mappings);
       onBulkResolved?.(resolvedMap);
       setBulkToast({
         type: 'success',
