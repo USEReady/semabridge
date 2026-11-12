@@ -57,7 +57,18 @@ class HistorySnapshotOrchestrator:
                 continue
 
             safe_source = self.identifier_sanitizer.sanitize_table_name(source_name)
+            if safe_source.upper().endswith("_LATEST"):
+                continue
             safe_latest_view = self.identifier_sanitizer.sanitize_table_name(f"{safe_source}_LATEST")
+            live_meta = getattr(self.schema_manager, "_live_schema_metadata", None)
+            if isinstance(live_meta, dict) and live_meta and safe_source.upper() not in live_meta:
+                if safe_latest_view.upper() in live_meta:
+                    dataset_source_overrides[dataset.unique_name] = safe_latest_view
+                logger.info(
+                    "History snapshot skipped for '%s': base table '%s' is not in target schema.",
+                    dataset.unique_name, safe_source,
+                )
+                continue
             if safe_latest_view in emitted_views:
                 dataset_source_overrides[dataset.unique_name] = safe_latest_view
                 continue
