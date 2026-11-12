@@ -361,59 +361,44 @@ class SnowflakeSchemaManager:
                     ds_name, modeled_cols, self._live_schema_metadata
                 )
                 compat = blocker["col_compat"] if blocker else 0.0
-                if compat >= 0.5:
-                    # Partial schema drift on a same-domain table (e.g. 50%-79%):
-                    # dynamically isolate into a model-scoped table so the existing
-                    # Snowflake table is untouched and deployment succeeds.
-                    from semabridge.connectors.table_binding_resolver import compute_column_compatibility
+                # Incompatible existing table (< 80%): dynamically isolate into
+                # a model-scoped table so the existing Snowflake table is never
+                # overwritten or wrongly bound, and deployment succeeds.
+                from semabridge.connectors.table_binding_resolver import compute_column_compatibility
 
-                    prefix = self._safe_table_name(model_name) if model_name else "MODEL"
-                    scoped_name = self._safe_table_name(f"{prefix}_{ds_name}")
-                    if scoped_name.upper() in all_existing:
-                        live_scoped_cols = self._live_schema_metadata.get(scoped_name.upper()) or set()
-                        if compute_column_compatibility(modeled_cols, live_scoped_cols) >= 0.8:
-                            plan.append({
-                                "dataset": ds_name,
-                                "action": "bind",
-                                "table": scoped_name,
-                                "database": target_db,
-                                "schema": target_schema,
-                                "matched_by": "scoped_model",
-                                "tie": [],
-                            })
-                            continue
-                        idx = 2
-                        while f"{scoped_name}_{idx}".upper() in all_existing:
-                            idx += 1
-                        scoped_name = f"{scoped_name}_{idx}"
-                    logger.info(
-                        "Target table '%s' exists with %.1f%% compatibility; dynamically isolating '%s' as '%s'.",
-                        safe_target_name, compat * 100.0, ds_name, scoped_name,
-                    )
-                    plan.append({
-                        "dataset": ds_name,
-                        "action": "create",
-                        "table": scoped_name,
-                        "database": target_db,
-                        "schema": target_schema,
-                        "matched_by": "scoped_isolation",
-                        "tie": [],
-                    })
-                    continue
-
+                prefix = self._safe_table_name(model_name) if model_name else "MODEL"
+                scoped_name = self._safe_table_name(f"{prefix}_{ds_name}")
+                if scoped_name.upper() in all_existing:
+                    live_scoped_cols = self._live_schema_metadata.get(scoped_name.upper()) or set()
+                    if compute_column_compatibility(modeled_cols, live_scoped_cols) >= 0.8:
+                        plan.append({
+                            "dataset": ds_name,
+                            "action": "bind",
+                            "table": scoped_name,
+                            "database": target_db,
+                            "schema": target_schema,
+                            "matched_by": "scoped_model",
+                            "tie": [],
+                        })
+                        continue
+                    idx = 2
+                    while f"{scoped_name}_{idx}".upper() in all_existing:
+                        idx += 1
+                    scoped_name = f"{scoped_name}_{idx}"
+                logger.info(
+                    "Target table '%s' exists with %.1f%% compatibility; dynamically isolating '%s' as '%s'.",
+                    safe_target_name, compat * 100.0, ds_name, scoped_name,
+                )
                 plan.append({
                     "dataset": ds_name,
-                    "action": "blocked",
-                    "table": blocker["table_name"] if blocker else safe_target_name,
-                    "matched_by": "collision",
-                    "col_compat": compat,
-                    "message": (
-                        blocker["message"]
-                        if blocker
-                        else f"Target object '{safe_target_name}' already exists in Snowflake and its columns do not match PBIX table '{ds_name}'. Cannot bind or create without overwriting."
-                    ),
+                    "action": "create",
+                    "table": scoped_name,
+                    "database": target_db,
+                    "schema": target_schema,
+                    "matched_by": "scoped_isolation",
                     "tie": [],
                 })
+                continue
             else:
                 plan.append({
                     "dataset": ds_name,

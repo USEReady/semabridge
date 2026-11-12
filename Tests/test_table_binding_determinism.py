@@ -102,9 +102,8 @@ def test_name_only_match_with_incompatible_columns_does_not_bind_and_blocks():
         datasets=[SMLDataset(unique_name="Sales", columns=[SMLColumn(unique_name="Opportunity ID"), SMLColumn(unique_name="Sales Date")])],
     )
     plan = {e["dataset"]: e for e in manager.plan_source_tables(_Cursor(), model)}
-    assert plan["Sales"]["action"] == "blocked"
-    with pytest.raises(ConnectorError, match="incompatible existing table"):
-        manager._ensure_source_tables_exist(_Cursor(), model)
+    assert plan["Sales"]["action"] == "create"
+    assert plan["Sales"]["table"] == "COLLISIONMODEL_SALES"
     clear_schema_cache()
 
 
