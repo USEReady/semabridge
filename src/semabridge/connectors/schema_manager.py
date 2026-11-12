@@ -442,6 +442,10 @@ class SnowflakeSchemaManager:
                 else:
                     logger.debug("Dataset '%s' is bound to existing table '%s' — leaving untouched.", entry["dataset"], entry["table"])
                 self._verified_tables.add(self._safe_table_name(entry["table"]))
+                pinned = getattr(self._live_schema_metadata, "pinned_bindings", None)
+                if isinstance(pinned, dict):
+                    from semabridge.connectors.table_binding_resolver import clean_ident as _ci
+                    pinned[_ci(entry["dataset"])] = entry["table"]
             else:
                 absent_tables_to_create.append((datasets_by_name[entry["dataset"]], entry["table"]))
 
@@ -465,9 +469,9 @@ class SnowflakeSchemaManager:
                 self._verified_tables.add(safe_table_name)
                 # Record the placeholder as created by this project so other
                 # projects are told before they bind to it.
+                from semabridge.connectors.table_binding_resolver import clean_ident as _ci
                 log = getattr(self._live_schema_metadata, "binding_log", None)
                 if log is not None:
-                    from semabridge.connectors.table_binding_resolver import clean_ident as _ci
                     _db, _sc = self._target_namespace()
                     log[_ci(dataset.unique_name)] = {
                         "dataset": dataset.unique_name,
@@ -476,6 +480,15 @@ class SnowflakeSchemaManager:
                         "tie": [],
                         "database": _db,
                         "schema": _sc,
+                    }
+                pinned = getattr(self._live_schema_metadata, "pinned_bindings", None)
+                if isinstance(pinned, dict):
+                    pinned[_ci(dataset.unique_name)] = safe_table_name
+                if isinstance(self._live_schema_metadata, dict) and safe_table_name.upper() not in self._live_schema_metadata:
+                    self._live_schema_metadata[safe_table_name.upper()] = {
+                        self._id.sanitize_column(c.unique_name).upper()
+                        for c in (getattr(dataset, "columns", None) or [])
+                        if getattr(c, "unique_name", None)
                     }
             except Exception as e:
                 logger.error(f"Failed to create missing source table '{safe_table_name}': {e}")
