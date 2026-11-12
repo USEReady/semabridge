@@ -378,7 +378,7 @@ class _DaxFilterParser:
             return tok.val, "NUMBER"
         if tok.kind == "WORD" and tok.val.upper() in _UNSUPPORTED_DAX_FUNCTIONS:
             raise RLSTranslationError(
-                f"Dynamic or lookup DAX function {tok.val}() cannot be translated to static Snowflake Row Access Policy."
+                f"Unsupported function: dynamic or lookup DAX function {tok.val}() cannot be translated to static Snowflake Row Access Policy."
             )
         raise RLSTranslationError(
             f"Expected single literal value (quoted string or number), found {tok.val!r} at pos {tok.pos}."
