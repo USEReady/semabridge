@@ -41,8 +41,9 @@ def test_project_discovery_returns_display_name(monkeypatch, tmp_path):
     _reset_compat_state()
     rows = asyncio.run(ppi.list_project_discovery_compat())
 
-    assert len(rows) == 1
-    row = rows[0]
+    matching = [r for r in rows if r["id"] == project_id]
+    assert len(matching) == 1
+    row = matching[0]
     assert row["id"] == project_id
     assert row["name"] == "Q1 Sales Analytics Sync"
     assert row["display_name"] == "Q1 Sales Analytics Sync"

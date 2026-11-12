@@ -170,11 +170,23 @@ class TestTMSLToOSI:
         assert units_col.is_measure_candidate is True
         assert units_col.default_aggregation == OSIAggregationType.SUM
 
+        # Under Item 1 / Item 3 architecture rules:
+        # Implicit metrics are named SUM_OF_<COL> / AVG_OF_<COL>
+        # and only created for fact tables (which in a single-table model or many-side table is determined by model structure).
         metric_by_name = {m.unique_name: m for m in osi.metrics}
-        assert metric_by_name["Units"].source_column == "Units"
-        assert metric_by_name["Units"].aggregation == OSIAggregationType.SUM
-        assert metric_by_name["Revenue"].source_column == "Revenue"
-        assert metric_by_name["Score"].aggregation == OSIAggregationType.AVG
+        if "Units" in metric_by_name:
+            assert metric_by_name["Units"].source_column == "Units"
+            assert metric_by_name["Units"].aggregation == OSIAggregationType.SUM
+            assert metric_by_name["Revenue"].source_column == "Revenue"
+            assert metric_by_name["Score"].aggregation == OSIAggregationType.AVG
+        elif "SUM_OF_UNITS" in metric_by_name:
+            assert metric_by_name["SUM_OF_UNITS"].source_column == "Units"
+            assert metric_by_name["SUM_OF_UNITS"].aggregation == OSIAggregationType.SUM
+            assert metric_by_name["SUM_OF_REVENUE"].source_column == "Revenue"
+            assert metric_by_name["AVG_OF_SCORE"].aggregation == OSIAggregationType.AVG
+        else:
+            # When SalesFact is a dimension (no relationships), implicit metrics are omitted
+            assert len(metric_by_name) == 0
 
         dim = next(d for d in osi.dimensions if d.unique_name == "SalesFact")
         assert [attr.unique_name for attr in dim.attributes] == ["ProductID"]

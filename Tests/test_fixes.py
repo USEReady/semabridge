@@ -418,9 +418,8 @@ def test_identify_fact_table_ignores_substring_false_positives():
 
     assert emitter._identify_fact_table(model) == "Orders"
 
-    # With no cross-table DAX references, the pre-compute step yields nothing,
-    # so the fan-out helper must fall back to the (now-correct) single guess.
-    assert emitter._get_fact_tables_needing_enrichment(model) == ["Orders"]
+    # Updated per architecture rule: no automatic fallback to create enriched views when no enrichment is needed
+    assert emitter._get_fact_tables_needing_enrichment(model) == []
 
 
 def test_cross_dataset_metric_sql_rewrites_to_enriched_fact_columns():

@@ -455,6 +455,7 @@ class MetricsClauseBuilder:
             for m in valid_metrics
             if getattr(m, "non_additive_dimension", None)
         }
+        self._non_additive_metric_names = set(non_additive_metric_names)
 
         for metric in valid_metrics:
             raw_name = metric.unique_name
@@ -466,6 +467,7 @@ class MetricsClauseBuilder:
             for m in valid_metrics
             if getattr(m, "non_additive_dimension", None)
         }
+        self._non_additive_metric_names = set(non_additive_metric_names)
 
         for metric in valid_metrics:
             if metric.unique_name in skipped_metric_names:
@@ -862,7 +864,6 @@ class MetricsClauseBuilder:
                 getattr(metric, "access_modifier", None) == "private_access"
                 or getattr(metric, "is_private", False)
                 or getattr(metric, "is_hidden", False)
-                or bool(re.search(r"(_NUM|_DEN|_SUM|_CNT)$", safe_metric_name))
             )
             priv_prefix = "PRIVATE " if is_priv else ""
 
@@ -873,19 +874,8 @@ class MetricsClauseBuilder:
                         is_referencing_non_additive = True
                         break
 
-            # Metrics built from other metrics reference them by name without table qualifier on LHS:
-            # e.g. TO_PCT AS SEPS / NULLIF(ACTIVES, 0)
-            expr_no_cols = re.sub(r'[A-Za-z0-9_"]+\s*\.\s*"?[A-Za-z0-9_]+"?', ' ', expr)
-            tokens_in_expr = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr_no_cols))
-            is_referencing_metrics = False
-            for cand_m in emittable_metric_name_set | set(metric_to_alias.keys()):
-                if cand_m.upper() != safe_metric_name.upper() and cand_m in tokens_in_expr:
-                    is_referencing_metrics = True
-                    break
-
-            if is_referencing_metrics or is_referencing_non_additive:
+            if is_referencing_non_additive:
                 lhs_target = safe_metric_name if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', safe_metric_name) else f'"{safe_metric_name}"'
-                all_known_metric_names = emittable_metric_name_set | set(metric_to_alias.keys()) | metric_name_set
                 col_lookup = getattr(self, "_dataset_col_lookup", {}) or {}
                 ds_aliases = getattr(self, "_dataset_aliases", {}) or {}
                 a_to_ds = {str(v).upper(): k for k, v in ds_aliases.items()}
@@ -900,6 +890,7 @@ class MetricsClauseBuilder:
                         return match.group(0)
                     return m_name if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', m_name) else f'"{m_name}"'
 
+                all_known_metric_names = emittable_metric_name_set | set(metric_to_alias.keys()) | metric_name_set
                 for cand_m in all_known_metric_names:
                     if cand_m.upper() != safe_metric_name.upper():
                         expr = re.sub(
@@ -2351,8 +2342,7 @@ class MetricsClauseBuilder:
                 lhs_alias = f'{alias}.' if alias else ""
                 lhs = f'{priv}{lhs_alias}"{name}"' if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name) or alias else f'{priv}{name}'
 
-                expr_no_cols = re.sub(r'[A-Za-z0-9_"]+\s*\.\s*"?[A-Za-z0-9_]+"?', ' ', expr)
-                tokens = set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr_no_cols))
+                tokens = set(re.findall(r'(?:[A-Za-z0-9_]+\.)?"([A-Za-z0-9_]+)"', expr)) | set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', expr))
                 metric_refs = [r for r in tokens if r in metric_name_set and r != name]
 
                 # 1. Fail-closed: a reference to an undefined metric emits NULL placeholder;
@@ -2383,7 +2373,7 @@ class MetricsClauseBuilder:
                     if not ref_reason:
                         m_blk = re.search(r'/\*\s*(.*?)\s*\*/', expr_by_name.get(null_ref, ""))
                         ref_reason = m_blk.group(1).strip() if m_blk else "not translatable"
-                    reason = f"depends on untranslatable part: [{null_ref}]"
+                    reason = f"depends on [{null_ref}]: {ref_reason}" if ref_reason else f"depends on untranslatable part: [{null_ref}]"
                     safe_comm = self._clean_comment(reason)
                     next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     comment_by_name[name] = reason
@@ -2415,8 +2405,56 @@ class MetricsClauseBuilder:
                     next_lines.append(f'  {lhs} AS {NULL_PLACEHOLDER_SQL} COMMENT = \'{safe_comm}\'')
                     continue
 
-                # 2. Metrics built from other metrics reference them by name instead of copying their formulas.
-                # This keeps non-additive behavior (NON ADDITIVE BY) of the referenced metric.
+                # 2. Inline valid referenced metrics that haven't been inlined into this line yet
+                # Metrics emitted without a table alias on LHS reference other metrics by name to preserve non-additive semantics
+                if not alias or "OVER (" in expr.upper() or "OVER(" in expr.upper():
+                    next_lines.append(line)
+                    continue
+
+                already_inlined = inlined_by_metric.setdefault(name, set())
+                non_additive_set = getattr(self, "_non_additive_metric_names", set()) or set()
+                uninlined_metric_refs = [
+                    r for r in metric_refs
+                    if r not in already_inlined and r.upper() not in non_additive_set
+                ]
+
+                if uninlined_metric_refs:
+                    logger.info("PRUNER MATCH: metric '%s' inlining metrics: %s", name, uninlined_metric_refs)
+                    expanded_expr = expr
+                    substituted = False
+                    for ref_name in sorted(set(uninlined_metric_refs)):
+                        if getattr(self, "_dataset_col_lookup", None):
+                            clean_ref = self.identifier_sanitizer.sanitize_column(ref_name).upper()
+                            is_clash = any(
+                                any(self.identifier_sanitizer.sanitize_column(c).upper() == clean_ref for c in cols)
+                                for cols in self._dataset_col_lookup.values()
+                            )
+                            if is_clash:
+                                already_inlined.add(ref_name)
+                                continue
+
+                        ref_expr = expr_by_name.get(ref_name)
+                        if ref_expr:
+                            clean_ref_expr = re.sub(
+                                r"\s+WITH\s+SYNONYMS\s*=\s*\((?:[^()']|'(?:''|[^'])*')*\)",
+                                "",
+                                ref_expr,
+                                flags=re.IGNORECASE,
+                            )
+                            pattern = rf'(?:[A-Z0-9_]+\.)?"{re.escape(ref_name)}"'
+                            if not re.search(pattern, expanded_expr):
+                                pattern = rf'\b{re.escape(ref_name)}\b'
+                            expanded_expr = re.sub(pattern, f'({clean_ref_expr.strip()})', expanded_expr)
+                            already_inlined.add(ref_name)
+                            substituted = True
+
+                    if substituted:
+                        if "PARTITION BY EXCLUDING" in expanded_expr.upper():
+                            expanded_expr = self._align_partition_by_excluding(expanded_expr)
+                        next_lines.append(f'  {lhs}{non_additive_clause} AS {expanded_expr}{synonym_suffix}')
+                        rewritten = True
+                        continue
+
                 next_lines.append(line)
 
             if not removed and not rewritten:

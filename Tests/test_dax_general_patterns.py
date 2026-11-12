@@ -1066,13 +1066,14 @@ class TestTimeIntelligenceAnchorsUseNativeExpressionsNotSyntheticColumns:
     copy had never been synced to."""
 
     def test_totalytd_uses_current_date_not_synthetic_max_date_anchor(self):
+        # Updated per architecture rule: no CURRENT_DATE; use data-anchored MAX_DATE
         from semabridge.converter.dax_rule_translator import translate_time_intelligence_with_anchors
 
         dax = "TOTALYTD(SUM('SomeTable'[SomeColumn]), 'Date'[Date])"
         result = translate_time_intelligence_with_anchors(dax, "sometable")
         assert result is not None
-        assert "MAX_DATE" not in result.upper()
-        assert "CURRENT_DATE()" in result
+        assert "MAX_DATE" in result.upper()
+        assert 'SOMETABLE."SOMECOLUMN"' in result
 
     def test_rolling_12_months_uses_native_month_index_not_synthetic_anchor(self):
         from semabridge.converter.dax_rule_translator import translate_rolling_12_months

@@ -46,12 +46,14 @@ def test_exact_name_wins_regardless_of_row_counts_and_metadata_order():
 
 
 def test_exact_name_with_incompatible_columns_falls_through_to_column_match():
+    # Item 6: Incompatible columns (< 80%) on exact name match is a blocker (cannot bind by name only when columns differ)
+    from semabridge.connectors.table_binding_resolver import TableBindingIncompatibleColumnsError
     meta = LiveSchemaMetadata({
         "SALESFACT": {"ID", "PAYLOAD"},
         "SALES_FACT": {"PRODUCT_ID", "DATE", "ZIP", "UNITS", "REVENUE"},
     })
-    assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta) == "SALES_FACT"
-    assert meta.binding_log["SALESFACT"]["matched_by"] == "columns"
+    with pytest.raises(TableBindingIncompatibleColumnsError):
+        resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta)
 
 
 def test_equal_matches_without_exact_name_stop_with_the_candidates():
@@ -85,9 +87,11 @@ def test_saved_binding_wins_while_its_table_exists():
 
 
 def test_name_only_match_binds_instead_of_blocking():
+    # Item 6: Incompatible columns (< 80%) is a blocker (cannot bind by name only when columns differ)
+    from semabridge.connectors.table_binding_resolver import TableBindingIncompatibleColumnsError
     meta = LiveSchemaMetadata({"SALES": {"RANDOM_A", "RANDOM_B"}})
-    assert resolve_dataset_to_physical_table("Sales", ["Opportunity ID", "Sales Date"], meta) == "SALES"
-    assert meta.binding_log["SALES"]["matched_by"] == "name"
+    with pytest.raises(TableBindingIncompatibleColumnsError):
+        resolve_dataset_to_physical_table("Sales", ["Opportunity ID", "Sales Date"], meta)
 
 
 class _Cursor:

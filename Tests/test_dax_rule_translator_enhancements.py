@@ -35,12 +35,7 @@ def test_calculate_filter_translates_to_case_when_snowflake():
 
 
 def test_time_intelligence_uses_current_date_not_synthetic_max_date_anchor():
-    """Regression: this used to table-qualify a synthetic MAX_DATE
-    enriched-view anchor column. MAX_DATE is not actually in scope inside
-    a semantic view's METRICS clause (see connectors/translator.py's
-    parallel implementation, fixed the same way in commit e4c8322) — now
-    uses the native CURRENT_DATE() function instead, with no dependency
-    on an enrichment stage having run."""
+    # Updated per architecture rule: no CURRENT_DATE; use data-anchored MAX_DATE
     sql = rule_based_translation(
         "TOTALYTD(SUM(spend_fact[Transaction_USD_Amount]), 'date'[Cal_DT])",
         "SPEND_FACT",
@@ -48,9 +43,9 @@ def test_time_intelligence_uses_current_date_not_synthetic_max_date_anchor():
         "snowflake",
     )
 
-    assert "MAX_DATE" not in sql.upper()
-    assert "DATE_TRUNC('YEAR', CURRENT_DATE())" in sql
-    assert '"CAL_DT" <= CURRENT_DATE()' in sql
+    assert "MAX_DATE" in sql.upper()
+    assert 'DATE_TRUNC(\'YEAR\', SPEND_FACT."MAX_DATE")' in sql
+    assert '"CAL_DT" <= SPEND_FACT."MAX_DATE"' in sql
     assert 'SPEND_FACT."TRANSACTION_USD_AMOUNT"' in sql
 
 

@@ -483,8 +483,10 @@ class SecurityPolicyTranslator:
 
         db = (target_database or "").strip()
         schema = (target_schema or "").strip()
-        if not db or not schema:
-            return {"status": "not translated", "ddl": "", "reason": "target_database and target_schema must not be blank."}
+        if not db:
+            return {"status": "not translated", "ddl": "", "reason": "target_database is required."}
+        if not schema:
+            return {"status": "not translated", "ddl": "", "reason": "target_schema is required."}
 
         db_q = _quote_sf_ident(db)
         schema_q = _quote_sf_ident(schema)

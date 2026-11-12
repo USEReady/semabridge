@@ -3149,8 +3149,9 @@ class DaxSqlRenderer:
 
         if name_cf in self._known_measure_names_casefold:
             if not self.row_context_stack:
-                ref_name = to_alias(node.name).upper()
-                return f'"{ref_name}"' if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', ref_name) else ref_name
+                raise self.DaxRenderError(
+                    f"Unresolved measure reference [{node.name}]: known measure with no resolved SQL yet"
+                )
 
         # The caller has no measure-registry knowledge of this name at all —
 

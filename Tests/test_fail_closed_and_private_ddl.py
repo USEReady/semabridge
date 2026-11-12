@@ -180,6 +180,7 @@ def test_helper_columns_and_metrics_declared_private_in_ddl():
                 sql_expression='SUM(SALES."AMOUNT")',
                 aggregation=AggregationType.SUM,
                 sync_enabled=True,
+                access_modifier="private_access",
             ),
             SMLMetric(
                 unique_name="BaseAmount_CNT",
@@ -188,6 +189,7 @@ def test_helper_columns_and_metrics_declared_private_in_ddl():
                 sql_expression='COUNT(SALES."AMOUNT")',
                 aggregation=AggregationType.COUNT,
                 sync_enabled=True,
+                access_modifier="private_access",
             ),
             # Normal metric
             SMLMetric(

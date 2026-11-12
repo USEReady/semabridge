@@ -26,8 +26,8 @@ def _dataset(unique_name, source_table, columns, key_col=None):
 
 
 def test_disconnected_table_takes_the_pk_declared_in_snowflake():
-    """A disconnected table with no PBIX key takes the primary key declared in
-    Snowflake (metadata), never one discovered by counting rows."""
+    """Item 3: No guessed primary keys. Disconnected tables (not targeted by any relationship)
+    get no PRIMARY KEY in the semantic view."""
     indicators_ds = _dataset("Indicators", "INDICATORS", ["SORT", "STATUS", "IMAGE"], key_col=None)
     model = SimpleNamespace(datasets=[indicators_ds], relationships=[])
 
@@ -46,9 +46,8 @@ def test_disconnected_table_takes_the_pk_declared_in_snowflake():
         model, registry=AliasRegistry(), metric_counts_by_dataset={}, related_datasets=set(),
     )
 
-    assert any('PRIMARY KEY ("STATUS")' in line for line in tables_sql)
-    # Uniqueness in the data is only checked for a warning.
-    mock_schema_manager.warn_if_key_not_unique.assert_called_with("INDICATORS", ["STATUS"], cursor=None)
+    # Disconnected table has no relationship -> no PRIMARY KEY guessed
+    assert not any('PRIMARY KEY' in line for line in tables_sql)
 
 
 def test_table_without_any_key_falls_back_to_first_column_without_data():

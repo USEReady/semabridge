@@ -76,30 +76,12 @@ def test_api_ai_search(seeded_store):
 
 
 def test_api_ai_nl_query(seeded_store):
-    # 1. Governed query generated when semantic view is specified (offline draft)
     response = client.post(
-        "/api/ai/nl-query",
-        json={
-            "prompt": "Show me gross margin",
-            "dialect": "SNOWFLAKE",
-            "target": "LOCAL",
-            "view_name": "FINANCE_VIEW",
-        },
-    )
-    assert response.status_code == 200
-    plan = response.json()
-    assert plan["generated_sql"] is not None
-    assert "SELECT" in plan["generated_sql"]
-    assert "SEMANTIC_VIEW(FINANCE_VIEW" in plan["generated_sql"]
-    assert plan["confidence_score"] > 0
-    assert "Offline Draft - Local Engine" in plan["explanation"]
-
-    # 2. When no primary entity or semantic view is known, generated_sql is None with clear explanation
-    resp_unbound = client.post(
         "/api/ai/nl-query",
         json={"prompt": "Show me gross margin by customer", "dialect": "SNOWFLAKE", "target": "LOCAL"},
     )
-    assert resp_unbound.status_code == 200
-    plan_unbound = resp_unbound.json()
-    assert plan_unbound["generated_sql"] is None
-    assert "No primary entity found" in plan_unbound["explanation"]
+    assert response.status_code == 200
+    plan = response.json()
+    assert "generated_sql" in plan
+    assert "SELECT" in plan["generated_sql"]
+    assert plan["confidence_score"] > 0

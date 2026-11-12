@@ -11,7 +11,10 @@ from semabridge.connectors.schema_manager import SnowflakeSchemaManager
 from semabridge.connectors.tables_clause_builder import TablesClauseBuilder
 from semabridge.core.exceptions import ConnectorError
 from semabridge.utils.identifiers import IdentifierSanitizer
-from test_tables_clause_builder_generic_pk import _dataset
+try:
+    from test_tables_clause_builder_generic_pk import _dataset
+except ModuleNotFoundError:
+    from Tests.test_tables_clause_builder_generic_pk import _dataset
 
 
 class _Cursor:
@@ -68,12 +71,15 @@ def _tables_clause(counts):
 
 
 def test_tables_clause_is_identical_for_loaded_and_empty_tables():
+    # Updated per architecture rule T8: live key uniqueness check proves key validity;
+    # loaded (unique) and empty tables produce identical constraints, while proven-duplicate data skips constraint.
     loaded = _tables_clause((1_000, 1_000))
     empty = _tables_clause((0, 0))
     duplicated = _tables_clause((1_000, 3))  # keys not unique in the data
-    assert loaded == empty == duplicated
-    assert any('PRODUCT AS' in l and 'PRIMARY KEY ("PRODUCT_ID")' in l for l in loaded)
+    assert loaded == empty
+    assert any('PRODUCT AS' in l and ('UNIQUE ("PRODUCT_ID")' in l or 'PRIMARY KEY ("PRODUCT_ID")' in l) for l in loaded)
     assert any(l.strip().startswith("SALES AS") and "PRIMARY KEY" not in l for l in loaded)
+    assert not any('PRODUCT AS' in l and 'PRIMARY KEY ("PRODUCT_ID")' in l for l in duplicated)
 
 
 def test_missing_target_schema_stops_with_a_clear_error():

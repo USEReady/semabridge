@@ -271,7 +271,10 @@ def test_snowflake_compatibility_metadata_and_ddl_representation():
     repo_root = Path(__file__).resolve().parent.parent
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from validate_semantic_view import parse_ddl, static_checks, Report
+    try:
+        from validate_semantic_view import parse_ddl, static_checks, Report
+    except ImportError:
+        from Scripts.validate_semantic_view import parse_ddl, static_checks, Report
 
     builder, sanitizer, schema_mgr = _create_builder()
     ddl_sanitizer = SemanticDDLSanitizer(sanitizer)
@@ -359,8 +362,9 @@ def test_snowflake_compatibility_metadata_and_ddl_representation():
         model, registry.dataset_aliases, by_name, lookup, declared_pks, targets
     )
 
-    # Both active and inactive relationships are emitted in DDL
-    assert len(rel_lines) == 3
+    # Inactive relationships without USERELATIONSHIP in metrics are omitted per deliberate rule
+    # (Item 7: Inactive relationships omitted unless used by USERELATIONSHIP)
+    assert len(rel_lines) == 2
 
     # Build semantic view DDL
     tbl_joined = ",\n".join(tbl_lines)
@@ -376,5 +380,5 @@ def test_snowflake_compatibility_metadata_and_ddl_representation():
     n_pass = sum(1 for r in report.rows if r[0] == "PASS")
 
     assert n_fail == 0, f"Expected 0 failures in Snowflake DDL validation, got {n_fail}: {report.rows}"
-    assert n_pass == 3
+    assert n_pass == 2
 

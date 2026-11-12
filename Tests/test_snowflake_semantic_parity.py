@@ -72,16 +72,18 @@ def test_relationship_builder_keeps_inactive_fabric_relationships():
         from_columns=["Posting_Date"],
         to_columns=["LY_CAL_DT"],
     )
+    # Item 7: Inactive relationships are kept when referenced by a measure via USERELATIONSHIP
+    metric = SimpleNamespace(
+        expression="CALCULATE(SUM(spend_fact[Amount]), USERELATIONSHIP(spend_fact[Posting_Date], date[LY_CAL_DT]))",
+        sql_expression="",
+    )
 
     lines = builder.build_for_osi(
-        SimpleNamespace(relationships=[rel]),
+        SimpleNamespace(relationships=[rel], metrics=[metric]),
         dataset_aliases={"spend_fact": "SPEND_FACT", "date": "COL_DATE"},
         dataset_by_name={"spend_fact": SimpleNamespace(), "date": SimpleNamespace()},
         dataset_col_lookup={"spend_fact": {"POSTING_DATE"}, "date": {"LY_CAL_DT"}},
-        # Snowflake requires a relationship target to be a declared PRIMARY
-        # KEY/UNIQUE; inactive relationships target their own role-playing
-        # alias of the date table (see TablesClauseBuilder's inactive aliases).
-        declared_pk_by_alias={"__keys__DATE_POSTING_DATE": [["LY_CAL_DT"]]},
+        declared_pk_by_alias={"DATE_POSTING_DATE": ["LY_CAL_DT"]},
         relationship_target_alias={},
     )
 

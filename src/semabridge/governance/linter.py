@@ -193,6 +193,7 @@ class SemanticLinter:
             all_metrics = [(m.domain, m) for m in ontology.metrics.values()]
 
         for dom_name, c in all_concepts:
+            eff_dom = dom_name or c.domain
             if self.steward_severity != "OFF" and not getattr(c, "data_steward", None):
                 issues.append(
                     LintIssue(
@@ -200,11 +201,39 @@ class SemanticLinter:
                         severity=self.steward_severity,
                         object_type="CONCEPT",
                         object_name=c.name,
-                        domain=dom_name or c.domain,
+                        domain=eff_dom,
                         message=f"Concept '{c.name}' has no data steward assigned.",
                         remediation="Add 'data_steward: \"user@enterprise.com\"' to the concept definition.",
                     )
                 )
+            if self.require_description and (not c.description or len(c.description.strip()) < 5):
+                issues.append(
+                    LintIssue(
+                        rule_id="RULE_MISSING_DESCRIPTION",
+                        severity="WARNING",
+                        object_type="CONCEPT",
+                        object_name=c.name,
+                        domain=eff_dom,
+                        message=f"Concept '{c.name}' lacks a comprehensive business description.",
+                        remediation="Provide an unambiguous description explaining the business logic.",
+                    )
+                )
+            if self.require_description:
+                for attr in getattr(c, "attributes", []) or []:
+                    attr_name = getattr(attr, "name", "")
+                    attr_desc = getattr(attr, "description", None)
+                    if not attr_desc or len(attr_desc.strip()) < 5:
+                        issues.append(
+                            LintIssue(
+                                rule_id="RULE_MISSING_DESCRIPTION",
+                                severity="WARNING",
+                                object_type="ATTRIBUTE",
+                                object_name=f"{c.name}.{attr_name}",
+                                domain=eff_dom,
+                                message=f"Attribute '{c.name}.{attr_name}' lacks a comprehensive business description.",
+                                remediation="Provide an unambiguous description explaining the business logic.",
+                            )
+                        )
 
         for dom_name, m in all_metrics:
             eff_domain = dom_name or m.domain
@@ -264,7 +293,7 @@ class SemanticLinter:
                     )
 
             if self.enforce_snake_case_metrics:
-                if " " in m.name or not re.match(r"^[A-Za-z0-9_]+$", m.name):
+                if " " in m.name or not re.match(r"^[a-z0-9_]+$", m.name):
                     issues.append(
                         LintIssue(
                             rule_id="RULE_NAMING_CONVENTION",

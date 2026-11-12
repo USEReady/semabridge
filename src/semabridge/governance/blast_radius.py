@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import deque
 import difflib
+import enum
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -20,6 +21,11 @@ from semabridge.ontology.models import DomainConcept, DomainMetric, DomainOntolo
 from semabridge.utils.reserved_prefixes import expand_column_aliases, normalize_separator_ident
 
 logger = logging.getLogger("semabridge.governance.blast_radius")
+
+class TargetType(str, enum.Enum):
+    COLUMN = "COLUMN"
+    TABLE = "TABLE"
+    METRIC = "METRIC"
 
 _VALID_TARGET_TYPES = frozenset({"COLUMN", "TABLE", "METRIC"})
 _VALID_CHANGE_TYPES = frozenset({"DROP", "RENAME", "MODIFY_TYPE", "MODIFY_EXPRESSION"})
@@ -125,11 +131,13 @@ class BlastRadiusSimulator:
         if not target_clean:
             raise ValueError("Target name cannot be empty.")
 
-        ttype_upper = str(target_type or "").strip().upper()
+        ttype_raw = target_type.value if hasattr(target_type, "value") else target_type
+        ttype_upper = str(ttype_raw or "").strip().upper()
         if ttype_upper not in _VALID_TARGET_TYPES:
             raise ValueError(f"Invalid target_type '{target_type}'. Must be one of {sorted(_VALID_TARGET_TYPES)}.")
 
-        ctype_upper = str(change_type or "").strip().upper()
+        ctype_raw = change_type.value if hasattr(change_type, "value") else change_type
+        ctype_upper = str(ctype_raw or "").strip().upper()
         if ctype_upper not in _VALID_CHANGE_TYPES:
             raise ValueError(f"Invalid change_type '{change_type}'. Must be one of {sorted(_VALID_CHANGE_TYPES)}.")
 
@@ -247,7 +255,11 @@ class BlastRadiusSimulator:
                 if tbl_clean and getattr(m, "dataset", None) and _norm_ident(m.dataset) != _norm_ident(tbl_clean):
                     continue
                 expr = m.expression or ""
-                if any(_ident_in_expr(expr, alias, tbl_clean or None) for alias in target_aliases):
+                src_col = getattr(m, "source_column", None) or ""
+                hit = any(_ident_in_expr(expr, alias, tbl_clean or None) for alias in target_aliases) or (
+                    src_col and any(_norm_ident(src_col) == _norm_ident(alias) for alias in target_aliases)
+                )
+                if hit:
                     key = m.unique_name.casefold()
                     if key not in seen_metric_keys:
                         seen_metric_keys.add(key)
@@ -258,7 +270,7 @@ class BlastRadiusSimulator:
                                 item_type="METRIC",
                                 impact_level="DIRECT",
                                 steward=getattr(m, "business_owner", None),
-                                details=f"Calculation relies on column '{target_clean}': {expr}",
+                                details=f"Calculation relies on column '{target_clean}': {expr or src_col}",
                             )
                         )
                         edges.append({"from": target_clean, "to": m.unique_name, "relationship": "computed_from"})
