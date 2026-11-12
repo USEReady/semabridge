@@ -23,6 +23,7 @@ class SearchHit(BaseModel):
     """Result item returned by semantic search."""
     item_id: str
     name: str
+    label: Optional[str] = None
     item_type: str  # 'CONCEPT', 'METRIC', 'ATTRIBUTE', 'RELATIONSHIP'
     domain: Optional[str] = None
     description: Optional[str] = None
@@ -162,10 +163,11 @@ class SemanticSearchIndex:
         for metric in ontology.metrics.values():
             doc_id = f"metric:{metric.name.casefold()}"
             corpus_text = f"{metric.name} {metric.label or ''} {metric.concept or ''} {metric.description or ''} {' '.join(metric.synonyms)} {' '.join(metric.business_rules)} {' '.join(metric.tags)}"
-            display_name = metric.label or (metric.name.replace("_", " ").title() if "_" in metric.name else metric.name)
+            display_label = metric.label or (metric.name.replace("_", " ").title() if "_" in metric.name else metric.name)
             self._add_document(
                 doc_id=doc_id,
-                name=display_name,
+                name=metric.name,
+                label=display_label,
                 item_type="METRIC",
                 domain=metric.domain,
                 description=metric.description,
@@ -208,6 +210,7 @@ class SemanticSearchIndex:
         domain: Optional[str],
         description: Optional[str],
         corpus_text: str,
+        label: Optional[str] = None,
         sql_expression: Optional[str] = None,
         synonyms: Optional[List[str]] = None,
         business_rules: Optional[List[str]] = None,
@@ -222,6 +225,7 @@ class SemanticSearchIndex:
         self.docs[doc_id] = {
             "item_id": doc_id,
             "name": name,
+            "label": label,
             "item_type": item_type,
             "domain": domain,
             "description": description,
@@ -296,28 +300,37 @@ class SemanticSearchIndex:
             if item_type_filter and doc["item_type"].casefold() != item_type_filter.casefold():
                 continue
 
-            # 1. Exact / Substring Name Match
+            # 1. Exact / Substring Name and Label Match
             doc_name_lower = doc["name"].casefold()
+            doc_label_lower = (doc.get("label") or "").casefold()
             query_lower = query_clean.casefold()
             doc_name_clean = doc_name_lower.replace("_", " ")
+            doc_label_clean = doc_label_lower.replace("_", " ")
             query_clean_spaced = query_lower.replace("_", " ")
             match_type = "FUZZY_BM25"
             matched_term = None
             exact_bonus = 0.0
 
             name_toks = _tokenize(doc["name"])
+            label_toks = _tokenize(doc.get("label") or "")
             q_toks_set = set(query_tokens)
-            name_toks_set = set(name_toks)
+            name_toks_set = set(name_toks) | set(label_toks)
             doc_nospace = re.sub(r"[^a-z0-9]+", "", doc_name_lower)
-            bigram_match = any(len(bg) >= 5 and bg in doc_nospace for bg in q_bigrams)
+            doc_label_nospace = re.sub(r"[^a-z0-9]+", "", doc_label_lower)
+            bigram_match = any(len(bg) >= 5 and (bg in doc_nospace or bg in doc_label_nospace) for bg in q_bigrams)
 
-            if doc_name_lower == query_lower or doc_name_clean == query_clean_spaced:
+            if (
+                doc_name_lower == query_lower
+                or doc_name_clean == query_clean_spaced
+                or (doc_label_lower and (doc_label_lower == query_lower or doc_label_clean == query_clean_spaced))
+            ):
                 exact_bonus = 1.0
                 match_type = "EXACT"
                 matched_term = doc["name"]
             elif (
                 (doc_name_clean and re.search(rf"(?<!\w){re.escape(doc_name_clean)}(?!\w)", query_clean_spaced))
-                or (len(query_clean_spaced) > 3 and query_clean_spaced in doc_name_clean)
+                or (doc_label_clean and re.search(rf"(?<!\w){re.escape(doc_label_clean)}(?!\w)", query_clean_spaced))
+                or (len(query_clean_spaced) > 3 and (query_clean_spaced in doc_name_clean or (doc_label_clean and query_clean_spaced in doc_label_clean)))
                 or (name_toks_set and name_toks_set.issubset(q_toks_set))
             ):
                 # Weight exact/token-subset match bonus by token coverage so multi-word matches
@@ -392,6 +405,7 @@ class SemanticSearchIndex:
                 SearchHit(
                     item_id=d["item_id"],
                     name=d["name"],
+                    label=d.get("label"),
                     item_type=d["item_type"],
                     domain=d["domain"],
                     description=d["description"],

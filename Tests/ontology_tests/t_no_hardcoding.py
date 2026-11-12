@@ -66,15 +66,16 @@ for f in sml_files:
             names.add(c.get("unique_name"))
     for x in m.get("metrics") or []:
         names.update([x.get("unique_name"), x.get("label"), x.get("original_name")])
-for f in (root / "Config" / "ontologies").glob("*.yaml"):
-    try:
-        o = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-    except Exception:
-        continue
-    for c in o.get("concepts") or []:
-        names.update([c.get("name"), *(c.get("synonyms") or [])])
-    for x in o.get("metrics") or []:
-        names.update([x.get("name"), x.get("label"), *(x.get("synonyms") or [])])
+for ont_dir in (root / "Config" / "ontologies", root / "Tests" / "fixtures" / "ontologies"):
+    for f in ont_dir.glob("*.yaml"):
+        try:
+            o = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        for c in o.get("concepts") or []:
+            names.update([c.get("name"), *(c.get("synonyms") or [])])
+        for x in o.get("metrics") or []:
+            names.update([x.get("name"), x.get("label"), *(x.get("synonyms") or [])])
 names = {n.strip() for n in names if isinstance(n, str) and len(n.strip()) >= a.min_len
          and n.strip().casefold() not in GENERIC_OK}
 words = [w.casefold() for w in (a.words if a.words is not None else BUSINESS_WORDS)]

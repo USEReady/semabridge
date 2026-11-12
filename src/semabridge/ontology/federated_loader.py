@@ -251,9 +251,9 @@ class FederatedOntologyLoader:
 
     @classmethod
     def _strip_domain_synthetic_synonyms(cls, dom: DomainOntology) -> None:
-        """Generically normalize synthetic underscore-to-title variants on loaded BI metrics."""
+        """Generically normalize synthetic underscore-to-title variants on BI-origin metrics."""
         for m in dom.metrics:
-            if m.origin == "user":
+            if m.origin != "bi":
                 continue
             raw_tech = str(m.name or "").strip()
             if "_" not in raw_tech:

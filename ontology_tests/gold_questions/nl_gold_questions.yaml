@@ -2,7 +2,7 @@
 # Each model defines a minimum accuracy floor (`min_accuracy`) enforced in CI/PR checks.
 models:
   - model_id: artificial_intelligence_sample
-    ontology_file: Config/ontologies/artificial_intelligence_sample.ontology.yaml
+    ontology_file: Tests/fixtures/ontologies/artificial_intelligence_sample.ontology.yaml
     min_accuracy: 90.0
     cases:
       - id: AI-01
@@ -64,7 +64,7 @@ models:
         expect_refusal: true
 
   - model_id: human_resources_sample_pbix
-    ontology_file: Config/ontologies/human_resources_sample_pbix.ontology.yaml
+    ontology_file: Tests/fixtures/ontologies/human_resources_sample_pbix.ontology.yaml
     min_accuracy: 85.0
     cases:
       - id: HR-01
@@ -110,7 +110,7 @@ models:
         note: "Actives carries a deployment refusal reason for missing PeriodNumber grain"
 
   - model_id: sales_returns_sample_v201912
-    ontology_file: Config/ontologies/sales_returns_sample_v201912.ontology.yaml
+    ontology_file: Tests/fixtures/ontologies/sales_returns_sample_v201912.ontology.yaml
     min_accuracy: 85.0
     cases:
       - id: SR-01
@@ -145,7 +145,7 @@ models:
         expect_refusal: true
 
   - model_id: arrow_chart_microsot_financial_dataset
-    ontology_file: Config/ontologies/arrow_chart_microsot_financial_dataset.ontology.yaml
+    ontology_file: Tests/fixtures/ontologies/arrow_chart_microsot_financial_dataset.ontology.yaml
     min_accuracy: 90.0
     cases:
       - id: AC-01
@@ -176,7 +176,7 @@ models:
         expect_refusal: true
 
   - model_id: adventure_works_dw_2020
-    ontology_file: Config/ontologies/adventure_works_dw_2020.ontology.yaml
+    ontology_file: Tests/fixtures/ontologies/adventure_works_dw_2020.ontology.yaml
     min_accuracy: 85.0
     cases:
       - id: AW-01
@@ -201,7 +201,7 @@ models:
         expect_refusal: true
 
   - model_id: store_sales_1
-    ontology_file: Config/ontologies/store_sales_1.ontology.yaml
+    ontology_file: Tests/fixtures/ontologies/store_sales_1.ontology.yaml
     min_accuracy: 85.0
     cases:
       - id: SS-01

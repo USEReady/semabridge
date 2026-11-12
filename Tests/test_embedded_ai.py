@@ -23,6 +23,8 @@ concepts:
         synonyms: [Territory, Geography]
       - name: customer_id
         data_type: VARCHAR
+      - name: sale_date
+        data_type: DATE
 metrics:
   - name: gross_margin
     label: Gross Margin
@@ -70,11 +72,11 @@ def test_nl_query_generation():
     index.index_ontology(fed)
     engine = NLQueryEngine(index, fed)
 
-    plan = engine.resolve_query("What is the gross margin by SalesTransactions in 2024?")
+    plan = engine.resolve_query("What is the gross margin by region in 2024?")
     assert plan.confidence_score > 0.4
-    assert "gross_margin" in plan.detected_metrics
-    assert "SalesTransactions" in plan.detected_dimensions
-    assert "YEAR(date) = 2024" in plan.filters
+    assert "Gross Margin" in plan.detected_metrics
+    assert "region" in plan.detected_dimensions
+    assert "YEAR(sale_date) = 2024" in plan.filters
     assert "SELECT" in plan.generated_sql
     assert "SUM(revenue) - SUM(cogs) AS gross_margin" in plan.generated_sql
     assert "GROUP BY" in plan.generated_sql

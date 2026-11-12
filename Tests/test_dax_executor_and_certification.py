@@ -173,7 +173,7 @@ def test_certification_persistence_and_verified_query_gating():
 
 
 def test_ai_model_drop_col_value_blast_radius_and_recert_remediation():
-    ai_path = Path("Config/ontologies/artificial_intelligence_sample.ontology.yaml")
+    ai_path = Path("Tests/fixtures/ontologies/artificial_intelligence_sample.ontology.yaml")
     dom = FederatedOntologyLoader.parse_yaml_string(ai_path.read_text(encoding="utf-8"))
     fed = FederatedOntologyLoader.merge_domains([dom])
 
@@ -203,7 +203,10 @@ def test_ai_model_drop_col_value_blast_radius_and_recert_remediation():
 
 
 def test_linter_per_domain_cycle_isolation_on_real_ontologies():
-    files = sorted(Path("Config/ontologies").glob("*.ontology.yaml"))
+    files = sorted([
+        *Path("Config/ontologies").glob("*.ontology.yaml"),
+        *Path("Tests/fixtures/ontologies").glob("*.ontology.yaml"),
+    ])
     domains = [FederatedOntologyLoader.parse_yaml_string(f.read_text(encoding="utf-8")) for f in files]
     fed = FederatedOntologyLoader.merge_domains(domains)
 
