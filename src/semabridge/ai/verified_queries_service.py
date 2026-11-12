@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from semabridge.repository.orm.ai_models import AIQueryExecutionRow, AIVerifiedQueryRow
+from semabridge.repository.orm.ai_models import AIQueryExecutionRow, AIVerifiedQueryRow, MetricCertification
 from semabridge.repository.orm.base import Base
 from semabridge.repository.orm.session_factory import db_manager
 
@@ -18,12 +18,12 @@ logger = logging.getLogger("semabridge.ai.verified_queries_service")
 
 
 def _ensure_tables_exist() -> None:
-    """Ensure the ai_query_executions and ai_verified_queries tables are created."""
+    """Ensure the ai_query_executions, ai_verified_queries, and certification tables are created."""
     try:
         engine = db_manager.get_engine()
         Base.metadata.create_all(
             bind=engine,
-            tables=[AIQueryExecutionRow.__table__, AIVerifiedQueryRow.__table__],
+            tables=[AIQueryExecutionRow.__table__, AIVerifiedQueryRow.__table__, MetricCertification.__table__],
             checkfirst=True,
         )
     except Exception as exc:
@@ -41,24 +41,34 @@ def normalize_sql_for_verification(sql: str) -> str:
 
 
 def record_query_execution(
-    question: str,
-    sql: str,
-    view_name: str,
+    question_or_sql: str = "",
+    sql: Optional[str] = None,
+    view_name: Optional[str] = None,
     user_id: str = "system",
     project_id: Optional[str] = None,
-    success: bool = False,
+    success: bool = True,
     row_count: int = 0,
     execution_time_ms: int = 0,
     error_message: Optional[str] = None,
+    target: str = "SNOWFLAKE",
+    is_simulated: bool = False,
+    **kwargs: Any,
 ) -> AIQueryExecutionRow:
     """Persist a live execution record in the database."""
     _ensure_tables_exist()
-    norm_sql = normalize_sql_for_verification(sql)
+    if sql is None:
+        exec_sql = question_or_sql
+        q_text = "Semantic View Query"
+    else:
+        exec_sql = sql
+        q_text = question_or_sql or "Semantic View Query"
+
+    norm_sql = normalize_sql_for_verification(exec_sql)
     row = AIQueryExecutionRow(
         id=str(uuid.uuid4()),
         project_id=project_id,
-        question=question or "Semantic View Query",
-        sql=sql,
+        question=q_text,
+        sql=exec_sql,
         normalized_sql=norm_sql,
         view_name=view_name or "governed_view",
         user_id=user_id or "system",
@@ -78,6 +88,7 @@ def record_query_execution(
             row.row_count,
         )
         return row
+
 
 
 def has_successful_execution(sql: str, project_id: Optional[str] = None) -> bool:
@@ -163,6 +174,128 @@ def save_verified_query(
         session.refresh(row)
         logger.info("Saved new verified query %s for project %s in database", safe_name, project_id)
         return row
+
+
+def export_verified_query_artifacts(
+    project_id: str,
+    name: str,
+    question: str,
+    sql: str,
+    target: str = "SNOWFLAKE",
+    verified_by: str = "session_user",
+) -> Optional[str]:
+    """Export verified query into Cortex Analyst YAML or Databricks Genie benchmarks."""
+    import yaml
+    from pathlib import Path
+    clean_q = question.strip()
+    clean_sql = sql.strip()
+    target_upper = target.upper()
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    primary_path = None
+
+    if target_upper in ("SNOWFLAKE", "CORTEX"):
+        yaml_path = Path("output/reverse") / project_id / "cortex_analyst.yaml"
+        if yaml_path.is_file():
+            try:
+                parsed = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+                if "semantic_model" in parsed and isinstance(parsed["semantic_model"], dict):
+                    v_list = parsed["semantic_model"].setdefault("verified_queries", [])
+                else:
+                    v_list = parsed.setdefault("verified_queries", [])
+                yaml_entry = {
+                    "name": name,
+                    "question": clean_q,
+                    "sql": clean_sql,
+                    "verified_at": timestamp,
+                    "verified_by": verified_by,
+                }
+                existing_idx = next(
+                    (i for i, q in enumerate(v_list) if str(q.get("question", "")).strip() == clean_q),
+                    None,
+                )
+                if existing_idx is not None:
+                    v_list[existing_idx] = yaml_entry
+                else:
+                    v_list.append(yaml_entry)
+                yaml_path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
+                primary_path = str(yaml_path)
+            except Exception as exc:
+                logger.warning("Could not update cortex_analyst.yaml: %s", exc)
+
+    if target_upper in ("DATABRICKS", "GENIE"):
+        benchmarks_dir = Path("Config/benchmarks")
+        benchmarks_dir.mkdir(parents=True, exist_ok=True)
+        bench_file = benchmarks_dir / f"databricks_genie_{project_id}.json"
+        try:
+            current_bench: List[Dict[str, Any]] = []
+            if bench_file.is_file():
+                current_bench = json.loads(bench_file.read_text(encoding="utf-8"))
+            bench_entry = {
+                "name": name,
+                "question": clean_q,
+                "sql": clean_sql,
+                "verified_at": timestamp,
+                "verified_by": verified_by,
+            }
+            existing_idx = next(
+                (i for i, q in enumerate(current_bench) if str(q.get("question", "")).strip() == clean_q),
+                None,
+            )
+            if existing_idx is not None:
+                current_bench[existing_idx] = bench_entry
+            else:
+                current_bench.append(bench_entry)
+            bench_file.write_text(json.dumps(current_bench, indent=2), encoding="utf-8")
+            primary_path = str(bench_file)
+        except Exception as exc:
+            logger.warning("Could not save Databricks benchmark: %s", exc)
+
+    return primary_path
+
+
+def save_verified_query_record(
+    *,
+    question: str,
+    sql: str,
+    target: str = "SNOWFLAKE",
+    project_id: Optional[str] = None,
+    name: Optional[str] = None,
+    domain: Optional[str] = None,
+    verified_by: str = "semabridge_analyst",
+) -> Dict[str, Any]:
+    """Compatibility wrapper that calls save_verified_query and exports artifacts."""
+    pid = project_id or "default"
+    row = save_verified_query(
+        project_id=pid,
+        question=question,
+        sql=sql,
+        confirmed=True,
+        user_id=verified_by,
+        name=name,
+    )
+    art_path = export_verified_query_artifacts(
+        project_id=pid,
+        name=row.name,
+        question=row.question,
+        sql=row.sql,
+        target=target,
+        verified_by=verified_by,
+    )
+    return {
+        "verified_item": {
+            "name": row.name,
+            "question": row.question,
+            "sql": row.sql,
+            "project_id": pid,
+            "target": target.upper(),
+            "domain": domain,
+            "verified_at": row.verified_at,
+            "verified_by": row.verified_by,
+        },
+        "artifact_path": art_path,
+        "project_slug": pid,
+    }
+
 
 
 def list_verified_queries_for_project(project_id: str) -> List[Dict[str, Any]]:

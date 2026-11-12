@@ -60,6 +60,7 @@ from semabridge.repository.orm.infra_models import (
 from semabridge.repository.orm.ai_models import (
     AIQueryExecutionRow,
     AIVerifiedQueryRow,
+    MetricCertification,
 )
 
 __all__ = [
@@ -105,4 +106,5 @@ __all__ = [
     # AI Query Executions & Verified Queries
     "AIQueryExecutionRow",
     "AIVerifiedQueryRow",
+    "MetricCertification",
 ]

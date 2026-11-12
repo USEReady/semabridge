@@ -107,6 +107,8 @@ class SaveVerifiedQueryRequest(BaseModel):
     user_id: Optional[str] = None
     is_onboarding: bool = False
     domain: Optional[str] = None
+    require_certified: bool = False
+
 
 
 class SaveVerifiedQueryResponse(BaseModel):
@@ -634,6 +636,26 @@ def save_verified_query(req: SaveVerifiedQueryRequest, request: Request) -> Save
                     detail=f"Forbidden: only project owner or an admin can save verified queries for project '{req.project_id}'.",
                 )
 
+    from semabridge.reconciliation.certification_service import check_sql_certification_status
+
+    cert_status = check_sql_certification_status(req.sql, project_id=req.project_id)
+    if cert_status["failed"]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only certified metrics can become verified queries. "
+                f"Reconciliation failed for: {', '.join(cert_status['failed'])}."
+            ),
+        )
+    if cert_status["uncertified"] and (getattr(req, "require_certified", False) or cert_status["has_any_certified"]):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only certified metrics can become verified queries. "
+                f"Uncertified metric(s): {', '.join(cert_status['uncertified'])}."
+            ),
+        )
+
     # Persist in PostgreSQL/DuckDB database via service layer
     try:
         from semabridge.ai.verified_queries_service import save_verified_query as db_save_verified_query
@@ -647,6 +669,20 @@ def save_verified_query(req: SaveVerifiedQueryRequest, request: Request) -> Save
             view_name=req.view_name,
             is_onboarding=req.is_onboarding,
         )
+        art_path = None
+        try:
+            from semabridge.ai.verified_queries_service import export_verified_query_artifacts
+            art_path = export_verified_query_artifacts(
+                project_id=project_id,
+                name=saved_row.name,
+                question=saved_row.question,
+                sql=saved_row.sql,
+                target=req.target,
+                verified_by=effective_user,
+            )
+        except Exception as exc:
+            logger.debug("Artifact export skipped: %s", exc)
+
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
@@ -660,7 +696,7 @@ def save_verified_query(req: SaveVerifiedQueryRequest, request: Request) -> Save
         success=True,
         message=f"Verified query '{saved_row.name}' successfully registered to database for semantic view.",
         target=target_upper,
-        artifact_path=f"database:ai_verified_queries/{saved_row.id}",
+        artifact_path=art_path or f"database:ai_verified_queries/{saved_row.id}",
         verified_query={
             "id": saved_row.id,
             "name": saved_row.name,

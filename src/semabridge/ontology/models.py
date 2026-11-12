@@ -87,6 +87,8 @@ class DomainAttribute(_StrictModel):
     is_primary_key: bool = False
     is_hidden: bool = False
     synonyms: CleanList = Field(default_factory=list)
+    sample_values: CleanList = Field(default_factory=list)
+
     # Explicit binding to model column names ("Column" or "Table.Column").
     maps_to: CleanList = Field(default_factory=list)
     origin: Optional[Origin] = None
