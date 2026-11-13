@@ -104,8 +104,8 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const activeTab = mode === 'comparator'
     ? 'governance'
     : mode === 'blast-radius'
-    ? 'blast-radius'
-    : (propProjectId ? localTab : urlTab || 'overview');
+      ? 'blast-radius'
+      : (propProjectId ? localTab : urlTab || 'overview');
 
   const selectTab = (tab) => {
     if (propProjectId) {
@@ -441,13 +441,12 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         setStatusMessage({
           type: fileErrors.length ? 'error' : 'success',
           text:
-            `Ingested ${data.uploaded_domains.length} domain ontolog${
-              data.uploaded_domains.length === 1 ? 'y' : 'ies'
+            `Ingested ${data.uploaded_domains.length} domain ontolog${data.uploaded_domains.length === 1 ? 'y' : 'ies'
             } (${data.uploaded_domains.join(', ')}).` +
             (fileErrors.length
               ? `\nRejected ${fileErrors.length} file(s):\n${fileErrors
-                  .map((e) => `${e.file}: ${e.error}`)
-                  .join('\n')}`
+                .map((e) => `${e.file}: ${e.error}`)
+                .join('\n')}`
               : ''),
         });
         setSelectedFiles([]);
@@ -737,7 +736,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       ) || { name: metricNameOrObj, label: metricNameOrObj };
     }
     if (mObj) {
-      openParityFor(mObj);
+      `      openParityFor(mObj);
     }
   };
 
@@ -752,517 +751,517 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     const activeSteward = stewardOverride || lintStewardSeverity;
     setRunningLint(true);
     try {
-      const res = await authFetch('/api/governance/lint', {
-        method: 'POST',
+      const res = await authFetch('/api/governance/lint', {`
+      method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          require_steward: activeSteward !== 'OFF',
-          steward_severity: activeSteward,
-          require_description: lintRequireDesc,
-          enforce_snake_case_metrics: lintSnakeCase,
-          project_id: govProjectId || selectedProjectSlug || undefined,
-        }),
+      body: JSON.stringify({
+        require_steward: activeSteward !== 'OFF',
+        steward_severity: activeSteward,
+        require_description: lintRequireDesc,
+        enforce_snake_case_metrics: lintSnakeCase,
+        project_id: govProjectId || selectedProjectSlug || undefined,
+      }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setLintReport(data);
-      } else {
-        const err = await res.json();
-        setStatusMessage({ type: 'error', text: describeApiError(err, 'Semantic linter failed.') });
-      }
-    } catch (err) {
-      setStatusMessage({ type: 'error', text: String(err) });
-    } finally {
-      setRunningLint(false);
-    }
-  };
-
-  const _reconDimList = () => reconDims.split(',').map((d) => d.trim()).filter(Boolean);
-
-  const _reconTolerancePayload = () => ({
-    absolute_tolerance: Math.max(0, Number(reconAbsTol) || 0),
-    relative_tolerance: Math.max(0, Number(reconRelTol) || 0),
-    max_mismatch_percentage: Math.max(0, Number(reconMaxMismatchPct) || 0),
-  });
-
-  const _updateParityView = (vData) => {
-    setReconResult(vData);
-    const dimKey = _reconDimList()[0];
-    const samples = vData?.mismatch_samples || [];
-    if (samples.length) {
-      setReconSliceRows(samples.map((s) => ({
-        slice: s.dimension_key ? (dimKey && typeof s.dimension_key === 'object' ? s.dimension_key[dimKey] : JSON.stringify(s.dimension_key)) : 'Total',
-        daxValue: s.dax_value ?? 0,
-        sqlValue: s.sql_value ?? 0,
-        deltaPct: Number(s.percentage_delta ?? 0).toFixed(2),
-        matched: Boolean(s.matched),
-      })));
+    if (res.ok) {
+      const data = await res.json();
+      setLintReport(data);
     } else {
-      setReconSliceRows([]);
+      const err = await res.json();
+      setStatusMessage({ type: 'error', text: describeApiError(err, 'Semantic linter failed.') });
     }
-    fetchCertifications(govProjectId || selectedProjectSlug || undefined, inspectingDomain || undefined);
-  };
+  } catch (err) {
+    setStatusMessage({ type: 'error', text: String(err) });
+  } finally {
+    setRunningLint(false);
+  }
+};
 
-  const _reconProjectId = () => (
-    govProjectId
-    || selectedProjectSlug
-    || inspectingDomainData?.source_project_id
-    || domainDetails[inspectingDomain]?.source_project_id
-    || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
-    || undefined
-  );
+const _reconDimList = () => reconDims.split(',').map((d) => d.trim()).filter(Boolean);
 
-  const handleGenerateReconQueries = async () => {
-    if (!reconMetric.trim() || !reconTable.trim()) return;
-    setRunningRecon(true);
-    setReconError(null);
-    try {
-      const res = await authFetch('/api/reconciliation/generate-queries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          metric_name: reconMetric.trim(),
-          metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
-          target_table_or_view: reconTable.trim(),
-          target_kind: reconTargetKind,
-          dimensions: _reconDimList(),
-          filters: [],
-          project_id: _reconProjectId(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setReconError(describeApiError(data, 'Could not generate reconciliation queries.'));
-        return;
-      }
-      setReconQueries(data);
-    } catch (err) {
-      setReconError(String(err));
-    } finally {
-      setRunningRecon(false);
+const _reconTolerancePayload = () => ({
+  absolute_tolerance: Math.max(0, Number(reconAbsTol) || 0),
+  relative_tolerance: Math.max(0, Number(reconRelTol) || 0),
+  max_mismatch_percentage: Math.max(0, Number(reconMaxMismatchPct) || 0),
+});
+
+const _updateParityView = (vData) => {
+  setReconResult(vData);
+  const dimKey = _reconDimList()[0];
+  const samples = vData?.mismatch_samples || [];
+  if (samples.length) {
+    setReconSliceRows(samples.map((s) => ({
+      slice: s.dimension_key ? (dimKey && typeof s.dimension_key === 'object' ? s.dimension_key[dimKey] : JSON.stringify(s.dimension_key)) : 'Total',
+      daxValue: s.dax_value ?? 0,
+      sqlValue: s.sql_value ?? 0,
+      deltaPct: Number(s.percentage_delta ?? 0).toFixed(2),
+      matched: Boolean(s.matched),
+    })));
+  } else {
+    setReconSliceRows([]);
+  }
+  fetchCertifications(govProjectId || selectedProjectSlug || undefined, inspectingDomain || undefined);
+};
+
+const _reconProjectId = () => (
+  govProjectId
+  || selectedProjectSlug
+  || inspectingDomainData?.source_project_id
+  || domainDetails[inspectingDomain]?.source_project_id
+  || domainData.domains?.find((d) => d.domain === inspectingDomain)?.source_project_id
+  || undefined
+);
+
+const handleGenerateReconQueries = async () => {
+  if (!reconMetric.trim() || !reconTable.trim()) return;
+  setRunningRecon(true);
+  setReconError(null);
+  try {
+    const res = await authFetch('/api/reconciliation/generate-queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metric_name: reconMetric.trim(),
+        metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+        target_table_or_view: reconTable.trim(),
+        target_kind: reconTargetKind,
+        dimensions: _reconDimList(),
+        filters: [],
+        project_id: _reconProjectId(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setReconError(describeApiError(data, 'Could not generate reconciliation queries.'));
+      return;
     }
-  };
+    setReconQueries(data);
+  } catch (err) {
+    setReconError(String(err));
+  } finally {
+    setRunningRecon(false);
+  }
+};
 
-  const handleRunLiveSql = async () => {
-    if (!reconQueries?.sql_query) return;
-    setRunningRecon(true);
-    setReconError(null);
-    try {
-      const res = await authFetch('/api/ai/execute-query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sql: reconQueries.sql_query,
-          target: 'SNOWFLAKE',
-          project_id: _reconProjectId(),
-          limit: 500,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.success === false) {
-        setReconError(data.error || data.message || describeApiError(data, 'Live SQL execution failed.'));
-        return;
-      }
-      const cols = data.columns || [];
-      const rowObjs = (data.rows || []).map((r) => Object.fromEntries(cols.map((c, idx) => [c, r[idx]])));
-      setReconSqlText(JSON.stringify(rowObjs, null, 2));
-    } catch (err) {
-      setReconError(String(err));
-    } finally {
-      setRunningRecon(false);
+const handleRunLiveSql = async () => {
+  if (!reconQueries?.sql_query) return;
+  setRunningRecon(true);
+  setReconError(null);
+  try {
+    const res = await authFetch('/api/ai/execute-query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sql: reconQueries.sql_query,
+        target: 'SNOWFLAKE',
+        project_id: _reconProjectId(),
+        limit: 500,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.success === false) {
+      setReconError(data.error || data.message || describeApiError(data, 'Live SQL execution failed.'));
+      return;
     }
-  };
+    const cols = data.columns || [];
+    const rowObjs = (data.rows || []).map((r) => Object.fromEntries(cols.map((c, idx) => [c, r[idx]])));
+    setReconSqlText(JSON.stringify(rowObjs, null, 2));
+  } catch (err) {
+    setReconError(String(err));
+  } finally {
+    setRunningRecon(false);
+  }
+};
 
-  const handleRunAutoDaxCertify = async () => {
-    if (!reconMetric.trim() || !reconTable.trim()) return;
-    setRunningRecon(true);
-    setReconError(null);
-    try {
-      let parsedDax = undefined;
-      if (reconDaxText.trim()) {
-        parsedDax = JSON.parse(reconDaxText);
-      }
-      const res = await authFetch('/api/reconciliation/certify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: _reconProjectId(),
-          domain: inspectingDomain || undefined,
-          metric_name: reconMetric.trim(),
-          view_metric: reconMetric.trim(),
-          metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
-          target_table_or_view: reconTable.trim(),
-          target_kind: reconTargetKind,
-          dimensions: _reconDimList(),
-          dax_results: parsedDax,
-          tolerance: _reconTolerancePayload(),
-          register_verified_query: Boolean(reconRegisterVerified),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setReconError(describeApiError(data, 'Auto-Run DAX & Certify failed.'));
-        return;
-      }
-      if (data.verification) {
-        _updateParityView(data.verification);
-        setReconQueries({
-          dax_query: data.certification?.dax_query || reconQueries?.dax_query || '',
-          sql_query: data.certification?.sql_query || reconQueries?.sql_query || '',
-        });
-      }
-    } catch (err) {
-      setReconError(String(err));
-    } finally {
-      setRunningRecon(false);
+const handleRunAutoDaxCertify = async () => {
+  if (!reconMetric.trim() || !reconTable.trim()) return;
+  setRunningRecon(true);
+  setReconError(null);
+  try {
+    let parsedDax = undefined;
+    if (reconDaxText.trim()) {
+      parsedDax = JSON.parse(reconDaxText);
     }
-  };
-
-  const handleRunReconciliation = async () => {
-    setRunningRecon(true);
-    setReconError(null);
-    try {
-      const daxRows = JSON.parse(reconDaxText || '[]');
-      const sqlRows = JSON.parse(reconSqlText || '[]');
-      const vRes = await authFetch('/api/reconciliation/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          metric_name: reconMetric.trim(),
-          dax_results: daxRows,
-          sql_results: sqlRows,
-          dimension_keys: _reconDimList(),
-          dax_query: reconQueries?.dax_query || '',
-          sql_query: reconQueries?.sql_query || '',
-          tolerance: _reconTolerancePayload(),
-          project_id: govProjectId || selectedProjectSlug || undefined,
-          domain: inspectingDomain || undefined,
-          view_metric: reconMetric.trim(),
-        }),
-      });
-      const vData = await vRes.json();
-      if (!vRes.ok) {
-        setReconError(describeApiError(vData, 'Verification failed.'));
-        return;
-      }
-      _updateParityView(vData);
-    } catch (err) {
-      setReconError(String(err));
-    } finally {
-      setRunningRecon(false);
+    const res = await authFetch('/api/reconciliation/certify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: _reconProjectId(),
+        domain: inspectingDomain || undefined,
+        metric_name: reconMetric.trim(),
+        view_metric: reconMetric.trim(),
+        metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+        target_table_or_view: reconTable.trim(),
+        target_kind: reconTargetKind,
+        dimensions: _reconDimList(),
+        dax_results: parsedDax,
+        tolerance: _reconTolerancePayload(),
+        register_verified_query: Boolean(reconRegisterVerified),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setReconError(describeApiError(data, 'Auto-Run DAX & Certify failed.'));
+      return;
     }
-  };
-
-  const handleTranslateRls = async () => {
-    setRunningRls(true);
-    setRlsStatus(null);
-    setRlsReason('');
-    try {
-      const res = await authFetch('/api/security/rls/tmdl-to-snowflake', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          role: {
-            name: rlsRoleName,
-            description: `Governed RLS policy for ${rlsRoleName}`,
-            table_permissions: [
-              {
-                table_name: rlsTableName,
-                dax_filter_expression: rlsDaxExpr,
-              },
-            ],
-            members: [],
-          },
-          target_database: rlsTargetDb,
-          target_schema: rlsTargetSchema,
-        }),
+    if (data.verification) {
+      _updateParityView(data.verification);
+      setReconQueries({
+        dax_query: data.certification?.dax_query || reconQueries?.dax_query || '',
+        sql_query: data.certification?.sql_query || reconQueries?.sql_query || '',
       });
-      const data = await res.json();
-      if (res.ok) {
-        setRlsStatus(data.status || (data.ddl ? 'translated' : 'not translated'));
-        setRlsReason(data.reason || '');
-        setRlsDdl(data.ddl || '');
-      } else {
-        setRlsStatus('not translated');
-        setRlsReason(describeApiError(data, 'RLS translation failed.'));
-        setRlsDdl('');
-      }
-    } catch (err) {
+    }
+  } catch (err) {
+    setReconError(String(err));
+  } finally {
+    setRunningRecon(false);
+  }
+};
+
+const handleRunReconciliation = async () => {
+  setRunningRecon(true);
+  setReconError(null);
+  try {
+    const daxRows = JSON.parse(reconDaxText || '[]');
+    const sqlRows = JSON.parse(reconSqlText || '[]');
+    const vRes = await authFetch('/api/reconciliation/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metric_name: reconMetric.trim(),
+        dax_results: daxRows,
+        sql_results: sqlRows,
+        dimension_keys: _reconDimList(),
+        dax_query: reconQueries?.dax_query || '',
+        sql_query: reconQueries?.sql_query || '',
+        tolerance: _reconTolerancePayload(),
+        project_id: govProjectId || selectedProjectSlug || undefined,
+        domain: inspectingDomain || undefined,
+        view_metric: reconMetric.trim(),
+      }),
+    });
+    const vData = await vRes.json();
+    if (!vRes.ok) {
+      setReconError(describeApiError(vData, 'Verification failed.'));
+      return;
+    }
+    _updateParityView(vData);
+  } catch (err) {
+    setReconError(String(err));
+  } finally {
+    setRunningRecon(false);
+  }
+};
+
+const handleTranslateRls = async () => {
+  setRunningRls(true);
+  setRlsStatus(null);
+  setRlsReason('');
+  try {
+    const res = await authFetch('/api/security/rls/tmdl-to-snowflake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        role: {
+          name: rlsRoleName,
+          description: `Governed RLS policy for ${rlsRoleName}`,
+          table_permissions: [
+            {
+              table_name: rlsTableName,
+              dax_filter_expression: rlsDaxExpr,
+            },
+          ],
+          members: [],
+        },
+        target_database: rlsTargetDb,
+        target_schema: rlsTargetSchema,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setRlsStatus(data.status || (data.ddl ? 'translated' : 'not translated'));
+      setRlsReason(data.reason || '');
+      setRlsDdl(data.ddl || '');
+    } else {
       setRlsStatus('not translated');
-      setRlsReason(String(err));
-    } finally {
-      setRunningRls(false);
+      setRlsReason(describeApiError(data, 'RLS translation failed.'));
+      setRlsDdl('');
     }
+  } catch (err) {
+    setRlsStatus('not translated');
+    setRlsReason(String(err));
+  } finally {
+    setRunningRls(false);
+  }
+};
+
+// Filtered domains (by project scope if selected)
+const visibleDomains = useMemo(() => {
+  const all = domainData.domains || [];
+  if (!selectedProjectSlug) return all;
+  const filteredByProject = all.filter(
+    (d) =>
+      d.source_project_id === selectedProjectSlug ||
+      (attachedDomainIds && (attachedDomainIds.includes(d.id) || attachedDomainIds.includes(d.domain)))
+  );
+  return filteredByProject.length > 0 ? filteredByProject : all;
+}, [domainData.domains, selectedProjectSlug, attachedDomainIds]);
+
+const activeMetrics = useMemo(() => {
+  const list = inspectingDomainData?.parsed?.metrics || [];
+  if (!glossarySearchQuery.trim()) return list;
+  const q = glossarySearchQuery.toLowerCase();
+  return list.filter(
+    (m) =>
+      (m.name || '').toLowerCase().includes(q) ||
+      (m.label || '').toLowerCase().includes(q) ||
+      (m.sql_expression || '').toLowerCase().includes(q) ||
+      (m.description || '').toLowerCase().includes(q)
+  );
+}, [inspectingDomainData, glossarySearchQuery]);
+
+const activeConcepts = useMemo(() => {
+  const list = inspectingDomainData?.parsed?.concepts || [];
+  if (!glossarySearchQuery.trim()) return list;
+  const q = glossarySearchQuery.toLowerCase();
+  return list.filter(
+    (c) =>
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.physical_table || '').toLowerCase().includes(q) ||
+      (c.description || '').toLowerCase().includes(q)
+  );
+}, [inspectingDomainData, glossarySearchQuery]);
+
+const activePolicies = useMemo(() => {
+  const list = inspectingDomainData?.parsed?.policies || [];
+  if (!glossarySearchQuery.trim()) return list;
+  const q = glossarySearchQuery.toLowerCase();
+  return list.filter(
+    (p) =>
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.filter_expression || '').toLowerCase().includes(q) ||
+      (p.description || '').toLowerCase().includes(q)
+  );
+}, [inspectingDomainData, glossarySearchQuery]);
+
+const activeProjectName = useMemo(() => {
+  if (!selectedProjectSlug) return 'All Projects (Enterprise)';
+  const found = projectsList.find((p) => (p.id || p.name) === selectedProjectSlug);
+  return found ? found.name || found.id : selectedProjectSlug;
+}, [selectedProjectSlug, projectsList]);
+
+// ── Derived data for Overview, Domains and Health ──────────────────────────
+const visibleNames = visibleDomains.map((d) => d.domain);
+const scopedCollisions = scopeCollisions(domainData.collisions, visibleNames);
+const collisionNames = new Set(scopedCollisions.map((c) => c.item_name));
+const reconDriftRows = reconSliceRows.filter((r) => !r.matched);
+const driftMetric = reconDriftRows.length ? reconMetric : null;
+const reconDimension = reconDims.split(',').map((d) => d.trim()).filter(Boolean)[0] || '';
+const allMetrics = visibleDomains.flatMap((d) => domainDetails[d.domain]?.parsed?.metrics || []);
+const allMetricNames = [...new Set(allMetrics.map((m) => m.name))];
+const allConcepts = visibleDomains.flatMap((d) => domainDetails[d.domain]?.parsed?.concepts || []);
+const allDimensions = [
+  ...new Set(
+    allConcepts.flatMap((c) =>
+      (c.attributes || [])
+        .filter((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''))
+        .map((a) => (a.logical_name && c.logical_name ? `${c.logical_name}.${a.logical_name}` : a.name))
+    )
+  ),
+];
+const allSemanticViews = [
+  ...new Set(
+    visibleDomains
+      .map((d) => domainDetails[d.domain]?.parsed?.semantic_view_name)
+      .filter(Boolean)
+  ),
+];
+const sumOf = (key) => visibleDomains.reduce((n, d) => n + (d[key] || 0), 0);
+
+const overviewStats = {
+  metrics: sumOf('metric_count'),
+  concepts: sumOf('concept_count'),
+  relationships: sumOf('relationship_count'),
+  boundMetrics: allMetrics.filter((m) => (m.maps_to || []).length > 0).length,
+  tables: new Set(allConcepts.map((c) => c.physical_table).filter(Boolean)).size,
+  detailsLoaded: visibleDomains.length > 0 && visibleDomains.every((d) => domainDetails[d.domain]),
+};
+
+const unresolvedRefs = domainData.unresolved_references || [];
+const attention = {
+  collisions: scopedCollisions.length,
+  unresolved: unresolvedRefs.length,
+  parityDrift: driftMetric ? 1 : 0,
+};
+attention.total = attention.collisions + attention.unresolved + attention.parityDrift;
+
+// Lint runs on the whole federation; keep only the visible domains' findings
+const scopedLint =
+  lintReport && selectedProjectSlug
+    ? {
+      ...lintReport,
+      issues: (lintReport.issues || []).filter((i) =>
+        (i.domain || '').split(',').some((d) => visibleNames.includes(d.trim()))
+      ),
+    }
+    : lintReport;
+
+const healthRows = buildHealthResults({
+  collisions: scopedCollisions,
+  unresolved: unresolvedRefs,
+  loadErrors: domainData.load_errors || [],
+  lintReport: scopedLint,
+  impactReports: checksRanAt
+    ? Object.fromEntries(Object.entries(impactReports).filter(([n]) => allMetricNames.includes(n)))
+    : {},
+  impactRan: !!checksRanAt,
+  recon: { rows: reconSliceRows, metric: reconMetric, dimension: reconDimension },
+  policyCount: sumOf('policy_count'),
+  rls: { ddl: rlsDdl, role: rlsRoleName, table: rlsTableName },
+});
+const healthIssueCount = healthRows.filter((r) => r.severity === 'breaking' || r.severity === 'warning').length;
+
+const domainPolicies = inspectingDomainData?.parsed?.policies || [];
+const metricRowInfo = (m) => {
+  const certKey = String(m.logical_name || m.name || '').toLowerCase();
+  const altKey = String(m.name || '').toLowerCase();
+  const cert = certificationsByMetric[certKey] || certificationsByMetric[altKey] || null;
+  return {
+    status: metricStatus(m, { collisionNames, driftMetric }),
+    cert,
+    usedIn: usedInText(m, impactReports[m.name]),
+    guardrail: guardrailText(m, domainPolicies),
   };
+};
+const domainMetricList = inspectingDomainData?.parsed?.metrics || [];
+const domainMetricNames = new Set(domainMetricList.map((m) => m.name));
+const drawerMetricObj = drawerMetric ? domainMetricList.find((m) => m.name === drawerMetric) : null;
+const drawerParity =
+  drawerMetricObj && reconMetric === drawerMetricObj.name && reconSliceRows.length
+    ? (() => {
+      if (!reconDriftRows.length) return { drift: false };
+      const worst = reconDriftRows.reduce((a, b) => (Number(b.deltaPct) > Number(a.deltaPct) ? b : a));
+      return { drift: true, deltaPct: worst.deltaPct, slice: `${reconDimension} = ${worst.slice}` };
+    })()
+    : null;
 
-  // Filtered domains (by project scope if selected)
-  const visibleDomains = useMemo(() => {
-    const all = domainData.domains || [];
-    if (!selectedProjectSlug) return all;
-    const filteredByProject = all.filter(
-      (d) =>
-        d.source_project_id === selectedProjectSlug ||
-        (attachedDomainIds && (attachedDomainIds.includes(d.id) || attachedDomainIds.includes(d.domain)))
-    );
-    return filteredByProject.length > 0 ? filteredByProject : all;
-  }, [domainData.domains, selectedProjectSlug, attachedDomainIds]);
-
-  const activeMetrics = useMemo(() => {
-    const list = inspectingDomainData?.parsed?.metrics || [];
-    if (!glossarySearchQuery.trim()) return list;
-    const q = glossarySearchQuery.toLowerCase();
-    return list.filter(
-      (m) =>
-        (m.name || '').toLowerCase().includes(q) ||
-        (m.label || '').toLowerCase().includes(q) ||
-        (m.sql_expression || '').toLowerCase().includes(q) ||
-        (m.description || '').toLowerCase().includes(q)
-    );
-  }, [inspectingDomainData, glossarySearchQuery]);
-
-  const activeConcepts = useMemo(() => {
-    const list = inspectingDomainData?.parsed?.concepts || [];
-    if (!glossarySearchQuery.trim()) return list;
-    const q = glossarySearchQuery.toLowerCase();
-    return list.filter(
-      (c) =>
-        (c.name || '').toLowerCase().includes(q) ||
-        (c.physical_table || '').toLowerCase().includes(q) ||
-        (c.description || '').toLowerCase().includes(q)
-    );
-  }, [inspectingDomainData, glossarySearchQuery]);
-
-  const activePolicies = useMemo(() => {
-    const list = inspectingDomainData?.parsed?.policies || [];
-    if (!glossarySearchQuery.trim()) return list;
-    const q = glossarySearchQuery.toLowerCase();
-    return list.filter(
-      (p) =>
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.filter_expression || '').toLowerCase().includes(q) ||
-        (p.description || '').toLowerCase().includes(q)
-    );
-  }, [inspectingDomainData, glossarySearchQuery]);
-
-  const activeProjectName = useMemo(() => {
-    if (!selectedProjectSlug) return 'All Projects (Enterprise)';
-    const found = projectsList.find((p) => (p.id || p.name) === selectedProjectSlug);
-    return found ? found.name || found.id : selectedProjectSlug;
-  }, [selectedProjectSlug, projectsList]);
-
-  // ── Derived data for Overview, Domains and Health ──────────────────────────
-  const visibleNames = visibleDomains.map((d) => d.domain);
-  const scopedCollisions = scopeCollisions(domainData.collisions, visibleNames);
-  const collisionNames = new Set(scopedCollisions.map((c) => c.item_name));
-  const reconDriftRows = reconSliceRows.filter((r) => !r.matched);
-  const driftMetric = reconDriftRows.length ? reconMetric : null;
-  const reconDimension = reconDims.split(',').map((d) => d.trim()).filter(Boolean)[0] || '';
-  const allMetrics = visibleDomains.flatMap((d) => domainDetails[d.domain]?.parsed?.metrics || []);
-  const allMetricNames = [...new Set(allMetrics.map((m) => m.name))];
-  const allConcepts = visibleDomains.flatMap((d) => domainDetails[d.domain]?.parsed?.concepts || []);
-  const allDimensions = [
-    ...new Set(
-      allConcepts.flatMap((c) =>
-        (c.attributes || [])
-          .filter((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''))
-          .map((a) => (a.logical_name && c.logical_name ? `${c.logical_name}.${a.logical_name}` : a.name))
-      )
-    ),
-  ];
-  const allSemanticViews = [
-    ...new Set(
-      visibleDomains
-        .map((d) => domainDetails[d.domain]?.parsed?.semantic_view_name)
-        .filter(Boolean)
-    ),
-  ];
-  const sumOf = (key) => visibleDomains.reduce((n, d) => n + (d[key] || 0), 0);
-
-  const overviewStats = {
-    metrics: sumOf('metric_count'),
-    concepts: sumOf('concept_count'),
-    relationships: sumOf('relationship_count'),
-    boundMetrics: allMetrics.filter((m) => (m.maps_to || []).length > 0).length,
-    tables: new Set(allConcepts.map((c) => c.physical_table).filter(Boolean)).size,
-    detailsLoaded: visibleDomains.length > 0 && visibleDomains.every((d) => domainDetails[d.domain]),
-  };
-
-  const unresolvedRefs = domainData.unresolved_references || [];
-  const attention = {
-    collisions: scopedCollisions.length,
-    unresolved: unresolvedRefs.length,
-    parityDrift: driftMetric ? 1 : 0,
-  };
-  attention.total = attention.collisions + attention.unresolved + attention.parityDrift;
-
-  // Lint runs on the whole federation; keep only the visible domains' findings
-  const scopedLint =
-    lintReport && selectedProjectSlug
-      ? {
-          ...lintReport,
-          issues: (lintReport.issues || []).filter((i) =>
-            (i.domain || '').split(',').some((d) => visibleNames.includes(d.trim()))
-          ),
-        }
-      : lintReport;
-
-  const healthRows = buildHealthResults({
-    collisions: scopedCollisions,
-    unresolved: unresolvedRefs,
-    loadErrors: domainData.load_errors || [],
-    lintReport: scopedLint,
-    impactReports: checksRanAt
-      ? Object.fromEntries(Object.entries(impactReports).filter(([n]) => allMetricNames.includes(n)))
-      : {},
-    impactRan: !!checksRanAt,
-    recon: { rows: reconSliceRows, metric: reconMetric, dimension: reconDimension },
-    policyCount: sumOf('policy_count'),
-    rls: { ddl: rlsDdl, role: rlsRoleName, table: rlsTableName },
-  });
-  const healthIssueCount = healthRows.filter((r) => r.severity === 'breaking' || r.severity === 'warning').length;
-
-  const domainPolicies = inspectingDomainData?.parsed?.policies || [];
-  const metricRowInfo = (m) => {
-    const certKey = String(m.logical_name || m.name || '').toLowerCase();
-    const altKey = String(m.name || '').toLowerCase();
-    const cert = certificationsByMetric[certKey] || certificationsByMetric[altKey] || null;
-    return {
-      status: metricStatus(m, { collisionNames, driftMetric }),
-      cert,
-      usedIn: usedInText(m, impactReports[m.name]),
-      guardrail: guardrailText(m, domainPolicies),
-    };
-  };
-  const domainMetricList = inspectingDomainData?.parsed?.metrics || [];
-  const domainMetricNames = new Set(domainMetricList.map((m) => m.name));
-  const drawerMetricObj = drawerMetric ? domainMetricList.find((m) => m.name === drawerMetric) : null;
-  const drawerParity =
-    drawerMetricObj && reconMetric === drawerMetricObj.name && reconSliceRows.length
-      ? (() => {
-          if (!reconDriftRows.length) return { drift: false };
-          const worst = reconDriftRows.reduce((a, b) => (Number(b.deltaPct) > Number(a.deltaPct) ? b : a));
-          return { drift: true, deltaPct: worst.deltaPct, slice: `${reconDimension} = ${worst.slice}` };
-        })()
-      : null;
-
-  return (
-    <div
-      style={{
-        height: '100%',
-        overflowY: 'auto',
-        background: 'var(--bg-app)',
-        color: 'var(--text-primary)',
-        padding: propProjectId ? '16px 0' : '28px 36px 40px',
-      }}
-    >
-      <div style={{ maxWidth: 1320, margin: '0 auto' }}>
-        {/* Header: title, subtitle and at most two actions */}
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
-            marginBottom: 14,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            {selectedProjectSlug && !propProjectId && (
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-blue)', marginBottom: 4 }}>
-                Project: {activeProjectName}
-              </div>
-            )}
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 12px' }}>
-              <h1
-                style={{
-                  fontSize: propProjectId ? 20 : 24,
-                  fontWeight: 800,
-                  margin: 0,
-                  color: 'var(--text-primary)',
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                {mode === 'comparator'
-                  ? 'Metric Comparator'
-                  : mode === 'blast-radius'
+return (
+  <div
+    style={{
+      height: '100%',
+      overflowY: 'auto',
+      background: 'var(--bg-app)',
+      color: 'var(--text-primary)',
+      padding: propProjectId ? '16px 0' : '28px 36px 40px',
+    }}
+  >
+    <div style={{ maxWidth: 1320, margin: '0 auto' }}>
+      {/* Header: title, subtitle and at most two actions */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          {selectedProjectSlug && !propProjectId && (
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-blue)', marginBottom: 4 }}>
+              Project: {activeProjectName}
+            </div>
+          )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 12px' }}>
+            <h1
+              style={{
+                fontSize: propProjectId ? 20 : 24,
+                fontWeight: 800,
+                margin: 0,
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              {mode === 'comparator'
+                ? 'Metric Comparator'
+                : mode === 'blast-radius'
                   ? 'Blast Radius'
                   : 'Explorer'}
-              </h1>
-              <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                {mode === 'comparator'
-                  ? 'Golden parity reconciliation, quality linter, and access checks'
-                  : mode === 'blast-radius'
+            </h1>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              {mode === 'comparator'
+                ? 'Golden parity reconciliation, quality linter, and access checks'
+                : mode === 'blast-radius'
                   ? 'What-if impact simulator for metric renames, drops, and formula changes'
                   : 'Shared business definitions every BI tool and AI agent uses'}
-              </span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            {!propProjectId && (
-              <select
-                value={selectedProjectSlug}
-                onChange={(e) => setSelectedProjectSlug(e.target.value)}
-                style={SELECT_STYLE}
-                aria-label="Project scope"
-              >
-                <option value="">All projects</option>
-                {projectsList.map((p) => (
-                  <option key={p.id || p.name} value={p.id || p.name}>
-                    {p.name || p.id}
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {activeTab === 'governance' && (
-              <>
-                {checksRanAt && (
-                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Last run {timeAgo(checksRanAt)}</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => handleRunAllChecks(visibleDomains)}
-                  disabled={runningChecks}
-                  style={{ ...BTN_PRIMARY, opacity: runningChecks ? 0.7 : 1 }}
-                >
-                  <RefreshCw size={13} style={runningChecks ? { animation: 'spin 1s linear infinite' } : undefined} />
-                  {runningChecks ? 'Running checks…' : 'Run all checks'}
-                </button>
-              </>
-            )}
-            {activeTab !== 'governance' && (
-              <>
-                <button type="button" onClick={() => setUploadModalOpen(true)} style={BTN}>
-                  <Upload size={13} /> Import YAML
-                </button>
-                <button type="button" onClick={openBootstrap} style={BTN_PRIMARY}>
-                  <Sparkles size={13} /> Generate from OSI
-                </button>
-              </>
-            )}
+            </span>
           </div>
         </div>
 
-        {/* Tabs: Overview · Domains · Map (Health / Blast Radius live on their own nav tabs) */}
-        {mode === 'explorer' && (
-          <div
-            role="tablist"
-            style={{
-              display: 'flex',
-              gap: 22,
-              borderBottom: '1px solid var(--border-main)',
-              marginBottom: 20,
-              overflowX: 'auto',
-            }}
-          >
-            {[
-              { id: 'overview', label: 'Overview' },
-              { id: 'mesh', label: 'Models', count: visibleDomains.length },
-              { id: 'graph', label: 'Map' },
-              ...(propProjectId ? [{ id: 'governance', label: 'Metric Comparator', badge: healthIssueCount }] : []),
-            ].map((t) => {
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          {!propProjectId && (
+            <select
+              value={selectedProjectSlug}
+              onChange={(e) => setSelectedProjectSlug(e.target.value)}
+              style={SELECT_STYLE}
+              aria-label="Project scope"
+            >
+              <option value="">All projects</option>
+              {projectsList.map((p) => (
+                <option key={p.id || p.name} value={p.id || p.name}>
+                  {p.name || p.id}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {activeTab === 'governance' && (
+            <>
+              {checksRanAt && (
+                <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Last run {timeAgo(checksRanAt)}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => handleRunAllChecks(visibleDomains)}
+                disabled={runningChecks}
+                style={{ ...BTN_PRIMARY, opacity: runningChecks ? 0.7 : 1 }}
+              >
+                <RefreshCw size={13} style={runningChecks ? { animation: 'spin 1s linear infinite' } : undefined} />
+                {runningChecks ? 'Running checks…' : 'Run all checks'}
+              </button>
+            </>
+          )}
+          {activeTab !== 'governance' && (
+            <>
+              <button type="button" onClick={() => setUploadModalOpen(true)} style={BTN}>
+                <Upload size={13} /> Import YAML
+              </button>
+              <button type="button" onClick={openBootstrap} style={BTN_PRIMARY}>
+                <Sparkles size={13} /> Generate from OSI
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs: Overview · Domains · Map (Health / Blast Radius live on their own nav tabs) */}
+      {mode === 'explorer' && (
+        <div
+          role="tablist"
+          style={{
+            display: 'flex',
+            gap: 22,
+            borderBottom: '1px solid var(--border-main)',
+            marginBottom: 20,
+            overflowX: 'auto',
+          }}
+        >
+          {[
+            { id: 'overview', label: 'Overview' },
+            { id: 'mesh', label: 'Models', count: visibleDomains.length },
+            { id: 'graph', label: 'Map' },
+            ...(propProjectId ? [{ id: 'governance', label: 'Metric Comparator', badge: healthIssueCount }] : []),
+          ].map((t) => {
             const on = activeTab === t.id;
             return (
               <button
@@ -1293,691 +1292,691 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
               </button>
             );
           })}
-          </div>
-        )}
+        </div>
+      )}
 
-        {/* Status Banner */}
-        {statusMessage && (
-          <div
-            style={{
-              marginBottom: 16,
-              padding: '10px 14px',
-              borderRadius: 10,
-              background: statusMessage.type === 'success' ? 'var(--color-success-bg)' : 'var(--color-error-bg)',
-              border: `1px solid ${statusMessage.type === 'success' ? 'var(--color-success)' : 'var(--color-error)'}`,
-              color: statusMessage.type === 'success' ? 'var(--color-success)' : 'var(--color-error)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              fontSize: 13,
-              fontWeight: 500,
-            }}
+      {/* Status Banner */}
+      {statusMessage && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: statusMessage.type === 'success' ? 'var(--color-success-bg)' : 'var(--color-error-bg)',
+            border: `1px solid ${statusMessage.type === 'success' ? 'var(--color-success)' : 'var(--color-error)'}`,
+            color: statusMessage.type === 'success' ? 'var(--color-success)' : 'var(--color-error)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {statusMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            <span style={{ whiteSpace: 'pre-line' }}>{statusMessage.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusMessage(null)}
+            style={{ background: 'transparent', border: 'none', color: 'inherit', padding: 4, cursor: 'pointer' }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {statusMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-              <span style={{ whiteSpace: 'pre-line' }}>{statusMessage.text}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setStatusMessage(null)}
-              style={{ background: 'transparent', border: 'none', color: 'inherit', padding: 4, cursor: 'pointer' }}
-            >
-              <X size={15} />
-            </button>
-          </div>
-        )}
+            <X size={15} />
+          </button>
+        </div>
+      )}
 
-        {activeTab === 'overview' && (
-          <OverviewView
-            domains={visibleDomains}
-            stats={overviewStats}
-            attention={attention}
-            healthIssues={healthIssueCount}
-            onGo={selectTab}
-            onAsk={() => navigate('/ask')}
-            onGenerate={openBootstrap}
-            onImport={() => setUploadModalOpen(true)}
-          />
-        )}
+      {activeTab === 'overview' && (
+        <OverviewView
+          domains={visibleDomains}
+          stats={overviewStats}
+          attention={attention}
+          healthIssues={healthIssueCount}
+          onGo={selectTab}
+          onAsk={() => navigate('/ask')}
+          onGenerate={openBootstrap}
+          onImport={() => setUploadModalOpen(true)}
+        />
+      )}
 
-        {activeTab === 'mesh' && (
-          <DomainsView
-            domains={visibleDomains}
-            selectedDomain={inspectingDomain}
-            domainDetail={inspectingDomainData}
-            onSelectDomain={(name) => {
-              setDrawerMetric(null);
-              handleOpenDomainInspector(name, inspectorActiveTab === 'yaml' ? 'metrics' : inspectorActiveTab);
-            }}
-            issueCountFor={(d) => domainIssueCount(d, { collisions: scopedCollisions, lintReport })}
-            subTab={inspectorActiveTab}
-            setSubTab={(t) => {
-              setInspectorActiveTab(t);
-              if (t !== 'metrics') setDrawerMetric(null);
-            }}
-            search={glossarySearchQuery}
-            setSearch={setGlossarySearchQuery}
-            metrics={activeMetrics}
-            concepts={activeConcepts}
-            policies={activePolicies}
-            rowInfo={metricRowInfo}
-            selectedMetricName={drawerMetricObj ? drawerMetric : null}
-            onSelectMetric={handleSelectMetric}
-            onShowMap={() => selectTab('graph')}
-            onOpenItem={setSelectedGlossaryItem}
-            onSync={() => handleSyncWithOsi(inspectingDomain)}
-            yaml={{
-              value: editorYaml,
-              onChange: setEditorYaml,
-              validationResult,
-              onValidate: handleValidateYaml,
-              onSave: handleSaveDomain,
-            }}
-            drawer={
-              drawerMetricObj && inspectorActiveTab === 'metrics' ? (
-                <MetricDrawer
-                  metric={drawerMetricObj}
-                  status={metricRowInfo(drawerMetricObj).status}
-                  certification={metricRowInfo(drawerMetricObj).cert}
-                  guardrail={metricRowInfo(drawerMetricObj).guardrail}
-                  domainMetricNames={domainMetricNames}
-                  impact={impactReports[drawerMetricObj.name]}
-                  impactLoading={!!impactLoading[drawerMetricObj.name]}
-                  lintIssues={lintIssuesFor(lintReport, { domain: inspectingDomain, objectName: drawerMetricObj.name })}
-                  lintLoading={runningLint}
-                  lintRan={!!lintReport}
-                  parity={drawerParity}
-                  onClose={() => setDrawerMetric(null)}
-                  onSelectMetric={handleSelectMetric}
-                  onUpdateMeta={handleUpdateMetricMeta}
-                  onImpactView={() => handleJumpToBlastRadius(drawerMetricObj.name, 'METRIC')}
-                  onParity={() => openParityFor(drawerMetricObj)}
-                  onLintView={() => {
-                    if (!lintReport) {
-                      handleRunLinter();
-                      return;
-                    }
-                    setHealthFilter('quality');
-                    setHealthExpanded(null);
-                    selectTab('governance');
-                  }}
-                  onAsk={() => handleJumpToAiTest(drawerMetricObj.name)}
-                  onEditYaml={() => {
-                    setDrawerMetric(null);
-                    setInspectorActiveTab('yaml');
-                  }}
-                  onShowMap={() => selectTab('graph')}
-                />
-              ) : null
-            }
-          />
-        )}
+      {activeTab === 'mesh' && (
+        <DomainsView
+          domains={visibleDomains}
+          selectedDomain={inspectingDomain}
+          domainDetail={inspectingDomainData}
+          onSelectDomain={(name) => {
+            setDrawerMetric(null);
+            handleOpenDomainInspector(name, inspectorActiveTab === 'yaml' ? 'metrics' : inspectorActiveTab);
+          }}
+          issueCountFor={(d) => domainIssueCount(d, { collisions: scopedCollisions, lintReport })}
+          subTab={inspectorActiveTab}
+          setSubTab={(t) => {
+            setInspectorActiveTab(t);
+            if (t !== 'metrics') setDrawerMetric(null);
+          }}
+          search={glossarySearchQuery}
+          setSearch={setGlossarySearchQuery}
+          metrics={activeMetrics}
+          concepts={activeConcepts}
+          policies={activePolicies}
+          rowInfo={metricRowInfo}
+          selectedMetricName={drawerMetricObj ? drawerMetric : null}
+          onSelectMetric={handleSelectMetric}
+          onShowMap={() => selectTab('graph')}
+          onOpenItem={setSelectedGlossaryItem}
+          onSync={() => handleSyncWithOsi(inspectingDomain)}
+          yaml={{
+            value: editorYaml,
+            onChange: setEditorYaml,
+            validationResult,
+            onValidate: handleValidateYaml,
+            onSave: handleSaveDomain,
+          }}
+          drawer={
+            drawerMetricObj && inspectorActiveTab === 'metrics' ? (
+              <MetricDrawer
+                metric={drawerMetricObj}
+                status={metricRowInfo(drawerMetricObj).status}
+                certification={metricRowInfo(drawerMetricObj).cert}
+                guardrail={metricRowInfo(drawerMetricObj).guardrail}
+                domainMetricNames={domainMetricNames}
+                impact={impactReports[drawerMetricObj.name]}
+                impactLoading={!!impactLoading[drawerMetricObj.name]}
+                lintIssues={lintIssuesFor(lintReport, { domain: inspectingDomain, objectName: drawerMetricObj.name })}
+                lintLoading={runningLint}
+                lintRan={!!lintReport}
+                parity={drawerParity}
+                onClose={() => setDrawerMetric(null)}
+                onSelectMetric={handleSelectMetric}
+                onUpdateMeta={handleUpdateMetricMeta}
+                onImpactView={() => handleJumpToBlastRadius(drawerMetricObj.name, 'METRIC')}
+                onParity={() => openParityFor(drawerMetricObj)}
+                onLintView={() => {
+                  if (!lintReport) {
+                    handleRunLinter();
+                    return;
+                  }
+                  setHealthFilter('quality');
+                  setHealthExpanded(null);
+                  selectTab('governance');
+                }}
+                onAsk={() => handleJumpToAiTest(drawerMetricObj.name)}
+                onEditYaml={() => {
+                  setDrawerMetric(null);
+                  setInspectorActiveTab('yaml');
+                }}
+                onShowMap={() => selectTab('graph')}
+              />
+            ) : null
+          }
+        />
+      )}
 
-        {/* ══════════════════════════════════════════════════════════════════════════
+      {/* ══════════════════════════════════════════════════════════════════════════
             TAB 2: CONNECTION MAP (Interactive Lineage DAG)
            ══════════════════════════════════════════════════════════════════════════ */}
-        {activeTab === 'graph' && (
-          <div
-            style={{
-              height: 640,
-              borderRadius: 18,
-              overflow: 'hidden',
-              border: '1px solid var(--border-main)',
-              background: 'var(--bg-surface)',
-            }}
-          >
-            <OntologyGraph projects={projectsList} initialProject={selectedProjectSlug} />
+      {activeTab === 'graph' && (
+        <div
+          style={{
+            height: 640,
+            borderRadius: 18,
+            overflow: 'hidden',
+            border: '1px solid var(--border-main)',
+            background: 'var(--bg-surface)',
+          }}
+        >
+          <OntologyGraph projects={projectsList} initialProject={selectedProjectSlug} />
+        </div>
+      )}
+
+      {activeTab === 'governance' && (
+        <HealthView
+          hideWhatIf={mode === 'comparator'}
+          rows={healthRows}
+          filter={healthFilter}
+          setFilter={setHealthFilter}
+          expandedId={healthExpanded}
+          setExpandedId={setHealthExpanded}
+          metricOptions={allMetricNames}
+          onRunLint={handleRunLinter}
+          onExpandParity={() => {
+            if (!reconMetric.trim()) {
+              const first = allMetrics.find((m) => m.sql_expression) || allMetrics[0];
+              if (first) prefillParity(first);
+            }
+          }}
+          onOpenMetric={handleOpenMetricFromHealth}
+          gov={{
+            govProjectId, setGovProjectId, projectsList,
+            blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
+            blastTableContext, setBlastTableContext,
+            runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+            lintStewardSeverity, setLintStewardSeverity,
+            onRunLintWithSteward: (sev) => handleRunLinter(sev),
+            dimensionOptions: allDimensions,
+            semanticViewOptions: allSemanticViews,
+            reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
+            reconTargetKind, setReconTargetKind, reconDims, setReconDims,
+            reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
+            reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
+            reconMaxMismatchPct, setReconMaxMismatchPct,
+            reconRegisterVerified, setReconRegisterVerified,
+            runningRecon,
+            onGenerateReconQueries: handleGenerateReconQueries,
+            onRunLiveSql: handleRunLiveSql,
+            onRunAutoDaxCertify: handleRunAutoDaxCertify,
+            onRunRecon: handleRunReconciliation,
+            onResetRecon: resetParityState,
+            reconResult, reconSliceRows, reconQueries, reconError,
+            rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
+            rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
+            runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
+            onOpenParity: handleJumpToParity,
+          }}
+        />
+      )}
+
+      {activeTab === 'blast-radius' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{
+            padding: 18,
+            borderRadius: 12,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-main)',
+          }}>
+            <WhatIfSimulator
+              gov={{
+                govProjectId, setGovProjectId, projectsList,
+                blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
+                blastTableContext, setBlastTableContext,
+                runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+                onOpenParity: handleJumpToParity,
+              }}
+              metricOptions={allMetricNames}
+              onOpenParity={handleJumpToParity}
+            />
           </div>
-        )}
-
-        {activeTab === 'governance' && (
-          <HealthView
-            hideWhatIf={mode === 'comparator'}
-            rows={healthRows}
-            filter={healthFilter}
-            setFilter={setHealthFilter}
-            expandedId={healthExpanded}
-            setExpandedId={setHealthExpanded}
-            metricOptions={allMetricNames}
-            onRunLint={handleRunLinter}
-            onExpandParity={() => {
-              if (!reconMetric.trim()) {
-                const first = allMetrics.find((m) => m.sql_expression) || allMetrics[0];
-                if (first) prefillParity(first);
-              }
-            }}
-            onOpenMetric={handleOpenMetricFromHealth}
-            gov={{
-              govProjectId, setGovProjectId, projectsList,
-              blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
-              blastTableContext, setBlastTableContext,
-              runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
-              lintStewardSeverity, setLintStewardSeverity,
-              onRunLintWithSteward: (sev) => handleRunLinter(sev),
-              dimensionOptions: allDimensions,
-              semanticViewOptions: allSemanticViews,
-              reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
-              reconTargetKind, setReconTargetKind, reconDims, setReconDims,
-              reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
-              reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
-              reconMaxMismatchPct, setReconMaxMismatchPct,
-              reconRegisterVerified, setReconRegisterVerified,
-              runningRecon,
-              onGenerateReconQueries: handleGenerateReconQueries,
-              onRunLiveSql: handleRunLiveSql,
-              onRunAutoDaxCertify: handleRunAutoDaxCertify,
-              onRunRecon: handleRunReconciliation,
-              onResetRecon: resetParityState,
-              reconResult, reconSliceRows, reconQueries, reconError,
-              rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
-              rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
-              runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
-              onOpenParity: handleJumpToParity,
-            }}
-          />
-        )}
-
-        {activeTab === 'blast-radius' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{
-              padding: 18,
-              borderRadius: 12,
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-main)',
-            }}>
-              <WhatIfSimulator
+          {blastReport && (
+            <ImpactReport
+              report={blastReport}
+              onOpenParity={handleJumpToParity}
+              onPickSuggestion={(s) => handleRunBlastRadius(s)}
+            />
+          )}
+          {healthExpanded === 'parity' && (
+            <div
+              id="parity-panel-section"
+              style={{
+                padding: 18,
+                borderRadius: 12,
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-main)',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>⚖️</span>
+                  <span>Golden Query Verifier &mdash; Parity Check</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 400 }}>
+                    Testing numerical tolerances on <strong>{reconMetric || 'metric'}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHealthExpanded(null)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid var(--border-main)',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                >
+                  ✕ Close
+                </button>
+              </div>
+              <ParityPanel
                 gov={{
                   govProjectId, setGovProjectId, projectsList,
                   blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
                   blastTableContext, setBlastTableContext,
                   runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+                  lintStewardSeverity, setLintStewardSeverity,
+                  onRunLintWithSteward: (sev) => handleRunLinter(sev),
+                  dimensionOptions: allDimensions,
+                  semanticViewOptions: allSemanticViews,
+                  reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
+                  reconTargetKind, setReconTargetKind, reconDims, setReconDims,
+                  reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
+                  reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
+                  reconMaxMismatchPct, setReconMaxMismatchPct,
+                  reconRegisterVerified, setReconRegisterVerified,
+                  runningRecon,
+                  onGenerateReconQueries: handleGenerateReconQueries,
+                  onRunLiveSql: handleRunLiveSql,
+                  onRunAutoDaxCertify: handleRunAutoDaxCertify,
+                  onRunRecon: handleRunReconciliation,
+                  onResetRecon: resetParityState,
+                  reconResult, reconSliceRows, reconQueries, reconError,
+                  rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
+                  rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
+                  runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
                   onOpenParity: handleJumpToParity,
                 }}
                 metricOptions={allMetricNames}
-                onOpenParity={handleJumpToParity}
+                dimensionOptions={allDimensions}
+                semanticViewOptions={allSemanticViews}
               />
             </div>
-            {blastReport && (
-              <ImpactReport
-                report={blastReport}
-                onOpenParity={handleJumpToParity}
-                onPickSuggestion={(s) => handleRunBlastRadius(s)}
-              />
-            )}
-            {healthExpanded === 'parity' && (
-              <div
-                id="parity-panel-section"
-                style={{
-                  padding: 18,
-                  borderRadius: 12,
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border-main)',
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <div style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>⚖️</span>
-                    <span>Golden Query Verifier &mdash; Parity Check</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 400 }}>
-                      Testing numerical tolerances on <strong>{reconMetric || 'metric'}</strong>
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setHealthExpanded(null)}
-                    style={{
-                      background: 'transparent',
-                      border: '1px solid var(--border-main)',
-                      borderRadius: 6,
-                      padding: '4px 10px',
-                      color: 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                    }}
-                  >
-                    ✕ Close
-                  </button>
-                </div>
-                <ParityPanel
-                  gov={{
-                    govProjectId, setGovProjectId, projectsList,
-                    blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
-                    blastTableContext, setBlastTableContext,
-                    runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
-                    lintStewardSeverity, setLintStewardSeverity,
-                    onRunLintWithSteward: (sev) => handleRunLinter(sev),
-                    dimensionOptions: allDimensions,
-                    semanticViewOptions: allSemanticViews,
-                    reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
-                    reconTargetKind, setReconTargetKind, reconDims, setReconDims,
-                    reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
-                    reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
-                    reconMaxMismatchPct, setReconMaxMismatchPct,
-                    reconRegisterVerified, setReconRegisterVerified,
-                    runningRecon,
-                    onGenerateReconQueries: handleGenerateReconQueries,
-                    onRunLiveSql: handleRunLiveSql,
-                    onRunAutoDaxCertify: handleRunAutoDaxCertify,
-                    onRunRecon: handleRunReconciliation,
-                    onResetRecon: resetParityState,
-                    reconResult, reconSliceRows, reconQueries, reconError,
-                    rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
-                    rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
-                    runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
-                    onOpenParity: handleJumpToParity,
-                  }}
-                  metricOptions={allMetricNames}
-                  dimensionOptions={allDimensions}
-                  semanticViewOptions={allSemanticViews}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ══════════════════════════════════════════════════════════════════════════
-          ITEM DETAIL DRAWER / MODAL (When clicking "View Details" on a row)
-         ══════════════════════════════════════════════════════════════════════════ */}
-      {selectedGlossaryItem && (
-        <div
-          onClick={() => setSelectedGlossaryItem(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 60,
-            background: 'rgba(2, 6, 23, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 580,
-              borderRadius: 20,
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-main)',
-              padding: 24,
-              boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div>
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#0284C7', textTransform: 'uppercase' }}>
-                  {selectedGlossaryItem.type} Inspector
-                </span>
-                <h3 style={{ fontSize: 18, fontWeight: 800, margin: '4px 0 0' }}>
-                  {selectedGlossaryItem.data.name}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedGlossaryItem(null)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
-              {selectedGlossaryItem.data.description && (
-                <div>
-                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>DESCRIPTION</strong>
-                  <span>{selectedGlossaryItem.data.description}</span>
-                </div>
-              )}
-              {selectedGlossaryItem.data.sql_expression && (
-                <div>
-                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>SQL FORMULA</strong>
-                  <code style={{ color: '#10B981', fontWeight: 700 }}>{selectedGlossaryItem.data.sql_expression}</code>
-                </div>
-              )}
-              {selectedGlossaryItem.data.filter_expression && (
-                <div>
-                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>
-                    ENFORCED WHERE POLICY
-                  </strong>
-                  <code style={{ color: '#F59E0B', fontWeight: 700 }}>{selectedGlossaryItem.data.filter_expression}</code>
-                </div>
-              )}
-              {selectedGlossaryItem.data.derives_from?.length > 0 && (
-                <div>
-                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>
-                    DERIVED FROM METRICS
-                  </strong>
-                  <span>{selectedGlossaryItem.data.derives_from.join(', ')}</span>
-                </div>
-              )}
-              {selectedGlossaryItem.data.attributes?.length > 0 && (
-                <div>
-                  <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11, marginBottom: 6 }}>
-                    ATTRIBUTES ({selectedGlossaryItem.data.attributes.length})
-                  </strong>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {selectedGlossaryItem.data.attributes.map((a) => (
-                      <span
-                        key={a.name}
-                        style={{
-                          padding: '4px 10px',
-                          borderRadius: 8,
-                          background: 'var(--bg-app)',
-                          border: '1px solid var(--border-main)',
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                        }}
-                      >
-                        {a.name} ({a.data_type || 'VARCHAR'})
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  const name = selectedGlossaryItem.data.name;
-                  setSelectedGlossaryItem(null);
-                  handleJumpToAiTest(name);
-                }}
-                style={PILL_BTN_DARK}
-              >
-                Ask AI about this
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload YAML Modal */}
-      {uploadModalOpen && (
-        <div
-          onClick={() => setUploadModalOpen(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 60,
-            background: 'rgba(2, 6, 23, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 480,
-              borderRadius: 20,
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-main)',
-              padding: 24,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Upload Domain YAML</h3>
-              <button
-                type="button"
-                onClick={() => setUploadModalOpen(false)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: '2px dashed var(--border-main)',
-                borderRadius: 14,
-                padding: 32,
-                textAlign: 'center',
-                cursor: 'pointer',
-                marginBottom: 16,
-              }}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".yaml,.yml"
-                onChange={(e) => {
-                  setSelectedFiles(Array.from(e.target.files || []));
-                  setUploadError(null);
-                }}
-                style={{ display: 'none' }}
-              />
-              <FileCode size={28} color="#0284C7" style={{ marginBottom: 8 }} />
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Click to select .yaml or .yml files</div>
-              {selectedFiles.length > 0 && (
-                <div style={{ fontSize: 12, color: '#10B981', marginTop: 8 }}>
-                  Selected: {selectedFiles.map((f) => f.name).join(', ')}
-                </div>
-              )}
-            </div>
-
-            {uploadError && (
-              <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 12, whiteSpace: 'pre-line' }}>
-                {uploadError}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => setUploadModalOpen(false)}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: 999,
-                  background: 'transparent',
-                  border: '1px solid var(--border-main)',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={loading || selectedFiles.length === 0}
-                onClick={handleFileUpload}
-                style={PILL_BTN_DARK}
-              >
-                Upload &amp; Compile
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Auto-Generate from OSI Modal */}
-      {bootstrapModalOpen && (
-        <div
-          onClick={() => setBootstrapModalOpen(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 60,
-            background: 'rgba(2, 6, 23, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 480,
-              borderRadius: 20,
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-main)',
-              padding: 24,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Auto-Generate Ontology from Project</h3>
-              <button
-                type="button"
-                onClick={() => setBootstrapModalOpen(false)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
-                  SOURCE PROJECT
-                </label>
-                <select
-                  value={bootstrapProject}
-                  onChange={(e) => setBootstrapProject(e.target.value)}
-                  style={{ ...SELECT_STYLE, width: '100%' }}
-                >
-                  <option value="">Select a project...</option>
-                  {projectsList.map((p) => (
-                    <option key={p.id || p.name} value={p.id || p.name}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
-                  MODEL NAME (OPTIONAL)
-                </label>
-                <input
-                  type="text"
-                  value={bootstrapDomain}
-                  onChange={(e) => setBootstrapDomain(e.target.value)}
-                  placeholder="Defaults to project name"
-                  style={{ ...INPUT_STYLE, width: '100%' }}
-                />
-              </div>
-            </div>
-
-            {bootstrapDuplicateError && (
-              <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--color-warning-bg)', color: 'var(--color-warning)', fontSize: 12, marginBottom: 14 }}>
-                <div>{bootstrapDuplicateError}</div>
-                <button
-                  type="button"
-                  disabled={bootstrapping}
-                  onClick={() => handleBootstrapFromOsi(true)}
-                  style={{ ...BTN_PRIMARY, marginTop: 8 }}
-                >
-                  Sync Existing Domain
-                </button>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setBootstrapDuplicateError(null);
-                  setBootstrapModalOpen(false);
-                }}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: 999,
-                  background: 'transparent',
-                  border: '1px solid var(--border-main)',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={bootstrapping || !bootstrapProject}
-                onClick={() => handleBootstrapFromOsi(false)}
-                style={PILL_BTN_DARK}
-              >
-                {bootstrapping ? 'Generating...' : 'Generate Ontology'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Collisions Modal */}
-      {showCollisionsModal && (
-        <div
-          onClick={() => setShowCollisionsModal(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 60,
-            background: 'rgba(2, 6, 23, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: 560,
-              borderRadius: 20,
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--border-main)',
-              padding: 24,
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#F59E0B' }}>
-                Cross-Domain Metric Collisions ({domainData.collisions.length})
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowCollisionsModal(false)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
-              {domainData.collisions.map((col, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    padding: 14,
-                    borderRadius: 12,
-                    background: 'var(--bg-app)',
-                    border: '1px solid var(--border-main)',
-                    fontSize: 12,
-                  }}
-                >
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{col.item_name}</div>
-                  {Object.entries(col.expressions || {}).map(([dom, expr]) => (
-                    <div key={dom} style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4 }}>
-                      <strong style={{ color: '#0284C7' }}>{dom}:</strong> {expr || 'N/A'}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>
-  );
+
+    {/* ══════════════════════════════════════════════════════════════════════════
+          ITEM DETAIL DRAWER / MODAL (When clicking "View Details" on a row)
+         ══════════════════════════════════════════════════════════════════════════ */}
+    {selectedGlossaryItem && (
+      <div
+        onClick={() => setSelectedGlossaryItem(null)}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 60,
+          background: 'rgba(2, 6, 23, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: '100%',
+            maxWidth: 580,
+            borderRadius: 20,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-main)',
+            padding: 24,
+            boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#0284C7', textTransform: 'uppercase' }}>
+                {selectedGlossaryItem.type} Inspector
+              </span>
+              <h3 style={{ fontSize: 18, fontWeight: 800, margin: '4px 0 0' }}>
+                {selectedGlossaryItem.data.name}
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedGlossaryItem(null)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
+            {selectedGlossaryItem.data.description && (
+              <div>
+                <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>DESCRIPTION</strong>
+                <span>{selectedGlossaryItem.data.description}</span>
+              </div>
+            )}
+            {selectedGlossaryItem.data.sql_expression && (
+              <div>
+                <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>SQL FORMULA</strong>
+                <code style={{ color: '#10B981', fontWeight: 700 }}>{selectedGlossaryItem.data.sql_expression}</code>
+              </div>
+            )}
+            {selectedGlossaryItem.data.filter_expression && (
+              <div>
+                <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>
+                  ENFORCED WHERE POLICY
+                </strong>
+                <code style={{ color: '#F59E0B', fontWeight: 700 }}>{selectedGlossaryItem.data.filter_expression}</code>
+              </div>
+            )}
+            {selectedGlossaryItem.data.derives_from?.length > 0 && (
+              <div>
+                <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11 }}>
+                  DERIVED FROM METRICS
+                </strong>
+                <span>{selectedGlossaryItem.data.derives_from.join(', ')}</span>
+              </div>
+            )}
+            {selectedGlossaryItem.data.attributes?.length > 0 && (
+              <div>
+                <strong style={{ color: 'var(--text-secondary)', display: 'block', fontSize: 11, marginBottom: 6 }}>
+                  ATTRIBUTES ({selectedGlossaryItem.data.attributes.length})
+                </strong>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {selectedGlossaryItem.data.attributes.map((a) => (
+                    <span
+                      key={a.name}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 8,
+                        background: 'var(--bg-app)',
+                        border: '1px solid var(--border-main)',
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      }}
+                    >
+                      {a.name} ({a.data_type || 'VARCHAR'})
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+            <button
+              type="button"
+              onClick={() => {
+                const name = selectedGlossaryItem.data.name;
+                setSelectedGlossaryItem(null);
+                handleJumpToAiTest(name);
+              }}
+              style={PILL_BTN_DARK}
+            >
+              Ask AI about this
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Upload YAML Modal */}
+    {uploadModalOpen && (
+      <div
+        onClick={() => setUploadModalOpen(false)}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 60,
+          background: 'rgba(2, 6, 23, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: '100%',
+            maxWidth: 480,
+            borderRadius: 20,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-main)',
+            padding: 24,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Upload Domain YAML</h3>
+            <button
+              type="button"
+              onClick={() => setUploadModalOpen(false)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              border: '2px dashed var(--border-main)',
+              borderRadius: 14,
+              padding: 32,
+              textAlign: 'center',
+              cursor: 'pointer',
+              marginBottom: 16,
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".yaml,.yml"
+              onChange={(e) => {
+                setSelectedFiles(Array.from(e.target.files || []));
+                setUploadError(null);
+              }}
+              style={{ display: 'none' }}
+            />
+            <FileCode size={28} color="#0284C7" style={{ marginBottom: 8 }} />
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Click to select .yaml or .yml files</div>
+            {selectedFiles.length > 0 && (
+              <div style={{ fontSize: 12, color: '#10B981', marginTop: 8 }}>
+                Selected: {selectedFiles.map((f) => f.name).join(', ')}
+              </div>
+            )}
+          </div>
+
+          {uploadError && (
+            <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 12, whiteSpace: 'pre-line' }}>
+              {uploadError}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setUploadModalOpen(false)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 999,
+                background: 'transparent',
+                border: '1px solid var(--border-main)',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={loading || selectedFiles.length === 0}
+              onClick={handleFileUpload}
+              style={PILL_BTN_DARK}
+            >
+              Upload &amp; Compile
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Auto-Generate from OSI Modal */}
+    {bootstrapModalOpen && (
+      <div
+        onClick={() => setBootstrapModalOpen(false)}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 60,
+          background: 'rgba(2, 6, 23, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: '100%',
+            maxWidth: 480,
+            borderRadius: 20,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-main)',
+            padding: 24,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Auto-Generate Ontology from Project</h3>
+            <button
+              type="button"
+              onClick={() => setBootstrapModalOpen(false)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+                SOURCE PROJECT
+              </label>
+              <select
+                value={bootstrapProject}
+                onChange={(e) => setBootstrapProject(e.target.value)}
+                style={{ ...SELECT_STYLE, width: '100%' }}
+              >
+                <option value="">Select a project...</option>
+                {projectsList.map((p) => (
+                  <option key={p.id || p.name} value={p.id || p.name}>
+                    {p.name || p.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+                MODEL NAME (OPTIONAL)
+              </label>
+              <input
+                type="text"
+                value={bootstrapDomain}
+                onChange={(e) => setBootstrapDomain(e.target.value)}
+                placeholder="Defaults to project name"
+                style={{ ...INPUT_STYLE, width: '100%' }}
+              />
+            </div>
+          </div>
+
+          {bootstrapDuplicateError && (
+            <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--color-warning-bg)', color: 'var(--color-warning)', fontSize: 12, marginBottom: 14 }}>
+              <div>{bootstrapDuplicateError}</div>
+              <button
+                type="button"
+                disabled={bootstrapping}
+                onClick={() => handleBootstrapFromOsi(true)}
+                style={{ ...BTN_PRIMARY, marginTop: 8 }}
+              >
+                Sync Existing Domain
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setBootstrapDuplicateError(null);
+                setBootstrapModalOpen(false);
+              }}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 999,
+                background: 'transparent',
+                border: '1px solid var(--border-main)',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={bootstrapping || !bootstrapProject}
+              onClick={() => handleBootstrapFromOsi(false)}
+              style={PILL_BTN_DARK}
+            >
+              {bootstrapping ? 'Generating...' : 'Generate Ontology'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Collisions Modal */}
+    {showCollisionsModal && (
+      <div
+        onClick={() => setShowCollisionsModal(false)}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 60,
+          background: 'rgba(2, 6, 23, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: '100%',
+            maxWidth: 560,
+            borderRadius: 20,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-main)',
+            padding: 24,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#F59E0B' }}>
+              Cross-Domain Metric Collisions ({domainData.collisions.length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowCollisionsModal(false)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
+            {domainData.collisions.map((col, idx) => (
+              <div
+                key={idx}
+                style={{
+                  padding: 14,
+                  borderRadius: 12,
+                  background: 'var(--bg-app)',
+                  border: '1px solid var(--border-main)',
+                  fontSize: 12,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{col.item_name}</div>
+                {Object.entries(col.expressions || {}).map(([dom, expr]) => (
+                  <div key={dom} style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 4 }}>
+                    <strong style={{ color: '#0284C7' }}>{dom}:</strong> {expr || 'N/A'}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+);
 }
