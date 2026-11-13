@@ -840,6 +840,32 @@ class MetricsClauseBuilder:
             metric_to_alias[self.identifier_sanitizer.to_alias(metric.unique_name)] = metric_entity_alias
             emittable_metric_name_set.add(self.identifier_sanitizer.to_alias(metric.unique_name))
 
+            if not is_priv and failure is None and expr != NULL_PLACEHOLDER_SQL:
+                lag_window_sql = self._try_render_grouped_lag_metric(
+                    metric=metric,
+                    metric_name=metric_name,
+                    alias=alias,
+                    dax_expr=getattr(metric, "expression", None),
+                    dataset_aliases=dataset_aliases,
+                    metric_name_set=metric_name_set,
+                    metric_to_alias=metric_to_alias,
+                    skipped_metric_names=skipped_metric_names,
+                )
+                if lag_window_sql:
+                    if "PARTITION BY EXCLUDING" in lag_window_sql.upper():
+                        lag_window_sql = self._align_partition_by_excluding(lag_window_sql)
+                    lag_safe_name = f"{safe_metric_name}__BY_PERIOD"
+                    m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", lag_window_sql, re.I | re.S)
+                    excl_text = m_excl.group(1).strip().replace('"', "") if m_excl else ""
+                    lag_comment = self._clean_comment(
+                        f"Window metric over {metric_entity_alias}.{lag_safe_name}. Must be queried with {excl_text}."
+                    )
+                    metrics_lines.append(
+                        f'  {metric_entity_alias}."{lag_safe_name}" AS {lag_window_sql} COMMENT = \'{lag_comment}\''
+                    )
+                    metric_to_alias[lag_safe_name] = metric_entity_alias
+                    emittable_metric_name_set.add(lag_safe_name)
+
         # Map every DDL-visible metric name back to its original unique_name +
         # dataset, so drops detected below (line removed between before/after
         # snapshots of metrics_lines) can be recorded against the same
@@ -2064,6 +2090,9 @@ class MetricsClauseBuilder:
     def _should_use_direct_metric_aggregation(self, metric: Any) -> bool:
         if not getattr(metric, "source_column", None) or not getattr(metric, "aggregation", None):
             return False
+        agg_val = metric.aggregation.value if hasattr(metric.aggregation, "value") else str(metric.aggregation)
+        if str(agg_val).upper() == "NONE":
+            return False
         complexity_tier = getattr(metric, "complexity_tier", 1) or 1
         if complexity_tier > 1:
             return False
@@ -2469,6 +2498,196 @@ class MetricsClauseBuilder:
             return None
         return "What-If parameter " + "; ".join(notes) + " (interactive slicer not supported in SQL)"
 
+    def _resolve_grouped_lag_dimensions(self, date_alias: str, unit: str) -> Optional[List[str]]:
+        """Resolve declared dimension column name(s) on ``date_alias`` for a
+        grouped ``LAG(...) OVER (PARTITION BY EXCLUDING ... ORDER BY ...)``
+        window metric. Returns None if no suitable declared dimension exists."""
+        emitted_dims = getattr(self, "emitted_dimensions", {}) or {}
+        dims: List[str] = []
+        for k, v in emitted_dims.items():
+            if k.upper() == date_alias.upper():
+                dims = list(v or [])
+                break
+        if not dims:
+            return None
+
+        dim_upper = {d.upper(): d for d in dims}
+
+        def _pick(exact_candidates: Tuple[str, ...], contains_all: Tuple[str, ...] = (), exclude: Tuple[str, ...] = ()) -> Optional[str]:
+            for cand in exact_candidates:
+                if cand in dim_upper:
+                    return dim_upper[cand]
+            if contains_all:
+                for du, orig in dim_upper.items():
+                    if all(tok in du for tok in contains_all) and not any(ex in du for ex in exclude):
+                        return orig
+            return None
+
+        u = unit.upper()
+        if u == "YEAR":
+            yr = _pick(("YEAR", "CALENDAR_YEAR", "FISCAL_YEAR"), ("YEAR",), ("MONTH", "QUARTER", "QTR", "DAY", "WEEK"))
+            return [yr] if yr else None
+
+        if u == "QUARTER":
+            yq = _pick(("YEAR_QUARTER", "YEARQUARTER", "QUARTER_YEAR", "QTR_YEAR", "FISCAL_YEAR_QUARTER"))
+            if yq:
+                return [yq]
+            yr = _pick(("YEAR", "CALENDAR_YEAR", "FISCAL_YEAR"), ("YEAR",), ("MONTH", "QUARTER", "QTR", "DAY", "WEEK"))
+            qtr = _pick(("QTRNUMBER", "QUARTERNUMBER", "QUARTER_NUMBER", "QTR_NUMBER", "QUARTER", "QTR"))
+            return [yr, qtr] if (yr and qtr) else None
+
+        if u == "MONTH":
+            yr = _pick(("YEAR", "CALENDAR_YEAR", "FISCAL_YEAR"), ("YEAR",), ("MONTH", "QUARTER", "QTR", "DAY", "WEEK"))
+            mo_num = _pick(("MONTHNUMBER", "MONTH_NUMBER", "MONTH_NUM"))
+            if yr and mo_num:
+                return [yr, mo_num]
+            ym = _pick(("PERIODNUMBER", "MONTHINCREMENTNUMBER", "YEAR_MONTH", "YEARMONTH", "MONTH_YEAR", "MONTHSTARTDATE"))
+            if ym:
+                return [ym]
+            mo = _pick(("MONTH",))
+            return [yr, mo] if (yr and mo) else None
+
+        return None
+
+    def _try_render_grouped_lag_metric(
+        self,
+        metric: Any,
+        metric_name: str,
+        alias: str,
+        dax_expr: Optional[str],
+        dataset_aliases: Dict[str, str],
+        metric_name_set: Set[str],
+        metric_to_alias: Optional[Dict[str, str]] = None,
+        skipped_metric_names: Optional[Set[str]] = None,
+    ) -> Optional[str]:
+        """Emit ``LAG(<base_metric>, n) OVER (PARTITION BY EXCLUDING <date_dims> ORDER BY <date_dims> ASC)``
+        for pure period-shift metrics ``CALCULATE([BaseMetric], SAMEPERIODLASTYEAR|PREVIOUS*|DATEADD|PARALLELPERIOD)``
+        so each grouped date row compares with its own previous period."""
+        if not dax_expr or not str(dax_expr).strip():
+            return None
+        try:
+            from semabridge.converter.dax_ast_parser import (
+                BinaryOpNode,
+                ColumnRefNode,
+                DaxAstParser,
+                FunctionCallNode,
+                LiteralNode,
+                MeasureRefNode,
+                UnaryOpNode,
+            )
+            ast = DaxAstParser().parse(dax_expr)
+        except Exception:
+            return None
+
+        if not hasattr(self, "_grouped_lag_by_metric"):
+            self._grouped_lag_by_metric: Dict[str, Tuple[str, str]] = {}
+        if not hasattr(self, "_grouped_lag_var_by_metric"):
+            self._grouped_lag_var_by_metric: Dict[str, Tuple[str, str]] = {}
+
+        # Handle comparison metrics referencing a grouped-LAG metric:
+        # e.g. [Base] - [LagMetric] or DIVIDE([VarMetric], [LagMetric]) / DIVIDE([Base] - [LagMetric], [LagMetric])
+        def _resolve_var_pair(node: Any) -> Optional[Tuple[str, str]]:
+            if isinstance(node, MeasureRefNode):
+                m_san = self.identifier_sanitizer.sanitize_column(node.name).upper()
+                return self._grouped_lag_var_by_metric.get(m_san)
+            if isinstance(node, BinaryOpNode) and node.op == "-" and isinstance(node.left, MeasureRefNode) and isinstance(node.right, MeasureRefNode):
+                l_san = self.identifier_sanitizer.sanitize_column(node.left.name).upper()
+                r_san = self.identifier_sanitizer.sanitize_column(node.right.name).upper()
+                lag_pair = self._grouped_lag_by_metric.get(r_san)
+                if lag_pair:
+                    l_alias = (metric_to_alias or {}).get(l_san) or alias
+                    base_ref = f"{l_alias}.{l_san}"
+                    if base_ref == lag_pair[0]:
+                        return (base_ref, lag_pair[1])
+            return None
+
+        var_pair = _resolve_var_pair(ast)
+        if var_pair and not isinstance(ast, MeasureRefNode):
+            base_ref, lag_sql = var_pair
+            self._grouped_lag_var_by_metric[metric_name.upper()] = (base_ref, lag_sql)
+            return f"({base_ref} - {lag_sql})"
+
+        if isinstance(ast, FunctionCallNode) and ast.func.upper() == "DIVIDE" and len(ast.args) >= 2:
+            num_pair = _resolve_var_pair(ast.args[0])
+            if num_pair and isinstance(ast.args[1], MeasureRefNode):
+                den_san = self.identifier_sanitizer.sanitize_column(ast.args[1].name).upper()
+                den_pair = self._grouped_lag_by_metric.get(den_san)
+                if den_pair and den_pair == num_pair:
+                    base_ref, lag_sql = num_pair
+                    return f"({base_ref} - {lag_sql}) / NULLIF({lag_sql}, 0)"
+
+        if not isinstance(ast, FunctionCallNode) or ast.func.upper() != "CALCULATE" or len(ast.args) != 2:
+            return None
+        base_node, mod_node = ast.args[0], ast.args[1]
+        if not isinstance(base_node, MeasureRefNode) or not isinstance(mod_node, FunctionCallNode):
+            return None
+
+        mfn = mod_node.func.upper()
+        unit = None
+        n = 1
+        date_arg = mod_node.args[0] if mod_node.args else None
+        if mfn == "SAMEPERIODLASTYEAR" and len(mod_node.args) == 1:
+            unit, n = "YEAR", 1
+        elif mfn == "PREVIOUSYEAR" and len(mod_node.args) == 1:
+            unit, n = "YEAR", 1
+        elif mfn == "PREVIOUSQUARTER" and len(mod_node.args) == 1:
+            unit, n = "QUARTER", 1
+        elif mfn == "PREVIOUSMONTH" and len(mod_node.args) == 1:
+            unit, n = "MONTH", 1
+        elif mfn in ("DATEADD", "PARALLELPERIOD") and len(mod_node.args) >= 3:
+            amt_node = mod_node.args[1]
+            amt = None
+            if isinstance(amt_node, UnaryOpNode) and amt_node.op == "-" and isinstance(amt_node.operand, LiteralNode):
+                try:
+                    amt = -abs(int(amt_node.operand.value))
+                except Exception:
+                    amt = None
+            elif isinstance(amt_node, LiteralNode):
+                try:
+                    amt = int(amt_node.value)
+                except Exception:
+                    amt = None
+            if amt is None or amt >= 0:
+                return None
+            n = abs(amt)
+            intv_raw = str(getattr(mod_node.args[2], "name", getattr(mod_node.args[2], "value", ""))).upper()
+            for cand_u in ("YEAR", "QUARTER", "MONTH"):
+                if cand_u in intv_raw:
+                    unit = cand_u
+                    break
+        if not unit or not isinstance(date_arg, ColumnRefNode) or not date_arg.table:
+            return None
+
+        base_san = self.identifier_sanitizer.sanitize_column(base_node.name).upper()
+        if base_san == metric_name.upper():
+            return None
+        if base_san not in metric_name_set:
+            return None
+        if skipped_metric_names and base_san in {s.upper() for s in skipped_metric_names}:
+            return None
+
+        base_alias = (metric_to_alias or {}).get(base_san) or alias
+        raw_date_tbl = date_arg.table.strip().strip("'")
+        date_alias = (
+            dataset_aliases.get(raw_date_tbl)
+            or dataset_aliases.get(raw_date_tbl.upper())
+            or next((v for k, v in dataset_aliases.items() if k.casefold() == raw_date_tbl.casefold()), None)
+        )
+        if not date_alias:
+            return None
+
+        level_dims = self._resolve_grouped_lag_dimensions(date_alias, unit)
+        if not level_dims:
+            return None
+
+        dim_refs = [f'{date_alias}."{d}"' for d in level_dims]
+        excl_clause = ", ".join(dim_refs)
+        order_clause = ", ".join(f"{dr} ASC" for dr in dim_refs)
+        base_ref = f"{base_alias}.{base_san}"
+        lag_sql = f"LAG({base_ref}, {n}) OVER (PARTITION BY EXCLUDING {excl_clause} ORDER BY {order_clause})"
+        self._grouped_lag_by_metric[metric_name.upper()] = (base_ref, lag_sql)
+        return lag_sql
+
     def _prune_unresolved_metric_lines(self, metrics_lines: List[str], metric_name_set: Set[str]) -> List[str]:
         if not metrics_lines or not metric_name_set:
             return metrics_lines
@@ -2638,7 +2857,7 @@ class MetricsClauseBuilder:
             if m:
                 _, m_name, m_expr = m.group(1), m.group(2), m.group(3)
                 if "PARTITION BY EXCLUDING" in m_expr.upper():
-                    m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", m_expr, re.I | re.S)
+                    m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\s+ORDER\s+BY\b|\)|$)", m_expr, re.I | re.S)
                     if m_excl:
                         tokens = [t.strip().replace('"', '') for t in m_excl.group(1).split(",") if t.strip()]
                         window_dims_by_metric[m_name.upper()] = set(tokens)
@@ -2665,7 +2884,7 @@ class MetricsClauseBuilder:
                 continue
             if "PARTITION BY EXCLUDING" in m_expr.upper():
                 m_expr = self._align_partition_by_excluding(m_expr)
-                m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\)|$)", m_expr, re.I | re.S)
+                m_excl = re.search(r"PARTITION\s+BY\s+EXCLUDING\s+(.*?)(?:\s+ORDER\s+BY\b|\)|$)", m_expr, re.I | re.S)
                 if m_excl:
                     excl_text = m_excl.group(1).strip().replace('"', "")
                     m_comm = re.search(r"\s+COMMENT\s*=\s*'((?:''|[^'])*)'\s*$", m_expr, re.IGNORECASE)
@@ -2697,6 +2916,28 @@ class MetricsClauseBuilder:
                 relationships=getattr(self, "_relationships", None),
                 dataset_aliases=getattr(self, "_dataset_aliases", None),
             )
+
+            # If an AVERAGEX/SUMX ended up emitting AVG(SUM(x::FLOAT)), unwrap it to
+            # AVG(x::FLOAT) so it remains a valid Snowflake semantic-view metric
+            # (Snowflake rejects nested aggregates in metric expressions: 010219).
+            dax_raw = getattr(self, "_measure_dax_map", {}).get(m_name.upper(), "")
+            if "AVERAGEX" in str(dax_raw).upper():
+                m_avg = re.match(r"^AVG\s*\((.*)\)(\s+COMMENT\s*=.*)?$", m_expr, re.IGNORECASE | re.DOTALL)
+                if m_avg:
+                    inner = m_avg.group(1).strip()
+                    comm_tail = m_avg.group(2) or ""
+                    while True:
+                        prev = inner
+                        inner = re.sub(r"::FLOAT\s*$", "", inner, flags=re.IGNORECASE).strip()
+                        if inner.startswith("(") and inner.endswith(")"):
+                            inner = inner[1:-1].strip()
+                        if inner == prev:
+                            break
+                    m_avg_sum = re.match(r"^SUM\s*\((.*)\)$", inner, re.IGNORECASE | re.DOTALL)
+                    if m_avg_sum:
+                        inner_expr = re.sub(r"::FLOAT\s*$", "", m_avg_sum.group(1).strip(), flags=re.IGNORECASE).strip()
+                        if inner_expr.count("(") == inner_expr.count(")"):
+                            m_expr = f"AVG({inner_expr}::FLOAT){comm_tail}"
 
             nested_reason = detect_nested_aggregate(m_expr)
             if nested_reason:

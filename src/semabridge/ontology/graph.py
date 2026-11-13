@@ -24,11 +24,16 @@ concept or a relationship end that no domain defines).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 def _key(text: Any) -> str:
     return str(text or "").strip().casefold()
+
+
+def _norm_metric_key(text: Any) -> str:
+    return re.sub(r"[\s_\-]+", "", str(text or "").strip().casefold())
 
 
 def build_ontology_graph(
@@ -47,9 +52,78 @@ def build_ontology_graph(
     project_names = project_names or {}
 
     if project_id is not None:
-        keep_ids = set(attachments.get(str(project_id), []))
-        domains = [d for d in domains if getattr(d, "id", None) in keep_ids]
-        attachments = {str(project_id): attachments.get(str(project_id), [])}
+        pid_clean = str(project_id).strip()
+        pid_cf = pid_clean.casefold()
+
+        def _slug(s: Any) -> str:
+            val = str(s or "").strip().casefold()
+            val = re.sub(r"^proj[-_]", "", val)
+            return re.sub(r"[\s_\-]+", " ", val).strip()
+
+        pid_slug = _slug(pid_clean)
+
+        # 1. Direct or case-insensitive match in attachments
+        keep_ids = set()
+        matched_pids = set()
+        for k, v in attachments.items():
+            k_clean = str(k).strip()
+            p_name = str(project_names.get(k_clean) or "").strip()
+            if (
+                k_clean.casefold() == pid_cf
+                or p_name.casefold() == pid_cf
+                or k_clean == pid_clean
+                or (pid_slug and _slug(k_clean) == pid_slug)
+                or (pid_slug and _slug(p_name) == pid_slug)
+            ):
+                keep_ids.update(v or [])
+                matched_pids.add(k_clean)
+
+        # 2. Metadata match: source_project_id, id, or domain name
+        for d in domains:
+            sp = str(getattr(d, "source_project_id", "") or "").strip()
+            did = str(getattr(d, "id", "") or "").strip()
+            dname = str(getattr(d, "domain", "") or "").strip()
+            did_orig = str(getattr(d, "id", None) or getattr(d, "domain", ""))
+
+            sp_slug = _slug(sp)
+            did_slug = _slug(did)
+            dname_slug = _slug(dname)
+
+            is_match = (
+                pid_cf in (sp.casefold(), did.casefold(), dname.casefold())
+                or (sp and sp.casefold() == pid_cf)
+                or (pid_slug and pid_slug in (sp_slug, did_slug, dname_slug))
+                or (pid_slug and (sp_slug == pid_slug or did_slug == pid_slug or dname_slug == pid_slug))
+                or (pid_slug and (dname_slug.startswith(pid_slug) or pid_slug.startswith(dname_slug)))
+                or any(
+                    str(project_names.get(p, "")).casefold() == pid_cf or _slug(project_names.get(p, "")) == pid_slug
+                    for p in [sp, did]
+                    if p
+                )
+            )
+            if is_match:
+                keep_ids.add(did_orig)
+                keep_ids.add(getattr(d, "id", ""))
+                keep_ids.add(getattr(d, "domain", ""))
+                if sp:
+                    matched_pids.add(sp)
+
+        domains = [
+            d
+            for d in domains
+            if getattr(d, "id", None) in keep_ids
+            or getattr(d, "domain", None) in keep_ids
+            or (getattr(d, "source_project_id", "") or "").strip().casefold() == pid_cf
+            or (_slug(getattr(d, "source_project_id", "")) == pid_slug if pid_slug else False)
+        ]
+
+        # Ensure project node and attachment edges are established
+        target_pid = list(matched_pids)[0] if matched_pids else pid_clean
+        if domains:
+            resolved_dom_ids = [str(getattr(d, "id", None) or getattr(d, "domain", "")) for d in domains]
+            attachments = {target_pid: resolved_dom_ids}
+        else:
+            attachments = {target_pid: list(keep_ids)}
 
     collided: Dict[Tuple[str, str], List[str]] = {}
     for c in collisions or []:
@@ -167,8 +241,16 @@ def build_ontology_graph(
         for m in dom.metrics:
             mnode = f"metric:{did}:{_key(m.name)}"
             metric_ids.setdefault(_key(m.name), mnode)
+            metric_ids.setdefault(_norm_metric_key(m.name), mnode)
+            if getattr(m, "logical_name", None):
+                metric_ids.setdefault(_key(m.logical_name), mnode)
+                metric_ids.setdefault(_norm_metric_key(m.logical_name), mnode)
+            if getattr(m, "label", None):
+                metric_ids.setdefault(_key(m.label), mnode)
+                metric_ids.setdefault(_norm_metric_key(m.label), mnode)
             for syn in m.synonyms or []:
                 metric_ids.setdefault(_key(syn), mnode)
+                metric_ids.setdefault(_norm_metric_key(syn), mnode)
 
     for dom in domains:
         did = str(getattr(dom, "id", None) or _key(dom.domain))
@@ -177,7 +259,10 @@ def build_ontology_graph(
             mnode = f"metric:{did}:{_key(m.name)}"
             target_concept = concept_ids.get(_key(m.concept)) if m.concept else None
             derives_from = list(getattr(m, "derives_from", None) or [])
-            missing_deps = [dep for dep in derives_from if not metric_ids.get(_key(dep))]
+            missing_deps = [
+                dep for dep in derives_from
+                if not (metric_ids.get(_key(dep)) or metric_ids.get(_norm_metric_key(dep)))
+            ]
             unresolved_msgs = []
             if m.concept and not target_concept:
                 unresolved_msgs.append(f"concept '{m.concept}' is not defined")
@@ -216,7 +301,7 @@ def build_ontology_graph(
         for m in dom.metrics:
             mnode = f"metric:{did}:{_key(m.name)}"
             for dep in getattr(m, "derives_from", None) or []:
-                base_mnode = metric_ids.get(_key(dep))
+                base_mnode = metric_ids.get(_key(dep)) or metric_ids.get(_norm_metric_key(dep))
                 if base_mnode and base_mnode in nodes:
                     add_edge(mnode, base_mnode, "derives", "derives from")
                     impacted = nodes[base_mnode].setdefault("impacted_metrics", [])

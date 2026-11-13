@@ -340,7 +340,10 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
 
   const fetchProjects = async () => {
     try {
-      const res = await authFetch('/api/projects?limit=50');
+      let res = await authFetch('/api/projects/discovery');
+      if (!res.ok) {
+        res = await authFetch('/api/projects?limit=50');
+      }
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : data.projects || [];
@@ -711,6 +714,24 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     setHealthFilter('all');
     setHealthExpanded('parity');
     selectTab('governance');
+  };
+
+  const handleJumpToParity = (metricNameOrObj) => {
+    let mObj = null;
+    if (metricNameOrObj && typeof metricNameOrObj === 'object') {
+      mObj = metricNameOrObj;
+    } else if (metricNameOrObj) {
+      const targetStr = String(metricNameOrObj).trim().toLowerCase();
+      mObj = allMetrics.find(
+        (m) =>
+          (m.name || '').toLowerCase() === targetStr ||
+          (m.label || '').toLowerCase() === targetStr ||
+          (m.logical_name || '').toLowerCase() === targetStr
+      ) || { name: metricNameOrObj, label: metricNameOrObj };
+    }
+    if (mObj) {
+      openParityFor(mObj);
+    }
   };
 
   const handleRunLinter = async (stewardOverride) => {
@@ -1391,7 +1412,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
               background: 'var(--bg-surface)',
             }}
           >
-            <OntologyGraph projects={projectsList} />
+            <OntologyGraph projects={projectsList} initialProject={selectedProjectSlug} />
           </div>
         )}
 
@@ -1437,6 +1458,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
               rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
               rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
               runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
+              onOpenParity: handleJumpToParity,
             }}
           />
         )}
@@ -1455,13 +1477,16 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                   blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
                   blastTableContext, setBlastTableContext,
                   runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+                  onOpenParity: handleJumpToParity,
                 }}
                 metricOptions={allMetricNames}
+                onOpenParity={handleJumpToParity}
               />
             </div>
             {blastReport && (
               <ImpactReport
                 report={blastReport}
+                onOpenParity={handleJumpToParity}
                 onPickSuggestion={(s) => handleRunBlastRadius(s)}
               />
             )}

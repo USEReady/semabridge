@@ -3410,17 +3410,28 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 or str(getattr(m, "dataset", "")).casefold() == str(fact_table).casefold()
             )
             if (shapes or metric_cites_max_date) and fact_date_col:
+                # If the live physical column in Snowflake is TEXT/VARCHAR,
+                # wrap it in TRY_TO_TIMESTAMP so date/time functions (YEAR, MONTH, EXTRACT)
+                # do not fail compilation with "Function EXTRACT does not support VARCHAR argument type".
+                from semabridge.connectors.date_column_coercion import is_text_type
+                col_types = getattr(self._live_schema_metadata, "column_types", {}) or {}
+                fact_tbl_key = self._id.sanitize_table_name(fact_table).upper()
+                fact_col_type = col_types.get(fact_tbl_key, {}).get(fact_date_col.upper(), "")
+                is_text_date = is_text_type(fact_col_type)
+
+                coerced_date_expr = f'TRY_TO_TIMESTAMP("{fact_date_col}")' if is_text_date else f'"{fact_date_col}"'
+
                 # COALESCE: an empty / all-NULL date column anchors at
                 # CURRENT_DATE() at query time instead of a NULL anchor.
                 anchor_joins.append(
-                    f'CROSS JOIN (SELECT COALESCE(MAX("{fact_date_col}"), CURRENT_DATE()) AS "MAX_DATE" '
+                    f'CROSS JOIN (SELECT COALESCE(MAX({coerced_date_expr}), CURRENT_DATE()) AS "MAX_DATE" '
                     f'FROM {fact_source_ref}) anchor_max'
                 )
                 max_date_sql = 'anchor_max."MAX_DATE"'
                 select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
                 projected_cols.add("MAX_DATE")
 
-                fact_date_col_sql = f'f."{fact_date_col}"'
+                fact_date_col_sql = f'TRY_TO_TIMESTAMP(f."{fact_date_col}")' if is_text_date else f'f."{fact_date_col}"'
                 new_flag_map = {}
 
                 has_rolling_months = any(

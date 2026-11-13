@@ -71,6 +71,20 @@ export default function HealthView({
   const visible = filter === 'all' ? displayRows : displayRows.filter((r) => r.category === filter);
   const whatIfOpen = !hideWhatIf && expandedId === 'whatif';
 
+  const handleOpenParity = (targetMetric) => {
+    if (gov?.onOpenParity) {
+      gov.onOpenParity(targetMetric);
+      return;
+    }
+    if (targetMetric && gov?.setReconMetric) {
+      gov.setReconMetric(targetMetric);
+      if (gov?.setReconExpr) gov.setReconExpr(targetMetric);
+    }
+    setFilter('parity');
+    setExpandedId('parity');
+    if (onExpandParity) onExpandParity();
+  };
+
   const renderDetail = (row) => {
     switch (row.kind) {
       case 'collision':
@@ -82,9 +96,9 @@ export default function HealthView({
       case 'lint':
         return <QualityIssues issues={row.payload} onOpenMetric={onOpenMetric} gov={gov} />;
       case 'impact':
-        return <ImpactReport report={row.payload} onPickSuggestion={(s) => gov?.onRunBlast?.(s)} />;
+        return <ImpactReport report={row.payload} onPickSuggestion={(s) => gov?.onRunBlast?.(s)} onOpenParity={handleOpenParity} />;
       case 'whatIf':
-        return <WhatIfSimulator gov={gov} metricOptions={metricOptions} />;
+        return <WhatIfSimulator gov={gov} metricOptions={metricOptions} onOpenParity={handleOpenParity} />;
       case 'parity':
         return (
           <ParityPanel

@@ -188,7 +188,7 @@ def _certify(monkeypatch, payload):
 
     calls = []
 
-    def _fake_exec(req):  # never touch a live warehouse in tests
+    def _fake_exec(req, **kwargs):  # never touch a live warehouse in tests
         from types import SimpleNamespace
 
         calls.append(req.sql)

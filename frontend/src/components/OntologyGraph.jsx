@@ -122,11 +122,11 @@ function DetailList({ title, items }) {
   );
 }
 
-export default function OntologyGraph({ projects = [] }) {
+export default function OntologyGraph({ projects = [], initialProject = '' }) {
   const [graph, setGraph] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [projectFilter, setProjectFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState(initialProject || '');
   const [showBindings, setShowBindings] = useState(true);
   const [onlyIssues, setOnlyIssues] = useState(false);
   // Track full-screen state for the Connection Map viewer and exit cleanly on Escape
@@ -134,6 +134,12 @@ export default function OntologyGraph({ projects = [] }) {
   const [selected, setSelected] = useState(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  useEffect(() => {
+    if (initialProject && !projectFilter) {
+      setProjectFilter(initialProject);
+    }
+  }, [initialProject]);
 
   useEffect(() => {
     if (!isFullscreen) return undefined;

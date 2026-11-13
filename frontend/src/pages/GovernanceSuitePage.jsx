@@ -443,7 +443,12 @@ function BiTruthView({ projectId }) {
     setBusy(true);
     setError('');
     try {
-      const res = await authFetch('/api/bi-truth/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: projectId || undefined }) });
+      const res = await authFetch('/api/bi-truth/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId || undefined }),
+        timeoutMs: 300000,
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data?.detail || `Run failed (${res.status})`);

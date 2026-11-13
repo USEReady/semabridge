@@ -2307,15 +2307,12 @@ class SemanticViewBuilder:
 
 
         for alias, cols in declared_pk.items():
-
             if alias.upper() in fact_aliases and cols:
-
-                raise ValueError(
-
-                    f"Pre-emit check failed: Fact table '{alias}' declared PRIMARY KEY {cols}, "
-
-                    f"but fact tables must have no primary key."
-
+                logger.warning(
+                    "Pre-emit check: Fact table '%s' declared PRIMARY KEY %s "
+                    "(allowed for 1:1 / unique key; continuing instead of failing).",
+                    alias,
+                    cols,
                 )
 
 

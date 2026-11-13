@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import uuid
 from datetime import datetime, timezone
@@ -77,6 +78,44 @@ def generate_truth_cases(
             "status": "draft",
             "created_at": now,
         })
+
+    # If no certified metrics or verified queries exist yet, bootstrap draft test cases from domain metrics
+    if not created and (project_id or domain):
+        from semabridge.ontology.store import ontology_store
+        fed = ontology_store.get_federated_ontology()
+        pid_clean = str(project_id or "").strip().casefold()
+        dom_clean = str(domain or "").strip().casefold()
+        target_domains = []
+        for d in fed.domains.values():
+            sp = str(getattr(d, "source_project_id", "") or "").strip().casefold()
+            did = str(getattr(d, "id", "") or "").strip().casefold()
+            dname = str(getattr(d, "domain", "") or "").strip().casefold()
+            matched = False
+            if pid_clean and (
+                pid_clean in (sp, did, dname)
+                or (sp and (sp == pid_clean or sp.replace("proj-", "") == pid_clean.replace("proj-", "")))
+            ):
+                matched = True
+            if dom_clean and dom_clean in (did, dname):
+                matched = True
+            if matched and d not in target_domains:
+                target_domains.append(d)
+
+        for d in target_domains:
+            for m in d.metrics:
+                mname = m.label or m.name
+                q = f"What is {mname}?"
+                created.append({
+                    "id": f"truth-{uuid.uuid4().hex[:8]}",
+                    "project_id": project_id or getattr(d, "source_project_id", None),
+                    "domain": d.domain,
+                    "metric_name": m.name,
+                    "question": q,
+                    "expected_sql": m.sql_expression or "",
+                    "expected_row_count": 0,
+                    "status": "draft",
+                    "created_at": now,
+                })
 
     if created:
         state = _load_suite()
@@ -189,10 +228,24 @@ def generate_golden_questions_from_pbix_dir(
     return []
 
 
+def _match_pid(c_pid: Any, target_pid: Optional[str]) -> bool:
+    if not target_pid:
+        return True
+    c_str = str(c_pid or "").strip().casefold()
+    t_str = str(target_pid or "").strip().casefold()
+    if not c_str or not t_str:
+        return False
+    if c_str == t_str:
+        return True
+    c_norm = c_str.replace("proj-", "").replace("-", "_").replace(" ", "_")
+    t_norm = t_str.replace("proj-", "").replace("-", "_").replace(" ", "_")
+    return c_norm == t_norm or c_norm.startswith(t_norm) or t_norm.startswith(c_norm)
+
+
 def list_truth_cases(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     cases = _load_suite()["cases"]
     if project_id:
-        cases = [c for c in cases if c.get("project_id") == project_id]
+        cases = [c for c in cases if _match_pid(c.get("project_id"), project_id)]
     return cases
 
 
@@ -222,13 +275,11 @@ def run_truth_suite(
     state = _load_suite()
     approved = [
         c for c in state["cases"]
-        if c.get("status") == "approved" and (not project_id or c.get("project_id") == project_id)
+        if c.get("status") == "approved" and (not project_id or _match_pid(c.get("project_id"), project_id))
     ]
     engine = NLQueryEngine(ontology_store.search_index, ontology_store.get_federated_ontology())
-    results: List[Dict[str, Any]] = []
-    passed = 0
 
-    for c in approved:
+    def _eval_case(c: Dict[str, Any]) -> Dict[str, Any]:
         pid = c.get("project_id") or project_id
         scope = resolve_project_scope(pid)
         generated_sql = ""
@@ -249,17 +300,22 @@ def run_truth_suite(
             err = str(exc)
 
         ok = bool(generated_sql) and not err
-        if ok:
-            passed += 1
-        results.append({
+        return {
             "case_id": c["id"],
             "question": c["question"],
             "passed": ok,
             "mode": mode,
             "generated_sql": generated_sql,
             "error": err,
-        })
+        }
 
+    results: List[Dict[str, Any]] = []
+    if approved:
+        max_workers = min(len(approved), 6)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_eval_case, approved))
+
+    passed = sum(1 for r in results if r.get("passed"))
     total = len(approved)
     accuracy = round((100.0 * passed / total), 2) if total else 0.0
     run_rec = {
@@ -279,6 +335,6 @@ def run_truth_suite(
 def list_truth_runs(project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     runs = _load_suite()["runs"]
     if project_id:
-        runs = [r for r in runs if r.get("project_id") == project_id]
+        runs = [r for r in runs if _match_pid(r.get("project_id"), project_id)]
     return runs
 

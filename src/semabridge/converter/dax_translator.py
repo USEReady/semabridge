@@ -588,7 +588,18 @@ class DAXTranslator:
                     failure_reason=na_reason,
                     sync_enabled=False,
                 )
-            fidelity_reason = dax_semantic_fidelity_failure_reason(parsed_ast, primary_table_name=dataset_name)
+            _effective_primary = dataset_name
+            if (
+                dataset_name
+                and relationships
+                and not any(
+                    (getattr(r, "from_dataset", None) or "").casefold() == dataset_name.casefold()
+                    or (getattr(r, "to_dataset", None) or "").casefold() == dataset_name.casefold()
+                    for r in relationships
+                )
+            ):
+                _effective_primary = None
+            fidelity_reason = dax_semantic_fidelity_failure_reason(parsed_ast, primary_table_name=_effective_primary)
             if fidelity_reason:
                 return DAXTranslationResult(
                     None, 4, clean_dax,
