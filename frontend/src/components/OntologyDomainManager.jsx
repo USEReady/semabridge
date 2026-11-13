@@ -13,7 +13,7 @@ import OverviewView from './ontology/OverviewView';
 import DomainsView from './ontology/DomainsView';
 import MetricDrawer from './ontology/MetricDrawer';
 import HealthView from './ontology/HealthView';
-import { WhatIfSimulator } from './ontology/GovernancePanels';
+import { WhatIfSimulator, ImpactReport, ParityPanel } from './ontology/GovernancePanels';
 import { Pill } from './ontology/ui';
 import { describeApiError, timeAgo, BTN, BTN_PRIMARY } from './ontology/styles';
 import {
@@ -1168,6 +1168,34 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         .filter(Boolean)
     ),
   ];
+
+  const handleJumpToParity = (metricNameOrObj) => {
+    let mObj = metricNameOrObj;
+    if (typeof metricNameOrObj === 'string') {
+      const targetStr = String(metricNameOrObj).trim().toLowerCase();
+      mObj = allMetrics.find(
+        (m) =>
+          (m.name || '').toLowerCase() === targetStr ||
+          (m.label || '').toLowerCase() === targetStr ||
+          (m.logical_name || '').toLowerCase() === targetStr
+      ) || { name: metricNameOrObj, label: metricNameOrObj };
+    }
+    if (mObj) {
+      prefillParity(mObj);
+      setHealthFilter('all');
+      setHealthExpanded('parity');
+      if (mode !== 'blast-radius') {
+        selectTab('governance');
+      }
+    }
+  };
+
+  useEffect(() => {
+    const urlMetric = new URLSearchParams(location.search).get('metric');
+    if (urlMetric && allMetrics.length > 0) {
+      handleJumpToParity(urlMetric);
+    }
+  }, [location.search, allMetrics]);
   const sumOf = (key) => visibleDomains.reduce((n, d) => n + (d[key] || 0), 0);
 
   const overviewStats = {
@@ -1587,8 +1615,80 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                   runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
                 }}
                 metricOptions={allMetricNames}
+                onOpenParity={handleJumpToParity}
               />
             </div>
+            {healthExpanded === 'parity' && (
+              <div
+                id="parity-panel-section"
+                style={{
+                  padding: 18,
+                  borderRadius: 12,
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-main)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <div style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>⚖️</span>
+                    <span>Golden Query Verifier &mdash; Parity Check</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 400 }}>
+                      Testing numerical tolerances on <strong>{reconMetric || 'metric'}</strong>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHealthExpanded(null)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid var(--border-main)',
+                      borderRadius: 6,
+                      padding: '4px 10px',
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                <ParityPanel
+                  gov={{
+                    govProjectId, setGovProjectId, projectsList,
+                    blastTarget, setBlastTarget, blastType, setBlastType, blastChangeType, setBlastChangeType,
+                    blastTableContext, setBlastTableContext,
+                    runningBlast, onRunBlast: handleRunBlastRadius, blastReport,
+                    lintStewardSeverity, setLintStewardSeverity,
+                    onRunLintWithSteward: (sev) => handleRunLinter(sev),
+                    dimensionOptions: allDimensions,
+                    semanticViewOptions: allSemanticViews,
+                    reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
+                    reconDaxExpr, setReconDaxExpr, reconCustomSql, setReconCustomSql,
+                    parityProjectMetrics, allMetrics, prefillParity,
+                    onUpdateMetricSql: handleUpdateMetricSql,
+                    reconTargetKind, setReconTargetKind, reconDims, setReconDims,
+                    reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
+                    reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
+                    reconMaxMismatchPct, setReconMaxMismatchPct,
+                    reconRegisterVerified, setReconRegisterVerified,
+                    runningRecon,
+                    onGenerateReconQueries: handleGenerateReconQueries,
+                    onRunLiveSql: handleRunLiveSql,
+                    onRunAutoDaxCertify: handleRunAutoDaxCertify,
+                    onRunRecon: handleRunReconciliation,
+                    onResetRecon: resetParityState,
+                    reconResult, reconSliceRows, reconQueries, reconError,
+                    rlsRoleName, setRlsRoleName, rlsTableName, setRlsTableName, rlsDaxExpr, setRlsDaxExpr,
+                    rlsTargetDb, setRlsTargetDb, rlsTargetSchema, setRlsTargetSchema,
+                    runningRls, onTranslateRls: handleTranslateRls, rlsDdl, rlsStatus, rlsReason,
+                    onOpenParity: handleJumpToParity,
+                  }}
+                  metricOptions={allMetricNames}
+                  dimensionOptions={allDimensions}
+                  semanticViewOptions={allSemanticViews}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>

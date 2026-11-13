@@ -722,7 +722,7 @@ function BiTruthView({ projectId }) {
     try {
       const res = await authFetch('/api/bi-truth/run', {
         method: 'POST',
-        timeoutMs: 180000,
+        timeoutMs: 300000,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: projectId || undefined }),
       });

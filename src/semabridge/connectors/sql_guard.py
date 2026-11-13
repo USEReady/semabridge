@@ -17,6 +17,7 @@ Strict Allowlist:
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Callable, List, Optional, Set, Tuple
 from semabridge.core.exceptions import ConnectorError
@@ -317,3 +318,127 @@ def validate_safe_sql(
                 cursor=cursor,
                 is_semantic_view=is_semantic,
             )
+
+
+_READ_ONLY_ALLOWED_ACTIONS = frozenset({"SELECT", "WITH_SELECT", "SHOW", "DESCRIBE"})
+
+
+def validate_read_only_sql(sql: str, *, warn_only: Optional[bool] = None) -> bool:
+    """Validate a single read-only SQL query (SELECT / WITH ... SELECT / SHOW / DESCRIBE).
+
+    Args:
+        sql: SQL string to validate.
+        warn_only: When True, log a warning and return False instead of raising
+            SQLSecurityGuardError. If None, checks SEMABRIDGE_SQL_GUARD_READONLY_MODE
+            ('warn' vs default 'enforce').
+    """
+    if warn_only is None:
+        warn_only = os.getenv("SEMABRIDGE_SQL_GUARD_READONLY_MODE", "enforce").strip().lower() == "warn"
+
+    def _reject(msg: str) -> bool:
+        if warn_only:
+            logger.warning("⚠️ READ-ONLY SQL GUARD (WARN): %s", msg)
+            return False
+        logger.error("🛑 READ-ONLY SQL GUARD: %s", msg)
+        raise SQLSecurityGuardError(msg)
+
+    if not sql or not sql.strip():
+        return _reject("Read-only SQL guard blocked empty SQL statement.")
+
+    non_empty = [strip_sql_comments(s).strip() for s in split_statements(sql)]
+    non_empty = [s for s in non_empty if s]
+    if len(non_empty) != 1:
+        return _reject(
+            f"Read-only SQL guard requires exactly one statement (got {len(non_empty)})."
+        )
+
+    clean = non_empty[0]
+    for pattern, op_name in _EXPLICIT_FORBIDDEN_PATTERNS:
+        if pattern.search(clean):
+            preview = clean[:120].replace("\n", " ")
+            return _reject(
+                f"Read-only SQL guard blocked forbidden operation '{op_name}': {preview!r}."
+            )
+
+    for pattern, action_name in _ALLOWLIST_PATTERNS:
+        if action_name in _READ_ONLY_ALLOWED_ACTIONS and pattern.search(clean):
+            return True
+
+    preview = clean[:120].replace("\n", " ")
+    return _reject(
+        f"Read-only SQL guard blocked statement: {preview!r}. "
+        "Only a single SELECT, WITH ... SELECT, SHOW, or DESCRIBE statement is permitted."
+    )
+
+
+class GuardedCursor:
+    """Cursor wrapper that enforces sql_guard before every execute()."""
+
+    def __init__(self, cursor: Any, *, read_only: bool = True, check_ownership: bool = False) -> None:
+        self._cursor = cursor
+        self._read_only = read_only
+        self._check_ownership = check_ownership
+
+    def execute(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        if self._read_only:
+            validate_read_only_sql(sql)
+        else:
+            validate_safe_sql(sql, cursor=self._cursor, check_ownership=self._check_ownership)
+        return self._cursor.execute(sql, *args, **kwargs)
+
+    def executemany(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        if self._read_only:
+            validate_read_only_sql(sql)
+        else:
+            validate_safe_sql(sql, cursor=self._cursor, check_ownership=self._check_ownership)
+        return self._cursor.executemany(sql, *args, **kwargs)
+
+    def __enter__(self) -> "GuardedCursor":
+        if hasattr(self._cursor, "__enter__"):
+            self._cursor.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> Any:
+        if hasattr(self._cursor, "__exit__"):
+            return self._cursor.__exit__(*args)
+        return None
+
+    def __iter__(self) -> Any:
+        return iter(self._cursor)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cursor, name)
+
+
+class GuardedConnection:
+    """Connection wrapper whose cursor() returns a GuardedCursor."""
+
+    def __init__(self, conn: Any, *, read_only: bool = True, check_ownership: bool = False) -> None:
+        self._conn = conn
+        self._read_only = read_only
+        self._check_ownership = check_ownership
+
+    def cursor(self, *args: Any, **kwargs: Any) -> GuardedCursor:
+        return GuardedCursor(
+            self._conn.cursor(*args, **kwargs),
+            read_only=self._read_only,
+            check_ownership=self._check_ownership,
+        )
+
+    def __enter__(self) -> "GuardedConnection":
+        if hasattr(self._conn, "__enter__"):
+            self._conn.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> Any:
+        if hasattr(self._conn, "__exit__"):
+            return self._conn.__exit__(*args)
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+
+def guard_connection(conn: Any, *, read_only: bool = True, check_ownership: bool = False) -> GuardedConnection:
+    """Wrap a DB-API connection so all cursor executions pass sql_guard."""
+    return GuardedConnection(conn, read_only=read_only, check_ownership=check_ownership)

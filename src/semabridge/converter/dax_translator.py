@@ -588,7 +588,18 @@ class DAXTranslator:
                     failure_reason=na_reason,
                     sync_enabled=False,
                 )
-            fidelity_reason = dax_semantic_fidelity_failure_reason(parsed_ast, primary_table_name=dataset_name)
+            _effective_primary = dataset_name
+            if (
+                dataset_name
+                and relationships
+                and not any(
+                    (getattr(r, "from_dataset", None) or "").casefold() == dataset_name.casefold()
+                    or (getattr(r, "to_dataset", None) or "").casefold() == dataset_name.casefold()
+                    for r in relationships
+                )
+            ):
+                _effective_primary = None
+            fidelity_reason = dax_semantic_fidelity_failure_reason(parsed_ast, primary_table_name=_effective_primary)
             if fidelity_reason:
                 return DAXTranslationResult(
                     None, 4, clean_dax,
@@ -626,8 +637,12 @@ class DAXTranslator:
                     if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in cats:
                         cats.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
                 if "CURRENT_DATE()" in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
-                    if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in cats:
-                        cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                    from semabridge.converter.dax_ast_parser import TI_CURRENT_DATE_ANCHOR_REASON
+                    return DAXTranslationResult(
+                        None, 4, clean_dax,
+                        failure_reason=TI_CURRENT_DATE_ANCHOR_REASON,
+                        sync_enabled=False,
+                    )
                 from semabridge.connectors.snowflake_metric_sql import simplify_dead_arithmetic_sql
                 result.sql = simplify_dead_arithmetic_sql(result.sql)
                 result.advisory_categories = cats

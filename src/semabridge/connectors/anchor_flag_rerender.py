@@ -143,10 +143,17 @@ def rerender_anchor_dependent_metrics(
         ds_cf = str(target_ds or dataset_name or "").casefold()
         if ds_cf in {str(s).casefold() for s in failed_sets} or ds_cf in {str(k).casefold() for k in failed_errs}:
             real_err = failed_errs.get(ds_cf) or next((v for k, v in failed_errs.items() if str(k).casefold() == ds_cf), "Enriched view creation failed")
+            clean_err = str(real_err).strip()
+            if clean_err.lower() in ("failed", "failed: failed", ""):
+                clean_err = "Enriched view creation failed"
+            elif clean_err.lower().startswith("cannot build enriched view"):
+                pass
+            elif not clean_err.lower().startswith("enriched view creation failed"):
+                clean_err = f"Enriched view creation failed: {clean_err}"
             metric.sql_expression = None
-            metric.sync_failure_reason = f"Enriched view creation failed: {real_err}"
+            metric.sync_failure_reason = clean_err
             metric.sync_enabled = False
-            logger.info("Enriched view failed for '%s'; metric '%s' emitted as NULL: %s", target_ds, name, real_err)
+            logger.info("Enriched view failed for '%s'; metric '%s' emitted as NULL: %s", target_ds, name, clean_err)
             rerendered += 1
             continue
 
@@ -192,6 +199,8 @@ def rerender_anchor_dependent_metrics(
             translation.sql[:160],
         )
         metric.sql_expression = translation.sql
+        metric.sync_enabled = True
+        metric.sync_failure_reason = None
         sync_time_anchor_advisory(metric, translation.sql)
         rerendered += 1
 

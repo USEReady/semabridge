@@ -293,9 +293,9 @@ class FederatedOntologyLoader:
 
     @classmethod
     def _strip_domain_synthetic_synonyms(cls, dom: DomainOntology) -> None:
-        """Generically normalize synthetic underscore-to-title variants on loaded BI metrics."""
+        """Generically normalize synthetic underscore-to-title variants on BI-origin metrics."""
         for m in dom.metrics:
-            if m.origin == "user":
+            if m.origin != "bi":
                 continue
             raw_tech = str(m.name or "").strip()
             if "_" not in raw_tech:
@@ -451,11 +451,31 @@ class FederatedOntologyLoader:
         if require_external:
             known = set(local)
             known_metrics = set(local_metrics)
+            for m in dom.metrics:
+                if getattr(m, "logical_name", None):
+                    known_metrics.add(str(m.logical_name).casefold())
+                if getattr(m, "label", None):
+                    known_metrics.add(str(m.label).casefold())
+                if getattr(m, "synonyms", None):
+                    known_metrics.update(str(s).casefold() for s in m.synonyms if s)
             for other in other_domains:
                 if other is dom or (other.id and other.id == dom.id):
                     continue
                 known.update(c.name.casefold() for c in other.concepts)
-                known_metrics.update(m.name.casefold() for m in other.metrics)
+                for m in other.metrics:
+                    known_metrics.add(m.name.casefold())
+                    if getattr(m, "logical_name", None):
+                        known_metrics.add(str(m.logical_name).casefold())
+                    if getattr(m, "label", None):
+                        known_metrics.add(str(m.label).casefold())
+                    if getattr(m, "synonyms", None):
+                        known_metrics.update(str(s).casefold() for s in m.synonyms if s)
+
+            def _norm_metric_val(s: str) -> str:
+                return re.sub(r"[\s_\-]+", "", str(s or "").casefold())
+
+            known_metrics_norm = {_norm_metric_val(k) for k in known_metrics}
+
             for r in dom.relationships:
                 label = r.name or f"{r.from_concept}->{r.to_concept}"
                 for end in (r.from_concept, r.to_concept):
@@ -463,7 +483,7 @@ class FederatedOntologyLoader:
                         errors.append(f"Relationship '{label}' references undefined concept '{end}'")
             for m in dom.metrics:
                 for dep in m.derives_from:
-                    if dep.casefold() not in known_metrics:
+                    if dep.casefold() not in known_metrics and _norm_metric_val(dep) not in known_metrics_norm:
                         errors.append(
                             f"Metric '{m.name}' derives_from undefined metric '{dep}'"
                         )
@@ -706,6 +726,19 @@ class FederatedOntologyLoader:
         # 3. Check for Unresolved Relationships and Metric Dependencies
         known_concepts = {c.casefold() for c in fed.concepts.keys()}
         known_metrics = {m.casefold() for m in fed.metrics.keys()}
+        for m in fed.metrics.values():
+            if getattr(m, "logical_name", None):
+                known_metrics.add(str(m.logical_name).casefold())
+            if getattr(m, "label", None):
+                known_metrics.add(str(m.label).casefold())
+            if getattr(m, "synonyms", None):
+                known_metrics.update(str(s).casefold() for s in m.synonyms if s)
+
+        def _norm_fed_metric(s: str) -> str:
+            return re.sub(r"[\s_\-]+", "", str(s or "").casefold())
+
+        known_metrics_norm = {_norm_fed_metric(k) for k in known_metrics}
+
         for rel in fed.relationships:
             if rel.from_concept.casefold() not in known_concepts:
                 fed.unresolved_references.append(
@@ -719,7 +752,7 @@ class FederatedOntologyLoader:
                 )
         for m in fed.metrics.values():
             for dep in m.derives_from:
-                if dep.casefold() not in known_metrics:
+                if dep.casefold() not in known_metrics and _norm_fed_metric(dep) not in known_metrics_norm:
                     fed.unresolved_references.append(
                         f"Metric '{m.name}' derives_from unknown metric: '{dep}'"
                     )

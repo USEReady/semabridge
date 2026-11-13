@@ -1,0 +1,4286 @@
+domain: em-hr-ai
+id: em_hr_ai
+version: 1.0.0
+description: ''
+concepts:
+- name: Age
+  logical_name: AGE
+  label: Age
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: The age bands used to look at the workforce demographically without
+    exposing individual ages.
+  synonyms: []
+  business_rules: []
+  physical_table: Age
+  attributes:
+  - name: Age group ID
+    logical_name: AGE_GROUP_ID
+    data_type: INTEGER
+    description: Age band code.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - age group ID
+    - group ID
+    sample_values: []
+    origin: bi
+    bi_description: Age band code.
+  - name: Age group
+    logical_name: AGE_GROUP
+    data_type: VARCHAR
+    description: Age band used to look at the workforce demographically (e.g. <25,
+      25-34, 35-44).
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - age group
+    sample_values: []
+    origin: bi
+    bi_description: Age band used to look at the workforce demographically (e.g. <25,
+      25-34, 35-44).
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: The age bands used to look at the workforce demographically without
+    exposing individual ages.
+- name: Business unit
+  logical_name: BUSINESS_UNIT
+  label: Business unit
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: The business units the company organizes work around. Lets reports
+    break the workforce down by market, region, and the VP who owns it.
+  synonyms: []
+  business_rules: []
+  physical_table: Business unit
+  attributes:
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    description: Name of the business unit / market.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - bu
+    sample_values: []
+    origin: bi
+    bi_description: Name of the business unit / market.
+  - name: Region with order
+    logical_name: REGION_WITH_ORDER
+    data_type: VARCHAR
+    description: Region label with a leading sort code so regions appear in a chosen
+      order rather than alphabetically.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - region with order
+    sample_values: []
+    origin: bi
+    bi_description: Region label with a leading sort code so regions appear in a chosen
+      order rather than alphabetically.
+  - name: VP
+    logical_name: VP
+    data_type: VARCHAR
+    description: VP (Market Director) who owns the business unit.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - vp
+    sample_values: []
+    origin: bi
+    bi_description: VP (Market Director) who owns the business unit.
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    description: Region the business unit belongs to (Americas, EMEA, APAC, ...).
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - region
+    sample_values: []
+    origin: bi
+    bi_description: Region the business unit belongs to (Americas, EMEA, APAC, ...).
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: The business units the company organizes work around. Lets reports
+    break the workforce down by market, region, and the VP who owns it.
+- name: Date
+  logical_name: COL_DATE
+  label: Date
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: The calendar the model runs on. Enables trending, year-over-year comparisons,
+    and any time-based slicing (year, quarter, month, day).
+  synonyms: []
+  business_rules: []
+  physical_table: Date
+  attributes:
+  - name: Date
+    logical_name: COL_DATE
+    data_type: DATE
+    description: The specific calendar day.
+    is_primary_key: true
+    is_hidden: false
+    format_string: dd-mmm-yyyy
+    synonyms:
+    - date
+    sample_values: []
+    origin: bi
+    bi_description: The specific calendar day.
+  - name: Month
+    logical_name: MONTH
+    data_type: INTEGER
+    description: Month name (Jan, Feb, ...) for grouping and trending.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - month
+    sample_values: []
+    origin: bi
+    bi_description: Month name (Jan, Feb, ...) for grouping and trending.
+  - name: Month number
+    logical_name: MONTH_NUMBER
+    data_type: INTEGER
+    description: Month of the year as a number (1-12).
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - month number
+    - MonthNumber
+    sample_values: []
+    origin: bi
+    bi_description: Month of the year as a number (1-12).
+  - name: Period
+    logical_name: PERIOD
+    data_type: VARCHAR
+    description: Year and month combined into a reporting period label.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - period
+    sample_values: []
+    origin: bi
+    bi_description: Year and month combined into a reporting period label.
+  - name: Period number
+    logical_name: PERIOD_NUMBER
+    data_type: INTEGER
+    description: Numeric version of the reporting period, used to keep periods in
+      chronological order.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - period number
+    - PeriodNumber
+    sample_values: []
+    origin: bi
+    bi_description: Numeric version of the reporting period, used to keep periods
+      in chronological order.
+  - name: Qtr
+    logical_name: QTR
+    data_type: INTEGER
+    description: Quarter of the year as a number (1-4).
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - qtr
+    sample_values: []
+    origin: bi
+    bi_description: Quarter of the year as a number (1-4).
+  - name: Qtr number
+    logical_name: QTR_NUMBER
+    data_type: VARCHAR
+    description: Quarter label (Q1, Q2, ...).
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - qtr number
+    - QtrNumber
+    sample_values: []
+    origin: bi
+    bi_description: Quarter label (Q1, Q2, ...).
+  - name: Year
+    logical_name: YEAR
+    data_type: INTEGER
+    description: Calendar year.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - year
+    sample_values: []
+    origin: bi
+    bi_description: Calendar year.
+  - name: Day
+    logical_name: DAY
+    data_type: INTEGER
+    description: Day of the month.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - day
+    sample_values: []
+    origin: bi
+    bi_description: Day of the month.
+  - name: Month start date
+    logical_name: MONTH_START_DATE
+    data_type: DATE
+    description: First day of the month a date falls in.
+    is_primary_key: false
+    is_hidden: false
+    format_string: dd-mmm-yyyy
+    synonyms:
+    - month start date
+    - MonthStartDate
+    - start date
+    sample_values: []
+    origin: bi
+    bi_description: First day of the month a date falls in.
+  - name: Month end date
+    logical_name: MONTH_END_DATE
+    data_type: DATE
+    description: Last day of the month a date falls in.
+    is_primary_key: false
+    is_hidden: false
+    format_string: dd-mmm-yyyy
+    synonyms:
+    - month end date
+    - MonthEndDate
+    - end date
+    sample_values: []
+    origin: bi
+    bi_description: Last day of the month a date falls in.
+  - name: Month increment number
+    logical_name: MONTH_INCREMENT_NUMBER
+    data_type: INTEGER
+    description: Sequential month counter that runs across years - handy for continuous
+      trend lines that shouldn't restart each January.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - month increment number
+    - MonthIncrementNumber
+    - increment number
+    sample_values: []
+    origin: bi
+    bi_description: Sequential month counter that runs across years - handy for continuous
+      trend lines that shouldn't restart each January.
+  hierarchies:
+  - name: YQM
+    label: YQM
+    is_hidden: false
+    levels:
+    - name: Year
+      label: Year
+      attribute: Year
+    - name: Qtr number
+      label: Qtr number
+      attribute: Qtr number
+    - name: Period number
+      label: Period number
+      attribute: Period number
+    origin: bi
+  tags: []
+  origin: bi
+  bi_description: The calendar the model runs on. Enables trending, year-over-year
+    comparisons, and any time-based slicing (year, quarter, month, day).
+- name: Employee
+  logical_name: EMPLOYEE
+  label: Employee
+  concept_type: ENTITY
+  domain: em-hr-ai
+  description: The workforce record that powers this model. It tracks who worked where
+    each month and captures every hire and separation, so the business can answer
+    questions about headcount, turnover, hiring, tenure, and workforce mix over time.
+  synonyms: []
+  business_rules: []
+  physical_table: Employee
+  attributes:
+  - name: date
+    logical_name: COL_DATE
+    data_type: DATE
+    description: The snapshot month this employee record applies to.
+    is_primary_key: false
+    is_hidden: true
+    format_string: dd-mmm-yyyy
+    synonyms:
+    - date
+    sample_values: []
+    origin: bi
+    bi_description: The snapshot month this employee record applies to.
+  - name: EmplID
+    logical_name: EMPLID
+    data_type: INTEGER
+    description: Unique employee identifier.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - empl ID
+    - EmplID
+    sample_values: []
+    origin: bi
+    bi_description: Unique employee identifier.
+  - name: Gender
+    logical_name: GENDER
+    data_type: VARCHAR
+    description: Employee's gender.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - gender
+    sample_values: []
+    origin: bi
+    bi_description: Employee's gender.
+  - name: Age
+    logical_name: AGE
+    data_type: INTEGER
+    description: Employee's age.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - age
+    sample_values: []
+    origin: bi
+    bi_description: Employee's age.
+  - name: EthnicGroup
+    logical_name: ETHNICGROUP
+    data_type: VARCHAR
+    description: Employee's ethnicity.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - ethnic group
+    - EthnicGroup
+    sample_values: []
+    origin: bi
+    bi_description: Employee's ethnicity.
+  - name: FP
+    logical_name: FP
+    data_type: VARCHAR
+    description: Whether the employee is Full-Time or Part-Time.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - fp
+    sample_values: []
+    origin: bi
+    bi_description: Whether the employee is Full-Time or Part-Time.
+  - name: TermDate
+    logical_name: TERMDATE
+    data_type: DATE
+    description: Date the employee left the company. Empty if they were still active
+      in the month.
+    is_primary_key: false
+    is_hidden: true
+    format_string: dd-mmm-yyyy
+    synonyms:
+    - term date
+    - TermDate
+    - date
+    sample_values: []
+    origin: bi
+    bi_description: Date the employee left the company. Empty if they were still active
+      in the month.
+  - name: isNewHire
+    logical_name: ISNEWHIRE
+    data_type: VARCHAR
+    description: Flag that marks the row for the month an employee was hired.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - is new hire
+    - isNewHire
+    sample_values: []
+    origin: bi
+    bi_description: Flag that marks the row for the month an employee was hired.
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    description: Business unit the employee works in.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - bu
+    sample_values: []
+    origin: bi
+    bi_description: Business unit the employee works in.
+  - name: HireDate
+    logical_name: HIREDATE
+    data_type: DATE
+    description: Date the employee originally joined the company.
+    is_primary_key: false
+    is_hidden: true
+    format_string: dd-mmm-yyyy
+    synonyms:
+    - hire date
+    - HireDate
+    - date
+    sample_values: []
+    origin: bi
+    bi_description: Date the employee originally joined the company.
+  - name: PayTypeID
+    logical_name: PAYTYPEID
+    data_type: VARCHAR
+    description: Whether the employee is paid Hourly or Salaried.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - pay type ID
+    - PayTypeID
+    - type
+    sample_values: []
+    origin: bi
+    bi_description: Whether the employee is paid Hourly or Salaried.
+  - name: TermReason
+    logical_name: TERMREASON
+    data_type: VARCHAR
+    description: Reason the employee left the company (only populated for separations).
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - term reason
+    - TermReason
+    - reason
+    sample_values: []
+    origin: bi
+    bi_description: Reason the employee left the company (only populated for separations).
+  - name: AgeGroupID
+    logical_name: AGEGROUPID
+    data_type: VARCHAR
+    description: The age band the employee falls into.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - age group ID
+    - AgeGroupID
+    - group ID
+    sample_values: []
+    origin: bi
+    bi_description: The age band the employee falls into.
+  - name: TenureDays
+    logical_name: TENUREDAYS
+    data_type: FLOAT
+    description: How long the employee has been with the company, in days.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - tenure day
+    - TenureDays
+    sample_values: []
+    origin: bi
+    bi_description: How long the employee has been with the company, in days.
+  - name: TenureMonths
+    logical_name: TENUREMONTHS
+    data_type: VARCHAR
+    description: How long the employee has been with the company, in months.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - tenure month
+    - TenureMonths
+    sample_values: []
+    origin: bi
+    bi_description: How long the employee has been with the company, in months.
+  - name: BadHires
+    logical_name: BADHIRES
+    data_type: FLOAT
+    description: Flag that marks a hire who left within 60 days - used to track early
+      attrition of new employees.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - bad hire
+    - BadHires
+    - hire
+    sample_values: []
+    origin: bi
+    bi_description: Flag that marks a hire who left within 60 days - used to track
+      early attrition of new employees.
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: The workforce record that powers this model. It tracks who worked
+    where each month and captures every hire and separation, so the business can answer
+    questions about headcount, turnover, hiring, tenure, and workforce mix over time.
+- name: Employee type
+  logical_name: EMPLOYEE_TYPE
+  label: Employee type
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: Whether an employee is Full-Time or Part-Time. Lets reports compare
+    workforce and hiring trends by employment status.
+  synonyms: []
+  business_rules: []
+  physical_table: Employee type
+  attributes:
+  - name: Employee type ID
+    logical_name: EMPLOYEE_TYPE_ID
+    data_type: VARCHAR
+    description: Employee type code.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - employee type ID
+    - type
+    - type ID
+    sample_values: []
+    origin: bi
+    bi_description: Employee type code.
+  - name: Employee type
+    logical_name: EMPLOYEE_TYPE
+    data_type: VARCHAR
+    description: Whether the employee is Full-Time or Part-Time.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - employee type
+    - employee type name
+    - type
+    sample_values: []
+    origin: bi
+    bi_description: Whether the employee is Full-Time or Part-Time.
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: Whether an employee is Full-Time or Part-Time. Lets reports compare
+    workforce and hiring trends by employment status.
+- name: Ethnicity
+  logical_name: ETHNICITY
+  label: Ethnicity
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: The ethnicity categories used to measure workforce diversity and representation.
+  synonyms: []
+  business_rules: []
+  physical_table: Ethnicity
+  attributes:
+  - name: Ethnicity group ID
+    logical_name: ETHNICITY_GROUP_ID
+    data_type: VARCHAR
+    description: Ethnicity code.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - ethnicity group ID
+    - group ID
+    sample_values: []
+    origin: bi
+    bi_description: Ethnicity code.
+  - name: Ethnicity group
+    logical_name: ETHNICITY_GROUP
+    data_type: VARCHAR
+    description: Ethnicity group used for diversity reporting.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - ethnicity group
+    sample_values: []
+    origin: bi
+    bi_description: Ethnicity group used for diversity reporting.
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: The ethnicity categories used to measure workforce diversity and
+    representation.
+- name: Gender
+  logical_name: GENDER
+  label: Gender
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: The gender categories used to measure workforce diversity and representation.
+  synonyms: []
+  business_rules: []
+  physical_table: Gender
+  attributes:
+  - name: Gender ID
+    logical_name: GENDER_ID
+    data_type: VARCHAR
+    description: Gender code.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - gender ID
+    sample_values: []
+    origin: bi
+    bi_description: Gender code.
+  - name: Gender
+    logical_name: GENDER
+    data_type: VARCHAR
+    description: Gender used for diversity reporting.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - gender
+    - gender name
+    sample_values: []
+    origin: bi
+    bi_description: Gender used for diversity reporting.
+  - name: Sort
+    logical_name: SORT
+    data_type: INTEGER
+    description: Controls the display order of the Gender labels.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - sort
+    sample_values: []
+    origin: bi
+    bi_description: Controls the display order of the Gender labels.
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: The gender categories used to measure workforce diversity and representation.
+- name: Pay type
+  logical_name: PAY_TYPE
+  label: Pay type
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: Whether an employee is paid Hourly or Salaried. Lets reports compare
+    workforce and turnover patterns across pay structures.
+  synonyms: []
+  business_rules: []
+  physical_table: Pay type
+  attributes:
+  - name: Pay type ID
+    logical_name: PAY_TYPE_ID
+    data_type: VARCHAR
+    description: Pay type code.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - pay type ID
+    - type
+    - type ID
+    sample_values: []
+    origin: bi
+    bi_description: Pay type code.
+  - name: Pay type
+    logical_name: PAY_TYPE
+    data_type: VARCHAR
+    description: Whether the employee is paid Hourly or Salaried.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - pay type
+    - pay type name
+    - type
+    sample_values: []
+    origin: bi
+    bi_description: Whether the employee is paid Hourly or Salaried.
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: Whether an employee is paid Hourly or Salaried. Lets reports compare
+    workforce and turnover patterns across pay structures.
+- name: Separation reason
+  logical_name: SEPARATION_REASON
+  label: Separation reason
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  description: Why someone left the company - voluntary vs. involuntary. Lets reports
+    understand what's driving separations.
+  synonyms: []
+  business_rules: []
+  physical_table: Separation reason
+  attributes:
+  - name: Separation reason ID
+    logical_name: SEPARATION_REASON_ID
+    data_type: VARCHAR
+    description: Separation reason code.
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - separation reason ID
+    - reason
+    - reason ID
+    sample_values: []
+    origin: bi
+    bi_description: Separation reason code.
+  - name: Separation reason
+    logical_name: SEPARATION_REASON
+    data_type: VARCHAR
+    description: Whether a departure was Voluntary or Involuntary.
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - separation reason
+    - separation reason name
+    - reason
+    sample_values: []
+    origin: bi
+    bi_description: Whether a departure was Voluntary or Involuntary.
+  hierarchies: []
+  tags: []
+  origin: bi
+  bi_description: Why someone left the company - voluntary vs. involuntary. Lets reports
+    understand what's driving separations.
+- name: AgeGroup
+  logical_name: AGEGROUP
+  label: AgeGroup
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: AgeGroup
+  attributes:
+  - name: AgeGroupID
+    logical_name: AGEGROUPID
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: AgeGroup
+    logical_name: AGEGROUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: BU
+  logical_name: BU
+  label: BU
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: BU
+  attributes:
+  - name: BU
+    logical_name: BU
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: RegionSeq
+    logical_name: REGIONSEQ
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: VP
+    logical_name: VP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: FP
+  logical_name: FP
+  label: FP
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: FP
+  attributes:
+  - name: FP
+    logical_name: FP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: FPDesc
+    logical_name: FPDESC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: PayType
+  logical_name: PAYTYPE
+  label: PayType
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: PayType
+  attributes:
+  - name: PayTypeID
+    logical_name: PAYTYPEID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: PayType
+    logical_name: PAYTYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: SeparationReason
+  logical_name: SEPARATIONREASON
+  label: SeparationReason
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: SeparationReason
+  attributes:
+  - name: SeparationTypeID
+    logical_name: SEPARATIONTYPEID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms: []
+    sample_values: []
+    origin: bi
+  - name: SeparationReason
+    logical_name: SEPARATIONREASON
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms: []
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Accounts
+  logical_name: ACCOUNTS
+  label: Accounts
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Accounts
+  attributes:
+  - name: Account Name
+    logical_name: ACCOUNT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - account name
+    - name
+    sample_values: []
+    origin: bi
+  - name: Street
+    logical_name: STREET
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - street
+    - address
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - city
+    sample_values: []
+    origin: bi
+  - name: State or Province
+    logical_name: STATE_OR_PROVINCE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - state or province
+    - state
+    - state province
+    sample_values: []
+    origin: bi
+  - name: Postal Code
+    logical_name: POSTAL_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - postal code
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - country
+    sample_values: []
+    origin: bi
+  - name: Latitude
+    logical_name: LATITUDE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - latitude
+    sample_values: []
+    origin: bi
+  - name: Longitude
+    logical_name: LONGITUDE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - longitude
+    sample_values: []
+    origin: bi
+  - name: Phone
+    logical_name: PHONE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - phone
+    sample_values: []
+    origin: bi
+  - name: Annual Revenue
+    logical_name: ANNUAL_REVENUE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - annual revenue
+    - revenue
+    sample_values: []
+    origin: bi
+  - name: Number of Employees
+    logical_name: NUMBER_OF_EMPLOYEES
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - number of employees
+    - number of employee
+    sample_values: []
+    origin: bi
+  - name: Account Owner
+    logical_name: ACCOUNT_OWNER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - account owner
+    sample_values: []
+    origin: bi
+  - name: AccountID
+    logical_name: ACCOUNTID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - account ID
+    - ID
+    - AccountID
+    sample_values: []
+    origin: bi
+  - name: Industry Lookup
+    logical_name: INDUSTRY_LOOKUP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - industry lookup
+    - lookup
+    sample_values: []
+    origin: bi
+  - name: Territory
+    logical_name: TERRITORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - territory
+    sample_values: []
+    origin: bi
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - region
+    sample_values: []
+    origin: bi
+  - name: AccountSeq
+    logical_name: ACCOUNTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - account seq
+    - AccountSeq
+    sample_values: []
+    origin: bi
+  - name: IndustrySeq
+    logical_name: INDUSTRYSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - industry seq
+    - IndustrySeq
+    sample_values: []
+    origin: bi
+  - name: AccountOwnerSeq
+    logical_name: ACCOUNTOWNERSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - account owner seq
+    - AccountOwnerSeq
+    sample_values: []
+    origin: bi
+  - name: Industry
+    logical_name: INDUSTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - industry
+    sample_values: []
+    origin: bi
+  - name: Account Number
+    logical_name: ACCOUNT_NUMBER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - account number
+    sample_values: []
+    origin: bi
+  hierarchies:
+  - name: Location Hierarchy
+    label: Location Hierarchy
+    is_hidden: false
+    levels:
+    - name: Country
+      label: Country
+      attribute: Country
+    - name: State or Province
+      label: State or Province
+      attribute: State or Province
+    - name: City
+      label: City
+      attribute: City
+    - name: Street
+      label: Street
+      attribute: Street
+    - name: Account Name
+      label: Account Name
+      attribute: Account Name
+    origin: bi
+  tags: []
+  origin: bi
+- name: Campaigns
+  logical_name: CAMPAIGNS
+  label: Campaigns
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Campaigns
+  attributes:
+  - name: CampaignSeq
+    logical_name: CAMPAIGNSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - campaign seq
+    - CampaignSeq
+    sample_values: []
+    origin: bi
+  - name: Type
+    logical_name: TYPE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - type
+    sample_values: []
+    origin: bi
+  - name: Campaign Name
+    logical_name: CAMPAIGN_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - name
+    sample_values: []
+    origin: bi
+  - name: Factor
+    logical_name: FACTOR
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - factor
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Case Calendar
+  logical_name: CASE_CALENDAR
+  label: Case Calendar
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Case Calendar
+  attributes:
+  - name: Date
+    logical_name: COL_DATE
+    data_type: DATE
+    is_primary_key: true
+    is_hidden: false
+    format_string: Short Date
+    synonyms:
+    - date
+    sample_values: []
+    origin: bi
+  - name: DAY
+    logical_name: DAY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - day
+    sample_values: []
+    origin: bi
+  - name: DaySeq
+    logical_name: DAYSEQ
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - day seq
+    - DaySeq
+    sample_values: []
+    origin: bi
+  - name: YEAR
+    logical_name: YEAR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - year
+    sample_values: []
+    origin: bi
+  - name: MONTH NUMBER
+    logical_name: MONTH_NUMBER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - month number
+    sample_values: []
+    origin: bi
+  - name: MONTH
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - month
+    sample_values: []
+    origin: bi
+  - name: YEAR MONTH NUMBER
+    logical_name: YEAR_MONTH_NUMBER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - year month number
+    - month number
+    sample_values: []
+    origin: bi
+  - name: YEAR MONTH
+    logical_name: YEAR_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - year month
+    sample_values: []
+    origin: bi
+  - name: YEAR WEEK
+    logical_name: YEAR_WEEK
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - year week
+    sample_values: []
+    origin: bi
+  - name: WEEK
+    logical_name: WEEK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    format_string: General Date
+    synonyms:
+    - week
+    sample_values: []
+    origin: bi
+  - name: RELATIVE WEEK
+    logical_name: RELATIVE_WEEK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - relative week
+    sample_values: []
+    origin: bi
+  - name: RELATIVE DAY
+    logical_name: RELATIVE_DAY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - relative day
+    sample_values: []
+    origin: bi
+  - name: RELATIVE 07 DAY PERIOD
+    logical_name: RELATIVE_07_DAY_PERIOD
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - relative 07 day period
+    - period
+    - day period
+    sample_values: []
+    origin: bi
+  - name: RELATIVE 30 DAY PERIOD
+    logical_name: RELATIVE_30_DAY_PERIOD
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - relative 30 day period
+    - period
+    - day period
+    sample_values: []
+    origin: bi
+  - name: RELATIVE MONTH
+    logical_name: RELATIVE_MONTH
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - relative month
+    sample_values: []
+    origin: bi
+  - name: Weekday
+    logical_name: WEEKDAY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - weekday
+    sample_values: []
+    origin: bi
+  - name: WeekdaySeq
+    logical_name: WEEKDAYSEQ
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - weekday seq
+    - WeekdaySeq
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Cases
+  logical_name: CASES
+  label: Cases
+  concept_type: ENTITY
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Cases
+  attributes:
+  - name: Case Created On
+    logical_name: CASE_CREATED_ON
+    data_type: TIMESTAMP_NTZ
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - case created on
+    - date
+    sample_values: []
+    origin: bi
+  - name: Status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - status
+    sample_values: []
+    origin: bi
+  - name: Agent
+    logical_name: AGENT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - owner
+    - Agent
+    - Rep
+    - Created by
+    sample_values: []
+    origin: bi
+  - name: Title
+    logical_name: TITLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - title
+    sample_values: []
+    origin: bi
+  - name: Origin
+    logical_name: ORIGIN
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - origin
+    sample_values: []
+    origin: bi
+  - name: Is Escalated
+    logical_name: IS_ESCALATED
+    data_type: BOOLEAN
+    is_primary_key: false
+    is_hidden: false
+    format_string: '"TRUE";"TRUE";"FALSE"'
+    synonyms:
+    - is escalated
+    sample_values: []
+    origin: bi
+  - name: Subject
+    logical_name: SUBJECT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - subject
+    sample_values: []
+    origin: bi
+  - name: CSAT Label
+    logical_name: CSAT_LABEL
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - CSAT label
+    - label
+    sample_values: []
+    origin: bi
+  - name: Resolution Minutes
+    logical_name: RESOLUTION_MINUTES
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '#,0.0'
+    synonyms:
+    - resolution minute
+    - minute
+    sample_values: []
+    origin: bi
+  - name: Severity
+    logical_name: SEVERITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - severity
+    sample_values: []
+    origin: bi
+  - name: Is SLA Violation
+    logical_name: IS_SLA_VIOLATION
+    data_type: BOOLEAN
+    is_primary_key: false
+    is_hidden: false
+    format_string: '"TRUE";"TRUE";"FALSE"'
+    synonyms:
+    - is SLA violation
+    - violation
+    - SLA violation
+    sample_values: []
+    origin: bi
+  - name: CSAT
+    logical_name: CSAT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - csat
+    sample_values: []
+    origin: bi
+  - name: SLA Compliance Goal
+    logical_name: SLA_COMPLIANCE_GOAL
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: 0%;-0%;0%
+    synonyms:
+    - SLA compliance goal
+    - goal
+    - compliance goal
+    sample_values: []
+    origin: bi
+  - name: Resolution Minutes Goal
+    logical_name: RESOLUTION_MINUTES_GOAL
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - resolution minutes goal
+    - resolution minute goal
+    - goal
+    sample_values: []
+    origin: bi
+  - name: CSAT Goal
+    logical_name: CSAT_GOAL
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0.00'
+    synonyms:
+    - CSAT goal
+    - goal
+    sample_values: []
+    origin: bi
+  - name: Escalations Goal
+    logical_name: ESCALATIONS_GOAL
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: 0%;-0%;0%
+    synonyms:
+    - escalations goal
+    - escalation goal
+    - goal
+    sample_values: []
+    origin: bi
+  - name: Minutes to First Contact
+    logical_name: MINUTES_TO_FIRST_CONTACT
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - minute to first contact
+    sample_values: []
+    origin: bi
+  - name: Activities
+    logical_name: ACTIVITIES
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - activity
+    sample_values: []
+    origin: bi
+  - name: Topic
+    logical_name: TOPIC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - topic
+    sample_values: []
+    origin: bi
+  - name: CaseSeq
+    logical_name: CASESEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - case seq
+    - CaseSeq
+    sample_values: []
+    origin: bi
+  - name: SystemUserSeq
+    logical_name: SYSTEMUSERSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - system user seq
+    - SystemUserSeq
+    sample_values: []
+    origin: bi
+  - name: AccountSeq
+    logical_name: ACCOUNTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - account seq
+    - AccountSeq
+    sample_values: []
+    origin: bi
+  - name: ProductSeq
+    logical_name: PRODUCTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - product seq
+    - ProductSeq
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Contacts
+  logical_name: CONTACTS
+  label: Contacts
+  concept_type: ENTITY
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Contacts
+  attributes:
+  - name: ContactID
+    logical_name: CONTACTID
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - contact ID
+    - ID
+    - ContactID
+    sample_values: []
+    origin: bi
+  - name: Contact
+    logical_name: CONTACT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - contact
+    - contact name
+    sample_values: []
+    origin: bi
+  - name: Job Title
+    logical_name: JOB_TITLE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - job title
+    sample_values: []
+    origin: bi
+  - name: Street
+    logical_name: STREET
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - street
+    sample_values: []
+    origin: bi
+  - name: City
+    logical_name: CITY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - city
+    sample_values: []
+    origin: bi
+  - name: State or Province
+    logical_name: STATE_OR_PROVINCE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - state or province
+    - state
+    - state province
+    sample_values: []
+    origin: bi
+  - name: Postal Code
+    logical_name: POSTAL_CODE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - postal code
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - country
+    sample_values: []
+    origin: bi
+  - name: Latitude
+    logical_name: LATITUDE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - latitude
+    sample_values: []
+    origin: bi
+  - name: Longitude
+    logical_name: LONGITUDE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - longitude
+    sample_values: []
+    origin: bi
+  - name: Phone
+    logical_name: PHONE
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - phone
+    sample_values: []
+    origin: bi
+  - name: ContactSeq
+    logical_name: CONTACTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - contact seq
+    - ContactSeq
+    sample_values: []
+    origin: bi
+  - name: AccountSeq
+    logical_name: ACCOUNTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - account seq
+    - AccountSeq
+    sample_values: []
+    origin: bi
+  - name: FirstName
+    logical_name: FIRSTNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - first name
+    - name
+    - FirstName
+    sample_values: []
+    origin: bi
+  - name: LastName
+    logical_name: LASTNAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - last name
+    - name
+    - LastName
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Industries
+  logical_name: INDUSTRIES
+  label: Industries
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Industries
+  attributes:
+  - name: Industry
+    logical_name: INDUSTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - industry
+    sample_values: []
+    origin: bi
+  - name: IndustrySeq
+    logical_name: INDUSTRYSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - industry seq
+    - IndustrySeq
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Opportunities
+  logical_name: OPPORTUNITIES
+  label: Opportunities
+  concept_type: ENTITY
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Opportunities
+  attributes:
+  - name: Budget
+    logical_name: BUDGET
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+    synonyms:
+    - budget
+    sample_values: []
+    origin: bi
+  - name: Topic
+    logical_name: TOPIC
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - topic
+    sample_values: []
+    origin: bi
+  - name: Purchase Process
+    logical_name: PURCHASE_PROCESS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - purchase process
+    - process
+    sample_values: []
+    origin: bi
+  - name: Decision Maker Identified
+    logical_name: DECISION_MAKER_IDENTIFIED
+    data_type: BOOLEAN
+    is_primary_key: false
+    is_hidden: false
+    format_string: '"TRUE";"TRUE";"FALSE"'
+    synonyms:
+    - decision maker identified
+    sample_values: []
+    origin: bi
+  - name: Status
+    logical_name: STATUS
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - status
+    sample_values: []
+    origin: bi
+  - name: PipelineStep
+    logical_name: PIPELINESTEP
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - pipeline step
+    - PipelineStep
+    - step
+    sample_values: []
+    origin: bi
+  - name: Value
+    logical_name: COL_VALUE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0;(\$#,0);\$#,0
+    synonyms:
+    - value
+    sample_values: []
+    origin: bi
+  - name: CloseDate
+    logical_name: CLOSEDATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: Short Date
+    synonyms:
+    - close date
+    - CloseDate
+    - date
+    sample_values: []
+    origin: bi
+  - name: Opportunity Created On
+    logical_name: OPPORTUNITY_CREATED_ON
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: Long Date
+    synonyms:
+    - opportunity created on
+    - date
+    sample_values: []
+    origin: bi
+  - name: Weeks Open
+    logical_name: WEEKS_OPEN
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - weeks open
+    - week open
+    - open
+    sample_values: []
+    origin: bi
+  - name: DaysToClose
+    logical_name: DAYSTOCLOSE
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - day to close
+    - DaysToClose
+    sample_values: []
+    origin: bi
+  - name: Discount
+    logical_name: DISCOUNT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: 0.0%;-0.0%;0.0%
+    synonyms:
+    - discount
+    sample_values: []
+    origin: bi
+  - name: Probability
+    logical_name: PROBABILITY
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: 0.0%;-0.0%;0.0%
+    synonyms:
+    - probability
+    sample_values: []
+    origin: bi
+  - name: Rating
+    logical_name: RATING
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - rating
+    sample_values: []
+    origin: bi
+  - name: Days Remaining In Pipeline
+    logical_name: DAYS_REMAINING_IN_PIPELINE
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - days remaining in pipeline
+    - day remaining in pipeline
+    - pipeline
+    sample_values: []
+    origin: bi
+  - name: Probability (raw)
+    logical_name: PROBABILITY_RAW
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: 0.0%;-0.0%;0.0%
+    synonyms:
+    - probability (raw)
+    - probability
+    sample_values: []
+    origin: bi
+  - name: AccountSeq
+    logical_name: ACCOUNTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - account seq
+    - AccountSeq
+    sample_values: []
+    origin: bi
+  - name: Opportunity Owner Name
+    logical_name: OPPORTUNITY_OWNER_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - opportunity owner name
+    - opportunity owner
+    - owner name
+    sample_values: []
+    origin: bi
+  - name: OpportunitySeq
+    logical_name: OPPORTUNITYSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - opportunity seq
+    - OpportunitySeq
+    sample_values: []
+    origin: bi
+  - name: ProductSeq
+    logical_name: PRODUCTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - product seq
+    - ProductSeq
+    sample_values: []
+    origin: bi
+  - name: SystemUserSeq
+    logical_name: SYSTEMUSERSEQ
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - system user seq
+    - SystemUserSeq
+    sample_values: []
+    origin: bi
+  - name: Product Name
+    logical_name: PRODUCT_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - product name
+    - ProductName
+    sample_values: []
+    origin: bi
+  - name: CampaignSeq
+    logical_name: CAMPAIGNSEQ
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    synonyms:
+    - campaign seq
+    - CampaignSeq
+    sample_values: []
+    origin: bi
+  - name: Campaign Name
+    logical_name: CAMPAIGN_NAME
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - campaign name
+    sample_values: []
+    origin: bi
+  - name: Blank
+    logical_name: BLANK
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - blank
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Opportunity Calendar
+  logical_name: OPPORTUNITY_CALENDAR
+  label: Opportunity Calendar
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Opportunity Calendar
+  attributes:
+  - name: Date
+    logical_name: COL_DATE
+    data_type: DATE
+    is_primary_key: false
+    is_hidden: true
+    format_string: Short Date
+    synonyms:
+    - date
+    - Date slicer
+    sample_values: []
+    origin: bi
+  - name: DAY
+    logical_name: DAY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: Short Date
+    synonyms:
+    - day
+    sample_values: []
+    origin: bi
+  - name: DaySeq
+    logical_name: DAYSEQ
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - day seq
+    - DaySeq
+    sample_values: []
+    origin: bi
+  - name: YEAR
+    logical_name: YEAR
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - year
+    sample_values: []
+    origin: bi
+  - name: MONTH NUMBER
+    logical_name: MONTH_NUMBER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - month number
+    sample_values: []
+    origin: bi
+  - name: MONTH
+    logical_name: MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - month
+    sample_values: []
+    origin: bi
+  - name: YEAR MONTH NUMBER
+    logical_name: YEAR_MONTH_NUMBER
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - year month number
+    - month number
+    sample_values: []
+    origin: bi
+  - name: YEAR MONTH
+    logical_name: YEAR_MONTH
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - year month
+    sample_values: []
+    origin: bi
+  - name: YEAR WEEK
+    logical_name: YEAR_WEEK
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - year week
+    sample_values: []
+    origin: bi
+  - name: WEEK
+    logical_name: WEEK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: true
+    format_string: General Date
+    synonyms:
+    - week
+    sample_values: []
+    origin: bi
+  - name: RELATIVE WEEK
+    logical_name: RELATIVE_WEEK
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - relative week
+    sample_values: []
+    origin: bi
+  - name: RELATIVE DAY
+    logical_name: RELATIVE_DAY
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: General Date
+    synonyms:
+    - relative day
+    sample_values: []
+    origin: bi
+  - name: RELATIVE 07 DAY PERIOD
+    logical_name: RELATIVE_07_DAY_PERIOD
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - relative 07 day period
+    - period
+    - day period
+    sample_values: []
+    origin: bi
+  - name: RELATIVE 30 DAY PERIOD
+    logical_name: RELATIVE_30_DAY_PERIOD
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - relative 30 day period
+    - period
+    - day period
+    sample_values: []
+    origin: bi
+  - name: RELATIVE MONTH
+    logical_name: RELATIVE_MONTH
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: false
+    format_string: '0'
+    synonyms:
+    - relative month
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Opportunity Forecast Adjustment
+  logical_name: OPPORTUNITY_FORECAST_ADJUSTMENT
+  label: Opportunity Forecast Adjustment
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Opportunity Forecast Adjustment
+  attributes:
+  - name: Forecast Adjustment
+    logical_name: FORECAST_ADJUSTMENT
+    data_type: FLOAT
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - forecast adjustment
+    - adjustment
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Owners
+  logical_name: OWNERS
+  label: Owners
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Owners
+  attributes:
+  - name: Sales owner
+    logical_name: SALES_OWNER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - sales owner
+    - sale owner
+    sample_values: []
+    origin: bi
+  - name: Manager
+    logical_name: MANAGER
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - manager
+    sample_values: []
+    origin: bi
+  - name: SystemUserSeq
+    logical_name: SYSTEMUSERSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - system user seq
+    - SystemUserSeq
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Products
+  logical_name: PRODUCTS
+  label: Products
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Products
+  attributes:
+  - name: Product category
+    logical_name: PRODUCT_CATEGORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - product category
+    - category
+    sample_values: []
+    origin: bi
+  - name: Product
+    logical_name: PRODUCT
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - product
+    - product name
+    sample_values: []
+    origin: bi
+  - name: MinOppValue
+    logical_name: MINOPPVALUE
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+    synonyms:
+    - min opp value
+    - MinOppValue
+    sample_values: []
+    origin: bi
+  - name: MaxOppValue
+    logical_name: MAXOPPVALUE
+    data_type: DECIMAL(18,2)
+    is_primary_key: false
+    is_hidden: false
+    format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+    synonyms:
+    - max opp value
+    - MaxOppValue
+    sample_values: []
+    origin: bi
+  - name: ProductSeq
+    logical_name: PRODUCTSEQ
+    data_type: INTEGER
+    is_primary_key: false
+    is_hidden: true
+    format_string: '0'
+    synonyms:
+    - product seq
+    - ProductSeq
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+- name: Territories
+  logical_name: TERRITORIES
+  label: Territories
+  concept_type: DIMENSION
+  domain: em-hr-ai
+  synonyms: []
+  business_rules: []
+  physical_table: Territories
+  attributes:
+  - name: Region
+    logical_name: REGION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - region
+    sample_values: []
+    origin: bi
+  - name: Territory
+    logical_name: TERRITORY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - territory
+    sample_values: []
+    origin: bi
+  - name: Country
+    logical_name: COUNTRY
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - country
+    sample_values: []
+    origin: bi
+  - name: State Or Province Abbreviation
+    logical_name: STATE_OR_PROVINCE_ABBREVIATION
+    data_type: VARCHAR
+    is_primary_key: false
+    is_hidden: false
+    synonyms:
+    - state or province abbreviation
+    - state
+    - state province abbreviation
+    sample_values: []
+    origin: bi
+  hierarchies: []
+  tags: []
+  origin: bi
+metrics:
+- name: Employees
+  logical_name: EMPLOYEES
+  label: Employees
+  description: Total headcount for the period in scope.
+  sql_expression: COUNT(Employee."EMPLID")
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[Period number]), 'Date'[Period
+    number] = MAX('Date'[Period number])))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - emp count
+  - EmpCount
+  - Employees
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Total headcount for the period in scope.
+- name: Separations
+  logical_name: SEPARATIONS
+  label: Separations
+  description: Number of employees who left the company in the period.
+  sql_expression: COUNT(CASE WHEN (Employee."TERMDATE" IS NOT NULL) THEN Employee."EMPLID"
+    END)
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - separations
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Number of employees who left the company in the period.
+- name: Actives
+  logical_name: ACTIVES
+  label: Actives
+  description: Number of employees still working at the end of the period.
+  dax_expression: CALCULATE([Employees], FILTER(Employee, ISBLANK(Employee[TermDate])))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - actives
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Number of employees still working at the end of the period.
+- name: New Hires
+  logical_name: NEW_HIRES
+  label: New Hires
+  description: Number of employees hired in the period.
+  sql_expression: SUM(Employee."ISNEWHIRE"::FLOAT)
+  dax_expression: SUM([isNewHire])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - new hires
+  - hires
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Number of employees hired in the period.
+- name: AVG Tenure Days
+  logical_name: AVG_TENURE_DAYS
+  label: AVG Tenure Days
+  description: Average employee tenure, in days.
+  sql_expression: AVG(Employee."TENUREDAYS"::FLOAT)
+  dax_expression: AVERAGE([TenureDays])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG tenure days
+  - tenure days
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Average employee tenure, in days.
+- name: AVG Tenure Months
+  logical_name: AVG_TENURE_MONTHS
+  label: AVG Tenure Months
+  description: Average employee tenure, in months.
+  sql_expression: CASE WHEN (ROUND(Employee."AVG_TENURE_DAYS" / 30, 1)) IS NULL AND
+    (1) IS NULL THEN NULL ELSE COALESCE(ROUND(Employee."AVG_TENURE_DAYS" / 30, 1),
+    0) - 1 END
+  dax_expression: ROUND([AVG Tenure Days]/30, 1)-1
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG tenure months
+  - tenure months
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Average employee tenure, in months.
+- name: AVG Age
+  logical_name: AVG_AGE
+  label: AVG Age
+  description: Average employee age.
+  sql_expression: ROUND(AVG(Employee."AGE"::FLOAT), 0)
+  dax_expression: ROUND(AVERAGE([Age]), 0)
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - AVG age
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Average employee age.
+- name: New Hires SPLY
+  logical_name: NEW_HIRES_SPLY
+  label: New Hires SPLY
+  description: Number of new hires in the same period one year ago - the comparison
+    point for year-over-year hiring.
+  dax_expression: CALCULATE([New Hires],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - new hires SPLY
+  - SPLY
+  - hires SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Number of new hires in the same period one year ago - the comparison
+    point for year-over-year hiring.
+- name: Actives SPLY
+  logical_name: ACTIVES_SPLY
+  label: Actives SPLY
+  description: Active headcount in the same period one year ago - the comparison point
+    for year-over-year workforce size.
+  dax_expression: CALCULATE([Actives],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - actives SPLY
+  - SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Active headcount in the same period one year ago - the comparison
+    point for year-over-year workforce size.
+- name: Seps SPLY
+  logical_name: SEPS_SPLY
+  label: Seps SPLY
+  description: Separations in the same period one year ago - the comparison point
+    for year-over-year attrition.
+  dax_expression: CALCULATE([Separations],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - seps SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Separations in the same period one year ago - the comparison point
+    for year-over-year attrition.
+- name: Employees SPLY
+  logical_name: EMPLOYEES_SPLY
+  label: Employees SPLY
+  description: Total headcount in the same period one year ago.
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[Period number]), 'Date'[Period
+    number] = MAX('Date'[Period number])),SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount SPLY
+  - Employees SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Total headcount in the same period one year ago.
+- name: Seps YoY Var
+  logical_name: SEPS_YOY_VAR
+  label: Seps YoY Var
+  description: Change in separations vs. the same period last year (positive = more
+    people leaving).
+  sql_expression: CASE WHEN (Employee."SEPARATIONS") IS NULL AND (Employee."SEPS_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."SEPARATIONS", 0) - COALESCE(Employee."SEPS_SPLY",
+    0) END
+  dax_expression: '[Separations]-[Seps SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - seps YoY var
+  business_rules: []
+  derives_from:
+  - Separations
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Change in separations vs. the same period last year (positive =
+    more people leaving).
+- name: Actives YoY Var
+  logical_name: ACTIVES_YOY_VAR
+  label: Actives YoY Var
+  description: Change in active headcount vs. the same period last year (positive
+    = workforce grew).
+  sql_expression: CASE WHEN (Employee."ACTIVES") IS NULL AND (Employee."ACTIVES_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."ACTIVES", 0) - COALESCE(Employee."ACTIVES_SPLY",
+    0) END
+  dax_expression: '[Actives]-[Actives SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - actives YoY var
+  business_rules: []
+  derives_from:
+  - Actives
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Change in active headcount vs. the same period last year (positive
+    = workforce grew).
+- name: New Hires YoY Var
+  logical_name: NEW_HIRES_YOY_VAR
+  label: New Hires YoY Var
+  description: Change in new hires vs. the same period last year (positive = more
+    hiring).
+  sql_expression: CASE WHEN (Employee."NEW_HIRES") IS NULL AND (Employee."NEW_HIRES_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."NEW_HIRES", 0) - COALESCE(Employee."NEW_HIRES_SPLY",
+    0) END
+  dax_expression: '[New Hires]-[New Hires SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - new hires YoY var
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Change in new hires vs. the same period last year (positive = more
+    hiring).
+- name: Seps YoY % Change
+  logical_name: SEPS_YOY_PCT_CHANGE
+  label: Seps YoY % Change
+  description: Percent change in separations vs. the same period last year - shows
+    whether attrition is trending up or down.
+  sql_expression: Employee."SEPS_YOY_VAR" / NULLIF(Employee."SEPS_SPLY", 0)
+  dax_expression: DIVIDE([Seps YoY Var], [Seps SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - seps YoY % change
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Percent change in separations vs. the same period last year - shows
+    whether attrition is trending up or down.
+- name: Actives YoY % Change
+  logical_name: ACTIVES_YOY_PCT_CHANGE
+  label: Actives YoY % Change
+  description: Percent change in active headcount vs. the same period last year -
+    shows workforce growth or shrinkage.
+  sql_expression: Employee."ACTIVES_YOY_VAR" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Actives YoY Var], [Actives SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - actives YoY % change
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Percent change in active headcount vs. the same period last year
+    - shows workforce growth or shrinkage.
+- name: New Hires YoY % Change
+  logical_name: NEW_HIRES_YOY_PCT_CHANGE
+  label: New Hires YoY % Change
+  description: Percent change in new hires vs. the same period last year - shows whether
+    hiring is accelerating or slowing.
+  sql_expression: Employee."NEW_HIRES_YOY_VAR" / NULLIF(Employee."NEW_HIRES_SPLY",
+    0)
+  dax_expression: DIVIDE([New Hires YoY Var], [New Hires SPLY])
+  format_string: '#,0.0%;-#,0.0%;#,0.0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - new hires YoY % change
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Percent change in new hires vs. the same period last year - shows
+    whether hiring is accelerating or slowing.
+- name: Bad Hires SPLY
+  logical_name: BAD_HIRES_SPLY
+  label: Bad Hires SPLY
+  description: Bad hires in the same period one year ago - the comparison point for
+    early-attrition trends.
+  dax_expression: CALCULATE([Bad hires],SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - bad hires SPLY
+  - SPLY
+  - hires SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Bad hires in the same period one year ago - the comparison point
+    for early-attrition trends.
+- name: Bad Hires YoY Var
+  logical_name: BAD_HIRES_YOY_VAR
+  label: Bad Hires YoY Var
+  description: Change in bad hires vs. the same period last year (positive = more
+    people leaving within their first 60 days).
+  sql_expression: CASE WHEN (Employee."BAD_HIRES") IS NULL AND (Employee."BAD_HIRES_SPLY")
+    IS NULL THEN NULL ELSE COALESCE(Employee."BAD_HIRES", 0) - COALESCE(Employee."BAD_HIRES_SPLY",
+    0) END
+  dax_expression: '[Bad hires]-[Bad Hires SPLY]'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - bad hires YoY var
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Change in bad hires vs. the same period last year (positive = more
+    people leaving within their first 60 days).
+- name: Bad Hires YoY % Change
+  logical_name: BAD_HIRES_YOY_PCT_CHANGE
+  label: Bad Hires YoY % Change
+  description: Percent change in bad hires vs. the same period last year - shows whether
+    early-attrition of new hires is getting worse.
+  sql_expression: Employee."BAD_HIRES_YOY_VAR" / NULLIF(Employee."BAD_HIRES_SPLY",
+    0)
+  dax_expression: DIVIDE([Bad Hires YoY Var], [Bad Hires SPLY])
+  format_string: '#,0%;-#,0%;#,0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - bad hires YoY % change
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Percent change in bad hires vs. the same period last year - shows
+    whether early-attrition of new hires is getting worse.
+- name: Sep % of Active
+  logical_name: SEP_PCT_OF_ACTIVE
+  label: Sep % of Active
+  description: 'Turnover rate: share of the active workforce that separated in the
+    period.'
+  sql_expression: Employee."SEPARATIONS" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Separations],[Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - sep%ofActive
+  - Sep % of Active
+  business_rules: []
+  derives_from:
+  - Separations
+  - Actives
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: 'Turnover rate: share of the active workforce that separated in
+    the period.'
+- name: Sep % of SMLY Actives
+  logical_name: SEP_PCT_OF_SMLY_ACTIVES
+  label: Sep % of SMLY Actives
+  description: Turnover rate for the same period one year ago - the comparison point
+    for [Sep % of Active].
+  sql_expression: Employee."SEPS_SPLY" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Seps SPLY],[Actives SPLY])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - sep%ofSMLYActives
+  - Sep % of SMLY Actives
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Turnover rate for the same period one year ago - the comparison
+    point for [Sep % of Active].
+- name: Bad hires % of actives
+  logical_name: BAD_HIRES_PCT_OF_ACTIVES
+  label: Bad hires % of actives
+  description: 'Bad-hire rate: share of the active workforce that came in as a bad
+    hire.'
+  sql_expression: Employee."BAD_HIRES" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Bad hires],[Actives])
+  format_string: 0%;-0%;0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - bad hires % of actives
+  business_rules: []
+  derives_from:
+  - Actives
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: 'Bad-hire rate: share of the active workforce that came in as a
+    bad hire.'
+- name: Bad hires % of Active SPLY
+  logical_name: BAD_HIRES_PCT_OF_ACTIVE_SPLY
+  label: Bad hires % of Active SPLY
+  description: Bad-hire rate for the same period one year ago - the comparison point
+    for [Bad hires % of actives].
+  sql_expression: Employee."BAD_HIRES_SPLY" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Bad Hires SPLY],[Actives SPLY])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - bad hires % of active SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Bad-hire rate for the same period one year ago - the comparison
+    point for [Bad hires % of actives].
+- name: Bad hires
+  logical_name: BAD_HIRES
+  label: Bad hires
+  description: Number of hires who left within 60 days - the standard measure of failed
+    hires.
+  sql_expression: SUM(Employee."BADHIRES"::FLOAT)
+  dax_expression: sum(Employee[BadHires])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - bad hires
+  - hires
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+  bi_description: Number of hires who left within 60 days - the standard measure of
+    failed hires.
+- name: Count of BU
+  logical_name: COUNT_OF_BU
+  label: Count of BU
+  sql_expression: COUNT(BU."BU")
+  dax_expression: COUNTA('BU'[BU])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of BU
+  business_rules: []
+  domain: em-hr-ai
+  concept: BU
+  tags: []
+  origin: bi
+- name: Count of Date
+  logical_name: COUNT_OF_DATE
+  label: Count of Date
+  sql_expression: COUNT(COL_DATE."COL_DATE")
+  dax_expression: COUNTA('Date'[Date])
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Count of Date
+  business_rules: []
+  domain: em-hr-ai
+  concept: Date
+  tags: []
+  origin: bi
+- name: EmpCount
+  logical_name: EMPCOUNT
+  label: EmpCount
+  sql_expression: COUNT(Employee."EMPLID")
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber]
+    = MAX('Date'[PeriodNumber])))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Seps
+  logical_name: SEPS
+  label: Seps
+  sql_expression: COUNT(CASE WHEN (Employee."TERMDATE" IS NOT NULL) THEN Employee."EMPLID"
+    END)
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(Employee, NOT(ISBLANK(Employee[TermDate]))))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Seps
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Sum of BadHires
+  logical_name: SUM_OF_BADHIRES
+  label: Sum of BadHires
+  sql_expression: SUM(Employee."BADHIRES"::FLOAT)
+  dax_expression: SUM([BadHires])
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sum of BadHires
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: EmpCount SPLY
+  logical_name: EMPCOUNT_SPLY
+  label: EmpCount SPLY
+  dax_expression: CALCULATE(COUNT([EmplID]), FILTER(ALL('Date'[PeriodNumber]), 'Date'[PeriodNumber]
+    = MAX('Date'[PeriodNumber])),SAMEPERIODLASTYEAR('Date'[Date]))
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - EmpCount SPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: TO %
+  logical_name: TO_PCT
+  label: TO %
+  sql_expression: Employee."SEPS" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Seps], [Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO %
+  business_rules: []
+  derives_from:
+  - Seps
+  - Actives
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: TO % Norm
+  logical_name: TO_PCT_NORM
+  label: TO % Norm
+  sql_expression: SUM(EMPLOYEE."TO_PCT"::FLOAT) OVER (PARTITION BY EXCLUDING GENDER."GENDER",
+    ETHNICITY."ETHNICITY")
+  dax_expression: CALCULATE([TO %], all(Gender[Gender]), ALL(Ethnicity[Ethnicity]))
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO % Norm
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: TO % Var
+  logical_name: TO_PCT_VAR
+  label: TO % Var
+  sql_expression: CASE WHEN (Employee."TO_PCT") IS NULL AND (Employee."TO_PCT_NORM")
+    IS NULL THEN NULL ELSE COALESCE(Employee."TO_PCT", 0) - COALESCE(Employee."TO_PCT_NORM",
+    0) END
+  dax_expression: '[TO %]-[TO % Norm]'
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - TO % Var
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Sep%ofActive
+  logical_name: SEPPCTOFACTIVE
+  label: Sep%ofActive
+  sql_expression: Employee."SEPS" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Seps],[Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sep%ofActive
+  business_rules: []
+  derives_from:
+  - Seps
+  - Actives
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: Sep%ofSMLYActives
+  logical_name: SEPPCTOFSMLYACTIVES
+  label: Sep%ofSMLYActives
+  sql_expression: Employee."SEPS_SPLY" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Seps SPLY],[Actives SPLY])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - Sep%ofSMLYActives
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: BadHire%ofActives
+  logical_name: BADHIREPCTOFACTIVES
+  label: BadHire%ofActives
+  sql_expression: Employee."SUM_OF_BADHIRES" / NULLIF(Employee."ACTIVES", 0)
+  dax_expression: DIVIDE([Sum of BadHires],[Actives])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - BadHire%ofActives
+  business_rules: []
+  derives_from:
+  - Actives
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: BadHire%ofActiveSPLY
+  logical_name: BADHIREPCTOFACTIVESPLY
+  label: BadHire%ofActiveSPLY
+  sql_expression: Employee."BAD_HIRES_SPLY" / NULLIF(Employee."ACTIVES_SPLY", 0)
+  dax_expression: DIVIDE([Bad Hires SPLY],[Actives SPLY])
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - BadHire%ofActiveSPLY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Employee
+  tags: []
+  origin: bi
+- name: SUM_OF_MONTHNUMBER
+  logical_name: SUM_OF_MONTHNUMBER
+  label: SUM_OF_MONTHNUMBER
+  sql_expression: SUM(MonthNumber)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_MONTHNUMBER
+  business_rules: []
+  domain: em-hr-ai
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_PERIODNUMBER
+  logical_name: SUM_OF_PERIODNUMBER
+  label: SUM_OF_PERIODNUMBER
+  sql_expression: SUM(PeriodNumber)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_PERIODNUMBER
+  business_rules: []
+  domain: em-hr-ai
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_QTR
+  logical_name: SUM_OF_QTR
+  label: SUM_OF_QTR
+  sql_expression: SUM(Qtr)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_QTR
+  business_rules: []
+  domain: em-hr-ai
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_YEAR
+  logical_name: SUM_OF_YEAR
+  label: SUM_OF_YEAR
+  sql_expression: SUM(Year)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_YEAR
+  business_rules: []
+  domain: em-hr-ai
+  concept: Date
+  tags: []
+  origin: bi
+- name: SUM_OF_DAY
+  logical_name: SUM_OF_DAY
+  label: SUM_OF_DAY
+  sql_expression: SUM(Day)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - SUM_OF_DAY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Date
+  tags: []
+  origin: bi
+- name: Case Count
+  logical_name: CASE_COUNT
+  label: Case Count
+  sql_expression: COUNT(*)
+  dax_expression: "\n    COUNTROWS('Cases')"
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - case count
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: Escalations
+  logical_name: ESCALATIONS
+  label: Escalations
+  sql_expression: IFF(COALESCE(Cases."CASE_COUNT", 0) = 0, 0, COUNT(CASE WHEN Cases."IS_ESCALATED"
+    = TRUE THEN 1 END) / Cases."CASE_COUNT")
+  dax_expression: DIVIDE(CALCULATE(COUNTROWS('Cases'),'Cases'[Is Escalated] = TRUE())
+    , [Case Count],0)
+  format_string: '#,0%;-#,0%;#,0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - escalations
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: SLA Compliance
+  logical_name: SLA_COMPLIANCE
+  label: SLA Compliance
+  sql_expression: IFF(COALESCE(Cases."CASE_COUNT", 0) = 0, 0, COUNT(CASE WHEN COALESCE(Cases."IS_SLA_VIOLATION",
+    FALSE) = FALSE THEN 1 END) / Cases."CASE_COUNT")
+  dax_expression: DIVIDE(CALCULATE(COUNTROWS('Cases'),'Cases'[Is SLA Violation] =
+    FALSE()) , [Case Count],0)
+  format_string: '#,0%;-#,0%;#,0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - SLA compliance
+  - compliance
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: Cases MoM%
+  logical_name: CASES_MOMPCT
+  label: Cases MoM%
+  sql_expression: (CASE WHEN (Cases."CASE_COUNT") IS NULL AND ("PREV_MONTH") IS NULL
+    THEN NULL ELSE COALESCE(Cases."CASE_COUNT", 0) - COALESCE("PREV_MONTH", 0) END)
+    / NULLIF("PREV_MONTH", 0)
+  dax_expression: "\nVAR __PREV_MONTH = CALCULATE([Case Count], DATEADD('Case Calendar'[Date],\
+    \ -1, MONTH))\nRETURN\n\tDIVIDE([Case Count] - __PREV_MONTH, __PREV_MONTH)"
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - cases MoM%
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: Cases % by Product
+  logical_name: CASES_PCT_BY_PRODUCT
+  label: Cases % by Product
+  dax_expression: "\nDIVIDE(\n        [Case Count],\n        CALCULATE(\n        \
+    \    [Case Count],All('Products')\n        )\n    )"
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - cases % by product
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: Cases % by Subject
+  logical_name: CASES_PCT_BY_SUBJECT
+  label: Cases % by Subject
+  sql_expression: CASES."CASE_COUNT" / NULLIF(SUM(CASES."CASE_COUNT"::FLOAT) OVER
+    (PARTITION BY EXCLUDING CASES."SUBJECT"), 0)
+  dax_expression: "\nDIVIDE(\n        [Case Count],\n        CALCULATE(\n        \
+    \    [Case Count],All('Cases'[Subject])\n        )\n    )"
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - cases % by subject
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: CSAT Impact
+  logical_name: CSAT_IMPACT
+  label: CSAT Impact
+  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
+    (PARTITION BY EXCLUDING CASES."TOPIC") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."TOPIC") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."TOPIC") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."TOPIC"), 0)), 0)) IS NULL THEN NULL ELSE 1
+    - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."TOPIC")
+    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CASES."TOPIC") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."TOPIC") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."TOPIC"), 0)), 0), 0) END
+  dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
+    \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
+    \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
+    \ ( 'Cases' ), 'Cases'[Topic] <> SELECTEDVALUE ( 'Cases'[Topic] ) )\n    )\nRETURN\n\
+    \    1 - ( AllAvgExcept / AllAvg )"
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CSAT impact
+  - impact
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: CSAT Impact - Subject
+  logical_name: CSAT_IMPACT_SUBJECT
+  label: CSAT Impact - Subject
+  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
+    (PARTITION BY EXCLUDING CASES."SUBJECT") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."SUBJECT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."SUBJECT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."SUBJECT"), 0)), 0)) IS NULL THEN NULL ELSE
+    1 - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."SUBJECT")
+    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CASES."SUBJECT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."SUBJECT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."SUBJECT"), 0)), 0), 0) END
+  dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
+    \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
+    \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
+    \ ( 'Cases' ), 'Cases'[Subject] <> SELECTEDVALUE ( 'Cases'[Subject] ) )\n    )\n\
+    RETURN\n    1 - ( AllAvgExcept / AllAvg )"
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CSAT impact - subject
+  - CSAT impact subject
+  - impact subject
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: CSAT Impact - Products
+  logical_name: CSAT_IMPACT_PRODUCTS
+  label: CSAT Impact - Products
+  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
+    (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ"), 0)), 0)) IS NULL THEN NULL ELSE
+    1 - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ")
+    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CASES."PRODUCTSEQ") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."PRODUCTSEQ"), 0)), 0), 0) END
+  dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
+    \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
+    \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
+    \ ( 'Cases' ), 'Cases'[ProductSeq] <> SELECTEDVALUE ( 'Cases'[ProductSeq] )  )\n\
+    \    )\nRETURN\n    1 - ( AllAvgExcept / AllAvg )"
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CSAT impact - products
+  - CSAT impact products
+  - products
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: CSAT Impact - Agent
+  logical_name: CSAT_IMPACT_AGENT
+  label: CSAT Impact - Agent
+  sql_expression: CASE WHEN (1) IS NULL AND ((((SUM(CASES."CSAT_SUM"::FLOAT) OVER
+    (PARTITION BY EXCLUDING CASES."AGENT") - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."AGENT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."AGENT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."AGENT"), 0)), 0)) IS NULL THEN NULL ELSE 1
+    - COALESCE((((SUM(CASES."CSAT_SUM"::FLOAT) OVER (PARTITION BY EXCLUDING CASES."AGENT")
+    - CASES."CSAT_SUM") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT) OVER (PARTITION BY EXCLUDING
+    CASES."AGENT") - CASES."CSAT_CNT", 0))) / NULLIF((SUM(CASES."CSAT_SUM"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."AGENT") / NULLIF(SUM(CASES."CSAT_CNT"::FLOAT)
+    OVER (PARTITION BY EXCLUDING CASES."AGENT"), 0)), 0), 0) END
+  dax_expression: "\nVAR FactorAvg =\n    AVERAGE ( 'Cases'[CSAT] )\nVAR AllAvg =\n\
+    \    CALCULATE ( AVERAGE ( 'Cases'[CSAT] ), ALL ( 'Cases' ) )\nVAR AllAvgExcept\
+    \ =\n    CALCULATE (\n        AVERAGE ( 'Cases'[CSAT] ),\n        FILTER ( ALL\
+    \ ( 'Cases' ), 'Cases'[Agent] <> SELECTEDVALUE ( 'Cases'[Agent] ) )\n    )\nRETURN\n\
+    \    1 - ( AllAvgExcept / AllAvg )"
+  format_string: 0.00%;-0.00%;0.00%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - CSAT impact - agent
+  - CSAT impact agent
+  - impact agent
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: Revenue Won
+  logical_name: REVENUE_WON
+  label: Revenue Won
+  sql_expression: SUM(CASE WHEN Opportunities."STATUS" = 'Won' THEN Opportunities."COL_VALUE"
+    END::FLOAT)
+  dax_expression: "\n CALCULATE(\n     SUMX(Opportunities, Opportunities[Value]),\n\
+    \     FILTER(Opportunities, Opportunities[Status] = \"Won\")\n )"
+  format_string: \$#,0.0;(\$#,0.0);\$#,0.0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - revenue won
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Revenue In Pipeline
+  logical_name: REVENUE_IN_PIPELINE
+  label: Revenue In Pipeline
+  sql_expression: CASE WHEN (SUM(CASE WHEN (Opportunities."STATUS" = 'Open') AND (TRY_TO_NUMBER(LEFT(Opportunities."PIPELINESTEP",
+    1)) >= 2) THEN Opportunities."COL_VALUE" END::FLOAT)) IS NULL AND ((SUM(CASE WHEN
+    (Opportunities."STATUS" = 'Open') AND (TRY_TO_NUMBER(LEFT(Opportunities."PIPELINESTEP",
+    1)) >= 2) THEN Opportunities."COL_VALUE" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT_VALUE"
+    / 100) IS NULL THEN NULL ELSE COALESCE((SUM(CASE WHEN (Opportunities."STATUS"
+    = 'Open') AND (TRY_TO_NUMBER(LEFT(Opportunities."PIPELINESTEP", 1)) >= 2) THEN
+    Opportunities."COL_VALUE" END::FLOAT)), 0) + COALESCE((SUM(CASE WHEN (Opportunities."STATUS"
+    = 'Open') AND (TRY_TO_NUMBER(LEFT(Opportunities."PIPELINESTEP", 1)) >= 2) THEN
+    Opportunities."COL_VALUE" END::FLOAT)) * OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT_VALUE"
+    / 100, 0) END
+  dax_expression: "\nVAR Revenue =\n    CALCULATE (\n        SUMX ( Opportunities,\
+    \ Opportunities[Value] ),\n        FILTER (\n            Opportunities,\n    \
+    \        Opportunities[Status] = \"Open\"\n            && VALUE(LEFT(Opportunities[PipelineStep],1))\
+    \ >=2\n        )\n    )\nRETURN\n    Revenue + ( Revenue * ( 'Opportunity Forecast\
+    \ Adjustment'[Forecast Adjustment Value] / 100 ) )\n"
+  format_string: \$#,0.0;(\$#,0.0);\$#,0.0
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - revenue in pipeline
+  - pipeline
+  - in pipeline
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Forecast %
+  logical_name: FORECAST_PCT
+  label: Forecast %
+  sql_expression: (CASE WHEN (Opportunities."REVENUE_WON") IS NULL AND (Opportunities."REVENUE_IN_PIPELINE")
+    IS NULL THEN NULL ELSE COALESCE(Opportunities."REVENUE_WON", 0) + COALESCE(Opportunities."REVENUE_IN_PIPELINE",
+    0) END) / NULLIF(Opportunities."REV_GOAL", 0)
+  dax_expression: (([Revenue Won]+[Revenue In Pipeline]))/ [Rev Goal]
+  format_string: '#,0%;-#,0%;#,0%'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - forecast %
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Forecast
+  logical_name: FORECAST
+  label: Forecast
+  sql_expression: CASE WHEN (Opportunities."REVENUE_WON") IS NULL AND (Opportunities."REVENUE_IN_PIPELINE")
+    IS NULL THEN NULL ELSE COALESCE(Opportunities."REVENUE_WON", 0) + COALESCE(Opportunities."REVENUE_IN_PIPELINE",
+    0) END
+  dax_expression: ([Revenue Won]+[Revenue In Pipeline])
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - forecast
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Opportunity Count In Pipeline
+  logical_name: OPPORTUNITY_COUNT_IN_PIPELINE
+  label: Opportunity Count In Pipeline
+  sql_expression: COUNT(CASE WHEN Opportunities."STATUS" = 'Open' THEN Opportunities."COL_VALUE"
+    END)
+  dax_expression: "\n    CALCULATE (\n        COUNT( Opportunities[Value] ),\n   \
+    \     FILTER (\n            Opportunities,\n            Opportunities[Status]\
+    \ = \"Open\"\n              --  && Opportunities[PipelineStep] IN { \"3-Pipeline\"\
+    , \"4-Mandate\", \"5-Close\" }\n        )\n    )\n"
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - opportunity count in pipeline
+  - pipeline
+  - in pipeline
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Opportunity Count
+  logical_name: OPPORTUNITY_COUNT
+  label: Opportunity Count
+  sql_expression: COUNT(*)
+  dax_expression: '
+
+    COUNTAX(Opportunities,TRUE())'
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - opportunity count
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Count of Won
+  logical_name: COUNT_OF_WON
+  label: Count of Won
+  sql_expression: COUNT(CASE WHEN Opportunities."STATUS" = 'Won' THEN Opportunities."OPPORTUNITYSEQ"
+    END)
+  dax_expression: "\nCOUNTAX(\n    FILTER(\n        KEEPFILTERS(Opportunities),Opportunities[Status]\
+    \ = \"Won\"\n        ),\n    Opportunities[OpportunitySeq]\n    ) "
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - count of won
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Count of Lost
+  logical_name: COUNT_OF_LOST
+  label: Count of Lost
+  sql_expression: COUNT(CASE WHEN Opportunities."STATUS" = 'Lost' THEN Opportunities."OPPORTUNITYSEQ"
+    END)
+  dax_expression: "\nCOUNTAX(\n    FILTER(\n        KEEPFILTERS(Opportunities),Opportunities[Status]\
+    \ = \"Lost\"\n        ),\n    Opportunities[OpportunitySeq]\n    ) "
+  format_string: '#,0'
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - count of lost
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Close %
+  logical_name: CLOSE_PCT
+  label: Close %
+  sql_expression: Opportunities."COUNT_OF_WON" / NULLIF(CASE WHEN (Opportunities."COUNT_OF_WON")
+    IS NULL AND (Opportunities."COUNT_OF_LOST") IS NULL THEN NULL ELSE COALESCE(Opportunities."COUNT_OF_WON",
+    0) + COALESCE(Opportunities."COUNT_OF_LOST", 0) END, 0)
+  dax_expression: '[Count of Won]/([Count of Won]+[Count of Lost])'
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - close %
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Revenue Open
+  logical_name: REVENUE_OPEN
+  label: Revenue Open
+  sql_expression: SUM(CASE WHEN Opportunities."STATUS" = 'Open' THEN Opportunities."COL_VALUE"
+    END::FLOAT)
+  dax_expression: "\nCALCULATE(\n     SUMX(Opportunities, Opportunities[Value]),\n\
+    \     FILTER(Opportunities, Opportunities[Status] = \"Open\")\n )"
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - revenue open
+  - open
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: Forecast Adjustment Value
+  logical_name: FORECAST_ADJUSTMENT_VALUE
+  label: Forecast Adjustment Value
+  sql_expression: IFF(COUNT(DISTINCT OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT")
+    + MAX(IFF(OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT" IS NULL, 1, 0))
+    = 1, MAX(OPPORTUNITY_FORECAST_ADJUSTMENT."FORECAST_ADJUSTMENT"), 0)
+  dax_expression: SELECTEDVALUE('Opportunity Forecast Adjustment'[Forecast Adjustment],
+    0)
+  is_hidden: true
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - forecast adjustment value
+  - adjustment value
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunity Forecast Adjustment
+  tags: []
+  origin: bi
+- name: Rev Goal
+  logical_name: REV_GOAL
+  label: Rev Goal
+  sql_expression: CASE WHEN (ROUND((CASE WHEN (Owners."REVENUE_WON") IS NULL AND ((SUM(CASE
+    WHEN (OPPORTUNITIES."STATUS" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP",
+    1)) >= 3) THEN OPPORTUNITIES."COL_VALUE" END::FLOAT)) * 0.75) IS NULL THEN NULL
+    ELSE COALESCE(Owners."REVENUE_WON", 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES."STATUS"
+    = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP", 1)) >= 3) THEN
+    OPPORTUNITIES."COL_VALUE" END::FLOAT)) * 0.75, 0) END) / (100000)) * (100000))
+    > 0 THEN (ROUND((CASE WHEN (Owners."REVENUE_WON") IS NULL AND ((SUM(CASE WHEN
+    (OPPORTUNITIES."STATUS" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP",
+    1)) >= 3) THEN OPPORTUNITIES."COL_VALUE" END::FLOAT)) * 0.75) IS NULL THEN NULL
+    ELSE COALESCE(Owners."REVENUE_WON", 0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES."STATUS"
+    = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP", 1)) >= 3) THEN
+    OPPORTUNITIES."COL_VALUE" END::FLOAT)) * 0.75, 0) END) / (100000)) * (100000))
+    ELSE ROUND((CASE WHEN (Owners."REVENUE_WON") IS NULL AND ((SUM(CASE WHEN (OPPORTUNITIES."STATUS"
+    = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP", 1)) >= 3) THEN
+    OPPORTUNITIES."COL_VALUE" END::FLOAT)) * 0.75) IS NULL THEN NULL ELSE COALESCE(Owners."REVENUE_WON",
+    0) + COALESCE((SUM(CASE WHEN (OPPORTUNITIES."STATUS" = 'Open') AND (TRY_TO_NUMBER(LEFT(OPPORTUNITIES."PIPELINESTEP",
+    1)) >= 3) THEN OPPORTUNITIES."COL_VALUE" END::FLOAT)) * 0.75, 0) END) / (10000))
+    * (10000) END
+  dax_expression: "\nVAR RevenueInPipeline =\n    CALCULATE (\n        SUMX ( Opportunities,\
+    \ Opportunities[Value] ),\n        FILTER (\n            Opportunities,\n    \
+    \        Opportunities[Status] = \"Open\"\n            && VALUE(LEFT(Opportunities[PipelineStep],1))\
+    \ >=3\n        )\n    )\nVAR BaseGoal =  \nMROUND(([Revenue Won]+ (RevenueInPipeline*.75)),100000)\
+    \    \nRETURN\nIF(BaseGoal > 0, BaseGoal, MROUND(([Revenue Won]+ (RevenueInPipeline*.75)),10000))"
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: NONE
+  grain: []
+  synonyms:
+  - rev goal
+  - goal
+  business_rules: []
+  domain: em-hr-ai
+  concept: Owners
+  tags: []
+  origin: bi
+- name: AVG_OF_ANNUAL_REVENUE
+  logical_name: AVG_OF_ANNUAL_REVENUE
+  label: AVG_OF_ANNUAL_REVENUE
+  sql_expression: AVG(Annual Revenue)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - annual revenue
+  - revenue
+  - AVG_OF_ANNUAL_REVENUE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Accounts
+  tags: []
+  origin: bi
+- name: AVG_OF_NUMBER_OF_EMPLOYEES
+  logical_name: AVG_OF_NUMBER_OF_EMPLOYEES
+  label: AVG_OF_NUMBER_OF_EMPLOYEES
+  sql_expression: AVG(Number of Employees)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - number of employees
+  - number of employee
+  - AVG_OF_NUMBER_OF_EMPLOYEES
+  business_rules: []
+  derives_from:
+  - Employees
+  domain: em-hr-ai
+  concept: Accounts
+  tags: []
+  origin: bi
+- name: SUM_OF_ACCOUNTOWNERSEQ
+  logical_name: SUM_OF_ACCOUNTOWNERSEQ
+  label: SUM_OF_ACCOUNTOWNERSEQ
+  sql_expression: SUM(AccountOwnerSeq)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - account owner seq
+  - AccountOwnerSeq
+  - SUM_OF_ACCOUNTOWNERSEQ
+  business_rules: []
+  domain: em-hr-ai
+  concept: Accounts
+  tags: []
+  origin: bi
+- name: AVG_OF_RESOLUTION_MINUTES
+  logical_name: AVG_OF_RESOLUTION_MINUTES
+  label: AVG_OF_RESOLUTION_MINUTES
+  sql_expression: AVG(Resolution Minutes)
+  format_string: '#,0.0'
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - resolution minute
+  - minute
+  - AVG_OF_RESOLUTION_MINUTES
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: AVG_OF_CSAT
+  logical_name: AVG_OF_CSAT
+  label: AVG_OF_CSAT
+  sql_expression: AVG(CSAT)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - csat
+  - AVG_OF_CSAT
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: AVG_OF_MINUTES_TO_FIRST_CONTACT
+  logical_name: AVG_OF_MINUTES_TO_FIRST_CONTACT
+  label: AVG_OF_MINUTES_TO_FIRST_CONTACT
+  sql_expression: AVG(Minutes to First Contact)
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - minute to first contact
+  - AVG_OF_MINUTES_TO_FIRST_CONTACT
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: SUM_OF_ACTIVITIES
+  logical_name: SUM_OF_ACTIVITIES
+  label: SUM_OF_ACTIVITIES
+  sql_expression: SUM(Activities)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - activity
+  - SUM_OF_ACTIVITIES
+  business_rules: []
+  domain: em-hr-ai
+  concept: Cases
+  tags: []
+  origin: bi
+- name: SUM_OF_LATITUDE
+  logical_name: SUM_OF_LATITUDE
+  label: SUM_OF_LATITUDE
+  sql_expression: SUM(Latitude)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - latitude
+  - SUM_OF_LATITUDE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Contacts
+  tags: []
+  origin: bi
+- name: SUM_OF_LONGITUDE
+  logical_name: SUM_OF_LONGITUDE
+  label: SUM_OF_LONGITUDE
+  sql_expression: SUM(Longitude)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - longitude
+  - SUM_OF_LONGITUDE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Contacts
+  tags: []
+  origin: bi
+- name: SUM_OF_CONTACTSEQ
+  logical_name: SUM_OF_CONTACTSEQ
+  label: SUM_OF_CONTACTSEQ
+  sql_expression: SUM(ContactSeq)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - contact seq
+  - ContactSeq
+  - SUM_OF_CONTACTSEQ
+  business_rules: []
+  domain: em-hr-ai
+  concept: Contacts
+  tags: []
+  origin: bi
+- name: SUM_OF_BUDGET
+  logical_name: SUM_OF_BUDGET
+  label: SUM_OF_BUDGET
+  sql_expression: SUM(Budget)
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - budget
+  - SUM_OF_BUDGET
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: SUM_OF_VALUE
+  logical_name: SUM_OF_VALUE
+  label: SUM_OF_VALUE
+  sql_expression: SUM(Value)
+  format_string: \$#,0;(\$#,0);\$#,0
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - value
+  - SUM_OF_VALUE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: SUM_OF_DAYSTOCLOSE
+  logical_name: SUM_OF_DAYSTOCLOSE
+  label: SUM_OF_DAYSTOCLOSE
+  sql_expression: SUM(DaysToClose)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - day to close
+  - DaysToClose
+  - SUM_OF_DAYSTOCLOSE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: AVG_OF_DISCOUNT
+  logical_name: AVG_OF_DISCOUNT
+  label: AVG_OF_DISCOUNT
+  sql_expression: AVG(Discount)
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - discount
+  - AVG_OF_DISCOUNT
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: AVG_OF_PROBABILITY
+  logical_name: AVG_OF_PROBABILITY
+  label: AVG_OF_PROBABILITY
+  sql_expression: AVG(Probability)
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - probability
+  - AVG_OF_PROBABILITY
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: AVG_OF_PROBABILITY_RAW
+  logical_name: AVG_OF_PROBABILITY_RAW
+  label: AVG_OF_PROBABILITY_RAW
+  sql_expression: AVG(Probability (raw))
+  format_string: 0.0%;-0.0%;0.0%
+  is_hidden: false
+  aggregation_type: AVG
+  grain: []
+  synonyms:
+  - probability (raw)
+  - probability
+  - AVG_OF_PROBABILITY_RAW
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: SUM_OF_OPPORTUNITYSEQ
+  logical_name: SUM_OF_OPPORTUNITYSEQ
+  label: SUM_OF_OPPORTUNITYSEQ
+  sql_expression: SUM(OpportunitySeq)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - opportunity seq
+  - OpportunitySeq
+  - SUM_OF_OPPORTUNITYSEQ
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunities
+  tags: []
+  origin: bi
+- name: SUM_OF_DAYSEQ
+  logical_name: SUM_OF_DAYSEQ
+  label: SUM_OF_DAYSEQ
+  sql_expression: SUM(DaySeq)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - day seq
+  - DaySeq
+  - SUM_OF_DAYSEQ
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunity Calendar
+  tags: []
+  origin: bi
+- name: SUM_OF_RELATIVE_07_DAY_PERIOD
+  logical_name: SUM_OF_RELATIVE_07_DAY_PERIOD
+  label: SUM_OF_RELATIVE_07_DAY_PERIOD
+  sql_expression: SUM(RELATIVE 07 DAY PERIOD)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - relative 07 day period
+  - period
+  - day period
+  - SUM_OF_RELATIVE_07_DAY_PERIOD
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunity Calendar
+  tags: []
+  origin: bi
+- name: SUM_OF_RELATIVE_30_DAY_PERIOD
+  logical_name: SUM_OF_RELATIVE_30_DAY_PERIOD
+  label: SUM_OF_RELATIVE_30_DAY_PERIOD
+  sql_expression: SUM(RELATIVE 30 DAY PERIOD)
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - relative 30 day period
+  - period
+  - day period
+  - SUM_OF_RELATIVE_30_DAY_PERIOD
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunity Calendar
+  tags: []
+  origin: bi
+- name: SUM_OF_RELATIVE_MONTH
+  logical_name: SUM_OF_RELATIVE_MONTH
+  label: SUM_OF_RELATIVE_MONTH
+  sql_expression: SUM(RELATIVE MONTH)
+  format_string: '0'
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - relative month
+  - SUM_OF_RELATIVE_MONTH
+  business_rules: []
+  domain: em-hr-ai
+  concept: Opportunity Calendar
+  tags: []
+  origin: bi
+- name: SUM_OF_MINOPPVALUE
+  logical_name: SUM_OF_MINOPPVALUE
+  label: SUM_OF_MINOPPVALUE
+  sql_expression: SUM(MinOppValue)
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - min opp value
+  - MinOppValue
+  - SUM_OF_MINOPPVALUE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Products
+  tags: []
+  origin: bi
+- name: SUM_OF_MAXOPPVALUE
+  logical_name: SUM_OF_MAXOPPVALUE
+  label: SUM_OF_MAXOPPVALUE
+  sql_expression: SUM(MaxOppValue)
+  format_string: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms:
+  - max opp value
+  - MaxOppValue
+  - SUM_OF_MAXOPPVALUE
+  business_rules: []
+  domain: em-hr-ai
+  concept: Products
+  tags: []
+  origin: bi
+relationships:
+- name: REL_EMPLOYEE_DATE__DATE_DATE
+  from_concept: Employee
+  to_concept: Date
+  cardinality: N:1
+  join_expression: Employee.date = Date.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_FP__EMPLOYEE_TYPE_EMPLOYEE_TYPE_ID
+  from_concept: Employee
+  to_concept: Employee type
+  cardinality: N:1
+  join_expression: Employee.FP = Employee type."Employee type ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_ETHNICGROUP__ETHNICITY_ETHNICITY_GROUP_ID
+  from_concept: Employee
+  to_concept: Ethnicity
+  cardinality: N:1
+  join_expression: Employee.EthnicGroup = Ethnicity."Ethnicity group ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_GENDER__GENDER_GENDER_ID
+  from_concept: Employee
+  to_concept: Gender
+  cardinality: N:1
+  join_expression: Employee.Gender = Gender."Gender ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_PAYTYPEID__PAY_TYPE_PAY_TYPE_ID
+  from_concept: Employee
+  to_concept: Pay type
+  cardinality: N:1
+  join_expression: Employee.PayTypeID = Pay type."Pay type ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_BU__BUSINESS_UNIT_BU
+  from_concept: Employee
+  to_concept: Business unit
+  cardinality: N:1
+  join_expression: Employee.BU = Business unit.BU
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_AGEGROUPID__AGE_AGE_GROUP_ID
+  from_concept: Employee
+  to_concept: Age
+  cardinality: N:1
+  join_expression: Employee.AgeGroupID = Age."Age group ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_TERMREASON__SEPARATION_REASON_SEPARATION_REASON_ID
+  from_concept: Employee
+  to_concept: Separation reason
+  cardinality: N:1
+  join_expression: Employee.TermReason = Separation reason."Separation reason ID"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_FP__FP_FP
+  from_concept: Employee
+  to_concept: FP
+  cardinality: N:1
+  join_expression: Employee.FP = FP.FP
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_ETHNICGROUP__ETHNICITY_ETHNIC_GROUP
+  from_concept: Employee
+  to_concept: Ethnicity
+  cardinality: N:1
+  join_expression: Employee.EthnicGroup = Ethnicity."Ethnic Group"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_GENDER__GENDER_ID
+  from_concept: Employee
+  to_concept: Gender
+  cardinality: N:1
+  join_expression: Employee.Gender = Gender.ID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_PAYTYPEID__PAYTYPE_PAYTYPEID
+  from_concept: Employee
+  to_concept: PayType
+  cardinality: N:1
+  join_expression: Employee.PayTypeID = PayType.PayTypeID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_BU__BU_BU
+  from_concept: Employee
+  to_concept: BU
+  cardinality: N:1
+  join_expression: Employee.BU = BU.BU
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_AGEGROUPID__AGEGROUP_AGEGROUPID
+  from_concept: Employee
+  to_concept: AgeGroup
+  cardinality: N:1
+  join_expression: Employee.AgeGroupID = AgeGroup.AgeGroupID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_EMPLOYEE_TERMREASON__SEPARATIONREASON_SEPARATIONTYPEID
+  from_concept: Employee
+  to_concept: SeparationReason
+  cardinality: N:1
+  join_expression: Employee.TermReason = SeparationReason.SeparationTypeID
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_ACCOUNTS_ACCOUNT_OWNER__OWNERS_SALES_OWNER
+  from_concept: Accounts
+  to_concept: Owners
+  cardinality: N:1
+  join_expression: Accounts."Account Owner" = Owners."Sales owner"
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_OPPORTUNITIES_ACCOUNTSEQ__ACCOUNTS_ACCOUNTSEQ
+  from_concept: Opportunities
+  to_concept: Accounts
+  cardinality: N:1
+  join_expression: Opportunities.AccountSeq = Accounts.AccountSeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CASES_ACCOUNTSEQ__ACCOUNTS_ACCOUNTSEQ
+  from_concept: Cases
+  to_concept: Accounts
+  cardinality: N:1
+  join_expression: Cases.AccountSeq = Accounts.AccountSeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CONTACTS_ACCOUNTSEQ__ACCOUNTS_ACCOUNTSEQ
+  from_concept: Contacts
+  to_concept: Accounts
+  cardinality: N:1
+  join_expression: Contacts.AccountSeq = Accounts.AccountSeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_ACCOUNTS_INDUSTRYSEQ__INDUSTRIES_INDUSTRYSEQ
+  from_concept: Accounts
+  to_concept: Industries
+  cardinality: N:1
+  join_expression: Accounts.IndustrySeq = Industries.IndustrySeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_OPPORTUNITIES_PRODUCTSEQ__PRODUCTS_PRODUCTSEQ
+  from_concept: Opportunities
+  to_concept: Products
+  cardinality: N:1
+  join_expression: Opportunities.ProductSeq = Products.ProductSeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CASES_PRODUCTSEQ__PRODUCTS_PRODUCTSEQ
+  from_concept: Cases
+  to_concept: Products
+  cardinality: N:1
+  join_expression: Cases.ProductSeq = Products.ProductSeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_OPPORTUNITIES_SYSTEMUSERSEQ__OWNERS_SYSTEMUSERSEQ
+  from_concept: Opportunities
+  to_concept: Owners
+  cardinality: N:1
+  join_expression: Opportunities.SystemUserSeq = Owners.SystemUserSeq
+  cross_filter_direction: single
+  is_active: false
+  origin: bi
+- name: REL_CASES_SYSTEMUSERSEQ__OWNERS_SYSTEMUSERSEQ
+  from_concept: Cases
+  to_concept: Owners
+  cardinality: N:1
+  join_expression: Cases.SystemUserSeq = Owners.SystemUserSeq
+  cross_filter_direction: single
+  is_active: false
+  origin: bi
+- name: REL_OPPORTUNITIES_CLOSEDATE__OPPORTUNITY_CALENDAR_DAY
+  from_concept: Opportunities
+  to_concept: Opportunity Calendar
+  cardinality: N:1
+  join_expression: Opportunities.CloseDate = Opportunity Calendar.DAY
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_OPPORTUNITIES_CAMPAIGNSEQ__CAMPAIGNS_CAMPAIGNSEQ
+  from_concept: Opportunities
+  to_concept: Campaigns
+  cardinality: N:1
+  join_expression: Opportunities.CampaignSeq = Campaigns.CampaignSeq
+  cross_filter_direction: single
+  is_active: true
+  origin: bi
+- name: REL_CASES_CASE_CREATED_ON__CASE_CALENDAR_DATE
+  from_concept: Cases
+  to_concept: Case Calendar
+  cardinality: N:1
+  join_expression: Cases."Case Created On" = Case Calendar.Date
+  cross_filter_direction: single
+  is_active: true
+  origin: bi

@@ -496,9 +496,11 @@ def _matches_pid(case_pid: Optional[str], target_pid: Optional[str]) -> bool:
         return True
     if not case_pid:
         return True
-    c_clean = str(case_pid).removeprefix("proj-").strip().casefold()
-    t_clean = str(target_pid).removeprefix("proj-").strip().casefold()
-    return c_clean == t_clean
+    c_clean = str(case_pid).removeprefix("proj-").replace("-", "_").replace(" ", "_").strip().casefold()
+    t_clean = str(target_pid).removeprefix("proj-").replace("-", "_").replace(" ", "_").strip().casefold()
+    return c_clean == t_clean or c_clean.startswith(t_clean) or t_clean.startswith(c_clean)
+
+_match_pid = _matches_pid
 
 
 def list_truth_cases(project_id: Optional[str] = None) -> List[Dict[str, Any]]:

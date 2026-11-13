@@ -10,6 +10,12 @@ from semabridge.core.drop_ledger import DropLedger
 
 logger = get_logger(__name__)
 
+_PERIOD_ANCHOR_COLUMNS = frozenset({"MAX_DATE", "MAX_MONTHINDEX"})
+PERIOD_ANCHOR_UNAVAILABLE_REASON = (
+    "not applicable: time intelligence needs a data-based period anchor/flag "
+    "(enriched view) that is not available for this table; it is not re-anchored to today's date"
+)
+
 
 class SemanticDDLSanitizer:
     """Handles identifier sanitization and DDL structural integrity for Snowflake."""
@@ -82,30 +88,15 @@ class SemanticDDLSanitizer:
 
         invalid_norm = invalid_identifier.upper().replace('"', "")
 
-        # Special case: MAX_DATE is a synthetic anchor that the translator
-        # injected by replacing CURRENT_DATE().  Snowflake semantic views do
-        # not have this column in scope, but CURRENT_DATE() is valid.  Replace
-        # all bare MAX_DATE tokens globally rather than nulling out metrics.
-        if invalid_norm == "MAX_DATE":
-            # Replace bare MAX_DATE (not inside quotes) with CURRENT_DATE()
-            fixed = re.sub(r'(?<!["\w])MAX_DATE(?!["\w])', 'CURRENT_DATE()', ddl)
-            if fixed != ddl:
-                return fixed, True, []
-            return ddl, False, []
-
-        if invalid_norm == "MAX_MONTHINDEX":
-            # MAX_MONTHINDEX is a synthetic anchor column for rolling-period metrics.
-            # Replace with EXTRACT(MONTH FROM CURRENT_DATE()) * 12 + EXTRACT(YEAR FROM CURRENT_DATE())
-            # as a close semantic approximation (months since epoch).  This keeps the
-            # metric alive with a sensible current-period value.
-            fixed = re.sub(
-                r'(?<!["\w])MAX_MONTHINDEX(?!["\w])',
-                '(EXTRACT(YEAR FROM CURRENT_DATE()) * 12 + EXTRACT(MONTH FROM CURRENT_DATE()))',
-                ddl
-            )
-            if fixed != ddl:
-                return fixed, True, []
-            return ddl, False, []
+        # MAX_DATE / MAX_MONTHINDEX are the data-anchored period columns of an
+        # enriched view. Snowflake rejecting one means no data-based anchor or
+        # flag exists for that table. Fail closed: the metrics using it become
+        # placeholders below. Never substitute CURRENT_DATE() -- DAX anchors to
+        # the data's last date, so a wall-clock anchor silently returns
+        # different numbers whenever the data does not extend to today.
+        null_reason = f"rejected by Snowflake: invalid identifier '{invalid_identifier}'"
+        if invalid_norm.rsplit(".", 1)[-1] in _PERIOD_ANCHOR_COLUMNS:
+            null_reason = PERIOD_ANCHOR_UNAVAILABLE_REASON
 
         invalid_alias: Optional[str] = None
         invalid_col: Optional[str] = None
@@ -203,9 +194,7 @@ class SemanticDDLSanitizer:
                     prefix = f'  {priv}{metric_match.group(1)}."{metric_match.group(2)}" AS '
                     nulled_metric_names.append(metric_match.group(2))
                     trailing_comma = "," if line.rstrip().endswith(",") else ""
-                    comment = escape_comment_literal(
-                        f"rejected by Snowflake: invalid identifier '{invalid_identifier}'"
-                    )
+                    comment = escape_comment_literal(null_reason)
                     remediated_lines.append(f"{prefix}CAST(NULL AS DOUBLE) COMMENT = '{comment}'{trailing_comma}")
                     changed = True
                     continue

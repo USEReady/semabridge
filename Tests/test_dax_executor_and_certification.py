@@ -203,7 +203,8 @@ def test_ai_model_drop_col_value_blast_radius_and_recert_remediation():
 
 
 def test_linter_per_domain_cycle_isolation_on_real_ontologies():
-    files = sorted(Path("Config/ontologies").glob("*.ontology.yaml"))
+    target_dir = Path("Tests/fixtures/ontologies") if Path("Tests/fixtures/ontologies").exists() else Path("Config/ontologies")
+    files = sorted(target_dir.glob("*.ontology.yaml"))
     domains = [FederatedOntologyLoader.parse_yaml_string(f.read_text(encoding="utf-8")) for f in files]
     fed = FederatedOntologyLoader.merge_domains(domains)
 

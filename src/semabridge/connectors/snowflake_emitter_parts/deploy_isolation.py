@@ -224,7 +224,11 @@ class DeployIsolationMixin:
 
         declared_dims = {(str(d.alias or "").upper(), d.name.upper()) for d in view.items("DIMENSIONS")}
         declared_facts = {(str(f.alias or "").upper(), f.name.upper()) for f in view.items("FACTS")}
-        declared_metrics = {(str(m.alias or "").upper(), m.name.upper()) for m in view.items("METRICS")}
+        declared_metrics = {
+            (str(m.alias or "").upper(), m.name.upper())
+            for m in view.items("METRICS")
+            if not m.is_null_placeholder
+        }
         metric_names = {n for _, n in declared_metrics}
 
         ref_re = re.compile(r'(?<![\w$"])"?([A-Za-z_][A-Za-z0-9_$]*)"?\s*\.\s*"((?:[^"]|"")+)"')
@@ -283,14 +287,15 @@ class DeployIsolationMixin:
                     if findings and findings[-1][0] is it:
                         continue
                 bad_ref = None
-                for a, c in ref_re.findall(expr):
+                for m_ref in ref_re.finditer(expr):
+                    a, c = m_ref.group(1), m_ref.group(2)
                     a_u, c_u = a.upper(), c.replace('""', '"').upper()
                     if a_u not in tables:
                         continue
-                    if (a_u, c_u) in declared_facts or (a_u, c_u) in declared_dims:
-                        if (a_u, c_u) != (str(it.alias or "").upper(), it.name.upper()):
-                            continue
-                    if clause == "METRICS" and ((a_u, c_u) in declared_metrics or c_u in metric_names):
+                    is_self = (a_u, c_u) == (str(it.alias or "").upper(), it.name.upper())
+                    if ((a_u, c_u) in declared_facts or (a_u, c_u) in declared_dims) and not is_self:
+                        continue
+                    if clause == "METRICS" and not is_self and ((a_u, c_u) in declared_metrics or c_u in metric_names):
                         continue
                     valid = cols_of(a_u)
                     if valid and c_u not in valid:

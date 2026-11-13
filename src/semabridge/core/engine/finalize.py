@@ -296,6 +296,29 @@ def _step10_finalize(
             target_type=context.target_type,
         )
 
+    # Requirement 6: Mark run WARNING when > N% of metrics are NULL placeholders
+    threshold_ratio = float(os.getenv("SEMABRIDGE_NULL_METRICS_WARNING_THRESHOLD", "0.20"))
+    metrics_total = getattr(self._summary, "metrics_total", 0) or 0
+    null_metrics_count = getattr(self._summary, "metrics_skipped", 0) or 0
+    if getattr(context, "sml_model", None) and getattr(context.sml_model, "metrics", None):
+        all_mets = list(context.sml_model.metrics)
+        if all_mets:
+            metrics_total = len(all_mets)
+            null_metrics_count = sum(
+                1 for m in all_mets
+                if not getattr(m, "sql_expression", None)
+                or getattr(m, "sql_expression", "") == "NULL"
+                or not getattr(m, "sync_enabled", True)
+            )
+
+    if status == RunStatus.SUCCESS and metrics_total > 0:
+        if (null_metrics_count / metrics_total) > threshold_ratio:
+            status = RunStatus.WARNING
+            logger.warning(
+                f"Run status set to WARNING: {null_metrics_count}/{metrics_total} metrics "
+                f"({(null_metrics_count/metrics_total)*100:.1f}%) are NULL placeholders (exceeds {threshold_ratio*100:.0f}% threshold)"
+            )
+
     self._summary.status = status
     self._summary.source_artifact_id = context.source_artifact_id
     self._summary.sml_snapshot_id = context.sml_snapshot_id

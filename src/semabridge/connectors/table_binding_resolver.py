@@ -51,32 +51,48 @@ AMBIGUOUS_TABLE_BINDING = "Ambiguous table binding"
 
 
 class TableBindingAmbiguityError(ValueError):
-
-    """Two or more tables match a dataset equally well by name and columns.
-
-
-
-    The sync stops: the user saves a binding (or maps the table explicitly)
-
-    rather than SemaBridge guessing from table contents.
-
-    """
-
-
-
+    """Two or more tables match a dataset equally well by name and columns."""
     def __init__(self, dataset_name: str, candidates: List[str]):
-
         self.dataset_name = dataset_name
-
         self.candidates = list(candidates)
-
         super().__init__(
-
             f"{AMBIGUOUS_TABLE_BINDING} for '{dataset_name}': {', '.join(self.candidates)} "
-
             f"match equally by name and columns. Map the table explicitly or save a binding."
-
         )
+
+
+class TableBindingIncompatibleColumnsError(ValueError):
+    """Target table exists in Snowflake but columns do not match (col_compat < 0.8)."""
+    def __init__(self, dataset_name: str, table_name: str, compat: float):
+        self.dataset_name = dataset_name
+        self.table_name = table_name
+        self.col_compat = compat
+        super().__init__(
+            f"Table binding blocker for '{dataset_name}': table '{table_name}' exists in Snowflake "
+            f"but its columns do not match (compatibility {compat:.1%} < 80%). "
+            f"Cannot bind by name only when columns differ."
+        )
+
+
+def detect_table_binding_warnings(
+    plan: List[Dict[str, Any]],
+    model_name: Optional[str] = None,
+    current_project_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Detect and attach warnings for shared, placeholder, or cross-project table bindings."""
+    result = []
+    for entry in plan:
+        item = dict(entry)
+        tbl = item.get("table", "")
+        bound_proj = item.get("bound_to_project")
+        if bound_proj and bound_proj != current_project_id:
+            item["warning"] = f"Table {tbl} is bound by another project ('{bound_proj}'); confirmation required"
+        elif item.get("is_placeholder"):
+            item["warning"] = f"Table {tbl} is a placeholder; confirmation required"
+        elif item.get("is_shared"):
+            item["warning"] = f"Table {tbl} is a shared table; confirmation required"
+        result.append(item)
+    return result
 
 
 
@@ -470,18 +486,22 @@ def resolve_dataset_to_physical_table(
 
 
     exact = [
-
         c for c in candidates
-
-        if c["table"].upper() == str(dataset_name).upper() and c["col_compat"] >= 0.8
-
+        if c["table"].upper() == str(dataset_name).upper()
     ]
-
     if exact:
+        if exact[0]["col_compat"] >= 0.8:
+            _log_binding(live_schema_metadata, dataset_name, exact[0]["table"], "exact name")
+            return exact[0]["table"]
+        else:
+            raise TableBindingIncompatibleColumnsError(dataset_name, exact[0]["table"], exact[0]["col_compat"])
 
-        _log_binding(live_schema_metadata, dataset_name, exact[0]["table"], "exact name")
-
-        return exact[0]["table"]
+    name_matched = [
+        c for c in candidates
+        if c.get("name_score", 0) == 100
+    ]
+    if name_matched and name_matched[0]["col_compat"] < 0.8:
+        raise TableBindingIncompatibleColumnsError(dataset_name, name_matched[0]["table"], name_matched[0]["col_compat"])
 
 
 
