@@ -190,7 +190,7 @@ async def list_workspaces(
 # -------------------------------------------------------
 
 
-_FABRIC_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+_FABRIC_PUBLIC_CLIENT_ID = os.getenv("FABRIC_CLIENT_ID", "04b07795-8ddb-461a-bbee-02f9e1bf7b46")
 # We use the native Fabric API scope. This token will be accepted by Fabric endpoints (list, create, update models).
 # To talk to Power BI endpoints (like executeQueries), the system will use the refresh_token to acquire a secondary token.
 _FABRIC_SCOPES = ["https://api.fabric.microsoft.com/.default"]

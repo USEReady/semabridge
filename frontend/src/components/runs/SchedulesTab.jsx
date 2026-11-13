@@ -13,19 +13,31 @@ const btn = {
   background: 'var(--bg-surface)', color: 'var(--text-secondary)',
 };
 
-function ScheduleRow({ schedule, onRun, onEdit, onDelete, isRunning, isDeleting, userTz }) {
+function ScheduleRow({ schedule, projects = [], onRun, onEdit, onDelete, isRunning, isDeleting, userTz }) {
   const [advanced, setAdvanced] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const tz = schedule.timezone || 'UTC';
   const next = countdown(schedule.next_run_at);
   const pid = schedule.project_id || schedule.id;
 
+  const matchedProj = projects?.find((p) => {
+    const p1 = String(p.id || p.project_id || '').toLowerCase().replace(/^proj-/, '');
+    const p2 = String(pid || '').toLowerCase().replace(/^proj-/, '');
+    return p1 === p2;
+  });
+  const displayName = schedule.project_name || matchedProj?.name || pid;
+
   return (
     <div style={{ borderTop: '1px solid var(--border-main)', padding: '12px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 260px', minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>
-            {schedule.project_name || schedule.project_id}
+            {displayName}
+            {displayName !== pid && (
+              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--text-tertiary)' }}>
+                ({pid})
+              </span>
+            )}
             {schedule.enabled === false && (
               <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)' }}>Paused</span>
             )}
@@ -90,7 +102,7 @@ function ScheduleRow({ schedule, onRun, onEdit, onDelete, isRunning, isDeleting,
   );
 }
 
-export default function SchedulesTab({ schedules, onAdd, onEdit, onDelete, onRun, runningScheduleId, deletingId }) {
+export default function SchedulesTab({ schedules, projects = [], onAdd, onEdit, onDelete, onRun, runningScheduleId, deletingId }) {
   const userTz = getUserTimezone();
 
   if (!schedules.length) {
@@ -124,6 +136,7 @@ export default function SchedulesTab({ schedules, onAdd, onEdit, onDelete, onRun
           <ScheduleRow
             key={s.id || s.project_id}
             schedule={s}
+            projects={projects}
             userTz={userTz}
             onRun={onRun}
             onEdit={onEdit}

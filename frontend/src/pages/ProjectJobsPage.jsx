@@ -197,7 +197,7 @@ export default function ProjectJobsPage() {
     if (!projectId || runningScheduleId) return;
     setRunningScheduleId(String(projectId));
     try {
-      addStartedRun(await api.runProjectNow(projectId));
+      addStartedRun(await api.runProjectNow(projectId, { schedule: 'Scheduled' }));
     } catch (err) {
       console.error('Trigger project run failed:', err);
       alert(`Trigger run failed: ${err.message || 'Unknown error'}`);
@@ -409,6 +409,7 @@ export default function ProjectJobsPage() {
       ) : tab === 'schedules' ? (
         <SchedulesTab
           schedules={schedules}
+          projects={projects}
           onAdd={() => handleOpenScheduleModal(null)}
           onEdit={handleOpenScheduleModal}
           onDelete={handleDeleteSchedule}

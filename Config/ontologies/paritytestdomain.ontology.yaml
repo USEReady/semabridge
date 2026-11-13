@@ -1,0 +1,16 @@
+domain: ParityTestDomain
+id: paritytestdomain
+version: 1.0.0
+source_project_id: proj-parity-test
+concepts: []
+metrics:
+- name: TotalUnitsParity
+  sql_expression: SUM(COALESCE("SALES"."UNITS", 0))
+  dax_expression: SUM(Sales[Units])
+  is_hidden: false
+  aggregation_type: SUM
+  grain: []
+  synonyms: []
+  business_rules: []
+  tags: []
+relationships: []

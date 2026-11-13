@@ -336,6 +336,10 @@ def _local_plan(engine, prompt: str, dialect: str, scope: ProjectScope, offline_
         semantic_view=scope.semantic_view,
         allowed_domains=scope.allowed_domains,
         deployment_error=scope.deploy_error,
+        # Physical-table SQL only when the user asked for an offline draft
+        # (or LOCAL); otherwise the engine refuses instead of returning
+        # unlabelled physical SQL.
+        offline_draft=bool(offline_label),
     )
     if offline_label:
         plan.explanation = f"[Offline Draft - Local Engine] {plan.explanation}"

@@ -93,3 +93,8 @@ def browse_directory(base_path: Optional[str] = Query(default=None)) -> List[dic
 
     directories.sort(key=lambda item: item["name"].lower())
     return directories
+
+
+# Alias router so GET /api/browse-directory also resolves cleanly (preventing 404)
+api_router = APIRouter(prefix="/api", tags=["utils"])
+api_router.add_api_route("/browse-directory", browse_directory, methods=["GET"], response_model=List[dict])

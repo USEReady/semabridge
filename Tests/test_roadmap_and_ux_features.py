@@ -133,3 +133,54 @@ def test_unrelated_zero_name_score_column_ties_do_not_block():
     )
     assert resolved == "REP_SFDC_OPPORTUNITYFIELDHISTORY"
 
+
+def test_reconciliation_project_metrics_and_update_sql():
+    from fastapi.testclient import TestClient
+    from semabridge.api.main import app
+    from semabridge.ontology.store import ontology_store
+    from semabridge.ontology.models import DomainOntology, DomainMetric
+
+    # Register a domain with DAX and SQL expressions
+    dom = DomainOntology(
+        domain="ParityTestDomain",
+        source_project_id="proj-parity-test",
+        metrics=[
+            DomainMetric(
+                name="TotalUnitsParity",
+                dax_expression="SUM(Sales[Units])",
+                sql_expression='SUM("SALES"."UNITS")',
+            )
+        ],
+    )
+    ontology_store.add_or_update_domain(dom)
+
+    client = TestClient(app)
+
+    # 1. Test GET /api/reconciliation/project-metrics
+    resp = client.get("/api/reconciliation/project-metrics?project_id=proj-parity-test")
+    assert resp.status_code == 200
+    metrics = resp.json().get("metrics", [])
+    found = next((m for m in metrics if m["name"] == "TotalUnitsParity"), None)
+    assert found is not None
+    assert found["dax_expression"] == "SUM(Sales[Units])"
+    assert found["sql_expression"] == 'SUM("SALES"."UNITS")'
+
+    # 2. Test POST /api/reconciliation/update-metric-sql
+    update_resp = client.post(
+        "/api/reconciliation/update-metric-sql",
+        json={
+            "project_id": "proj-parity-test",
+            "metric_name": "TotalUnitsParity",
+            "sql_expression": 'SUM(COALESCE("SALES"."UNITS", 0))',
+        },
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["sql_expression"] == 'SUM(COALESCE("SALES"."UNITS", 0))'
+
+    # Verify updated in store
+    updated_dom = ontology_store.get_domain("ParityTestDomain")
+    updated_metric = next(m for m in updated_dom.metrics if m.name == "TotalUnitsParity")
+    assert updated_metric.sql_expression == 'SUM(COALESCE("SALES"."UNITS", 0))'
+    assert updated_metric.dax_expression == "SUM(Sales[Units])"
+
+

@@ -301,3 +301,44 @@ def test_knowledge_graph_sql_requires_real_target(monkeypatch):
     res = client.get("/api/ontology/projects/p-kg/knowledge-graph.sql")
     assert res.status_code == 200, res.text
     assert "RDB._SEMABRIDGE_ONTOLOGY" in res.text and "PROD_DWH" not in res.text
+
+
+# ---------------------------------------------------------------- D2 hardening / offline draft
+def test_dataset_label_that_only_respaces_name_is_not_a_synonym():
+    from semabridge.intermediate.models import OSIDataset, OSIModel
+
+    model = OSIModel(
+        unique_name="M", label="M",
+        datasets=[
+            OSIDataset(unique_name="fact_sales", label="Fact Sales", source_table="fact_sales", columns=[]),
+            OSIDataset(unique_name="dim_cust", label="Customers", source_table="dim_cust", columns=[]),
+        ],
+        metrics=[],
+    )
+    dom = FederatedOntologyLoader.from_osi_model(model=model, domain_name="D")
+    by = {c.name: c for c in dom.concepts}
+    fact = next(c for n, c in by.items() if n.casefold() == "fact_sales")
+    cust = next(c for n, c in by.items() if n.casefold() == "dim_cust")
+    assert "Fact Sales" not in fact.synonyms
+    assert "Customers" in cust.synonyms
+
+
+def test_local_plan_passes_offline_draft_flag():
+    from semabridge.ai.project_connection import ProjectScope
+    from semabridge.api.routers import ai_router
+
+    seen = {}
+
+    class _Plan:
+        explanation = ""
+        warnings = []
+
+    class _Eng:
+        def resolve_query(self, prompt, **kw):
+            seen.update(kw)
+            return _Plan()
+
+    ai_router._local_plan(_Eng(), "q", "DATABRICKS", ProjectScope(project_id=None), offline_label=False)
+    assert seen["offline_draft"] is False
+    ai_router._local_plan(_Eng(), "q", "DATABRICKS", ProjectScope(project_id=None), offline_label=True)
+    assert seen["offline_draft"] is True

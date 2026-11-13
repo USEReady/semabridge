@@ -24,7 +24,8 @@ there's nothing for that shortcut to get wrong.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Set
+import re
+from typing import Any, Dict, List, Optional, Set
 
 from semabridge.converter.dax_translator import DAXTranslator
 from semabridge.converter.time_intelligence_shapes import (
@@ -191,6 +192,68 @@ def rerender_anchor_dependent_metrics(
             translation.sql[:160],
         )
         metric.sql_expression = translation.sql
+        sync_time_anchor_advisory(metric, translation.sql)
         rerendered += 1
 
     return rerendered
+
+
+ADVISORY_CATEGORY_TI_ANCHORED_TO_DATA = "time_intelligence_anchored_to_latest_data_date"
+
+
+_PRIOR_PERIOD_FLAG_RE = re.compile(r"(SPLY|_PY_|_PY$|PRIOR|PREV|LAST_YEAR|_LY_|_LY$)")
+
+
+def _ti_data_anchor_note(flags: List[str]) -> str:
+    note = (
+        "Time-intelligence window is anchored to the latest date in the data "
+        f"(enriched-view period flag {', '.join(flags)}), as DAX does with no date filter; "
+        "the window does not move with a period chosen in the query."
+    )
+    if any(_PRIOR_PERIOD_FLAG_RE.search(f) for f in flags):
+        # E18: a per-period "same period last year" (shifting with each
+        # year/month in the query) is not expressible as a semantic-view
+        # metric: a window LAG metric only sees rows left after the query's
+        # own filters (a query filtered to one year gets NULL), skips gaps
+        # in the calendar silently, and window metrics cannot be referenced
+        # by other metrics (so YoY metrics could not use it).
+        note += (
+            " Grouped by year or month it still returns the latest period's prior-year "
+            "value, not each row's own prior year: a per-period same-period-last-year is "
+            "not expressible as a Snowflake semantic-view metric."
+        )
+    return note
+
+
+def sync_time_anchor_advisory(metric: Any, sql: Optional[str]) -> None:
+    """Keep the metric's time-anchor advisory in line with the SQL it now has
+    (E17). A metric first rendered with the CURRENT_DATE() fallback and then
+    re-rendered against the enriched view's data-anchored period flags must
+    not keep saying it is anchored to CURRENT_DATE(), and vice versa."""
+    from semabridge.converter.dax_ast_parser import (
+        ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE,
+        ADVISORY_NOTE_TI_ANCHORED_TO_CURRENT_DATE,
+    )
+    notes = list(getattr(metric, "advisory_notes", None) or [])
+    cats = list(getattr(metric, "advisory_categories", None) or [])
+    if not hasattr(metric, "advisory_notes"):
+        return
+    notes = [
+        n for n in notes
+        if n != ADVISORY_NOTE_TI_ANCHORED_TO_CURRENT_DATE
+        and not str(n).startswith("Time-intelligence window is anchored to the latest date in the data")
+    ]
+    cats = [c for c in cats if c not in (ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE, ADVISORY_CATEGORY_TI_ANCHORED_TO_DATA)]
+    sql_u = str(sql or "").upper()
+    flags = sorted(set(re.findall(r'\b(IS_[A-Z0-9_]+)\b', sql_u)))
+    if "CURRENT_DATE()" in sql_u:
+        notes.append(ADVISORY_NOTE_TI_ANCHORED_TO_CURRENT_DATE)
+        cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+    elif flags:
+        notes.append(_ti_data_anchor_note(flags))
+        cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_DATA)
+    try:
+        metric.advisory_notes = notes
+        metric.advisory_categories = cats
+    except Exception:  # noqa: BLE001
+        pass

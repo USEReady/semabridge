@@ -1324,7 +1324,13 @@ class FederatedOntologyLoader:
 
             inferred_type = ConceptType.ENTITY if ds.is_fact else ConceptType.DIMENSION
             bi_syns: List[str] = list(getattr(ds, "synonyms", None) or [])
-            if ds.label and ds.label.casefold() != ds.unique_name.casefold():
+            # A label that only re-spaces the technical name ("FACT_SALES" ->
+            # "fact sales") is not a real synonym.
+            if (
+                ds.label
+                and ds.label.casefold() != ds.unique_name.casefold()
+                and " ".join(ds.label.split()).casefold() != ds.unique_name.replace("_", " ").casefold()
+            ):
                 bi_syns.append(ds.label)
             desc, bi_desc = cls._merge_description(exist_c, ds.description)
 
