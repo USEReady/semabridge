@@ -16,11 +16,9 @@ def is_mock_parity_enabled() -> bool:
 
 
 def is_mock_drift_enabled() -> bool:
-    """Return True if mock drift detection is enabled via server environment."""
+    """Return True if mock drift detection is explicitly enabled via SEMABRIDGE_MOCK_DRIFT."""
     val = os.getenv("SEMABRIDGE_MOCK_DRIFT", "").strip().lower()
-    if val in ("1", "true", "yes", "on"):
-        return True
-    return is_mock_parity_enabled()
+    return val in ("1", "true", "yes", "on")
 
 
 def generate_mock_comparative_data(

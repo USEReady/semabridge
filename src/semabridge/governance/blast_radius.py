@@ -130,6 +130,15 @@ class BlastRadiusSimulator:
         """Alias for simulate_impact accepting alternative keyword argument names."""
         name = target_name or target_object or ""
         ttype = object_type or target_type
+        if not str(name).strip():
+            return BlastRadiusReport(
+                target_object="",
+                target_type=ttype,
+                change_type=change_type,
+                severity="SAFE",
+                status="ok",
+                total_impacted_items=0,
+            )
         return self.simulate_impact(
             target_name=name,
             target_type=ttype,

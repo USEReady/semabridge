@@ -4,7 +4,7 @@ import {
   Map, FolderOpen, PlayCircle, Settings,
   Split, PanelLeftClose, PanelLeftOpen,
   History as HistoryIcon, Sparkles, BookOpen,
-  Activity, Zap, Clock, ArrowLeftRight, ShieldCheck, Layers,
+  Activity, Zap, Clock, ArrowLeftRight, ShieldCheck, Layers, Radio,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import ContextBadge from './ContextBadge';
@@ -48,9 +48,10 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
     {
       label: null,
       items: [
-        { to: '/projects', label: 'Projects', icon: FolderOpen },
-        { to: '/runs',     label: 'Runs',     icon: PlayCircle },
-        { to: '/ask',      label: 'Ask AI',   icon: Sparkles },
+        { to: '/projects', label: 'Projects',        icon: FolderOpen },
+        { to: '/runs',     label: 'Runs',            icon: PlayCircle },
+        { to: '/drift',    label: 'Data Monitoring', icon: Radio },
+        { to: '/ask',      label: 'Ask AI',          icon: Sparkles },
       ],
     },
     {

@@ -16,6 +16,7 @@ from semabridge.governance.drift_service import (
     reset_simulated_metric_drift,
     resolve_drift_event,
     run_drift_check,
+    seed_mock_drift_events,
     simulate_metric_drift,
 )
 
@@ -72,6 +73,12 @@ def get_drift_events(project_id: Optional[str] = None, status: Optional[str] = N
 def delete_drift_events(project_id: Optional[str] = None) -> Dict[str, Any]:
     cleared = clear_drift_events(project_id=project_id)
     return {"success": True, "cleared_count": cleared}
+
+
+@router.post("/events/seed-mock", response_model=Dict[str, Any])
+def seed_mock_events(project_id: Optional[str] = "proj-tiral_comp") -> Dict[str, Any]:
+    events = seed_mock_drift_events(project_id or "proj-tiral_comp")
+    return {"success": True, "count": len(events), "events": events}
 
 
 @router.post("/simulate-change", response_model=Dict[str, Any])

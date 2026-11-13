@@ -33,6 +33,7 @@ const ResetPasswordPage  = lazy(() => import('./pages/ResetPasswordPage'));
 const UnauthorizedPage   = lazy(() => import('./pages/UnauthorizedPage'));
 const AskAiPage          = lazy(() => import('./pages/AskAiPage'));
 const GovernanceSuitePage = lazy(() => import('./pages/GovernanceSuitePage'));
+const DriftMonitoringPage = lazy(() => import('./pages/DriftMonitoringPage'));
 
 // Old route names redirect to the new ones, keeping any ?query (bookmarks, links in run reports).
 function RedirectKeepQuery({ to }) {
@@ -115,7 +116,9 @@ export default function App() {
             <Route path="/ontology"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="explorer" /></Suspense></ErrorBoundary>} />
             <Route path="/metric-comparator" element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="comparator" /></Suspense></ErrorBoundary>} />
             <Route path="/blast-radius"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><OntologyPage mode="blast-radius" /></Suspense></ErrorBoundary>} />
-            <Route path="/drift"             element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="drift" /></Suspense></ErrorBoundary>} />
+            <Route path="/drift"             element={<ErrorBoundary><Suspense fallback={<PageFallback />}><DriftMonitoringPage /></Suspense></ErrorBoundary>} />
+            <Route path="/drift-monitoring"  element={<RedirectKeepQuery to="/drift" />} />
+            <Route path="/data-monitoring"   element={<RedirectKeepQuery to="/drift" />} />
             <Route path="/reverse-sync"      element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="reverse-sync" /></Suspense></ErrorBoundary>} />
             <Route path="/bi-truth"          element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="bi-truth" /></Suspense></ErrorBoundary>} />
             <Route path="/cross-platform"    element={<ErrorBoundary><Suspense fallback={<PageFallback />}><GovernanceSuitePage mode="cross-platform" /></Suspense></ErrorBoundary>} />
