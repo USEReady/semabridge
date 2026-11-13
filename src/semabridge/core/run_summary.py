@@ -21,6 +21,7 @@ class RunStatus(str, Enum):
     FAILED = "FAILED"
     PARTIAL = "PARTIAL"
     RUNNING = "RUNNING"
+    WARNING = "WARNING"
 
 
 class StepStatus(str, Enum):
@@ -219,6 +220,7 @@ class RunSummary(BaseModel):
         # Header
         status_color = {
             RunStatus.SUCCESS: "green",
+            RunStatus.WARNING: "yellow",
             RunStatus.FAILED: "red",
             RunStatus.PARTIAL: "yellow",
             RunStatus.RUNNING: "cyan",

@@ -1167,6 +1167,13 @@ class MetricsClauseBuilder:
             g in reason_text.lower() for g in self._GENERIC_FAILURE_MARKERS
         ):
             reason_text = f"{reason_text} ({sync_reason})"
+        # Clean repetitive prefix patterns like "failed: failed"
+        reason_text = re.sub(r'^(failed:\s*)+', 'failed: ', reason_text, flags=re.I)
+        if reason_text.lower().strip() in ("failed: failed", "failed:"):
+            reason_text = "Enriched view creation failed"
+        reason_text = re.sub(r'^(Enriched view creation failed:\s*)+', 'Enriched view creation failed: ', reason_text, flags=re.I)
+        if reason_text.lower().endswith(": failed"):
+            reason_text = reason_text[:-8].strip()
         by_design_src = reason_text
         reason_clean = re.sub(r"^BY_DESIGN_EXCLUDED:\s*", "", reason_text, flags=re.I).strip()
         if reason_text.upper().startswith("BY_DESIGN_EXCLUDED") and not reason_clean.lower().startswith("not applicable"):

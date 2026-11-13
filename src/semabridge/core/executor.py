@@ -1037,6 +1037,29 @@ class CLIExecutor:
                 target_type=self.config.target.type if self.config.target else None,
             )
         
+        # Requirement 6: Mark the run WARNING when > N% of metrics are NULL placeholders
+        threshold_ratio = float(os.getenv("SEMABRIDGE_NULL_METRICS_WARNING_THRESHOLD", "0.20"))
+        metrics_total = getattr(self.summary, "metrics_total", 0) or 0
+        null_metrics_count = getattr(self.summary, "metrics_skipped", 0) or 0
+        if hasattr(self, "_sml_model") and getattr(self._sml_model, "metrics", None):
+            all_mets = list(self._sml_model.metrics)
+            if all_mets:
+                metrics_total = len(all_mets)
+                null_metrics_count = sum(
+                    1 for m in all_mets
+                    if not getattr(m, "sql_expression", None)
+                    or getattr(m, "sql_expression", "") == "NULL"
+                    or not getattr(m, "sync_enabled", True)
+                )
+
+        if status == RunStatus.SUCCESS and metrics_total > 0:
+            if (null_metrics_count / metrics_total) > threshold_ratio:
+                status = RunStatus.WARNING
+                logger.warning(
+                    f"Run status set to WARNING: {null_metrics_count}/{metrics_total} metrics "
+                    f"({(null_metrics_count/metrics_total)*100:.1f}%) are NULL placeholders (exceeds {threshold_ratio*100:.0f}% threshold)"
+                )
+
         # Update status
         self.summary.status = status
         

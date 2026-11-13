@@ -2272,37 +2272,25 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
 
         return []
 
-    def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
-        """Resolve the date column a fact table's time-intelligence anchor
-        (MAX_DATE / flag columns) would be built from — IF this fact table
-        actually qualifies for enrichment at all. Returns None if there's
-        no date-table relationship for the model, or the resolved date
-        column isn't present among this fact table's own columns.
-
-        This is the same eligibility check _create_enriched_view applies
-        before it ever fetches a live anchor literal (see that method's
-        `date_info`/`resolved_date_col in fact_cols` logic), extracted so
-        `predict_anchor_flag_map` (below) can reuse the identical
-        model-based fallback branch. Not wired into _create_enriched_view
-        itself — that method is left untouched to avoid destabilizing its
-        existing, well-tested behavior; the two are kept consistent
-        instead via the cross-check regression test in
-        Tests/test_anchor_flag_map_prediction.py.
-
-        Column existence is checked against live schema (`_live_schema_
-        metadata`) when confirmed, falling back to this model's own
-        declared columns otherwise — exactly the same fallback
-        `SnowflakeSchemaManager._resolve_physical_column_name` already
-        applies internally. For a throwaway, never-deployed emitter
-        instance (no cursor ever attached, `_live_schema_metadata` never
-        populated — see `predict_anchor_flag_map`), this always resolves
-        against the model's own declared columns, which is exactly the
-        "no live connection yet" prediction this method exists for.
+    def _resolve_fact_anchor_info(self, model: Any, fact_table: str) -> Optional[Dict[str, Any]]:
+        """Resolve date anchor information for a fact table.
+        Returns a dict:
+        {
+            "mode": "direct" | "joined",
+            "fact_table": fact_table,
+            "anchor_col": str,
+            "can_duplicate": bool,
+            "duplicate_reason": Optional[str],
+            # If joined:
+            "dim_table": str,
+            "fact_fk": str,
+            "dim_pk": str,
+            "dim_date_col": str,
+        }
         """
         date_info = self._find_date_table(model)
-        if not date_info:
-            return None
-        date_table, date_col, _fiscal_col = date_info
+        date_table = date_info[0] if date_info else None
+        date_col = date_info[1] if date_info else None
 
         fact_dataset = self._get_dataset_by_name(model, fact_table)
         if fact_dataset is None:
@@ -2327,12 +2315,11 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 if getattr(c, "unique_name", None)
             }
 
-        # Requirement 3: fact_date_col must be a date-typed column (schema type DATE/TIMESTAMP); never an integer join column.
-        def _is_date_type(col_name: str) -> bool:
+        def _is_date_type(col_name: str, ds_obj: Any, src_key: str) -> bool:
             if not col_name:
                 return False
             col_u = col_name.upper()
-            live_types = getattr(self, "_live_column_types", {}).get(fact_source_key, {})
+            live_types = getattr(self, "_live_column_types", {}).get(src_key, {})
             if col_u in live_types:
                 t = str(live_types[col_u]).upper()
                 if any(dt in t for dt in ["DATE", "TIME", "TIMESTAMP"]):
@@ -2340,7 +2327,7 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 if any(nt in t for nt in ["INT", "NUMBER", "FLOAT", "DECIMAL", "NUMERIC", "VARCHAR", "STRING", "BOOLEAN"]):
                     return False
             clean_col_u = re.sub(r'[^A-Z0-9]', '', col_u)
-            for c in getattr(fact_dataset, "columns", []) or []:
+            for c in getattr(ds_obj, "columns", []) or []:
                 c_uname = getattr(c, "unique_name", "") or ""
                 c_name = getattr(c, "name", "") or ""
                 c_clean = re.sub(r'[^A-Z0-9]', '', c_uname.upper())
@@ -2360,38 +2347,179 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                         return False
             return False
 
-        # 1. Check active relationship between fact_table and date_table
-        for rel in getattr(model, "relationships", []) or []:
-            if not getattr(rel, "is_active", True):
-                continue
-            from_ds = getattr(rel, "from_dataset", "")
-            to_ds = getattr(rel, "to_dataset", "")
-            if from_ds == fact_table and to_ds == date_table:
-                from_cols = getattr(rel, "from_columns", []) or []
-                if from_cols:
-                    c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, from_cols[0], model=model)
-                    if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys):
-                        return c_phys
-            elif to_ds == fact_table and from_ds == date_table:
-                to_cols = getattr(rel, "to_columns", []) or []
-                if to_cols:
-                    c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, to_cols[0], model=model)
-                    if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys):
-                        return c_phys
+        # 1. Direct date column on fact via active relationship to date_table
+        if date_table:
+            for rel in getattr(model, "relationships", []) or []:
+                if not getattr(rel, "is_active", True):
+                    continue
+                from_ds = getattr(rel, "from_dataset", "")
+                to_ds = getattr(rel, "to_dataset", "")
+                if from_ds == fact_table and to_ds == date_table:
+                    from_cols = getattr(rel, "from_columns", []) or []
+                    if from_cols:
+                        c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, from_cols[0], model=model)
+                        if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys, fact_dataset, fact_source_key):
+                            return {"mode": "direct", "fact_table": fact_table, "anchor_col": c_phys, "can_duplicate": False}
+                elif to_ds == fact_table and from_ds == date_table:
+                    to_cols = getattr(rel, "to_columns", []) or []
+                    if to_cols:
+                        c_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, to_cols[0], model=model)
+                        if c_phys and c_phys.upper() in fact_cols and _is_date_type(c_phys, fact_dataset, fact_source_key):
+                            return {"mode": "direct", "fact_table": fact_table, "anchor_col": c_phys, "can_duplicate": False}
 
-        # 2. Check direct date column match
-        resolved_date_col = self.schema_manager._resolve_physical_column_name(
-            fact_dataset, date_col, model=model
-        )
-        if resolved_date_col and resolved_date_col.upper() in fact_cols and _is_date_type(resolved_date_col):
-            return resolved_date_col
+        # 2. Check direct date column match on fact
+        if date_col:
+            resolved_date_col = self.schema_manager._resolve_physical_column_name(
+                fact_dataset, date_col, model=model
+            )
+            if resolved_date_col and resolved_date_col.upper() in fact_cols and _is_date_type(resolved_date_col, fact_dataset, fact_source_key):
+                return {"mode": "direct", "fact_table": fact_table, "anchor_col": resolved_date_col, "can_duplicate": False}
 
         # 3. Check any date-typed column on fact
         cand = next(
-            (fc for fc in sorted(fact_cols) if _is_date_type(fc)),
+            (fc for fc in sorted(fact_cols) if _is_date_type(fc, fact_dataset, fact_source_key)),
             None
         )
-        return cand
+        if cand:
+            return {"mode": "direct", "fact_table": fact_table, "anchor_col": cand, "can_duplicate": False}
+
+        # 4. Dimension-joined date column (e.g. fact.PeriodKey -> calendar.PeriodKey -> calendar.Date)
+        candidate_date_tables: list[str] = []
+        if date_table:
+            candidate_date_tables.append(date_table)
+
+        # Also inspect DAX time functions for table references
+        for m in getattr(model, "metrics", []) or []:
+            dax = getattr(m, "expression", "") or ""
+            for m_tbl in re.findall(r"['\"]?([A-Za-z0-9_]+)['\"]?\[([A-Za-z0-9_]+)\]", dax):
+                tbl_name, _col_name = m_tbl
+                if tbl_name and tbl_name not in candidate_date_tables:
+                    candidate_date_tables.append(tbl_name)
+
+        for cand_tbl in candidate_date_tables:
+            cand_ds = self._get_dataset_by_name(model, cand_tbl)
+            if not cand_ds or str(cand_tbl).casefold() == str(fact_table).casefold():
+                continue
+
+            cand_source_name = resolve_dataset_to_physical_table(
+                cand_tbl,
+                [c.unique_name for c in getattr(cand_ds, "columns", []) or []],
+                self._live_schema_metadata,
+                model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
+            )
+            cand_source_key = self._id.sanitize_table_name(cand_source_name).upper()
+
+            # Find date column on cand_ds
+            dim_date_col = None
+            if date_col and any(getattr(c, "unique_name", "").upper() == date_col.upper() for c in getattr(cand_ds, "columns", []) or []):
+                dim_date_col = date_col
+            if not dim_date_col:
+                for c in getattr(cand_ds, "columns", []) or []:
+                    c_name = getattr(c, "unique_name", "")
+                    if _is_date_type(c_name, cand_ds, cand_source_key):
+                        dim_date_col = c_name
+                        break
+            if not dim_date_col:
+                continue
+
+            # Check active relationship between fact_table and cand_tbl
+            for rel in getattr(model, "relationships", []) or []:
+                if not getattr(rel, "is_active", True):
+                    continue
+                from_ds = getattr(rel, "from_dataset", "")
+                to_ds = getattr(rel, "to_dataset", "")
+                from_cols = getattr(rel, "from_columns", []) or []
+                to_cols = getattr(rel, "to_columns", []) or []
+                if not from_cols or not to_cols:
+                    continue
+
+                cardinality_raw = str(getattr(rel, "cardinality", "") or "").upper()
+                cardinality_clean = cardinality_raw.rsplit(".", 1)[-1].replace("-", "_")
+
+                if from_ds == fact_table and to_ds == cand_tbl:
+                    fact_fk = from_cols[0]
+                    dim_pk = to_cols[0]
+                    dim_col_obj = next((c for c in getattr(cand_ds, "columns", []) or [] if getattr(c, "unique_name", "") == dim_pk), None)
+                    dim_is_key = bool(getattr(dim_col_obj, "is_key", False) or getattr(dim_col_obj, "is_unique", False))
+                    can_dup = (
+                        "MANY_TO_MANY" in cardinality_clean
+                        or "ONE_TO_MANY" in cardinality_clean
+                        or (not dim_is_key and cardinality_clean not in ("MANY_TO_ONE", "ONE_TO_ONE"))
+                    )
+                    if can_dup:
+                        return {
+                            "mode": "joined",
+                            "fact_table": fact_table,
+                            "dim_table": cand_tbl,
+                            "fact_fk": fact_fk,
+                            "dim_pk": dim_pk,
+                            "dim_date_col": dim_date_col,
+                            "anchor_col": dim_date_col,
+                            "can_duplicate": True,
+                            "duplicate_reason": (
+                                f"Cannot build enriched view: relationship from '{fact_table}' to '{cand_tbl}' "
+                                f"on '{fact_fk}' may duplicate fact rows (non-unique key on dimension)"
+                            ),
+                        }
+                    return {
+                        "mode": "joined",
+                        "fact_table": fact_table,
+                        "dim_table": cand_tbl,
+                        "fact_fk": fact_fk,
+                        "dim_pk": dim_pk,
+                        "dim_date_col": dim_date_col,
+                        "anchor_col": dim_date_col,
+                        "can_duplicate": False,
+                    }
+                elif to_ds == fact_table and from_ds == cand_tbl:
+                    fact_fk = to_cols[0]
+                    dim_pk = from_cols[0]
+                    dim_col_obj = next((c for c in getattr(cand_ds, "columns", []) or [] if getattr(c, "unique_name", "") == dim_pk), None)
+                    dim_is_key = bool(getattr(dim_col_obj, "is_key", False) or getattr(dim_col_obj, "is_unique", False))
+                    can_dup = (
+                        "MANY_TO_MANY" in cardinality_clean
+                        or "MANY_TO_ONE" in cardinality_clean
+                        or (not dim_is_key and cardinality_clean not in ("ONE_TO_MANY", "ONE_TO_ONE"))
+                    )
+                    if can_dup:
+                        return {
+                            "mode": "joined",
+                            "fact_table": fact_table,
+                            "dim_table": cand_tbl,
+                            "fact_fk": fact_fk,
+                            "dim_pk": dim_pk,
+                            "dim_date_col": dim_date_col,
+                            "anchor_col": dim_date_col,
+                            "can_duplicate": True,
+                            "duplicate_reason": (
+                                f"Cannot build enriched view: relationship from '{fact_table}' to '{cand_tbl}' "
+                                f"on '{fact_fk}' may duplicate fact rows (non-unique key on dimension)"
+                            ),
+                        }
+                    return {
+                        "mode": "joined",
+                        "fact_table": fact_table,
+                        "dim_table": cand_tbl,
+                        "fact_fk": fact_fk,
+                        "dim_pk": dim_pk,
+                        "dim_date_col": dim_date_col,
+                        "anchor_col": dim_date_col,
+                        "can_duplicate": False,
+                    }
+
+        return None
+
+    def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
+        """Resolve the date column a fact table's time-intelligence anchor
+        (MAX_DATE / flag columns) would be built from — IF this fact table
+        actually qualifies for enrichment at all. Returns None if there's
+        no date-table relationship for the model, or the join could duplicate
+        fact rows, or no date column can be established.
+        """
+        info = self._resolve_fact_anchor_info(model, fact_table)
+        if not info or info.get("can_duplicate"):
+            return None
+        return info.get("anchor_col")
 
     def _predict_eligible_enrichment_fact_tables(self, model: Any) -> list[str]:
         """Fact tables `predict_anchor_flag_map` should treat as eligible
@@ -2540,141 +2668,17 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
     def _auto_execute_precompute_suggestions(self, model, cursor) -> None:
         """
         Automatically execute pre-compute suggestions in Snowflake.
-        Only adds denormalized columns to fact/bridge tables when the column
-        truly does NOT already exist in that table.
+        Base-table mutation is disabled by architecture; SemaBridge never modifies physical tables.
         """
         suggestions = self.semantic_view_builder._precompute_suggestions(model)
-
         if not suggestions:
             return
-
-        logger.info("🚀 Auto-executing pre-compute suggestions...")
 
         logger.info(
             "Physical base-table mutation is disabled by architecture. "
             "SemaBridge never modifies physical tables."
         )
         return
-
-        # Build a live lookup: table_name_upper -> set of existing column names (upper)
-        live_meta: dict[str, set[str]] = {}
-        if hasattr(self, 'semantic_view_builder') and hasattr(self.semantic_view_builder, 'live_schema_metadata'):
-            live_meta = {
-                k.upper(): {c.upper() for c in v}
-                for k, v in self.semantic_view_builder.live_schema_metadata.items()
-            }
-
-        if not live_meta:
-            sf_meta = self.schema_manager._fetch_schema_metadata(cursor)
-            if not sf_meta:
-                datasets = list(getattr(model, "datasets", []) or [])
-                sf_meta = self.schema_manager._fetch_model_table_metadata(cursor, datasets)
-            if sf_meta:
-                self._live_schema_metadata.update(sf_meta)
-                live_meta = {
-                    k.upper(): {c.upper() for c in v}
-                    for k, v in sf_meta.items()
-                }
-
-        for table, cols in suggestions.items():
-            table_upper = table.upper()
-            if self.physical_namespace:
-                # Namespaced model: the dataset's physical table is its
-                # (namespaced) source_table, never the bare dataset name,
-                # which could be ANOTHER model's table in the shared schema.
-                table_upper = self._dataset_physical_table_key(model, table)
-
-            # Resolve physical table name (model name may differ from Snowflake name)
-            existing_cols = live_meta.get(table_upper, set())
-
-            # Skip suggestion entirely if ALL referenced columns already exist in
-            # the target table — these are DAX self-references (e.g. 'Date'[MonthIndex])
-            # not actual cross-table denormalization requests.
-            cols_needing_add = []
-            for col in cols:
-                col_upper = col.upper().replace(' ', '_')
-                # Map common DAX name -> physical name (e.g. Date -> COL_DATE)
-                physical = self._resolve_physical_col_name(col, existing_cols)
-                if physical in existing_cols or col_upper in existing_cols:
-                    logger.debug(
-                        "Skipping pre-compute for %s.%s: column already exists as %s",
-                        table, col, physical or col_upper
-                    )
-                else:
-                    cols_needing_add.append(col)
-
-            if not cols_needing_add:
-                logger.info(
-                    "Skipping all pre-compute suggestions for %s: columns already present", table
-                )
-                continue
-
-            # Check table exists
-            try:
-                cursor.execute(f"SHOW TABLES LIKE '{table_upper}'")
-                if not cursor.fetchone():
-                    logger.warning("Table %s not found, skipping pre-compute", table)
-                    continue
-            except Exception as _show_tables_exc:
-                # Was a silent `except Exception: continue` -- indistinguishable
-                # from the "table genuinely doesn't exist" branch above, but this
-                # one can also fire for a real connection/permission/syntax
-                # problem, which would then vanish with zero trace on a live,
-                # paid deploy. Always log which table and why before skipping.
-                logger.warning(
-                    "Could not verify existence of table %s before pre-compute "
-                    "(skipping this table's pre-compute suggestions): %s",
-                    table, _show_tables_exc,
-                )
-                continue
-
-            for col in cols_needing_add:
-                col_safe = col.upper().replace(' ', '_')
-                source_table = self._find_source_table_for_precompute(table, col)
-                if not source_table:
-                    logger.warning("Could not find source table for %s.%s; skipping", table, col)
-                    continue
-
-                # Resolve source column physical name
-                source_physical = (
-                    self._dataset_physical_table_key(model, source_table)
-                    if self.physical_namespace
-                    else source_table.upper()
-                )
-                source_existing = live_meta.get(source_physical, set())
-                src_col_phys = self._resolve_physical_col_name(col, source_existing) or col_safe
-
-                # Resolve join keys
-                from_key = self._get_directional_join_key(table, source_table, from_side=table)
-                to_key = self._get_directional_join_key(table, source_table, from_side=source_table)
-                if not from_key or not to_key:
-                    logger.warning("No model relationship between %s and %s; skipping pre-compute join for %s", table, source_table, col)
-                    continue
-
-                # Add column if not exists
-                try:
-                    cursor.execute(
-                        f'ALTER TABLE "{table_upper}" ADD COLUMN IF NOT EXISTS "{col_safe}" VARCHAR'
-                    )
-                    logger.info("Added column %s to %s", col_safe, table)
-                except Exception as e:
-                    logger.debug("Column %s may already exist in %s: %s", col_safe, table, e)
-
-                # Populate using Snowflake-compatible correlated UPDATE
-                update_sql = (
-                    f'UPDATE "{table_upper}" t '
-                    f'SET t."{col_safe}" = ('
-                    f'  SELECT s."{src_col_phys}" FROM "{source_physical}" s '
-                    f'  WHERE s."{to_key}" = t."{from_key}" LIMIT 1'
-                    f')'
-                )
-                try:
-                    cursor.execute(update_sql)
-                    logger.info("Populated %s in %s from %s", col_safe, table, source_table)
-                except Exception as e:
-                    logger.warning("Could not auto-populate %s: %s", col_safe, e)
-
-        logger.info("✅ Pre-compute suggestions executed successfully")
 
     def _resolve_physical_col_name(self, dax_col_name: str, existing_cols: set[str]) -> str:
         """
@@ -3296,8 +3300,13 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         # on the model and the schema. An empty or all-NULL date column falls
         # back to CURRENT_DATE() at query time.
         anchor_joins: list[str] = []
-        if date_info and self._is_fact_table_date_eligible(model, fact_table, date_info[0], date_info[1], fact_cols):
-            date_table, date_col, fiscal_col = date_info
+        anchor_info = self._resolve_fact_anchor_info(model, fact_table)
+        if (date_info and self._is_fact_table_date_eligible(model, fact_table, date_info[0], date_info[1], fact_cols)) or anchor_info:
+            date_table, date_col, fiscal_col = date_info or (
+                anchor_info.get("dim_table") if anchor_info else None,
+                anchor_info.get("dim_date_col") if anchor_info else None,
+                anchor_info.get("dim_date_col") if anchor_info else None,
+            )
             source_table_mapping = self._get_source_table_mapping()
 
             date_dataset = next(
@@ -3408,60 +3417,113 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 if not getattr(m, "dataset", None)
                 or str(getattr(m, "dataset", "")).casefold() == str(fact_table).casefold()
             )
-            if (shapes or metric_cites_max_date) and fact_date_col:
-                # If the live physical column in Snowflake is TEXT/VARCHAR,
-                # wrap it in TRY_TO_TIMESTAMP so date/time functions (YEAR, MONTH, EXTRACT)
-                # do not fail compilation with "Function EXTRACT does not support VARCHAR argument type".
-                from semabridge.connectors.date_column_coercion import is_text_type
-                col_types = getattr(self._live_schema_metadata, "column_types", {}) or {}
-                fact_tbl_key = self._id.sanitize_table_name(fact_table).upper()
-                fact_col_type = col_types.get(fact_tbl_key, {}).get(fact_date_col.upper(), "")
-                is_text_date = is_text_type(fact_col_type)
+            anchor_info = self._resolve_fact_anchor_info(model, fact_table)
+            if anchor_info and anchor_info.get("can_duplicate"):
+                fail_reason = anchor_info["duplicate_reason"]
+                logger.warning(fail_reason)
+                self._failed_enrichment_datasets.add(fact_table)
+                self._failed_enrichment_datasets.add(fact_table.casefold())
+                if not hasattr(self, "_failed_enriched_view_datasets") or not isinstance(self._failed_enriched_view_datasets, dict):
+                    self._failed_enriched_view_datasets = {}
+                self._failed_enriched_view_datasets[fact_table.casefold()] = fail_reason
+                if hasattr(self, "semantic_view_builder") and self.semantic_view_builder is not None:
+                    self.semantic_view_builder.failed_enrichment_datasets.add(fact_table)
+                    self.semantic_view_builder.failed_enrichment_datasets.add(fact_table.casefold())
+                return None
 
-                coerced_date_expr = f'TRY_TO_TIMESTAMP("{fact_date_col}")' if is_text_date else f'"{fact_date_col}"'
-
-                # COALESCE: an empty / all-NULL date column anchors at
-                # CURRENT_DATE() at query time instead of a NULL anchor.
-                anchor_joins.append(
-                    f'CROSS JOIN (SELECT COALESCE(MAX({coerced_date_expr}), CURRENT_DATE()) AS "MAX_DATE" '
-                    f'FROM {fact_source_ref}) anchor_max'
-                )
-                max_date_sql = 'anchor_max."MAX_DATE"'
-                select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
-                projected_cols.add("MAX_DATE")
-
-                fact_date_col_sql = f'TRY_TO_TIMESTAMP(f."{fact_date_col}")' if is_text_date else f'f."{fact_date_col}"'
+            if (shapes or metric_cites_max_date) and (anchor_info or fact_date_col):
                 new_flag_map = {}
-
-                has_rolling_months = any(
-                    len(s) == 1 and s[0].startswith("R") and s[0].endswith("M") and s[0][1:-1].isdigit()
-                    for s in shapes
-                )
-                if has_rolling_months and scalar_patterns:
-                    anchor_joins.append(
-                        f'LEFT JOIN {date_table_ref} dt_anchor ON f."{fact_date_col}" = dt_anchor."{resolved_date_col}"'
-                    )
-
-                for shape in sorted(shapes):
-                    flag_name = flag_column_name(shape)
-                    if (
-                        len(shape) == 1
-                        and shape[0].startswith("R")
-                        and shape[0].endswith("M")
-                        and shape[0][1:-1].isdigit()
-                        and scalar_patterns
-                    ):
-                        n_months = int(shape[0][1:-1])
-                        pat0 = scalar_patterns[0]
-                        flag_sql = (
-                            f'dt_anchor."{pat0.dim_col}" <= anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" '
-                            f'AND dt_anchor."{pat0.dim_col}" > anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" - {n_months}'
+                if anchor_info and anchor_info.get("mode") == "joined":
+                    dim_tbl_name = anchor_info["dim_table"]
+                    dim_ds = self._get_dataset_by_name(model, dim_tbl_name) or date_dataset
+                    if dim_ds:
+                        from semabridge.connectors.table_binding_resolver import resolve_dataset_to_physical_table
+                        resolved_dt = resolve_dataset_to_physical_table(
+                            dim_ds.unique_name,
+                            [c.unique_name for c in getattr(dim_ds, "columns", []) or []],
+                            self._live_schema_metadata,
+                            model_name=getattr(model, "unique_name", None) or getattr(model, "name", None),
                         )
-                    else:
-                        flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_sql)
-                    select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
-                    projected_cols.add(flag_name)
-                    new_flag_map[shape] = flag_name
+                        safe_dt = self._id.sanitize_table_name(resolved_dt)
+                        dt_ref = f'"{self.config.database}"."{self.config.schema_name}"."{safe_dt}"'
+                        fact_fk_phys = self.schema_manager._resolve_physical_column_name(fact_dataset, anchor_info["fact_fk"], model=model) or anchor_info["fact_fk"]
+                        dim_pk_phys = self.schema_manager._resolve_physical_column_name(dim_ds, anchor_info["dim_pk"], model=model) or anchor_info["dim_pk"]
+                        dim_date_phys = self.schema_manager._resolve_physical_column_name(dim_ds, anchor_info["dim_date_col"], model=model) or anchor_info["dim_date_col"]
+                        anchor_col_name = self._id.sanitize_column(anchor_info["anchor_col"])
+
+                        anchor_joins.append(
+                            f'LEFT JOIN {dt_ref} dt_anchor ON f."{fact_fk_phys}" = dt_anchor."{dim_pk_phys}"'
+                        )
+                        select_parts.append(f'\n            , dt_anchor."{dim_date_phys}" AS "{anchor_col_name}"')
+                        projected_cols.add(anchor_col_name.upper())
+
+                        anchor_joins.append(
+                            f'CROSS JOIN (SELECT COALESCE(MAX(dt_anchor."{dim_date_phys}"), CURRENT_DATE()) AS "MAX_DATE" '
+                            f'FROM {fact_source_ref} f LEFT JOIN {dt_ref} dt_anchor ON f."{fact_fk_phys}" = dt_anchor."{dim_pk_phys}") anchor_max'
+                        )
+                        max_date_sql = 'anchor_max."MAX_DATE"'
+                        select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
+                        projected_cols.add("MAX_DATE")
+
+                        for shape in sorted(shapes):
+                            flag_name = flag_column_name(shape)
+                            flag_sql = build_shape_boolean_sql(shape, f'dt_anchor."{dim_date_phys}"', max_date_sql)
+                            select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
+                            projected_cols.add(flag_name.upper())
+                            new_flag_map[shape] = flag_name
+                elif fact_date_col:
+                    # If the live physical column in Snowflake is TEXT/VARCHAR,
+                    # wrap it in TRY_TO_TIMESTAMP so date/time functions (YEAR, MONTH, EXTRACT)
+                    # do not fail compilation with "Function EXTRACT does not support VARCHAR argument type".
+                    from semabridge.connectors.date_column_coercion import is_text_type
+                    col_types = getattr(self._live_schema_metadata, "column_types", {}) or {}
+                    fact_tbl_key = self._id.sanitize_table_name(fact_table).upper()
+                    fact_col_type = col_types.get(fact_tbl_key, {}).get(fact_date_col.upper(), "")
+                    is_text_date = is_text_type(fact_col_type)
+
+                    coerced_date_expr = f'TRY_TO_TIMESTAMP("{fact_date_col}")' if is_text_date else f'"{fact_date_col}"'
+
+                    # COALESCE: an empty / all-NULL date column anchors at
+                    # CURRENT_DATE() at query time instead of a NULL anchor.
+                    anchor_joins.append(
+                        f'CROSS JOIN (SELECT COALESCE(MAX({coerced_date_expr}), CURRENT_DATE()) AS "MAX_DATE" '
+                        f'FROM {fact_source_ref}) anchor_max'
+                    )
+                    max_date_sql = 'anchor_max."MAX_DATE"'
+                    select_parts.append(f'\n            , {max_date_sql} AS "MAX_DATE"')
+                    projected_cols.add("MAX_DATE")
+
+                    fact_date_col_sql = f'TRY_TO_TIMESTAMP(f."{fact_date_col}")' if is_text_date else f'f."{fact_date_col}"'
+
+                    has_rolling_months = any(
+                        len(s) == 1 and s[0].startswith("R") and s[0].endswith("M") and s[0][1:-1].isdigit()
+                        for s in shapes
+                    )
+                    if has_rolling_months and scalar_patterns:
+                        anchor_joins.append(
+                            f'LEFT JOIN {date_table_ref} dt_anchor ON f."{fact_date_col}" = dt_anchor."{resolved_date_col}"'
+                        )
+
+                    for shape in sorted(shapes):
+                        flag_name = flag_column_name(shape)
+                        if (
+                            len(shape) == 1
+                            and shape[0].startswith("R")
+                            and shape[0].endswith("M")
+                            and shape[0][1:-1].isdigit()
+                            and scalar_patterns
+                        ):
+                            n_months = int(shape[0][1:-1])
+                            pat0 = scalar_patterns[0]
+                            flag_sql = (
+                                f'dt_anchor."{pat0.dim_col}" <= anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" '
+                                f'AND dt_anchor."{pat0.dim_col}" > anchor_{re.sub(r"[^A-Za-z0-9_]", "_", pat0.dim_col).lower()}."{pat0.helper_name}" - {n_months}'
+                            )
+                        else:
+                            flag_sql = build_shape_boolean_sql(shape, fact_date_col_sql, max_date_sql)
+                        select_parts.append(f'\n            , ({flag_sql}) AS "{flag_name}"')
+                        projected_cols.add(flag_name.upper())
+                        new_flag_map[shape] = flag_name
             elif not shapes and not scalar_patterns and not fact_date_col:
                 # Do not mark fact table as having no usable dates if it has an active relationship to a date table (T7)
                 has_active_date_rel = False
