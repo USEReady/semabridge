@@ -1599,6 +1599,10 @@ ADVISORY_NOTE_TI_ANCHORED_TO_CURRENT_DATE = (
     "period flag was available; DAX anchors to the last date in the filter context, "
     "so values differ when the data does not extend to today."
 )
+TI_CURRENT_DATE_ANCHOR_REASON = (
+    "not applicable: time intelligence has no data-based period flag/anchor; "
+    "a window anchored to today's date would not match DAX (anchored to the data's last date)"
+)
 
 
 USERELATIONSHIP_REASON = (
@@ -2339,8 +2343,7 @@ class DaxSqlRenderer:
             if not validate_emitted_sql(sql):
                 raise self.DaxRenderError(f"Emitted SQL contains un-translated DAX syntax: {sql}")
             if "CURRENT_DATE()" in sql.upper() and not _ast_contains_func(node, {"TODAY", "NOW"}):
-                if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in self._advisory_categories:
-                    self._advisory_categories.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                raise self.DaxRenderError(TI_CURRENT_DATE_ANCHOR_REASON)
             return sql
 
         except self.DaxRenderError as exc:
@@ -2814,8 +2817,8 @@ class DaxSqlRenderer:
                 return var_sql
             if col_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[col_cf]
-                if val.strip().upper() == "NULL":
-                    return "NULL"
+                if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                    raise self.DaxRenderError(f"depends on untranslatable part: [{col_clean}]")
                 if self.row_context_stack:
                     return self._row_level_measure_sql(col_clean, val)
                 return f"({val})"
@@ -2826,8 +2829,8 @@ class DaxSqlRenderer:
         elif qualified_cf:
             if qualified_cf in self._measure_sql_map_by_casefold:
                 val = self._measure_sql_map_by_casefold[qualified_cf]
-                if val.strip().upper() == "NULL":
-                    return "NULL"
+                if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                    raise self.DaxRenderError(f"depends on untranslatable part: [{node.raw}]")
                 return f"({val})"
             if qualified_cf in self._known_measure_names_casefold:
                 raise self.DaxRenderError(
@@ -3128,8 +3131,8 @@ class DaxSqlRenderer:
         name_cf = node.name.casefold()
         if name_cf in self._measure_sql_map_by_casefold:
             val = self._measure_sql_map_by_casefold[name_cf]
-            if val.strip().upper() == "NULL":
-                return "NULL"
+            if val.strip().upper() == "NULL" or "CAST(NULL AS" in val.upper():
+                raise self.DaxRenderError(f"depends on untranslatable part: [{node.name}]")
             if self.row_context_stack:
                 return self._row_level_measure_sql(node.name, val)
             if (
@@ -3874,6 +3877,25 @@ class DaxSqlRenderer:
         if func == "IF":
             return self._render_if(node.args)
 
+        # RANKX(table, expr, [val], [order], [ties])
+        if func == "RANKX":
+            if len(node.args) < 2:
+                raise self.DaxRenderError("not applicable: needs window metric (ranking)")
+            expr_arg = node.args[1]
+            order_dir = "DESC"
+            if len(node.args) >= 4:
+                order_val = str(getattr(node.args[3], "value", "") or getattr(node.args[3], "name", "") or "").upper()
+                if order_val in ("ASC", "0", "FALSE", "1"):
+                    order_dir = "ASC" if order_val in ("ASC", "1") else "DESC"
+            expr_sql = self._render_node(expr_arg)
+            if not expr_sql or "CAST(NULL AS" in expr_sql.upper():
+                raise self.DaxRenderError("not applicable: needs window metric (ranking)")
+            return f"RANK() OVER (ORDER BY {expr_sql} {order_dir})"
+
+        # TREATAS
+        if func == "TREATAS":
+            raise self.DaxRenderError("not applicable: virtual relationship (TREATAS) not supported in semantic views")
+
         # Registry-driven templates (if configured)
 
         rendered_args = [self._render_node(a) for a in node.args]
@@ -3907,8 +3929,6 @@ class DaxSqlRenderer:
         if func == "IF":
 
             return self._render_if(node.args)
-
-
 
         # SWITCH
 
@@ -5042,6 +5062,8 @@ class DaxSqlRenderer:
 
         try:
             agg_expr = self._render_node(filtered_args[0])
+            if not agg_expr or agg_expr.strip().upper() == "NULL" or "CAST(NULL AS" in agg_expr.upper():
+                raise self.DaxRenderError("depends on untranslatable part: base aggregation is untranslatable")
 
             filter_clauses: List[str] = []
 
@@ -6439,6 +6461,29 @@ def _refs_any_data(node: DaxNode) -> bool:
     return False
 
 
+def _has_treatas(node: Optional[DaxNode]) -> bool:
+    if node is None:
+        return False
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if cur is None:
+            continue
+        if isinstance(cur, FunctionCallNode):
+            if cur.func.upper() == "TREATAS":
+                return True
+            stack.extend(cur.args)
+        elif isinstance(cur, BinaryOpNode):
+            stack.extend([cur.left, cur.right])
+        elif isinstance(cur, UnaryOpNode):
+            stack.append(cur.operand)
+        elif isinstance(cur, VarNode):
+            for _, expr in getattr(cur, "variables", []):
+                stack.append(expr)
+            stack.append(getattr(cur, "body", None))
+    return False
+
+
 def _has_ranking_function(node: DaxNode) -> bool:
     res = False
     def _walk(cur):
@@ -6824,6 +6869,10 @@ def classify_dax_ast_not_applicable(
     # CASE WHEN / IF over a window metric (Snowflake error 010258 / 010273)
     if _has_case_when_or_if(parsed_ast) and _has_window_construct(parsed_ast):
         return "not applicable: CASE WHEN over a window metric is not supported in Snowflake semantic views"
+
+    # Virtual relationships (TREATAS)
+    if _has_treatas(parsed_ast):
+        return "not applicable: virtual relationship (TREATAS) not supported in semantic views"
 
     # 3. Ranking functions
     if _has_ranking_function(parsed_ast):

@@ -247,6 +247,33 @@ class QueryValidator:
     }
     
     @staticmethod
+    def validate_metric_grain(
+        metric_name: str,
+        metric_sql: str,
+        group_by_clause: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Validate that time intelligence metric grain aligns with GROUP BY clause."""
+        if not group_by_clause:
+            return True, None
+        gb = group_by_clause.lower()
+        m_name = (metric_name or "").lower()
+        if "sply" in m_name or "sameperiodlastyear" in m_name:
+            if "month" in gb or "week" in gb or "day" in gb or "date" in gb:
+                return (
+                    False,
+                    f"Metric '{metric_name}' is tied to Year grain; grouping by '{group_by_clause}' "
+                    f"would silently return the previous row instead of same period last year."
+                )
+        if "pm" in m_name or "previousmonth" in m_name:
+            if "week" in gb or "day" in gb or "date" in gb:
+                return (
+                    False,
+                    f"Metric '{metric_name}' is tied to Month grain; grouping by '{group_by_clause}' "
+                    f"would silently return the previous row instead of previous month."
+                )
+        return True, None
+
+    @staticmethod
     def validate_select_clause(select_clause: str) -> Tuple[bool, Optional[str]]:
         """Validate SELECT clause structure."""
         if not select_clause or not select_clause.strip():

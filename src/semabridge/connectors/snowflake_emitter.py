@@ -2270,8 +2270,7 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         if fact_tables:
             return fact_tables
 
-        fallback = self._identify_fact_table(model)
-        return [fallback] if fallback and not _is_virtual_dataset(fallback) else []
+        return []
 
     def _resolve_fact_enrichment_date_column(self, model: Any, fact_table: str) -> Optional[str]:
         """Resolve the date column a fact table's time-intelligence anchor

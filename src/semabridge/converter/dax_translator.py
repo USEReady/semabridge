@@ -637,8 +637,12 @@ class DAXTranslator:
                     if ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS not in cats:
                         cats.append(ADVISORY_CATEGORY_CALCULATE_FILTER_SEMANTICS)
                 if "CURRENT_DATE()" in result.sql.upper() and not re.search(r"\b(TODAY|NOW)\s*\(", clean_dax, re.IGNORECASE):
-                    if ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE not in cats:
-                        cats.append(ADVISORY_CATEGORY_TI_ANCHORED_TO_CURRENT_DATE)
+                    from semabridge.converter.dax_ast_parser import TI_CURRENT_DATE_ANCHOR_REASON
+                    return DAXTranslationResult(
+                        None, 4, clean_dax,
+                        failure_reason=TI_CURRENT_DATE_ANCHOR_REASON,
+                        sync_enabled=False,
+                    )
                 from semabridge.connectors.snowflake_metric_sql import simplify_dead_arithmetic_sql
                 result.sql = simplify_dead_arithmetic_sql(result.sql)
                 result.advisory_categories = cats

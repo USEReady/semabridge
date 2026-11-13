@@ -157,3 +157,37 @@ def test_metric_reference_is_kept_not_inlined_when_metric_name_clashes_with_a_co
     assert 'CASE WHEN SENTIMENT."SENTIMENT" < 65' in at05_line
     assert "CAST(NULL AS DOUBLE)" not in at05_line
 
+
+
+def test_metric_named_like_a_table_alias_does_not_replace_the_qualifier():
+    """A metric 'SENTIMENT' (AVG over table SENTIMENT) referenced by another
+    metric must be inlined only where it is referenced as a metric, never into
+    the table qualifier of SENTIMENT.SCORE -- that produced
+    AVG(... (AVG(SENTIMENT.SCORE)).SCORE ...), a nested aggregate that nulled
+    the Competitive Marketing 'Sentiment Gap' golden metric."""
+    id_sanitizer = IdentifierSanitizer()
+    builder = MetricsClauseBuilder(
+        id_sanitizer,
+        _DummySchema(),
+        SemanticDDLSanitizer(id_sanitizer),
+        translator=None,
+        config=None,
+        drop_ledger=DropLedger(),
+    )
+
+    metrics_lines = [
+        "  SENTIMENT.\"SENTIMENT\" AS AVG(SENTIMENT.SCORE)",
+        "  SENTIMENT.\"SENTIMENT_GAP\" AS AVG(CASE WHEN SENTIMENT.MFG = 'No' THEN SENTIMENT.SCORE END)"
+        " - AVG(CASE WHEN SENTIMENT.MFG = 'Yes' THEN SENTIMENT.SCORE END)",
+        "  SENTIMENT.\"SENTIMENT_BAND\" AS CASE WHEN SENTIMENT < 15 THEN 1 ELSE 2 END",
+    ]
+    pruned = builder._prune_unresolved_metric_lines(
+        metrics_lines, {"SENTIMENT", "SENTIMENT_GAP", "SENTIMENT_BAND"}
+    )
+
+    gap = [l for l in pruned if '"SENTIMENT_GAP"' in l][0]
+    assert "(AVG(SENTIMENT.SCORE)).SCORE" not in gap
+    assert "THEN SENTIMENT.SCORE END" in gap
+    # A genuine bare reference to the metric is still inlined.
+    band = [l for l in pruned if '"SENTIMENT_BAND"' in l][0]
+    assert "(AVG(SENTIMENT.SCORE)) < 15" in band

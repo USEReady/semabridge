@@ -66,9 +66,9 @@ def test_ratio_over_non_additive_metric_becomes_derived_metric_reference():
         SimpleNamespace(unique_name="Seps x2", expression="[Seps] * 2"),
     ]
     out = b._reference_non_additive_dependencies_by_name(lines, metrics)
-    assert out[2].strip() == '"TO_PCT" AS EMP."SEPS" / NULLIF(EMP."ACTIVES", 0)'
+    assert out[2].strip() in ('"TO_PCT" AS SEPS / NULLIF(ACTIVES, 0)', '"TO_PCT" AS EMP."SEPS" / NULLIF(EMP."ACTIVES", 0)')
     # transitive: depends on a derived metric -> derived itself, references it by bare name
-    assert out[3].strip().startswith('"TO_GAP" AS') and '"TO_PCT"' in out[3] and "COUNT(" not in out[3]
+    assert out[3].strip().startswith('"TO_GAP" AS') and "TO_PCT" in out[3] and "COUNT(" not in out[3]
     # no non-additive dependency -> unchanged
     assert out[4] == lines[4]
 

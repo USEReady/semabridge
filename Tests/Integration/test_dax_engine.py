@@ -31,6 +31,13 @@ from semabridge.converter.dax_engine import (
 from semabridge.converter.dax_ast_parser import DaxAstParser, DaxSqlRenderer
 
 
+@pytest.fixture(autouse=True)
+def _cache_file_in_tmp(tmp_path, monkeypatch):
+    """DaxTranslationCache writes (and clear() deletes) a cwd-relative file;
+    keep it out of the repo checkout and away from parallel workers."""
+    monkeypatch.chdir(tmp_path)
+
+
 class TestDirectAggregations:
     """Test direct aggregation translations."""
     

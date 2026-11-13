@@ -399,25 +399,29 @@ class TablesClauseBuilder:
             # Omit unlinked measure-only tables (containers with no physical data columns and no relationships)
             cols = getattr(d, "columns", []) or []
             is_measure_table = getattr(d, "is_measure_table", False)
+            _DUMMY_COL_NAMES = {
+                "_", "COLUMN1", "COLUMN 1", "DUMMY", "ROWNUMBER", "1", "{1}", "PLACEHOLDER"
+            }
             non_dummy_cols = [
                 c for c in cols
-                if getattr(c, "unique_name", "") != "_"
-                and not str(getattr(c, "unique_name", "")).startswith("_RowNumber")
+                if getattr(c, "unique_name", "").upper() not in _DUMMY_COL_NAMES
+                and not str(getattr(c, "unique_name", "")).startswith(("_RowNumber", "RowNumber"))
             ]
             # A measure container in Power BI is a table that hosts measures,
-            # has no relationships and only hidden placeholder column(s) (e.g.
-            # "Value" from {1}, "Column1" from an empty #table) that no measure
+            # has no relationships and only placeholder column(s) that no measure
             # reads. Those placeholders are not data -- treat the table as
             # measure-only so its measures are re-homed like any other.
             if (
-                non_dummy_cols
+                not getattr(d, "is_fact", False)
+                and len(datasets) > 1
+                and non_dummy_cols
+                and all(getattr(c, "is_hidden", False) for c in non_dummy_cols)
                 and metric_counts_by_dataset.get(d_name, 0) > 0
                 and str(d_name).casefold() not in related_dataset_names
-                and all(getattr(c, "is_hidden", False) for c in non_dummy_cols)
                 and not self._columns_used_by_metrics(d_name, non_dummy_cols)
             ):
                 non_dummy_cols = []
-            if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names:
+            if (is_measure_table or len(non_dummy_cols) == 0) and str(d_name).casefold() not in related_dataset_names and not getattr(d, "is_fact", False) and len(datasets) > 1:
                 logger.info("Omitting unlinked measure-only table '%s' from semantic view TABLES clause", d_name)
                 if self.drop_ledger is not None:
                     self.drop_ledger.record(

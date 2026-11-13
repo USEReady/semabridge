@@ -820,6 +820,19 @@ class MetricsClauseBuilder:
             elif whatif_notes := self._whatif_comment_note(metric, getattr(self, "_current_model", None)):
                 comment_clause = f" COMMENT = '{self._clean_comment(whatif_notes)}'"
 
+            whatif_match = re.search(
+                r"SELECTEDVALUE\s*\(\s*(?:'([^']+)'|([A-Za-z0-9_]+))\[([^\]]+)\]\s*,\s*([^\)]+)\)",
+                str(getattr(metric, "expression", "") or ""),
+                re.IGNORECASE,
+            )
+            if whatif_match and not comment_clause:
+                p_tbl = whatif_match.group(1) or whatif_match.group(2)
+                p_col = whatif_match.group(3)
+                p_def = whatif_match.group(4).strip().strip("'\"")
+                p_name = p_tbl or p_col or "Parameter"
+                safe_comment = self._clean_comment(f"What-if parameter: {p_name}, default: {p_def}")
+                comment_clause = f" COMMENT = '{safe_comment}'"
+
             # PRIVATE comes only from an explicit flag set where the metric
             # was created (SemaBridge-generated helpers are created with
             # access_modifier="private_access"; see
@@ -828,6 +841,8 @@ class MetricsClauseBuilder:
             is_priv = (
                 getattr(metric, "access_modifier", None) == "private_access"
                 or getattr(metric, "is_private", False)
+                or getattr(metric, "is_hidden", False)
+                or bool(re.search(r"(_NUM|_DEN|_SUM|_CNT)$", safe_metric_name))
             )
             priv_prefix = "PRIVATE " if is_priv else ""
 
@@ -1102,7 +1117,7 @@ class MetricsClauseBuilder:
         for ddl in derived:
             sql, refs = rendered[ddl]
             for r in refs:
-                target = f'"{parsed[r]["name"]}"' if (r in derived or not parsed[r]["alias"]) else f'{parsed[r]["alias"]}."{parsed[r]["name"]}"'
+                target = parsed[r]["name"] if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', parsed[r]["name"]) else f'"{parsed[r]["name"]}"'
                 sql = sql.replace(f"__REF__{r}__", target)
             if sql.startswith("(") and sql.endswith(")") and self._has_balanced_outer(sql):
                 sql = sql[1:-1]
