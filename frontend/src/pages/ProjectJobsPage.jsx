@@ -15,7 +15,6 @@ import RunDrawer, { StatusPill } from '../components/runs/RunDrawer';
 import RunReportModal from '../components/runs/RunReportModal';
 import { defaultReportModel, downloadRunMarkdown } from '../components/runs/runReportActions';
 import SchedulesTab from '../components/runs/SchedulesTab';
-import { DriftView } from './GovernanceSuitePage';
 import useRunReportCounts, { clearRunCounts } from '../components/runs/useRunReportCounts';
 import { formatAgo, formatDateTime, formatDuration, normStatus, parseIso, shortMessage } from '../components/runs/runsFormat';
 
@@ -401,12 +400,9 @@ export default function ProjectJobsPage() {
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border-main)', marginBottom: 16 }}>
         {tabBtn('history', 'History')}
         {tabBtn('schedules', 'Schedules', schedules.length)}
-        {tabBtn('drift', 'Drift Approvals')}
       </div>
 
-      {tab === 'drift' ? (
-        <DriftView />
-      ) : tab === 'schedules' ? (
+      {tab === 'schedules' ? (
         <SchedulesTab
           schedules={schedules}
           projects={projects}

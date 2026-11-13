@@ -17,7 +17,7 @@ import LeftNavigation from '../components/LeftNavigation';
 const SECTION_LABELS = {
   projects: 'Projects', runs: 'Runs', ask: 'Ask AI', ontology: 'Explorer',
   'metric-comparator': 'Metric Comparator', 'blast-radius': 'Blast Radius',
-  drift: 'Drift & Schedule', 'reverse-sync': 'Reverse Sync',
+  drift: 'Data Monitoring', 'drift-monitoring': 'Data Monitoring', 'data-monitoring': 'Data Monitoring', 'reverse-sync': 'Reverse Sync',
   'bi-truth': 'BI-Truth Suite', 'cross-platform': 'Cross-Platform',
   map: 'Model map', history: 'History', compare: 'Compare', settings: 'Settings',
   'global-config': 'Settings',

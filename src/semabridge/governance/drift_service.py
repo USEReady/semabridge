@@ -6,13 +6,92 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("semabridge.governance.drift_service")
 
 _SCHEDULER = None
+
+
+def get_default_mock_drift_events(project_id: str = "proj-tiral_comp") -> List[Dict[str, Any]]:
+    """Return high-fidelity mock drift events for project demonstration and monitoring."""
+    now = datetime.now(timezone.utc)
+    t1 = (now - timedelta(minutes=18)).isoformat()
+    t2 = (now - timedelta(hours=1, minutes=25)).isoformat()
+    t3 = (now - timedelta(days=1, hours=3)).isoformat()
+    t3_res = (now - timedelta(days=1, hours=2, minutes=30)).isoformat()
+    t4 = (now - timedelta(days=2, hours=5)).isoformat()
+    t4_res = (now - timedelta(days=2, hours=4)).isoformat()
+
+    return [
+        {
+            "id": "drift-90fe41780e",
+            "project_id": project_id,
+            "domain": "COMP_ANALYSIS",
+            "metric_name": "TOTAL_UNITS",
+            "drift_type": "EXPRESSION_MISMATCH",
+            "bi_definition": "SUM(SALESFACT.UNITS * 1.05)",
+            "snowflake_definition": "SUM(SALESFACT.UNITS)",
+            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.TOTAL_UNITS", "REPORTS.EXECUTIVE_DASHBOARD"],
+            "status": "pending",
+            "resolution_reason": "",
+            "detected_at": t1,
+        },
+        {
+            "id": "drift-84ac12e9b1",
+            "project_id": project_id,
+            "domain": "COMP_ANALYSIS",
+            "metric_name": "COUNT_OF_PRODUCT",
+            "drift_type": "EXPRESSION_MISMATCH",
+            "bi_definition": "COUNT(DISTINCT PRODUCT.PRODUCT_ID)",
+            "snowflake_definition": "COUNT(PRODUCT.PRODUCT)",
+            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.COUNT_OF_PRODUCT"],
+            "status": "pending",
+            "resolution_reason": "",
+            "detected_at": t2,
+        },
+        {
+            "id": "drift-71fd55c3a4",
+            "project_id": project_id,
+            "domain": "COMP_ANALYSIS",
+            "metric_name": "SALES_DOL",
+            "drift_type": "EXPRESSION_MISMATCH",
+            "bi_definition": "SUM(SALESFACT.REVENUE) - SUM(SALESFACT.DISCOUNT)",
+            "snowflake_definition": "SUM(SALESFACT.REVENUE)",
+            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS", "METRICS.SALES_DOL", "METRICS.MARGIN_PCT"],
+            "status": "approved",
+            "resolution_reason": "Approved by Data Steward: promotional discounts subtracted from gross sales.",
+            "detected_at": t3,
+            "resolved_at": t3_res,
+        },
+        {
+            "id": "drift-52be9934c7",
+            "project_id": project_id,
+            "domain": "COMP_ANALYSIS",
+            "metric_name": "SENTIMENT_SCORE",
+            "drift_type": "MISSING_IN_SNOWFLAKE",
+            "bi_definition": "AVERAGE(SENTIMENT.SCORE)",
+            "snowflake_definition": "(not present in semantic view)",
+            "affected_objects": ["SEMANTIC_VIEWS.COMP_ANALYSIS"],
+            "status": "ignored",
+            "resolution_reason": "Ignored: experimental BI metric not designated for warehouse promotion.",
+            "detected_at": t4,
+            "resolved_at": t4_res,
+        },
+    ]
+
+
+def seed_mock_drift_events(project_id: str = "proj-tiral_comp") -> List[Dict[str, Any]]:
+    """Seed or re-populate mock drift events for a project."""
+    state = _load_state()
+    mock_events = get_default_mock_drift_events(project_id)
+    existing_ids = {e.get("id") for e in state.get("events", [])}
+    added = [e for e in mock_events if e.get("id") not in existing_ids]
+    state["events"] = added + state.get("events", [])
+    _save_state(state)
+    return state["events"]
 
 
 def _state_path() -> Path:
@@ -59,8 +138,10 @@ def _normalize_metric_expr(expr: str) -> str:
     s = re.sub(r'::(FLOAT|DOUBLE|INT|INTEGER|NUMBER|VARCHAR|BOOLEAN)\b', '', s, flags=re.I)
     # Strip CAST(X AS TYPE)
     s = re.sub(r'CAST\s*\(\s*(.*?)\s+AS\s+[A-Za-z0-9_]+\s*\)', r'\1', s, flags=re.I)
-    # Strip column qualifiers e.g. SALESFACT.UNITS -> UNITS
-    s = re.sub(r'\b[A-Za-z0-9_]+\.([A-Za-z0-9_]+)\b', r'\1', s)
+    # Strip table name qualifiers (e.g. SALESFACT.UNITS -> UNITS)
+    s = re.sub(r'\b[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)\b', r'\1', s)
+    # Strip table prefix denormalizations e.g. product_isvanarsdel -> isvanarsdel
+    s = re.sub(r'\b(product|salesfact|date|geo|sentiment)_([A-Za-z0-9_]+)\b', r'\2', s, flags=re.I)
     # Strip SQL/DAX comment annotations
     s = re.sub(r'/\*.*?\*/', '', s)
     s = re.sub(r'--.*$', '', s, flags=re.M)
@@ -158,13 +239,15 @@ def run_drift_check(
             drift_reason = None
             sf_expr = ""
             if sf_connected and sf_entry is None and getattr(dom, "semantic_view_name", None):
-                drift_reason = "MISSING_IN_SNOWFLAKE"
+                clean_sql = (m.sql_expression or "").strip().strip("'\"")
+                if clean_sql and not clean_sql.isspace():
+                    drift_reason = "MISSING_IN_SNOWFLAKE"
             elif sf_entry is not None:
                 sf_expr = (sf_entry.get("expression") or "").strip()
                 # Ignore expected null placeholder for measures without SQL
-                if not (m.sql_expression or "").strip() and ("null" in sf_expr.lower() or not sf_expr):
+                if not (m.sql_expression or "").strip() or not sf_expr or "null" in sf_expr.lower():
                     pass
-                elif sf_expr and bi_expr and _normalize_metric_expr(sf_expr) != _normalize_metric_expr(bi_expr):
+                elif _normalize_metric_expr(sf_expr) != _normalize_metric_expr(bi_expr):
                     drift_reason = "EXPRESSION_MISMATCH"
 
             if drift_reason:
@@ -276,7 +359,7 @@ def list_drift_events(project_id: Optional[str] = None, status: Optional[str] = 
 
 
 def clear_drift_events(project_id: Optional[str] = None) -> int:
-    """Clear all drift events for a project or all projects."""
+    """Clear all drift events for a project or all projects and synchronize baselines."""
     state = _load_state()
     orig = len(state.get("events", []))
     if project_id:
@@ -285,8 +368,11 @@ def clear_drift_events(project_id: Optional[str] = None) -> int:
             e for e in state.get("events", [])
             if str(e.get("project_id") or "").lower().removeprefix("proj-").strip() != p_clean
         ]
+        if "baselines" in state and p_clean in state["baselines"]:
+            state["baselines"].pop(p_clean, None)
     else:
         state["events"] = []
+        state["baselines"] = {}
     _save_state(state)
     return orig - len(state.get("events", []))
 
@@ -330,6 +416,15 @@ def simulate_metric_drift(
         raise ValueError("No metrics found in domain to modify.")
 
     orig_expr = m_target.sql_expression or m_target.dax_expression or "COUNT(*)"
+
+    # Record baseline for original expression before modifying
+    state = _load_state()
+    p_clean_target = project_id.lower().removeprefix("proj-").strip()
+    proj_baselines = state.setdefault("baselines", {}).setdefault(p_clean_target, {})
+    if m_target.name.upper() not in proj_baselines:
+        proj_baselines[m_target.name.upper()] = _normalize_metric_expr(orig_expr)
+    _save_state(state)
+
     if not new_expression:
         mod_expr = f"{orig_expr} * 1.05"
     else:

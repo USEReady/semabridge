@@ -63,8 +63,6 @@ export function DriftView({ projectId = '' }) {
   const [webhookUrl, setWebhookUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const [demoMsg, setDemoMsg] = useState('');
-  const [simMetric, setSimMetric] = useState('TOTAL_UNITS');
   const [filterStatus, setFilterStatus] = useState('all');
 
   const refresh = useCallback(async () => {
@@ -119,65 +117,10 @@ export function DriftView({ projectId = '' }) {
     await refresh();
   };
 
-  const handleSimulateChange = async () => {
-    setBusy(true);
-    setDemoMsg('');
-    try {
-      const targetPid = projectId || 'proj-tiral_comp';
-      const res = await authFetch('/api/drift/simulate-change', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: targetPid,
-          metric_name: simMetric,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setDemoMsg(`Formula for '${simMetric}' modified to: ${data.modified_expression}. Now trigger or run a scheduled job (Runs > Schedules > 'Run now') to observe the drift pause!`);
-      } else {
-        setDemoMsg(data?.detail || 'Failed to modify metric.');
-      }
-      await refresh();
-    } catch (err) {
-      setDemoMsg(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleResetMetric = async () => {
-    setBusy(true);
-    setDemoMsg('');
-    try {
-      const targetPid = projectId || 'proj-tiral_comp';
-      const res = await authFetch('/api/drift/reset-change', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: targetPid,
-          metric_name: simMetric,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setDemoMsg(`Metric '${simMetric}' has been reset back to baseline (${data.reset_expression}).`);
-      } else {
-        setDemoMsg(data?.detail || 'Failed to reset metric.');
-      }
-      await refresh();
-    } catch (err) {
-      setDemoMsg(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleClearEvents = async () => {
     if (!window.confirm('Clear drift events history?')) return;
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
     await authFetch(`/api/drift/events${qs}`, { method: 'DELETE' });
-    setDemoMsg('Cleared all drift events history.');
     await refresh();
   };
 
@@ -192,72 +135,6 @@ export function DriftView({ projectId = '' }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* ── DEMO & DRIFT SIMULATION GUIDE ─────────────────────────────── */}
-      <div style={{ ...CARD, background: 'rgba(59, 130, 246, 0.05)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-          <div>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--accent-blue)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Sparkles size={15} /> Drift &amp; Schedule Workflow Demo
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-              Demonstrate drift detection: Change a metric's formula, then trigger the scheduled run to verify direct upsert pauses for approval.
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleClearEvents}
-            style={{ ...BTN, fontSize: 11, color: 'var(--color-error)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-            title="Reset drift events list to a clean state"
-          >
-            <Trash2 size={12} /> Clear Drift History
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Select Metric:</span>
-          <select
-            style={{ ...INPUT, padding: '4px 8px', fontSize: 12, borderRadius: 6 }}
-            value={simMetric}
-            onChange={(e) => setSimMetric(e.target.value)}
-          >
-            <option value="TOTAL_UNITS">TOTAL_UNITS (Sales Units)</option>
-            <option value="SALES_DOL">SALES_DOL (Revenue Amount)</option>
-            <option value="COUNT_OF_PRODUCT">COUNT_OF_PRODUCT (Product Count)</option>
-            <option value="SENTIMENT">SENTIMENT (Average Sentiment)</option>
-          </select>
-
-          <button
-            type="button"
-            style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff', fontSize: 12 }}
-            disabled={busy}
-            onClick={handleSimulateChange}
-            title="Modify this metric in the ontology to create a drift against Snowflake"
-          >
-            <Sparkles size={13} /> {busy ? 'Applying…' : '1. Simulate Metric Change'}
-          </button>
-
-          <button
-            type="button"
-            style={{ ...BTN, fontSize: 12 }}
-            disabled={busy}
-            onClick={handleResetMetric}
-            title="Restore original metric formula"
-          >
-            <RefreshCw size={12} /> Reset to Original
-          </button>
-
-          <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
-            Next step: Go to <strong>Runs &gt; Schedules</strong> &amp; click <strong>Run now</strong>.
-          </span>
-        </div>
-
-        {demoMsg && (
-          <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 6, background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-success)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <CheckCircle2 size={14} /> {demoMsg}
-          </div>
-        )}
-      </div>
-
       {/* ── SCHEDULE CONFIGURATION & IMMEDIATE CHECK ─────────────────── */}
       <div style={CARD}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
