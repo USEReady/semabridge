@@ -275,8 +275,9 @@ export function WhatIfSimulator({ gov, metricOptions, onOpenParity }) {
   );
 }
 
-export function ParityPanel({ gov, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
+export function ParityPanel({ gov = {}, onOpenMetric, metricOptions = [], dimensionOptions = [], semanticViewOptions = [] }) {
   const {
+    govProjectId,
     reconMetric,
     setReconMetric,
     reconExpr,

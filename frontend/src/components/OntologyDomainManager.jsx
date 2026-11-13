@@ -736,31 +736,24 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       ) || { name: metricNameOrObj, label: metricNameOrObj };
     }
     if (mObj) {
-      `      openParityFor(mObj);
+      openParityFor(mObj);
     }
   };
-
-  useEffect(() => {
-    const urlMetric = new URLSearchParams(location.search).get('metric');
-    if (urlMetric && allMetrics.length > 0) {
-      handleJumpToParity(urlMetric);
-    }
-  }, [location.search, allMetrics]);
 
   const handleRunLinter = async (stewardOverride) => {
     const activeSteward = stewardOverride || lintStewardSeverity;
     setRunningLint(true);
     try {
-      const res = await authFetch('/api/governance/lint', {`
-      method: 'POST',
+      const res = await authFetch('/api/governance/lint', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        require_steward: activeSteward !== 'OFF',
-        steward_severity: activeSteward,
-        require_description: lintRequireDesc,
-        enforce_snake_case_metrics: lintSnakeCase,
-        project_id: govProjectId || selectedProjectSlug || undefined,
-      }),
+        body: JSON.stringify({
+          require_steward: activeSteward !== 'OFF',
+          steward_severity: activeSteward,
+          require_description: lintRequireDesc,
+          enforce_snake_case_metrics: lintSnakeCase,
+          project_id: govProjectId || selectedProjectSlug || undefined,
+        }),
       });
     if (res.ok) {
       const data = await res.json();
@@ -1075,6 +1068,13 @@ const allSemanticViews = [
       .filter(Boolean)
   ),
 ];
+
+useEffect(() => {
+  const urlMetric = new URLSearchParams(location.search).get('metric');
+  if (urlMetric && allMetrics.length > 0) {
+    handleJumpToParity(urlMetric);
+  }
+}, [location.search, allMetrics]);
 const sumOf = (key) => visibleDomains.reduce((n, d) => n + (d[key] || 0), 0);
 
 const overviewStats = {
