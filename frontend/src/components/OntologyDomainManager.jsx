@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Layers, Upload, FileCode, Sparkles, CheckCircle2,
@@ -13,7 +13,7 @@ import OverviewView from './ontology/OverviewView';
 import DomainsView from './ontology/DomainsView';
 import MetricDrawer from './ontology/MetricDrawer';
 import HealthView from './ontology/HealthView';
-import { WhatIfSimulator, ImpactReport } from './ontology/GovernancePanels';
+import { WhatIfSimulator } from './ontology/GovernancePanels';
 import { Pill } from './ontology/ui';
 import { describeApiError, timeAgo, BTN, BTN_PRIMARY } from './ontology/styles';
 import {
@@ -205,6 +205,9 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   // 3. Golden Data Reconciliation (live SQL + DAX execution/upload parity)
   const [reconMetric, setReconMetric] = useState('');
   const [reconExpr, setReconExpr] = useState('');
+  const [reconDaxExpr, setReconDaxExpr] = useState('');
+  const [reconCustomSql, setReconCustomSql] = useState('');
+  const [parityProjectMetrics, setParityProjectMetrics] = useState([]);
   const [reconTable, setReconTable] = useState('');
   const [reconTargetKind, setReconTargetKind] = useState('semantic_view');
   const [reconDims, setReconDims] = useState('');
@@ -690,19 +693,46 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     const logicalMetric = m.logical_name && concept?.logical_name
       ? `${concept.logical_name}.${m.logical_name}`
       : (m.logical_name || m.name);
-    setReconMetric(logicalMetric);
-    setReconExpr(logicalMetric);
-    const svName = m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || concept?.physical_table || m.concept || '';
+    const mName = m.name || logicalMetric;
+    setReconMetric(mName);
+    const sqlEx = m.sql_expression || logicalMetric;
+    setReconExpr(sqlEx);
+    setReconCustomSql(sqlEx);
+    setReconDaxExpr(m.dax_expression || '');
+    const svName = m.semantic_view_name || m.target_table_or_view || inspectingDomainData?.parsed?.semantic_view_name || concept?.physical_table || m.concept || '';
     setReconTable(svName);
-    setReconTargetKind(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name ? 'semantic_view' : 'table');
-    if (concept?.attributes?.length) {
+    const isSv = Boolean(m.semantic_view_name || inspectingDomainData?.parsed?.semantic_view_name || m.target_kind === 'semantic_view');
+    setReconTargetKind(isSv ? 'semantic_view' : 'table');
+    let chosenDim = '';
+    if (m.dimensions?.length) {
+      chosenDim = m.dimensions[0];
+      setReconDims(chosenDim);
+    } else if (concept?.attributes?.length) {
       const firstDim = concept.attributes.find((a) => !a.is_hidden && !/INT|DEC|FLOAT|NUM/i.test(a.data_type || ''));
       if (firstDim) {
-        const dName = firstDim.logical_name && concept.logical_name
+        chosenDim = firstDim.logical_name && concept.logical_name
           ? `${concept.logical_name}.${firstDim.logical_name}`
           : firstDim.name;
-        setReconDims(dName);
+        setReconDims(chosenDim);
       }
+    }
+    // Auto-generate verification queries for this metric
+    if (mName && svName) {
+      authFetch('/api/reconciliation/generate-queries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metric_name: mName.trim(),
+          metric_sql_expression: sqlEx.trim(),
+          target_table_or_view: svName.trim(),
+          target_kind: isSv ? 'semantic_view' : 'table',
+          dimensions: chosenDim ? [chosenDim.trim()] : [],
+          filters: [],
+          project_id: _reconProjectId(),
+        }),
+      }).then((res) => {
+        if (res.ok) res.json().then((data) => setReconQueries(data)).catch(() => {});
+      }).catch(() => {});
     }
   };
 
@@ -753,15 +783,21 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const _updateParityView = (vData) => {
     setReconResult(vData);
     const dimKey = _reconDimList()[0];
-    const samples = vData?.mismatch_samples || [];
+    const samples = vData?.comparison_rows || vData?.mismatch_samples || vData?.sample_mismatches || [];
     if (samples.length) {
-      setReconSliceRows(samples.map((s) => ({
-        slice: s.dimension_key ? (dimKey && typeof s.dimension_key === 'object' ? s.dimension_key[dimKey] : JSON.stringify(s.dimension_key)) : 'Total',
-        daxValue: s.dax_value ?? 0,
-        sqlValue: s.sql_value ?? 0,
-        deltaPct: Number(s.percentage_delta ?? 0).toFixed(2),
-        matched: Boolean(s.matched),
-      })));
+      setReconSliceRows(samples.map((s) => {
+        const daxVal = s.dax_value ?? 0;
+        const sqlVal = s.sql_value ?? 0;
+        const absDiff = s.absolute_delta ?? (Number(sqlVal) - Number(daxVal));
+        return {
+          slice: s.dimension_key ? (dimKey && typeof s.dimension_key === 'object' ? s.dimension_key[dimKey] : (typeof s.dimension_key === 'string' ? s.dimension_key : JSON.stringify(s.dimension_key))) : 'Total',
+          daxValue: daxVal,
+          sqlValue: sqlVal,
+          absDiff,
+          deltaPct: Number(s.percentage_delta ?? 0).toFixed(2),
+          matched: Boolean(s.matched ?? s.is_match),
+        };
+      }));
     } else {
       setReconSliceRows([]);
     }
@@ -777,17 +813,77 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     || undefined
   );
 
-  const handleGenerateReconQueries = async () => {
+  const handleUpdateMetricSql = async (newSql, reRun = false) => {
+    const targetM = reconMetric.trim();
+    if (!targetM || !newSql?.trim()) return;
+    setRunningRecon(true);
+    setReconError(null);
+    try {
+      const res = await authFetch('/api/reconciliation/update-metric-sql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: _reconProjectId(),
+          domain: inspectingDomain || undefined,
+          metric_name: targetM,
+          sql_expression: newSql.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReconError(describeApiError(data, 'Failed to update Snowflake SQL.'));
+        return;
+      }
+      setReconExpr(newSql.trim());
+      setReconCustomSql(newSql.trim());
+      setStatusMessage({ type: 'success', text: `Updated Snowflake SQL for ${targetM}.` });
+      fetchDomainData();
+      fetchProjectReconMetrics(govProjectId || selectedProjectSlug || undefined);
+      if (reRun) {
+        // Run with custom SQL query
+        const customSql = reconQueries?.sql_query
+          ? reconQueries.sql_query.replace(new RegExp(reconExpr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), newSql.trim())
+          : undefined;
+        await handleRunAutoDaxCertify({ customSqlQuery: customSql, overrideSqlExpr: newSql.trim() });
+      } else {
+        await handleGenerateReconQueries({ overrideSqlExpr: newSql.trim() });
+      }
+    } catch (err) {
+      setReconError(String(err));
+    } finally {
+      setRunningRecon(false);
+    }
+  };
+
+  const fetchProjectReconMetrics = useCallback(async (projId) => {
+    try {
+      const q = projId ? `?project_id=${encodeURIComponent(projId)}` : '';
+      const res = await authFetch(`/api/reconciliation/project-metrics${q}`);
+      if (res.ok) {
+        const data = await res.json();
+        setParityProjectMetrics(data.metrics || []);
+      }
+    } catch {
+      // ignore
+    }
+  }, [authFetch]);
+
+  useEffect(() => {
+    fetchProjectReconMetrics(govProjectId || selectedProjectSlug || undefined);
+  }, [govProjectId, selectedProjectSlug, fetchProjectReconMetrics]);
+
+  const handleGenerateReconQueries = async (opts = {}) => {
     if (!reconMetric.trim() || !reconTable.trim()) return;
     setRunningRecon(true);
     setReconError(null);
     try {
+      const sqlExpr = opts.overrideSqlExpr || reconExpr.trim() || reconMetric.trim();
       const res = await authFetch('/api/reconciliation/generate-queries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           metric_name: reconMetric.trim(),
-          metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+          metric_sql_expression: sqlExpr,
           target_table_or_view: reconTable.trim(),
           target_kind: reconTargetKind,
           dimensions: _reconDimList(),
@@ -809,15 +905,39 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   const handleRunLiveSql = async () => {
-    if (!reconQueries?.sql_query) return;
     setRunningRecon(true);
     setReconError(null);
     try {
+      let query = reconQueries?.sql_query;
+      if (!query && reconMetric.trim() && reconTable.trim()) {
+        const qRes = await authFetch('/api/reconciliation/generate-queries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            metric_name: reconMetric.trim(),
+            metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+            target_table_or_view: reconTable.trim(),
+            target_kind: reconTargetKind,
+            dimensions: _reconDimList(),
+            filters: [],
+            project_id: _reconProjectId(),
+          }),
+        });
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          setReconQueries(qData);
+          query = qData.sql_query;
+        }
+      }
+      if (!query) {
+        setReconError('Please select a metric and deployed view/table first.');
+        return;
+      }
       const res = await authFetch('/api/ai/execute-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sql: reconQueries.sql_query,
+          sql: query,
           target: 'SNOWFLAKE',
           project_id: _reconProjectId(),
           limit: 500,
@@ -831,6 +951,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       const cols = data.columns || [];
       const rowObjs = (data.rows || []).map((r) => Object.fromEntries(cols.map((c, idx) => [c, r[idx]])));
       setReconSqlText(JSON.stringify(rowObjs, null, 2));
+      setStatusMessage({ type: 'success', text: `Successfully executed Snowflake SQL: ${rowObjs.length} rows returned.` });
     } catch (err) {
       setReconError(String(err));
     } finally {
@@ -838,15 +959,20 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     }
   };
 
-  const handleRunAutoDaxCertify = async () => {
+  const handleRunAutoDaxCertify = async (opts = {}) => {
     if (!reconMetric.trim() || !reconTable.trim()) return;
     setRunningRecon(true);
     setReconError(null);
     try {
-      let parsedDax = undefined;
-      if (reconDaxText.trim()) {
-        parsedDax = JSON.parse(reconDaxText);
+      let parsedDax = opts.daxResults !== undefined ? opts.daxResults : undefined;
+      if (parsedDax === undefined && reconDaxText.trim()) {
+        try {
+          parsedDax = JSON.parse(reconDaxText);
+        } catch {
+          // ignore
+        }
       }
+      const sqlExpr = opts.overrideSqlExpr || reconExpr.trim() || reconMetric.trim();
       const res = await authFetch('/api/reconciliation/certify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -855,11 +981,12 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
           domain: inspectingDomain || undefined,
           metric_name: reconMetric.trim(),
           view_metric: reconMetric.trim(),
-          metric_sql_expression: reconExpr.trim() || reconMetric.trim(),
+          metric_sql_expression: sqlExpr,
           target_table_or_view: reconTable.trim(),
           target_kind: reconTargetKind,
           dimensions: _reconDimList(),
           dax_results: parsedDax,
+          custom_sql_query: opts.customSqlQuery || undefined,
           tolerance: _reconTolerancePayload(),
           register_verified_query: Boolean(reconRegisterVerified),
         }),
@@ -1422,6 +1549,9 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
               dimensionOptions: allDimensions,
               semanticViewOptions: allSemanticViews,
               reconMetric, setReconMetric, reconExpr, setReconExpr, reconTable, setReconTable,
+              reconDaxExpr, setReconDaxExpr, reconCustomSql, setReconCustomSql,
+              parityProjectMetrics, allMetrics, prefillParity,
+              onUpdateMetricSql: handleUpdateMetricSql,
               reconTargetKind, setReconTargetKind, reconDims, setReconDims,
               reconDaxText, setReconDaxText, reconSqlText, setReconSqlText,
               reconAbsTol, setReconAbsTol, reconRelTol, setReconRelTol,
@@ -1459,12 +1589,6 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
                 metricOptions={allMetricNames}
               />
             </div>
-            {blastReport && (
-              <ImpactReport
-                report={blastReport}
-                onPickSuggestion={(s) => handleRunBlastRadius(s)}
-              />
-            )}
           </div>
         )}
       </div>

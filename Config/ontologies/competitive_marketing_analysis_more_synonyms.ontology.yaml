@@ -624,7 +624,7 @@ metrics:
 - name: TOTAL_UNITS
   logical_name: TOTAL_UNITS
   label: TOTAL_UNITS
-  sql_expression: SUM(SALESFACT."UNITS")
+  sql_expression: SUM(SALESFACT."UNITS") * 1.05
   dax_expression: SUM([Units])
   is_hidden: false
   aggregation_type: NONE

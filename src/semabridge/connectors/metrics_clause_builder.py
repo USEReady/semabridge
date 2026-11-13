@@ -417,14 +417,20 @@ class MetricsClauseBuilder:
         # Build relationship reachability graph to predict cross-table reference failures
         relationship_graph: Dict[str, Set[str]] = {}
         directed_reach: Dict[str, Set[str]] = {}
+        # Inactive relationships are emitted only when a measure uses them
+        # (USERELATIONSHIP), each with its own unique role alias -- the same
+        # map the TABLES / RELATIONSHIPS clauses use.
+        try:
+            from semabridge.utils.identifiers import inactive_role_alias_map, _relationship_signature
+            role_alias_by_sig = inactive_role_alias_map(getattr(model, "relationships", []) or [], model)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not build inactive role alias map: %s", exc)
+            role_alias_by_sig, _relationship_signature = {}, None
         for rel in getattr(model, "relationships", []) or []:
             from_a = dataset_aliases.get(getattr(rel, "from_dataset", None))
             to_a = dataset_aliases.get(getattr(rel, "to_dataset", None))
             if not getattr(rel, "is_active", True):
-                from_cols_raw = getattr(rel, "from_columns", None) or []
-                fk_col_raw = from_cols_raw[0] if from_cols_raw else ""
-                if fk_col_raw:
-                    to_a = to_alias(rel.to_dataset, fk_col_raw)
+                to_a = role_alias_by_sig.get(_relationship_signature(rel)) if _relationship_signature else None
             if from_a and to_a:
                 relationship_graph.setdefault(from_a, set()).add(to_a)
                 relationship_graph.setdefault(to_a, set()).add(from_a)
@@ -1016,6 +1022,8 @@ class MetricsClauseBuilder:
                     return f"({left} / NULLIF({right}, 0))"
                 if node.op in ("+", "-"):
                     # DAX BLANK arithmetic: BLANK - x = -x; BLANK - BLANK = BLANK.
+                    if isinstance(node.left, LiteralNode) or isinstance(node.right, LiteralNode):
+                        return f"(COALESCE({left}, 0) {node.op} COALESCE({right}, 0))"
                     return (
                         f"(CASE WHEN {left} IS NULL AND {right} IS NULL THEN NULL "
                         f"ELSE COALESCE({left}, 0) {node.op} COALESCE({right}, 0) END)"

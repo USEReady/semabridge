@@ -540,6 +540,41 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         user_id = run.get("user_id")
         if user_id is not None and str(user_id).strip():
             sync_payload["user_id"] = user_id
+
+        # Scheduled run drift guard: When drift is detected on scheduled run, show drift approval and do not directly upsert
+        schedule_label = str(run.get("schedule") or run.get("run_type") or "Manual")
+        is_scheduled = "scheduled" in schedule_label.lower() or "cron" in schedule_label.lower()
+        if is_scheduled:
+            from semabridge.governance.drift_service import run_drift_check, list_drift_events
+            drift_check = run_drift_check(project_id=project_id, owner_id=str(user_id) if user_id else None)
+            pending_events = list_drift_events(project_id=project_id, status="pending")
+            if drift_check.get("drift_detected", 0) > 0 or len(pending_events) > 0:
+                logger.warning(
+                    "[%s] Drift detected on scheduled run (%d pending events). Halting direct upsert to require manual drift approval.",
+                    project_id, len(pending_events)
+                )
+                run["duration_ms"] = elapsed_ms(started)
+                run["completed_at"] = _compat_now_iso()
+                run["status"] = "warning"
+                run["message"] = (
+                    f"Drift detected on scheduled run ({len(pending_events)} metric(s) drifted). "
+                    "Direct upsert paused: drift approval required in Drift Approvals tab."
+                )
+                run["summary"] = {
+                    "drift_detected": True,
+                    "drift_count": len(pending_events),
+                    "drift_events": pending_events[:5],
+                    "approval_required": True,
+                    "upsert_executed": False,
+                    "message": "Drift detected on scheduled run. Direct upsert paused pending review.",
+                }
+                run["logs"] = [
+                    f"WARNING Drift detected on scheduled run for project '{project_id}': {len(pending_events)} drifted metric(s).",
+                    "PAUSED Direct upsert was paused to protect warehouse integrity.",
+                    "ACTION Review and approve changes under Runs > Drift Approvals to execute upsert.",
+                ]
+                _compat_save_store()
+                return run
         # Forward sync_mode and force so the execution engine applies the correct strategy
         sync_mode = str(run.get("sync_mode") or "copy").lower()
         if sync_mode not in {"copy", "upsert"}:
@@ -1175,10 +1210,10 @@ async def run_project_now_compat(
     import sys
     pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
     create_run_fn = getattr(pri_mod, "_create_project_run", None) or _create_project_run
+    schedule_label = str((payload or {}).get("schedule") or "Manual")
     run, project_cfg, started = create_run_fn(
-
         project_id,
-        "Manual",
+        schedule_label,
         run_type=run_type,
         project_cfg_override=config_override,
         restore_snapshot_id=restore_snapshot_id,

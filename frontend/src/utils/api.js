@@ -2450,7 +2450,10 @@ export const api = {
         const normalizedPath = String(pathValue || '').trim();
         if (normalizedPath) params.set('path', normalizedPath);
         const query = params.toString();
-        const res = await authFetch(`${API_BASE_URL}/browse-directory${query ? `?${query}` : ''}`);
+        let res = await authFetch(`${API_BASE_URL}/browse-directory${query ? `?${query}` : ''}`);
+        if (!res.ok && res.status === 404) {
+            res = await authFetch(`${API_BASE_URL}/utils/browse-directory${query ? `?${query}` : ''}`);
+        }
         return handleResponse(res);
     },
 

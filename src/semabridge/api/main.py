@@ -19,7 +19,7 @@ _main_logger = logging.getLogger(__name__)
 
 from semabridge.api.account_router import router as account_router
 from semabridge.api.app_setup import configure_app, lifespan
-from semabridge.api.browse import router as browse_router
+from semabridge.api.browse import router as browse_router, api_router as browse_api_router
 from semabridge.api.discovery_api import router as discovery_router
 from semabridge.api.repo_router import router as repo_router
 from semabridge.api.routers.connection_router import router as connection_router
@@ -87,6 +87,7 @@ for router in [
     llm_provider_router,
     discovery_router,
     browse_router,
+    browse_api_router,
     alert_router,
     core_router,
     project_router,

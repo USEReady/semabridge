@@ -8,12 +8,15 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from semabridge.governance.drift_service import (
+    clear_drift_events,
     create_schedule,
     delete_schedule,
     list_drift_events,
     list_schedules,
+    reset_simulated_metric_drift,
     resolve_drift_event,
     run_drift_check,
+    simulate_metric_drift,
 )
 
 router = APIRouter(prefix="/api/drift", tags=["drift_monitoring"])
@@ -27,6 +30,17 @@ class DriftCheckRequest(BaseModel):
 
 class DriftResolutionRequest(BaseModel):
     reason: str = ""
+
+
+class SimulateMetricChangeRequest(BaseModel):
+    project_id: str
+    metric_name: Optional[str] = "TOTAL_UNITS"
+    new_expression: Optional[str] = None
+
+
+class ResetMetricChangeRequest(BaseModel):
+    project_id: str
+    metric_name: Optional[str] = "TOTAL_UNITS"
 
 
 class CreateScheduleRequest(BaseModel):
@@ -54,11 +68,61 @@ def get_drift_events(project_id: Optional[str] = None, status: Optional[str] = N
     return {"count": len(events), "events": events}
 
 
+@router.delete("/events", response_model=Dict[str, Any])
+def delete_drift_events(project_id: Optional[str] = None) -> Dict[str, Any]:
+    cleared = clear_drift_events(project_id=project_id)
+    return {"success": True, "cleared_count": cleared}
+
+
+@router.post("/simulate-change", response_model=Dict[str, Any])
+def simulate_change(req: SimulateMetricChangeRequest) -> Dict[str, Any]:
+    try:
+        res = simulate_metric_drift(
+            project_id=req.project_id,
+            metric_name=req.metric_name,
+            new_expression=req.new_expression,
+        )
+        return {"success": True, **res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/reset-change", response_model=Dict[str, Any])
+def reset_change(req: ResetMetricChangeRequest) -> Dict[str, Any]:
+    try:
+        res = reset_simulated_metric_drift(
+            project_id=req.project_id,
+            metric_name=req.metric_name,
+        )
+        return {"success": True, **res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/events/{event_id}/approve", response_model=Dict[str, Any])
 def approve_drift(event_id: str, req: DriftResolutionRequest) -> Dict[str, Any]:
     ev = resolve_drift_event(event_id, "approve", req.reason)
     if not ev:
         raise HTTPException(status_code=404, detail="Drift event not found.")
+    pid = ev.get("project_id")
+    if pid:
+        try:
+            import asyncio
+            import logging
+            import threading
+            from semabridge.api.services.run_service import _execute_project_run
+            def _run_approved():
+                loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(_execute_project_run(pid, schedule_label="Approved Sync"))
+                except Exception as exc:
+                    logging.getLogger(__name__).warning("Approved sync run failed for %s: %s", pid, exc)
+                finally:
+                    loop.close()
+            threading.Thread(target=_run_approved, daemon=True).start()
+        except Exception:
+            pass
     return {"success": True, "event": ev}
 
 

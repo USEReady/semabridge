@@ -115,6 +115,29 @@ class BlastRadiusSimulator:
             if c
         )
 
+    def simulate(
+        self,
+        target_name: Optional[str] = None,
+        target_type: str = "METRIC",
+        change_type: str = "MODIFY_EXPRESSION",
+        target_object: Optional[str] = None,
+        object_type: Optional[str] = None,
+        table_context: Optional[str] = None,
+        project_id: Optional[str] = None,
+        allowed_domains: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> BlastRadiusReport:
+        """Alias for simulate_impact accepting alternative keyword argument names."""
+        name = target_name or target_object or ""
+        ttype = object_type or target_type
+        return self.simulate_impact(
+            target_name=name,
+            target_type=ttype,
+            change_type=change_type,
+            table_context=table_context,
+            allowed_domains=allowed_domains,
+        )
+
     def simulate_impact(
         self,
         target_name: str,

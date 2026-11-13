@@ -182,6 +182,7 @@ class VerificationResult(BaseModel):
     sql_query_executed: str
     certification_badge: str
     sample_mismatches: List[QueryComparisonRow] = Field(default_factory=list)
+    comparison_rows: List[QueryComparisonRow] = Field(default_factory=list)
     column_mapping: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -439,6 +440,7 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
         max_abs_delta = 0.0
         max_pct_delta = 0.0
         sample_mismatches: List[QueryComparisonRow] = []
+        all_comparison_rows: List[QueryComparisonRow] = []
 
         for k in all_keys:
             in_dax = k in dax_map
@@ -480,6 +482,9 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
                 is_match=is_match,
             )
 
+            if len(all_comparison_rows) < 100:
+                all_comparison_rows.append(comp_row)
+
             if is_match:
                 matched_count += 1
             else:
@@ -512,5 +517,6 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
             sql_query_executed=sql_query,
             certification_badge=badge,
             sample_mismatches=sample_mismatches,
+            comparison_rows=all_comparison_rows,
             column_mapping=resolved_column_mapping,
         )

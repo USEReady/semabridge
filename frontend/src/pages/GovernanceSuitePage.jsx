@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { authFetch } from '../utils/api';
-import { Play, Check, X, RefreshCw, Clock, Layers, ShieldCheck, ArrowLeftRight } from 'lucide-react';
+import {
+  Play, Check, X, RefreshCw, Clock, Layers, ShieldCheck, ArrowLeftRight,
+  Trash2, CheckCircle2, AlertTriangle, Code, Sparkles, HelpCircle,
+  Plus, Upload, FileText, Download,
+} from 'lucide-react';
 
 const CARD = {
   background: 'var(--bg-surface)',
@@ -59,6 +63,9 @@ export function DriftView({ projectId = '' }) {
   const [webhookUrl, setWebhookUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [demoMsg, setDemoMsg] = useState('');
+  const [simMetric, setSimMetric] = useState('TOTAL_UNITS');
+  const [filterStatus, setFilterStatus] = useState('all');
 
   const refresh = useCallback(async () => {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
@@ -112,8 +119,146 @@ export function DriftView({ projectId = '' }) {
     await refresh();
   };
 
+  const handleSimulateChange = async () => {
+    setBusy(true);
+    setDemoMsg('');
+    try {
+      const targetPid = projectId || 'proj-tiral_comp';
+      const res = await authFetch('/api/drift/simulate-change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: targetPid,
+          metric_name: simMetric,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDemoMsg(`Formula for '${simMetric}' modified to: ${data.modified_expression}. Now trigger or run a scheduled job (Runs > Schedules > 'Run now') to observe the drift pause!`);
+      } else {
+        setDemoMsg(data?.detail || 'Failed to modify metric.');
+      }
+      await refresh();
+    } catch (err) {
+      setDemoMsg(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResetMetric = async () => {
+    setBusy(true);
+    setDemoMsg('');
+    try {
+      const targetPid = projectId || 'proj-tiral_comp';
+      const res = await authFetch('/api/drift/reset-change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: targetPid,
+          metric_name: simMetric,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDemoMsg(`Metric '${simMetric}' has been reset back to baseline (${data.reset_expression}).`);
+      } else {
+        setDemoMsg(data?.detail || 'Failed to reset metric.');
+      }
+      await refresh();
+    } catch (err) {
+      setDemoMsg(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleClearEvents = async () => {
+    if (!window.confirm('Clear drift events history?')) return;
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    await authFetch(`/api/drift/events${qs}`, { method: 'DELETE' });
+    setDemoMsg('Cleared all drift events history.');
+    await refresh();
+  };
+
+  const pendingCount = events.filter((e) => e.status === 'pending').length;
+  const approvedCount = events.filter((e) => e.status === 'approved').length;
+  const ignoredCount = events.filter((e) => e.status === 'ignored').length;
+
+  const filteredEvents = events.filter((ev) => {
+    if (filterStatus === 'all') return true;
+    return ev.status === filterStatus;
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* ── DEMO & DRIFT SIMULATION GUIDE ─────────────────────────────── */}
+      <div style={{ ...CARD, background: 'rgba(59, 130, 246, 0.05)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--accent-blue)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Sparkles size={15} /> Drift &amp; Schedule Workflow Demo
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Demonstrate drift detection: Change a metric's formula, then trigger the scheduled run to verify direct upsert pauses for approval.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleClearEvents}
+            style={{ ...BTN, fontSize: 11, color: 'var(--color-error)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+            title="Reset drift events list to a clean state"
+          >
+            <Trash2 size={12} /> Clear Drift History
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Select Metric:</span>
+          <select
+            style={{ ...INPUT, padding: '4px 8px', fontSize: 12, borderRadius: 6 }}
+            value={simMetric}
+            onChange={(e) => setSimMetric(e.target.value)}
+          >
+            <option value="TOTAL_UNITS">TOTAL_UNITS (Sales Units)</option>
+            <option value="SALES_DOL">SALES_DOL (Revenue Amount)</option>
+            <option value="COUNT_OF_PRODUCT">COUNT_OF_PRODUCT (Product Count)</option>
+            <option value="SENTIMENT">SENTIMENT (Average Sentiment)</option>
+          </select>
+
+          <button
+            type="button"
+            style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff', fontSize: 12 }}
+            disabled={busy}
+            onClick={handleSimulateChange}
+            title="Modify this metric in the ontology to create a drift against Snowflake"
+          >
+            <Sparkles size={13} /> {busy ? 'Applying…' : '1. Simulate Metric Change'}
+          </button>
+
+          <button
+            type="button"
+            style={{ ...BTN, fontSize: 12 }}
+            disabled={busy}
+            onClick={handleResetMetric}
+            title="Restore original metric formula"
+          >
+            <RefreshCw size={12} /> Reset to Original
+          </button>
+
+          <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
+            Next step: Go to <strong>Runs &gt; Schedules</strong> &amp; click <strong>Run now</strong>.
+          </span>
+        </div>
+
+        {demoMsg && (
+          <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 6, background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-success)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CheckCircle2 size={14} /> {demoMsg}
+          </div>
+        )}
+      </div>
+
+      {/* ── SCHEDULE CONFIGURATION & IMMEDIATE CHECK ─────────────────── */}
       <div style={CARD}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <input style={{ ...INPUT, width: 90 }} type="number" min={5} value={intervalMins} onChange={(e) => setIntervalMins(e.target.value)} title="Interval (minutes)" />
@@ -124,9 +269,9 @@ export function DriftView({ projectId = '' }) {
             <Play size={13} /> {busy ? 'Checking…' : 'Check Drift Now'}
           </button>
         </div>
-        {msg && <div style={{ fontSize: 12, color: 'var(--accent-blue)' }}>{msg}</div>}
+        {msg && <div style={{ fontSize: 12, color: 'var(--accent-blue)', marginTop: 8 }}>{msg}</div>}
         {schedules.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             {schedules.map((s) => (
               <span key={s.id} style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 999, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 Every {s.interval_minutes}m ({s.project_id || 'All'})
@@ -137,27 +282,136 @@ export function DriftView({ projectId = '' }) {
         )}
       </div>
 
+      {/* ── DRIFT APPROVALS & CHANGE REVIEW ───────────────────────────── */}
       <div style={CARD}>
-        <strong style={{ fontSize: 13 }}>Drift Events ({events.length})</strong>
-        {events.length === 0 && <span style={{ fontSize: 12.5, color: 'var(--text-tertiary)' }}>No drift detected yet.</span>}
-        {events.map((ev) => (
-          <div key={ev.id} style={{ padding: 12, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <strong>{ev.metric_name}</strong>
-              <span style={{ fontSize: 11, color: 'var(--color-warning)', fontWeight: 700 }}>{ev.drift_type}</span>
-              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>[{ev.status}]</span>
-              <span style={{ flex: 1 }} />
-              {ev.status === 'pending' && (
-                <>
-                  <button type="button" style={BTN_PRIMARY} onClick={() => resolve(ev.id, 'approve')}><Check size={12} /> Approve &amp; Sync</button>
-                  <button type="button" style={BTN} onClick={() => resolve(ev.id, 'ignore')}><X size={12} /> Ignore</button>
-                </>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+          <strong style={{ fontSize: 13 }}>
+            Drift Approvals &amp; Change Detection ({events.length})
+          </strong>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {[
+              { id: 'all', label: `All (${events.length})` },
+              { id: 'pending', label: `Pending (${pendingCount})` },
+              { id: 'approved', label: `Approved (${approvedCount})` },
+              { id: 'ignored', label: `Ignored (${ignoredCount})` },
+            ].map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFilterStatus(f.id)}
+                style={{
+                  ...BTN,
+                  padding: '3px 8px',
+                  fontSize: 11,
+                  background: filterStatus === f.id ? 'var(--bg-surface-hover)' : 'transparent',
+                  borderColor: filterStatus === f.id ? 'var(--accent-blue)' : 'var(--border-main)',
+                  color: filterStatus === f.id ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {filteredEvents.length === 0 && (
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 12.5 }}>
+            No drift events in this view. Use the demo bar above to simulate a metric change or run a scheduled drift check.
+          </div>
+        )}
+
+        {filteredEvents.map((ev) => {
+          const isPending = ev.status === 'pending';
+          const isApproved = ev.status === 'approved';
+          const isIgnored = ev.status === 'ignored';
+
+          return (
+            <div
+              key={ev.id}
+              style={{
+                padding: 14,
+                borderRadius: 8,
+                background: 'var(--bg-app)',
+                border: `1px solid ${
+                  isPending
+                    ? 'rgba(234, 179, 8, 0.4)'
+                    : isApproved
+                    ? 'rgba(34, 197, 94, 0.3)'
+                    : 'var(--border-main)'
+                }`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {ev.metric_name}
+                </span>
+                <span style={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  textTransform: 'uppercase',
+                  background: 'rgba(234, 179, 8, 0.15)',
+                  color: 'var(--color-warning)',
+                }}>
+                  {ev.drift_type}
+                </span>
+                <span style={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  textTransform: 'uppercase',
+                  background: isApproved ? 'rgba(34,197,94,0.15)' : isIgnored ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
+                  color: isApproved ? 'var(--color-success)' : isIgnored ? 'var(--color-error)' : 'var(--accent-blue)',
+                }}>
+                  {ev.status}
+                </span>
+                <span style={{ flex: 1 }} />
+                {isPending && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      style={{ ...BTN_PRIMARY, background: 'var(--color-success, #22c55e)', color: '#fff', padding: '4px 10px', fontSize: 11.5 }}
+                      onClick={() => resolve(ev.id, 'approve')}
+                      title="Approve changes and automatically sync to Snowflake warehouse"
+                    >
+                      <Check size={12} /> Approve &amp; Sync
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...BTN, padding: '4px 10px', fontSize: 11.5 }}
+                      onClick={() => resolve(ev.id, 'ignore')}
+                      title="Ignore drift and keep current warehouse definition"
+                    >
+                      <X size={12} /> Ignore
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 11.5 }}>
+                <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+                  <div style={{ color: 'var(--accent-blue)', fontWeight: 600, marginBottom: 2 }}>BI Semantic Model (Modified):</div>
+                  <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all' }}>{ev.bi_definition || '—'}</code>
+                </div>
+                <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+                  <div style={{ color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 2 }}>Snowflake Warehouse (Current):</div>
+                  <code style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{ev.snowflake_definition || '—'}</code>
+                </div>
+              </div>
+
+              {ev.affected_objects?.length > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                  <strong>Impacted Objects:</strong> {ev.affected_objects.join(', ')}
+                </div>
               )}
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>BI: <code>{ev.bi_definition || '—'}</code> | Snowflake: <code>{ev.snowflake_definition || '—'}</code></div>
-            {ev.affected_objects?.length > 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Affected: {ev.affected_objects.join(', ')}</div>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -402,6 +656,23 @@ function BiTruthView({ projectId }) {
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [infoMsg, setInfoMsg] = useState('');
+  const [limit, setLimit] = useState(15);
+  const [filter, setFilter] = useState('all'); // 'all' | 'draft' | 'approved' | 'rejected'
+
+  // Forms for adding manual and importing documents
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showUploadForm, setShowUploadForm] = useState(false);
+
+  // Manual Question fields
+  const [manualQuestion, setManualQuestion] = useState('');
+  const [manualMetric, setManualMetric] = useState('');
+  const [manualExpectedSql, setManualExpectedSql] = useState('');
+  const [manualExpectedDax, setManualExpectedDax] = useState('');
+
+  // Upload fields
+  const [uploadText, setUploadText] = useState('');
+  const [uploadFileName, setUploadFileName] = useState('');
 
   const refresh = useCallback(async () => {
     const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
@@ -412,38 +683,172 @@ function BiTruthView({ projectId }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const handleSaveManual = async (e) => {
+    e?.preventDefault();
+    if (!manualQuestion.trim()) {
+      setError('Question text is required.');
+      return;
+    }
+    setError('');
+    setBusy(true);
+    try {
+      const res = await authFetch('/api/bi-truth/cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          question: manualQuestion.trim(),
+          metric_name: manualMetric.trim() || undefined,
+          expected_sql: manualExpectedSql.trim() || undefined,
+          expected_dax: manualExpectedDax.trim() || undefined,
+          status: 'approved',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInfoMsg('Question added and approved successfully!');
+        setManualQuestion('');
+        setManualMetric('');
+        setManualExpectedSql('');
+        setManualExpectedDax('');
+        setShowAddForm(false);
+        setTimeout(() => setInfoMsg(''), 4000);
+      } else {
+        setError(data?.detail || 'Failed to save question.');
+      }
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleImportText = async () => {
+    if (!uploadText.trim()) {
+      setError('Please provide document content or select a file to import.');
+      return;
+    }
+    setError('');
+    setBusy(true);
+    try {
+      const res = await authFetch('/api/bi-truth/cases/import-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          content: uploadText.trim(),
+          filename: uploadFileName || 'document.csv',
+          status: 'approved',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInfoMsg(`Successfully imported and approved ${data.added_count || 0} questions from document!`);
+        setUploadText('');
+        setUploadFileName('');
+        setShowUploadForm(false);
+        setTimeout(() => setInfoMsg(''), 4000);
+      } else {
+        setError(data?.detail || 'Failed to import document.');
+      }
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleFileUpload = (file) => {
+    if (!file) return;
+    setUploadFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setUploadText(String(e.target?.result || ''));
+    };
+    reader.readAsText(file);
+  };
+
   const generate = async () => {
     setError('');
-    await authFetch('/api/bi-truth/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId || undefined,
-      }),
-    });
+    setInfoMsg('');
+    setBusy(true);
+    try {
+      const res = await authFetch('/api/bi-truth/generate', {
+        method: 'POST',
+        timeoutMs: 120000,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          limit: Number(limit) || 15,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.detail || 'Failed to generate test cases.');
+      } else {
+        if (data.added_count > 0) {
+          setInfoMsg(`Generated ${data.added_count} new test questions from project model.`);
+        } else {
+          setInfoMsg('All model questions are already loaded below.');
+        }
+        setTimeout(() => setInfoMsg(''), 4000);
+      }
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearCases = async () => {
+    if (!window.confirm('Clear all test questions and accuracy results for this project scope?')) return;
+    setError('');
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    await authFetch(`/api/bi-truth/cases${qs}`, { method: 'DELETE' });
+    setRuns([]);
     await refresh();
   };
 
   const approveAllDrafts = async () => {
     setError('');
-    const drafts = cases.filter((c) => c.status !== 'approved');
-    await Promise.all(
-      drafts.map((c) =>
-        authFetch(`/api/bi-truth/cases/${c.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'approved' }),
-        })
-      )
-    );
-    await refresh();
+    setBusy(true);
+    try {
+      const res = await authFetch('/api/bi-truth/cases/batch-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'approved',
+          project_id: projectId || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInfoMsg(`Approved all ${data.updated_count || 'draft'} questions successfully!`);
+        setTimeout(() => setInfoMsg(''), 4000);
+      } else {
+        setError(data?.detail || 'Failed to approve drafts.');
+      }
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const runSuite = async () => {
     setBusy(true);
     setError('');
     try {
-      const res = await authFetch('/api/bi-truth/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: projectId || undefined }) });
+      const res = await authFetch('/api/bi-truth/run', {
+        method: 'POST',
+        timeoutMs: 180000,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId || undefined }),
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data?.detail || `Run failed (${res.status})`);
@@ -457,38 +862,573 @@ function BiTruthView({ projectId }) {
   };
 
   const setStatus = async (id, status) => {
-    await authFetch(`/api/bi-truth/cases/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    await authFetch(`/api/bi-truth/cases/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
     await refresh();
   };
 
   const latest = runs[0];
-  const draftCount = cases.filter((c) => c.status !== 'approved').length;
+  const draftCount = cases.filter((c) => c.status === 'draft').length;
+  const approvedCount = cases.filter((c) => c.status === 'approved').length;
+
+  const filteredCases = cases.filter((c) => {
+    if (filter === 'all') return true;
+    return c.status === filter;
+  });
+
+  const resultMap = new Map((latest?.results || []).map((r) => [r.case_id, r]));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* ── 1. ACTION TOOLBAR ────────────────────────────────────────────── */}
       <div style={CARD}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" style={BTN} onClick={generate}><RefreshCw size={13} /> Generate from Certified Metrics</button>
-          {draftCount > 0 && (
-            <button type="button" style={BTN} onClick={approveAllDrafts}><Check size={13} /> Approve All ({draftCount})</button>
-          )}
-          <button type="button" style={BTN_PRIMARY} disabled={busy} onClick={runSuite}><ShieldCheck size={13} /> {busy ? 'Running…' : 'Run Approved Suite'}</button>
-          {latest && <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--accent-blue)' }}>Latest Accuracy: {latest.accuracy_pct}% ({latest.passed}/{latest.total})</span>}
-        </div>
-        {error && <div style={{ fontSize: 12, color: 'var(--color-error)' }}>{error}</div>}
-      </div>
-      <div style={CARD}>
-        <strong style={{ fontSize: 13 }}>Test Questions ({cases.length})</strong>
-        {cases.map((c) => (
-          <div key={c.id} style={{ padding: 10, borderRadius: 8, background: 'var(--bg-app)', border: '1px solid var(--border-main)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{c.question}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{c.metric_name} · status: <b>{c.status}</b></div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff' }}
+                disabled={busy}
+                onClick={generate}
+              >
+                <Sparkles size={13} /> {busy ? 'Generating…' : 'Generate Questions'}
+              </button>
+              <select
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value))}
+                style={{ ...INPUT, padding: '5px 8px', fontSize: 12, borderRadius: 8, height: 32 }}
+                title="Number of questions to generate"
+              >
+                <option value={10}>10 questions (Fast)</option>
+                <option value={15}>15 questions (Recommended)</option>
+                <option value={20}>20 questions</option>
+                <option value={50}>50 questions</option>
+                <option value={100}>All questions</option>
+              </select>
             </div>
-            {c.status !== 'approved' && <button type="button" style={BTN_PRIMARY} onClick={() => setStatus(c.id, 'approved')}>Approve</button>}
-            {c.status !== 'rejected' && <button type="button" style={BTN} onClick={() => setStatus(c.id, 'rejected')}>Reject</button>}
+            {draftCount > 0 && (
+              <button type="button" style={BTN} onClick={approveAllDrafts}>
+                <Check size={13} /> Approve All Drafts ({draftCount})
+              </button>
+            )}
+            <button
+              type="button"
+              style={{
+                ...BTN,
+                background: showAddForm ? 'var(--bg-surface-hover)' : 'var(--bg-surface-raised)',
+                borderColor: showAddForm ? 'var(--accent-blue)' : 'var(--border-main)',
+                color: showAddForm ? 'var(--accent-blue)' : 'var(--text-primary)',
+              }}
+              onClick={() => {
+                setShowAddForm(!showAddForm);
+                setShowUploadForm(false);
+              }}
+              title="Add a custom question and expected SQL/DAX manually"
+            >
+              <Plus size={13} /> Add Question
+            </button>
+            <button
+              type="button"
+              style={{
+                ...BTN,
+                background: showUploadForm ? 'var(--bg-surface-hover)' : 'var(--bg-surface-raised)',
+                borderColor: showUploadForm ? 'var(--accent-blue)' : 'var(--border-main)',
+                color: showUploadForm ? 'var(--accent-blue)' : 'var(--text-primary)',
+              }}
+              onClick={() => {
+                setShowUploadForm(!showUploadForm);
+                setShowAddForm(false);
+              }}
+              title="Import questions from CSV, TSV, JSON, or text documents"
+            >
+              <Upload size={13} /> Import Document
+            </button>
+            <button
+              type="button"
+              style={{
+                ...BTN_PRIMARY,
+                background: approvedCount > 0 ? 'var(--color-success, #22c55e)' : 'var(--bg-surface-raised)',
+                borderColor: approvedCount > 0 ? 'var(--color-success, #22c55e)' : 'var(--border-main)',
+                color: approvedCount > 0 ? '#fff' : 'var(--text-tertiary)',
+                cursor: approvedCount > 0 ? 'pointer' : 'not-allowed',
+              }}
+              disabled={busy || approvedCount === 0}
+              onClick={runSuite}
+            >
+              <ShieldCheck size={14} /> {busy ? 'Testing Engine…' : `Run Approved Suite (${approvedCount})`}
+            </button>
+            {cases.length > 0 && (
+              <button
+                type="button"
+                style={{ ...BTN, color: 'var(--color-error)' }}
+                onClick={clearCases}
+                title="Wipe test cases for this project"
+              >
+                <Trash2 size={13} /> Clear Questions
+              </button>
+            )}
           </div>
-        ))}
+
+          {/* Filter Pills */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5 }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Show:</span>
+            {[
+              { id: 'all', label: `All (${cases.length})` },
+              { id: 'draft', label: `Draft (${draftCount})` },
+              { id: 'approved', label: `Approved (${approvedCount})` },
+              { id: 'rejected', label: `Rejected (${cases.filter((c) => c.status === 'rejected').length})` },
+            ].map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFilter(f.id)}
+                style={{
+                  ...BTN,
+                  padding: '3px 8px',
+                  fontSize: 11,
+                  background: filter === f.id ? 'var(--bg-surface-hover)' : 'transparent',
+                  borderColor: filter === f.id ? 'var(--accent-blue)' : 'var(--border-main)',
+                  color: filter === f.id ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', color: 'var(--color-error)', fontSize: 12 }}>
+            {error}
+          </div>
+        )}
+
+        {infoMsg && (
+          <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(34,197,94,0.1)', color: 'var(--color-success)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CheckCircle2 size={14} /> {infoMsg}
+          </div>
+        )}
+
+        {/* Latest Run Accuracy Banner - only show if test cases exist */}
+        {latest && cases.length > 0 && (
+          <div style={{
+            padding: '12px 16px',
+            borderRadius: 8,
+            background: latest.accuracy_pct >= 90 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(234, 179, 8, 0.08)',
+            border: `1px solid ${latest.accuracy_pct >= 90 ? 'rgba(34, 197, 94, 0.3)' : 'rgba(234, 179, 8, 0.3)'}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {latest.accuracy_pct >= 90 ? (
+                <CheckCircle2 size={22} style={{ color: 'var(--color-success, #22c55e)' }} />
+              ) : (
+                <AlertTriangle size={22} style={{ color: 'var(--color-warning, #eab308)' }} />
+              )}
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700 }}>
+                  Truth Suite Accuracy: <span style={{ color: latest.accuracy_pct >= 90 ? 'var(--color-success)' : 'var(--color-warning)' }}>{latest.accuracy_pct}%</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  {latest.passed} out of {latest.total} approved questions verified accurately against Snowflake &amp; Cortex semantic layer.
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Last executed: {new Date(latest.ran_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── MANUAL QUESTION ADD FORM ────────────────────────────────────── */}
+      {showAddForm && (
+        <form onSubmit={handleSaveManual} style={{ ...CARD, borderColor: 'var(--accent-blue)', background: 'var(--bg-surface-raised)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Plus size={16} style={{ color: 'var(--accent-blue)' }} />
+              <strong style={{ fontSize: 13.5 }}>Add Custom Ground-Truth Question</strong>
+            </div>
+            <button
+              type="button"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+              onClick={() => setShowAddForm(false)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
+            Manually add an executive question and certified SQL / DAX answer to benchmark against the AI agent.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                Question *
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. What were total sales in the West region last year?"
+                value={manualQuestion}
+                onChange={(e) => setManualQuestion(e.target.value)}
+                style={{ ...INPUT, width: '100%', boxSizing: 'border-box' }}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                Metric Tag / Name (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Total Sales"
+                value={manualMetric}
+                onChange={(e) => setManualMetric(e.target.value)}
+                style={{ ...INPUT, width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                Expected SQL (Warehouse Query)
+              </label>
+              <textarea
+                placeholder="e.g. SELECT SUM(sales) FROM sales_fact WHERE region = 'West';"
+                value={manualExpectedSql}
+                onChange={(e) => setManualExpectedSql(e.target.value)}
+                rows={3}
+                style={{ ...INPUT, width: '100%', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: 11.5, resize: 'vertical' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                Expected DAX (Power BI Measure - Optional)
+              </label>
+              <textarea
+                placeholder="e.g. CALCULATE([Total Sales], Customer[Region] = &quot;West&quot;)"
+                value={manualExpectedDax}
+                onChange={(e) => setManualExpectedDax(e.target.value)}
+                rows={3}
+                style={{ ...INPUT, width: '100%', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: 11.5, resize: 'vertical' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button
+              type="button"
+              style={BTN}
+              onClick={() => {
+                setShowAddForm(false);
+                setManualQuestion('');
+                setManualMetric('');
+                setManualExpectedSql('');
+                setManualExpectedDax('');
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !manualQuestion.trim()}
+              style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff' }}
+            >
+              <Check size={14} /> Save &amp; Approve Question
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* ── DOCUMENT IMPORT FORM ────────────────────────────────────────── */}
+      {showUploadForm && (
+        <div style={{ ...CARD, borderColor: 'var(--accent-blue)', background: 'var(--bg-surface-raised)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Upload size={16} style={{ color: 'var(--accent-blue)' }} />
+              <strong style={{ fontSize: 13.5 }}>Import Benchmark Questions from Document</strong>
+            </div>
+            <button
+              type="button"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
+              onClick={() => setShowUploadForm(false)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
+            Upload a spreadsheet (CSV, TSV), JSON evaluation suite, or paste question/answer text. All imported items are approved automatically.
+          </p>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label
+              style={{
+                ...BTN,
+                padding: '8px 14px',
+                cursor: 'pointer',
+                borderColor: uploadFileName ? 'var(--color-success)' : 'var(--border-main)',
+                background: uploadFileName ? 'rgba(34, 197, 94, 0.08)' : 'var(--bg-surface)',
+              }}
+            >
+              <FileText size={14} style={{ color: uploadFileName ? 'var(--color-success)' : 'var(--accent-blue)' }} />
+              {uploadFileName ? `Loaded: ${uploadFileName}` : 'Choose File (.csv, .tsv, .json, .txt, .md)'}
+              <input
+                type="file"
+                accept=".csv,.tsv,.json,.txt,.md,text/csv,application/json,text/plain"
+                onChange={(e) => handleFileUpload(e.target.files?.[0])}
+                style={{ display: 'none' }}
+              />
+            </label>
+
+            <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)' }}>Or paste content directly below:</span>
+
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                style={{ ...BTN, padding: '3px 8px', fontSize: 11 }}
+                onClick={() => {
+                  setUploadFileName('sample_questions.csv');
+                  setUploadText(
+`question,expected_sql,metric_name
+"What is total sales amount?","SELECT SUM(sales) FROM sales_fact;","Total Sales"
+"What is the total order count?","SELECT COUNT(order_id) FROM orders_fact;","Order Count"
+"Show sales by region","SELECT region, SUM(sales) FROM sales_fact GROUP BY region;","Regional Sales"`
+                  );
+                }}
+              >
+                Insert CSV Template
+              </button>
+              <button
+                type="button"
+                style={{ ...BTN, padding: '3px 8px', fontSize: 11 }}
+                onClick={() => {
+                  setUploadFileName('sample_suite.json');
+                  setUploadText(JSON.stringify([
+                    {
+                      "question": "What is the total gross profit?",
+                      "expected_sql": "SELECT SUM(gross_profit) FROM finance_mart;",
+                      "metric_name": "Gross Profit"
+                    },
+                    {
+                      "question": "What is total active customer count?",
+                      "expected_sql": "SELECT COUNT(DISTINCT customer_id) FROM customers WHERE active = true;",
+                      "metric_name": "Active Customers"
+                    }
+                  ], null, 2));
+                }}
+              >
+                Insert JSON Template
+              </button>
+              <button
+                type="button"
+                style={{ ...BTN, padding: '3px 8px', fontSize: 11 }}
+                onClick={() => {
+                  setUploadFileName('sample_qa.txt');
+                  setUploadText(
+`Q: What was total units sold this quarter?
+A: SELECT SUM(units) FROM sales_fact WHERE quarter = 1;
+
+Q: What is total net margin percentage?
+A: SELECT (SUM(margin) / NULLIF(SUM(revenue), 0)) * 100 FROM sales_fact;`
+                  );
+                }}
+              >
+                Insert Q&amp;A Template
+              </button>
+            </div>
+          </div>
+
+          <textarea
+            value={uploadText}
+            onChange={(e) => setUploadText(e.target.value)}
+            rows={7}
+            placeholder="Paste CSV rows, JSON array of questions, or Q: ... A: ... blocks here..."
+            style={{
+              ...INPUT,
+              width: '100%',
+              boxSizing: 'border-box',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              lineHeight: 1.5,
+              resize: 'vertical',
+            }}
+          />
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              style={BTN}
+              onClick={() => {
+                setShowUploadForm(false);
+                setUploadText('');
+                setUploadFileName('');
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy || !uploadText.trim()}
+              onClick={handleImportText}
+              style={{ ...BTN_PRIMARY, background: 'var(--accent-blue)', color: '#fff' }}
+            >
+              <Upload size={14} /> Import &amp; Approve Questions
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 2. QUESTIONS REVIEW & APPROVAL LIST ─────────────────────────── */}
+      <div style={CARD}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <strong style={{ fontSize: 13 }}>
+            Business Questions &amp; Expected Answers ({filteredCases.length})
+          </strong>
+          <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            Approve the questions you want to benchmark against your semantic layer.
+          </span>
+        </div>
+
+        {filteredCases.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 12.5 }}>
+            No test questions in this view. Click <strong>Generate from Project Model &amp; Metrics</strong> above to automatically create questions tailored to your project.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {filteredCases.map((c) => {
+              const runRes = resultMap.get(c.id);
+              const isApproved = c.status === 'approved';
+              const isRejected = c.status === 'rejected';
+
+              return (
+                <div
+                  key={c.id}
+                  style={{
+                    padding: 12,
+                    borderRadius: 8,
+                    background: 'var(--bg-app)',
+                    border: `1px solid ${
+                      runRes
+                        ? runRes.passed ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'
+                        : isApproved ? 'rgba(34,197,94,0.2)' : 'var(--border-main)'
+                    }`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                        <span style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          textTransform: 'uppercase',
+                          background: isApproved ? 'rgba(34,197,94,0.15)' : isRejected ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
+                          color: isApproved ? 'var(--color-success)' : isRejected ? 'var(--color-error)' : 'var(--accent-blue)',
+                        }}>
+                          {c.status}
+                        </span>
+                        {c.metric_name && (
+                          <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--accent-blue)' }}>
+                            [{c.metric_name}]
+                          </span>
+                        )}
+                        {runRes && (
+                          <span style={{
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            background: runRes.passed ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)',
+                            color: runRes.passed ? 'var(--color-success)' : 'var(--color-error)',
+                          }}>
+                            {runRes.passed ? '✓ PASSED' : '✕ FAILED'}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {c.question}
+                      </div>
+                    </div>
+
+                    {/* Approve / Reject Controls */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      {c.status !== 'approved' && (
+                        <button
+                          type="button"
+                          style={{ ...BTN_PRIMARY, padding: '4px 10px', fontSize: 11 }}
+                          onClick={() => setStatus(c.id, 'approved')}
+                          title="Approve this question for accuracy testing"
+                        >
+                          <Check size={12} /> Approve
+                        </button>
+                      )}
+                      {c.status !== 'rejected' && (
+                        <button
+                          type="button"
+                          style={{ ...BTN, padding: '4px 10px', fontSize: 11 }}
+                          onClick={() => setStatus(c.id, 'rejected')}
+                          title="Reject / Ignore this question"
+                        >
+                          <X size={12} /> Reject
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expected SQL / Formula preview */}
+                  {(c.expected_sql || c.dax_expression) && (
+                    <div style={{
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border-main)',
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: 'var(--text-secondary)',
+                      overflowX: 'auto',
+                    }}>
+                      <span style={{ color: 'var(--text-tertiary)', marginRight: 6 }}>Expected SQL:</span>
+                      <span style={{ color: 'var(--color-success)' }}>{c.expected_sql || c.dax_expression}</span>
+                    </div>
+                  )}
+
+                  {/* Execution Results comparison */}
+                  {runRes && (
+                    <div style={{
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      background: runRes.passed ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)',
+                      border: `1px solid ${runRes.passed ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontWeight: 700, color: runRes.passed ? 'var(--color-success)' : 'var(--color-error)' }}>
+                          {runRes.passed ? '✓ AI Engine Generated Matching SQL:' : '✕ AI Engine Output Discrepancy:'}
+                        </span>
+                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>({runRes.mode})</span>
+                      </div>
+                      <div style={{ color: 'var(--text-primary)', whiteSpace: 'pre-wrap', maxHeight: 80, overflowY: 'auto' }}>
+                        {runRes.generated_sql || runRes.error || 'No SQL generated'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

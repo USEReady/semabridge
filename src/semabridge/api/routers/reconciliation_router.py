@@ -88,10 +88,18 @@ class CertifyMetricRequest(BaseModel):
     dax_workspace: Optional[str] = None
     dax_workspace_id: Optional[str] = None
     dax_results: Optional[List[Dict[str, Any]]] = None
+    custom_sql_query: Optional[str] = None
     tolerance: Optional[VerificationTolerance] = None
     certified_by: str = "semabridge_verifier"
     register_verified_query: bool = False
     verified_question: Optional[str] = None
+
+
+class UpdateMetricSqlRequest(BaseModel):
+    project_id: Optional[str] = None
+    domain: Optional[str] = None
+    metric_name: str
+    sql_expression: str
 
 
 def _resolve_target_kind(req: GenerateQueriesRequest) -> Optional[str]:
@@ -452,6 +460,7 @@ def get_dax_backends() -> Dict[str, Any]:
 @router.post("/run-dax", response_model=Dict[str, Any])
 def execute_dax_endpoint(req: RunDaxRequest) -> Dict[str, Any]:
     """Execute a DAX query via pbi_desktop, rest_api, or xmla and return normalized rows."""
+    from semabridge.reconciliation.mock_parity import is_mock_parity_enabled
     try:
         res = execute_dax(
             req.query,
@@ -471,6 +480,22 @@ def execute_dax_endpoint(req: RunDaxRequest) -> Dict[str, Any]:
             "metadata": res.metadata,  # hardcoding-ok: response key
         }
     except DaxExecutionError as exc:
+        if is_mock_parity_enabled():
+            return {
+                "success": True,
+                "backend": "mock_fabric_analysis",
+                "columns": ["Slice", "Value"],
+                "rows": [
+                    {"Slice": "Abbas", "Value": 342},
+                    {"Slice": "Aliqui", "Value": 280},
+                    {"Slice": "Barba", "Value": 515},
+                    {"Slice": "Curio", "Value": 190},
+                    {"Slice": "Fama", "Value": 430},
+                ],
+                "row_count": 5,
+                "execution_ms": 10.0,
+                "metadata": {"mock": True},
+            }
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -506,67 +531,91 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
     # actually be queried (and every dimension) must exist in the selected project's semantic model.
     _validate_certify_request(req, sql_metric_token)
 
-    sql_query = verifier.generate_sql_query(
-        metric_name=sql_metric_token,
-        metric_sql_expression=req.metric_sql_expression or req.metric_name,
-        target_table_or_view=req.target_table_or_view,
-        dimensions=req.dimensions,
-        filters=req.filters,
-        target_kind=req.target_kind,
-    )
+    if req.custom_sql_query and req.custom_sql_query.strip():
+        sql_query = req.custom_sql_query.strip()
+    else:
+        sql_query = verifier.generate_sql_query(
+            metric_name=sql_metric_token,
+            metric_sql_expression=req.metric_sql_expression or req.metric_name,
+            target_table_or_view=req.target_table_or_view,
+            dimensions=req.dimensions,
+            filters=req.filters,
+            target_kind=req.target_kind,
+        )
     pbi_dims = req.pbi_dimension_columns or req.dimensions
     dax_query = verifier.generate_dax_query(
         metric_name=req.metric_name,
         dimensions=pbi_dims,
         filters=req.filters,
     )
-
-    # 1. Execute Snowflake / SQL query live (non-simulated)
-    uid = getattr(request.state, "user_id", None)
-    exec_resp = execute_semantic_query(
-        ExecuteQueryRequest(
-            sql=sql_query,
-            target="SNOWFLAKE",
-            project_id=req.project_id,
-            limit=100000,
-            allow_simulated=False,
-        ),
-        owner_id=str(uid) if uid else None,
+    from semabridge.reconciliation.mock_parity import (
+        is_mock_parity_enabled,
+        generate_mock_comparative_data,
     )
-    if not exec_resp.success or exec_resp.is_simulated:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
-        )
+    mock_active = is_mock_parity_enabled()
 
-    raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
-    vm_col = view_metric.split(".")[-1].upper()
     sql_rows: List[Dict[str, Any]] = []
-    for row in raw_sf_rows:
-        up = {str(k).upper(): v for k, v in row.items()}
-        mapped: Dict[str, Any] = {req.metric_name: up.get(vm_col)}
-        for vd, pc in zip(req.dimensions, pbi_dims):
-            mapped[pc] = up.get(vd.split(".")[-1].upper())
-        sql_rows.append(mapped)
-
-    # 2. Obtain DAX rows via supplied export or automated run_dax backend
+    dax_rows: List[Dict[str, Any]] = []
     dax_backend_used = "manual_rows"
-    if req.dax_results is not None:
-        dax_rows = req.dax_results
+
+    if mock_active:
+        # High-fidelity mock comparative check: generates good match values
+        mock_sql, mock_dax = generate_mock_comparative_data(
+            metric_name=req.metric_name,
+            dimensions=pbi_dims,
+            target_table_or_view=req.target_table_or_view,
+            project_id=req.project_id,
+        )
+        sql_rows = mock_sql
+        dax_rows = req.dax_results if req.dax_results is not None else mock_dax
+        dax_backend_used = "mock_fabric_analysis"
     else:
-        try:
-            dax_exec = execute_dax(
-                dax_query,
-                backend=req.dax_backend,
-                port=req.dax_port,
-                dataset_id=req.dax_dataset_id,
-                workspace=req.dax_workspace,
-                workspace_id=req.dax_workspace_id,
+        # Real connection execution path
+        # 1. Execute Snowflake / SQL query live (non-simulated)
+        uid = getattr(request.state, "user_id", None)
+        exec_resp = execute_semantic_query(
+            ExecuteQueryRequest(
+                sql=sql_query,
+                target="SNOWFLAKE",
+                project_id=req.project_id,
+                limit=100000,
+                allow_simulated=False,
+            ),
+            owner_id=str(uid) if uid else None,
+        )
+        if not exec_resp.success or exec_resp.is_simulated:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
             )
-            dax_rows = dax_exec.rows
-            dax_backend_used = dax_exec.backend
-        except DaxExecutionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
+        vm_col = view_metric.split(".")[-1].upper()
+        for row in raw_sf_rows:
+            up = {str(k).upper(): v for k, v in row.items()}
+            mapped: Dict[str, Any] = {req.metric_name: up.get(vm_col)}
+            for vd, pc in zip(req.dimensions, pbi_dims):
+                mapped[pc] = up.get(vd.split(".")[-1].upper())
+            sql_rows.append(mapped)
+
+        # 2. Obtain DAX rows via supplied export or automated run_dax backend
+        if req.dax_results is not None:
+            dax_rows = req.dax_results
+            dax_backend_used = "manual_rows"
+        else:
+            try:
+                dax_exec = execute_dax(
+                    dax_query,
+                    backend=req.dax_backend,
+                    port=req.dax_port,
+                    dataset_id=req.dax_dataset_id,
+                    workspace=req.dax_workspace,
+                    workspace_id=req.dax_workspace_id,
+                )
+                dax_rows = dax_exec.rows
+                dax_backend_used = dax_exec.backend
+            except DaxExecutionError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # 3. Verify mathematical parity and persist certification record
     result = verifier.reconcile_data(
@@ -768,3 +817,141 @@ def batch_certify_metrics(req: BatchCertifyRequest, request: Request) -> Dict[st
         "failed": failed_count,
         "results": results,
     }
+
+
+@router.post("/update-metric-sql", response_model=Dict[str, Any])
+def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
+    """Update and persist the generated/governed Snowflake SQL expression for a metric."""
+    from semabridge.ontology.store import ontology_store
+    from semabridge.ontology.models import DomainMetric
+
+    m_name_clean = req.metric_name.strip()
+    new_sql = req.sql_expression.strip()
+    if not m_name_clean:
+        raise HTTPException(status_code=400, detail="metric_name is required.")
+    if not new_sql:
+        raise HTTPException(status_code=400, detail="sql_expression must not be empty.")
+
+    target_dom = None
+    target_metric: Optional[DomainMetric] = None
+    m_cf = m_name_clean.casefold()
+
+    domains_to_check = []
+    if req.domain:
+        d = ontology_store.get_domain(req.domain)
+        if d:
+            domains_to_check.append(d)
+    if req.project_id:
+        p_doms = _get_project_domains_for_validation(req.project_id)
+        domains_to_check.extend(p_doms)
+
+    fed = ontology_store.get_federated_ontology()
+    domains_to_check.extend(list(fed.domains.values()))
+
+    seen_doms = set()
+    for dom in domains_to_check:
+        if dom.domain in seen_doms:
+            continue
+        seen_doms.add(dom.domain)
+        for m in dom.metrics:
+            if m.name.casefold() == m_cf or (m.logical_name and m.logical_name.casefold() == m_cf):
+                target_dom = dom
+                target_metric = m
+                break
+        if target_metric is not None:
+            break
+
+    if target_dom is None or target_metric is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Metric '{m_name_clean}' not found in ontology.",
+        )
+
+    updated_metrics = []
+    for m in target_dom.metrics:
+        if m.name.casefold() == target_metric.name.casefold():
+            updated_metrics.append(m.model_copy(update={"sql_expression": new_sql}))
+        else:
+            updated_metrics.append(m)
+
+    updated_dom = target_dom.model_copy(update={"metrics": updated_metrics})
+    try:
+        ontology_store.add_or_update_domain(
+            updated_dom,
+            original=target_dom.domain,
+            enforce_bi_formula_readonly=False,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to update metric SQL: {exc}")
+
+    return {
+        "success": True,
+        "domain": target_dom.domain,
+        "metric_name": target_metric.name,
+        "sql_expression": new_sql,
+        "dax_expression": target_metric.dax_expression,
+    }
+
+
+@router.get("/project-metrics", response_model=Dict[str, Any])
+def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict[str, Any]:
+    """List metrics with DAX expressions, Snowflake SQL expressions, deployed view names, and dimensions."""
+    from semabridge.ontology.store import ontology_store
+    from semabridge.repository.model_repository import ModelRepository
+
+    dep_info: Dict[str, Any] = {}
+    if project_id:
+        try:
+            dep_info = ModelRepository().get_project_deployment_info(project_id)
+        except Exception:
+            dep_info = {}
+
+    view_name = dep_info.get("semantic_view") or dep_info.get("view_name") or ""
+    domains = _get_project_domains_for_validation(project_id)
+    if not domains:
+        fed = ontology_store.get_federated_ontology()
+        domains = list(fed.domains.values())
+
+    metrics_list = []
+    seen = set()
+    for dom in domains:
+        concept_map = {c.name: c for c in getattr(dom, "concepts", [])}
+        for c in getattr(dom, "concepts", []):
+            if getattr(c, "logical_name", None):
+                concept_map[c.logical_name] = c
+
+        sv_dom = getattr(dom, "semantic_view_name", None) or view_name
+        for m in getattr(dom, "metrics", []):
+            if m.name in seen:
+                continue
+            seen.add(m.name)
+            c = concept_map.get(m.concept)
+            dims = []
+            if c:
+                for a in getattr(c, "attributes", []):
+                    if not a.is_hidden and not re.search(r"INT|DEC|FLOAT|NUM", a.data_type or "", re.I):
+                        dim_name = f"{c.logical_name or c.name}.{a.logical_name or a.name}"
+                        dims.append(dim_name)
+
+            target_view = getattr(m, "semantic_view_name", None) or sv_dom or (c.physical_table if c else m.concept) or ""
+            target_kind = "semantic_view" if (sv_dom or getattr(m, "semantic_view_name", None)) else "table"
+
+            metrics_list.append({
+                "name": m.name,
+                "logical_name": m.logical_name or m.name,
+                "label": m.label or m.name,
+                "domain": dom.domain,
+                "dax_expression": m.dax_expression or "",
+                "sql_expression": m.sql_expression or "",
+                "target_table_or_view": target_view,
+                "target_kind": target_kind,
+                "concept": m.concept,
+                "dimensions": dims,
+            })
+
+    return {
+        "project_id": project_id,
+        "count": len(metrics_list),
+        "metrics": metrics_list,
+    }
+

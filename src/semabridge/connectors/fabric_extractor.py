@@ -421,8 +421,19 @@ class FabricExtractor:
                 return self._access_token
             except RequestException as e:
                 logger.error(f"Failed to acquire access token (service principal): {e}")
+                detail = ""
                 if hasattr(e, 'response') and e.response is not None:
                     logger.error(f"Response: {e.response.text}")
+                    try:
+                        body = e.response.json()
+                        # Azure's own reason, e.g. "AADSTS7000222: The provided client
+                        # secret keys for app '...' are expired." -- first sentence only.
+                        desc = str(body.get("error_description") or body.get("error") or "")
+                        detail = desc.split("\r\n")[0].split(" Trace ID:")[0].strip()
+                    except ValueError:
+                        detail = ""
+                if detail:
+                    raise FabricExtractionError(f"Authentication failed: {detail}")
                 raise FabricExtractionError(f"Authentication failed: {e}")
 
         # 3. Device-code / delegated flow — use stored MSAL token.
