@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cloud, Snowflake, Database, BarChart3, Folder } from 'lucide-react';
+import { Cloud, Snowflake, Database, BarChart3, Folder, PieChart } from 'lucide-react';
 
 export default function SourceIcon({ source, size = 14 }) {
   const normalizedSource = String(source || '').toLowerCase();
@@ -10,6 +10,10 @@ export default function SourceIcon({ source, size = 14 }) {
 
   if (normalizedSource.includes('fabric')) {
     return <Cloud size={size} color="#3b82f6" />;
+  }
+
+  if (normalizedSource.includes('tableau') || normalizedSource.includes('tds') || normalizedSource.includes('twb')) {
+    return <PieChart size={size} color="#E97627" />;
   }
 
   if (normalizedSource.includes('snowflake')) {

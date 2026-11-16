@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -72,7 +73,17 @@ class LocalPBIXConnector(BaseConnector):
         """
         self.config = config
         self.validate_config(["pbix_path"])
-        self._pbix_path = Path(config["pbix_path"]).resolve()
+        raw_p = Path(config["pbix_path"])
+        if not raw_p.exists():
+            stem = raw_p.stem
+            clean_stem = re.sub(r"^[0-9a-fA-F]{32}_", "", stem)
+            candidates = list(Path.cwd().glob(f"Examples/**/{clean_stem}*.pbix")) + list(Path.cwd().glob(f"Examples/**/{stem}*.pbix"))
+            if candidates and candidates[0].exists():
+                self._pbix_path = candidates[0].resolve()
+            else:
+                self._pbix_path = raw_p.resolve()
+        else:
+            self._pbix_path = raw_p.resolve()
         self._archive: Optional[zipfile.ZipFile] = None
         self._data_model_schema: Optional[Dict[str, Any]] = None
         self._connections: Optional[List[Dict[str, Any]]] = None

@@ -8,7 +8,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   FolderOpen, Plus, MoreVertical, Layers, Trash2, Edit3,
   Upload, Download, Play, Settings, Copy, Folder, FolderPlus,
-  X, Check, BarChart3, Cloud, Snowflake, Database,
+  X, Check, BarChart3, Cloud, Snowflake, Database, PieChart,
 } from 'lucide-react';
 
 import StatusBadge from '../components/common/StatusBadge';
@@ -27,7 +27,41 @@ import { SidebarSystemGroup, SidebarAddButton } from '../components/projects/Sys
 import { hasFailures } from '../utils/statusUtils';
 import PortfolioSummary from '../components/projects/PortfolioSummary';
 import ProjectsTable from '../components/projects/ProjectsTable';
-import { OntologyScore } from '../components/projects/projectHealth';
+import { OntologyScore, ConversionBar } from '../components/projects/projectHealth';
+
+function relTime(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days === 1 ? 'Yesterday' : `${days}d ago`;
+}
+
+function formatConnectorName(key) {
+  const k = String(key || '').toLowerCase().trim();
+  if (k.includes('pbix') || k.includes('powerbi') || k === 'pbi') return 'Power BI';
+  if (k.includes('fabric')) return 'Fabric';
+  if (k.includes('tableau') || k.includes('tds') || k.includes('twb')) return 'Tableau';
+  if (k.includes('snowflake')) return 'Snowflake';
+  if (k.includes('databricks')) return 'Databricks';
+  if (k.includes('postgres')) return 'PostgreSQL';
+  if (k.includes('salesforce')) return 'Salesforce';
+  return k ? k.charAt(0).toUpperCase() + k.slice(1) : '—';
+}
+
+function projectRoute(project) {
+  const src = project?.source_type || project?.source || project?.adapter || project?.connector || '';
+  const tgt = project?.target_type || project?.target || (Array.isArray(project?.targets) && project.targets[0]?.type) || '';
+  const srcName = formatConnectorName(src);
+  const tgtName = tgt ? formatConnectorName(tgt) : '';
+  if (srcName && tgtName) return `${srcName} → ${tgtName}`;
+  return srcName || tgtName || '—';
+}
 
 const LAYOUT_KEY = 'semabridge:projects:layout';
 function readLayout() {
@@ -59,6 +93,7 @@ function normalizeSourceKey(value) {
   if (key.includes('fabric')) return 'fabric';
   if (key.includes('snowflake')) return 'snowflake';
   if (key.includes('databricks')) return 'databricks';
+  if (key.includes('tableau') || key.includes('tds') || key.includes('twb')) return 'tableau';
   if (key.includes('google') && key.includes('sheet')) return 'google_sheets';
   if (key.includes('postgres')) return 'postgresql';
   if (key.includes('salesforce')) return 'salesforce';
@@ -81,6 +116,7 @@ function renderSourceIcon(sourceType, size = 14) {
   if (source.includes('fabric')) return <Cloud size={size} color="#3b82f6" />;
   if (source.includes('snowflake')) return <Snowflake size={size} color="#38bdf8" />;
   if (source.includes('databricks')) return <Database size={size} color="#f97316" />;
+  if (source.includes('tableau')) return <PieChart size={size} color="#E8762D" />;
   return <Folder size={size} color="var(--text-tertiary)" />;
 }
 
@@ -97,6 +133,7 @@ const FOLDER_COLORS = [
 
 const SOURCE_TARGET_OPTIONS = [
   { value: 'fabric', label: 'MS Fabric' },
+  { value: 'tableau', label: 'Tableau' },
   { value: 'snowflake', label: 'Snowflake' },
   { value: 'databricks', label: 'Databricks' },
   { value: 'postgresql', label: 'PostgreSQL' },
@@ -1266,6 +1303,7 @@ export default function ProjectsPage() {
         ) : (
         <VirtualProjectGrid
           ontologyHealth={ontologyHealth}
+          perProject={portfolio?.per_project || {}}
           filtered={filtered}
           loading={loading}
           searchQuery={searchQuery}
@@ -1466,7 +1504,7 @@ function SidebarFolder({
 
 /* ─── Project Card ─── */
 const ProjectCard = React.memo(function ProjectCard({
-  project, menuOpen, onMenuToggle,
+  project, summary, menuOpen, onMenuToggle,
   onViewDetail, onConfigure, onRunNow, isRunning = false, onDuplicate, onExport, onDelete,
   selected = false, onToggleSelect,
   onDragStart, onDragEnd, ontologyHealth,
@@ -1474,6 +1512,8 @@ const ProjectCard = React.memo(function ProjectCard({
   const navigate = useNavigate();
   const isOpen = menuOpen === project.id;
   const sourceKey = sourceKeyOf(project);
+  const modelCount = summary?.models ?? project.model_count ?? (Array.isArray(project.semantic_models) ? project.semantic_models.length : null);
+  const routeLabel = projectRoute(project);
   const { activeRuns } = useContext(SyncContext);
   const myRun = activeRuns.find(
     run =>
@@ -1542,7 +1582,8 @@ const ProjectCard = React.memo(function ProjectCard({
               </span>
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {sourceKey || '—'}
+              <span>{routeLabel}</span>
+              {modelCount != null && modelCount > 0 && <span> · {modelCount} model{modelCount === 1 ? '' : 's'}</span>}
             </div>
           </div>
         </div>
@@ -1594,6 +1635,36 @@ const ProjectCard = React.memo(function ProjectCard({
               {tag}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Metrics & Conversion strip */}
+      {summary && (summary.counts || summary.conversion_pct !== null || summary.last_run_at) ? (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, padding: '7px 9px',
+          borderRadius: 8, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-light)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+            <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>Conversion</span>
+            <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+              {summary.conversion_pct != null ? `${Math.round(summary.conversion_pct)}%` : '—'}
+            </span>
+          </div>
+          {summary.counts && <ConversionBar counts={summary.counts} height={5} />}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-tertiary)', marginTop: 1 }}>
+            <span>Last run: {relTime(summary.last_run_at || project.last_run_at) || 'Never'}</span>
+            {summary.last_run_status === 'failed' && (
+              <span style={{ color: 'var(--color-error)', fontWeight: 600 }}>failed</span>
+            )}
+            {summary.counts?.needs_review > 0 && (
+              <span style={{ color: 'var(--color-warning)' }}>{summary.counts.needs_review} to review</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--text-tertiary)', marginBottom: 10, padding: '2px 0' }}>
+          <span>Last run: {relTime(project.last_run_at) || 'Never'}</span>
+          <span>{modelCount ? `${modelCount} model${modelCount === 1 ? '' : 's'}` : 'Draft'}</span>
         </div>
       )}
 
@@ -1724,7 +1795,7 @@ function ProjectMenu({ onViewDetail, onConfigure, onRunNow, onDuplicate, onExpor
 }
 
 /* ─── Virtual grid wrapper ─── */
-const CARD_HEIGHT = 160; // approximate card height in px
+const CARD_HEIGHT = 185; // approximate card height in px
 const CARD_MIN_WIDTH = 290;
 const GRID_GAP = 14;
 
@@ -1737,6 +1808,7 @@ function VirtualProjectGrid({
   handleDragStart, handleDragEnd,
   setProjectListScrollTop, projectListScrollTop,
   ontologyHealth = {},
+  perProject = {},
 }) {
   const scrollRef = useRef(null);
 
@@ -1832,6 +1904,7 @@ function VirtualProjectGrid({
                 <ProjectCard
                   key={project.id}
                   project={project}
+                  summary={perProject[project.id]}
                   menuOpen={menuOpen}
                   onMenuToggle={setMenuOpen}
                   onViewDetail={() => { setActiveProjectId(project.id); setDetailProject(project); }}

@@ -437,7 +437,11 @@ def _normalize_project_config_yaml(
     source_cfg = parsed.get("source")
     if isinstance(source_cfg, dict):
         from semabridge.utils.project_models import assign_model_view_names, is_multi_mode
+        from semabridge.utils.upload_storage import persist_source_uploads
 
+        # Source files still in the OS temp dir (purged by the OS) are
+        # copied to persistent storage before the paths are saved.
+        persist_source_uploads(parsed)
         if is_multi_mode(source_cfg):
             source_cfg["model_views"] = assign_model_view_names(source_cfg)
     if not str(parsed.get("project_name") or "").strip():

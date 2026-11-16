@@ -478,27 +478,74 @@ def _model_identity_key(value: Any) -> str:
     return name.strip().lower()
 
 
+def _model_match_key(value: Any) -> str:
+    """Like _model_identity_key, but also drops the 32-hex upload prefix
+    (``<uuid>_Sales.pbix`` -> ``sales``). Every upload -- the dry run's and
+    the project's own -- stores the same file under a fresh random prefix, so
+    an override tagged with the dry-run copy's path must still match the
+    project's copy of that model."""
+    return (clean_pbix_model_name(_model_identity_key(value)) or "").strip().lower()
+
+
 def _config_with_model_scoped_overrides(config: Dict[str, Any], job: Dict[str, Any]) -> Dict[str, Any]:
     """Return the config this job should run with: mappings_overrides rows
     tagged with a ``model`` (written by the multi-model dry run) are kept only
     for the job they belong to; untagged rows apply to every model, exactly as
     before. Returns ``config`` itself when there is nothing to filter, so a
-    single-model run sees the very same config object."""
+    single-model run sees the very same config object.
+
+    A row matches its job by exact model key first. Failing that, it matches
+    by upload-prefix-free name (see _model_match_key) -- unless that name is
+    shared by several of the project's configured models, where it would be
+    ambiguous, or the row's exact key names a different configured model."""
     overrides = config.get("mappings_overrides") if isinstance(config, dict) else None
     if not isinstance(overrides, list) or not any(
         isinstance(row, dict) and str(row.get("model") or "").strip() for row in overrides
     ):
         return config
-    identities = {
-        _model_identity_key(job.get(key))
-        for key in ("pbix_path", "dataset_id", "model_label", "resolved_display_name", "source_ref")
-    }
-    identities.discard("")
-    scoped = [
-        row for row in overrides
-        if not (isinstance(row, dict) and str(row.get("model") or "").strip())
-        or _model_identity_key(row.get("model")) in identities
+    job_values = [
+        job.get(key) for key in ("pbix_path", "dataset_id", "model_label", "resolved_display_name", "source_ref")
     ]
+    identities = {_model_identity_key(v) for v in job_values}
+    identities.discard("")
+    match_identities = {_model_match_key(v) for v in job_values}
+    match_identities.discard("")
+
+    source_cfg = config.get("source") if isinstance(config.get("source"), dict) else {}
+    configured_models = [m for m in (source_cfg.get("models") or []) if str(m or "").strip()]
+    configured_exact = {_model_identity_key(m) for m in configured_models}
+    configured_match_counts: Dict[str, int] = {}
+    for m in configured_models:
+        key = _model_match_key(m)
+        configured_match_counts[key] = configured_match_counts.get(key, 0) + 1
+
+    def _belongs(row: Any) -> bool:
+        if not (isinstance(row, dict) and str(row.get("model") or "").strip()):
+            return True
+        exact = _model_identity_key(row.get("model"))
+        if exact in identities:
+            return True
+        if exact in configured_exact:
+            return False  # explicitly another configured model
+        match = _model_match_key(row.get("model"))
+        if not match or match not in match_identities:
+            return False
+        return configured_match_counts.get(match, 0) <= 1
+
+    scoped = [row for row in overrides if _belongs(row)]
+    dropped_ambiguous = sum(
+        1 for row in overrides
+        if isinstance(row, dict) and str(row.get("model") or "").strip()
+        and _model_identity_key(row.get("model")) not in identities
+        and _model_match_key(row.get("model")) in match_identities
+        and configured_match_counts.get(_model_match_key(row.get("model")), 0) > 1
+    )
+    if dropped_ambiguous:
+        logger.warning(
+            "Skipped %d mapping override(s) for model '%s': several configured models share its "
+            "file name, so overrides tagged with another upload path cannot be attributed safely.",
+            dropped_ambiguous, job.get("model_label"),
+        )
     return {**config, "mappings_overrides": scoped}
 
 

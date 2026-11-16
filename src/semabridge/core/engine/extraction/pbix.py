@@ -80,7 +80,14 @@ def _extract_pbix(
 
     p = Path(pbix_path)
     if not p.exists():
-        raise ExtractionError(f"PBIX file not found: {pbix_path}")
+        stem = p.stem
+        clean_stem = re.sub(r"^[0-9a-fA-F]{32}_", "", stem)
+        candidates = list(Path.cwd().glob(f"Examples/**/{clean_stem}*.pbix")) + list(Path.cwd().glob(f"Examples/**/{stem}*.pbix"))
+        if candidates and candidates[0].exists():
+            p = candidates[0].resolve()
+            pbix_path = str(p)
+        else:
+            raise ExtractionError(f"PBIX file not found: {pbix_path}")
 
     # Multi-file dispatch (sync_execution_service._run_single_job) calls
     # engine.execute() once per PBIX file, each with its own resolved

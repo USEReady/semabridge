@@ -161,6 +161,8 @@ def analyze(models: List[Any]) -> Dict[str, Any]:
     from semabridge.ontology.quality import analyze_source_metrics, source_metrics_from_osi
     from semabridge.ontology.store import ontology_store
 
+    ontology_store.reload_from_disk()
+
     metrics = []
     for model in models:
         metrics.extend(source_metrics_from_osi(model))

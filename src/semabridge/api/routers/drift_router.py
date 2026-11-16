@@ -76,8 +76,8 @@ def delete_drift_events(project_id: Optional[str] = None) -> Dict[str, Any]:
 
 
 @router.post("/events/seed-mock", response_model=Dict[str, Any])
-def seed_mock_events(project_id: Optional[str] = "proj-tiral_comp") -> Dict[str, Any]:
-    events = seed_mock_drift_events(project_id or "proj-tiral_comp")
+def seed_mock_events(project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
+    events = seed_mock_drift_events(project_id or "proj-comp")
     return {"success": True, "count": len(events), "events": events}
 
 

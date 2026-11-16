@@ -188,17 +188,12 @@ def _compat_apply_manual_mapping_overrides_to_cfg(config_yaml: str, project_id: 
     if not overrides:
         return config_yaml
     config_overrides = parsed.get("mappings_overrides") if isinstance(parsed.get("mappings_overrides"), list) else []
-    model_scoped = any(
-        isinstance(row, dict) and str(row.get("model") or "").strip()
-        for row in list(config_overrides) + overrides
-    )
-    if model_scoped:
-        # Multi-model project: an edit may arrive through both the YAML
-        # (written at create time) and the mapping store (edited later) --
-        # merge so it is applied exactly once, scoped to its own model.
-        parsed["mappings_overrides"] = _compat_merge_model_scoped_overrides(config_overrides, overrides)
-    else:
-        parsed["mappings_overrides"] = overrides
+    # An edit may arrive through both the YAML (written at create time, incl.
+    # every dry-run "Resolve All" rename) and the mapping store (edited
+    # later) -- merge so each (model, source_path) is applied exactly once
+    # with the store's edit winning. Replacing the YAML list with the store's
+    # rows dropped every YAML-only rename and brought resolved collisions back.
+    parsed["mappings_overrides"] = _compat_merge_model_scoped_overrides(config_overrides, overrides)
     return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
 
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Check, CheckCircle2, ChevronDown, RefreshCw, Loader2 } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, RefreshCw, Loader2, PieChart } from 'lucide-react';
 import { api } from '../../utils/api';
 import SourceIcon from '../common/SourceIcon';
 import SearchableSelect from '../common/SearchableSelect';
@@ -124,8 +124,11 @@ export function StepConnectorConfig({
 
   const uploadPbixFile = async (file) => {
     if (!file) return;
-    if (!String(file.name || '').toLowerCase().endsWith('.pbix')) {
-      setPbixUploadError('Only .pbix files are supported.');
+    const fname = String(file.name || '').toLowerCase();
+    const isPbix = fname.endsWith('.pbix');
+    const isTableau = fname.endsWith('.tds') || fname.endsWith('.tdsx') || fname.endsWith('.twb') || fname.endsWith('.twbx');
+    if (!isPbix && !isTableau) {
+      setPbixUploadError('Supported files: .pbix, .tds, .tdsx, .twb, .twbx');
       return;
     }
 
@@ -687,7 +690,57 @@ export function StepConnectorConfig({
         );
         })()}
 
-        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && sourceConnector !== 'pbix' && (
+        {sourceConnector === 'tableau' && (() => {
+          const hasUploadedTableau = Boolean(pbixUploadPath || pbixFile) && !pbixUploading && !pbixUploadError;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={LABEL}>Tableau Data Source (.tds / .tdsx / .twb / .twbx)</label>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>
+                  Upload a Tableau data source XML (.tds), packaged data source archive (.tdsx), workbook (.twb), or packaged workbook (.twbx).
+                </div>
+                <label
+                  style={{
+                    display: 'block',
+                    border: hasUploadedTableau ? '1px dashed #22c55e' : '1px dashed var(--border-main)',
+                    borderRadius: 10,
+                    padding: '24px 16px',
+                    textAlign: 'center',
+                    cursor: pbixUploading ? 'progress' : 'pointer',
+                    background: hasUploadedTableau ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-surface)',
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept=".tds,.tdsx,.twb,.twbx"
+                    disabled={pbixUploading}
+                    onChange={async (e) => {
+                      const nextFile = e.target.files?.[0];
+                      if (nextFile) await uploadPbixFile(nextFile);
+                    }}
+                    style={{ display: 'none' }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                    <PieChart size={24} color="#E8762D" />
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {hasUploadedTableau ? 'Tableau File Attached' : 'Click or Drag to Upload Tableau File'}
+                    </div>
+                    <div style={{ fontSize: 12, color: hasUploadedTableau ? '#86efac' : 'var(--text-tertiary)' }}>
+                      {pbixUploading ? 'Uploading file...' : pbixUploadPath ? pbixUploadPath : 'Supported formats: .tds, .tdsx, .twb, .twbx'}
+                    </div>
+                  </div>
+                </label>
+                {pbixUploadError && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-error)' }}>
+                    {pbixUploadError}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {sourceConnector !== 'fabric' && sourceConnector !== 'snowflake' && sourceConnector !== 'pbix' && sourceConnector !== 'tableau' && (
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
             Source connector defaults will be resolved from the saved global connection.
           </div>

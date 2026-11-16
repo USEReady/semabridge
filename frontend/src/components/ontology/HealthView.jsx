@@ -62,6 +62,7 @@ export default function HealthView({
   gov,
   metricOptions,
   onRunLint,
+  runningLint = false,
   onExpandParity,
   onOpenMetric,
   hideWhatIf = false,
@@ -182,8 +183,21 @@ export default function HealthView({
                   </div>
                 </div>
                 <Pill tone="n">{CATEGORY_LABEL[row.category]}</Pill>
-                <button type="button" style={{ ...BTN_SM, minWidth: 72 }} onClick={() => onAction(row)}>
-                  {open ? 'Collapse' : row.action}
+                <button
+                  type="button"
+                  disabled={row.kind === 'lintRun' && runningLint}
+                  style={{
+                    ...BTN_SM,
+                    minWidth: 72,
+                    opacity: row.kind === 'lintRun' && runningLint ? 0.7 : 1,
+                  }}
+                  onClick={() => onAction(row)}
+                >
+                  {row.kind === 'lintRun' && runningLint
+                    ? 'Checking…'
+                    : open
+                    ? 'Collapse'
+                    : row.action}
                 </button>
               </div>
               {open && (

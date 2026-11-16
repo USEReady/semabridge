@@ -10,14 +10,13 @@ export const STEPS = [
 export const CONNECTOR_TYPES = [
   { value: 'pbix', label: 'Local PBIX File' },
   { value: 'fabric', label: 'Microsoft Fabric' },
+  { value: 'tableau', label: 'Tableau (.tds / .twb)' },
   { value: 'snowflake', label: 'Snowflake' },
   { value: 'databricks', label: 'Databricks' },
 ];
 
 export const TARGET_CONNECTOR_TYPES = [
   { value: 'snowflake', label: 'Snowflake' },
-  { value: 'fabric', label: 'Microsoft Fabric' },
-  { value: 'databricks', label: 'Databricks' },
 ];
 
 export const INTERMEDIATE_FORMAT_TYPES = [

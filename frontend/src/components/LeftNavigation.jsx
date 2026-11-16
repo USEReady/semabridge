@@ -50,7 +50,7 @@ export default function LeftNavigation({ onEmergencyReset, searchQuery = '' }) {
       items: [
         { to: '/projects', label: 'Projects',        icon: FolderOpen },
         { to: '/runs',     label: 'Runs',            icon: PlayCircle },
-        { to: '/drift',    label: 'Data Monitoring', icon: Radio },
+        { to: '/drift',    label: 'Drift Monitoring', icon: Radio },
         { to: '/ask',      label: 'Ask AI',          icon: Sparkles },
       ],
     },

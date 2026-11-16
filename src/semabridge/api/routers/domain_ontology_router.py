@@ -174,6 +174,7 @@ def _summary(dom: Any) -> Dict[str, Any]:
 @router.get("", response_model=Dict[str, Any])
 def list_domains() -> Dict[str, Any]:
     """List all federated domain ontologies with counts, collisions and load errors."""
+    ontology_store.reload_from_disk()
     fed = ontology_store.get_federated_ontology()
     return {
         "domains": [_summary(dom) for dom in fed.domains.values()],

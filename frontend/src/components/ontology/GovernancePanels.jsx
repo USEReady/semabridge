@@ -29,52 +29,91 @@ const PANEL = {
   display: 'flex',
   flexDirection: 'column',
   gap: 12,
+  minWidth: 0,
+  overflow: 'hidden',
 };
 
 const itemLabel = (x) => (x && typeof x === 'object' ? x.name || x.object_name || String(x) : String(x));
 
 function ImpactGroup({ title, items, tone }) {
   return (
-    <div style={{ padding: 12, borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
+    <div style={{
+      padding: 12,
+      borderRadius: 10,
+      background: 'var(--bg-surface)',
+      border: '1px solid var(--border-main)',
+      minWidth: 0,
+      overflow: 'hidden',
+      display: 'flex',
+      flexDirection: 'column',
+    }}>
       <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{title}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: items.length ? tone : 'var(--text-tertiary)', marginTop: 2 }}>
         {items.length}
       </div>
       {items.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-          {items.slice(0, 12).map((it, i) => {
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          marginTop: 8,
+          maxHeight: 240,
+          overflowY: 'auto',
+          minWidth: 0,
+        }}>
+          {items.slice(0, 15).map((it, i) => {
             const obj = it && typeof it === 'object' ? it : null;
             const hop = obj?.hop_level || (obj?.impact_level === 'TRANSITIVE' ? 'TRANSITIVE' : 'DIRECT');
             const src = obj?.source || obj?.dependency_source;
             const recert = Boolean(obj?.re_certify || obj?.re_certification_required);
             return (
-              <span
+              <div
                 key={i}
-                title={obj?.details || ''}
+                title={obj?.details || itemLabel(it)}
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: 6,
                   fontFamily: MONO,
                   fontSize: 10.5,
-                  padding: '2px 7px',
-                  borderRadius: 5,
+                  padding: '4px 8px',
+                  borderRadius: 6,
                   border: '1px solid var(--border-main)',
                   background: 'var(--bg-app)',
+                  minWidth: 0,
+                  maxWidth: '100%',
+                  boxSizing: 'border-box',
                 }}
               >
-                <span>{itemLabel(it)}</span>
-                {obj && (
-                  <span style={{ fontSize: 9.5, fontWeight: 700, color: hop === 'TRANSITIVE' ? 'var(--color-warning)' : 'var(--accent-blue)' }}>
-                    [{hop}]
-                  </span>
-                )}
-                {src && <span style={{ fontSize: 9.5, color: 'var(--text-tertiary)' }}>[{src}]</span>}
-                {recert && <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--color-error)' }}>[Re-certify]</span>}
-              </span>
+                <span style={{
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  minWidth: 0,
+                  flex: '1 1 auto',
+                  color: 'var(--text-primary)',
+                  fontWeight: 500,
+                  lineHeight: 1.35,
+                }}>
+                  {itemLabel(it)}
+                </span>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, marginTop: 1 }}>
+                  {obj && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: hop === 'TRANSITIVE' ? 'var(--color-warning)' : 'var(--accent-blue)' }}>
+                      [{hop}]
+                    </span>
+                  )}
+                  {src && <span style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>[{src}]</span>}
+                  {recert && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-error)' }}>[Re-certify]</span>}
+                </div>
+              </div>
             );
           })}
-          {items.length > 12 && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>+{items.length - 12}</span>}
+          {items.length > 15 && (
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)', padding: '2px 4px' }}>
+              +{items.length - 15} more
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -117,7 +156,7 @@ export function ImpactReport({ report, onPickSuggestion }) {
       )}
 
       {sev !== 'NOT_FOUND' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, minWidth: 0 }}>
           <ImpactGroup title="Metrics" items={report.affected_metrics || []} tone="var(--color-warning)" />
           <ImpactGroup title="BI reports" items={report.affected_bi_reports || []} tone="var(--color-error)" />
           <ImpactGroup title="AI agents" items={report.affected_ai_tools || []} tone="var(--accent-purple)" />
@@ -159,9 +198,14 @@ export function WhatIfSimulator({ gov, metricOptions }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          Simulate a schema or metric change across direct and transitive dependencies.
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            Check a schema or metric change across direct and transitive dependencies.
+          </span>
+          <span style={{ fontSize: 10.5, padding: '2px 7px', borderRadius: 4, background: 'rgba(59, 130, 246, 0.12)', color: 'var(--accent-blue)', border: '1px solid rgba(59, 130, 246, 0.25)', fontWeight: 600 }}>
+            Downstream BI & AI Active
+          </span>
+        </div>
         {setGovProjectId && (
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
             Governance scope:
@@ -1055,9 +1099,20 @@ export function ParityPanel({ gov, onOpenMetric, metricOptions = [], dimensionOp
             <div style={{ display: 'flex', gap: 16 }}>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Matched Rows</div>
-                <div style={{ fontSize: 16, fontWeight: 700, fontFamily: MONO, color: reconResult.matched_rows === reconResult.total_rows ? 'var(--color-success)' : 'var(--color-error)' }}>
-                  {reconResult.matched_rows} / {reconResult.total_rows}
-                </div>
+                {(() => {
+                  const totalRows = reconResult.total_rows ?? reconResult.total_rows_compared ?? ((reconResult.matched_rows || 0) + (reconResult.mismatched_rows || 0));
+                  const isAllMatched = reconResult.status === 'CERTIFIED' || (totalRows > 0 && reconResult.matched_rows === totalRows);
+                  return (
+                    <div style={{
+                      fontSize: 16,
+                      fontWeight: 700,
+                      fontFamily: MONO,
+                      color: isAllMatched ? 'var(--color-success)' : 'var(--color-error)',
+                    }}>
+                      {reconResult.matched_rows} / {totalRows}
+                    </div>
+                  );
+                })()}
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Max Drift %</div>
@@ -1074,11 +1129,43 @@ export function ParityPanel({ gov, onOpenMetric, metricOptions = [], dimensionOp
             </div>
           </div>
 
-          {reconResult.column_mapping && Object.keys(reconResult.column_mapping).length > 0 && (
-            <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', fontFamily: MONO }}>
-              Dimension mapping: {Object.entries(reconResult.column_mapping).map(([k, v]) => `${k} ↔ ${v}`).join(', ')}
-            </div>
-          )}
+          {reconResult.column_mapping && Object.keys(reconResult.column_mapping).length > 0 && (() => {
+            const mappingEntries = [];
+            if (reconResult.column_mapping.metric) {
+              const m = reconResult.column_mapping.metric;
+              const fromCol = typeof m === 'object' ? (m.dax_column || m.requested) : m;
+              const toCol = typeof m === 'object' ? (m.sql_column || m.requested) : m;
+              if (fromCol || toCol) {
+                mappingEntries.push(`metric (${fromCol} ↔ ${toCol})`);
+              }
+            }
+            if (Array.isArray(reconResult.column_mapping.dimensions)) {
+              reconResult.column_mapping.dimensions.forEach((d) => {
+                const fromCol = typeof d === 'object' ? (d.dax_column || d.requested) : d;
+                const toCol = typeof d === 'object' ? (d.sql_column || d.requested) : d;
+                if (fromCol || toCol) {
+                  mappingEntries.push(`${fromCol} ↔ ${toCol}`);
+                }
+              });
+            } else if (reconResult.column_mapping.dimensions && typeof reconResult.column_mapping.dimensions === 'object') {
+              Object.entries(reconResult.column_mapping.dimensions).forEach(([k, v]) => {
+                const vStr = typeof v === 'object' ? (v.sql_column || v.requested || k) : v;
+                mappingEntries.push(`${k} ↔ ${vStr}`);
+              });
+            } else {
+              Object.entries(reconResult.column_mapping).forEach(([k, v]) => {
+                if (k !== 'metric' && k !== 'dimensions') {
+                  const vStr = typeof v === 'object' ? (v.sql_column || v.requested || JSON.stringify(v)) : String(v);
+                  mappingEntries.push(`${k} ↔ ${vStr}`);
+                }
+              });
+            }
+            return mappingEntries.length > 0 ? (
+              <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', fontFamily: MONO }}>
+                Dimension mapping: {mappingEntries.join(', ')}
+              </div>
+            ) : null;
+          })()}
           {Array.isArray(reconResult.errors) && reconResult.errors.length > 0 && (
             <div style={{ fontSize: 12, color: 'var(--color-error)' }}>{reconResult.errors.join('; ')}</div>
           )}

@@ -12,5 +12,6 @@ metrics:
   grain: []
   synonyms: []
   business_rules: []
+  domain: ParityTestDomain
   tags: []
 relationships: []

@@ -68,6 +68,33 @@ def test_equal_matches_without_exact_name_stop_with_the_candidates():
     assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, meta) == "SALES_FACT"
 
 
+def test_cross_model_namespaced_tables_disambiguated_by_model_name():
+    # Multi-model batch where tables in the shared schema are prefixed by model namespace
+    date_cols = ["Date", "Year", "Month"]
+    meta = LiveSchemaMetadata({
+        "COMPETITIVE_MARKETING_ANALYSIS_DATE": {"DATE", "YEAR", "MONTH"},
+        "CORE_FINANCE_V1_DATE": {"DATE", "YEAR", "MONTH"},
+    })
+    # With model_name specified (including upload hash prefix), it binds to its own table
+    res = resolve_dataset_to_physical_table(
+        "Date",
+        date_cols,
+        meta,
+        model_name="e124ae47cc9646bc9403600f2c8449b2_Competitive Marketing Analysis",
+    )
+    assert res == "COMPETITIVE_MARKETING_ANALYSIS_DATE"
+    assert meta.binding_log["DATE"]["matched_by"] == "model namespace"
+
+    # Core finance model resolves to its own table
+    res_finance = resolve_dataset_to_physical_table(
+        "Date",
+        date_cols,
+        meta,
+        model_name="Core Finance v1",
+    )
+    assert res_finance == "CORE_FINANCE_V1_DATE"
+
+
 def test_tie_without_row_counts_is_alphabetical():
     for order in (["SALES_FACT", "SALESFACT"], ["SALESFACT", "SALES_FACT"]):
         assert resolve_dataset_to_physical_table("SalesFact", SALES_COLS, _meta(order)) == "SALESFACT"

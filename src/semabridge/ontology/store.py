@@ -115,6 +115,11 @@ class DomainOntologyStore:
         self._seed_sample_domains()
         self._refresh_index()
 
+    def reload_from_disk(self) -> None:
+        """Reload all domain files from storage_dir and refresh search index."""
+        with self._lock:
+            self._load_seed_defaults()
+
     def _seed_sample_domains(self) -> None:
         finance_yaml = """  # hardcoding-ok: demo seed domain
 domain: Finance

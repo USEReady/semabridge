@@ -51,6 +51,7 @@ class SourceType(str, Enum):
     """Supported source connector types."""
     FABRIC = "fabric"
     SNOWFLAKE = "snowflake"
+    TABLEAU = "tableau"
 
 
 class TargetType(str, Enum):
@@ -59,6 +60,8 @@ class TargetType(str, Enum):
     TABLEAU_DATASOURCE = "tableau_datasource"
     FABRIC = "fabric"
     SNOWFLAKE = "snowflake"  # Legacy support
+    DATABRICKS = "databricks"
+    DATABRICKS_METRIC_VIEW = "databricks_metric_view"
 
 
 class SourceConfig(BaseModel):
@@ -66,7 +69,7 @@ class SourceConfig(BaseModel):
     Source connector configuration with wildcard support.
     
     Attributes:
-        type: Source type (fabric, snowflake)
+        type: Source type (fabric, snowflake, tableau)
         workspace: Fabric workspace name (for fabric type)
         workspace_id: Fabric workspace GUID (for fabric type)
         dataset_id: Specific dataset/model ID (optional)
@@ -74,6 +77,8 @@ class SourceConfig(BaseModel):
         models: Explicit list of model names to include (overrides 'model' pattern)
         database: Snowflake database (for snowflake type)
         schema_name: Snowflake schema (for snowflake type)
+        path: File path (for tableau or local file sources)
+        file_path: Alias for path
     """
     type: SourceType
     workspace: Optional[str] = None
@@ -83,6 +88,8 @@ class SourceConfig(BaseModel):
     models: Optional[List[str]] = Field(default=None, description="Explicit list of model names")
     database: Optional[str] = None
     schema_name: Optional[str] = Field(default=None, alias="schema")
+    path: Optional[str] = Field(default=None, description="Path to source file (.pbix, .tds, .twb, etc.)")
+    file_path: Optional[str] = Field(default=None, description="Alternative alias for path")
     
     class Config:
         populate_by_name = True
@@ -90,12 +97,10 @@ class SourceConfig(BaseModel):
     @field_validator("type", mode="before")
     @classmethod
     def _reject_unsupported_bi_sources(cls, value: Any) -> Any:
-        """Give a clear 'not supported yet' error for known-but-unsupported sources."""
+        """Normalize aliases and give a clear 'not supported yet' error for known-but-unsupported sources."""
         normalized = str(getattr(value, "value", value) or "").strip().lower()
         if normalized in {"tableau", "tableau_datasource", "tds", "twb"}:
-            from semabridge.connectors.tableau_connector import TABLEAU_UNSUPPORTED_REASON
-
-            raise ValueError(f"Source type '{value}' is not supported yet: {TABLEAU_UNSUPPORTED_REASON}")
+            return SourceType.TABLEAU
         if normalized in {"dbt", "dbt_semantic_layer", "metricflow"}:
             from semabridge.connectors.dbt_connector import DBT_UNSUPPORTED_REASON
 
@@ -133,12 +138,16 @@ class TargetConfig(BaseModel):
         database: Target database name
         schema_name: Target schema name  
         project: Target project (for Tableau)
+        catalog: Target catalog name (for Databricks Unity Catalog)
+        warehouse_id: Target SQL warehouse ID (for Databricks)
         deploy: Whether to execute deployment
     """
     type: TargetType
     database: Optional[str] = None
     schema_name: Optional[str] = Field(default=None, alias="schema")
     project: Optional[str] = None
+    catalog: Optional[str] = None
+    warehouse_id: Optional[str] = None
     deploy: bool = True
     
     class Config:

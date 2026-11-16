@@ -200,6 +200,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const [lintSnakeCase, setLintSnakeCase] = useState(true);
   const [lintStewardSeverity, setLintStewardSeverity] = useState('WARNING');
   const [lintReport, setLintReport] = useState(null);
+  const [qualityChecked, setQualityChecked] = useState(false);
   const [runningLint, setRunningLint] = useState(false);
 
   // 3. Golden Data Reconciliation (live SQL + DAX execution/upload parity)
@@ -301,6 +302,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     setImpactLoading({});
     setBlastReport(null);
     setLintReport(null);
+    setQualityChecked(false);
     setHealthExpanded(null);
     resetParityState();
   }, [effectiveGovProjectId]);
@@ -576,6 +578,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         change_type: changeType,
         table_context: tableCtx || undefined,
         project_id: effectiveGovProjectId || undefined,
+        mock_mode: true,
       }),
     });
     const data = await res.json();
@@ -611,7 +614,6 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const handleSelectMetric = (name) => {
     setDrawerMetric(name);
     ensureImpact(name);
-    if (!lintReport && !runningLint) handleRunLinter();
   };
 
   // Health "Open" on a finding: go to the metric in Domains and open its drawer
@@ -746,6 +748,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   const handleRunLinter = async (stewardOverride) => {
     const activeSteward = stewardOverride || lintStewardSeverity;
     setRunningLint(true);
+    setQualityChecked(true);
     try {
       const res = await authFetch('/api/governance/lint', {
         method: 'POST',
@@ -1203,6 +1206,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
     unresolved: unresolvedRefs,
     loadErrors: domainData.load_errors || [],
     lintReport: scopedLint,
+    qualityRan: Boolean(qualityChecked || lintReport),
     impactReports: checksRanAt
       ? Object.fromEntries(Object.entries(impactReports).filter(([n]) => allMetricNames.includes(n)))
       : {},
@@ -1532,6 +1536,7 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
             setExpandedId={setHealthExpanded}
             metricOptions={allMetricNames}
             onRunLint={handleRunLinter}
+            runningLint={runningLint}
             onExpandParity={() => {
               if (!reconMetric.trim()) {
                 const first = allMetrics.find((m) => m.sql_expression) || allMetrics[0];

@@ -162,6 +162,8 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
             dup_name_repo=self._dup_name_repo,
         )
         self.schema_manager._live_schema_metadata = self._live_schema_metadata
+        if self.physical_namespace:
+            self.schema_manager.physical_namespace = self.physical_namespace
         self.translator = MetricExpressionTranslator(
             identifier_sanitizer=self._id
         )
@@ -1484,6 +1486,8 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
         try:
             cur = conn.cursor()
             with self._physical_namespace_scope(model):
+                if self.physical_namespace:
+                    self.schema_manager.physical_namespace = self.physical_namespace
                 return self.schema_manager.plan_source_tables(cur, model)
         finally:
             if owns_conn:

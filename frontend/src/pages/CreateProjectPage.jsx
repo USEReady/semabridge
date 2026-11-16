@@ -72,14 +72,13 @@ const STEPS = [
 const CONNECTOR_TYPES = [
   { value: 'pbix', label: 'Local PBIX File' },
   { value: 'fabric', label: 'Microsoft Fabric' },
+  { value: 'tableau', label: 'Tableau (.tds / .twb)' },
   { value: 'snowflake', label: 'Snowflake' },
   { value: 'databricks', label: 'Databricks' },
 ];
 
 const TARGET_CONNECTOR_TYPES = [
   { value: 'snowflake', label: 'Snowflake' },
-  { value: 'fabric', label: 'Microsoft Fabric' },
-  { value: 'databricks', label: 'Databricks' },
 ];
 
 const INTERMEDIATE_FORMAT_TYPES = [
@@ -1393,6 +1392,17 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
     }
 
+    if (sourceConnector === 'tableau') {
+      const tableauPath = effectiveSources.singlePbixPath || pbixUploadPath || selectedPbixFilePath || '';
+      if (tableauPath) {
+        source.path = tableauPath;
+        source.file_path = tableauPath;
+      }
+      if (selectedModelNames.length > 0) {
+        source.models = selectedModelNames;
+      }
+    }
+
     return source;
   };
 
@@ -1415,6 +1425,12 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
       if (connector === 'databricks') {
         if (databricksAccountId) target.identity_id = databricksAccountId;
+        if (targetDatabase.trim()) target.catalog = targetDatabase.trim();
+        if (targetSchema.trim()) target.schema = targetSchema.trim();
+      }
+
+      if (connector === 'tableau_datasource') {
+        target.deploy = true;
       }
 
       if (connector === 'snowflake') {
@@ -1922,6 +1938,25 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         isDirty: true,
       };
     }));
+    // Single-model: the entity mappings are what project create saves to the
+    // mapping store, so they must carry the resolved names too -- otherwise
+    // the store keeps the colliding defaults and they come back on sync.
+    if (!fileId) {
+      setDetectedEntityMappings((prev) => prev.map((mapping) => {
+        const nextTarget = resolvedMap[mapping.id];
+        if (!nextTarget) return mapping;
+        return {
+          ...mapping,
+          target_name: nextTarget,
+          is_user_edited: true,
+          status: 'manual',
+          collision_detected: false,
+          validation_status: 'valid',
+          validation_code: 'OK',
+          validation_message: '',
+        };
+      }));
+    }
   }, [setRowsForModel]);
 
   const handleSynonymUpdate = useCallback((rowId, synonyms, fileId = null) => {

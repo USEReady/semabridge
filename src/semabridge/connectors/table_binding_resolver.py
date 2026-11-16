@@ -240,68 +240,121 @@ def compute_column_compatibility(
 
 
 
-def rank_table_candidates(
-
-    dataset_name: str,
-
-    dataset_columns: List[str],
-
-    live_schema_metadata: Dict[str, Set[str]],
-
-) -> List[Dict[str, Any]]:
-
-    """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match.
-
+def _extract_model_namespaces(model_name: Optional[str]) -> Set[str]:
+    """Extract possible physical namespace prefixes and model tokens from a model identifier.
     
-
-    A table is a candidate when column compatibility >= 0.8 or its normalized
-
-    name equals the dataset's; column compatibility ranks first, so a
-
-    name-only match never beats a column match.
-
+    Handles:
+    - Raw friendly names (e.g. 'Competitive Marketing Analysis' -> 'COMPETITIVE_MARKETING_ANALYSIS')
+    - Hex/UUID hashed names (e.g. 'e124ae47cc9646bc9403600f2c8449b2_Competitive Marketing Analysis')
+    - Model keys with '::' (e.g. 'proj-comp::Competitive Marketing Analysis')
+    - File stems (e.g. 'Competitive Marketing Analysis.pbix')
     """
+    if not model_name:
+        return set()
+    from semabridge.utils.name_translator import build_physical_namespace
+    from semabridge.utils.identifiers import clean_pbix_model_name, IdentifierSanitizer
 
-    norm_ds = clean_ident(dataset_name)
+    raw = str(model_name).strip()
+    if not raw:
+        return set()
 
+    variants = {raw}
+    if "::" in raw:
+        variants.add(raw.split("::", 1)[1])
 
+    # Strip hex/UUID upload prefix if present: e.g. e124ae47cc9646bc9403600f2c8449b2_Competitive Marketing Analysis
+    m = re.match(r"^[0-9a-fA-F\-]{24,36}_(.+)$", raw)
+    if m:
+        variants.add(m.group(1))
 
-    # Filter out auto-generated temp tables and enriched views
-
-    viable_tables = {
-
-        tbl: cols for tbl, cols in live_schema_metadata.items()
-
-        if not tbl.startswith(("__FIXED", "DATETABLETEMPLATE_", "LOCALDATETABLE_"))
-
-        and not tbl.endswith(("_ENRICHED", "_LATEST"))
-
-    }
-
-
-
-    candidates = []
-
-    for tbl_name, live_cols in viable_tables.items():
-
-        col_compat = compute_column_compatibility(dataset_columns, live_cols)
-
-        tbl_norm = clean_ident(tbl_name)
-
-
-
-        # A candidate needs matching columns (>= 0.8) or the same normalized
-
-        # name; columns rank first, so a name-only match never beats them.
-
-        if col_compat < 0.8 and tbl_norm != norm_ds:
-
+    namespaces: Set[str] = set()
+    for v in list(variants):
+        if not v:
+            continue
+        stem = clean_pbix_model_name(v) if v.lower().endswith(".pbix") else v
+        stem = stem.strip()
+        if not stem:
             continue
 
+        try:
+            ns = build_physical_namespace(stem)
+            if ns and ns != "MODEL":
+                namespaces.add(ns.upper())
+        except Exception:
+            pass
 
+        try:
+            c = IdentifierSanitizer().to_alias(stem)
+            if c:
+                namespaces.add(c.upper())
+        except Exception:
+            pass
+
+        alnum = re.sub(r"[^A-Z0-9]", "", stem.upper())
+        if alnum:
+            namespaces.add(alnum)
+
+    return namespaces
+
+
+def _matches_model_namespace(tbl_name: str, model_name: Optional[str]) -> bool:
+    """Check if a physical table name begins with or belongs to this model's physical namespace."""
+    if not model_name or not tbl_name:
+        return False
+    ns_set = _extract_model_namespaces(model_name)
+    if not ns_set:
+        return False
+
+    raw_tbl = str(tbl_name).strip().upper()
+    clean_tbl = clean_ident(tbl_name).upper()
+    alnum_tbl = re.sub(r"[^A-Z0-9]", "", raw_tbl)
+
+    for ns in ns_set:
+        if not ns:
+            continue
+        # Table starts with namespace followed by underscore: e.g. COMPETITIVE_MARKETING_ANALYSIS_DATE
+        if raw_tbl.startswith(f"{ns}_") or clean_tbl.startswith(f"{ns}_"):
+            return True
+        if raw_tbl.startswith(ns) or clean_tbl.startswith(ns) or alnum_tbl.startswith(ns):
+            return True
+        if f"_{ns}_" in f"_{raw_tbl}_" or f"_{ns}_" in f"_{clean_tbl}_":
+            return True
+
+    return False
+
+
+def rank_table_candidates(
+    dataset_name: str,
+    dataset_columns: List[str],
+    live_schema_metadata: Dict[str, Set[str]],
+    model_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Rank candidate physical tables primarily by column compatibility, tie-breaking by name match.
+    
+    A table is a candidate when column compatibility >= 0.8 or its normalized
+    name equals the dataset's; column compatibility ranks first, so a
+    name-only match never beats a column match.
+    """
+    norm_ds = clean_ident(dataset_name)
+
+    # Filter out auto-generated temp tables and enriched views
+    viable_tables = {
+        tbl: cols for tbl, cols in live_schema_metadata.items()
+        if not tbl.startswith(("__FIXED", "DATETABLETEMPLATE_", "LOCALDATETABLE_"))
+        and not tbl.endswith(("_ENRICHED", "_LATEST"))
+    }
+
+    candidates = []
+    for tbl_name, live_cols in viable_tables.items():
+        col_compat = compute_column_compatibility(dataset_columns, live_cols)
+        tbl_norm = clean_ident(tbl_name)
+
+        # A candidate needs matching columns (>= 0.8) or the same normalized
+        # name; columns rank first, so a name-only match never beats them.
+        if col_compat < 0.8 and tbl_norm != norm_ds:
+            continue
 
         # Name matching score [0 - 100]
-
         from semabridge.utils.identifiers import IdentifierSanitizer
 
         norm_ds_raw = IdentifierSanitizer(suppress_reserved=False).to_alias(dataset_name)
@@ -309,56 +362,42 @@ def rank_table_candidates(
         alnum_ds = re.sub(r"[^A-Z0-9]", "", norm_ds_raw.upper())
         alnum_tbl = re.sub(r"[^A-Z0-9]", "", tbl_norm_raw.upper())
 
+        is_model_match = bool(model_name and _matches_model_namespace(tbl_name, model_name))
+
         name_score = 0
-
         if norm_ds == tbl_norm:
-
             name_score = 100
-
         elif alnum_ds and alnum_ds == alnum_tbl:
-
             name_score = 90
-
+        elif is_model_match and (
+            tbl_norm.endswith(norm_ds)
+            or (alnum_ds and alnum_tbl and alnum_tbl.endswith(alnum_ds))
+            or (norm_ds_raw and tbl_norm_raw and tbl_norm_raw.endswith(norm_ds_raw))
+            or norm_ds in tbl_norm
+        ):
+            # Canonical namespaced table for this model: e.g. COMPETITIVE_MARKETING_ANALYSIS_DATE
+            name_score = 85
         elif tbl_norm.endswith(norm_ds) or norm_ds.endswith(tbl_norm):
-
             name_score = 75
-
         elif norm_ds_raw and tbl_norm_raw and (tbl_norm_raw.endswith(norm_ds_raw) or norm_ds_raw.endswith(tbl_norm_raw)):
-
             name_score = 70
-
         elif tbl_norm.startswith(norm_ds) or norm_ds.startswith(tbl_norm):
-
             name_score = 65
-
         elif norm_ds in tbl_norm or tbl_norm in norm_ds:
-
             name_score = 45
 
-
-
         candidates.append({
-
             "table_name": tbl_name,
-
             "table": tbl_name,
-
             "score": (col_compat * 100) + (name_score * 0.5),
-
             "name_score": name_score,
-
             "col_compat": col_compat,
-
+            "model_match": is_model_match,
         })
 
-
-
-    # Rank by column compatibility, then name match; table name only orders
-
-    # the list (an equal top rank is an ambiguity, see resolve below).
-
-    candidates.sort(key=lambda x: (-x["col_compat"], -x["name_score"], x["table"]))
-
+    # Rank by column compatibility, then name match, prioritizing model match;
+    # table name only orders the list.
+    candidates.sort(key=lambda x: (-x["col_compat"], -x["name_score"], -int(x.get("model_match", False)), x["table"]))
     return candidates
 
 
@@ -465,39 +504,35 @@ def resolve_dataset_to_physical_table(
 
 
 
-    candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata)
-
-
+    candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata, model_name=model_name)
 
     exact = [
-
         c for c in candidates
-
         if c["table"].upper() == str(dataset_name).upper() and c["col_compat"] >= 0.8
-
     ]
-
     if exact:
-
         _log_binding(live_schema_metadata, dataset_name, exact[0]["table"], "exact name")
-
         return exact[0]["table"]
 
-
-
     if candidates and _is_viable(candidates[0]):
-
         best = candidates[0]
-
         tied = [
-
             c["table"] for c in candidates
-
             if c["col_compat"] == best["col_compat"] and c["name_score"] == best["name_score"]
-
         ]
-
         if len(tied) > 1:
+            if model_name:
+                model_matches = [t for t in tied if _matches_model_namespace(t, model_name)]
+                if len(model_matches) == 1:
+                    chosen = model_matches[0]
+                    logger.info(
+                        "Disambiguated table binding for '%s' using model '%s': %s (over %s)",
+                        dataset_name, model_name, chosen,
+                        ", ".join(t for t in tied if t != chosen),
+                    )
+                    _log_binding(live_schema_metadata, dataset_name, chosen, "model namespace")
+                    return chosen
+
             if best["name_score"] == 0:
                 logger.info(
                     "Ignoring %d column-only ties for '%s' with zero name similarity (%s); treating table as missing.",
@@ -506,29 +541,18 @@ def resolve_dataset_to_physical_table(
                 return dataset_name
             raise TableBindingAmbiguityError(dataset_name, tied)
 
+        matched_by = "model namespace" if best.get("name_score") == 85 else "columns"
         logger.debug(
-
-            "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d)",
-
-            dataset_name, best["table"], best["col_compat"], best["name_score"],
-
+            "Generic table binding: '%s' -> '%s' (col_compat=%.2f, name_score=%d, matched_by=%s)",
+            dataset_name, best["table"], best["col_compat"], best["name_score"], matched_by,
         )
-
         _log_binding(
-
             live_schema_metadata,
-
             dataset_name,
-
             best["table"],
-
-            "columns",
-
+            matched_by,
         )
-
         return best["table"]
-
-
 
     return dataset_name
 

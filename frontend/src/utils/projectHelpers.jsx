@@ -1,4 +1,4 @@
-import { Cloud, Database, Snowflake } from 'lucide-react';
+import { Cloud, Database, Snowflake, PieChart } from 'lucide-react';
 export {
   shortDeterministicHash,
   sanitizeMappingName,
@@ -279,6 +279,9 @@ export function getConnectorPresentation(type) {
   }
   if (normalized.includes('databricks')) {
     return { label: 'Databricks', icon: <Database size={14} />, accent: '#fb923c' };
+  }
+  if (normalized.includes('tableau') || normalized.includes('tds') || normalized.includes('twb')) {
+    return { label: 'Tableau', icon: <PieChart size={14} />, accent: '#f97316' };
   }
   return { label: normalized || 'Connector', icon: <Database size={14} />, accent: '#94a3b8' };
 }

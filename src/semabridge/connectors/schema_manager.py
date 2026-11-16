@@ -321,7 +321,12 @@ class SnowflakeSchemaManager:
 
         mapping_dict = getattr(getattr(getattr(self, "behavior", None), "snowflake", None), "source_table_mapping", {}) or {}
         binding_log = getattr(self._live_schema_metadata, "binding_log", None)
-        model_name = getattr(sml, "unique_name", None) or getattr(sml, "name", None)
+        model_name = (
+            getattr(self, "physical_namespace", None)
+            or getattr(sml, "label", None)
+            or getattr(sml, "unique_name", None)
+            or getattr(sml, "name", None)
+        )
 
         target_db, target_schema = self._target_namespace()
         plan: List[Dict[str, Any]] = []

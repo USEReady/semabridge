@@ -173,6 +173,7 @@ class VerificationResult(BaseModel):
     metric_name: str
     dimension_keys: List[str]
     total_rows_compared: int
+    total_rows: Optional[int] = None
     matched_rows: int
     mismatched_rows: int
     max_absolute_delta: float
@@ -292,6 +293,7 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
                 metric_name=metric_name,
                 dimension_keys=dimension_keys,
                 total_rows_compared=0,
+                total_rows=0,
                 matched_rows=0,
                 mismatched_rows=0,
                 max_absolute_delta=0.0,
@@ -311,6 +313,7 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
                 metric_name=metric_name,
                 dimension_keys=dimension_keys,
                 total_rows_compared=0,
+                total_rows=0,
                 matched_rows=0,
                 mismatched_rows=0,
                 max_absolute_delta=0.0,
@@ -421,6 +424,7 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
                 metric_name=metric_name,
                 dimension_keys=dimension_keys,
                 total_rows_compared=dup_mismatches,
+                total_rows=dup_mismatches,
                 matched_rows=0,
                 mismatched_rows=dup_mismatches,
                 max_absolute_delta=0.0,
@@ -508,6 +512,7 @@ FROM {clean_target}{where_clause}{group_by}{order_by};"""
             metric_name=metric_name,
             dimension_keys=dimension_keys,
             total_rows_compared=total_rows,
+            total_rows=total_rows,
             matched_rows=matched_count,
             mismatched_rows=mismatched_count,
             max_absolute_delta=round(max_abs_delta, 6),

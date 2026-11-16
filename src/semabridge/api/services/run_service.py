@@ -1460,6 +1460,11 @@ async def get_run_report_data_compat(project_id: str, run_id: str) -> Optional[D
     if run is None:
         return None
 
+    if isinstance(run.get("report_summary"), dict) and run["report_summary"].get("counts"):
+        rep = dict(run["report_summary"])
+        rep["crashed"] = False
+        return rep
+
     project_cfg = _project_cfg_for_report(project_id)
     data = build_run_report_data(run, project_cfg)
 

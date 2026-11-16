@@ -266,8 +266,6 @@ function ProjectDashboard({ project, configForm, setConfigForm, connectionStatus
             </div>
             <FormSelect value={configForm.target_type || 'snowflake'} onChange={e => updateField('target_type', e.target.value)}>
               <option value="snowflake">Snowflake</option>
-              <option value="fabric">Fabric</option>
-              <option value="databricks">Databricks</option>
             </FormSelect>
           </div>
 
@@ -2802,10 +2800,8 @@ function FormEditor({
         </div>
         <div>
           <label style={LABEL}>Target Connector</label>
-          <select value={value.target_type} onChange={e => patch('target_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
+          <select value={value.target_type || 'snowflake'} onChange={e => patch('target_type', e.target.value)} style={{ ...INPUT, cursor: 'pointer' }}>
             <option value="snowflake">snowflake</option>
-            <option value="fabric">fabric</option>
-            <option value="databricks">databricks</option>
           </select>
         </div>
       </div>

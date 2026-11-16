@@ -2,7 +2,7 @@ domain: Competitive Marketing Analysis (More Synonyms)
 id: competitive_marketing_analysis_more_synonyms
 owner: bonifacealexander
 version: 1.0.0
-source_project_id: proj-tiral_comp
+source_project_id: proj-comp
 semantic_view_name: SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_MORE_SYNONYMS_SEMANTIC
 concepts:
 - name: Category

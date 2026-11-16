@@ -310,6 +310,60 @@ def _project_sync_settings(project_id: str) -> Tuple[str, Dict[str, Any]]:
         return "copy", {}
 
 
+def _saved_names_for_dry_run(
+    project_cfg: Dict[str, Any],
+    source_config: Dict[str, Any],
+    selected_sources: List[str],
+    target_connector: Optional[str],
+) -> Dict[str, Dict[str, Any]]:
+    """The project's saved mappings_overrides that apply to the model being
+    dry-run, as build_entity_mappings' ``existing_mappings`` (keyed by
+    source_path). Model-tagged rows are scoped exactly as a real sync scopes
+    them (upload-prefix-insensitive), so the dry run shows the names the sync
+    will deploy. A row counts as user-edited only when it differs from the
+    default identifier, so untouched fields still read as auto-mapped."""
+    overrides = (project_cfg or {}).get("mappings_overrides")
+    if not isinstance(overrides, list) or not overrides:
+        return {}
+    from semabridge.api.services.project_mapping_engine import _default_target_identifier
+    from semabridge.api.services.sync_execution_service import _config_with_model_scoped_overrides
+
+    refs = [str(s) for s in (selected_sources or []) if str(s or "").strip()]
+    for key in ("pbix_path", "pbix_file_path", "model", "file_path", "path"):
+        value = (source_config or {}).get(key)
+        if isinstance(value, str) and value.strip():
+            refs.append(value)
+    scoped: List[Dict[str, Any]] = []
+    seen_rows: set = set()
+    for ref in refs or [""]:
+        job = {"pbix_path": ref, "source_ref": ref, "model_label": ref}
+        for row in _config_with_model_scoped_overrides(project_cfg, job).get("mappings_overrides") or []:
+            if id(row) not in seen_rows:
+                seen_rows.add(id(row))
+                scoped.append(row)
+
+    existing: Dict[str, Dict[str, Any]] = {}
+    for row in scoped:
+        if not isinstance(row, dict):
+            continue
+        source_path = str(row.get("source_path") or "").strip()
+        target_name = str(row.get("target_name") or "").strip()
+        if not source_path or not target_name:
+            continue
+        if ".columns." in source_path:
+            source_name = source_path.split(".columns.", 1)[1]
+        elif source_path.startswith("metrics."):
+            source_name = source_path[len("metrics."):]
+        else:
+            source_name = source_path.rsplit(".", 1)[-1]
+        default_name = _default_target_identifier(source_name, target_connector)
+        existing[source_path] = {
+            "target_name": target_name,
+            "is_user_edited": target_name.upper() != str(default_name or "").upper(),
+        }
+    return existing
+
+
 async def _run_dry_run_pipeline(
     *,
     project_id: str,
@@ -558,7 +612,12 @@ async def _run_dry_run_pipeline(
     built = build_entity_mappings(
         project_id=preview_project_id,
         model=sml_blob or {"unique_name": "preview", "datasets": [], "metrics": []},
-        existing_mappings={},
+        # An existing project's dry run starts from the names it already
+        # saved (e.g. collisions resolved earlier), not from raw defaults --
+        # otherwise every re-run brings the same collisions back.
+        existing_mappings=_saved_names_for_dry_run(
+            project_cfg, source_config, selected_sources, target_connector
+        ),
         session_key=f"{preview_project_id}-mapping-session",
         target_connector=target_connector,
     )

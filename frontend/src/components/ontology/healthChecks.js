@@ -100,92 +100,101 @@ export function buildHealthResults({
   recon,
   policyCount,
   rls,
+  qualityRan = Boolean(lintReport),
 }) {
   const rows = [];
 
-  (loadErrors || []).forEach((e, i) => {
+  // Quality findings: only display when quality check has been executed by the user
+  if (!qualityRan) {
     rows.push({
-      id: `load-${i}`,
-      severity: 'breaking',
-      category: 'quality',
-      title: `A domain file could not be loaded`,
-      detail: itemName(e),
-      action: 'Details',
-      kind: 'loadError',
-      payload: e,
-    });
-  });
-
-  if ((unresolved || []).length) {
-    rows.push({
-      id: 'unresolved',
-      severity: 'breaking',
-      category: 'quality',
-      title: `${plural(unresolved.length, 'reference')} ${unresolved.length === 1 ? 'points' : 'point'} to something that doesn't exist`,
-      detail: unresolved.slice(0, 3).map(itemName).join(' · ') + (unresolved.length > 3 ? ` +${unresolved.length - 3}` : ''),
-      action: 'Details',
-      kind: 'unresolved',
-      payload: unresolved,
-    });
-  }
-
-  (collisions || []).forEach((c, i) => {
-    const doms = c.conflicting_domains || Object.keys(c.expressions || {});
-    rows.push({
-      id: `collision-${i}`,
-      severity: 'warning',
-      category: 'quality',
-      title: `“${c.item_name}” defined in ${doms.join(' and ')}`,
-      detail: 'Two different definitions. Pick an owner, or rename one.',
-      action: 'Resolve',
-      kind: 'collision',
-      payload: c,
-    });
-  });
-
-  // Quality (linter), grouped by rule
-  if (lintReport) {
-    const issues = lintIssuesFor(lintReport);
-    const byRule = {};
-    issues.forEach((iss) => {
-      (byRule[iss.rule_id] = byRule[iss.rule_id] || []).push(iss);
-    });
-    Object.entries(byRule).forEach(([rule, list]) => {
-      const names = [...new Set(list.map((x) => x.object_name || x.target_name))];
-      const title = LINT_TITLES[rule] ? LINT_TITLES[rule](list.length) : list[0].message;
-      rows.push({
-        id: `lint-${rule}`,
-        severity: 'warning',
-        category: 'quality',
-        title,
-        detail: names.slice(0, 4).join(', ') + (names.length > 4 ? ` +${names.length - 4}` : ''),
-        action: 'Details',
-        kind: 'lint',
-        payload: list,
-      });
-    });
-    if (!Object.keys(byRule).length) {
-      rows.push({
-        id: 'lint-pass',
-        severity: 'passing',
-        category: 'quality',
-        title: 'Owners, descriptions and names look good',
-        detail: 'Every metric and concept has an owner, a description and a standard name.',
-        action: 'View',
-        kind: 'lint',
-        payload: [],
-      });
-    }
-  } else {
-    rows.push({
-      id: 'lint-pending',
+      id: 'quality-pending',
       severity: 'pending',
       category: 'quality',
       title: 'Quality not checked yet',
-      detail: 'Checks owners, descriptions and naming for every metric and concept.',
+      detail: 'Checks owners, descriptions, naming standards, collisions, and unresolved references.',
       action: 'Check',
       kind: 'lintRun',
     });
+  } else {
+    (loadErrors || []).forEach((e, i) => {
+      rows.push({
+        id: `load-${i}`,
+        severity: 'breaking',
+        category: 'quality',
+        title: `A domain file could not be loaded`,
+        detail: itemName(e),
+        action: 'Details',
+        kind: 'loadError',
+        payload: e,
+      });
+    });
+
+    if ((unresolved || []).length) {
+      rows.push({
+        id: 'unresolved',
+        severity: 'breaking',
+        category: 'quality',
+        title: `${plural(unresolved.length, 'reference')} ${unresolved.length === 1 ? 'points' : 'point'} to something that doesn't exist`,
+        detail: unresolved.slice(0, 3).map(itemName).join(' · ') + (unresolved.length > 3 ? ` +${unresolved.length - 3}` : ''),
+        action: 'Details',
+        kind: 'unresolved',
+        payload: unresolved,
+      });
+    }
+
+    (collisions || []).forEach((c, i) => {
+      const doms = c.conflicting_domains || Object.keys(c.expressions || {});
+      rows.push({
+        id: `collision-${i}`,
+        severity: 'warning',
+        category: 'quality',
+        title: `“${c.item_name}” defined in ${doms.join(' and ')}`,
+        detail: 'Two different definitions. Pick an owner, or rename one.',
+        action: 'Resolve',
+        kind: 'collision',
+        payload: c,
+      });
+    });
+
+    // Quality (linter), grouped by rule
+    if (lintReport) {
+      const issues = lintIssuesFor(lintReport);
+      const byRule = {};
+      issues.forEach((iss) => {
+        (byRule[iss.rule_id] = byRule[iss.rule_id] || []).push(iss);
+      });
+      Object.entries(byRule).forEach(([rule, list]) => {
+        const names = [...new Set(list.map((x) => x.object_name || x.target_name))];
+        const title = LINT_TITLES[rule] ? LINT_TITLES[rule](list.length) : list[0].message;
+        rows.push({
+          id: `lint-${rule}`,
+          severity: 'warning',
+          category: 'quality',
+          title,
+          detail: names.slice(0, 4).join(', ') + (names.length > 4 ? ` +${names.length - 4}` : ''),
+          action: 'Details',
+          kind: 'lint',
+          payload: list,
+        });
+      });
+      if (
+        !Object.keys(byRule).length &&
+        !(loadErrors || []).length &&
+        !(unresolved || []).length &&
+        !(collisions || []).length
+      ) {
+        rows.push({
+          id: 'lint-pass',
+          severity: 'passing',
+          category: 'quality',
+          title: 'Owners, descriptions, and naming standards look good',
+          detail: 'Every metric and concept has an owner, description, and standard name with no collisions.',
+          action: 'View',
+          kind: 'lint',
+          payload: [],
+        });
+      }
+    }
   }
 
   // Impact (blast radius per metric)

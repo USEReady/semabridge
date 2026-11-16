@@ -924,14 +924,23 @@ def _load_project_override_paths(project_id: str, model_ref: str) -> set[str]:
         except Exception:
             pass
 
+    from semabridge.utils.identifiers import clean_pbix_model_name
+
     model_norm = str(model_ref or "").replace("\\", "/").strip().lower()
     model_stem = PurePath(model_norm).stem.lower() if model_norm else ""
+    # Upload copies of one file differ only by their 32-hex prefix (the dry
+    # run re-uploads), so compare prefix-free names too.
+    model_clean = (clean_pbix_model_name(model_norm) or "").strip().lower() if model_norm else ""
     out: set[str] = set()
     for ov in overrides:
         if not isinstance(ov, dict) or not ov.get("target_name"):
             continue
         ov_model = str(ov.get("model") or "").replace("\\", "/").strip().lower()
-        if ov_model and model_norm and ov_model != model_norm and PurePath(ov_model).stem.lower() != model_stem:
+        if (
+            ov_model and model_norm and ov_model != model_norm
+            and PurePath(ov_model).stem.lower() != model_stem
+            and (clean_pbix_model_name(ov_model) or "").strip().lower() != model_clean
+        ):
             continue
         for k in (ov.get("source_path"), ov.get("id")):
             if k:

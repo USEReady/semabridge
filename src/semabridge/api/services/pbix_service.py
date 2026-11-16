@@ -1,5 +1,4 @@
 import logging
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from semabridge.api.services.project_domain_service import (
     import_pbix,
 )
 from semabridge.domain.exceptions import NotFoundError, ValidationError
+from semabridge.utils.upload_storage import upload_storage_root as _upload_storage_root
 from semabridge.api.services.project_shared import (
     _compat_load_project_yaml_text,
     _compat_save_project_yaml_text,
@@ -67,10 +67,11 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     _compat_save_store()
 
 def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
-    """Store an uploaded PBIX file in the target directory."""
+    """Store an uploaded PBIX or Tableau file in the target directory."""
     filename = str(upload.filename or "").strip()
-    if not filename.lower().endswith(".pbix"):
-        raise ValidationError("Only .pbix files are supported")
+    allowed_exts = (".pbix", ".tds", ".tdsx", ".twb", ".twbx")
+    if not any(filename.lower().endswith(ext) for ext in allowed_exts):
+        raise ValidationError(f"Only {', '.join(allowed_exts)} files are supported")
 
     safe_name = Path(filename).name
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -84,12 +85,14 @@ def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
     return destination.resolve()
 
 async def upload_pbix_temp(file: UploadFile = File(...)):
-    temp_root = Path(tempfile.gettempdir()) / "semabridge" / "uploads"
+    # Persistent, not the OS temp dir: projects sync from these paths later
+    # (see semabridge.utils.upload_storage).
+    temp_root = _upload_storage_root() / "files"
     saved = _save_uploaded_pbix_file(file, temp_root)
     return {"path": str(saved).replace("\\", "/")}
 
 async def upload_project_pbix(project_id: str, file: UploadFile = File(...)):
-    project_root = Path(tempfile.gettempdir()) / "semabridge" / "projects" / project_id
+    project_root = _upload_storage_root() / "projects" / project_id
     saved = _save_uploaded_pbix_file(file, project_root)
     _compat_set_project_pbix_path(project_id, str(saved))
     return {

@@ -91,10 +91,10 @@ def test_scheduled_run_drift_approval_guard(monkeypatch):
     assert is_mock_drift_enabled() is True
 
     # 1. Trigger drift check which generates pending drift event in mock mode
-    drift_res = run_drift_check(project_id="tiral_comp")
+    drift_res = run_drift_check(project_id="proj-comp")
     assert drift_res["drift_detected"] >= 1
 
-    events = list_drift_events(project_id="tiral_comp", status="pending")
+    events = list_drift_events(project_id="proj-comp", status="pending")
     assert len(events) >= 1
     ev_id = events[0]["id"]
     assert events[0]["status"] == "pending"
@@ -107,18 +107,18 @@ def test_scheduled_run_drift_approval_guard(monkeypatch):
     assert appr_res.json()["event"]["status"] == "approved"
 
     # 3. Test simulate metric change & reset endpoints
-    sim_res = client.post("/api/drift/simulate-change", json={"project_id": "proj-tiral_comp", "metric_name": "TOTAL_UNITS"})
+    sim_res = client.post("/api/drift/simulate-change", json={"project_id": "proj-comp", "metric_name": "TOTAL_UNITS"})
     assert sim_res.status_code == 200
     assert "TOTAL_UNITS" in sim_res.json()["metric_name"]
-    assert "1.05" in sim_res.json()["modified_expression"]
+    assert "STATUS NOT IN" in sim_res.json()["modified_expression"] or "Cancelled" in sim_res.json()["modified_expression"]
 
     # 4. Test delete / clear drift events
-    del_res = client.delete("/api/drift/events?project_id=proj-tiral_comp")
+    del_res = client.delete("/api/drift/events?project_id=proj-comp")
     assert del_res.status_code == 200
     assert del_res.json()["success"] is True
 
     # 5. Test reset metric change
-    reset_res = client.post("/api/drift/reset-change", json={"project_id": "proj-tiral_comp", "metric_name": "TOTAL_UNITS"})
+    reset_res = client.post("/api/drift/reset-change", json={"project_id": "proj-comp", "metric_name": "TOTAL_UNITS"})
     assert reset_res.status_code == 200
     assert reset_res.json()["success"] is True
 

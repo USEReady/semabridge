@@ -83,6 +83,29 @@ def assign_model_view_names(source_cfg: Dict[str, Any]) -> Dict[str, str]:
         if saved:
             result[key] = saved
             taken.add(saved.upper())
+    # A re-uploaded file is the same model under a new random upload prefix
+    # (<32-hex>_Name.pbix): it keeps the view name its previous copy had,
+    # instead of being treated as a brand-new model.
+    from semabridge.utils.identifiers import clean_pbix_model_name
+
+    def _clean(value: str) -> str:
+        return (clean_pbix_model_name(str(value).replace("\\", "/")) or "").strip().lower()
+
+    orphaned: Dict[str, List[str]] = {}
+    for old_key, old_name in existing.items():
+        if old_key not in keys and str(old_name or "").strip():
+            orphaned.setdefault(_clean(old_key), []).append(str(old_name).strip())
+    missing_by_clean: Dict[str, List[str]] = {}
+    for key in keys:
+        if key not in result:
+            missing_by_clean.setdefault(_clean(key), []).append(key)
+    for clean, missing_keys in missing_by_clean.items():
+        names = orphaned.get(clean) or []
+        # Only an unambiguous one-to-one replacement inherits the name.
+        if clean and len(names) == 1 and len(missing_keys) == 1 and names[0].upper() not in taken:
+            result[missing_keys[0]] = names[0]
+            taken.add(names[0].upper())
+
     for key in keys:
         if key in result:
             continue

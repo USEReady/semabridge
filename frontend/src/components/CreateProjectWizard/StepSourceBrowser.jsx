@@ -38,6 +38,32 @@ export function StepSourceBrowser({
   const isSelected = (m) => isModelSelected({ id: m.id, name: m.name }, Array.from(selectedModels || []), selectedModelNameByKey);
   const isSaved = (m) => Boolean(savedModels?.has(m.id) || (m.name && (savedModels?.has(m.name) || savedModels?.has(m.name.trim()))));
 
+  if (sourceConnector === 'tableau') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>Tableau Source Ready</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>
+            Tableau data source parsing extracts relations, joins, and Level-of-Detail (LOD) formulas into the canonical OSI model. Continue to the next step to review ontology mappings and targets.
+          </p>
+        </div>
+        <div style={{ padding: '18px 20px', borderRadius: 12, border: '1px solid var(--border-main)', background: 'var(--bg-surface)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <UploadStatusIcon status={pbixUploadPath || selectedPbixFilePath ? 'ready' : 'pending'} size={14} />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>
+              {pbixUploadPath ? pbixUploadPath.split('/').pop() : 'Tableau Datasource (.tds / .tdsx / .twb / .twbx)'}
+            </span>
+          </div>
+          {pbixUploadPath && (
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Source path: {pbixUploadPath}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (sourceConnector === 'pbix') {
     if (pbixSourceMode === 'MANUAL') {
       return (

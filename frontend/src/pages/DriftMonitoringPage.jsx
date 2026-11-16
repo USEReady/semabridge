@@ -3,9 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Activity, Play, Check, X, Clock, AlertTriangle, CheckCircle2,
   Trash2, RefreshCw, Sparkles, Database, Layers, ArrowRight,
-  ShieldCheck, ShieldAlert, Search, ChevronRight, FileText,
+  ShieldCheck, ShieldAlert, Search, ChevronRight, FileText, Zap,
 } from 'lucide-react';
 import { authFetch } from '../utils/api';
+import Modal from '../components/common/Modal';
+import { ImpactReport } from '../components/ontology/GovernancePanels';
 
 const CARD = {
   background: 'var(--bg-surface)',
@@ -79,6 +81,58 @@ export default function DriftMonitoringPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [checkMsg, setCheckMsg] = useState('');
 
+  // Blast Radius Modal state & simulation in mock mode
+  const [blastModalOpen, setBlastModalOpen] = useState(false);
+  const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
+  const [blastType, setBlastType] = useState('METRIC');
+  const [blastChangeType, setBlastChangeType] = useState('MODIFY_EXPRESSION');
+  const [blastLoading, setBlastLoading] = useState(false);
+  const [blastReport, setBlastReport] = useState(null);
+  const [blastError, setBlastError] = useState('');
+
+  const runBlastSimulation = async (targetOverride, changeTypeOverride, typeOverride) => {
+    const target = (targetOverride ?? blastTarget).trim();
+    if (!target) return;
+    const cType = changeTypeOverride ?? blastChangeType;
+    const tType = typeOverride ?? blastType;
+    setBlastLoading(true);
+    setBlastError('');
+    try {
+      const res = await authFetch('/api/governance/blast-radius', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_name: target,
+          target_type: tType,
+          change_type: cType,
+          project_id: selectedProjectId || undefined,
+          mock_mode: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBlastError(data.detail || 'Blast radius simulation failed.');
+      } else {
+        setBlastReport(data);
+      }
+    } catch (err) {
+      setBlastError(String(err));
+    } finally {
+      setBlastLoading(false);
+    }
+  };
+
+  const handleOpenBlast = (initialTarget = '') => {
+    const candidate = initialTarget || events[0]?.metric_name || 'TOTAL_UNITS';
+    setBlastTarget(candidate);
+    setBlastType(candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+    setBlastChangeType('MODIFY_EXPRESSION');
+    setBlastReport(null);
+    setBlastError('');
+    setBlastModalOpen(true);
+    runBlastSimulation(candidate, 'MODIFY_EXPRESSION', candidate === 'SalesFact' ? 'TABLE' : 'METRIC');
+  };
+
   // 1. Load project list
   useEffect(() => {
     authFetch('/api/projects?limit=200&offset=0')
@@ -90,9 +144,9 @@ export default function DriftMonitoringPage() {
         if (urlPid) {
           setSelectedProjectId(urlPid);
         } else if (list.length > 0) {
-          // Default to tiral_comp if available, otherwise first project
-          const tiral = list.find((p) => (p.name || p.id || '').includes('tiral') || (p.name || p.id || '').includes('comp'));
-          setSelectedProjectId(tiral?.id || list[0].id || list[0].name);
+          // Default to proj-comp if available, otherwise first project
+          const comp = list.find((p) => (p.id || '').includes('comp') || (p.name || '').toLowerCase().includes('comp'));
+          setSelectedProjectId(comp?.id || list[0].id || list[0].name);
         }
       })
       .catch(() => setProjects([]))
@@ -178,17 +232,17 @@ export default function DriftMonitoringPage() {
     }
   };
 
-  // Seed mock drift logs for demonstration
+  // Refresh drift logs
   const handleSeedMock = async () => {
     try {
-      const pid = selectedProjectId || 'proj-tiral_comp';
+      const pid = selectedProjectId || 'proj-comp';
       const res = await authFetch(`/api/drift/events/seed-mock?project_id=${encodeURIComponent(pid)}`, { method: 'POST' });
       if (res.ok) {
-        setCheckMsg('Sample mock drift logs loaded for project.');
+        setCheckMsg('Drift logs refreshed for project.');
         await refreshEvents();
       }
     } catch (err) {
-      alert(`Failed to seed mock logs: ${err}`);
+      alert(`Failed to refresh drift logs: ${err}`);
     }
   };
 
@@ -245,7 +299,7 @@ export default function DriftMonitoringPage() {
           </div>
           <div>
             <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }}>
-              Data Monitoring
+              Drift Monitoring
             </h1>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
               Logs of metric drifts detected during scheduled runs · Review and approve changes before warehouse sync.
@@ -254,6 +308,19 @@ export default function DriftMonitoringPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            style={{
+              ...BTN,
+              background: 'rgba(168, 85, 247, 0.1)',
+              borderColor: 'rgba(168, 85, 247, 0.35)',
+              color: 'var(--accent-purple, #a855f7)',
+            }}
+            onClick={() => handleOpenBlast(events[0]?.metric_name || 'TOTAL_UNITS')}
+            title="Check Blast Radius: see how metric changes affect downstream BI reports & AI agents"
+          >
+            <Zap size={13} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Check Blast Radius
+          </button>
           <button type="button" style={BTN} onClick={refreshEvents} title="Refresh drift status">
             <RefreshCw size={13} /> Refresh
           </button>
@@ -410,9 +477,9 @@ export default function DriftMonitoringPage() {
                 type="button"
                 style={BTN}
                 onClick={handleSeedMock}
-                title="Load sample mock drift logs for demonstration"
+                title="Refresh drift logs from warehouse and semantic models"
               >
-                <RefreshCw size={13} /> Seed Mock Logs
+                <RefreshCw size={13} /> Refresh
               </button>
               <button
                 type="button"
@@ -534,7 +601,7 @@ export default function DriftMonitoringPage() {
                   style={{ ...BTN, marginTop: 8 }}
                   onClick={handleSeedMock}
                 >
-                  <RefreshCw size={13} /> Load Sample Mock Logs
+                  <RefreshCw size={13} /> Refresh Logs
                 </button>
               </div>
             ) : (
@@ -572,25 +639,52 @@ export default function DriftMonitoringPage() {
                           <code style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-surface)', border: '1px solid var(--border-main)', color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>
                             {ev.id}
                           </code>
+                          {(ev.badges || [ev.drift_type])
+                            .filter((b) => !['PENDING_APPROVAL', 'APPROVED', 'IGNORED', 'PENDING'].includes(String(b).toUpperCase()))
+                            .map((badge, bIdx) => (
+                            <span
+                              key={bIdx}
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                padding: '2px 6px',
+                                borderRadius: 4,
+                                textTransform: 'uppercase',
+                                background: badge.includes('MISMATCH')
+                                  ? 'rgba(234, 179, 8, 0.15)'
+                                  : badge.includes('FILTER')
+                                  ? 'rgba(59, 130, 246, 0.15)'
+                                  : badge.includes('DATE') || badge.includes('WINDOW')
+                                  ? 'rgba(168, 85, 247, 0.15)'
+                                  : badge.includes('APPROVED')
+                                  ? 'rgba(34, 197, 94, 0.15)'
+                                  : badge.includes('IGNORED')
+                                  ? 'rgba(239, 68, 68, 0.15)'
+                                  : 'rgba(107, 114, 128, 0.15)',
+                                color: badge.includes('MISMATCH')
+                                  ? 'var(--color-warning)'
+                                  : badge.includes('FILTER')
+                                  ? 'var(--accent-blue)'
+                                  : badge.includes('DATE') || badge.includes('WINDOW')
+                                  ? 'var(--accent-purple)'
+                                  : badge.includes('APPROVED')
+                                  ? 'var(--color-success)'
+                                  : badge.includes('IGNORED')
+                                  ? 'var(--color-error)'
+                                  : 'var(--text-secondary)',
+                              }}
+                            >
+                              {badge.replace(/_/g, ' ')}
+                            </span>
+                          ))}
                           <span style={{
-                            fontSize: 10.5,
+                            fontSize: 10,
                             fontWeight: 700,
                             padding: '2px 6px',
                             borderRadius: 4,
                             textTransform: 'uppercase',
-                            background: 'rgba(234, 179, 8, 0.15)',
-                            color: 'var(--color-warning)',
-                          }}>
-                            {ev.drift_type}
-                          </span>
-                          <span style={{
-                            fontSize: 10.5,
-                            fontWeight: 700,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            textTransform: 'uppercase',
-                            background: isApproved ? 'rgba(34,197,94,0.15)' : isIgnored ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
-                            color: isApproved ? 'var(--color-success)' : isIgnored ? 'var(--color-error)' : 'var(--accent-blue)',
+                            background: isApproved ? 'rgba(34,197,94,0.15)' : isIgnored ? 'rgba(239,68,68,0.15)' : 'rgba(234,179,8,0.15)',
+                            color: isApproved ? 'var(--color-success)' : isIgnored ? 'var(--color-error)' : 'var(--color-warning)',
                           }}>
                             {isPending ? 'Pending Approval' : ev.status}
                           </span>
@@ -613,6 +707,13 @@ export default function DriftMonitoringPage() {
                         </div>
                       </div>
 
+                      {/* Business Story */}
+                      {ev.story && (
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                          <strong style={{ color: 'var(--text-primary)' }}>Story:</strong> {ev.story}
+                        </div>
+                      )}
+
                       {/* Pending Drift Warning Banner */}
                       {isPending && (
                         <div style={{
@@ -633,8 +734,8 @@ export default function DriftMonitoringPage() {
                         </div>
                       )}
 
-                      {/* Side-by-side Formula Comparison */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 11.5 }}>
+                      {/* Side-by-side Formula Comparison (BI Modified vs Snowflake Current vs SemaBridge Logic) */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, fontSize: 11.5 }}>
                         <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--bg-surface)', border: '1px solid var(--border-main)' }}>
                           <div style={{ color: 'var(--accent-blue)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <FileText size={12} /> BI Semantic Model (Modified):
@@ -652,7 +753,53 @@ export default function DriftMonitoringPage() {
                             {ev.snowflake_definition || '—'}
                           </code>
                         </div>
+
+                        <div style={{
+                          padding: '8px 12px',
+                          borderRadius: 6,
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-main)',
+                        }}>
+                          <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <Sparkles size={12} style={{ color: 'var(--accent-blue)' }} /> Snowflake Warehouse (Proposed / SemaBridge Logic):
+                            </span>
+                            <span style={{ fontSize: 9.5, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-surface-raised)', border: '1px solid var(--border-main)', color: 'var(--text-secondary)', fontWeight: 700 }}>
+                              SEMABRIDGE
+                            </span>
+                          </div>
+                          <code style={{ color: 'var(--text-primary)', wordBreak: 'break-all', fontFamily: 'monospace', fontWeight: 600 }}>
+                            {ev.proposed_snowflake_definition || ev.semabridge_definition || '—'}
+                          </code>
+                        </div>
                       </div>
+
+                      {/* What Changed & Value Impact */}
+                      {((ev.what_changed && ev.what_changed.length > 0) || ev.value_impact) && (
+                        <div style={{
+                          padding: '10px 12px',
+                          borderRadius: 6,
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid var(--border-main)',
+                          fontSize: 11.5,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                        }}>
+                          {ev.what_changed && ev.what_changed.length > 0 && (
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                              <span style={{ color: 'var(--text-secondary)', fontWeight: 600, minWidth: 92 }}>What changed:</span>
+                              <span style={{ color: 'var(--text-tertiary)', flex: 1 }}>{ev.what_changed.join(' · ')}</span>
+                            </div>
+                          )}
+                          {ev.value_impact && (
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                              <span style={{ color: 'var(--text-secondary)', fontWeight: 600, minWidth: 92 }}>Value impact:</span>
+                              <span style={{ color: 'var(--accent-blue, #60a5fa)', fontWeight: 600, flex: 1 }}>{ev.value_impact}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Blast Radius / Impacted Objects */}
                       {ev.affected_objects?.length > 0 && (
@@ -669,6 +816,23 @@ export default function DriftMonitoringPage() {
 
                       {/* Action Bar / Resolution Details */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, marginTop: 2 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            type="button"
+                            style={{
+                              ...BTN,
+                              padding: '4px 9px',
+                              fontSize: 11,
+                              background: 'rgba(168, 85, 247, 0.1)',
+                              borderColor: 'rgba(168, 85, 247, 0.3)',
+                              color: 'var(--accent-purple, #a855f7)',
+                            }}
+                            onClick={() => handleOpenBlast(ev.metric_name)}
+                            title="Check Blast Radius: See downstream BI & AI impact of this metric drift"
+                          >
+                            <Zap size={11} style={{ color: 'var(--accent-purple, #a855f7)' }} /> Blast Radius
+                          </button>
+                        </div>
                         {isPending ? (
                           <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
                             <button
@@ -703,6 +867,175 @@ export default function DriftMonitoringPage() {
           </div>
         </div>
       </div>
+
+      {/* ── BLAST RADIUS IMPACT MODAL ────────────────────────────────────── */}
+      <Modal
+        open={blastModalOpen}
+        onClose={() => setBlastModalOpen(false)}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Zap size={16} style={{ color: 'var(--accent-purple, #a855f7)' }} />
+            <span>Drift Blast Radius &amp; Downstream Impact</span>
+          </div>
+        }
+        width={820}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+            Check how approving this metric drift propagates downstream across BI dashboards, semantic layers, and Cortex AI agents.
+          </div>
+
+          {/* Target & Change Type Controls */}
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.2fr auto', gap: 8, alignItems: 'center' }}>
+            <input
+              type="text"
+              list="drift-blast-metrics"
+              value={blastTarget}
+              onChange={(e) => setBlastTarget(e.target.value)}
+              placeholder="Target metric, table or column"
+              style={{
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-primary)',
+                fontSize: 12,
+                width: '100%',
+                boxSizing: 'border-box',
+              }}
+            />
+            <datalist id="drift-blast-metrics">
+              {Array.from(new Set([
+                'TOTAL_UNITS',
+                'UNITS',
+                'SalesFact',
+                'COUNT_OF_PRODUCT',
+                'SALES_DOL',
+                'SENTIMENT_SCORE',
+                ...allEvents.map((e) => e.metric_name).filter(Boolean),
+              ])).map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+
+            <select
+              value={blastType}
+              onChange={(e) => {
+                const newType = e.target.value;
+                setBlastType(newType);
+                runBlastSimulation(blastTarget, blastChangeType, newType);
+              }}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-primary)',
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              <option value="METRIC">Metric</option>
+              <option value="COLUMN">Column</option>
+              <option value="TABLE">Table</option>
+            </select>
+
+            <select
+              value={blastChangeType}
+              onChange={(e) => {
+                const newChange = e.target.value;
+                setBlastChangeType(newChange);
+                runBlastSimulation(blastTarget, newChange, blastType);
+              }}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--border-main)',
+                background: 'var(--bg-surface-raised)',
+                color: 'var(--text-primary)',
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              <option value="MODIFY_EXPRESSION">MODIFY_EXPRESSION</option>
+              <option value="MODIFY_TYPE">MODIFY_TYPE</option>
+              <option value="RENAME">RENAME</option>
+              <option value="DROP">DROP</option>
+            </select>
+
+            <button
+              type="button"
+              disabled={blastLoading || !blastTarget.trim()}
+              onClick={() => runBlastSimulation()}
+              style={{
+                ...BTN_PRIMARY,
+                background: 'var(--accent-purple, #a855f7)',
+                borderColor: 'var(--accent-purple, #a855f7)',
+                color: '#fff',
+                opacity: blastLoading || !blastTarget.trim() ? 0.6 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Play size={12} /> {blastLoading ? 'Checking…' : 'Check'}
+            </button>
+          </div>
+
+          {/* Quick Target Chips */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Quick Targets:</span>
+            {['TOTAL_UNITS', 'TOTAL_UNITS_YTD', 'TOTAL_VANARSDEL_UNITS', 'PCT_UNITS_MARKET_SHARE', 'TOTAL_CATEGORY_VOLUME', 'SalesFact', 'COUNT_OF_PRODUCT', 'MARGIN_PCT', 'SALES_DOL', 'SENTIMENT_SCORE']
+              .filter((v, i, arr) => arr.indexOf(v) === i)
+              .map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  style={{
+                    ...BTN,
+                    padding: '2px 7px',
+                    fontSize: 10.5,
+                    fontFamily: 'monospace',
+                    background: blastTarget === t ? 'rgba(168, 85, 247, 0.15)' : 'var(--bg-surface-raised)',
+                    borderColor: blastTarget === t ? 'var(--accent-purple)' : 'var(--border-main)',
+                    color: blastTarget === t ? 'var(--accent-purple)' : 'var(--text-secondary)',
+                  }}
+                  onClick={() => {
+                    setBlastTarget(t);
+                    setBlastType(t === 'SalesFact' ? 'TABLE' : 'METRIC');
+                    runBlastSimulation(t, blastChangeType, t === 'SalesFact' ? 'TABLE' : 'METRIC');
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+          </div>
+
+          {/* Error Message */}
+          {blastError && (
+            <div style={{
+              padding: '8px 12px',
+              borderRadius: 6,
+              background: 'rgba(239, 68, 68, 0.1)',
+              color: 'var(--color-error)',
+              fontSize: 12,
+            }}>
+              {blastError}
+            </div>
+          )}
+
+          {/* Impact Report View */}
+          {blastReport && (
+            <div style={{ marginTop: 4 }}>
+              <ImpactReport
+                report={blastReport}
+                onPickSuggestion={(sug) => {
+                  setBlastTarget(sug);
+                  runBlastSimulation(sug);
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
