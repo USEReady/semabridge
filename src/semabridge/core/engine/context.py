@@ -147,3 +147,7 @@ class RunContext:
     # "failed", row_count, reason}.
     data_backfill_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
     cortex_validation_results: list[Dict[str, Any]] = _dataclass_field(default_factory=list)
+    # Fabric source row counts (COUNTROWS, behind features.fabric_real_row_counts).
+    # For row-count parity only -- never used to classify fact vs dimension.
+    source_row_counts: Optional[Dict[str, int]] = None
+    source_row_count_errors: list[str] = _dataclass_field(default_factory=list)

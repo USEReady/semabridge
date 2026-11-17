@@ -248,5 +248,6 @@ def test_create_project_without_preview_fields_has_no_migration_report(monkeypat
 
     monkeypatch.setattr(pc, "create_project_compat", _fake_create)
     monkeypatch.setattr(pc, "require_request_user_id", lambda request: None)
-    resp = asyncio.run(pc.create_project(object(), pc.CreateProjectRequest(name="p")))
+    # source.type is required at create (fabric batch 2: no default source type)
+    resp = asyncio.run(pc.create_project(object(), pc.CreateProjectRequest(name="p", source={"type": "pbix"})))
     assert resp == {"id": "plain"}

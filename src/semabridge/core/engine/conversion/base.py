@@ -226,6 +226,13 @@ def _upsert_delta_preview_model(self, context: RunContext, preview_overrides: Di
     try:
         if context.source_type == "pbix":
             converted = self._convert_pbix_to_sml(shadow)
+        elif context.source_type == "fabric" and getattr(shadow, "source_format", None) is not None \
+                and getattr(shadow.source_format, "tmsl_definition", None):
+            # Re-convert the already-extracted Fabric TMSL with the preview's
+            # overrides (no new Fabric call), exactly like PBIX. Copying the
+            # converted model instead applied overrides a second time after DAX
+            # translation, so the preview could differ from what deploys.
+            converted = self._convert_fabric_to_sml(shadow, None, None)
         else:
             converted = context.sml_model.model_copy(deep=True)
         if not shadow.mapping_overrides_applied:

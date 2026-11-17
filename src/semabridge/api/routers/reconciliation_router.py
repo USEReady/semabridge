@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, Set
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -69,6 +70,37 @@ class RunDaxRequest(BaseModel):
     dataset_id: Optional[str] = None
     workspace: Optional[str] = None
     workspace_id: Optional[str] = None
+    # Optional: when set and the project is a Fabric project (and no backend is
+    # given), the query runs on that project's own Fabric model.
+    project_id: Optional[str] = None
+
+
+def _fabric_project_dax_target(project_id: Optional[str], backend: Optional[str], dataset_id: Optional[str]):
+    """The project's Fabric DAX target, or None to keep the existing backend selection.
+
+    An explicit backend from the caller is respected unchanged. For a Fabric
+    project with no backend, the DAX side is the project's own model; config
+    problems become a 400 with the reason instead of a local-Desktop guess.
+    """
+    if backend:
+        return None
+    from semabridge.sources.base import SourceError
+    from semabridge.sources.fabric.dax_target import resolve_fabric_dax_target
+
+    try:
+        return resolve_fabric_dax_target(project_id, dataset_id=dataset_id)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _run_fabric_project_dax(target, query: str) -> Dict[str, Any]:
+    from semabridge.sources.base import SourceError
+    from semabridge.sources.fabric.dax_target import run_fabric_dax
+
+    try:
+        return run_fabric_dax(target, query)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=f"Fabric DAX on the project's model failed: {exc}") from exc
 
 
 class CertifyMetricRequest(BaseModel):
@@ -440,7 +472,19 @@ def get_dax_backends() -> Dict[str, Any]:
 @router.post("/run-dax", response_model=Dict[str, Any])
 def execute_dax_endpoint(req: RunDaxRequest) -> Dict[str, Any]:
     """Execute a DAX query via pbi_desktop, rest_api, or xmla and return normalized rows."""
-    from semabridge.reconciliation.mock_parity import is_mock_parity_enabled
+    fabric_target = _fabric_project_dax_target(req.project_id, req.backend, req.dataset_id)
+    if fabric_target is not None:
+        t0 = time.perf_counter()
+        res = _run_fabric_project_dax(fabric_target, req.query)
+        return {
+            "success": True,
+            "backend": res["backend"],
+            "columns": res["columns"],
+            "rows": res["rows"],
+            "row_count": len(res["rows"]),
+            "execution_ms": round((time.perf_counter() - t0) * 1000.0, 2),
+            "metadata": res["metadata"],  # hardcoding-ok: response key
+        }
     try:
         res = execute_dax(
             req.query,
@@ -460,22 +504,6 @@ def execute_dax_endpoint(req: RunDaxRequest) -> Dict[str, Any]:
             "metadata": res.metadata,  # hardcoding-ok: response key
         }
     except DaxExecutionError as exc:
-        if is_mock_parity_enabled():
-            return {
-                "success": True,
-                "backend": "mock_fabric_analysis",
-                "columns": ["Slice", "Value"],
-                "rows": [
-                    {"Slice": "Abbas", "Value": 342},
-                    {"Slice": "Aliqui", "Value": 280},
-                    {"Slice": "Barba", "Value": 515},
-                    {"Slice": "Curio", "Value": 190},
-                    {"Slice": "Fama", "Value": 430},
-                ],
-                "row_count": 5,
-                "execution_ms": 10.0,
-                "metadata": {"mock": True},
-            }
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -528,74 +556,66 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
         dimensions=pbi_dims,
         filters=req.filters,
     )
-    from semabridge.reconciliation.mock_parity import (
-        is_mock_parity_enabled,
-        generate_mock_comparative_data,
-    )
-    mock_active = is_mock_parity_enabled()
 
     sql_rows: List[Dict[str, Any]] = []
     dax_rows: List[Dict[str, Any]] = []
     dax_backend_used = "manual_rows"
 
-    if mock_active:
-        # High-fidelity mock comparative check: generates good match values
-        mock_sql, mock_dax = generate_mock_comparative_data(
-            metric_name=req.metric_name,
-            dimensions=pbi_dims,
-            target_table_or_view=req.target_table_or_view,
+    # Real connection execution path
+    # 1. Execute Snowflake / SQL query live (non-simulated)
+    uid = getattr(request.state, "user_id", None)
+    exec_resp = execute_semantic_query(
+        ExecuteQueryRequest(
+            sql=sql_query,
+            target="SNOWFLAKE",
             project_id=req.project_id,
+            limit=100000,
+            allow_simulated=False,
+        ),
+        owner_id=str(uid) if uid else None,
+    )
+    if not exec_resp.success or exec_resp.is_simulated:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
         )
-        sql_rows = mock_sql
-        dax_rows = req.dax_results if req.dax_results is not None else mock_dax
-        dax_backend_used = "mock_fabric_analysis"
+
+    raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
+    vm_col = view_metric.split(".")[-1].upper()
+    for row in raw_sf_rows:
+        up = {str(k).upper(): v for k, v in row.items()}
+        mapped: Dict[str, Any] = {req.metric_name: up.get(vm_col)}
+        for vd, pc in zip(req.dimensions, pbi_dims):
+            mapped[pc] = up.get(vd.split(".")[-1].upper())
+        sql_rows.append(mapped)
+
+    # 2. Obtain DAX rows via supplied export or automated run_dax backend
+    fabric_target = (
+        _fabric_project_dax_target(req.project_id, req.dax_backend, req.dax_dataset_id)
+        if req.dax_results is None
+        else None
+    )
+    if req.dax_results is not None:
+        dax_rows = req.dax_results
+        dax_backend_used = "manual_rows"
+    elif fabric_target is not None:
+        fabric_res = _run_fabric_project_dax(fabric_target, dax_query)
+        dax_rows = fabric_res["rows"]
+        dax_backend_used = fabric_res["backend"]
     else:
-        # Real connection execution path
-        # 1. Execute Snowflake / SQL query live (non-simulated)
-        uid = getattr(request.state, "user_id", None)
-        exec_resp = execute_semantic_query(
-            ExecuteQueryRequest(
-                sql=sql_query,
-                target="SNOWFLAKE",
-                project_id=req.project_id,
-                limit=100000,
-                allow_simulated=False,
-            ),
-            owner_id=str(uid) if uid else None,
-        )
-        if not exec_resp.success or exec_resp.is_simulated:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Live Snowflake execution failed: {exec_resp.error or exec_resp.message or 'unknown error'}",
+        try:
+            dax_exec = execute_dax(
+                dax_query,
+                backend=req.dax_backend,
+                port=req.dax_port,
+                dataset_id=req.dax_dataset_id,
+                workspace=req.dax_workspace,
+                workspace_id=req.dax_workspace_id,
             )
-
-        raw_sf_rows = [dict(zip(exec_resp.columns, r)) for r in exec_resp.rows]
-        vm_col = view_metric.split(".")[-1].upper()
-        for row in raw_sf_rows:
-            up = {str(k).upper(): v for k, v in row.items()}
-            mapped: Dict[str, Any] = {req.metric_name: up.get(vm_col)}
-            for vd, pc in zip(req.dimensions, pbi_dims):
-                mapped[pc] = up.get(vd.split(".")[-1].upper())
-            sql_rows.append(mapped)
-
-        # 2. Obtain DAX rows via supplied export or automated run_dax backend
-        if req.dax_results is not None:
-            dax_rows = req.dax_results
-            dax_backend_used = "manual_rows"
-        else:
-            try:
-                dax_exec = execute_dax(
-                    dax_query,
-                    backend=req.dax_backend,
-                    port=req.dax_port,
-                    dataset_id=req.dax_dataset_id,
-                    workspace=req.dax_workspace,
-                    workspace_id=req.dax_workspace_id,
-                )
-                dax_rows = dax_exec.rows
-                dax_backend_used = dax_exec.backend
-            except DaxExecutionError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            dax_rows = dax_exec.rows
+            dax_backend_used = dax_exec.backend
+        except DaxExecutionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # 3. Verify mathematical parity and persist certification record
     result = verifier.reconcile_data(
