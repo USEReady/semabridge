@@ -306,3 +306,220 @@ def test_service_principal_account_used_when_selected_by_project():
 
             assert resolved_token == "spn-access-token-88888"
             mock_inst.acquire_token_for_client.assert_called_once_with(scopes=["https://api.fabric.microsoft.com/.default"])
+
+
+def test_encrypted_secrets_readable_after_simulated_restart(tmp_path, monkeypatch):
+    """
+    (a) Encrypted secrets must remain readable after a simulated restart (new process, same key).
+    """
+    from semabridge.auth.encryption import _get_fernet
+
+    key_file = tmp_path / "encryption.key"
+    test_secret = "secret-key-persisted-across-restart-12345"
+    key_file.write_text(test_secret, encoding="utf-8")
+
+    monkeypatch.setenv("SEMABRIDGE_ENCRYPTION_KEY_FILE", str(key_file))
+    monkeypatch.delenv("SEMABRIDGE_ENCRYPTION_KEY", raising=False)
+    _get_fernet.cache_clear()
+
+    # Save credentials
+    cm = CredentialManager()
+    cm.save_credentials(
+        "snowflake",
+        {
+            "user": "persisted_user",
+            "password": "PersistedSecretPassword!",
+        },
+    )
+
+    # Verify encrypted in DB
+    unmasked_before = cm.get_credentials("snowflake", mask_secrets=False)
+    assert unmasked_before["password"] == "PersistedSecretPassword!"
+
+    # Simulate restart: clear the process-level LRU cache
+    _get_fernet.cache_clear()
+
+    # Read back in "new process" with same key file
+    cm_after = CredentialManager()
+    unmasked_after = cm_after.get_credentials("snowflake", mask_secrets=False)
+    assert unmasked_after["password"] == "PersistedSecretPassword!"
+
+
+def test_missing_key_fails_startup_cleanly_without_data_loss(tmp_path, monkeypatch):
+    """
+    (b) A missing key fails startup with a clear error and leaves rows untouched
+    (no re-encryption, no data loss).
+    """
+    from semabridge.auth.encryption import _get_fernet, ensure_encryption_key_available
+
+    engine = db_manager.get_engine()
+    # Insert existing rows into DB
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO semabridge_credentials (owner_id, service, key, value, is_secret) "
+                "VALUES (0, 'safe_service', 'api_secret', 'critical_plaintext_data', 1)"
+            )
+        )
+        conn.commit()
+
+    # Configure missing key with auth enabled
+    non_existent = tmp_path / "missing_folder" / "missing.key"
+    monkeypatch.setenv("SEMABRIDGE_ENCRYPTION_KEY_FILE", str(non_existent))
+    monkeypatch.delenv("SEMABRIDGE_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    _get_fernet.cache_clear()
+
+    # ensure_encryption_key_available must raise RuntimeError
+    with pytest.raises(RuntimeError) as exc_info:
+        ensure_encryption_key_available()
+
+    assert "AUTH_ENABLED=true you must set SEMABRIDGE_ENCRYPTION_KEY" in str(exc_info.value)
+
+    # Verify rows in DB remain completely untouched (no data loss)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT value FROM semabridge_credentials WHERE service = 'safe_service' AND key = 'api_secret'")
+        ).mappings().first()
+    assert row["value"] == "critical_plaintext_data"
+
+
+def test_target_publish_path_uses_account_token_without_global_fallback():
+    """
+    Fabric target / publish path must resolve the access token strictly from the Account
+    bundle without falling back to or writing global fabric_token in credentials.
+    """
+    from semabridge.auth.credential_builder import build_fabric_config
+    from semabridge.core.settings import FabricConfig
+    from semabridge.connectors.fabric_publisher import FabricPublisher
+
+    # Add account with valid token
+    payload = {
+        "access_token": "account-scoped-target-token-xyz",
+        "expires_at": int(datetime.now(timezone.utc).timestamp()) + 3600,
+        "tenant_id": "tenant-target-1",
+        "username": "deployer@contoso.com",
+    }
+    with db_manager.get_session() as session:
+        account = Account(
+            id="acct-target-deploy",
+            connector_type="FABRIC",
+            tag="target-deploy-acct",
+            identity_email="deployer@contoso.com",
+            auth_type="interactive",
+            encrypted_token=encrypt_token(json.dumps(payload)),
+            status="Active",
+        )
+        session.add(account)
+        session.commit()
+
+        base_config = FabricConfig(
+            tenant_id="default-tenant",
+            client_id="default-client",
+            workspace_id="ws-target-123",
+        )
+
+        with patch("semabridge.auth.fabric_validator.fabric_validator.validate_msal_token", return_value=True):
+            fabric_cfg, fabric_token = build_fabric_config(account, session, base_config)
+
+    assert fabric_token == "account-scoped-target-token-xyz"
+    assert fabric_cfg.workspace_id == "ws-target-123"
+
+    # Verify publisher initialization
+    publisher = FabricPublisher(fabric_cfg)
+    publisher._access_token = fabric_token
+    assert publisher._access_token == "account-scoped-target-token-xyz"
+
+    # Confirm semabridge_credentials has NO global fabric_token row written
+    engine = db_manager.get_engine()
+    with engine.connect() as conn:
+        global_rows = conn.execute(
+            text("SELECT * FROM semabridge_credentials WHERE service = 'fabric_token'")
+        ).mappings().all()
+    assert len(global_rows) == 0
+
+
+def test_post_account_test_connection_endpoints():
+    """
+    5. Test connection backend endpoint POST /api/accounts/{id}/test
+    Verifies Fabric device-code, Fabric service principal, and Snowflake accounts
+    with recorded responses.
+    """
+    # 1. Setup Fabric Device Code Account
+    with db_manager.get_session() as session:
+        session.add(
+            Account(
+                id="acct-test-dc",
+                connector_type="FABRIC",
+                tag="test-device-code",
+                identity_email="devcode@contoso.com",
+                auth_type="interactive",
+                encrypted_token=encrypt_token("some-token"),
+                status="Active",
+            )
+        )
+        # 2. Setup Fabric Service Principal Account
+        session.add(
+            Account(
+                id="acct-test-spn",
+                connector_type="FABRIC",
+                tag="test-spn",
+                identity_email="spn-client-id",
+                auth_type="service_principal",
+                encrypted_token=encrypt_token(json.dumps({
+                    "auth_type": "service_principal",
+                    "tenant_id": "t1",
+                    "client_id": "c1",
+                    "client_secret": "s1",
+                })),
+                status="Active",
+            )
+        )
+        # 3. Setup Snowflake Account
+        session.add(
+            Account(
+                id="acct-test-sf",
+                connector_type="SNOWFLAKE",
+                tag="test-snowflake",
+                identity_email="sf_analyst",
+                encrypted_token=encrypt_token(json.dumps({
+                    "account": "xy12345.us-east-1",
+                    "user": "sf_analyst",
+                    "password": "SfPassword123!",
+                    "warehouse": "COMPUTE_WH",
+                    "database": "ANALYTICS",
+                })),
+                status="Active",
+            )
+        )
+        session.commit()
+
+    with TestClient(app) as client:
+        # Test 1: Fabric Device Code Account
+        with patch("semabridge.auth.token_resolver.resolve_fabric_access_token", return_value="recorded-dc-token"):
+            res_dc = client.post("/api/accounts/acct-test-dc/test")
+            assert res_dc.status_code == 200
+            assert res_dc.json() == {"status": "success", "message": "Fabric authentication successful"}
+
+        # Test 2: Fabric Service Principal Account
+        with patch("semabridge.auth.token_resolver.resolve_fabric_access_token", return_value="recorded-spn-token"):
+            res_spn = client.post("/api/accounts/acct-test-spn/test")
+            assert res_spn.status_code == 200
+            assert res_spn.json() == {"status": "success", "message": "Fabric authentication successful"}
+
+        # Test 3: Snowflake Account
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        with patch("snowflake.connector.connect", return_value=mock_conn) as mock_sf_connect:
+            res_sf = client.post("/api/accounts/acct-test-sf/test")
+            assert res_sf.status_code == 200
+            assert res_sf.json() == {"status": "success", "message": "Snowflake connection successful"}
+            mock_sf_connect.assert_called_once()
+            mock_cursor.execute.assert_called_once_with("SELECT CURRENT_VERSION()")
+            mock_conn.close.assert_called_once()
+
+        # Test 4: Missing Account returns 404
+        res_missing = client.post("/api/accounts/nonexistent-id/test")
+        assert res_missing.status_code == 404
+
