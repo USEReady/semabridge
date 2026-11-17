@@ -534,6 +534,7 @@ class SMLModel(BaseModel):
     source_platform: SourcePlatform = Field(default=SourcePlatform.SNOWFLAKE, description="Platform where model was authored")
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Creation timestamp")
     modified_at: Optional[str] = Field(default=None, description="Last modification timestamp")
+    unmatched_mapping_overrides: list[str] = Field(default_factory=list, description="Unmatched mapping overrides")
     
     def model_post_init(self, __context: Any) -> None:
         """Set label from unique_name if not provided."""
