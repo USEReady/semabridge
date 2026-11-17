@@ -143,7 +143,10 @@ def _run_gate(tmp_path, *extra):
     return subprocess.run(
         [sys.executable, str(repo / "Tests" / "governance_tests" / "g09_cicd_gate.py"), "--gate-only", "--direct",
          "--ontologies-dir", str(tmp_path), "--max-errors", "0", "--steward-level", "warning", *extra],
-        capture_output=True, text=True, cwd=str(repo), timeout=120,
+        # Hang guard only (pass/fail comes from the exit code): the subprocess
+        # imports the whole package, which under parallel-suite CPU load can
+        # take longer than 120 s.
+        capture_output=True, text=True, cwd=str(repo), timeout=600,
     )
 
 
