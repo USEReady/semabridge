@@ -151,6 +151,10 @@ class RunSummary(BaseModel):
     # SourceFormat.ambiguous_report_aliases and LocalPBIXConnector.discover()).
     ambiguous_report_aliases: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Non-fatal source warnings (e.g. a Fabric report the identity cannot
+    # read); empty unless a source adds one.
+    source_warnings: List[str] = Field(default_factory=list)
+
     # Effective demo_mode for this run (server env var AND project opt-in
     # both true — see core/demo_mode.resolve_effective_demo_mode). Stamped
     # once at finalize time from the resolved ConnectorBehavior actually

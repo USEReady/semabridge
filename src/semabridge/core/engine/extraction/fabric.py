@@ -194,6 +194,22 @@ def _extract_fabric(
     # Ensure display name is explicitly resolved and stored for naming resolution
     source_format.dataset_name = extractor.get_model_display_name(resolved_dataset_id)
 
+    if context.behavior.features.fabric_report_layer:
+        # Report-layer parity with .pbix: captions of the reports bound to this
+        # model become field aliases (synonyms); unresolved / ambiguous report
+        # fields are reported like PBIX. A report this identity cannot read is a
+        # run warning, not a failure.
+        from semabridge.sources.fabric.report_layer import fetch_report_layer
+
+        try:
+            layer = fetch_report_layer(extractor, ws_id, resolved_dataset_id, tmsl)
+        except SourceError as exc:
+            raise ExtractionError(f"Fabric report layer failed: {exc}") from exc
+        source_format.field_aliases = layer.field_aliases
+        source_format.unresolved_report_field_references = layer.unresolved
+        source_format.ambiguous_report_aliases = layer.ambiguous
+        context.source_warnings.extend(layer.warnings)
+
     self._record_step(4, StepStatus.SUCCESS, f"Extracted TMSL definition for '{source_format.dataset_name}'")
 
     return source_format

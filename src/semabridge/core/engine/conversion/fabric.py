@@ -73,6 +73,10 @@ def _convert_fabric_to_sml(
         "display_name": sf.dataset_name or None,
         "project_id": context.project_id,
     }
+    # Report-layer aliases (features.fabric_report_layer). Passed only when
+    # present: with the flag off the converter input is exactly as before.
+    if getattr(sf, "field_aliases", None):
+        source_data["field_aliases"] = sf.field_aliases
     # Name-based relationship inference invents joins the source never
     # declared — strictly opt-in via options.infer_relationships.
     options_ns = getattr(getattr(context, "config", None), "options", None)

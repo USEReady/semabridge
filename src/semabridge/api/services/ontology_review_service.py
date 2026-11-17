@@ -116,6 +116,18 @@ async def read_source_models(
                 errors.append({"source": Path(str(p)).name, "error": str(exc)})
         return models, errors
 
+    if stype == "fabric" and (selected_sources or not project_id or project_id == "preview"):
+        # Before the dry run: read every selected Fabric model live with the
+        # project's credentials (the PBIX branch above reads the files). After
+        # a sync (real project, nothing selected) the snapshot path below runs.
+        from semabridge.sources.base import SourceError
+        from semabridge.sources.fabric.model_reader import read_fabric_models
+
+        try:
+            return await asyncio.to_thread(read_fabric_models, source_config, list(selected_sources or []))
+        except SourceError as exc:
+            raise UnsupportedSourceError(str(exc)) from exc
+
     if project_id and project_id not in ("preview", ""):
         # Multi-model project: review EVERY model's latest snapshot. The project
         # head is only whichever model synced last, which would hide the other

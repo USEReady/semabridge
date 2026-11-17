@@ -151,3 +151,6 @@ class RunContext:
     # For row-count parity only -- never used to classify fact vs dimension.
     source_row_counts: Optional[Dict[str, int]] = None
     source_row_count_errors: list[str] = _dataclass_field(default_factory=list)
+    # Non-fatal source warnings shown on the run (e.g. a Fabric report the
+    # identity cannot read). Empty unless a source adds one.
+    source_warnings: list[str] = _dataclass_field(default_factory=list)
