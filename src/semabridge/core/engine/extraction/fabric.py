@@ -59,7 +59,6 @@ def _extract_fabric(
     config = context.config
     fabric_cfg = config.fabric
     ws_id = workspace_id or fabric_cfg.workspace_id
-    stored_workspace_id: str = ""
 
     if context.behavior.features.offline_mode:
         offline_path = Path(context.behavior.features.offline_fabric_model_path)
@@ -96,18 +95,6 @@ def _extract_fabric(
         self._record_step(4, StepStatus.SUCCESS, f"OFFLINE extract loaded {table_count} tables")
         return source_format
 
-    try:
-        from semabridge.repository.credential_manager import CredentialManager
-
-        cm = CredentialManager()
-        stored_fabric = cm.get_credentials("fabric", mask_secrets=False)
-        stored_workspace_id = (stored_fabric.get("workspace_id") or "").strip()
-        configured_workspace_id = str(getattr(fabric_cfg, "workspace_id", "") or "").strip()
-        if not workspace_id and not configured_workspace_id and stored_workspace_id:
-            ws_id = stored_workspace_id
-    except Exception as exc:
-        logger.warning("_extract_fabric: stored Fabric workspace lookup failed: %s", exc)
-
     # One resolver for every Fabric stage (identity > run account token >
     # interactive store > extractor's own configured auth). Resolved here, at
     # Stage 4, so a long-queued scheduled run still gets a fresh identity token.
@@ -123,40 +110,23 @@ def _extract_fabric(
     if not dataset_id:
         raise ExtractionError("dataset_id is required for Fabric source")
 
-    guid_pattern = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-
-    def _is_guid(value: str) -> bool:
-        return bool(value and re.match(guid_pattern, value))
+    # The project's workspace only: a GUID as-is, or an exact workspace NAME
+    # resolved with the project's credentials. Never the stored credential's
+    # or the .env workspace (no alias fallback).
+    from semabridge.sources.base import SourceError
+    from semabridge.sources.fabric.workspaces import resolve_workspace_strict
 
     requested_ws = str(ws_id or "").strip()
-    configured_ws = str(fabric_cfg.workspace_id or "").strip()
-    stored_ws = str(stored_workspace_id or "").strip()
-
-    # UI aliases (for example, semabridge-local) are not accepted by Fabric API.
-    # Prefer known GUIDs from credentials or environment-backed config.
-    if requested_ws and not _is_guid(requested_ws):
-        if _is_guid(stored_ws):
-            logger.info(
-                "Fabric workspace '%s' appears to be an alias; using credential workspace GUID '%s'",
-                requested_ws,
-                stored_ws,
-            )
-            requested_ws = stored_ws
-        elif _is_guid(configured_ws):
-            logger.info(
-                "Fabric workspace '%s' appears to be an alias; using configured workspace GUID '%s'",
-                requested_ws,
-                configured_ws,
-            )
-            requested_ws = configured_ws
-
-    ws_id = requested_ws or configured_ws or stored_ws
-
-    if ws_id and fabric_cfg.workspace_id != ws_id:
-        fabric_cfg.workspace_id = ws_id
-
-
+    if not requested_ws:
+        raise ExtractionError("No Fabric workspace for this model: set source.workspace_id (no default workspace is used).")
+    fabric_cfg.workspace_id = requested_ws
     extractor = apply_to_extractor(FabricExtractor(fabric_cfg), fabric_creds)
+    try:
+        ws_id = resolve_workspace_strict(extractor, requested_ws)
+    except SourceError as exc:
+        raise ExtractionError(str(exc)) from exc
+    fabric_cfg.workspace_id = ws_id
+    extractor.config.workspace_id = ws_id
 
     # Exact match only: a GUID as-is, or exactly one model with that display
     # name. Two models sharing a name is an error naming their ids, never
