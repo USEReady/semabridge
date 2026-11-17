@@ -392,6 +392,15 @@ class ExecutionEngine:
                 from semabridge.core.engine.deployment.snowflake import preview_table_bindings
 
                 context.table_binding_plan = preview_table_bindings(context)
+                plan_tables = context.table_binding_plan.get("tables", []) or []
+                plan_blocked = context.table_binding_plan.get("blocked", []) or []
+                if plan_tables and len(plan_blocked) == len(plan_tables):
+                    from semabridge.core.zero_tables import ZeroTablesModelError
+                    raise ZeroTablesModelError(
+                        "All physical tables failed to bind",
+                        reason_code="ALL_TABLES_FAILED",
+                        measures=getattr(context.sml_model, "metrics", []) if context.sml_model else [],
+                    )
 
             # Step 8: Convert to Target Format (Optional). A Snowflake dry
             # run builds the DDL too (read-only, against the live schema) so
@@ -452,7 +461,39 @@ class ExecutionEngine:
             
             # Step 10: Finalize Run
             return self._step10_finalize(context, RunStatus.SUCCESS)
-            
+
+        except ZeroTablesModelError as zero_exc:
+            from semabridge.core.drop_ledger import DropStage
+            model_disp = resolved_display_name or project_name or (context.project_name if context else "") or "model"
+            logger.warning(
+                "Model '%s' skipped (0 physical tables, reason=%s, ref=%s)",
+                model_disp, zero_exc.reason_code, zero_exc.model_reference,
+            )
+            self._record_step(self._current_step or 4, StepStatus.SKIPPED, f"Model skipped: {zero_exc.reason_code}")
+
+            if zero_exc.reason_code == "MEASURES_ONLY" and zero_exc.measures:
+                for m in zero_exc.measures:
+                    m_name = m.get("name") if isinstance(m, dict) else (getattr(m, "unique_name", None) or getattr(m, "name", None) or str(m))
+                    context.drop_ledger.record(
+                        entity_kind="metric",
+                        entity_name=m_name,
+                        stage=DropStage.EXTRACTION,
+                        reason="Parent model had 0 physical tables - cannot generate semantic view without at least one table",
+                    )
+
+            self._record_step(10, StepStatus.SUCCESS, f"Model skipped: {zero_exc.reason_code}")
+            summary = self._step10_finalize(context, RunStatus.WARNING)
+            summary.status = RunStatus.WARNING
+            summary.skipped_no_tables = True
+            summary.reason_code = zero_exc.reason_code
+            summary.model_reference = zero_exc.model_reference
+            summary.warning_message = "No tables found - a semantic view cannot be created"
+            note_str = f"Model {model_disp} skipped: {zero_exc.reason_code}"
+            if zero_exc.reason_code == "LIVE_CONNECTION" and zero_exc.model_reference:
+                note_str += f" (Points to {zero_exc.model_reference} on Power BI Service)"
+            summary.notes.append(note_str)
+            return summary
+
         except Exception as e:
             logger.error(f"Execution failed at step {self._current_step}: {e}")
             

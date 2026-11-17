@@ -805,26 +805,37 @@ def _run_single_job_impl(
                 batch_name_registry=batch_name_registry,
             )
             summary_data = summary.model_dump(mode="json")
-            job_ok = str(summary_data.get("status", "")).upper() == "SUCCESS"
+            summary_status = str(summary_data.get("status", "")).upper()
+            is_skipped = bool(summary_data.get("skipped_no_tables")) or summary_status == "WARNING"
+            job_ok = summary_status == "SUCCESS"
             run_context = getattr(engine, "_context", None)
 
             _record_true_run_completion(repository, summary_data)
 
-            if job_ok and deploy_enabled:
+            if job_ok and deploy_enabled and not is_skipped:
                 try:
                     _persist_model_version(repository, local_config, summary_data, model_label, resolved_workspace_id)
                 except Exception as version_error:
                     logger.warning("Version row write failed for %s: %s", model_label, version_error)
 
-            status = "success" if job_ok else "failed"
+            if is_skipped:
+                status = "SKIPPED_NO_TABLES"
+            elif job_ok:
+                status = "success"
+            else:
+                status = "failed"
             return {
                 "model": model_label,
                 "status": status,
+                "skipped_no_tables": is_skipped,
+                "reason_code": summary_data.get("reason_code"),
+                "warning_message": summary_data.get("warning_message") or "No tables found - a semantic view cannot be created",
+                "model_reference": summary_data.get("model_reference"),
                 "summary": summary_data,
                 "routing_summary": summary_data.get("routing_summary") if isinstance(summary_data, dict) else None,
                 "console": _build_console_details(
                     summary_data,
-                    fallback_message=f"[{status.upper()}] Model '{model_label}' finished with status {summary_data.get('status')}",
+                    fallback_message=f"[{status.upper()}] Model '{model_label}' skipped: {summary_data.get('reason_code')}" if is_skipped else f"[{status.upper()}] Model '{model_label}' finished with status {summary_data.get('status')}",
                 ),
                 "run_id": summary_data.get("run_id"),
                 "missing_dims": summary_data.get("missing_dims") or {},
@@ -833,9 +844,9 @@ def _run_single_job_impl(
                 "cortex_validation_results": summary_data.get("cortex_validation_results") or [],
                 "upsert_delta": summary_data.get("upsert_delta"),
                 "pbix_path": job.get("pbix_path"),
-                "view_name": _resolve_result_view_name(run_context, target_type),
-                "target_artifact_path": summary_data.get("target_artifact_path")
-                or getattr(run_context, "target_artifact_path", None),
+                "view_name": None if is_skipped else _resolve_result_view_name(run_context, target_type),
+                "target_artifact_path": None if is_skipped else (summary_data.get("target_artifact_path")
+                or getattr(run_context, "target_artifact_path", None)),
                 "physical_namespace": job.get("physical_namespace"),
                 "duration_ms": int((time.perf_counter() - started) * 1000),
             }
@@ -1355,14 +1366,29 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             result.setdefault("model_plan", plan)
 
     succeeded = [result for result in per_model_results if result["status"] == "success"]
-    if len(succeeded) == len(per_model_results):
-        overall_status = "success"
-    elif succeeded:
-        overall_status = "partial"
-    elif any(result["status"] == "conflict" for result in per_model_results):
+    skipped = [result for result in per_model_results if result["status"] in ("SKIPPED_NO_TABLES", "skipped_no_tables")]
+    failed = [result for result in per_model_results if result["status"] not in ("success", "SKIPPED_NO_TABLES", "skipped_no_tables", "conflict")]
+    conflicts = [result for result in per_model_results if result["status"] == "conflict"]
+
+    if conflicts:
         overall_status = "conflict"
+    elif failed:
+        overall_status = "partial" if (succeeded or skipped) else "failed"
+    elif skipped:
+        # Run status: WARNING (not ERROR, not SUCCESS), with an explicit note in the report
+        overall_status = "WARNING"
+    elif len(succeeded) == len(per_model_results):
+        overall_status = "success"
     else:
         overall_status = "failed"
+
+    report_notes: List[str] = []
+    for s in skipped:
+        m_name = s.get("model") or "unknown"
+        r_code = s.get("reason_code") or "0 physical tables"
+        ref = s.get("model_reference")
+        reason_str = f"{r_code} (Points to {ref} on Power BI Service)" if (r_code == "LIVE_CONNECTION" and ref) else r_code
+        report_notes.append(f"Model {m_name} skipped: {reason_str}")
 
     last_summary = next(
         (result.get("summary") for result in reversed(per_model_results) if isinstance(result.get("summary"), dict)),
@@ -1382,6 +1408,8 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
         "status": overall_status,
         "models_synced": len(succeeded),
         "total_models": len(per_model_results),
+        "skipped_models": [s.get("model") for s in skipped],
+        "notes": report_notes,
         "results": per_model_results,
         "summary": last_summary or {},
         "routing_summary": (last_summary or {}).get("routing_summary") if isinstance(last_summary, dict) else None,

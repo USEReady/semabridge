@@ -107,20 +107,39 @@ def _extract_pbix(
         object.__setattr__(context.config, "source", source_cfg)
     source_cfg.pbix_path = pbix_path
 
+    from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
+
     drop_ledger = getattr(context, "drop_ledger", None)
     connector = LocalPBIXConnector({"pbix_path": pbix_path}, drop_ledger=drop_ledger)
     discovered = connector.discover()
+
+    disc_meta = discovered.get("metadata") or {}
+    live_ref = disc_meta.get("model_reference")
+    if disc_meta.get("reason_code") == "LIVE_CONNECTION":
+        raise ZeroTablesModelError(
+            f"'{p.name}' is a thin report with a live connection to Power BI Service",
+            reason_code="LIVE_CONNECTION",
+            pbix_path=pbix_path,
+            model_reference=live_ref,
+        )
+
     tmsl = connector.extract() if discovered.get("raw_tmsl") is None else discovered.get("raw_tmsl")
 
     if not tmsl:
         raise ExtractionError(
             f"Could not extract DataModelSchema from {pbix_path}"
         )
-    if not (tmsl.get("model", {}) or {}).get("tables"):
-        # A model with no tables can only deploy an empty semantic view; the
-        # dry run used to report it as "success" with 0 fields. Typical cause:
-        # a thin report connected to a dataset in the Power BI service.
-        raise ExtractionError(_empty_pbix_model_message(pbix_path))
+
+    classification = classify_tmsl_model(tmsl, pbix_path=pbix_path, live_reference=live_ref)
+    if classification is not None:
+        reason_code, model_ref, measures = classification
+        raise ZeroTablesModelError(
+            f"'{p.name}' contains 0 physical tables ({reason_code})",
+            reason_code=reason_code,
+            pbix_path=pbix_path,
+            model_reference=model_ref,
+            measures=measures,
+        )
 
     logger.debug(
         "PBIX -> TMSL transition complete for %s (%s tables)",

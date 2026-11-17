@@ -332,13 +332,49 @@ class PBIXParsingError(SemaBridgeError):
         self.pbix_path = pbix_path
 
 
-class PBIXLiveConnectionError(PBIXParsingError):
+class ZeroTablesModelError(SemaBridgeError):
+    """
+    Raised when a model has 0 physical tables and therefore cannot generate
+    a semantic view.
+
+    Reason codes:
+      - LIVE_CONNECTION: Thin report connecting live to a published dataset
+      - ONLY_AUTO_DATE_TABLES: Model has tables, but all are auto date/template tables
+      - ALL_TABLES_FAILED: User tables existed, but all failed during extraction/binding
+      - MEASURES_ONLY: Model has 0 physical tables, but has one or more measures defined
+      - EMPTY_MODEL: Model has 0 tables and 0 measures
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        pbix_path: Optional[str] = None,
+        model_reference: Optional[str] = None,
+        measures: Optional[List[Any]] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        full_details = dict(details or {})
+        full_details["reason_code"] = reason_code
+        if model_reference:
+            full_details["model_reference"] = model_reference
+        if pbix_path:
+            full_details["pbix_path"] = pbix_path
+        super().__init__(message, full_details)
+        self.reason_code = reason_code
+        self.pbix_path = pbix_path
+        self.model_reference = model_reference
+        self.measures = list(measures or [])
+
+
+class PBIXLiveConnectionError(ZeroTablesModelError, PBIXParsingError):
     """
     The PBIX is a thin report: it has no data model of its own and connects
     live to a published semantic model (Power BI / Fabric / Analysis Services).
 
-    Subclass of PBIXParsingError so existing callers keep failing safely; callers
-    that understand it can classify the file as LIVE_CONNECTION (no tables, so no
+    Subclass of ZeroTablesModelError and PBIXParsingError so existing callers keep failing safely;
+    callers that understand it can classify the file as LIVE_CONNECTION (no tables, so no
     semantic view) instead of reporting an extraction failure.
 
     Attributes:
@@ -350,12 +386,13 @@ class PBIXLiveConnectionError(PBIXParsingError):
 
     def __init__(self, message: str, pbix_path: Optional[str] = None,
                  model_reference: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
-        full_details = dict(details or {})
-        full_details["reason_code"] = self.reason_code
-        if model_reference:
-            full_details["model_reference"] = model_reference
-        super().__init__(message, pbix_path=pbix_path, details=full_details)
-        self.model_reference = model_reference
+        super().__init__(
+            message,
+            reason_code=self.reason_code,
+            pbix_path=pbix_path,
+            model_reference=model_reference,
+            details=details,
+        )
 
 
 class RateLimitError(ConnectorError):

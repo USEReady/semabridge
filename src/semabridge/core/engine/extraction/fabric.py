@@ -220,7 +220,19 @@ def _extract_fabric(
 
     resolved_dataset_id = extractor.resolve_model_id(dataset_id)
 
+    from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
+
     tmsl = extractor.get_model_definition(resolved_dataset_id)
+    classification = classify_tmsl_model(tmsl)
+    if classification is not None:
+        reason_code, model_ref, measures = classification
+        m_name = getattr(context, "project_name", "") or resolved_dataset_id
+        raise ZeroTablesModelError(
+            f"Fabric model '{m_name}' contains 0 physical tables ({reason_code})",
+            reason_code=reason_code,
+            model_reference=model_ref,
+            measures=measures,
+        )
     row_counts = extractor.get_table_row_counts(resolved_dataset_id)
 
     source_format = from_fabric_tmsl(
