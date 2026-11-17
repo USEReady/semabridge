@@ -23,6 +23,7 @@ from semabridge.core.run_summary import (
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.core.engine.context import RunContext
+from semabridge.core.zero_tables import ZeroTablesModelError
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
     AuthenticationError,
@@ -395,7 +396,6 @@ class ExecutionEngine:
                 plan_tables = context.table_binding_plan.get("tables", []) or []
                 plan_blocked = context.table_binding_plan.get("blocked", []) or []
                 if plan_tables and len(plan_blocked) == len(plan_tables):
-                    from semabridge.core.zero_tables import ZeroTablesModelError
                     raise ZeroTablesModelError(
                         "All physical tables failed to bind",
                         reason_code="ALL_TABLES_FAILED",

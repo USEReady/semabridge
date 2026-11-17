@@ -715,6 +715,21 @@ async def create_project_compat(request: dict):
         pbix_path=pbix_path,
     )
 
+    safe_name = re.sub(r'[^a-zA-Z0-9_]+', '-', payload_name.lower()).strip('-')
+    default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
+    requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
+    project_id = requested_id or default_id
+    _compat_deleted_project_ids.discard(project_id)
+    requested_semantic_name = _project_semantic_name({"semantic_name": payload_name, "name": payload_name}, payload_name)
+
+    from semabridge.core.project_resync import check_target_semantic_view_exists
+    target_conflict = check_target_semantic_view_exists(project_id, payload.get("config_yaml") or payload)
+    if target_conflict and not payload.get("sync_mode") and not bool(payload.get("acknowledge_duplicates", False)):
+        raise HTTPException(status_code=409, detail=target_conflict)
+    elif target_conflict and payload.get("sync_mode"):
+        chosen_mode = str(payload.get("sync_mode")).lower()
+        record_resync_audit(payload.get("user_id"), project_id, chosen_mode, details={"view_name": target_conflict.get("view_name")})
+
     if match_info and not requested_mode:
         # Backend must enforce: if a match exists and request has no mode -> HTTP 409 with match details
         raise HTTPException(status_code=409, detail=match_info)
@@ -728,14 +743,7 @@ async def create_project_compat(request: dict):
         payload_name = copy_name
         payload["name"] = copy_name
         payload["display_name"] = copy_name
-        record_resync_audit(payload.get("user_id"), payload.get("project_id") or default_id if 'default_id' in locals() else "proj-copy", "copy", match_type=match_info.get("match_type") if match_info else "B")
-
-    safe_name = re.sub(r'[^a-zA-Z0-9_]+', '-', payload_name.lower()).strip('-')
-    default_id = f"proj-{safe_name}" if safe_name else f"proj-{int(_time.time() * 1000)}"
-    requested_id = str(payload.get("id") or payload.get("project_id") or default_id).strip()
-    project_id = requested_id or default_id
-    _compat_deleted_project_ids.discard(project_id)
-    requested_semantic_name = _project_semantic_name({"semantic_name": payload_name, "name": payload_name}, payload_name)
+        record_resync_audit(payload.get("user_id"), project_id, "copy", match_type=match_info.get("match_type") if match_info else "B")
 
     existing_project_id = None
     existing_project = None

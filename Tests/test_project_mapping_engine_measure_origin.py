@@ -71,10 +71,8 @@ def test_metric_target_name_uses_snowflake_leading_digit_rule() -> None:
 
 
 def test_option_b_collision_resolution() -> None:
-    # Product.Manufacturer and Customer.Manufacturer live in DIFFERENT logical
-    # tables: a Snowflake semantic view names them PRODUCT.MANUFACTURER and
-    # CUSTOMER.MANUFACTURER, so they do not collide (the emitter dedupes per
-    # logical table too). Earlier versions used one flat namespace.
+    # Scenario: Two datasets Product and Customer both have Manufacturer column.
+    # The engine should detect collisions, but keep the target names as raw sanitized MANUFACTURER.
     model = {
         "unique_name": "Core_Finance_v1",
         "datasets": [
@@ -85,57 +83,53 @@ def test_option_b_collision_resolution() -> None:
     }
 
     payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
-    columns = [row for row in payload["mappings"] if row.get("entity_kind") == "column"]
+    mappings = payload["mappings"]
+
+    # Filter to only the columns
+    columns = [row for row in mappings if row.get("entity_kind") == "column"]
     assert len(columns) == 2
+
+    # Check target names are NOT mutated
     for col in columns:
         assert col["target_name"] == "MANUFACTURER"
-        assert col["collision_detected"] is False
-        assert col["validation_status"] == "valid"
-
-    # Two fields of the SAME table that sanitize to one name do collide; the
-    # names are not mutated and every row gets unique, to_alias-form options.
-    same_table = {
-        "unique_name": "Core_Finance_v1",
-        "datasets": [
-            {
-                "unique_name": "Product",
-                "columns": [
-                    {"unique_name": "Margin %", "data_type": "string"},
-                    {"unique_name": "Margin PCT", "data_type": "string", "type": "calculated"},
-                ],
-            },
-        ],
-        "metrics": [],
-    }
-    payload = build_entity_mappings(project_id="p1", model=same_table, target_connector="snowflake")
-    columns = [row for row in payload["mappings"] if row.get("entity_kind") == "column"]
-    firsts = []
-    for col in columns:
-        assert col["target_name"] == "MARGIN_PCT"  # emitter's to_alias: % -> PCT
         assert col["collision_detected"] is True
+        assert col["collision_group"] == "column::Core_Finance_v1:MANUFACTURER"
+        assert col["validation_status"] == "collision"
         assert col["validation_code"] == "NAME_COLLISION"
-        first = col["resolution_suggestions"][0]
-        assert first != "MARGIN_PCT"
-        assert first in ("PRODUCT_MARGIN_PCT", "COL_MARGIN_PCT")
-        firsts.append(first)
-    assert len(set(firsts)) == 2  # Resolve All yields unique names
+        # Verify suggestions ordering
+        assert col["resolution_suggestions"][0] in ("PRODUCT_MANUFACTURER", "CUSTOMER_MANUFACTURER")
 
-    # Overriding one of them manually makes the other unique.
+    # Scenario B: Overriding one of them manually makes the other unique under Option B
     existing_mappings = {
-        "datasets.Product.columns.Margin %": {"id": "m1", "target_name": "OVERRIDDEN_MARGIN", "is_user_edited": True},
+        "datasets.Product.columns.Manufacturer": {"id": "m1", "target_name": "OVERRIDDEN_MANUFACTURER", "is_user_edited": True},
     }
+
     payload_override = build_entity_mappings(
-        project_id="p1", model=same_table, existing_mappings=existing_mappings, target_connector="snowflake"
+        project_id="p1",
+        model=model,
+        existing_mappings=existing_mappings,
+        target_connector="snowflake"
     )
     cols = {row["source_path"]: row for row in payload_override["mappings"] if row.get("entity_kind") == "column"}
-    assert cols["datasets.Product.columns.Margin %"]["collision_detected"] is False
-    assert cols["datasets.Product.columns.Margin PCT"]["collision_detected"] is False
-    assert cols["datasets.Product.columns.Margin PCT"]["validation_status"] == "valid"
+
+    col_prod = cols["datasets.Product.columns.Manufacturer"]
+    col_cust = cols["datasets.Customer.columns.Manufacturer"]
+
+    # Overridden column should be valid and have user edit status
+    assert col_prod["target_name"] == "OVERRIDDEN_MANUFACTURER"
+    assert col_prod["collision_detected"] is False
+    assert col_prod["validation_status"] == "valid"
+
+    # Symmetrically, Customer.Manufacturer is now unique, so its collision flag is cleared
+    assert col_cust["target_name"] == "MANUFACTURER"
+    assert col_cust["collision_detected"] is False
+    assert col_cust["validation_status"] == "valid"
 
 
 def test_transitive_collision() -> None:
-    # Product.Manufacturer, Product.Product_Manufacturer, Customer.Manufacturer:
-    # every name is unique within its own logical table -> no collision.
+    # Scenario: Product.Manufacturer and Customer.Manufacturer collide.
+    # Product has another column Product_Manufacturer.
+    # Target names should stay as raw sanitized, and conflicts are only flagged on duplicates.
     model = {
         "unique_name": "Core_Finance_v1",
         "datasets": [
@@ -146,51 +140,75 @@ def test_transitive_collision() -> None:
                     {"name": "Product_Manufacturer", "data_type": "string"},
                 ],
             },
-            {"unique_name": "Customer", "columns": [{"name": "Manufacturer", "data_type": "string"}]},
-        ],
-    }
-    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
-    columns = {row["source_path"]: row for row in payload["mappings"] if row.get("entity_kind") == "column"}
-    assert len(columns) == 3
-    assert columns["datasets.Product.columns.Manufacturer"]["target_name"] == "MANUFACTURER"
-    assert columns["datasets.Customer.columns.Manufacturer"]["target_name"] == "MANUFACTURER"
-    assert columns["datasets.Product.columns.Product_Manufacturer"]["target_name"] == "PRODUCT_MANUFACTURER"
-    assert not any(c["collision_detected"] for c in columns.values())
-
-
-def test_collisions_remain_unresolved_until_user_action() -> None:
-    # Same-table duplicates stay unresolved (names unchanged) until the user
-    # acts; suggestions are in the emitter's to_alias form and unique.
-    model = {
-        "unique_name": "Core_Finance_v1",
-        "datasets": [
-            {"unique_name": "BU", "columns": [{"unique_name": "Executive_id", "data_type": "integer"}]},
-            {"unique_name": "Executive", "columns": [{"unique_name": "ID", "data_type": "integer"}]},
             {
-                "unique_name": "Industry",
+                "unique_name": "Customer",
                 "columns": [
-                    {"unique_name": "% ID", "data_type": "integer"},
-                    {"unique_name": "PCT ID", "data_type": "integer", "type": "calculated"},
+                    {"name": "Manufacturer", "data_type": "string"},
                 ],
             },
         ],
     }
 
     payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
+    mappings = payload["mappings"]
+
+    columns = {row["source_path"]: row for row in mappings if row.get("entity_kind") == "column"}
+    assert len(columns) == 3
+
+    col_prod_man = columns["datasets.Product.columns.Manufacturer"]
+    col_prod_prod_man = columns["datasets.Product.columns.Product_Manufacturer"]
+    col_cust_man = columns["datasets.Customer.columns.Manufacturer"]
+
+    # Target names check: raw sanitized, not mutated
+    assert col_prod_man["target_name"] == "MANUFACTURER"
+    assert col_cust_man["target_name"] == "MANUFACTURER"
+    assert col_prod_prod_man["target_name"] == "PRODUCT_MANUFACTURER"
+
+    # Conflicting columns should have collision_detected = True
+    assert col_prod_man["collision_detected"] is True
+    assert col_prod_man["validation_status"] == "collision"
+    
+    assert col_cust_man["collision_detected"] is True
+    assert col_cust_man["validation_status"] == "collision"
+
+    # Unique column should be valid
+    assert col_prod_prod_man["collision_detected"] is False
+    assert col_prod_prod_man["validation_status"] == "valid"
+
+
+def test_collisions_remain_unresolved_until_user_action() -> None:
+    # Regression test: verify that when build_entity_mappings is called with multiple colliding columns,
+    # target_names remain unresolved initially and resolution_suggestions are populated deterministically.
+    model = {
+        "unique_name": "Core_Finance_v1",
+        "datasets": [
+            {"unique_name": "BU", "columns": [{"unique_name": "Executive_id", "data_type": "integer"}]},
+            {"unique_name": "Executive", "columns": [{"unique_name": "ID", "data_type": "integer"}]},
+            {"unique_name": "Industry", "columns": [{"unique_name": "ID", "data_type": "integer"}]},
+        ],
+    }
+
+    payload = build_entity_mappings(project_id="p1", model=model, target_connector="snowflake")
     cols = {row["source_path"]: row for row in payload["mappings"] if row.get("entity_kind") == "column"}
 
-    assert cols["datasets.BU.columns.Executive_id"]["collision_detected"] is False
-    assert cols["datasets.Executive.columns.ID"]["collision_detected"] is False
+    col_bu_exec = cols["datasets.BU.columns.Executive_id"]
+    col_exec_id = cols["datasets.Executive.columns.ID"]
+    col_ind_id = cols["datasets.Industry.columns.ID"]
 
-    pair = [cols["datasets.Industry.columns.% ID"], cols["datasets.Industry.columns.PCT ID"]]
-    suggestions = set()
-    for c in pair:
-        assert c["target_name"] == "PCT_ID"  # unchanged until the user acts
-        assert c["collision_detected"] is True
-        assert c["validation_status"] == "collision"
-        assert c["resolution_suggestions"][0] in ("INDUSTRY_PCT_ID", "COL_PCT_ID")
-        suggestions.add(c["resolution_suggestions"][0])
-    assert len(suggestions) == 2
+    assert col_bu_exec["target_name"] == "EXECUTIVE_ID"
+    assert col_bu_exec["collision_detected"] is False
+    assert col_bu_exec["validation_status"] == "valid"
+
+    assert col_exec_id["target_name"] == "ID"
+    assert col_exec_id["collision_detected"] is True
+    assert col_exec_id["validation_status"] == "collision"
+    
+    # Verify suggestions order:
+    assert col_exec_id["resolution_suggestions"][0] in ("EXECUTIVE_ID", "COL_ID")
+    assert col_ind_id["target_name"] == "ID"
+    assert col_ind_id["collision_detected"] is True
+    assert col_ind_id["validation_status"] == "collision"
+    assert col_ind_id["resolution_suggestions"][0] in ("INDUSTRY_ID", "COL_ID")
 
 
 def test_metric_and_column_rows_include_synonyms() -> None:

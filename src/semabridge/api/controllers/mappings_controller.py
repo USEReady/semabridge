@@ -63,6 +63,9 @@ class AutoMapRequest(BaseModel):
 
 class DeployRequest(BaseModel):
     field_mappings: List[Dict[str, Any]]
+    sync_mode: Optional[str] = None
+    confirm_removals: Optional[List[str]] = None
+    acknowledge_duplicates: Optional[bool] = False
 
 # --- Router ---
 
@@ -441,6 +444,10 @@ def _restore_engine_collision_verdicts(
         if engine_row.get("mapping_scope"):
             row["mapping_scope"] = engine_row.get("mapping_scope")
         if engine_row.get("collision_detected"):
+            row["collision_detected"] = True
+            row["validation_status"] = engine_row.get("validation_status") or "collision"
+            row["validation_code"] = engine_row.get("validation_code") or "NAME_COLLISION"
+            row["status"] = "collision"
             continue
         if str(row.get("validation_code") or "").upper() == "COLLISION":
             row["collision_detected"] = False
@@ -1359,6 +1366,9 @@ async def deploy_mappings(
                 "run_type": "SYNC",
                 "field_mappings": request.field_mappings,
                 "user_id": request_user_id,
+                "sync_mode": request.sync_mode,
+                "confirm_removals": request.confirm_removals,
+                "acknowledge_duplicates": request.acknowledge_duplicates,
             },
         )
         return {

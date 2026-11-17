@@ -127,6 +127,15 @@ def _extract_project_workspace(p: Dict[str, Any]) -> str:
     return str(ws or "").strip().casefold()
 
 
+def _is_preview_project(p_id: str, p: Dict[str, Any]) -> bool:
+    pid_str = str(p_id or "").lower()
+    if pid_str.startswith("preview-") or pid_str.startswith("dry-run-"):
+        return True
+    if p.get("is_preview") or p.get("mode") == "preview":
+        return True
+    return False
+
+
 def detect_project_match(
     new_name: str,
     source_cfg: Dict[str, Any],
@@ -149,7 +158,7 @@ def detect_project_match(
     # Pass 1: Match A - Identical content hash checked against ALL projects in the workspace
     if content_hash:
         for p_id, p in existing_projects.items():
-            if not isinstance(p, dict) or p.get("is_deleted"):
+            if not isinstance(p, dict) or p.get("is_deleted") or _is_preview_project(p_id, p):
                 continue
             p_ws = _extract_project_workspace(p)
             if target_ws and p_ws and target_ws != p_ws:
@@ -167,7 +176,7 @@ def detect_project_match(
 
     # Pass 2: Match B - Same source identity with different content (or missing hash on existing)
     for p_id, p in existing_projects.items():
-        if not isinstance(p, dict) or p.get("is_deleted"):
+        if not isinstance(p, dict) or p.get("is_deleted") or _is_preview_project(p_id, p):
             continue
         p_ws = _extract_project_workspace(p)
         if target_ws and p_ws and target_ws != p_ws:
@@ -214,7 +223,7 @@ def detect_project_match(
     # Pass 3: Match C - Same project name, different source in the same workspace -> name clash
     if clean_new_name:
         for p_id, p in existing_projects.items():
-            if not isinstance(p, dict) or p.get("is_deleted"):
+            if not isinstance(p, dict) or p.get("is_deleted") or _is_preview_project(p_id, p):
                 continue
             p_ws = _extract_project_workspace(p)
             if target_ws and p_ws and target_ws != p_ws:
@@ -255,6 +264,171 @@ def _build_match_info(
         "number_of_views": len(views) if isinstance(views, list) else 1,
         "options": options,
     }
+
+
+def check_target_semantic_view_exists(
+    project_id: Optional[str],
+    config_yaml_or_dict: Any,
+    cursor: Optional[Any] = None,
+    target_database: Optional[str] = None,
+    target_schema: Optional[str] = None,
+    view_name: Optional[str] = None,
+    existing_projects: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Checks whether the target semantic view already exists before deploying.
+    Executes SHOW SEMANTIC VIEWS IN SCHEMA <db>.<schema> if a cursor is available,
+    and checks SemaBridge's deployed snapshots to determine ownership:
+      - this project
+      - another project in the workspace
+      - not created by SemaBridge (upsert_available = False)
+    """
+    import yaml
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.snapshot_models import SnapshotRow
+    from semabridge.api.services.project_shared import _compat_projects
+    from sqlalchemy import select
+
+    cfg: Dict[str, Any] = {}
+    if isinstance(config_yaml_or_dict, str):
+        try:
+            cfg = yaml.safe_load(config_yaml_or_dict) or {}
+        except Exception:
+            cfg = {}
+    elif isinstance(config_yaml_or_dict, dict):
+        cfg = config_yaml_or_dict
+
+    db, sch = target_database, target_schema
+    if not db or not sch:
+        target = cfg.get("target") or {}
+        if isinstance(target, dict):
+            db = target.get("database") or cfg.get("database")
+            sch = target.get("schema") or target.get("schema_name") or cfg.get("schema")
+        elif isinstance(target, list) and len(target) > 0 and isinstance(target[0], dict):
+            db = target[0].get("database") or cfg.get("database")
+            sch = target[0].get("schema") or target[0].get("schema_name") or cfg.get("schema")
+        if not db:
+            db = cfg.get("snowflake_database") or cfg.get("database")
+        if not sch:
+            sch = cfg.get("snowflake_schema") or cfg.get("schema")
+
+    db = str(db or "").strip().upper()
+    sch = str(sch or "").strip().upper()
+
+    planned_views: List[str] = []
+    if view_name:
+        planned_views.append(str(view_name).strip().upper())
+    else:
+        src = cfg.get("source") or {}
+        models = src.get("models") if isinstance(src, dict) else None
+        if isinstance(models, list):
+            for m in models:
+                if isinstance(m, str) and m.strip():
+                    vn = Path(m).stem if ("/" in m or "\\" in m or m.endswith(".pbix")) else m
+                    clean_vn = re.sub(r"[^A-Za-z0-9_]+", "_", vn).strip("_").upper()
+                    if clean_vn and clean_vn not in planned_views:
+                        planned_views.append(clean_vn)
+        target = cfg.get("target") or {}
+        if isinstance(target, dict) and target.get("view"):
+            vn = str(target["view"]).strip().upper()
+            if vn and vn not in planned_views:
+                planned_views.append(vn)
+        if not planned_views:
+            model_name = str(cfg.get("name") or cfg.get("semantic_name") or project_id or "SEMANTIC_VIEW").strip().upper()
+            clean_vn = re.sub(r"[^A-Za-z0-9_]+", "_", model_name).strip("_")
+            if clean_vn:
+                planned_views.append(clean_vn)
+
+    # 1. Query Snowflake SHOW SEMANTIC VIEWS if cursor available
+    snowflake_views: Set[str] = set()
+    if cursor is not None and db and sch:
+        try:
+            cursor.execute(f"SHOW SEMANTIC VIEWS IN SCHEMA {db}.{sch}")
+            rows = cursor.fetchall() or []
+            for r in rows:
+                vn = None
+                if isinstance(r, dict):
+                    vn = r.get("name") or r.get("NAME")
+                elif isinstance(r, (list, tuple)) and len(r) > 1:
+                    vn = r[1]
+                if vn:
+                    snowflake_views.add(str(vn).strip().upper())
+        except Exception as exc:
+            logger.debug("SHOW SEMANTIC VIEWS query failed or not supported on this cursor: %s", exc)
+
+    # 2. Check deployed snapshots in DB
+    deployed_snapshots: List[SnapshotRow] = []
+    try:
+        with db_manager.get_session() as session:
+            stmt = (
+                select(SnapshotRow)
+                .where(SnapshotRow.deployed_at.is_not(None))
+                .order_by(SnapshotRow.deployed_at.desc())
+            )
+            all_snaps = list(session.execute(stmt).scalars().all())
+            session.expunge_all()
+            for s in all_snaps:
+                s_db = str(s.target_database or "").strip().upper()
+                s_sch = str(s.target_schema or "").strip().upper()
+                if (not db or s_db == db) and (not sch or s_sch == sch):
+                    deployed_snapshots.append(s)
+    except Exception as exc:
+        logger.debug("SnapshotRow query failed: %s", exc)
+
+    projects_store = existing_projects if existing_projects is not None else _compat_projects
+
+    # Check each planned view
+    for target_vn in planned_views:
+        view_in_snowflake = target_vn in snowflake_views
+        matching_snap = None
+        for s in deployed_snapshots:
+            snap_vn = str(s.view_name or "").strip().upper()
+            if snap_vn == target_vn:
+                matching_snap = s
+                break
+
+        if not view_in_snowflake and not matching_snap:
+            continue
+
+        if matching_snap:
+            owner_id = str(matching_snap.project_id)
+            owner_proj = projects_store.get(owner_id) if isinstance(projects_store, dict) else {}
+            owner_name = str((owner_proj or {}).get("name") or owner_id)
+            last_deployed_at = matching_snap.deployed_at.isoformat() if matching_snap.deployed_at else None
+
+            sml_dict: Dict[str, Any] = {}
+            if matching_snap.sml_blob:
+                try:
+                    sml_dict = json.loads(matching_snap.sml_blob) if isinstance(matching_snap.sml_blob, str) else matching_snap.sml_blob
+                except Exception:
+                    sml_dict = {}
+
+            metric_count = len(sml_dict.get("metrics") or [])
+            dimension_count = sum(len(d.get("columns") or []) for d in (sml_dict.get("datasets") or []))
+            upsert_available = True
+        else:
+            owner_id = None
+            owner_name = None
+            last_deployed_at = None
+            metric_count = 0
+            dimension_count = 0
+            upsert_available = False
+
+        full_view_name = f"{db}.{sch}.{target_vn}" if db and sch else target_vn
+        return {
+            "status": "target_view_exists",
+            "view_name": full_view_name,
+            "raw_view_name": target_vn,
+            "owner_project_id": owner_id,
+            "owner_project_name": owner_name,
+            "last_deployed_at": last_deployed_at,
+            "metric_count": metric_count,
+            "dimension_count": dimension_count,
+            "upsert_available": upsert_available,
+            "options": ["upsert", "copy"] if upsert_available else ["copy"],
+            "message": f"Semantic view '{full_view_name}' already exists in target schema {db}.{sch}.",
+        }
+
+    return None
 
 
 # ---------------------------------------------------------------------------

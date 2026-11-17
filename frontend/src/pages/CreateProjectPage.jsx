@@ -47,6 +47,7 @@ import { donePbixPaths, planPbixFileAdditions, entriesFromSavedPaths } from '../
 import { cleanPbixLabel } from '../utils/pbixLabel';
 import { useMultiDryRunJob } from '../components/CreateProjectWizard/useMultiDryRunJob';
 import { normalizeRows } from '../utils/normalizeRows';
+import { resolveMultiModelReadiness, getSyncButtonProps } from '../utils/multiFileDryRunReadiness';
 import { escapeYamlString } from '../utils/yaml';
 import { canProjectUpsert } from '../utils/syncMode';
 import { StepBasicInfo } from '../components/CreateProjectWizard/StepBasicInfo';
@@ -328,6 +329,25 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
   const [runWarning, setRunWarning] = useState('');
+  const [existingProjects, setExistingProjects] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    api.listProjects().then((list) => {
+      if (active && Array.isArray(list)) setExistingProjects(list);
+    }).catch(() => { });
+    return () => { active = false; };
+  }, []);
+
+  const nameClash = useMemo(() => {
+    if (editMode) return false;
+    const clean = name.trim().toLowerCase();
+    if (!clean) return false;
+    return existingProjects.some(
+      (p) => String(p?.name || '').trim().toLowerCase() === clean
+    );
+  }, [name, existingProjects, editMode]);
+
   // Step 4 (Ontology review) state; kept here so Back/Next preserves decisions.
   const [ontologyReview, setOntologyReview] = useState(EMPTY_REVIEW);
   const isHydratedRef = useRef(false);
@@ -949,7 +969,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               }
             }
           }
-          
+
           setWsLoading(false); // Set loading to false immediately after 200 OK
         })
         .catch((err) => {
@@ -1257,8 +1277,22 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       }
 
     } catch (err) {
+      if (err?.cancelled) {
+        return;
+      }
       setCreatedProject(null);
-      setCreateError(err?.message || 'Create project failed.');
+      let msg = err?.message || 'Create project failed.';
+      const detail = err?.payload?.detail || err?.detail;
+      if (detail && typeof detail === 'object') {
+        if (detail.match_type === 'C') {
+          msg = `A project named "${name}" already exists in this workspace. Please choose another name.`;
+        } else if (typeof detail.reason === 'string') {
+          msg = detail.reason;
+        } else if (typeof detail.message === 'string') {
+          msg = detail.message;
+        }
+      }
+      setCreateError(msg);
       console.error('Create project failed:', err);
     } finally {
       setSaving(false);
@@ -1452,7 +1486,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     if (selectedModels.size) {
       lines.push('selection:');
       lines.push('  model_ids:');
-      
+
       const resolvedIds = new Set();
       [...selectedModels].forEach(modelKey => {
         const id = modelKey.includes('::') ? modelKey.split('::')[1] : modelKey;
@@ -1526,7 +1560,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
 
   /* ─── Step validity ─── */
   const canAdvance = () => {
-    if (step === 1) return name.trim().length > 0;
+    if (step === 1) return name.trim().length > 0 && !nameClash;
     // Fabric: the backend rejects an empty model list -- require >= 1.
     if (step === 3 && sourceConnector === 'fabric') return selectedModelNames.length > 0;
     if (step === 5) return mappingReadyToProceed;
@@ -1720,6 +1754,10 @@ export default function CreateProjectPage({ editMode = false, initialData = null
   });
   const multiSections = multiJob.sections;
   const isMultiModelRun = Boolean(multiDryRunJob?.job_id) && multiSections.length > 0;
+  const multiReadiness = useMemo(
+    () => resolveMultiModelReadiness(multiSections),
+    [multiSections],
+  );
   const updateMultiFileRows = multiJob.updateFileRows;
 
   const handleRemoveMultiFile = useCallback((fileId) => {
@@ -2080,6 +2118,21 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     return Object.keys(diff).length > 0 ? diff : null;
   }, [editMode, initialData, name, description, tags, sourceConnector, targetConnectors]);
 
+  const step5SyncButtonProps = useMemo(() => {
+    if (step !== 5) return null;
+    if (isMultiModelRun && multiSections.length > 0) {
+      return getSyncButtonProps(multiReadiness);
+    }
+    const isSingleSkipped = dryRunData?.status === 'SKIPPED_NO_TABLES' || dryRunData?.skipped_no_tables;
+    if (isSingleSkipped) {
+      return { label: 'Nothing to create', disabled: true };
+    }
+    if (mappingDryRunStatus === 'success') {
+      return { label: 'Create 1 of 1 semantic view', disabled: !mappingReadyToProceed };
+    }
+    return null;
+  }, [step, isMultiModelRun, multiSections.length, multiReadiness, dryRunData, mappingDryRunStatus, mappingReadyToProceed]);
+
   /* ─── Render ─── */
   return (
     <div style={{ padding: '0', minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-main)', position: 'relative' }}>
@@ -2103,8 +2156,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         alignItems: 'center',
         overflowY: 'auto'
       }}>
-        <div style={{ 
-          width: '100%', 
+        <div style={{
+          width: '100%',
           maxWidth: (step >= 3 && step <= 5) ? 1400 : 900,
           transition: 'max-width 0.3s ease'
         }}>
@@ -2120,6 +2173,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
               tagInput={tagInput} setTagInput={setTagInput}
               showValidation={showStep1Validation}
               editMode={editMode}
+              nameClash={nameClash}
             />
           )}
           {step === 2 && (
@@ -2343,6 +2397,8 @@ export default function CreateProjectPage({ editMode = false, initialData = null
         saving={saving}
         mappingLoading={mappingLoading}
         editMode={editMode}
+        nextLabel={step5SyncButtonProps?.label}
+        nextDisabled={step5SyncButtonProps?.disabled}
       />
 
       <Modal

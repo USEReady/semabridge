@@ -514,15 +514,36 @@ async function handleResponse(res) {
                 detail = parsed.detail;
             } else if (typeof parsed?.detail?.message === 'string' && parsed.detail.message.trim()) {
                 detail = parsed.detail.message;
+            } else if (typeof parsed?.detail?.reason === 'string' && parsed.detail.reason.trim()) {
+                detail = parsed.detail.reason;
             } else if (typeof parsed?.message === 'string' && parsed.message.trim()) {
                 detail = parsed.message;
+            } else if (typeof parsed?.error === 'string' && parsed.error.trim()) {
+                detail = parsed.error;
+            } else if (parsed && typeof parsed === 'object') {
+                if (res.status === 409) {
+                    detail = 'A semantic view or resource conflict occurred.';
+                } else if (res.status === 500) {
+                    detail = 'An unexpected server error occurred.';
+                } else {
+                    detail = `Request failed with status ${res.status}`;
+                }
             }
         } catch {
             // Keep raw response text detail when JSON parsing fails.
         }
+        if (typeof detail === 'string' && (detail.trim().startsWith('{') || detail.trim().startsWith('['))) {
+            try {
+                const sub = JSON.parse(detail);
+                detail = sub?.message || sub?.reason || sub?.error || (res.status === 409 ? 'A semantic view or resource conflict occurred.' : `Request failed with status ${res.status}`);
+            } catch {
+                detail = res.status === 409 ? 'A semantic view or resource conflict occurred.' : `Request failed with status ${res.status}`;
+            }
+        }
         const error = new Error(`API Error ${res.status}: ${detail}`);
         error.status = res.status;
         error.payload = parsed;
+        error.detail = parsed?.detail || parsed;
         throw error;
     }
     return res.json();
@@ -1439,14 +1460,37 @@ export const api = {
 
     async createProject(data) {
         invalidateApiCache('projects:list');
-        const res = await authFetch(`${API_BASE_URL}/projects`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
-        });
-        const created = await handleResponse(res);
-        return normalizeProject(created?.project ?? created);
+        const send = async (body) => {
+            const res = await authFetch(`${API_BASE_URL}/projects`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
+            });
+            const created = await handleResponse(res);
+            return normalizeProject(created?.project ?? created);
+        };
+        try {
+            return await send(data);
+        } catch (err) {
+            if (!isDuplicateSyncError(err)) throw err;
+            const choice = await requestDuplicateSyncConfirmation(err.payload?.detail || err.detail);
+            if (!choice) {
+                const cancelled = new Error('Project creation cancelled.');
+                cancelled.cancelled = true;
+                throw cancelled;
+            }
+            const syncMode = typeof choice === 'string' ? choice : (choice.sync_mode || 'copy');
+            const mode = typeof choice === 'object' ? (choice.mode || choice.resync_mode) : undefined;
+            const confirmRemovals = typeof choice === 'object' ? choice.confirm_removals : undefined;
+            return send({
+                ...(data || {}),
+                acknowledge_duplicates: true,
+                sync_mode: syncMode,
+                ...(mode ? { mode, resync_mode: mode } : {}),
+                ...(confirmRemovals ? { confirm_removals: confirmRemovals } : {}),
+            });
+        }
     },
 
     async uploadPbix(file) {
@@ -1655,14 +1699,7 @@ export const api = {
                 timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
             });
             
-            // Handle non-200 responses
-            if (!res.ok) {
-                const errorText = await res.text();
-                console.error('[API] Dry run failed:', res.status, errorText);
-                throw new Error(`Dry run failed: ${res.status} - ${errorText}`);
-            }
-            
-            const data = await res.json();
+            const data = await handleResponse(res);
             
             // Validate response has required structure
             if (!data || typeof data !== 'object') {
@@ -1781,13 +1818,35 @@ export const api = {
         return handleResponse(res);
     },
 
-    async deployMappings(projectId, fieldMappings) {
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/deploy`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ field_mappings: fieldMappings }),
-        });
-        return handleResponse(res);
+    async deployMappings(projectId, fieldMappings, options = {}) {
+        const send = async (body) => {
+            const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/deploy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            return handleResponse(res);
+        };
+        const initialBody = { field_mappings: fieldMappings, ...(options || {}) };
+        try {
+            return await send(initialBody);
+        } catch (err) {
+            if (!isDuplicateSyncError(err)) throw err;
+            const choice = await requestDuplicateSyncConfirmation(err.payload?.detail || err.detail);
+            if (!choice) {
+                const cancelled = new Error('Deployment cancelled.');
+                cancelled.cancelled = true;
+                throw cancelled;
+            }
+            const syncMode = typeof choice === 'string' ? choice : (choice.sync_mode || 'copy');
+            const confirmRemovals = typeof choice === 'object' ? choice.confirm_removals : undefined;
+            return send({
+                ...initialBody,
+                acknowledge_duplicates: true,
+                sync_mode: syncMode,
+                ...(confirmRemovals ? { confirm_removals: confirmRemovals } : {}),
+            });
+        }
     },
 
     async deleteMappings(projectId) {
@@ -2012,16 +2071,23 @@ export const api = {
         try {
             return await send(payload);
         } catch (err) {
-            // Pre-sync duplicate check: a model is already synced by another
-            // project. Ask the user; only a confirmed retry deploys.
+            // Target view already exists / duplicate check:
+            // Ask the user; only a confirmed retry deploys with chosen sync_mode.
             if (!isDuplicateSyncError(err)) throw err;
-            const confirmed = await requestDuplicateSyncConfirmation(err.payload.detail);
-            if (!confirmed) {
-                const cancelled = new Error('Sync cancelled: model already synced by another project.');
+            const choice = await requestDuplicateSyncConfirmation(err.payload?.detail || err.detail);
+            if (!choice) {
+                const cancelled = new Error('Sync cancelled: target semantic view already exists.');
                 cancelled.cancelled = true;
                 throw cancelled;
             }
-            return send({ ...(payload || {}), acknowledge_duplicates: true });
+            const syncMode = typeof choice === 'string' ? choice : (choice.sync_mode || 'copy');
+            const confirmRemovals = typeof choice === 'object' ? choice.confirm_removals : undefined;
+            return send({
+                ...(payload || {}),
+                acknowledge_duplicates: true,
+                sync_mode: syncMode,
+                ...(confirmRemovals ? { confirm_removals: confirmRemovals } : {}),
+            });
         }
     },
 

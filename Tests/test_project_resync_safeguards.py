@@ -251,3 +251,135 @@ def test_audit_logging(tmp_path):
     assert len(lines) == 1
     assert lines[0]["project_id"] == "proj-100"
     assert lines[0]["mode"] == "upsert"
+
+
+def test_target_view_exists_with_baseline_snapshot():
+    """Requirement: view exists + no mode -> 409 with all fields; baseline exists -> upsert_available True."""
+    from semabridge.core.project_resync import check_target_semantic_view_exists
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.snapshot_models import SnapshotRow
+    from datetime import datetime, timezone
+    import json
+
+    engine = db_manager.get_engine()
+    Base.metadata.create_all(bind=engine)
+    now = datetime.now(timezone.utc)
+    sml_content = json.dumps({
+        "metrics": [{"name": "Sales"}, {"name": "Profit"}],
+        "datasets": [{"columns": [{"name": "Date"}, {"name": "Region"}, {"name": "Amount"}]}],
+    })
+
+    with db_manager.get_session() as session:
+        session.query(SnapshotRow).filter(SnapshotRow.snapshot_id == "snap-test-view-1").delete()
+        snap = SnapshotRow(
+            snapshot_id="snap-test-view-1",
+            project_id="proj-owner-1",
+            timestamp=now,
+            status="success",
+            sync_mode="copy",
+            deployed_at=now,
+            target_database="ANALYTICS",
+            target_schema="PUBLIC",
+            view_name="REVENUE_VIEW",
+            sml_blob=sml_content,
+        )
+        session.add(snap)
+        session.commit()
+
+    existing_projects = {
+        "proj-owner-1": {"name": "Revenue Analytics"},
+    }
+
+    conflict = check_target_semantic_view_exists(
+        project_id="proj-new-attempt",
+        config_yaml_or_dict={
+            "target": {"database": "ANALYTICS", "schema": "PUBLIC", "view": "REVENUE_VIEW"}
+        },
+        existing_projects=existing_projects,
+    )
+
+    assert conflict is not None
+    assert conflict["status"] == "target_view_exists"
+    assert conflict["view_name"] == "ANALYTICS.PUBLIC.REVENUE_VIEW"
+    assert conflict["raw_view_name"] == "REVENUE_VIEW"
+    assert conflict["owner_project_id"] == "proj-owner-1"
+    assert conflict["owner_project_name"] == "Revenue Analytics"
+    assert conflict["last_deployed_at"] is not None
+    assert conflict["metric_count"] == 2
+    assert conflict["dimension_count"] == 3
+    assert conflict["upsert_available"] is True
+    assert conflict["options"] == ["upsert", "copy"]
+
+
+def test_target_view_created_outside_semabridge_upsert_unavailable():
+    """Requirement: view created outside SemaBridge (SHOW SEMANTIC VIEWS returns it, no snapshot) -> upsert_available false."""
+    from semabridge.core.project_resync import check_target_semantic_view_exists
+
+    class MockCursor:
+        def execute(self, sql):
+            self.last_sql = sql
+
+        def fetchall(self):
+            return [{"NAME": "EXTERNAL_VIEW"}]
+
+    conflict = check_target_semantic_view_exists(
+        project_id="proj-import",
+        config_yaml_or_dict={
+            "target": {"database": "RAW_DB", "schema": "PUBLIC", "view": "EXTERNAL_VIEW"}
+        },
+        cursor=MockCursor(),
+        existing_projects={},
+    )
+
+    assert conflict is not None
+    assert conflict["view_name"] == "RAW_DB.PUBLIC.EXTERNAL_VIEW"
+    assert conflict["owner_project_id"] is None
+    assert conflict["owner_project_name"] is None
+    assert conflict["upsert_available"] is False
+    assert conflict["options"] == ["copy"]
+
+
+def test_owner_other_project_detected():
+    """Requirement: owner = other project shows warning distinction."""
+    from semabridge.core.project_resync import check_target_semantic_view_exists
+    from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.snapshot_models import SnapshotRow
+    from datetime import datetime, timezone
+
+    engine = db_manager.get_engine()
+    Base.metadata.create_all(bind=engine)
+    now = datetime.now(timezone.utc)
+    with db_manager.get_session() as session:
+        session.query(SnapshotRow).filter(SnapshotRow.snapshot_id == "snap-test-view-2").delete()
+        snap = SnapshotRow(
+            snapshot_id="snap-test-view-2",
+            project_id="proj-finance",
+            timestamp=now,
+            status="success",
+            sync_mode="copy",
+            deployed_at=now,
+            target_database="FINANCE_DB",
+            target_schema="REPORTING",
+            view_name="FIN_METRICS",
+            sml_blob="{}",
+        )
+        session.add(snap)
+        session.commit()
+
+    existing_projects = {"proj-finance": {"name": "Finance Team"}}
+
+    # When queried by a different project
+    conflict = check_target_semantic_view_exists(
+        project_id="proj-marketing",
+        config_yaml_or_dict={
+            "target": {"database": "FINANCE_DB", "schema": "REPORTING", "view": "FIN_METRICS"}
+        },
+        existing_projects=existing_projects,
+    )
+    assert conflict is not None
+    assert conflict["owner_project_id"] == "proj-finance"
+    assert conflict["owner_project_id"] != "proj-marketing"
+    assert conflict["owner_project_name"] == "Finance Team"
+

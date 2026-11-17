@@ -944,11 +944,13 @@ def _compat_serialize_auto_map_entity_mappings(
             first["validation_status"] = "invalid"
             first["validation_code"] = "COLLISION"
             first["validation_message"] = "Duplicate target name detected."
+            first["status"] = "collision"
 
             mapping["collision_detected"] = True
             mapping["validation_status"] = "invalid"
             mapping["validation_code"] = "COLLISION"
             mapping["validation_message"] = "Duplicate target name detected."
+            mapping["status"] = "collision"
         else:
             seen[target_key] = mapping
 

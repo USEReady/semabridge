@@ -14,7 +14,7 @@ import MultiFileDryRunStatus from './MultiFileDryRunStatus';
 import UpsertChangesView, { OntologyChangesList } from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
-import { resolveMultiModelReadiness, flattenSectionRows } from '../../utils/multiFileDryRunReadiness';
+import { resolveMultiModelReadiness, flattenSectionRows, formatZeroTablesReason } from '../../utils/multiFileDryRunReadiness';
 
 const hasOntologyChanges = (c) => Boolean(c && typeof c === 'object' && (
   Object.values(c.applied || {}).some((n) => Number(n) > 0) ||
@@ -682,6 +682,72 @@ export function StepMappingOptions({
             onRetryFile={onRetryMultiFile}
             onRemoveFile={onRemoveMultiFile}
           />
+        </div>
+      )}
+
+      {/* ── Zero-Tables Skipped Model Warning ──────────────────────────────── */}
+      {!multiDryRunJob?.job_id && (dryRunData?.status === 'SKIPPED_NO_TABLES' || dryRunData?.skipped_no_tables) && (
+        <div style={{
+          border: '1px solid rgba(245, 158, 11, 0.45)',
+          borderRadius: 10,
+          background: 'rgba(245, 158, 11, 0.05)',
+          padding: '16px 18px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <AlertTriangle size={18} style={{ color: 'var(--color-warning)', flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {dryRunData?.model_name || 'Model'}
+                </span>
+                <span style={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  color: 'var(--color-warning)',
+                  background: 'rgba(245, 158, 11, 0.18)',
+                  padding: '2px 8px',
+                  borderRadius: 6,
+                  textTransform: 'uppercase',
+                }}>
+                  SKIPPED (0 TABLES)
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+                <strong style={{ color: 'var(--color-warning)' }}>No tables found - a semantic view cannot be created: </strong>
+                {formatZeroTablesReason(dryRunData)}
+              </div>
+            </div>
+            <span style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: 'var(--text-secondary)',
+              background: 'var(--bg-surface-raised)',
+              border: '1px solid var(--border-main)',
+              borderRadius: 6,
+              padding: '4px 10px',
+            }}>
+              Skip (default)
+            </span>
+          </div>
+          {dryRunData?.reason_code && (
+            <div style={{
+              fontSize: 12,
+              color: 'var(--text-tertiary)',
+              padding: '8px 12px',
+              borderRadius: 6,
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-main)',
+            }}>
+              <div><strong>Reason Code:</strong> <code>{dryRunData.reason_code}</code></div>
+              {dryRunData.model_reference && <div><strong>Power BI Service Reference:</strong> <code>{dryRunData.model_reference}</code></div>}
+              {Array.isArray(dryRunData.measures) && dryRunData.measures.length > 0 && (
+                <div><strong>Measures:</strong> {dryRunData.measures.map(m => m.name || m).join(', ')}</div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

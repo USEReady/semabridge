@@ -16,13 +16,14 @@
  * a per-model Retry; other models are never hidden by a sibling's failure.
  */
 import { useCallback, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, RotateCcw, X, Zap } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, RotateCcw, X, Zap, AlertTriangle, Info } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import DryRunMappingTable from '../DryRunMappingTable';
 import UpsertChangesView from '../UpsertChangesView';
 import PanelBoundary from '../common/PanelBoundary';
 import TableBindingPlan from '../TableBindingPlan';
 import { resolveCollisionsForRows } from '../../utils/projectHelpers';
+import { formatZeroTablesReason } from '../../utils/multiFileDryRunReadiness';
 
 function pluralize(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -250,6 +251,146 @@ export default function MultiFileDryRunStatus({
       {sections.map((section) => {
         const isOpen = expanded.has(section.fileId);
         const isRerunning = rerunningIds.has(section.fileId);
+        const isSkippedNoTables = section.status === 'skipped_no_tables';
+
+        if (isSkippedNoTables) {
+          const reasonText = formatZeroTablesReason(section);
+          return (
+            <div
+              key={section.fileId}
+              style={{
+                border: '1px solid rgba(245, 158, 11, 0.45)',
+                borderRadius: 10,
+                background: 'rgba(245, 158, 11, 0.05)',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '12px 14px',
+                  userSelect: 'none',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <AlertTriangle size={16} style={{ color: 'var(--color-warning)', flexShrink: 0 }} />
+                <div style={{ minWidth: 200, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {section.label}
+                    </span>
+                    <span style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      color: 'var(--color-warning)',
+                      background: 'rgba(245, 158, 11, 0.18)',
+                      padding: '2px 8px',
+                      borderRadius: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}>
+                      SKIPPED (0 TABLES)
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                    <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>No tables found - a semantic view cannot be created: </span>
+                    {reasonText}
+                  </div>
+                </div>
+
+                {/* Actions: Skip (default) / Remove from project / Details */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: 'var(--text-secondary)',
+                      background: 'var(--bg-surface-raised)',
+                      border: '1px solid var(--border-main)',
+                      borderRadius: 6,
+                      padding: '4px 10px',
+                    }}
+                    title="This model will be skipped during synchronization"
+                  >
+                    Skip (default)
+                  </span>
+
+                  {onRemoveFile && sections.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(evt) => { evt.stopPropagation(); onRemoveFile(section.fileId); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        background: 'transparent',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        borderRadius: 6,
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--color-error)',
+                        cursor: 'pointer',
+                      }}
+                      title="Remove this model from the project"
+                    >
+                      <X size={12} /> Remove from project
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => toggle(section.fileId)}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid var(--border-main)',
+                      borderRadius: 6,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: 'var(--text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {isOpen ? 'Hide Details' : 'Details'}
+                  </button>
+                </div>
+              </div>
+
+              {isOpen && (
+                <div style={{
+                  padding: '12px 16px',
+                  borderTop: '1px solid rgba(245, 158, 11, 0.2)',
+                  background: 'var(--bg-surface)',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}>
+                  <div><strong>Reason Code:</strong> <code>{section.reasonCode || '0_PHYSICAL_TABLES'}</code></div>
+                  {section.modelReference && (
+                    <div><strong>Remote Model Reference:</strong> <code>{section.modelReference}</code></div>
+                  )}
+                  {Array.isArray(section.measures) && section.measures.length > 0 && (
+                    <div>
+                      <strong>Measures found ({section.measures.length}):</strong>
+                      <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 11, color: 'var(--text-primary)' }}>
+                        {section.measures.map((m) => (typeof m === 'string' ? m : (m?.name || m?.unique_name || ''))).filter(Boolean).join(', ')}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ color: 'var(--text-tertiary)', fontStyle: 'italic', marginTop: 4 }}>
+                    SemaBridge creates semantic views over physical tables. Models without physical tables cannot be translated into target database views.
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
         const failed = section.status === 'failed' || Boolean(section.loadError);
         const canRetry = failed && !isRerunning;
         const badgeStatus = isRerunning ? 'running' : section.status;
