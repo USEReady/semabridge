@@ -34,6 +34,7 @@ from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.core.zero_tables import ZeroTablesModelError
 from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
@@ -74,6 +75,8 @@ def _step4_extract(
         else:
             raise ExtractionError(f"Unknown source type: {context.source_type}")
 
+    except ZeroTablesModelError:
+        raise
     except Exception as e:
         self._record_step(4, StepStatus.FAILED, str(e))
         raise ExtractionError(f"Extraction failed: {e}") from e
