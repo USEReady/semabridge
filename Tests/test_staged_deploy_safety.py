@@ -13,7 +13,7 @@ from typing import Any, List, Optional, Tuple
 import pytest
 
 from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
-from semabridge.connectors.staged_deploy import STAGING_MARK, StagedDeploy
+from semabridge.connectors.staged_deploy import STAGING_MARK, StagedDeploy, with_copy_grants
 from semabridge.core.behavior import ConnectorBehavior
 from semabridge.core.settings import SnowflakeConfig
 from semabridge.formats.sml.models import SMLModel
@@ -135,7 +135,9 @@ def test_success_builds_in_staging_then_promotes_identical_definitions_last(monk
     assert f"{LIVE_ENRICHED}{STAGING_MARK}" in staging_sv_sql  # validated against the NEW enriched view
     # The live objects get exactly the definitions an unstaged deploy creates.
     assert writes[2][1] == ENRICHED_SQL
-    assert writes[3][1] == SV_DDL
+    # ...plus COPY GRANTS, so replacing the live view keeps its grants.
+    assert writes[3][1] == with_copy_grants(SV_DDL)
+    assert writes[3][1].rstrip().endswith("COPY GRANTS")
     # Nothing live was written before validation finished.
     assert all(STAGING_MARK in s for c, s in writes[:2])
     actions = [(e["action"], e["object_type"]) for e in emitter.deploy_events]
@@ -203,3 +205,13 @@ def _allow_staged_names(monkeypatch):
     # The real _execute_sql runs the ownership guard; the fake above does
     # not, so nothing to set up -- kept explicit for readers.
     yield
+
+
+def test_copy_grants_only_on_semantic_view_replace():
+    sv = 'CREATE OR REPLACE SEMANTIC VIEW "D"."S"."V"\n  TABLES (T AS "D"."S"."T")\n  COMMENT = \'x\';'
+    out = with_copy_grants(sv)
+    assert out.endswith("COPY GRANTS;")             # last clause, before the terminator
+    assert with_copy_grants(out) == out             # idempotent
+    view = 'CREATE OR REPLACE VIEW "D"."S"."E" AS SELECT 1'
+    assert with_copy_grants(view) == view           # other DDL untouched
+    assert with_copy_grants("") == ""

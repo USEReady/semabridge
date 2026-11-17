@@ -4,6 +4,7 @@ metrics become CAST(NULL AS DOUBLE) placeholders; everything else is unchanged."
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from semabridge.connectors.staged_deploy import with_copy_grants
 from semabridge.connectors.translator import MetricExpressionTranslator
 from semabridge.sml.models import SMLModel
 from semabridge.utils.identifiers import IdentifierSanitizer
@@ -108,8 +109,9 @@ def test_snowflake_rejected_metric_is_nulled_and_view_deploys(monkeypatch):
 
     assert emitter.deploy(_model_stub(), sync_mode="copy") is True
 
-    # The live view gets exactly the validated (remediated) SQL.
-    assert emitter._test_promoted == [executed[-1]]
+    # The live view gets exactly the validated (remediated) SQL, promoted
+    # with COPY GRANTS so existing grants survive the replace.
+    assert emitter._test_promoted == [with_copy_grants(executed[-1])]
     final = executed[-1]
     # The rejected metric is nulled with the Snowflake error in its COMMENT
     # (escaped literal, never a /* */ block).

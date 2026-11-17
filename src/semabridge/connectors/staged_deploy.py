@@ -18,7 +18,9 @@ A staged deploy (``SEMABRIDGE_STAGED_DEPLOY``, default on):
    names, then the validated (remediated) semantic-view DDL under the live
    name. ``CREATE OR REPLACE`` replaces each live object atomically, and
    both statements were just proven to compile, so the live semantic view
-   is never left pointing at objects it cannot use. If the semantic-view
+   is never left pointing at objects it cannot use. The semantic view is
+   promoted WITH ``COPY GRANTS`` so the grants on the live view survive the
+   replace (copied atomically by Snowflake). If the semantic-view
    promotion still fails, the enriched views are restored from the
    definitions captured (``GET_DDL``) just before promotion;
 4. deferred destructive work (dropping a stale enriched view that could not
@@ -50,6 +52,25 @@ _SV_NAME_RE = re.compile(
     r'(CREATE\s+(?:OR\s+REPLACE\s+)?SEMANTIC\s+VIEW\s+)((?:"[^"]+"|\w+)(?:\s*\.\s*(?:"[^"]+"|\w+))*)',
     re.IGNORECASE,
 )
+
+
+_COPY_GRANTS_RE = re.compile(r"\bCOPY\s+GRANTS\b", re.IGNORECASE)
+_REPLACE_SV_RE = re.compile(r"^\s*CREATE\s+OR\s+REPLACE\s+SEMANTIC\s+VIEW\b", re.IGNORECASE)
+
+
+def with_copy_grants(ddl: str) -> str:
+    """Add ``COPY GRANTS`` (the last clause of CREATE SEMANTIC VIEW) to a
+    ``CREATE OR REPLACE SEMANTIC VIEW``. Without it, replacing the live view
+    drops every explicit grant on it (only schema future grants survive);
+    with it Snowflake copies them in the same statement. Other DDL is
+    returned unchanged."""
+    if not ddl or not _REPLACE_SV_RE.match(ddl) or _COPY_GRANTS_RE.search(ddl):
+        return ddl
+    body = ddl.rstrip()
+    terminator = ""
+    if body.endswith(";"):
+        body, terminator = body[:-1].rstrip(), ";"
+    return f"{body}\nCOPY GRANTS{terminator}"
 
 
 def staged_deploy_enabled() -> bool:
@@ -206,7 +227,9 @@ class StagedDeploy:
             self._event("promoted", "VIEW", live)
         try:
             for ddl in semantic_ddls:
-                self._execute(cursor, ddl, context="promote-semantic-view")
+                # COPY GRANTS: replacing the live view must keep the access
+                # other roles were granted on it.
+                self._execute(cursor, with_copy_grants(ddl), context="promote-semantic-view")
             for live, _staging in self.semantic_views:
                 self._event("promoted", "SEMANTIC VIEW", live)
         except Exception as exc:
