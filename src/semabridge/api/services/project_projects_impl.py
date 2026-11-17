@@ -724,10 +724,21 @@ async def create_project_compat(request: dict):
 
     from semabridge.core.project_resync import check_target_semantic_view_exists
     target_conflict = check_target_semantic_view_exists(project_id, payload.get("config_yaml") or payload)
-    if target_conflict and not payload.get("sync_mode") and not bool(payload.get("acknowledge_duplicates", False)):
-        raise HTTPException(status_code=409, detail=target_conflict)
-    elif target_conflict and payload.get("sync_mode"):
-        chosen_mode = str(payload.get("sync_mode")).lower()
+    if target_conflict:
+        confirmed_view = str(payload.get("confirmed_target_view") or "").strip().upper()
+        conflict_full_vn = str(target_conflict.get("view_name") or "").strip().upper()
+        conflict_raw_vn = str(target_conflict.get("raw_view_name") or "").strip().upper()
+        is_confirmed = (
+            bool(confirmed_view)
+            and (
+                confirmed_view == conflict_full_vn
+                or confirmed_view == conflict_raw_vn
+                or (conflict_raw_vn and confirmed_view.endswith(f".{conflict_raw_vn}"))
+            )
+        )
+        if not is_confirmed:
+            raise HTTPException(status_code=409, detail=target_conflict)
+        chosen_mode = str(payload.get("sync_mode") or payload.get("mode") or "copy").lower()
         record_resync_audit(payload.get("user_id"), project_id, chosen_mode, details={"view_name": target_conflict.get("view_name")})
 
     if match_info and not requested_mode:
@@ -737,21 +748,13 @@ async def create_project_compat(request: dict):
     if requested_mode == "skip":
         return {"status": "skipped", "message": "Identical content; skipped", "match_info": match_info}
 
-    if requested_mode == "copy":
-        existing_names = {str(p.get("name") or "") for p in _compat_projects.values() if isinstance(p, dict)}
-        copy_name, copy_suffix = resolve_unique_copy_name(payload_name, existing_names)
-        payload_name = copy_name
-        payload["name"] = copy_name
-        payload["display_name"] = copy_name
-        record_resync_audit(payload.get("user_id"), project_id, "copy", match_type=match_info.get("match_type") if match_info else "B")
-
     existing_project_id = None
     existing_project = None
-    if match_info and requested_mode in ("upsert", "resync_anyway"):
+    if match_info and requested_mode in ("upsert", "copy", "resync_anyway"):
         existing_project_id = match_info.get("matched_project_id")
         existing_project = _compat_projects.get(existing_project_id) if existing_project_id else None
-        record_resync_audit(payload.get("user_id"), existing_project_id or project_id, "upsert", match_type=match_info.get("match_type") if match_info else "B")
-    elif requested_mode != "copy":
+        record_resync_audit(payload.get("user_id"), existing_project_id or project_id, requested_mode, match_type=match_info.get("match_type") if match_info else "B")
+    else:
         for candidate_id, candidate in _compat_projects.items():
             if _project_semantic_key(candidate, candidate_id) == requested_semantic_name.strip().casefold():
                 existing_project_id = candidate_id

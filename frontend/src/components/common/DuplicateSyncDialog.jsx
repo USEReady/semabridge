@@ -117,15 +117,23 @@ export default function DuplicateSyncDialog({ currentProjectId = null }) {
     );
   }
 
-  // Match B: Same source, changed file
+  // Match B: Same source, changed file -> offer Upsert / Copy for the existing project's view
   if (matchType === 'B') {
-    const canContinueB = Boolean(selectedMode);
+    const matchedProjectName = detail?.project_name || detail?.matched_project_id || 'Existing Project';
+    const lastSyncTime = detail?.last_sync_time ? new Date(detail.last_sync_time).toLocaleString() : 'Never';
+    const targetSchema = detail?.target_db_schema || '—';
+    const targetViewName = detail?.view_name || (detail?.target_db_schema ? `${targetSchema}.${matchedProjectName}` : matchedProjectName);
+    const upsertAvailable = detail?.upsert_available !== false;
+    const removedFields = Array.isArray(detail?.removed_fields) ? detail.removed_fields : [];
+    const needsRemovalConfirmation = selectedMode === 'copy' && removedFields.length > 0;
+    const canContinueB = Boolean(selectedMode) && (!needsRemovalConfirmation || confirmedRemovals);
+
     return (
       <Modal
         open={open}
         onClose={() => answer(false)}
-        title="Source already synced in workspace"
-        size="md"
+        title="Semantic view already exists"
+        size="lg"
         footer={(
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" style={SECONDARY_BTN} onClick={() => answer(false)}>
@@ -140,7 +148,9 @@ export default function DuplicateSyncDialog({ currentProjectId = null }) {
                 answer({
                   mode: selectedMode,
                   resync_mode: selectedMode,
-                  sync_mode: selectedMode === 'upsert' ? 'upsert' : 'copy',
+                  sync_mode: selectedMode,
+                  confirmed_target_view: detail?.view_name || detail?.raw_view_name || targetViewName,
+                  confirm_removals: selectedMode === 'copy' ? removedFields : undefined,
                 });
               }}
             >
@@ -149,12 +159,41 @@ export default function DuplicateSyncDialog({ currentProjectId = null }) {
           </div>
         )}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            A project with this source identity already exists in this workspace with different content. Choose how you want to proceed:
-          </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{
+            padding: '12px 14px',
+            borderRadius: 8,
+            background: 'var(--bg-surface-raised)',
+            border: '1px solid var(--border-main)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)' }}>
+              <Database size={15} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+              <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 13.5, wordBreak: 'break-all' }}>
+                {targetViewName}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Clock size={13} style={{ color: 'var(--text-tertiary)' }} />
+                Last deployed: {lastSyncTime}
+              </span>
+              <div>
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Project: </span>
+                <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>{matchedProjectName}</span>
+              </div>
+            </div>
+          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Select synchronization mode:
+            </div>
+
+            {/* Upsert Option */}
             <label style={{
               display: 'flex',
               alignItems: 'flex-start',
@@ -163,54 +202,104 @@ export default function DuplicateSyncDialog({ currentProjectId = null }) {
               borderRadius: 8,
               border: `1px solid ${selectedMode === 'upsert' ? 'var(--accent-blue)' : 'var(--border-main)'}`,
               background: selectedMode === 'upsert' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface)',
-              cursor: 'pointer',
+              cursor: upsertAvailable ? 'pointer' : 'not-allowed',
+              opacity: upsertAvailable ? 1 : 0.6,
+              transition: 'all 0.15s ease',
             }}>
               <input
                 type="radio"
                 name="match_b_mode"
                 value="upsert"
+                disabled={!upsertAvailable}
                 checked={selectedMode === 'upsert'}
                 onChange={() => setSelectedMode('upsert')}
-                style={{ marginTop: 3, accentColor: 'var(--accent-blue)', cursor: 'pointer' }}
+                style={{ marginTop: 3, accentColor: 'var(--accent-blue)', cursor: upsertAvailable ? 'pointer' : 'not-allowed' }}
               />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>
-                  Update the existing project
+                  Upsert
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                  Update the existing project with these changes (upsert).
+                  Update changed fields, add new ones, keep fields removed in Power BI.
                 </div>
+                {!upsertAvailable && (
+                  <div style={{ fontSize: 11.5, color: 'var(--color-warning)', marginTop: 4 }}>
+                    Upsert is unavailable because there is no baseline snapshot for this view (it was created outside SemaBridge).
+                  </div>
+                )}
               </div>
             </label>
 
+            {/* Copy Option */}
             <label style={{
               display: 'flex',
               alignItems: 'flex-start',
               gap: 12,
               padding: '12px 14px',
               borderRadius: 8,
-              border: `1px solid ${selectedMode === 'new_project' ? 'var(--accent-blue)' : 'var(--border-main)'}`,
-              background: selectedMode === 'new_project' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface)',
+              border: `1px solid ${selectedMode === 'copy' ? 'var(--accent-blue)' : 'var(--border-main)'}`,
+              background: selectedMode === 'copy' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface)',
               cursor: 'pointer',
+              transition: 'all 0.15s ease',
             }}>
               <input
                 type="radio"
                 name="match_b_mode"
-                value="new_project"
-                checked={selectedMode === 'new_project'}
-                onChange={() => setSelectedMode('new_project')}
+                value="copy"
+                checked={selectedMode === 'copy'}
+                onChange={() => setSelectedMode('copy')}
                 style={{ marginTop: 3, accentColor: 'var(--accent-blue)', cursor: 'pointer' }}
               />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>
-                  Create a separate project
+                  Copy
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                  Keep the existing project and create an independent new project.
+                  Replace the view exactly; fields removed in Power BI are dropped.
                 </div>
               </div>
             </label>
           </div>
+
+          {/* Removed Fields Warning & Confirmation for Copy Mode */}
+          {selectedMode === 'copy' && removedFields.length > 0 && (
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: 8,
+              background: 'rgba(251, 191, 36, 0.08)',
+              border: '1px solid rgba(251, 191, 36, 0.35)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              fontSize: 12.5,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-warning)', fontWeight: 600 }}>
+                <AlertTriangle size={15} />
+                <span>{removedFields.length} field(s) will be dropped from the target view:</span>
+              </div>
+              <div style={{
+                maxHeight: 120,
+                overflowY: 'auto',
+                fontFamily: 'monospace',
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                paddingLeft: 8,
+              }}>
+                {removedFields.map((f, i) => (
+                  <div key={i}>• {f}</div>
+                ))}
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: 'var(--text-primary)', marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={confirmedRemovals}
+                  onChange={(e) => setConfirmedRemovals(e.target.checked)}
+                  style={{ accentColor: 'var(--accent-blue)', cursor: 'pointer' }}
+                />
+                <span style={{ fontWeight: 600 }}>I understand and confirm dropping these fields</span>
+              </label>
+            </div>
+          )}
         </div>
       </Modal>
     );
@@ -304,6 +393,8 @@ export default function DuplicateSyncDialog({ currentProjectId = null }) {
               if (!canContinue) return;
               answer({
                 sync_mode: selectedMode,
+                mode: selectedMode,
+                confirmed_target_view: detail?.view_name || detail?.raw_view_name,
                 confirm_removals: selectedMode === 'copy' ? removedFields : undefined,
               });
             }}

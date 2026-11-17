@@ -1483,10 +1483,12 @@ export const api = {
             const syncMode = typeof choice === 'string' ? choice : (choice.sync_mode || 'copy');
             const mode = typeof choice === 'object' ? (choice.mode || choice.resync_mode) : undefined;
             const confirmRemovals = typeof choice === 'object' ? choice.confirm_removals : undefined;
+            const confirmedTargetView = typeof choice === 'object' ? (choice.confirmed_target_view || err.payload?.detail?.view_name || err.detail?.view_name) : (err.payload?.detail?.view_name || err.detail?.view_name);
             return send({
                 ...(data || {}),
                 acknowledge_duplicates: true,
                 sync_mode: syncMode,
+                ...(confirmedTargetView ? { confirmed_target_view: confirmedTargetView } : {}),
                 ...(mode ? { mode, resync_mode: mode } : {}),
                 ...(confirmRemovals ? { confirm_removals: confirmRemovals } : {}),
             });
@@ -1840,10 +1842,12 @@ export const api = {
             }
             const syncMode = typeof choice === 'string' ? choice : (choice.sync_mode || 'copy');
             const confirmRemovals = typeof choice === 'object' ? choice.confirm_removals : undefined;
+            const confirmedTargetView = typeof choice === 'object' ? (choice.confirmed_target_view || err.payload?.detail?.view_name || err.detail?.view_name) : (err.payload?.detail?.view_name || err.detail?.view_name);
             return send({
                 ...initialBody,
                 acknowledge_duplicates: true,
                 sync_mode: syncMode,
+                ...(confirmedTargetView ? { confirmed_target_view: confirmedTargetView } : {}),
                 ...(confirmRemovals ? { confirm_removals: confirmRemovals } : {}),
             });
         }
@@ -2082,10 +2086,12 @@ export const api = {
             }
             const syncMode = typeof choice === 'string' ? choice : (choice.sync_mode || 'copy');
             const confirmRemovals = typeof choice === 'object' ? choice.confirm_removals : undefined;
+            const confirmedTargetView = typeof choice === 'object' ? (choice.confirmed_target_view || err.payload?.detail?.view_name || err.detail?.view_name) : (err.payload?.detail?.view_name || err.detail?.view_name);
             return send({
                 ...(payload || {}),
                 acknowledge_duplicates: true,
                 sync_mode: syncMode,
+                ...(confirmedTargetView ? { confirmed_target_view: confirmedTargetView } : {}),
                 ...(confirmRemovals ? { confirm_removals: confirmRemovals } : {}),
             });
         }

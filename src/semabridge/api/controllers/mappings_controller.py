@@ -66,6 +66,7 @@ class DeployRequest(BaseModel):
     sync_mode: Optional[str] = None
     confirm_removals: Optional[List[str]] = None
     acknowledge_duplicates: Optional[bool] = False
+    confirmed_target_view: Optional[str] = None
 
 # --- Router ---
 
@@ -1358,6 +1359,24 @@ async def deploy_mappings(
     project_shared._compat_raise_if_store_failed()
 
     # ── 3. Trigger the full semantic sync pipeline (SYNC run) ─────────────────
+    from semabridge.core.project_resync import check_target_semantic_view_exists
+    cfg_to_check = project_shared._compat_project_configs.get(actual_project_id) or project_shared._compat_project_configs.get(project_id)
+    target_conflict = check_target_semantic_view_exists(actual_project_id, cfg_to_check)
+    if target_conflict:
+        confirmed_view = str(request.confirmed_target_view or "").strip().upper()
+        conflict_full_vn = str(target_conflict.get("view_name") or "").strip().upper()
+        conflict_raw_vn = str(target_conflict.get("raw_view_name") or "").strip().upper()
+        is_confirmed = (
+            bool(confirmed_view)
+            and (
+                confirmed_view == conflict_full_vn
+                or confirmed_view == conflict_raw_vn
+                or (conflict_raw_vn and confirmed_view.endswith(f".{conflict_raw_vn}"))
+            )
+        )
+        if not is_confirmed:
+            raise HTTPException(status_code=409, detail=target_conflict)
+
     try:
         run_result = await run_project_now_compat(
             actual_project_id,
@@ -1369,6 +1388,7 @@ async def deploy_mappings(
                 "sync_mode": request.sync_mode,
                 "confirm_removals": request.confirm_removals,
                 "acknowledge_duplicates": request.acknowledge_duplicates,
+                "confirmed_target_view": request.confirmed_target_view,
             },
         )
         return {
@@ -1379,6 +1399,8 @@ async def deploy_mappings(
             "deployed_count": len(request.field_mappings),
             "errors": [],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

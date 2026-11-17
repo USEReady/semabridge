@@ -1376,7 +1376,6 @@ async def _start_project_run_request(
 
             target_conflict = await asyncio.to_thread(check_target_semantic_view_exists, project_id, config_override)
             if target_conflict:
-                explicit_sync_mode = payload.get("sync_mode")
                 if is_scheduled_run:
                     from semabridge.api.services.project_shared import _compat_projects
                     proj_data = _compat_projects.get(project_id) or {}
@@ -1384,12 +1383,24 @@ async def _start_project_run_request(
                     if not saved_mode:
                         raise HTTPException(status_code=400, detail="Scheduled sync stopped: no sync mode configured for this project.")
                     payload["sync_mode"] = saved_mode
-                elif not explicit_sync_mode and not bool(payload.get("acknowledge_duplicates", False)):
-                    raise HTTPException(
-                        status_code=409,
-                        detail=target_conflict,
-                    )
                 else:
+                    confirmed_view = str(payload.get("confirmed_target_view") or "").strip().upper()
+                    conflict_full_vn = str(target_conflict.get("view_name") or "").strip().upper()
+                    conflict_raw_vn = str(target_conflict.get("raw_view_name") or "").strip().upper()
+                    is_confirmed = (
+                        bool(confirmed_view)
+                        and (
+                            confirmed_view == conflict_full_vn
+                            or confirmed_view == conflict_raw_vn
+                            or (conflict_raw_vn and confirmed_view.endswith(f".{conflict_raw_vn}"))
+                        )
+                    )
+                    if not is_confirmed:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=target_conflict,
+                        )
+                    explicit_sync_mode = payload.get("sync_mode")
                     chosen_mode = str(explicit_sync_mode or "copy").lower()
                     payload["sync_mode"] = chosen_mode
                     from semabridge.api.services.project_shared import _compat_projects

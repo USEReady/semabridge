@@ -383,3 +383,51 @@ def test_owner_other_project_detected():
     assert conflict["owner_project_id"] != "proj-marketing"
     assert conflict["owner_project_name"] == "Finance Team"
 
+
+@pytest.mark.asyncio
+async def test_sync_mode_sent_without_confirmed_target_view_raises_409(monkeypatch):
+    """TRIGGER TEST (Item 1): sync_mode sent but no confirmed_target_view -> 409 target_view_exists."""
+    from semabridge.api.services import project_projects_impl as ppi
+    from fastapi import HTTPException
+
+    fake_conflict = {
+        "status": "target_view_exists",
+        "view_name": "ANALYTICS.PUBLIC.REVENUE_VIEW",
+        "raw_view_name": "REVENUE_VIEW",
+        "owner_project_id": "proj-owner-1",
+        "owner_project_name": "Revenue Analytics",
+        "last_deployed_at": "2026-11-17T12:00:00Z",
+        "metric_count": 5,
+        "dimension_count": 10,
+        "upsert_available": True,
+        "options": ["upsert", "copy"],
+    }
+    monkeypatch.setattr(
+        "semabridge.core.project_resync.check_target_semantic_view_exists",
+        lambda pid, cfg, **kw: fake_conflict,
+    )
+
+    # 1. sync_mode is sent (as ProjectConfigPage / ProjectsPage does), but NO confirmed_target_view -> 409
+    payload = {
+        "name": "New Project Attempt",
+        "source": {"type": "pbix"},
+        "target": {"database": "ANALYTICS", "schema": "PUBLIC", "view": "REVENUE_VIEW"},
+        "sync_mode": "upsert",
+    }
+    with pytest.raises(HTTPException) as exc_info:
+        await ppi.create_project_compat(payload)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["status"] == "target_view_exists"
+    assert exc_info.value.detail["view_name"] == "ANALYTICS.PUBLIC.REVENUE_VIEW"
+
+    # 2. When confirmed_target_view matches, it bypasses the 409
+    payload_confirmed = {
+        **payload,
+        "confirmed_target_view": "ANALYTICS.PUBLIC.REVENUE_VIEW",
+    }
+    try:
+        await ppi.create_project_compat(payload_confirmed)
+    except HTTPException as e:
+        assert e.status_code != 409
+
+
