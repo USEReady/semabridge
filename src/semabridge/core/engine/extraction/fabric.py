@@ -34,6 +34,7 @@ from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
 from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
@@ -219,8 +220,6 @@ def _extract_fabric(
         extractor._token_expires_at = time.time() + 1800
 
     resolved_dataset_id = extractor.resolve_model_id(dataset_id)
-
-    from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
 
     tmsl = extractor.get_model_definition(resolved_dataset_id)
     classification = classify_tmsl_model(tmsl)

@@ -34,6 +34,7 @@ from semabridge.sml.models import SMLModel, SMLRelationship
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.utils.logger import get_logger
 from semabridge.utils.relationship_naming import generate_relationship_name
+from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
 from semabridge.core.engine.context import RunContext
 from semabridge.core.engine.exceptions import (
     ConfigValidationError,
@@ -106,8 +107,6 @@ def _extract_pbix(
         source_cfg = SimpleNamespace()
         object.__setattr__(context.config, "source", source_cfg)
     source_cfg.pbix_path = pbix_path
-
-    from semabridge.core.zero_tables import classify_tmsl_model, ZeroTablesModelError
 
     drop_ledger = getattr(context, "drop_ledger", None)
     connector = LocalPBIXConnector({"pbix_path": pbix_path}, drop_ledger=drop_ledger)
