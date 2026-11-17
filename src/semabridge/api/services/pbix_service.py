@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -38,9 +39,10 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     project["updated_at"] = _compat_now_iso()
     _compat_projects[project_id] = project
 
+    from semabridge.api.services.project_config_store import get_project_config_text, save_project_config
+
     yaml_text = (
-        _compat_load_project_yaml_text(project_id)
-        or _compat_project_configs.get(project_id)
+        get_project_config_text(project_id)
         or _compat_load_repo_yaml_text()
         or _compat_default_project_yaml(project)
     )
@@ -55,16 +57,25 @@ def _compat_set_project_pbix_path(project_id: str, pbix_path: str) -> None:
     parsed["source"] = source_cfg
 
     rebuilt = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
-    _compat_project_configs[project_id] = rebuilt
-    try:
-        _compat_save_project_yaml_text(project_id, rebuilt)
-    except Exception as exc:
-        logger.warning("Could not write PBIX config to project YAML: %s", exc)
-    try:
-        _compat_repo_yaml_path().write_text(rebuilt, encoding="utf-8")
-    except Exception as exc:
-        logger.warning("Could not write PBIX config to repo YAML: %s", exc)
+    # The single config writer (DB version + cache + YAML export). Never the
+    # shared repo YAML: it is the fallback config for other projects.
+    save_project_config(project_id, rebuilt, reason="upload")
     _compat_save_store()
+    from semabridge.api.services.project_shared import _compat_raise_if_store_failed
+    _compat_raise_if_store_failed()
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+_DEFAULT_MAX_UPLOAD_MB = 512
+
+
+def _max_upload_bytes() -> int:
+    raw = os.environ.get("SEMABRIDGE_MAX_UPLOAD_MB", "").strip()
+    try:
+        mb = int(raw) if raw else _DEFAULT_MAX_UPLOAD_MB
+    except ValueError:
+        mb = _DEFAULT_MAX_UPLOAD_MB
+    return max(1, mb) * 1024 * 1024
+
 
 def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
     """Store an uploaded PBIX or Tableau file in the target directory."""
@@ -77,11 +88,29 @@ def _save_uploaded_pbix_file(upload: UploadFile, target_dir: Path) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     destination = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
 
-    content = upload.file.read()
-    if not content:
+    # Stream to disk in chunks (never hold the whole file in memory) and
+    # enforce SEMABRIDGE_MAX_UPLOAD_MB (default 512).
+    max_bytes = _max_upload_bytes()
+    written = 0
+    try:
+        with destination.open("wb") as out:
+            while True:
+                chunk = upload.file.read(_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ValidationError(
+                        f"Uploaded file exceeds the {max_bytes // (1024 * 1024)} MB limit "
+                        "(set SEMABRIDGE_MAX_UPLOAD_MB to change it)"
+                    )
+                out.write(chunk)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+    if written == 0:
+        destination.unlink(missing_ok=True)
         raise ValidationError("Uploaded file is empty")
-
-    destination.write_bytes(content)
     return destination.resolve()
 
 async def upload_pbix_temp(file: UploadFile = File(...)):
@@ -92,7 +121,10 @@ async def upload_pbix_temp(file: UploadFile = File(...)):
     return {"path": str(saved).replace("\\", "/")}
 
 async def upload_project_pbix(project_id: str, file: UploadFile = File(...)):
-    project_root = _upload_storage_root() / "projects" / project_id
+    pid = str(project_id or "").strip()
+    if not pid or pid in {".", ".."} or Path(pid).name != pid or "\\" in pid:
+        raise ValidationError("Invalid project id")
+    project_root = _upload_storage_root() / "projects" / pid
     saved = _save_uploaded_pbix_file(file, project_root)
     _compat_set_project_pbix_path(project_id, str(saved))
     return {

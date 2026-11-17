@@ -21,13 +21,22 @@ from semabridge.api.services.project_mapping_engine import (
 )
 from semabridge.api.services.project_shared import (
     _compat_ensure_loaded,
+    _compat_mark_store_dirty,
     _compat_mappings,
+    compat_store_lock,
     _compat_now_iso,
     _compat_project_configs,
     _compat_project_runs,
     _compat_projects,
     _compat_save_store,
 )
+
+def _raise_if_store_failed() -> None:
+    from semabridge.api.services.project_shared import _compat_raise_if_store_failed
+
+    _compat_raise_if_store_failed()
+
+
 from semabridge.domain.exceptions import ExternalServiceError, NotFoundError, ValidationError
 from semabridge.utils.identifiers import IdentifierSanitizer
 
@@ -39,6 +48,31 @@ AUTO_MAP_SNOWFLAKE_RESERVED = {
 }
 _SNOWFLAKE_SANITIZER = IdentifierSanitizer(force_uppercase=True, suppress_reserved=True)
 logger = logging.getLogger(__name__)
+
+
+_mapping_logger = logging.getLogger("semabridge.mapping")
+
+
+def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
+    """Structured mapping/collision diagnostics at DEBUG level (replaces the
+    former stdout ``print(json.dumps(...))``), tagged with the project and,
+    inside a run, the run id and model being processed."""
+    if not _mapping_logger.isEnabledFor(logging.DEBUG):
+        return
+    import json as _json
+
+    from semabridge.core.run_model_logs import current_scope
+
+    scope = current_scope()
+    _mapping_logger.debug(
+        "mapping_event %s",
+        _json.dumps({
+            "project_id": project_id or (scope[0] if scope else None),
+            "run_id": scope[1] if scope else None,
+            "model": scope[2] if scope else None,
+            **event,
+        }, default=str),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,33 +151,75 @@ def _compat_sanitize_target_name_for_project(project_id: str, target_name: str) 
 
 
 def _compat_collect_manual_mapping_overrides(project_id: str) -> List[Dict[str, str]]:
+    """The project's user mapping edits -- read from the mapping_overrides
+    table, the single home of user-chosen names (the JSON mapping store is
+    only a display cache now)."""
+    from semabridge.api.services.project_config_store import list_overrides
+
     overrides: List[Dict[str, str]] = []
-    for mapping in _compat_mappings.values():
-        if not isinstance(mapping, dict):
-            continue
-        if str(mapping.get("project_id") or "") != str(project_id):
-            continue
-        if not bool(mapping.get("is_user_edited")):
-            continue
-        source_path = str(mapping.get("source_path") or "").strip()
-        target_name = _compat_sanitize_target_name_for_project(
-            project_id,
-            str(mapping.get("target_name") or "").strip(),
-        )
+    # Target type resolved once (it parses the whole config), not per row.
+    sanitize = _compat_project_target_type(project_id) == "snowflake"
+    for row in list_overrides(str(project_id)):
+        source_path = str(row.get("source_path") or "").strip()
+        target_name = str(row.get("target_name") or "").strip()
+        if sanitize and target_name:
+            target_name = _SNOWFLAKE_SANITIZER.to_alias(target_name)
         if not source_path or not target_name:
             continue
         override = {
             "source_path": source_path,
             "target_name": target_name,
-            "entity_kind": str(mapping.get("entity_kind") or "").strip().lower(),
-            "source_name": str(mapping.get("source_name") or "").strip(),
+            "entity_kind": str(row.get("entity_kind") or "").strip().lower(),
+            "source_name": str(row.get("source_name") or "").strip(),
         }
-        model = str(mapping.get("model") or "").strip()
+        model = str(row.get("model") or "").strip()
         if model:
             # Multi-model edit: keep it scoped to its own model.
             override["model"] = model
         overrides.append(override)
     return overrides
+
+
+def _compat_overrides_by_source_path(project_id: str) -> Dict[str, Dict[str, Any]]:
+    """Table overrides keyed by source_path for the mapping list (untagged
+    rows win over model-tagged ones for the same path)."""
+    from semabridge.api.services.project_config_store import list_overrides
+
+    by_path: Dict[str, Dict[str, Any]] = {}
+    try:
+        rows = list_overrides(str(project_id))
+    except Exception as exc:
+        logger.error("Mapping overrides of %s could not be read: %s", project_id, exc)
+        return {}
+    for row in rows:
+        path = str(row.get("source_path") or "").strip()
+        if not path:
+            continue
+        if path in by_path and not str(row.get("model") or "").strip() == "":
+            continue
+        by_path[path] = row
+    return by_path
+
+
+def _compat_record_manual_mapping(project_id: str, mapping: Dict[str, Any], *, user_id: Any = None) -> bool:
+    """Persist one user mapping edit into the mapping_overrides table.
+    Returns False when the row has no source_path / target (nothing to save)."""
+    from semabridge.api.services.project_config_store import upsert_override
+
+    source_path = str(mapping.get("source_path") or "").strip()
+    target_name = str(mapping.get("target_name") or "").strip()
+    if not project_id or not source_path or not target_name:
+        return False
+    upsert_override(
+        project_id,
+        source_path=source_path,
+        target_name=target_name,
+        model=mapping.get("model"),
+        entity_kind=mapping.get("entity_kind"),
+        source_name=mapping.get("source_name"),
+        user_id=user_id,
+    )
+    return True
 
 
 def _compat_override_identity(row: Dict[str, Any]) -> tuple:
@@ -259,43 +335,15 @@ def _compat_scope_model_for_dry_run(
     latest_model: Dict[str, Any],
     selected_model_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    model = dict(latest_model or {})
-    selected = [str(item or "").strip() for item in (selected_model_names or []) if str(item or "").strip()]
-    if not selected:
-        return model
+    """The model to preview for the selected sources: the WHOLE model.
 
-    selected_lookup = {name.lower() for name in selected}
-    datasets = model.get("datasets") if isinstance(model.get("datasets"), list) else []
-    filtered_datasets = [
-        row
-        for row in datasets
-        if isinstance(row, dict) and str(row.get("unique_name") or "").strip().lower() in selected_lookup
-    ]
-    if not filtered_datasets:
-        return model
-
-    model["datasets"] = filtered_datasets
-
-    # Keep metrics that can be attributed to the selected dataset scope.
-    metrics = model.get("metrics") if isinstance(model.get("metrics"), list) else []
-    if metrics:
-        dataset_lookup = {
-            str(row.get("unique_name") or "").strip().lower(): str(row.get("unique_name") or "").strip()
-            for row in filtered_datasets
-            if isinstance(row, dict) and str(row.get("unique_name") or "").strip()
-        }
-        scoped_metrics: List[Dict[str, Any]] = []
-        for metric in metrics:
-            if not isinstance(metric, dict):
-                continue
-            source_tables = _extract_metric_source_tables(metric, dataset_lookup)
-            if source_tables:
-                scoped_metrics.append(metric)
-        model["metrics"] = scoped_metrics
-    else:
-        model["metrics"] = []
-
-    return model
+    Each selected model (PBIX file / Fabric semantic model) is already its own
+    dry-run job and its own snapshot, so there is nothing to narrow down.
+    This used to keep only datasets NAMED like the selected source (a Fabric
+    model "Sales" with a table "Sales" previewed just that one table), which
+    made the preview partial while the sync deployed every table.
+    """
+    return dict(latest_model or {})
 
 
 def _compat_source_match_keys(value: Any) -> set:
@@ -406,7 +454,11 @@ def _compat_build_project_entity_mappings(
     target_connector: Optional[str] = None,
     selected_model_names: Optional[List[str]] = None,
     preferred_snapshot_id: str = "",
+    persist: bool = True,
 ) -> Dict[str, Any]:
+    """``save_store`` keeps the built rows in the in-memory cache; ``persist``
+    additionally writes the store file now (read paths pass False and only
+    schedule a deferred flush)."""
     from semabridge.api.services.snapshot_service import _compat_latest_sml_state
     from semabridge.api.services.project_shared import (
         _compat_default_project_yaml,
@@ -439,6 +491,24 @@ def _compat_build_project_entity_mappings(
         }
 
     existing_mappings = _compat_existing_entity_mappings(project_id)
+    # User-chosen names come from the override table (authoritative); the
+    # store rows only carry the rest of each mapping's display state.
+    table_overrides = _compat_overrides_by_source_path(project_id)
+    for source_path, override in table_overrides.items():
+        row = dict(existing_mappings.get(source_path) or {})
+        row.update({
+            "source_path": source_path,
+            "target_name": override.get("target_name"),
+            "status": "manual",
+            "is_user_edited": True,
+        })
+        if override.get("entity_kind") and not row.get("entity_kind"):
+            row["entity_kind"] = override.get("entity_kind")
+        existing_mappings[source_path] = row
+    for source_path, row in list(existing_mappings.items()):
+        if row.get("is_user_edited") and source_path not in table_overrides:
+            # A store edit that is no longer in the table was reset.
+            existing_mappings[source_path] = {**row, "is_user_edited": False, "status": "auto"}
     latest_model = _compat_hydrate_missing_metrics_from_manual_mappings(latest_model, existing_mappings)
     latest_model = _compat_scope_model_for_dry_run(latest_model, selected_model_names)
 
@@ -451,27 +521,33 @@ def _compat_build_project_entity_mappings(
     )
 
     persisted: List[Dict[str, Any]] = []
+    sanitize_targets = _compat_project_target_type(project_id) == "snowflake"
     for mapping in built.get("mappings", []):
         mapping_id = str(mapping.get("id") or "")
         if not mapping_id:
             continue
         existing = _compat_mappings.get(mapping_id, {})
         merged = {**existing, **mapping}
-        if existing.get("is_user_edited"):
-            manual_target = _compat_sanitize_target_name_for_project(
-                project_id,
-                str(existing.get("target_name") or "").strip(),
-            )
+        override = table_overrides.get(str(mapping.get("source_path") or "").strip())
+        if override:
+            manual_target = str(override.get("target_name") or "").strip()
+            if sanitize_targets and manual_target:
+                manual_target = _SNOWFLAKE_SANITIZER.to_alias(manual_target)
             if manual_target:
                 merged["target_name"] = manual_target
                 merged["status"] = "manual"
                 merged["is_user_edited"] = True
+        elif merged.get("is_user_edited"):
+            merged["is_user_edited"] = False
         if save_store:
-            _compat_mappings[mapping_id] = merged
+            with compat_store_lock():
+                _compat_mappings[mapping_id] = merged
         persisted.append(merged)
 
-    if save_store:
+    if save_store and persist:
         _compat_save_store()
+    elif save_store:
+        _compat_mark_store_dirty()
     return {
         "project_id": project_id,
         "session_key": built.get("session_key"),
@@ -693,13 +769,14 @@ def _compat_is_blocking_mapping(mapping: Dict[str, Any]) -> bool:
     validation_message = str(mapping.get("validation_message") or "").strip().lower()
     status = str(mapping.get("status") or "").strip().lower()
 
-    # Deterministic NAME_COLLISION rows are auto-resolved by suffixing the
-    # identifier; they should not block deploy when a target exists.
-    if (
-        validation_code == "NAME_COLLISION"
-        and target_name
-        and ("resolved" in validation_message or status in {"auto", "manual"})
-    ):
+    # A NAME_COLLISION row blocks, exactly as the UI shows it ("Resolve all
+    # collisions before deploying"). Collisions the user already resolved
+    # are not blocking because their saved names no longer collide (the
+    # dry run starts from saved names), and the multi-model gate also
+    # drops rows covered by a saved override. Previously these rows were
+    # exempt whenever status was auto/manual, so the gate never blocked a
+    # collision while the UI did -- and unresolved names reached the sync.
+    if validation_code == "NAME_COLLISION" and "resolved" in validation_message and target_name:
         return False
 
     if status in {"collision", "unmapped"}:
@@ -793,7 +870,7 @@ def _compat_serialize_auto_map_entity_mappings(
             validation_message = f"'{source_name}' is a Snowflake reserved keyword."
 
             import json
-            print(json.dumps({
+            _log_mapping_event(None, {
                 "layer": "_compat_serialize_auto_map_entity_mappings",
                 "source_name": source_name,
                 "source_path": source_path,
@@ -803,7 +880,7 @@ def _compat_serialize_auto_map_entity_mappings(
                 "collision_group": "",
                 "validation_code": "RESERVED_KEYWORD",
                 "semantic_name": _semantic_name(source_name)
-            }))
+            })
 
         entity_mappings.append({
             "id": str(row.get("id") or f"mapping-{index + 1}"),
@@ -843,11 +920,17 @@ def _compat_serialize_auto_map_entity_mappings(
             "source_file": row.get("source_file"),
         })
 
-    seen: Dict[str, Dict[str, Any]] = {}
+    # Same namespace rule as the mapping engine and the emitter: columns
+    # clash only within their own logical table (Snowflake semantic views
+    # qualify dimensions as <table>.<name>); metrics share one namespace.
+    from semabridge.api.services.project_mapping_engine import _scope_key
+
+    seen: Dict[tuple, Dict[str, Any]] = {}
     for mapping in entity_mappings:
-        target_key = str(mapping.get("target_name") or "").strip().upper()
-        if not target_key:
+        target_name_key = str(mapping.get("target_name") or "").strip().upper()
+        if not target_name_key:
             continue
+        target_key = (_scope_key(mapping), target_name_key)
         if target_key in seen:
             first = seen[target_key]
             # Only flag as a real collision when the two source names are
@@ -891,7 +974,8 @@ async def list_mappings_compat(project_id: Optional[str] = None):
         raise ValidationError("project_id is required")
 
     if len(project_ids) == 1:
-        data = _compat_build_project_entity_mappings(project_ids[0])
+        # A read: refresh the cached rows but never rewrite the store file here.
+        data = _compat_build_project_entity_mappings(project_ids[0], persist=False)
         return {
             "project_id": data.get("project_id"),
             "session_key": data.get("session_key"),
@@ -913,8 +997,6 @@ async def list_mappings_compat(project_id: Optional[str] = None):
         combined_source_fields.extend(data.get("source_fields", []))
         combined_target_fields.extend(data.get("target_fields", []))
         collisions.extend(data.get("collisions", []))
-
-    _compat_save_store()
 
     return {
         "project_id": None,
@@ -992,15 +1074,23 @@ async def auto_map_compat(payload: dict):
             )
 
         if not dry_run:
-            for mapping_id, mapping in list(_compat_mappings.items()):
-                if str(mapping.get("project_id") or "") != project_id:
-                    continue
-                if reset_manual:
-                    _compat_mappings.pop(mapping_id, None)
-                    continue
-                mapping["status"] = "auto"
-                mapping["is_user_edited"] = False
-                mapping["target_name"] = ""
+            # Reset: the user's names are removed from the override table
+            # (the single source the sync reads), and the YAML export is
+            # regenerated without them, so they cannot come back.
+            from semabridge.api.services.project_config_store import delete_overrides
+
+            removed = delete_overrides(project_id)
+            logger.info("Mapping reset for %s removed %d saved override(s)", project_id, removed)
+            with compat_store_lock():
+                for mapping_id, mapping in list(_compat_mappings.items()):
+                    if str(mapping.get("project_id") or "") != project_id:
+                        continue
+                    if reset_manual:
+                        _compat_mappings.pop(mapping_id, None)
+                        continue
+                    mapping["status"] = "auto"
+                    mapping["is_user_edited"] = False
+                    mapping["target_name"] = ""
 
         data = _compat_build_project_entity_mappings(
             project_id,
@@ -1163,7 +1253,7 @@ async def update_mapping_compat(mapping_id: str, payload: dict):
 
     _compat_ensure_loaded()
     incoming = payload or {}
-    existing = _compat_mappings.get(mapping_id, {"id": mapping_id, "project_id": incoming.get("project_id")})
+    existing = dict(_compat_mappings.get(mapping_id) or {"id": mapping_id, "project_id": incoming.get("project_id")})
 
     # Backfill canonical identity fields for clients that only send target_name.
     if not str(existing.get("source_path") or "").strip():
@@ -1180,28 +1270,41 @@ async def update_mapping_compat(mapping_id: str, payload: dict):
 
     existing.update(incoming)
     existing["id"] = mapping_id
+    project_id = str(existing.get("project_id") or incoming.get("project_id") or "").strip()
     if "target_name" in incoming:
-        project_id = str(existing.get("project_id") or incoming.get("project_id") or "").strip()
         existing["target_name"] = _compat_sanitize_target_name_for_project(
             project_id,
             str(incoming.get("target_name") or "").strip(),
         )
         existing["status"] = "manual"
         existing["is_user_edited"] = True
+        # The edit itself goes to the override table first: if it cannot be
+        # saved the request fails instead of "succeeding" in memory only.
+        _compat_record_manual_mapping(project_id, existing, user_id=incoming.get("user_id"))
     existing["updated_at"] = _compat_now_iso()
-    _compat_mappings[mapping_id] = existing
-    _compat_save_store()
+    with compat_store_lock():
+        _compat_mappings[mapping_id] = existing
+        _compat_save_store()
+        _raise_if_store_failed()
     return existing
 
 
 async def delete_mappings_compat(project_id: Optional[str] = None):
-    if project_id:
+    """Clear one project's mappings (cache rows + saved overrides). A
+    project_id is always required: clearing every project's mappings in one
+    call is never what a user meant."""
+    pid = str(project_id or "").strip()
+    if not pid:
+        raise ValidationError("project_id is required")
+    from semabridge.api.services.project_config_store import delete_overrides
+
+    delete_overrides(pid)
+    with compat_store_lock():
         for mapping_id in [
-            k for k, v in _compat_mappings.items()
-            if str(v.get("project_id") or "") == str(project_id)
+            k for k, v in list(_compat_mappings.items())
+            if isinstance(v, dict) and str(v.get("project_id") or "") == pid
         ]:
             _compat_mappings.pop(mapping_id, None)
-    else:
-        _compat_mappings.clear()
-    _compat_save_store()
+        _compat_save_store()
+        _raise_if_store_failed()
     return Response(status_code=204)

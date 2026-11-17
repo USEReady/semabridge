@@ -61,6 +61,9 @@ def test_untranslatable_metric_is_emitted_as_null_placeholder_on_home_table():
     assert records[0]["by_design"] is False
 
 
+_STAGING_SUFFIX = __import__("re").compile(r"__SBSTG_[0-9A-F]+")
+
+
 def _wire(emitter, monkeypatch, fail_with):
     """One DDL; Snowflake rejects it while `fail_with(sql)` returns an error."""
     conn = MagicMock()
@@ -71,15 +74,23 @@ def _wire(emitter, monkeypatch, fail_with):
     monkeypatch.setattr(emitter.schema_manager, "_fetch_schema_metadata", lambda cur: {"DUMMY": set()})
     monkeypatch.setattr(emitter.semantic_view_builder, "generate_ddls", lambda model: [DDL])
     executed = []
+    # Staged deploy (connectors/staged_deploy.py): DDL[0] statements run
+    # against a staging copy; the validated SQL is then promoted to the live
+    # name. ``executed`` holds the validation attempts with the staging
+    # suffix removed; ``executed.promoted`` the live statements.
+    executed_promoted = []
 
     def fake_execute_sql(cursor, sql, context="", **kwargs):
         if context.startswith("DDL[0]"):
-            executed.append(sql)
+            executed.append(_STAGING_SUFFIX.sub("", sql))
             error = fail_with(sql)
             if error:
                 raise error
+        elif context == "promote-semantic-view":
+            executed_promoted.append(sql)
 
     monkeypatch.setattr(emitter.connection_manager, "_execute_sql", fake_execute_sql)
+    emitter._test_promoted = executed_promoted
     return executed
 
 
@@ -97,6 +108,8 @@ def test_snowflake_rejected_metric_is_nulled_and_view_deploys(monkeypatch):
 
     assert emitter.deploy(_model_stub(), sync_mode="copy") is True
 
+    # The live view gets exactly the validated (remediated) SQL.
+    assert emitter._test_promoted == [executed[-1]]
     final = executed[-1]
     # The rejected metric is nulled with the Snowflake error in its COMMENT
     # (escaped literal, never a /* */ block).

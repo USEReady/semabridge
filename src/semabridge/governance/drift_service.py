@@ -61,6 +61,37 @@ def derive_semabridge_sql(metric_name: str, bi_definition: str) -> str:
     return s
 
 
+_DAX_MARKERS = re.compile(r"\[|\b(CALCULATE|DIVIDE|SUMX|AVERAGEX|COUNTROWS|DISTINCTCOUNT|FILTER|ALL|TOTALYTD|SAMEPERIODLASTYEAR|RELATED|VALUES|SELECTEDVALUE)\s*\(", re.I)
+
+
+def propose_snowflake_sql(metric_name: str, bi_definition: str, *, mock: bool = False) -> str:
+    """Proposed Snowflake SQL for a drifted metric, from its BI definition.
+
+    Demo (mock) events keep their curated SQL (derive_semabridge_sql). Real
+    events go through the same DAX translator the sync uses -- never the
+    name-keyed demo strings, which produced unrelated SQL for real metrics.
+    SQL definitions are proposed as-is. Returns "" when no faithful
+    translation exists (the UI then shows no proposal; approving still
+    re-syncs from the BI source)."""
+    if mock:
+        return derive_semabridge_sql(metric_name, bi_definition)
+    text = str(bi_definition or "").strip()
+    if not text or text in ("—", "(not present in semantic view)"):
+        return ""
+    if not _DAX_MARKERS.search(text):
+        return text  # already SQL (ontology sql_expression)
+    try:
+        from semabridge.converter.dax_translator import DAXTranslator
+
+        result = DAXTranslator().translate(
+            text, table_alias="", dataset_name="", metric_name=metric_name, skip_tier5=True,
+        )
+        return str(result.sql or "").strip()
+    except Exception as exc:
+        logger.debug("Drift proposal translation failed for %s: %s", metric_name, exc)
+        return ""
+
+
 def get_default_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]]:
     """Return high-fidelity mock drift events for project demonstration and monitoring."""
     now = datetime.now(timezone.utc)
@@ -225,28 +256,28 @@ def get_default_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[st
 
 
 def seed_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]]:
-    """Seed or re-populate mock drift events for projects (Regional Sales has zero drift)."""
-    state = _load_state()
-    # Strip any events belonging to proj-sales so Regional Sales Sample is completely clean
-    events_clean = [
-        e for e in state.get("events", [])
-        if "sales" not in str(e.get("project_id", "")).lower()
-    ]
-    comp_events = get_default_mock_drift_events("proj-comp")
+    """Re-populate the demo drift events of ``project_id`` (flagged ``mock``).
 
-    updated_events = []
-    seen_ids = set()
-    for e in comp_events:
-        updated_events.append(e)
-        seen_ids.add(e["id"])
-    for e in events_clean:
-        if e.get("id") not in seen_ids:
-            updated_events.append(e)
-            seen_ids.add(e.get("id"))
-    state["events"] = updated_events
+    Only previously seeded demo events of that project are replaced: real
+    drift events -- of this or any other project -- are never touched, and a
+    real event for a metric always wins over a demo one."""
+    state = _load_state()
+    events = list(state.get("events") or [])
+    pid = project_id or "proj-comp"
+    kept = [e for e in events if not (e.get("mock") and e.get("project_id") == pid)]
+    real_metrics = {
+        str(e.get("metric_name") or "").lower()
+        for e in kept
+        if e.get("project_id") == pid and not e.get("mock")
+    }
+    seeded = []
+    for e in get_default_mock_drift_events(pid):
+        if str(e.get("metric_name") or "").lower() in real_metrics:
+            continue
+        seeded.append({**e, "mock": True})
+    state["events"] = seeded + kept
     _save_state(state)
-    return [e for e in updated_events if not project_id or e.get("project_id") == project_id]
-    return [e for e in updated_events if not project_id or e.get("project_id") == project_id]
+    return [e for e in state["events"] if e.get("project_id") == pid]
 
 
 def _state_path() -> Path:
@@ -264,9 +295,10 @@ def _load_state() -> Dict[str, Any]:
         events = list(data.get("events") or [])
         for ev in events:
             if not ev.get("proposed_snowflake_definition"):
-                ev["proposed_snowflake_definition"] = derive_semabridge_sql(
+                ev["proposed_snowflake_definition"] = propose_snowflake_sql(
                     ev.get("metric_name", ""),
-                    ev.get("bi_definition", "")
+                    ev.get("bi_definition", ""),
+                    mock=bool(ev.get("mock")),
                 )
         return {
             "schedules": list(data.get("schedules") or []),
@@ -311,6 +343,18 @@ def _normalize_metric_expr(expr: str) -> str:
     return s
 
 
+def _view_key(view: Optional[str]) -> str:
+    """Comparable key of a semantic view name (last identifier, case-folded)."""
+    return str(view or "").strip().split(".")[-1].strip('"').casefold()
+
+
+def drift_event_key(ev: Dict[str, Any]) -> tuple:
+    """Dedup key of a drift event: (project, model-or-view, metric)."""
+    pid = str(ev.get("project_id") or "").lower().removeprefix("proj-").strip()
+    scope = str(ev.get("model_id") or "").strip().casefold() or _view_key(ev.get("semantic_view"))
+    return (pid, scope, str(ev.get("metric_name") or "").lower().strip())
+
+
 def run_drift_check(
     project_id: Optional[str] = None,
     domain: Optional[str] = None,
@@ -325,30 +369,16 @@ def run_drift_check(
 
     fed = ontology_store.get_federated_ontology()
 
-    def _matches_project(d, pid: Optional[str]) -> bool:
-        if not pid:
-            return True
-        p_clean = pid.lower().removeprefix("proj-")
-        spid = (getattr(d, "source_project_id", None) or "").lower()
-        did = (getattr(d, "id", None) or "").lower()
-        dname = (getattr(d, "domain", None) or "").lower()
-        return (
-            spid == pid.lower()
-            or spid.removeprefix("proj-") == p_clean
-            or did == pid.lower()
-            or did.removeprefix("proj-") == p_clean
-            or dname == pid.lower()
-        )
+    # One resolver for "the project's domains" (no fallback to other projects'
+    # domains); without a project every domain is checked.
+    candidates = ontology_store.domains_for(project_id) if project_id else list(fed.domains.values())
+    target_domains = [d for d in candidates if not domain or d.domain.lower() == domain.lower() or (d.id or "").lower() == domain.lower()]
 
-    target_domains = [
-        d for d in fed.domains.values()
-        if (not domain or d.domain.lower() == domain.lower())
-        and _matches_project(d, project_id)
-    ]
-    if not target_domains and fed.domains:
-        target_domains = list(fed.domains.values())
-
-    sf_metrics: Dict[str, Dict[str, str]] = {}
+    # Snowflake metrics per semantic view: {VIEW_TAIL: {METRIC: entry}} -- each
+    # domain is compared against ITS OWN view only (multi-model projects have
+    # one view per model, and same-named metrics differ between them).
+    sf_metrics_by_view: Dict[str, Dict[str, Dict[str, str]]] = {}
+    inspected_views: set = set()
     sf_connected = False
     try:
         sf = resolve_project_warehouse_config(project_id, "SNOWFLAKE", owner_id=owner_id)
@@ -362,8 +392,9 @@ def run_drift_check(
                     cur = conn.cursor()
                     for dom in target_domains:
                         sv = getattr(dom, "semantic_view_name", None)
-                        if not sv:
+                        if not sv or _view_key(sv) in inspected_views:
                             continue
+                        sf_metrics = sf_metrics_by_view.setdefault(_view_key(sv), {})
                         try:
                             cur.execute(f"DESCRIBE SEMANTIC VIEW {sv}")
                             cols = [c[0].lower() for c in cur.description] if cur.description else []
@@ -377,8 +408,9 @@ def run_drift_check(
                                     entry = sf_metrics.setdefault(name.upper(), {"name": name, "view": sv, "expression": ""})
                                     if prop == "EXPRESSION":
                                         entry["expression"] = val
-                        except Exception:
-                            pass
+                            inspected_views.add(_view_key(sv))
+                        except Exception as exc:
+                            logger.info("Drift check could not describe %s: %s", sv, exc)
                     sf_connected = True
                 finally:
                     conn.close()
@@ -393,14 +425,17 @@ def run_drift_check(
     from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
 
     for dom in target_domains:
+        dom_view = getattr(dom, "semantic_view_name", None)
+        view_inspected = bool(dom_view) and _view_key(dom_view) in inspected_views
+        view_metrics = sf_metrics_by_view.get(_view_key(dom_view), {}) if dom_view else {}
         for m in dom.metrics:
             checked += 1
             m_key = m.name.upper()
-            sf_entry = sf_metrics.get(m_key)
+            sf_entry = view_metrics.get(m_key)
             bi_expr = (m.sql_expression or m.dax_expression or "").strip()
             drift_reason = None
             sf_expr = ""
-            if sf_connected and sf_entry is None and getattr(dom, "semantic_view_name", None):
+            if sf_connected and view_inspected and sf_entry is None:
                 clean_sql = (m.sql_expression or "").strip().strip("'\"")
                 if clean_sql and not clean_sql.isspace():
                     drift_reason = "MISSING_IN_SNOWFLAKE"
@@ -432,11 +467,14 @@ def run_drift_check(
                     "id": f"drift-{uuid.uuid4().hex[:10]}",
                     "project_id": project_id or getattr(dom, "source_project_id", None),
                     "domain": dom.domain,
+                    "domain_id": dom.id,
+                    "model_id": getattr(dom, "source_model_id", None),
+                    "semantic_view": dom_view,
                     "metric_name": m.name,
                     "drift_type": drift_reason,
                     "bi_definition": bi_expr,
                     "snowflake_definition": sf_expr or "(not present in semantic view)",
-                    "proposed_snowflake_definition": derive_semabridge_sql(m.name, bi_expr),
+                    "proposed_snowflake_definition": propose_snowflake_sql(m.name, bi_expr),
                     "affected_objects": affected,
                     "status": "pending",
                     "resolution_reason": "",
@@ -470,11 +508,15 @@ def run_drift_check(
                 "id": f"drift-{uuid.uuid4().hex[:10]}",
                 "project_id": project_id or getattr(dom, "source_project_id", None) or "proj-comp",
                 "domain": dom.domain,
+                "domain_id": dom.id,
+                "model_id": getattr(dom, "source_model_id", None),
+                "semantic_view": getattr(dom, "semantic_view_name", None),
                 "metric_name": m_name,
                 "drift_type": "EXPRESSION_MISMATCH",
                 "bi_definition": bi_updated,
                 "snowflake_definition": sf_expr,
-                "proposed_snowflake_definition": derive_semabridge_sql(m_name, bi_updated),
+                "proposed_snowflake_definition": propose_snowflake_sql(m_name, bi_updated, mock=True),
+                "mock": True,
                 "affected_objects": [sv, f"METRICS.{m_name}"],
                 "status": "pending",
                 "resolution_reason": "",
@@ -483,13 +525,14 @@ def run_drift_check(
             new_events.append(ev)
 
     state = _load_state()
-    # Deduplicate into state by (project_id_clean, metric_name_clean)
+    # Deduplicate into state by (project, model/view, metric): same-named
+    # metrics of two models of one project are different drift items. Legacy
+    # events without model/view keep their (project, "", metric) key.
     event_map = {}
     for e in state.get("events") or []:
-        key = (str(e.get("project_id") or "").lower().removeprefix("proj-").strip(), str(e.get("metric_name") or "").lower().strip())
-        event_map[key] = e
+        event_map[drift_event_key(e)] = e
     for ev in new_events:
-        key = (str(ev.get("project_id") or "").lower().removeprefix("proj-").strip(), str(ev.get("metric_name") or "").lower().strip())
+        key = drift_event_key(ev)
         prev = event_map.get(key)
         if prev and prev.get("bi_definition") == ev.get("bi_definition") and prev.get("status") in ("approved", "ignored"):
             continue
@@ -555,6 +598,16 @@ def clear_drift_events(project_id: Optional[str] = None) -> int:
     return orig - len(state.get("events", []))
 
 
+def _project_domain_for_metric(store: Any, project_id: str, metric_name: Optional[str]) -> Any:
+    """The project's domain declaring ``metric_name`` (first project domain otherwise)."""
+    doms = store.domains_for(project_id)
+    if metric_name:
+        for d in doms:
+            if any(m.name.lower() == metric_name.lower() for m in d.metrics):
+                return d
+    return doms[0] if doms else None
+
+
 def simulate_metric_drift(
     project_id: str,
     metric_name: Optional[str] = None,
@@ -562,18 +615,10 @@ def simulate_metric_drift(
 ) -> Dict[str, Any]:
     """Simulate changing a metric definition in the domain ontology so scheduled run reflects it as drift."""
     from semabridge.ontology.store import ontology_store
-    fed = ontology_store.get_federated_ontology()
-    p_clean = project_id.lower().removeprefix("proj-").strip()
-    target_dom = None
-    for d in fed.domains.values():
-        spid = (getattr(d, "source_project_id", None) or "").lower().removeprefix("proj-").strip()
-        did = (getattr(d, "id", None) or "").lower().removeprefix("proj-").strip()
-        if spid == p_clean or did == p_clean or d.domain.lower() == p_clean:
-            target_dom = d
-            break
-    if not target_dom and fed.domains:
-        target_dom = list(fed.domains.values())[0]
+    target_dom = _project_domain_for_metric(ontology_store, project_id, metric_name)
     if not target_dom:
+        # Never fall back to another project's domain: simulating would
+        # rewrite that project's metric formula.
         raise ValueError(f"No domain found for project '{project_id}'")
 
     m_target = None
@@ -641,17 +686,8 @@ def reset_simulated_metric_drift(
 ) -> Dict[str, Any]:
     """Reset a metric formula back to standard baseline expression."""
     from semabridge.ontology.store import ontology_store
-    fed = ontology_store.get_federated_ontology()
-    p_clean = project_id.lower().removeprefix("proj-").strip()
-    target_dom = None
-    for d in fed.domains.values():
-        spid = (getattr(d, "source_project_id", None) or "").lower().removeprefix("proj-").strip()
-        did = (getattr(d, "id", None) or "").lower().removeprefix("proj-").strip()
-        if spid == p_clean or did == p_clean or d.domain.lower() == p_clean:
-            target_dom = d
-            break
-    if not target_dom and fed.domains:
-        target_dom = list(fed.domains.values())[0]
+    # Never another project's domain: resetting would rewrite its formula.
+    target_dom = _project_domain_for_metric(ontology_store, project_id, metric_name or "TOTAL_UNITS")
 
     baselines = {
         "TOTAL_UNITS": 'SUM(SALESFACT."UNITS")',

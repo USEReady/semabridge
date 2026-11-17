@@ -131,7 +131,12 @@ async def read_source_models(
 
 
 def combine_models(models: List[Any], name: str) -> Any:
-    """One OSIModel holding every model's datasets/metrics/relationships (first wins by name)."""
+    """One OSIModel holding every model's datasets/metrics/relationships (first wins by name).
+
+    Legacy helper: the review now builds one domain per model
+    (:func:`build_reviewed_domains`), so same-named items of different models
+    are never collapsed.
+    """
     if not models:
         raise ValueError("No source models to combine")
     if len(models) == 1:
@@ -205,3 +210,62 @@ def build_reviewed_domain(
     if owner:
         draft = draft.model_copy(update={"owner": owner})
     return apply_review_decisions(draft, merges=merges, conflicts=conflicts, descriptions=descriptions)
+
+
+def review_model_id(model: Any) -> str:
+    """Model id (``model_key``) of a reviewed source model."""
+    from semabridge.ontology.models import model_key
+
+    for raw in (getattr(model, "source_file", None), getattr(model, "unique_name", None), getattr(model, "label", None)):
+        key = model_key(raw)
+        if key:
+            return key
+    return ""
+
+
+def build_reviewed_domains(
+    models: List[Any],
+    *,
+    domain_name: str,
+    owner: Optional[str],
+    merges: List[Dict[str, Any]],
+    conflicts: List[Dict[str, Any]],
+    descriptions: Dict[str, str],
+    project_id: Optional[str] = None,
+    existing_by_model: Optional[Dict[str, Any]] = None,
+) -> List[Tuple[Any, Dict[str, List[str]], str, str]]:
+    """One reviewed domain PER MODEL: ``[(domain, report, model_id, model_name)]``.
+
+    Nothing is merged across models: same-named measures of two models stay in
+    their own model's domain. Review decisions apply inside each domain (a
+    cross-model "merge" gives every member the same business name in its own
+    model's domain). Domain ids are ``{project_slug}__{model_slug}``; display
+    names ``"<domain_name> · <model>"``.
+    """
+    from semabridge.ontology.federated_loader import FederatedOntologyLoader
+    from semabridge.ontology.models import per_model_domain_id
+    from semabridge.ontology.quality import apply_review_decisions
+
+    out: List[Tuple[Any, Dict[str, List[str]], str, str]] = []
+    seen: set = set()
+    base = (project_id if project_id and project_id != "preview" else domain_name) or "review"
+    for model in models:
+        mid = review_model_id(model)
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        mname = str(getattr(model, "label", None) or getattr(model, "unique_name", None) or mid)
+        existing = (existing_by_model or {}).get(mid)
+        name = existing.domain if existing is not None else f"{domain_name} · {mname}"
+        draft = FederatedOntologyLoader.from_osi_model(model=model, domain_name=name, existing_ontology=existing)
+        update: Dict[str, Any] = {
+            "id": existing.id if existing is not None else per_model_domain_id(base, mid),
+            "source_model_id": mid,
+            "source_model_name": mname,
+        }
+        if owner and not draft.owner:
+            update["owner"] = owner
+        draft = draft.model_copy(update=update)
+        draft, report = apply_review_decisions(draft, merges=merges, conflicts=conflicts, descriptions=descriptions)
+        out.append((draft, report, mid, mname))
+    return out

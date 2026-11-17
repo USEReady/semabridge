@@ -202,17 +202,25 @@ class DatabaseManager:
             # URL has changed (credential rotation) — force a re-resolve.
             clear_db_config_cache()
 
+        from semabridge.core.db_resolver import DatabaseNotConfiguredError, local_db_allowed
+
         try:
             cfg = resolve_db_config()
             return cfg.connection_url
+        except DatabaseNotConfiguredError:
+            raise
         except Exception:  # noqa: BLE001
             pass
 
-        # Absolute fallback — DuckDB at ~/.semabridge/
+        # Absolute fallback — DuckDB at ~/.semabridge/ (only when allowed)
         from pathlib import Path as _Path
         env_url = _os.environ.get("SEMABRIDGE_DATABASE_URL") or _os.environ.get("DATABASE_URL")
         if env_url:
             return env_url
+        if not local_db_allowed():
+            raise DatabaseNotConfiguredError(
+                "SEMABRIDGE_DATABASE_URL is not set (set SEMABRIDGE_ALLOW_LOCAL_DB=true for a local DuckDB)."
+            )
         sema_dir = _Path.home() / ".semabridge"
         sema_dir.mkdir(parents=True, exist_ok=True)
         fallback = f"duckdb:///{sema_dir / 'semabridge_state.db'}"

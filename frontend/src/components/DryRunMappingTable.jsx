@@ -17,7 +17,8 @@ import SmartSearchBar from './common/SmartSearchBar';
 import { matchesSmartQuery } from './common/smartSearchQuery.js';
 import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
-import { suggestCollisionResolutions, sanitizeMappingName, shortDeterministicHash, buildSourceFingerprint, resolveCollisionsForRows } from '../utils/projectHelpers';
+import { suggestCollisionResolutions, resolveCollisionsForRows } from '../utils/projectHelpers';
+import { normalizeTypedName, finalizeTypedName } from '../utils/collisionResolution';
 import {
   groupRowsByFieldType,
   normalizeFieldTypeKey,
@@ -1014,7 +1015,7 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
         <input
           type="text"
           value={pendingRename}
-          onChange={e => onRenameChange(sanitizeMappingName(e.target.value) || e.target.value.toUpperCase())}
+          onChange={e => onRenameChange(normalizeTypedName(e.target.value))}
           placeholder="Or type a custom name…"
           style={{
             flex: 1,
@@ -1060,6 +1061,11 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
       {pendingRename && !inputValid && (
         <div style={{ fontSize: 11, color: 'var(--color-error)' }}>
           Use only letters, numbers, and underscores. Must start with a letter or underscore.
+        </div>
+      )}
+      {pendingRename && inputValid && finalizeTypedName(pendingRename) !== pendingRename.trim() && (
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          Will be deployed as <code>{finalizeTypedName(pendingRename)}</code> (Snowflake identifier rules).
         </div>
       )}
     </div>
@@ -1260,7 +1266,9 @@ export default function DryRunMappingTable({
 
   // ── Per-collision apply rename ───────────────────────────────────────────────
   const applyRename = useCallback(async (rowId) => {
-    const newName = (pendingRenames[rowId] || '').trim();
+    // Store the name exactly as it will deploy (the emitter's to_alias
+    // rules), so no later sanitization renames what the user picked.
+    const newName = finalizeTypedName((pendingRenames[rowId] || '').trim());
     if (!newName) return;
     setApplyingRename(rowId);
     try {

@@ -392,8 +392,11 @@ def _resolve_deploy_dirs(
     # Match domains matching allowed_domains or semantic_view
     dom_objs = list(getattr(ontology, "domains", {}).values())
     sv_target = _norm_ident(semantic_view.split(".")[-1]) if semantic_view else ""
+    if allowed_domains is not None and not allowed_domains:
+        # A project with no domains: never fall back to every domain's deploy dir.
+        return []
     for d in dom_objs:
-        if allowed_domains and d.domain not in allowed_domains and getattr(d, "id", None) not in allowed_domains:
+        if allowed_domains is not None and d.domain not in allowed_domains and getattr(d, "id", None) not in allowed_domains:
             continue
         d_sv = _norm_ident((getattr(d, "semantic_view_name", None) or "").split(".")[-1])
         if sv_target and d_sv and d_sv != sv_target:
@@ -629,6 +632,9 @@ class ProjectLexicon:
         is_count_fn: Optional[Any] = None,
     ) -> "ProjectLexicon":
         allowed_cf = {d.casefold() for d in (allowed_domains or []) if d}
+        # ``allowed_domains=[]`` (project without domains) matches nothing; it
+        # must never widen to every domain.
+        restrict = allowed_domains is not None
         target_cf = target_domain.casefold() if target_domain else None
 
         deploy_meta = load_deploy_lexicon_metadata(
@@ -644,7 +650,7 @@ class ProjectLexicon:
             dom_names = {dom.domain.casefold()}
             if getattr(dom, "id", None):
                 dom_names.add(dom.id.casefold())
-            if allowed_cf and not (dom_names & allowed_cf):
+            if restrict and not (dom_names & allowed_cf):
                 continue
             if target_cf and target_cf not in dom_names:
                 continue
@@ -656,7 +662,7 @@ class ProjectLexicon:
 
         if not scoped_concepts:
             for c in getattr(ontology, "concepts", {}).values():
-                if allowed_cf and c.domain and c.domain.casefold() not in allowed_cf:
+                if restrict and (not c.domain or c.domain.casefold() not in allowed_cf):
                     continue
                 if target_cf and c.domain and c.domain.casefold() != target_cf:
                     continue
@@ -725,7 +731,7 @@ class ProjectLexicon:
             dom_names = {dom.domain.casefold()}
             if getattr(dom, "id", None):
                 dom_names.add(dom.id.casefold())
-            if allowed_cf and not (dom_names & allowed_cf):
+            if restrict and not (dom_names & allowed_cf):
                 continue
             if target_cf and target_cf not in dom_names:
                 continue
@@ -737,7 +743,7 @@ class ProjectLexicon:
 
         if not metrics_raw:
             for m in getattr(ontology, "metrics", {}).values():
-                if allowed_cf and m.domain and m.domain.casefold() not in allowed_cf:
+                if restrict and (not m.domain or m.domain.casefold() not in allowed_cf):
                     continue
                 if target_cf and m.domain and m.domain.casefold() != target_cf:
                     continue

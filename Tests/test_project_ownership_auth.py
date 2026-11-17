@@ -98,7 +98,8 @@ def test_is_project_owned_by_user_uses_direct_owner_only(monkeypatch):
     assert pos.is_project_owned_by_user("proj-1", "8", log_denied=False) is False
 
 
-def test_is_project_owned_by_user_dynamic_backfill(monkeypatch):
+def test_is_project_owned_by_user_does_not_claim_unowned_project(monkeypatch):
+    """Unowned projects are no longer silently handed to whoever asks first."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     project = {"id": "proj-unowned", "project_id": "proj-unowned", "name": "Unowned"}
     persist_calls = []
@@ -113,14 +114,15 @@ def test_is_project_owned_by_user_dynamic_backfill(monkeypatch):
             "recovered": False,
         },
     )
+    monkeypatch.setattr(pos, "_is_admin_user", lambda user_id: False)
     monkeypatch.setattr(
         pos,
         "_persist_project_owner",
         lambda project_id, proj, user_id, source: persist_calls.append((project_id, user_id, source)),
     )
 
-    assert pos.is_project_owned_by_user("proj-unowned", "42") is True
-    assert persist_calls == [("proj-unowned", "42", "dynamic_backfill")]
+    assert pos.is_project_owned_by_user("proj-unowned", "42") is False
+    assert persist_calls == []
 
 
 def test_project_run_route_requires_owned_project_and_injects_user_id(monkeypatch):
@@ -133,8 +135,10 @@ def test_project_run_route_requires_owned_project_and_injects_user_id(monkeypatc
 
     monkeypatch.setattr(project_runs_controller, "require_request_user_id", lambda request: "7")
     monkeypatch.setattr(project_runs_controller, "auth_is_enabled", lambda: True)
+    # The access guard is the shared implementation in project_ownership_service.
+    monkeypatch.setattr(pos, "auth_is_enabled", lambda: True)
     monkeypatch.setattr(
-        project_runs_controller,
+        pos,
         "is_project_owned_by_user",
         lambda project_id, user_id, **kwargs: project_id == "proj-1" and user_id == "7",
     )
@@ -162,8 +166,10 @@ def test_jobs_trigger_requires_owned_project_and_injects_user_id(monkeypatch):
 
     monkeypatch.setattr(jobs_controller, "require_request_user_id", lambda request: "9")
     monkeypatch.setattr(jobs_controller, "auth_is_enabled", lambda: True)
+    # The access guard is the shared implementation in project_ownership_service.
+    monkeypatch.setattr(pos, "auth_is_enabled", lambda: True)
     monkeypatch.setattr(
-        jobs_controller,
+        pos,
         "is_project_owned_by_user",
         lambda project_id, user_id, **kwargs: project_id == "proj-9" and user_id == "9",
     )
@@ -212,8 +218,10 @@ def test_mappings_list_requires_owned_project(monkeypatch):
 
     monkeypatch.setattr(mappings_controller, "require_request_user_id", lambda request: "3")
     monkeypatch.setattr(mappings_controller, "auth_is_enabled", lambda: True)
+    # The access guard is the shared implementation in project_ownership_service.
+    monkeypatch.setattr(pos, "auth_is_enabled", lambda: True)
     monkeypatch.setattr(
-        mappings_controller,
+        pos,
         "is_project_owned_by_user",
         lambda project_id, user_id, **kwargs: project_id == "proj-3" and user_id == "3",
     )

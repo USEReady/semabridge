@@ -87,32 +87,27 @@ def generate_truth_cases(
     target_domains = []
     pid = (project_id or "").strip()
     if pid:
-        p_doms = ontology_store.get_project_domains(pid)
-        if not p_doms and not pid.startswith("proj-"):
-            p_doms = ontology_store.get_project_domains(f"proj-{pid}")
-        if not p_doms and pid.startswith("proj-"):
-            p_doms = ontology_store.get_project_domains(pid.removeprefix("proj-"))
-        if p_doms:
-            target_domains.extend(p_doms)
-        else:
-            fed = ontology_store.get_federated_ontology()
-            matched = [
-                d for d in fed.domains.values()
-                if _matches_pid(getattr(d, "source_project_id", None), pid)
-                or (getattr(d, "id", None) or "").strip().casefold() == pid.casefold()
-                or d.domain.strip().casefold() == pid.casefold()
-            ]
-            if matched:
-                target_domains.extend(matched)
+        # One resolver; a project without domains yields no suggestions
+        # (never another project's metrics).
+        target_domains.extend(
+            d for d in ontology_store.domains_for(pid)
+            if not domain or d.domain.casefold() == domain.casefold() or (d.id or "").casefold() == domain.casefold()
+        )
     elif domain:
         d = ontology_store.get_domain(domain)
         if d:
             target_domains.append(d)
+    else:
+        target_domains = list(ontology_store.get_federated_ontology().domains.values())
 
-    if not target_domains:
-        # Fallback to federated ontology domains
-        fed = ontology_store.get_federated_ontology()
-        target_domains = list(fed.domains.values())
+    # Same-named metrics of different models (one domain per model) are
+    # separate cases; their questions name the domain to stay distinct.
+    prior_seen = set(seen_metrics)
+    name_counts: Dict[str, int] = {}
+    for dom in target_domains:
+        for nm in {(m.name or m.logical_name or "").casefold() for m in getattr(dom, "metrics", []) or []}:
+            name_counts[nm] = name_counts.get(nm, 0) + 1
+    seen_pairs: set = set()
 
     for dom in target_domains:
         d_name = dom.domain
@@ -141,9 +136,11 @@ def generate_truth_cases(
             if len(created) >= limit:
                 break
             m_name = m.name or m.logical_name
-            if not m_name or m_name.casefold() in seen_metrics:
+            if not m_name or m_name.casefold() in prior_seen or (d_name, m_name.casefold()) in seen_pairs:
                 continue
+            seen_pairs.add((d_name, m_name.casefold()))
             seen_metrics.add(m_name.casefold())
+            in_dom = f" in {d_name}" if name_counts.get(m_name.casefold(), 0) > 1 else ""
             m_sql = m.sql_expression or ""
             m_dax = m.dax_expression or ""
 
@@ -153,7 +150,7 @@ def generate_truth_cases(
                 "project_id": project_id or getattr(dom, "source_project_id", None) or d_name,
                 "domain": d_name,
                 "metric_name": m_name,
-                "question": f"What is the total {m_name}?",
+                "question": f"What is the total {m_name}{in_dom}?",
                 "expected_sql": m_sql,
                 "expected_dax": m_dax,
                 "expected_row_count": 1,
@@ -171,7 +168,7 @@ def generate_truth_cases(
                     "project_id": project_id or getattr(dom, "source_project_id", None) or d_name,
                     "domain": d_name,
                     "metric_name": m_name,
-                    "question": f"What is {m_name} by {chosen_dim}?",
+                    "question": f"What is {m_name} by {chosen_dim}{in_dom}?",
                     "expected_sql": f"SELECT {chosen_dim}, {m_sql} GROUP BY {chosen_dim}" if m_sql else "",
                     "expected_dax": f"EVALUATE SUMMARIZECOLUMNS('{chosen_dim}', \"{m_name}\", [{m_name}])" if m_dax else "",
                     "expected_row_count": 0,
@@ -490,6 +487,33 @@ def generate_golden_questions_from_pbix_dir(
     return []
 
 
+def _case_scope(scope: Any, case: Dict[str, Any]) -> Any:
+    """Per-case copy of a project scope pointed at the case's own semantic view.
+
+    Multi-model projects have one view per model: a case generated from a
+    domain uses that domain's view; otherwise the question is routed to the
+    view owning its metric (no view when ambiguous).
+    """
+    import dataclasses
+
+    from semabridge.ai.project_connection import route_scope_to_view
+
+    views = getattr(scope, "domain_views", None) or {}
+    if not dataclasses.is_dataclass(scope) or getattr(scope, "explicit_view", False) or len(set(views.values())) < 2:
+        return scope
+    cs = dataclasses.replace(scope, candidate_views=[], routing_matches={})
+    dom = case.get("domain")
+    if dom and dom in views:
+        from semabridge.ai.project_connection import _restrict_to
+        from semabridge.ontology.store import ontology_store
+
+        cs.semantic_view = views[dom]
+        cs.answered_by_domain = dom
+        _restrict_to(cs, list(ontology_store.domains_for(cs.project_id)), [dom])
+        return cs
+    return route_scope_to_view(case.get("question") or "", cs)
+
+
 def _matches_pid(case_pid: Optional[str], target_pid: Optional[str]) -> bool:
     """Check if case project_id matches target project_id flexibly."""
     if not target_pid:
@@ -590,7 +614,7 @@ def run_truth_suite(
 
     def _evaluate_case(c: Dict[str, Any]) -> Dict[str, Any]:
         pid = c.get("project_id") or project_id
-        scope = _get_scope(pid)
+        scope = _case_scope(_get_scope(pid), c)
         sf = _get_sf(pid)
         generated_sql = ""
         mode = "local"

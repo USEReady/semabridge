@@ -38,44 +38,17 @@ class LintOptions(BaseModel):
 
 
 def _resolve_project_allowed_domains(project_id: Optional[str]) -> Optional[List[str]]:
-    """Resolve attached or model-matched domain names/ids for a project_id."""
+    """Domain names/ids of a project (``ontology_store.domains_for``).
+
+    ``None`` = no project (unrestricted). A project without domains yields
+    ``[project_id]`` -- a filter that matches nothing -- never every domain.
+    """
     pid = (project_id or "").strip()
     if not pid:
         return None
-    pid_cf = pid.casefold()
-    p_domains = ontology_store.get_project_domains(pid)
-    if p_domains:
-        return [d.domain for d in p_domains] + [d.id for d in p_domains if d.id]
-
-    fed = ontology_store.get_federated_ontology()
-    matched = [
-        d
-        for d in fed.domains.values()
-        if (getattr(d, "source_project_id", None) or "").strip().casefold() == pid_cf
-        or (getattr(d, "id", None) or "").strip().casefold() == pid_cf
-        or d.domain.strip().casefold() == pid_cf
-    ]
-    if not matched:
-        try:
-            from semabridge.repository.model_repository import ModelRepository
-
-            dep_info = ModelRepository().get_project_deployment_info(pid)
-            model_name = (dep_info.get("model_name") or "").strip()
-            sem_view = (dep_info.get("semantic_view") or dep_info.get("view_name") or "").strip()
-            if model_name or sem_view:
-                matched = [
-                    d
-                    for d in fed.domains.values()
-                    if (model_name and d.domain.strip().casefold() == model_name.casefold())
-                    or (
-                        sem_view
-                        and (getattr(d, "semantic_view_name", None) or "").strip().casefold() == sem_view.casefold()
-                    )
-                ]
-        except Exception:
-            pass
-    if matched:
-        return [d.domain for d in matched] + [d.id for d in matched if d.id]
+    doms = ontology_store.domains_for(pid)
+    if doms:
+        return [d.domain for d in doms] + [d.id for d in doms if d.id]
     return [pid]
 
 

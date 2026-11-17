@@ -254,7 +254,10 @@ def test_gate_passes_when_job_is_linked_from_preview():
     validate_multi_model_dry_run_readiness("proj_linked_1", source_cfg)
 
 
-def test_gate_discovers_unlinked_preview_job_by_matching_models():
+def test_gate_never_adopts_an_unlinked_preview_job():
+    """Any user's recent preview job used to be adopted (and its project_id
+    rewritten) by name match inside this validation. Only jobs linked to the
+    project at save time (owner-checked) count, and validation is read-only."""
     source_cfg = {
         "mode": "multiple",
         "models": ["models/ModelA.pbix", "models/ModelB.pbix"],
@@ -284,6 +287,8 @@ def test_gate_discovers_unlinked_preview_job_by_matching_models():
         status="success",
     )
 
-    # Gate should discover the preview job with matching models and link it
-    validate_multi_model_dry_run_readiness("proj-multi-sync-test", source_cfg)
+    with pytest.raises(ValidationError, match="no dry-run job found"):
+        validate_multi_model_dry_run_readiness("proj-multi-sync-test", source_cfg)
+    with db_manager.get_session() as session:
+        assert session.get(DryRunJob, "dryrun-preview-random-id").project_id == "preview-random-id"
 

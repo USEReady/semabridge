@@ -155,7 +155,7 @@ function Row({ project, summary, health, expanded, onToggleExpand, selected, onT
             </span>
           </div>
         </td>
-        <td style={td}><StatusBadge status={status || 'draft'} size="sm" /></td>
+        <td style={td}><StatusBadge status={status || 'draft'} size="sm" trueStatus={!myRun && project.demo_masked ? project.true_status : undefined} /></td>
         <td style={{ ...td, width: 40 }} onClick={e => e.stopPropagation()}>
           <button
             type="button"

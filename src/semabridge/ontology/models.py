@@ -50,6 +50,44 @@ def slugify_domain(name: str) -> str:
     return slug[:64]
 
 
+def model_key(raw: Any) -> str:
+    """Stable, lower-cased id of a BI model inside a project ('' if none).
+
+    Accepts a model file path, an upload-prefixed stem, a display name or a
+    deployed view base name; the 32-hex upload prefix and the file extension
+    are dropped, then the name is slugified (``Core_Finance_v1.pbix`` ->
+    ``core_finance_v1``; ``COMPETITIVE_MARKETING_ANALYSIS`` ->
+    ``competitive_marketing_analysis``).
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if "/" in text or "\\" in text or re.search(r"\.(pbix|pbit|bim|tmdl|json|ya?ml)$", text, re.I):
+        from semabridge.utils.identifiers import clean_pbix_model_name
+
+        text = clean_pbix_model_name(text) or text
+    text = re.sub(r"^[0-9a-fA-F]{32}_", "", text)
+    return slugify_domain(text)
+
+
+def project_key(project_id: Any) -> str:
+    """Project id normalised for comparisons (case-folded, ``proj-`` prefix removed)."""
+    return str(project_id or "").strip().casefold().removeprefix("proj-")
+
+
+def per_model_domain_id(project_id: str, model_id: str) -> str:
+    """Domain id of one model of a multi-model project: ``{project_slug}__{model_slug}``."""
+    proj = slugify_domain(project_key(project_id)) or "project"
+    mdl = model_key(model_id) or "model"
+    out = f"{proj}__{mdl}"
+    if len(out) <= 64:
+        return out
+    import hashlib
+
+    digest = hashlib.sha1(out.encode("utf-8")).hexdigest()[:6]
+    return f"{proj[:24]}__{mdl[:30]}_{digest}"[:64]
+
+
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -286,6 +324,11 @@ class DomainOntology(_StrictModel):
     # Project whose BI model this domain was bootstrapped from; used by
     # "sync with OSI" to re-merge the latest model into this domain.
     source_project_id: Optional[str] = None
+    # Model of a multi-model project this domain belongs to (see ``model_key``);
+    # None for single-model projects and for project-wide shared domains.
+    source_model_id: Optional[str] = None
+    source_model_name: Optional[str] = None
+    # Fully-qualified DB.SCHEMA.VIEW of the semantic view built from this model.
     semantic_view_name: Optional[str] = None
     deployment_error: Optional[str] = None
     concepts: List[DomainConcept] = Field(default_factory=list)
@@ -315,6 +358,13 @@ class DomainOntology(_StrictModel):
         if not _SLUG_RE.match(v):
             raise ValueError(f"'id' must match {_SLUG_RE.pattern} (lowercase letters, digits, '_' or '-'): {v!r}")
         return v
+
+    @field_validator("source_model_id")
+    @classmethod
+    def _norm_model_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return model_key(v) or None
 
     @model_validator(mode="after")
     def _unique_and_ids(self) -> "DomainOntology":
@@ -348,3 +398,8 @@ class FederatedEnterpriseOntology(BaseModel):
     policies: Dict[str, DomainPolicy] = Field(default_factory=dict)
     collisions: List[OntologyCollision] = Field(default_factory=list)
     unresolved_references: List[str] = Field(default_factory=list)
+    # ``metrics``/``concepts`` keep the first definition per name (back-compat);
+    # these list EVERY domain declaring a (case-folded) name, so callers can
+    # tell same-named items of different models apart instead of guessing.
+    metric_owners: Dict[str, List[str]] = Field(default_factory=dict)
+    concept_owners: Dict[str, List[str]] = Field(default_factory=dict)

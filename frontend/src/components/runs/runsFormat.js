@@ -67,17 +67,46 @@ export function normStatus(status) {
   const s = String(status || '').toLowerCase();
   if (s === 'succeeded' || s === 'completed' || s === 'complete') return 'success';
   if (s === 'error') return 'failed';
-  if (s === 'queued' || s === 'pending' || s === 'in_progress') return 'running';
+  if (s === 'pending' || s === 'in_progress') return 'running';
   return s || 'unknown';
+}
+
+/** Still in progress: waiting for a slot ("queued") or executing. */
+export function isActiveStatus(status) {
+  const s = normStatus(status);
+  return s === 'running' || s === 'queued';
+}
+
+/** Some models failed: the run can be retried for just those models. */
+export function isRetryableStatus(status) {
+  const s = normStatus(status);
+  return s === 'partial' || s === 'failed' || s === 'interrupted';
 }
 
 export const STATUS_PILL = {
   success: { label: 'Succeeded', color: 'var(--color-success)', bg: 'var(--color-success-bg)' },
   failed: { label: 'Failed', color: 'var(--color-error)', bg: 'var(--color-error-bg)' },
+  partial: { label: 'Partly failed', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)' },
+  warning: { label: 'Warnings', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)' },
   running: { label: 'Running', color: 'var(--accent-blue)', bg: 'rgba(99, 102, 241, 0.14)' },
+  queued: { label: 'Queued', color: 'var(--text-secondary)', bg: 'var(--bg-surface-raised)' },
+  interrupted: { label: 'Interrupted', color: 'var(--color-error)', bg: 'var(--color-error-bg)' },
+  skipped: { label: 'Skipped', color: 'var(--text-tertiary)', bg: 'var(--bg-surface-raised)' },
   conflict: { label: 'Conflict', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)' },
   cancelled: { label: 'Cancelled', color: 'var(--text-tertiary)', bg: 'var(--bg-surface-raised)' },
 };
+
+/**
+ * Demo mode shows a masked "success" for presentation; the real outcome is
+ * kept on the run (true_status / true_message). Returns the tooltip text that
+ * reveals it, or '' when the status shown is the real one.
+ */
+export function demoMaskTitle(run) {
+  if (!run?.demo_masked) return '';
+  const real = statusPill(run.true_status).label;
+  const msg = run.true_message ? `: ${run.true_message}` : '';
+  return `Demo mode: shown as succeeded. Real status: ${real}${msg}`;
+}
 
 export function statusPill(status) {
   const key = normStatus(status);

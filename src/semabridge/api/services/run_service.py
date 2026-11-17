@@ -5,11 +5,14 @@ manual deploy, project lineage, and clear-job-runs.
 """
 import asyncio
 import json
+import logging
 import os
 import threading
 import time as _time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+import uuid
 
 import yaml
 
@@ -36,6 +39,16 @@ from semabridge.core.run_helpers import (
     sync_mode_from_project_config,
 )
 from semabridge.domain.exceptions import NotFoundError, ValidationError
+from semabridge.api.services.run_records import (
+    close_model_rows,
+    get_project_run,
+    list_project_runs,
+    merge_with_memory,
+    save_project_run,
+)
+from semabridge.core import run_coordination
+
+logger = logging.getLogger(__name__)
 
 # Backward-compatible alias
 _compat_normalize_sync_mode = normalize_sync_mode
@@ -289,17 +302,25 @@ def _create_project_run(
     restore_snapshot_id: Optional[str] = None,
     sync_mode: Optional[str] = None,
     fallback_sync_mode: Optional[str] = None,
+    run_id: Optional[str] = None,
+    retry_of_run_id: Optional[str] = None,
 ) -> tuple:
     """Create a run record. ``sync_mode`` is set explicitly only for RESTORE
     runs (the restored snapshot's mode); every other run uses the mode
     selected in the project configuration, then ``fallback_sync_mode``
-    (e.g. a run-now request's own value), then "copy"."""
+    (e.g. a run-now request's own value), then "copy".
+
+    The run id is a uuid created once here (or by the caller that already
+    leased the project under it) and used by the store record, the project
+    row in ``runs`` (authoritative), the per-model engine rows
+    (``parent_run_id``), logs, reports and the UI. The run starts "queued"
+    and turns "running" when its first model gets an execution slot."""
     _compat_ensure_loaded()
     if project_id not in _compat_projects:
         raise NotFoundError("Project not found")
 
     started = _time.time()
-    run_id = f"run-{int(_time.time() * 1000)}"
+    run_id = str(run_id or uuid.uuid4())
     modular_bundle = project_shared._compat_load_modular_project(project_id)
     project_cfg = (
         project_cfg_override
@@ -339,14 +360,14 @@ def _create_project_run(
         "project_name": project_meta.get("name", project_id),
         "run_type": str(run_type or "SYNC").upper(),
         "schedule": schedule_label,
-        "status": "running",
+        "status": "queued",
         "sync_mode": sync_mode,
         "account_id": project_meta.get("account_id") or project_meta.get("source_account_id"),
         "source_type": _extract_source_type_from_project_cfg(
             project_cfg,
             fallback=str(project_meta.get("source") or "fabric").lower(),
         ),
-        "message": "Execution started.",
+        "message": "Queued: waiting for a free execution slot.",
         "logs": [
             "LIVE Run queued. Waiting for execution engine...",
             *(["Notice: Initial project deployment promoted from UPSERT to COPY to establish baseline target schema."] if initial_deployment_promoted else []),
@@ -359,7 +380,10 @@ def _create_project_run(
     }
     if restore_snapshot_id:
         run["restore_snapshot_id"] = restore_snapshot_id
+    if retry_of_run_id:
+        run["retry_of_run_id"] = retry_of_run_id
     _compat_project_runs.setdefault(project_id, []).insert(0, run)
+    save_project_run(run)
     try:
         from semabridge.api.services.snapshot_service import _compat_capture_snapshots_for_run
         _compat_capture_snapshots_for_run(project_id=project_id, run=run, project_cfg=project_cfg, stage="before")
@@ -492,27 +516,87 @@ def _reconcile_model_result(project_id: str, result_entry: Dict[str, Any], logge
         summary_dropped.extend(unaccounted_entries)
 
 
-# Runs executing in THIS process. The stale-run sweeper must never time out a
-# run that is still working (long post-deploy checks can exceed its cutoff);
-# it only cleans up runs left "running" by a crash or restart.
-_ACTIVE_RUN_IDS: set = set()
-_ACTIVE_RUN_LOCK = threading.Lock()
-
-
 def _is_run_active(run_id: Any) -> bool:
-    with _ACTIVE_RUN_LOCK:
-        return str(run_id or "") in _ACTIVE_RUN_IDS
+    """True while ``run_id`` executes in THIS process (heartbeat registry)."""
+    return run_coordination.is_live_here(run_id)
+
+
+def _persist_run(run: Dict[str, Any]) -> None:
+    """Write the run to the compat store AND its authoritative runs row."""
+    _compat_save_store()
+    save_project_run(run)
+
+
+ALREADY_RUNNING_MESSAGE = "A sync of this project is already running."
+
+
+def _project_busy_detail(project_id: str, holder: Any) -> Dict[str, Any]:
+    return {
+        "status": "already_running",
+        "project_id": project_id,
+        "run_id": getattr(holder, "run_id", None),
+        "message": f"{ALREADY_RUNNING_MESSAGE} Wait for it to finish (run {getattr(holder, 'run_id', None)}).",
+    }
+
+
+def _acquire_project_lease(project_id: str, run_id: str) -> run_coordination.LeaseResult:
+    return run_coordination.acquire_lease(
+        run_coordination.project_lease_key(project_id),
+        run_id=run_id, holder=run_id, lease_type="project", project_id=project_id,
+    )
+
+
+def _mark_run_skipped(run: Dict[str, Any], started: float, holder: Any) -> Dict[str, Any]:
+    run["status"] = "skipped"
+    run["message"] = (
+        f"Skipped: {ALREADY_RUNNING_MESSAGE[2:].rstrip('.')} (run {getattr(holder, 'run_id', None)}); "
+        "this run did not start."
+    )
+    run["logs"] = [*run.get("logs", []), run["message"]]
+    run["completed_at"] = _compat_now_iso()
+    run["duration_ms"] = elapsed_ms(started)
+    _persist_run(run)
+    return run
+
+
+def _mark_run_started(run: Dict[str, Any]) -> None:
+    """queued -> running, once (called when the first model gets a slot)."""
+    if str(run.get("status") or "") != "queued":
+        return
+    run["status"] = "running"
+    run["message"] = "Execution started."
+    run["started_running_at"] = _compat_now_iso()
+    save_project_run(run)
 
 
 async def _perform_project_run(run: dict, project_cfg: str, started: float) -> dict:
+    """Execute a project run under its project lease and heartbeat.
+
+    * Project lease (``project:<id>``, DB-backed, cross-process): a second
+      run of the same project is recorded "skipped" instead of running
+      concurrently (entry points that answer an HTTP request check the lease
+      first and return 409).
+    * Heartbeat: the run row (and its model rows) are refreshed every few
+      seconds while this executes, so the stale sweep can tell a long run
+      from one orphaned by a crash/restart (see core/run_coordination.py).
+    """
     run_id = str(run.get("run_id") or run.get("id") or "")
-    with _ACTIVE_RUN_LOCK:
-        _ACTIVE_RUN_IDS.add(run_id)
+    project_id = str(run.get("project_id") or "")
+    lease = _acquire_project_lease(project_id, run_id) if project_id else None
+    if lease is not None and not lease:
+        logger.warning("Run %s of project %s skipped: run %s holds the project", run_id, project_id, lease.run_id)
+        return _mark_run_skipped(run, started, lease)
+    token = run_coordination.model_started_callback.set(lambda: _mark_run_started(run))
     try:
-        return await _perform_project_run_impl(run, project_cfg, started)
+        with run_coordination.live_run(run_id):
+            return await _perform_project_run_impl(run, project_cfg, started)
     finally:
-        with _ACTIVE_RUN_LOCK:
-            _ACTIVE_RUN_IDS.discard(run_id)
+        run_coordination.model_started_callback.reset(token)
+        if run_id:
+            closed = close_model_rows(run_id, message="Model execution ended without recording an outcome.")
+            if closed:
+                logger.warning("Run %s: closed %d model row(s) left running", run_id, closed)
+            run_coordination.release_leases(run_id=run_id)
 
 
 async def _perform_project_run_impl(run: dict, project_cfg: str, started: float) -> dict:
@@ -574,7 +658,7 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                         "PAUSED Direct upsert was paused to protect warehouse integrity.",
                         "ACTION Review and approve changes under Drift Monitoring in navigation to execute upsert.",
                     ]
-                    _compat_save_store()
+                    _persist_run(run)
                     return run
             except Exception as drift_err:
                 logger.warning("[%s] Drift pre-check encountered non-fatal error: %s", project_id, drift_err)
@@ -595,6 +679,10 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
                 "cap=%d) -- will start as soon as a slot frees up",
                 project_id, _MAX_CONCURRENT_RUNS, _MAX_CONCURRENT_RUNS,
             )
+            run["message"] = (
+                f"Queued: {_MAX_CONCURRENT_RUNS} other sync(s) are running; this run starts when one finishes."
+            )
+            save_project_run(run)
             _RUN_SEMAPHORE.acquire()
         try:
             sync_result = await sync_models(sync_payload)
@@ -622,21 +710,17 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         _project_status_map = {
             "success": "active",
             "warning": "warning",
-            "partial": "warning",
+            "partial": "partial",
             "failed": "failed",
         }
-        # The Projects grid is a display surface like any other run status
-        # badge — mask it the same way (see run_helpers.mask_run_for_display)
-        # so a demo-mode-masked run doesn't show the project as broken.
-        _display_status = (
-            "success"
-            if (run["demo_mode"] and _run_final_status in ("failed", "warning"))
-            else _run_final_status
-        )
+        # The project's STORED status is always the true outcome. Demo-mode
+        # masking is applied only when the projects grid is rendered (see
+        # run_helpers.mask_project_for_display), never written here.
         if project_id in _compat_projects:
             _compat_projects[project_id]["status"] = _project_status_map.get(
-                _display_status, _display_status
+                _run_final_status, _run_final_status
             )
+            _compat_projects[project_id]["last_run_demo_mode"] = bool(run["demo_mode"])
             # Persist the updated status so the store file has the correct value
             # on the next server start (avoids reverting to "draft" on restart).
             # Uses the module-level _compat_save_store already imported at the
@@ -719,18 +803,29 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
             if _model_results and isinstance(run["summary"].get("reconciliation"), dict):
                 _model_results[0]["reconciliation"] = run["summary"]["reconciliation"]
 
+        _failed_models = [
+            str(r.get("model")) for r in _model_results
+            if str(r.get("status") or "").lower() != "success" and r.get("model")
+        ]
+        run["failed_models"] = _failed_models
         run["message"] = (
             "Execution completed successfully."
             if run["status"] == "success"
             else "Execution completed with warnings."
             if run["status"] == "warning"
+            else (
+                f"Completed with failures: {len(_failed_models)} of {len(_model_results)} model(s) failed "
+                f"({', '.join(_failed_models[:5])}{'...' if len(_failed_models) > 5 else ''}). "
+                "Retry the failed models from the run."
+            )
+            if run["status"] == "partial"
             else str(
                 (((run["summary"].get("errors") or [{}])[0]).get("message"))
                 or "Execution failed."
             )
         )
 
-        if run.get("demo_mode") and run["status"] in ("failed", "warning"):
+        if run.get("demo_mode") and run["status"] in ("failed", "warning", "partial"):
             logger.warning(
                 "DEMO_MODE_MASKED_FAILURE project_id=%s run_id=%s true_status=%s error=%s",
                 project_id, run.get("run_id"), run["status"], run["message"],
@@ -842,29 +937,154 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
             persist_run_model_results(run, project_cfg)
         except Exception as persist_exc:
             logger.warning("Per-model results not persisted for %s: %s", project_id, persist_exc)
-        _compat_save_store()
+        _persist_run(run)
     return run
 
 
+def _prepare_sync_config(project_id: str) -> str:
+    """The config every SYNC run executes: the project's saved config (from
+    the project_configs table, via the single reader) with the
+    mapping_overrides table merged into mappings_overrides. Shared by
+    run-now, scheduled and triggered runs so none of them can deploy
+    without the user's saved names. Read-only: it never writes the config."""
+    modular_bundle = project_shared._compat_load_modular_project(project_id)
+    base_cfg = (
+        (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
+        or _compat_project_configs.get(project_id)
+        or _compat_load_repo_yaml_text()
+        or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
+    )
+    from semabridge.api.services.mapping_service import _compat_apply_manual_mapping_overrides_to_cfg
+
+    config = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id) or base_cfg
+    return config
+
+
+def _readiness_timeout_seconds() -> int:
+    try:
+        return max(10, int(os.getenv("SEMABRIDGE_READINESS_TIMEOUT_SECONDS", "300")))
+    except ValueError:
+        return 300
+
+
+async def _assert_sync_ready(project_id: str, config_yaml: str, *, force: bool = False) -> None:
+    """Server-side dry-run gate shared by every SYNC entry point. Raises
+    ValidationError (multi-model) or HTTPException 409 (single-model) when
+    the project has unresolved dry-run blockers."""
+    parsed_cfg = _compat_parse_project_cfg_dict(config_yaml) or {}
+    source_cfg = parsed_cfg.get("source") if isinstance(parsed_cfg.get("source"), dict) else {}
+    from semabridge.utils.project_models import is_multi_mode
+
+    if is_multi_mode(source_cfg):
+        from semabridge.api.services.dry_run_job_service import validate_multi_model_dry_run_readiness
+
+        await asyncio.to_thread(validate_multi_model_dry_run_readiness, project_id, source_cfg)
+        return
+    if force:
+        return
+    import sys
+
+    pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
+    auto_map_fn = getattr(pri_mod, "auto_map_compat", None)
+    if auto_map_fn is None:
+        from semabridge.api.services.mapping_service import auto_map_compat as auto_map_fn
+    collect_blockers_fn = getattr(pri_mod, "_compat_collect_dry_run_blockers", None)
+    if collect_blockers_fn is None:
+        from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers as collect_blockers_fn
+    # Design choice: the single-model readiness dry run stays IN the request
+    # (the UI shows its 409 "blocked" detail inline, see api.js
+    # runProjectNow / ProjectsPage), but it runs on its own event loop in the
+    # bounded pipeline pool -- never on the API event loop -- and is bounded
+    # by SEMABRIDGE_READINESS_TIMEOUT_SECONDS (default 300). A timeout is a
+    # 503 telling the user to run a dry run first; nothing is deployed.
+    payload = {"project_id": project_id, "dry_run": True, "config_yaml": config_yaml}
+    timeout_s = _readiness_timeout_seconds()
+    try:
+        auto_map_res = await run_coordination.run_blocking(
+            run_coordination.run_coroutine_blocking, lambda: auto_map_fn(payload), timeout=timeout_s,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "readiness_timeout",
+                "message": (
+                    f"The pre-sync dry run did not finish within {timeout_s}s, so the sync was not started. "
+                    "Run a dry run for this project first, then sync again."
+                ),
+            },
+        )
+    blockers = collect_blockers_fn(auto_map_res)
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked",
+                "mode": "DRY_RUN",
+                "blocking_issue_count": len(blockers),
+                "blockers": blockers,
+                "message": f"Project has {len(blockers)} blocking issue(s) in dry run. Resolve them before running live sync.",
+            },
+        )
+
+
 async def _execute_project_run(project_id: str, schedule_label: str = "Manual") -> dict:
-    run, project_cfg, started = _create_project_run(project_id, schedule_label)
+    """Scheduled/triggered run: same config preparation and dry-run gate as
+    run-now. A gate failure is recorded on the run instead of deploying; a
+    project that is already syncing gets a "skipped" run record."""
+    config = _prepare_sync_config(project_id)
+    run, project_cfg, started = _create_project_run(project_id, schedule_label, project_cfg_override=config)
+    return await _gated_project_run(run, project_cfg, started)
+
+
+def _start_gated_project_run(project_id: str, schedule_label: str = "Manual") -> dict:
+    """Create a SYNC run now and execute it (gate first) in the background.
+    Used by job triggers so they get the same checks as run-now."""
+    config = _prepare_sync_config(project_id)
+    run, project_cfg, started = _create_project_run(project_id, schedule_label, project_cfg_override=config)
+
+    def _run_loop() -> None:
+        run_coordination.run_coroutine_blocking(lambda: _gated_project_run(run, project_cfg, started))
+
+    threading.Thread(target=_run_loop, daemon=True, name=f"project-run-{run['id'][:8]}").start()
+    return run
+
+
+async def _gated_project_run(run: dict, project_cfg: str, started: float) -> dict:
+    """Lease -> dry-run gate -> execute. The project lease is taken BEFORE
+    the gate so a concurrent run is reported as skipped, not as a gate
+    failure, and released if the gate stops the run."""
+    project_id = str(run.get("project_id") or "")
+    run_id = str(run.get("run_id") or run.get("id") or "")
+    lease = _acquire_project_lease(project_id, run_id)
+    if not lease:
+        return _mark_run_skipped(run, started, lease)
+    try:
+        with run_coordination.live_run(run_id):
+            await _assert_sync_ready(project_id, project_cfg)
+    except Exception as exc:
+        run_coordination.release_leases(run_id=run_id)
+        detail = getattr(exc, "detail", None)
+        message = detail.get("message") if isinstance(detail, dict) else str(detail or exc)
+        run["status"] = "failed"
+        run["message"] = f"Sync not started: {message}"
+        run["logs"] = [*run.get("logs", []), run["message"]]
+        run["completed_at"] = _compat_now_iso()
+        run["duration_ms"] = elapsed_ms(started)
+        _persist_run(run)
+        return run
     return await _perform_project_run(run, project_cfg, started)
 
 
 def _run_project_background(run: dict, project_cfg: str, started: float) -> None:
     """Run project execution in a dedicated background thread with its own event loop."""
-    import threading
 
     def _run_loop():
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_perform_project_run(run, project_cfg, started))
-        finally:
-            loop.close()
+        run_coordination.run_coroutine_blocking(lambda: _perform_project_run(run, project_cfg, started))
 
-    threading.Thread(target=_run_loop, daemon=True).start()
+    threading.Thread(
+        target=_run_loop, daemon=True, name=f"project-run-{str(run.get('id') or '')[:8]}"
+    ).start()
 
 
 def _enrich_run_report_meta(run: Dict[str, Any]) -> Dict[str, Any]:
@@ -892,160 +1112,109 @@ def _enrich_run_report_meta(run: Dict[str, Any]) -> Dict[str, Any]:
     return run
 
 
-def _sweep_stale_runs():
-    """Find any runs in memory or ORM DB with status=='running' that are older
-    than 5 minutes (or from previous interrupted sessions) and mark them failed."""
-    import logging
+_last_sweep_at = 0.0
+_SWEEP_MIN_INTERVAL_S = 5.0
+
+
+def _sweep_stale_runs(force: bool = False):
+    """Heartbeat-based stale-run sweep (cross-process, restart-safe).
+
+    A running/queued run is "interrupted" only when its heartbeat is older
+    than the lease (SEMABRIDGE_RUN_LEASE_SECONDS, default 120 s) -- there is
+    no wall-clock limit on how long a live run may take. The DB rows are
+    swept first (core/run_coordination.sweep_stale_runs); the compat-store
+    copies then follow their DB row. A legacy store run with no DB row is
+    judged by its own start time against the same lease."""
     from datetime import datetime, timezone, timedelta
-    logger = logging.getLogger(__name__)
 
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=5)
-
-    # 1. Sweep DB
+    global _last_sweep_at
+    now_mono = _time.monotonic()
+    if not force and now_mono - _last_sweep_at < _SWEEP_MIN_INTERVAL_S:
+        return
+    _last_sweep_at = now_mono
     try:
-        from semabridge.repository.orm.session_factory import db_manager
-        from semabridge.repository.orm.models import Run
-        from sqlalchemy import select
-
-        with db_manager.get_session() as session:
-            running_db_runs = session.execute(
-                select(Run).where(Run.status == "running")
-            ).scalars().all()
-            for r in running_db_runs:
-                if _is_run_active(getattr(r, "id", None) or getattr(r, "run_id", None)):
-                    continue
-                run_ts = getattr(r, "started_at", None) or getattr(r, "created_at", None)
-                if run_ts:
-                    if isinstance(run_ts, str):
-                        try:
-                            run_ts = datetime.fromisoformat(run_ts.replace("Z", "+00:00"))
-                        except ValueError:
-                            run_ts = None
-                    if run_ts and run_ts.tzinfo is None:
-                        run_ts = run_ts.replace(tzinfo=timezone.utc)
-                is_stale = not run_ts or (now - run_ts.astimezone(timezone.utc)).total_seconds() > 300
-                if is_stale:
-                    r.status = "failed"
-                    r.error_message = r.error_message or "Run timed out or was interrupted."
-                    if not r.completed_at:
-                        r.completed_at = now
-            session.commit()
+        run_coordination.sweep_stale_runs()
     except Exception as exc:
         logger.debug("Stale DB run sweep skipped: %s", exc)
 
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=run_coordination.lease_seconds())
     modified = False
     for pid, r_list in list(_compat_project_runs.items()):
         for r in r_list:
-            if str(r.get("status") or "").lower() == "running":
-                if _is_run_active(r.get("run_id") or r.get("id")):
-                    continue
-                ts_str = r.get("started_at") or r.get("created_at")
-                run_ts = None
-                if ts_str:
-                    try:
-                        run_ts = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
-                        if run_ts.tzinfo is None:
-                            run_ts = run_ts.replace(tzinfo=timezone.utc)
-                    except ValueError:
-                        pass
-                if not run_ts or run_ts < cutoff:
-                    r["status"] = "failed"
-                    r["message"] = r.get("message") or "Run timed out or was interrupted."
-                    r["completed_at"] = r.get("completed_at") or _compat_now_iso()
-                    modified = True
+            if str(r.get("status") or "").lower() not in run_coordination.ACTIVE_STATUSES:
+                continue
+            rid = r.get("run_id") or r.get("id")
+            if _is_run_active(rid):
+                continue
+            db_run = get_project_run(str(rid))
+            if db_run is not None:
+                if str(db_run.get("status") or "").lower() in run_coordination.ACTIVE_STATUSES:
+                    continue  # alive (heartbeating) -- possibly in another process
+                r["status"] = db_run["status"]
+                r["message"] = db_run.get("message") or r.get("message")
+                r["completed_at"] = r.get("completed_at") or db_run.get("completed_at")
+                modified = True
+                continue
+            run_ts = None
+            try:
+                run_ts = datetime.fromisoformat(str(r.get("started_at") or "").replace("Z", "+00:00"))
+                if run_ts.tzinfo is None:
+                    run_ts = run_ts.replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+            if not run_ts or run_ts < cutoff:
+                r["status"] = "interrupted"
+                r["message"] = run_coordination.INTERRUPTED_MESSAGE.format(seconds=run_coordination.lease_seconds())
+                r["completed_at"] = r.get("completed_at") or _compat_now_iso()
+                modified = True
     if modified:
-        try:
-            _compat_save_store()
-        except Exception:
-            pass
+        # Called from GET handlers (run list): schedule a deferred store
+        # flush instead of rewriting the whole file inside the request.
+        project_shared._compat_mark_store_dirty()
 
 
 # ---------------------------------------------------------------------------
 # Public functions
 # ---------------------------------------------------------------------------
 
+def _display_run(run: Dict[str, Any]) -> Dict[str, Any]:
+    return _enrich_run_report_meta(mask_run_for_display(_hydrate_model_results(run)))
+
+
 async def get_project_runs_compat(project_id: str):
-    """Retrieve run history for a project.
+    """Run history of a project, newest first.
 
-    Falls back to ORM queries if the in-memory compatibility store is empty.
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
+    The ``runs`` table (run_kind='project') is authoritative for which runs
+    exist and their status; the in-memory store copy adds per-run blobs while
+    this process holds them. Legacy store-only runs (``run-<ms>`` ids never
+    imported) are still listed for history."""
     _compat_ensure_loaded()
-    _sweep_stale_runs()
+    await asyncio.to_thread(_sweep_stale_runs)
     pid = str(project_id).strip()
 
-    runs = _compat_project_runs.get(pid, [])
-    if runs:
-        return [_enrich_run_report_meta(mask_run_for_display(_hydrate_model_results(r))) for r in runs]
+    mem_runs = list(_compat_project_runs.get(pid, []))
+    mem_by_id = {str(r.get("run_id") or r.get("id") or ""): r for r in mem_runs if isinstance(r, dict)}
+    db_runs = await asyncio.to_thread(list_project_runs, pid)
+    if db_runs is None:
+        # Database unreachable: degrade to the store copy.
+        return [_display_run(r) for r in mem_runs]
 
-    try:
-        from semabridge.repository.orm.models import Run
-        from sqlalchemy import select
-        from semabridge.repository.orm.session_factory import db_manager
+    from semabridge.api.services.run_report_service import load_persisted_model_reports
 
-        with db_manager.get_session() as session:
-            stmt = (
-                select(Run)
-                .where(Run.project_id == pid)
-                .order_by(Run.started_at.desc())
-                .limit(100)
-            )
-            rows = session.execute(stmt).scalars().all()
-
-            results: List[Dict[str, Any]] = []
-            for row in rows:
-                if str(getattr(row, "run_type", "") or "").upper() == "DRY_RUN":
-                    continue  # previews are not runs
-                def _parse_list(attr_name: str) -> List[Any]:
-                    val = getattr(row, attr_name, None)
-                    if not val:
-                        return []
-                    try:
-                        return json.loads(val) if isinstance(val, str) else val
-                    except Exception:
-                        return []
-
-                before_ids = _parse_list("before_target_snapshot_ids")
-                after_ids = _parse_list("after_target_snapshot_ids")
-
-                # The `runs` table has no report columns at all -- report
-                # state has only ever lived in the in-memory compat-store run
-                # dict (see the `finally` block in _perform_project_run),
-                # which this ORM fallback runs only after that store has
-                # already been evicted (server restart). Without this,
-                # per-model download buttons would silently disappear from
-                # the UI for any run reconstructed here, even though the
-                # .md files are still on disk -- see
-                # run_report_service.load_persisted_model_reports().
-                from semabridge.api.services.run_report_service import load_persisted_model_reports
-
-                run_data = {
-                    "run_id": row.run_id,
-                    "id": row.run_id,
-                    "project_id": row.project_id,
-                    "run_type": getattr(row, "run_type", "SYNC") or "SYNC",
-                    "sync_mode": _compat_normalize_sync_mode(getattr(row, "sync_mode", None)) or "copy",
-                    "status": row.status or "unknown",
-                    "started_at": row.started_at.isoformat() if row.started_at else None,
-                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-                    "before_target_snapshot_ids": before_ids,
-                    "after_target_snapshot_ids": after_ids,
-                    "after_tgt_snapshots": after_ids,
-                    "demo_mode": bool(getattr(row, "demo_mode", False)),
-                    "model_reports": load_persisted_model_reports(row.project_id, row.run_id),
-                }
-                results.append(run_data)
-
-            if results:
-                _compat_project_runs[pid] = results
-
-            return [_enrich_run_report_meta(mask_run_for_display(_hydrate_model_results(r))) for r in results]
-    except Exception as exc:
-        logger.error("Failed to retrieve runs from ORM: %s", exc)
-        return []
+    merged: List[Dict[str, Any]] = []
+    seen: set = set()
+    for db_run in db_runs:
+        rid = str(db_run.get("run_id") or "")
+        seen.add(rid)
+        run = merge_with_memory(db_run, mem_by_id.get(rid))
+        if not run.get("model_reports"):
+            run["model_reports"] = load_persisted_model_reports(pid, rid)
+        merged.append(run)
+    for rid, mem in mem_by_id.items():
+        if rid and rid not in seen:
+            merged.append(mem)
+    merged.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
+    return [_display_run(r) for r in merged]
 
 
 def _hydrate_model_results(run: Dict[str, Any]) -> Dict[str, Any]:
@@ -1160,81 +1329,173 @@ async def run_project_now_compat(
         ).strip()
         or None
     )
-    config_override = None
-    if run_type == "SYNC":
-        modular_bundle = project_shared._compat_load_modular_project(project_id)
-        base_cfg = (
-            (str(modular_bundle.get("config_yaml") or "") if modular_bundle else "")
-            or _compat_project_configs.get(project_id)
-            or _compat_load_repo_yaml_text()
-            or _compat_default_project_yaml(_compat_projects.get(project_id, {}))
-        )
-        from semabridge.api.services.mapping_service import _compat_apply_manual_mapping_overrides_to_cfg
-        config_override = _compat_apply_manual_mapping_overrides_to_cfg(base_cfg, project_id)
-        _compat_project_configs[project_id] = config_override
+    return await _start_project_run_request(
+        project_id, background_tasks, payload or {}, run_type=run_type,
+        restore_snapshot_id=restore_snapshot_id,
+    )
 
-        # Multi-model server-side gate: every model must have a successful dry run with no unresolved blockers
-        parsed_cfg = _compat_parse_project_cfg_dict(config_override or base_cfg) or {}
-        source_cfg = parsed_cfg.get("source") if isinstance(parsed_cfg.get("source"), dict) else {}
-        from semabridge.utils.project_models import is_multi_mode
-        if is_multi_mode(source_cfg):
-            from semabridge.api.services.dry_run_job_service import validate_multi_model_dry_run_readiness
-            validate_multi_model_dry_run_readiness(project_id, source_cfg)
-        else:
-            force = bool((payload or {}).get("force", False))
-            if not force:
-                import sys
-                pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
-                auto_map_fn = getattr(pri_mod, "auto_map_compat", None)
-                if auto_map_fn is None:
-                    from semabridge.api.services.mapping_service import auto_map_compat as auto_map_fn
-                collect_blockers_fn = getattr(pri_mod, "_compat_collect_dry_run_blockers", None)
-                if collect_blockers_fn is None:
-                    from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers as collect_blockers_fn
-                dry_run_payload = {
-                    "project_id": project_id,
-                    "dry_run": True,
-                    "config_yaml": config_override or base_cfg,
-                }
-                auto_map_res = await auto_map_fn(dry_run_payload)
-                blockers = collect_blockers_fn(auto_map_res)
-                if blockers:
+
+async def _start_project_run_request(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    payload: Dict[str, Any],
+    *,
+    run_type: str = "SYNC",
+    restore_snapshot_id: Optional[str] = None,
+    retry_of_run_id: Optional[str] = None,
+    scope_models: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Shared HTTP entry for run-now, restore and retry.
+
+    Order: project lease (409 "already running") -> dry-run gate (409
+    "blocked") -> duplicate check (409 "duplicate") -> run record (queued)
+    -> background execution. The lease is taken under the new run's id
+    first, so a double click or a schedule firing meanwhile can never start
+    a second sync of the project; every early exit releases it."""
+    run_id = str(uuid.uuid4())
+    lease = _acquire_project_lease(project_id, run_id)
+    if not lease:
+        raise HTTPException(status_code=409, detail=_project_busy_detail(project_id, lease))
+    handed_off = False
+    run_coordination.register_live_run(run_id)  # renews the lease during the gate
+    try:
+        config_override = None
+        if run_type == "SYNC":
+            config_override = _prepare_sync_config(project_id)
+            if scope_models:
+                config_override = _scope_config_to_models(config_override, scope_models)
+            await _assert_sync_ready(project_id, config_override, force=bool(payload.get("force", False)))
+            if not bool(payload.get("acknowledge_duplicates", False)):
+                from semabridge.api.services.duplicate_sync_service import find_duplicate_deployments
+
+                duplicates = await asyncio.to_thread(find_duplicate_deployments, project_id, config_override)
+                if duplicates:
                     raise HTTPException(
                         status_code=409,
                         detail={
-                            "status": "blocked",
-                            "mode": "DRY_RUN",
-                            "blocking_issue_count": len(blockers),
-                            "blockers": blockers,
-                            "message": f"Project has {len(blockers)} blocking issue(s) in dry run. Resolve them before running live sync.",
+                            "status": "duplicate",
+                            "duplicates": duplicates,
+                            "message": (
+                                f"{len(duplicates)} model(s) in this project are already synced by another project. "
+                                "Review them, then confirm to sync anyway."
+                            ),
                         },
                     )
 
-    import sys
-    pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
-    create_run_fn = getattr(pri_mod, "_create_project_run", None) or _create_project_run
-    schedule_label = str((payload or {}).get("schedule") or "Manual")
-    run, project_cfg, started = create_run_fn(
-        project_id,
-        schedule_label,
-        run_type=run_type,
-        project_cfg_override=config_override,
-        restore_snapshot_id=restore_snapshot_id,
-        sync_mode=(
-            _compat_sync_mode_for_restore_snapshot(project_id, restore_snapshot_id, payload)
-            if run_type == "RESTORE" and restore_snapshot_id
-            else (payload or {}).get("sync_mode")
-        ),
-        fallback_sync_mode=(payload or {}).get("sync_mode"),
+        import sys
+        pri_mod = sys.modules.get("semabridge.api.services.project_runs_impl")
+        create_run_fn = getattr(pri_mod, "_create_project_run", None) or _create_project_run
+        schedule_label = str(payload.get("schedule") or ("Retry" if retry_of_run_id else "Manual"))
+        create_kwargs: Dict[str, Any] = dict(
+            run_type=run_type,
+            project_cfg_override=config_override,
+            restore_snapshot_id=restore_snapshot_id,
+            sync_mode=(
+                _compat_sync_mode_for_restore_snapshot(project_id, restore_snapshot_id, payload)
+                if run_type == "RESTORE" and restore_snapshot_id
+                else payload.get("sync_mode")
+            ),
+            fallback_sync_mode=payload.get("sync_mode"),
+            run_id=run_id,
+        )
+        if retry_of_run_id:
+            create_kwargs["retry_of_run_id"] = retry_of_run_id
+        try:
+            run, project_cfg, started = create_run_fn(project_id, schedule_label, **create_kwargs)
+        except TypeError:
+            # A patched/legacy creator without run_id support: move the
+            # lease to whatever id it created.
+            create_kwargs.pop("run_id", None)
+            create_kwargs.pop("retry_of_run_id", None)
+            run, project_cfg, started = create_run_fn(project_id, schedule_label, **create_kwargs)
+            new_id = str(run.get("run_id") or run.get("id") or run_id)
+            if new_id != run_id:
+                run_coordination.release_leases(run_id=run_id)
+                run_coordination.unregister_live_run(run_id)
+                run_id = new_id
+                run_coordination.register_live_run(run_id)
+                moved = _acquire_project_lease(project_id, run_id)
+                if not moved:
+                    raise HTTPException(status_code=409, detail=_project_busy_detail(project_id, moved))
+        user_id = payload.get("user_id")
+        force = bool(payload.get("force", False))
+        if user_id is not None and str(user_id).strip():
+            run["user_id"] = user_id
+        run["force"] = force
+        if scope_models:
+            run["scope_models"] = list(scope_models)
+        run_bg_fn = getattr(pri_mod, "_run_project_background", None) or _run_project_background
+        background_tasks.add_task(run_bg_fn, run, project_cfg, started)
+        handed_off = True
+        return {
+            "run_id": run["id"],
+            "status": run.get("status") or "queued",
+            "run_type": run_type,
+            "retry_of_run_id": retry_of_run_id,
+            "message": "Sync queued; it starts as soon as an execution slot is free.",
+        }
+    finally:
+        run_coordination.unregister_live_run(run_id)
+        if not handed_off:
+            run_coordination.release_leases(run_id=run_id)
+
+
+def _scope_config_to_models(config_yaml: str, models: List[str]) -> str:
+    """Restrict a project config to the given models (retry of failed
+    models). Naming is still computed over the whole project (see
+    sync_execution_service ``sync_scope_models``)."""
+    parsed = _compat_parse_project_cfg_dict(config_yaml) or {}
+    parsed["sync_scope_models"] = [str(m) for m in models if str(m or "").strip()]
+    return yaml.safe_dump(parsed, sort_keys=False, allow_unicode=True)
+
+
+def _failed_models_of_run(project_id: str, run_id: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """The run (DB row merged with the store copy) and its failed models."""
+    db_run = get_project_run(run_id)
+    mem = next(
+        (r for r in _compat_project_runs.get(project_id, []) if str(r.get("run_id") or r.get("id")) == run_id),
+        None,
     )
-    user_id = (payload or {}).get("user_id")
-    force = bool((payload or {}).get("force", False))
-    if user_id is not None and str(user_id).strip():
-        run["user_id"] = user_id
-    run["force"] = force
-    run_bg_fn = getattr(pri_mod, "_run_project_background", None) or _run_project_background
-    background_tasks.add_task(run_bg_fn, run, project_cfg, started)
-    return {"run_id": run["id"], "status": "running", "run_type": run_type, "message": "Sync started in background"}
+    if db_run is None and mem is None:
+        return None, []
+    run = merge_with_memory(db_run, mem) if db_run else dict(mem)
+    if str(run.get("project_id") or project_id) != project_id:
+        return None, []
+    failed: List[str] = []
+    results = run.get("results") or []
+    if not results:
+        from semabridge.api.services.run_model_results import load_run_model_results
+
+        results = load_run_model_results(project_id, run_id)
+    for entry in results or []:
+        if isinstance(entry, dict) and entry.get("model") and str(entry.get("status") or "").lower() != "success":
+            failed.append(str(entry["model"]))
+    if not failed:
+        failed = [str(m) for m in (run.get("failed_models") or []) if m]
+    return run, failed
+
+
+async def retry_failed_models_compat(
+    project_id: str, run_id: str, background_tasks: BackgroundTasks, payload: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """POST /api/projects/{id}/runs/{run_id}/retry: start a new SYNC run of
+    only the models that did not succeed in ``run_id``, through the same
+    gate as run-now (project lease, dry-run blockers, duplicates)."""
+    _compat_ensure_loaded()
+    run, failed = await asyncio.to_thread(_failed_models_of_run, project_id, run_id)
+    if run is None:
+        raise NotFoundError(f"Run '{run_id}' not found for project '{project_id}'.")
+    status = str(run.get("status") or "").lower()
+    if status in run_coordination.ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail={"status": "running", "message": "The run is still in progress."})
+    if not failed:
+        raise ValidationError("Nothing to retry: every model of this run succeeded.")
+    body = dict(payload or {})
+    body.setdefault("sync_mode", run.get("sync_mode"))
+    result = await _start_project_run_request(
+        project_id, background_tasks, body, run_type="SYNC", retry_of_run_id=run_id, scope_models=failed,
+    )
+    return {**result, "models": failed}
 
 
 async def get_run_report_compat(project_id: str, run_id: str) -> Optional[Dict[str, str]]:
@@ -1761,6 +2022,8 @@ async def clear_job_runs_compat(before: Optional[str] = None, user_id: Optional[
         with db_manager.get_session() as session:
             runs = session.execute(select(Run)).scalars().all()
             for r in runs:
+                if str(r.status or "").lower() in run_coordination.ACTIVE_STATUSES:
+                    continue  # never delete a run that is still executing
                 # Date filter
                 if cutoff_dt is not None:
                     run_ts = getattr(r, "started_at", None) or getattr(r, "created_at", None)

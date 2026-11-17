@@ -370,6 +370,11 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
             # prior deploy's time-intelligence flag-column map into this one
             # (see _create_enriched_view / converter/time_intelligence_shapes.py).
             self.translator.anchor_flag_map.clear()
+            # Staged deploy state + this deploy's object journal (see
+            # connectors/staged_deploy.py); reset so a reused emitter never
+            # carries a previous deploy's staging objects.
+            self._staged = None
+            self.deploy_events = []
             self._load_saved_bindings()
             deploy_started_at = time.perf_counter()
             model_name = getattr(model, "unique_name", None) or getattr(model, "label", None) or "<unnamed_model>"
@@ -407,6 +412,23 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                     if _ds_name:
                         _allowed_objs.add(self._enriched_view_name(_ds_name, model=model).upper())
                 set_allowed_model_objects(_allowed_objs)
+
+                # Lease every object this deploy may write (semantic view +
+                # enriched views), db.schema.object, DB-backed so it holds
+                # across worker processes; a no-op outside a run.
+                from semabridge.core.run_coordination import acquire_target_objects
+
+                acquire_target_objects(self.config.database, self.config.schema_name, _allowed_objs)
+
+                from semabridge.connectors.staged_deploy import StagedDeploy, staged_deploy_enabled
+
+                if staged_deploy_enabled():
+                    self._staged = StagedDeploy(
+                        self.connection_manager._execute_sql,
+                        self.config.database,
+                        self.config.schema_name,
+                        allow=set_allowed_model_objects,
+                    )
 
                 # Let TablesClauseBuilder precompute anchor literals (e.g.
                 # _CURRENT_<c>) via a live lookup instead of
@@ -725,12 +747,21 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                                 )
                             else:
                                 _drop_enriched = f'DROP VIEW IF EXISTS "{_en}"'
-                                self.connection_manager._execute_sql(
-                                    cur, _drop_enriched, context="pre-drop-enriched-view"
-                                )
-                                logger.info(
-                                    "Pre-dropped stale enriched view '%s' (could not recreate)", _en
-                                )
+                                if self._staged is not None:
+                                    # The live semantic view may still use it:
+                                    # drop only after the new view is promoted.
+                                    self._staged.defer_drop(_drop_enriched, _en)
+                                    logger.info(
+                                        "Stale enriched view '%s' (could not recreate) will be dropped after promotion",
+                                        _en,
+                                    )
+                                else:
+                                    self.connection_manager._execute_sql(
+                                        cur, _drop_enriched, context="pre-drop-enriched-view"
+                                    )
+                                    logger.info(
+                                        "Pre-dropped stale enriched view '%s' (could not recreate)", _en
+                                    )
                                 self._failed_enrichment_datasets.add(_refresh_fact_table)
                                 self._failed_enrichment_datasets.add(_refresh_fact_table.casefold())
                                 _need_ddl_rebuild = True
@@ -760,6 +791,9 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                         _tbl_clean = _tbl.strip('"')
                         if _tbl_clean.upper().endswith("_ENRICHED"):
                             _fq_v = f'"{self.config.database}"."{self.config.schema_name}"."{_tbl_clean}"'
+                            if self._staged is not None:
+                                # A staged enriched view exists under its staging name.
+                                _fq_v = self._staged.staging_fq_for(_fq_v)
                             if not self._view_exists(cur, _fq_v):
                                 # Same naming function as creation identifies
                                 # the dataset (prefixed or not).
@@ -809,6 +843,9 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
 
                 _ddls_with_sql_total = sum(1 for _s in ddls if _s)
                 _ddls_executed_count = 0
+                _staged_sv_indices: list = []
+                from semabridge.connectors.snowflake_emitter_parts.deploy_isolation import _is_semantic_view_sql
+
                 for idx, sql in enumerate(ddls):
                     if not sql:
                         continue
@@ -816,8 +853,20 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                         # Bounded remediation: a Snowflake rejection is mapped
                         # to the offending item(s), which are isolated with
                         # the Snowflake error as the reason, then retried.
-                        ddls[idx] = self._execute_with_isolation(cur, sql, f"DDL[{idx}]")
-                        _ddls_executed_count += 1
+                        if self._staged is not None and _is_semantic_view_sql(sql):
+                            # Staged: create + remediate under the staging
+                            # name, against the staged enriched views. Nothing
+                            # live changes here.
+                            _executed = self._execute_with_isolation(
+                                cur, self._staged.to_staging(sql), f"DDL[{idx}] (staging)"
+                            )
+                            ddls[idx] = self._staged.to_live(_executed)
+                            _staged_sv_indices.append(idx)
+                            if self._staged.semantic_views:
+                                self._staged.record_semantic_staged(self._staged.semantic_views[-1][0])
+                        else:
+                            ddls[idx] = self._execute_with_isolation(cur, sql, f"DDL[{idx}]")
+                            _ddls_executed_count += 1
                     except Exception as ddl_exc:
                         if _ddls_executed_count > 0:
                             self._partial_deploy_info = {
@@ -826,6 +875,18 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                                 "failed_ddl_index": idx,
                             }
                         raise ddl_exc
+
+                if self._staged is not None:
+                    # Promotion is the LAST step: validated enriched views,
+                    # then the validated semantic view, under the live names.
+                    try:
+                        self._staged.promote(cur, [ddls[i] for i in _staged_sv_indices])
+                    except Exception as promote_exc:
+                        raise ConnectorError(
+                            "The new definition validated in staging but could not be promoted to the live "
+                            "objects; the live semantic view was left as it was and the enriched views were "
+                            f"restored: {promote_exc}"
+                        ) from promote_exc
 
                 # Step 5: Artifact Generation (Cortex YAML / Audit)
                 if not is_osi:
@@ -901,6 +962,15 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
                 return True
 
             finally:
+                _staged = getattr(self, "_staged", None)
+                if _staged is not None:
+                    # Staging objects never outlive the deploy (success or failure).
+                    try:
+                        _staged.cleanup(cur)
+                    except Exception as _cleanup_exc:  # noqa: BLE001
+                        logger.warning("Staging cleanup failed: %s", _cleanup_exc)
+                    self.deploy_events = list(_staged.events)
+                    self._staged = None
                 if owns_conn:
                     conn.close()
 
@@ -3567,7 +3637,13 @@ class SnowflakeEmitter(DeployIsolationMixin, BaseEmitter):
             return enriched_view_name
 
         try:
-            self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")
+            _staged = getattr(self, "_staged", None)
+            if _staged is not None:
+                # Staged deploy: build under the staging name; the live view
+                # is replaced only at promotion (connectors/staged_deploy.py).
+                _staged.stage_enriched_view(cursor, enriched_view_name, full_sql)
+            else:
+                self.connection_manager._execute_sql(cursor, full_sql, context="create-enriched-view")
 
             # No data check: the view only LEFT JOINs along many-to-one PBIX
             # relationships onto the one-side key (_edge_is_pk_safe), so it

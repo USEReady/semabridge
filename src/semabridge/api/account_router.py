@@ -61,7 +61,9 @@ def _try_get_user(request: Request, db: Session) -> Optional[User]:
     This allows the account router to work in both authenticated (production)
     and unauthenticated (development) modes without duplicating every endpoint.
     """
-    if os.environ.get("AUTH_ENABLED", "").lower() != "true":
+    from semabridge.auth.flags import auth_enabled
+
+    if not auth_enabled():
         return None
     try:
         return get_current_user(request, db)
@@ -298,17 +300,21 @@ def link_project_account(
         if hasattr(main_module, "_compat_projects") and project_id in main_module._compat_projects:
             main_module._compat_projects[project_id]["account_id"] = account.id
             main_module._compat_projects[project_id]["updated_at"] = main_module._compat_now_iso()
-        if hasattr(main_module, "_compat_project_configs") and project_id in main_module._compat_project_configs:
-            yaml_text = main_module._compat_project_configs.get(project_id) or ""
-            if yaml_text:
-                import yaml
-                parsed = yaml.safe_load(yaml_text) or {}
-                if isinstance(parsed, dict):
-                    source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
-                    source_cfg["identity_id"] = account.id
-                    parsed["source"] = source_cfg
-                    main_module._compat_project_configs[project_id] = yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False)
-                    main_module._compat_save_project_yaml_text(project_id, main_module._compat_project_configs[project_id])
+        from semabridge.api.services.project_config_store import get_project_config_text, save_project_config
+
+        yaml_text = get_project_config_text(project_id)
+        if yaml_text:
+            import yaml
+            parsed = yaml.safe_load(yaml_text) or {}
+            if isinstance(parsed, dict):
+                source_cfg = parsed.get("source") if isinstance(parsed.get("source"), dict) else {}
+                source_cfg["identity_id"] = account.id
+                parsed["source"] = source_cfg
+                save_project_config(
+                    project_id,
+                    yaml.safe_dump(parsed, sort_keys=False, allow_unicode=False),
+                    reason="link_account",
+                )
     except Exception as exc:
         logger.warning("Could not sync compatibility project/account state for %s: %s", project_id, exc)
     

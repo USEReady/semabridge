@@ -440,7 +440,7 @@ class ModelRepository:
                                 workspace_id=workspace_id,
                                 adapter=adapter,
                                 source_connection=source_connection,
-                                last_updated=datetime.utcnow(),
+                                last_updated=datetime.now(timezone.utc),
                                 connection_tag=connection_tag,
                             )
                         )
@@ -573,7 +573,7 @@ class ModelRepository:
             logger.info("No previous history. Initial commit.")
 
         snapshot_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
 
         with self._session() as session:
             session.add(
@@ -700,7 +700,7 @@ class ModelRepository:
                     # same placeholder table it created.
                     if not (row.matched_by == "created" and same_table):
                         row.matched_by = entry.get("matched_by")
-                    row.updated_at = datetime.utcnow()
+                    row.updated_at = datetime.now(timezone.utc)
                 else:
                     continue
                 saved += 1
@@ -801,7 +801,7 @@ class ModelRepository:
                 )
                 return False
 
-            row.deployed_at = datetime.utcnow()
+            row.deployed_at = datetime.now(timezone.utc)
             if target_database:
                 row.target_database = str(target_database).strip()
             if target_schema:
@@ -1222,8 +1222,17 @@ class ModelRepository:
         target_type: Optional[str] = None,
         sync_mode: str = "copy",
     ) -> None:
-        """Record the start of an execution run."""
+        """Record the start of an execution run (one engine row per model).
+
+        The row is linked to the project run executing it (``parent_run_id``,
+        from the per-model log scope set by the sync job) and heartbeated
+        until ``record_run_complete`` (see core/run_coordination.py)."""
+        from semabridge.core import run_coordination
+        from semabridge.core.run_model_logs import current_scope
+
         timestamp = datetime.now(timezone.utc)
+        scope = current_scope()
+        parent_run_id = scope[1] if scope and scope[1] and scope[1] != run_id else None
         with self._session() as session:
             existing = session.get(Run, run_id)
             if existing:
@@ -1235,6 +1244,9 @@ class ModelRepository:
                     existing.started_at = timestamp
                 if not existing.status:
                     existing.status = "running"
+                if parent_run_id and not existing.parent_run_id:
+                    existing.parent_run_id = parent_run_id
+                existing.heartbeat_at = timestamp
             else:
                 session.add(
                     Run(
@@ -1245,9 +1257,14 @@ class ModelRepository:
                         source_type=source_type,
                         target_type=target_type,
                         sync_mode=sync_mode,
+                        run_kind="model",
+                        parent_run_id=parent_run_id,
+                        heartbeat_at=timestamp,
+                        worker_id=run_coordination.WORKER_ID,
                     )
                 )
             session.commit()
+        run_coordination.register_live_run(run_id)
 
     def record_run_complete(
         self,
@@ -1267,7 +1284,10 @@ class ModelRepository:
         touch. ``demo_mode``/``demo_masked`` are metadata about whether that
         later masking applied, not a place to store a masked value.
         """
-        timestamp = datetime.utcnow()
+        from semabridge.core import run_coordination
+
+        run_coordination.unregister_live_run(run_id)
+        timestamp = datetime.now(timezone.utc)
         with self._session() as session:
             session.execute(
                 update(Run)
@@ -1393,7 +1413,7 @@ class ModelRepository:
         rollback_from_version: Optional[str] = None,
     ) -> str:
         """Insert or upsert a model version row."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         osi_snapshot = _try_convert_to_osi(snapshot)
 
         with self._session() as session:

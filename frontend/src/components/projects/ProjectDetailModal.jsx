@@ -38,7 +38,7 @@ function RunRow({ run }) {
         {run.run_id?.slice(0, 8)}…
       </td>
       <td style={{ padding: '8px 12px' }}>
-        <StatusBadge status={run.status} />
+        <StatusBadge status={run.status} trueStatus={run.demo_masked ? run.true_status : undefined} />
       </td>
       <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>{started}</td>
       <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>{duration}</td>

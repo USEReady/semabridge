@@ -80,19 +80,28 @@ def _step9_deploy(self, context: RunContext) -> None:
     # 🔥 DO NOT re-raise
 
     except Exception as e:
-        # NEW: On Snowflake deployment failure, attempt to update view metadata
-        # This is a non-destructive operation that updates only the timestamp
-        # to reflect when the last sync attempt occurred, keeping the old view intact
+        # A failed deploy no longer touches the live view at all (the former
+        # silent "bump LAST_ALTERED" ALTER on failure is gone: it changed a
+        # live object with no audit trail). The attempt is recorded instead,
+        # in the run's deploy journal (run_deploy_events).
         if context.target_type == "snowflake":
             try:
-                sf_cfg = context.config.snowflake
-                error_msg = str(e)
-                self._update_snowflake_view_metadata_on_failure(context, sf_cfg, error_msg)
-            except Exception as metadata_update_error:
-                logger.warning(
-                    f"Could not update Snowflake view metadata on failure (non-fatal): {metadata_update_error}"
+                from semabridge.connectors.staged_deploy import persist_deploy_events
+
+                persist_deploy_events(
+                    [{
+                        "action": "deploy_failed",
+                        "object_type": "SEMANTIC VIEW",
+                        "object_name": str(getattr(context, "deployed_view_name", None) or "") or None,
+                        "status": "failed",
+                        "detail": str(e)[:2000],
+                    }],
+                    run_id=getattr(context, "run_id", None),
+                    project_id=getattr(context, "project_id", None),
+                    model=getattr(context, "project_name", None),
                 )
-                # Continue with the original error handling regardless
-        
+            except Exception as audit_error:
+                logger.warning(f"Could not record the failed deploy attempt (non-fatal): {audit_error}")
+
         self._record_step(9, StepStatus.FAILED, str(e))
         raise DeploymentError(f"Deployment failed: {e}") from e

@@ -521,6 +521,9 @@ class FederatedOntologyLoader:
             # Register Concepts
             for concept in dom.concepts:
                 c_key = concept.name.casefold()
+                owners = fed.concept_owners.setdefault(c_key, [])
+                if dom.domain not in owners:
+                    owners.append(dom.domain)
                 if c_key not in concept_sources:
                     concept_sources[c_key] = []
                 concept_sources[c_key].append((dom.domain, concept))
@@ -533,6 +536,9 @@ class FederatedOntologyLoader:
             # Register Metrics (normalize spaces/underscores while preserving symbols like %)
             for metric in dom.metrics:
                 m_key = re.sub(r"[\s_]+", "_", str(metric.name or "").strip()).casefold()
+                m_owners = fed.metric_owners.setdefault(m_key, [])
+                if dom.domain not in m_owners:
+                    m_owners.append(dom.domain)
                 if m_key not in metric_sources:
                     metric_sources[m_key] = []
                 metric_sources[m_key].append((dom.domain, metric))
@@ -559,14 +565,18 @@ class FederatedOntologyLoader:
             src_pid = str(getattr(dom, "source_project_id", None) or "").strip()
             if src_pid:
                 key_pid = src_pid.casefold()
-                by_source_project.setdefault(key_pid, []).append(dom.domain)
+                # One domain per MODEL of a project is expected: only two domains
+                # of the same project AND the same model (or both project-wide)
+                # are duplicates.
+                model_part = str(getattr(dom, "source_model_id", None) or "").strip().casefold()
+                by_source_project.setdefault(f"{key_pid}::{model_part}", []).append(dom.domain)
                 domain_project_map[dom.domain.casefold()] = key_pid
 
         for key_pid, dom_names in sorted(by_source_project.items()):
             if len(dom_names) > 1:
                 src_label = next(
                     (getattr(fed.domains[n], "source_project_id", None) or key_pid for n in dom_names if n in fed.domains),
-                    key_pid,
+                    key_pid.split("::", 1)[0],
                 )
                 fed.collisions.append(
                     OntologyCollision(
@@ -1634,6 +1644,9 @@ class FederatedOntologyLoader:
                 else model.description
             ),
             semantic_view_name=resolved_sv_name,
+            source_project_id=existing_ontology.source_project_id if existing_ontology else None,
+            source_model_id=existing_ontology.source_model_id if existing_ontology else None,
+            source_model_name=existing_ontology.source_model_name if existing_ontology else None,
             deployment_error=deployment_error or (existing_ontology.deployment_error if existing_ontology else None),
             concepts=concepts,
             metrics=metrics,

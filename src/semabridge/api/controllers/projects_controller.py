@@ -68,6 +68,7 @@ class RestoreProjectVersionRequest(BaseModel):
         extra = "allow"
 
 from semabridge.api.services.project_ownership_service import (
+    assert_project_access,
     auth_is_enabled,
     is_project_owned_by_user,
     require_request_user_id,
@@ -107,9 +108,8 @@ logger = logging.getLogger(__name__)
 
 
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
-    """Synchronous access guard — call via asyncio.to_thread from async endpoints."""
-    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id):
-        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
+    """Synchronous access guard (shared implementation in project_ownership_service)."""
+    assert_project_access(project_id, user_id, log_prefix="ProjectAuth")
 
 
 # Optional create/update payload fields naming the dry-run preview(s) a

@@ -1,4 +1,5 @@
 from semabridge.api.services.core_shared import *
+from semabridge.auth.flags import auth_enabled
 from semabridge.domain.exceptions import InternalError, NotFoundError, PermissionError, SemaBridgeError
 
 
@@ -40,20 +41,38 @@ async def sync_models(payload: Dict[str, Any]):
                     logger.debug("Could not resolve account_id for project %s: %s", project_id, acct_err)
 
         # Phase 2C: Ownership validation — prevent User A from using User B's Account.
-        if account_id and user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        if account_id and user_id and auth_enabled():
             _validate_account_ownership(account_id, int(user_id))
 
-        if user_id and os.environ.get("AUTH_ENABLED", "").lower() == "true":
-            from semabridge.auth.user_credentials import scoped_user_env
+        def _execute() -> Dict[str, Any]:
+            # Warehouse/BI connector credentials already travel in the run's
+            # own config (account_id -> Account row, resolved per connector).
+            # What scoped_user_env still injects is the user's LLM provider
+            # API keys ("api_secrets": OPENAI_API_KEY, ANTHROPIC_API_KEY, ...),
+            # which the LLM client libraries read from os.environ at call time
+            # deep inside the translators; threading them through every call
+            # site is not achievable without rewriting those clients. The
+            # process-wide gate (auth/user_credentials._EnvScopeGate) therefore
+            # stays: runs of DIFFERENT users are serialized for the duration of
+            # the section, runs with identical keys share it, and process-
+            # executor children (spawned inside the section) inherit the keys.
+            if user_id and auth_enabled():
+                from semabridge.auth.user_credentials import scoped_user_env
 
-            with scoped_user_env(int(user_id), "api_secrets"):
-                return execute_sync_request(
-                    payload,
-                    _normalize_yaml_windows_path_fields,
-                    account_id=account_id,
-                )
+                with scoped_user_env(int(user_id), "api_secrets"):
+                    return execute_sync_request(
+                        payload,
+                        _normalize_yaml_windows_path_fields,
+                        account_id=account_id,
+                    )
+            return execute_sync_request(payload, _normalize_yaml_windows_path_fields, account_id=account_id)
 
-        return execute_sync_request(payload, _normalize_yaml_windows_path_fields, account_id=account_id)
+        # The pipeline is blocking (connectors, LLM, warehouse DDL): run it in
+        # the bounded pipeline pool, never on the event loop, so the API stays
+        # responsive while a sync or dry run executes.
+        from semabridge.core.run_coordination import run_blocking
+
+        return await run_blocking(_execute)
     except SemaBridgeError:
         raise
     except Exception as e:
@@ -99,5 +118,5 @@ def _validate_account_ownership(account_id: str, user_id: int) -> None:
     except Exception as exc:
         logger.error("Account ownership check failed: %s", exc)
         # Fail-open only in development — fail-closed in production
-        if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+        if auth_enabled():
             raise InternalError("Account ownership validation failed.") from exc

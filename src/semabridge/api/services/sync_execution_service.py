@@ -25,7 +25,6 @@ from semabridge.utils.name_translator import (
     build_physical_namespace,
     get_target_deployment_name,
     make_unique_labels,
-    target_lock_manager,
 )
 
 logger = logging.getLogger("semabridge.api")
@@ -443,6 +442,146 @@ def _assign_project_mode_naming(sync_jobs: List[Dict[str, Any]], source_cfg: Dic
         job["physical_namespace"] = namespace
 
 
+# ---------------------------------------------------------------------------
+# Per-model plan: the ONE place both the dry run and the real sync get each
+# model's deploy naming from. The sync runs exactly the jobs
+# _build_sync_jobs() returns; the dry run builds its config from the
+# project's own saved config (mappings_controller._dry_run_config) and runs
+# the same _build_sync_jobs() on it, scoped to the model being dry-run
+# (payload ``scope_source_refs``), so view names and physical prefixes are
+# computed by the same code over the same model list.
+# ---------------------------------------------------------------------------
+
+
+def model_plan_for_job(job: Dict[str, Any], target_type: str) -> Dict[str, Any]:
+    """The deploy plan of one sync job (as returned by _build_sync_jobs)."""
+    display = job.get("resolved_display_name")
+    return {
+        "model_label": job.get("model_label"),
+        "source_ref": job.get("source_ref") or job.get("pbix_path") or job.get("dataset_id"),
+        "multi_mode": bool(job.get("multi_mode")),
+        "batch_model_count": int(job.get("batch_model_count") or 1),
+        # Multi-mode: the saved per-model view base name. Single-mode: None
+        # (the view name then comes from the extracted model's own name).
+        "view_base_name": display,
+        "view_name": get_target_deployment_name(str(display), target_type) if display else None,
+        "physical_namespace": job.get("physical_namespace"),
+        "resolution_error": job.get("resolution_error"),
+    }
+
+
+def build_model_plans(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every configured model's deploy plan, exactly as a sync of ``config``
+    would compute it."""
+    sync_jobs, _source_type, target_type, _source_cfg, _target_cfg = _build_sync_jobs(config)
+    return [model_plan_for_job(job, target_type) for job in sync_jobs]
+
+
+def job_matches_source_ref(job: Dict[str, Any], ref: Any) -> bool:
+    """True when ``ref`` (a source.models entry / pbix path / dataset name)
+    names this job exactly (case/slash-insensitive, never fuzzy)."""
+    key = _model_identity_key(ref)
+    raw = str(ref or "").strip().replace("\\", "/").lower()
+    if not raw:
+        return False
+    for value in (job.get("source_ref"), job.get("pbix_path"), job.get("dataset_id")):
+        text = str(value or "").strip().replace("\\", "/").lower()
+        if text and text == raw:
+            return True
+    # Base-name match only for path-like refs (a PBIX entry vs its resolved file).
+    if "/" in raw or raw.endswith(".pbix"):
+        return any(
+            _model_identity_key(v) == key and key
+            for v in (job.get("source_ref"), job.get("pbix_path"))
+        )
+    return False
+
+
+def _canonical_json(value: Any) -> str:
+    import json
+
+    return json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def model_config_fingerprint(config: Dict[str, Any], job: Dict[str, Any], target_type: str) -> str:
+    """sha256 of everything in ``config`` that decides WHERE and UNDER WHICH
+    NAMES this job's model deploys: source type + project mode, the model's
+    view name and physical prefix, and the target (type/database/schema).
+    Computed identically by the dry run (on its scoped config) and by the
+    sync gate (on the project's config), so a mismatch means the sync would
+    deploy something the dry run never showed.
+
+    File paths (random upload prefixes), mapping overrides (re-validated by
+    the gate against the dry run's rows instead -- resolving a collision in
+    the dry-run table must not invalidate the dry run) and run options are
+    deliberately excluded."""
+    import hashlib
+
+    source_cfg = config.get("source") if isinstance(config.get("source"), dict) else {}
+    target_cfg = _resolve_target_config(config) or {}
+    payload = {
+        "source_type": _normalize_connector_type(source_cfg.get("type", "fabric"), "fabric"),
+        "multi_mode": bool(job.get("multi_mode")),
+        "view_base_name": str(job.get("resolved_display_name") or "").upper() or None,
+        "physical_namespace": str(job.get("physical_namespace") or "").upper() or None,
+        "target": {
+            "type": _normalize_connector_type(target_type or target_cfg.get("type"), "snowflake"),
+            "database": str(target_cfg.get("database") or "").strip().upper(),
+            "schema": str(target_cfg.get("schema") or target_cfg.get("schema_name") or "").strip().upper(),
+        },
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def model_overrides_fingerprint(config: Dict[str, Any], job: Dict[str, Any]) -> str:
+    """sha256 of the mapping overrides that apply to this job (informational:
+    lets the gate tell 'overrides edited since the dry run')."""
+    import hashlib
+
+    rows = _config_with_model_scoped_overrides(config, job).get("mappings_overrides") or []
+    pairs = sorted(
+        (str(r.get("source_path") or "").strip(), str(r.get("target_name") or "").strip().upper())
+        for r in rows if isinstance(r, dict) and str(r.get("source_path") or "").strip()
+    )
+    return hashlib.sha256(_canonical_json(pairs).encode("utf-8")).hexdigest()
+
+
+_FILE_HASH_CACHE: Dict[tuple, str] = {}
+
+
+def file_content_sha256(path: Any) -> Optional[str]:
+    """sha256 of a source file's bytes (None when it is not a readable local
+    file, e.g. a Fabric model name). Every upload copy of the same file
+    hashes identically, so a re-upload of an unchanged file still matches its
+    dry run. Cached by (path, size, mtime)."""
+    import hashlib
+
+    text = str(path or "").strip()
+    if not text:
+        return None
+    try:
+        p = Path(text).expanduser()
+        if not p.is_file():
+            return None
+        stat = p.stat()
+        key = (str(p.resolve()), stat.st_size, stat.st_mtime_ns)
+        cached = _FILE_HASH_CACHE.get(key)
+        if cached:
+            return cached
+        digest = hashlib.sha256()
+        with p.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+        value = digest.hexdigest()
+        if len(_FILE_HASH_CACHE) > 256:
+            _FILE_HASH_CACHE.clear()
+        _FILE_HASH_CACHE[key] = value
+        return value
+    except OSError as exc:
+        logger.warning("Could not hash source file %s: %s", text, exc)
+        return None
+
+
 def _persist_model_version(
     repository: ModelRepository,
     config: Dict[str, Any],
@@ -555,10 +694,16 @@ def _run_single_job(job: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     this model and written to this model's own log file."""
     from semabridge.core.run_model_logs import append_model_log_line, model_log_scope
 
+    from semabridge.core.run_coordination import model_slot
+
     model_label = job["model_label"]
     run_id = job.get("project_run_id")
     project_id = job.get("log_project_id")
-    with model_log_scope(project_id, run_id, model_label):
+    # One global cap on concurrent model executions (syncs AND dry runs,
+    # SEMABRIDGE_MAX_CONCURRENT_MODELS). A process-executor job already
+    # holds its slot in the parent (see _run_parallel_jobs).
+    slot_ctx = _NoLock() if job.get("_slot_held") else model_slot()
+    with slot_ctx, model_log_scope(project_id, run_id, model_label):
         logger.info(
             "Model '%s' started (view=%s, prefix=%s)",
             model_label, job.get("resolved_display_name") or "-", job.get("physical_namespace") or "-",
@@ -615,9 +760,15 @@ def _run_single_job_impl(
     )
     lock_key = _target_lock_key(local_config, target_view_name)
 
-    with target_lock_manager.hold(lock_key) as acquired:
+    # A dry run never deploys, so it must not take the target view's lease: it
+    # would reject (and be rejected by) a concurrent real sync of that view.
+    # Real deploys lease db.schema.<view> here (DB-backed, cross-process); the
+    # emitter additionally leases every physical/enriched object it writes
+    # under the same holder (see core/run_coordination.acquire_target_objects).
+    lock_ctx = _TargetLease(job, local_config, target_view_name, requested_project_id) if deploy_enabled else _NoLock()
+    with lock_ctx as acquired:
         if not acquired:
-            logger.warning("Target view lock for '%s' is held by another active run; rejecting request.", lock_key)
+            logger.warning("Target view lease for '%s' is held by another active run; rejecting request.", lock_key)
             result = _failed_result(
                 job,
                 f"Target view name '{target_view_name}' is currently being deployed by another active run.",
@@ -695,6 +846,7 @@ def _run_single_job_impl(
             # _extract_with_pbixray for the same fix applied one layer down, at
             # the actual extraction call site.
             logger.error("Sync failed for model '%s': %s", model_label, exc, exc_info=True)
+            _close_engine_row(repository, engine, exc)
             accumulated_drops = []
             try:
                 if engine is not None and hasattr(engine, "_context") and hasattr(engine._context, "drop_ledger"):
@@ -706,6 +858,81 @@ def _run_single_job_impl(
             if "CONFLICT:" in str(exc):
                 result["status"] = "conflict"
             return result
+
+
+class _NoLock:
+    """Stand-in for a lease/slot that is not needed (always acquired)."""
+
+    def __enter__(self) -> bool:
+        return True
+
+    def __exit__(self, *exc: Any) -> bool:
+        return False
+
+
+class _TargetLease:
+    """DB-backed lease on the model's semantic view (``target:db.schema.view``)
+    held for the whole model execution, plus the deploy-holder context the
+    emitter uses to lease the physical/enriched objects it writes. Works
+    across worker processes; expires if the holder stops heartbeating."""
+
+    def __init__(self, job: Dict[str, Any], config: Dict[str, Any], view_name: str, project_id: Optional[str]):
+        import uuid as _uuid
+
+        from semabridge.core import run_coordination
+
+        self._rc = run_coordination
+        target_cfg = _resolve_target_config(config) or {}
+        self._key = run_coordination.target_lease_key(
+            target_cfg.get("database"), target_cfg.get("schema") or target_cfg.get("schema_name"), view_name
+        )
+        self._own_run = not job.get("project_run_id")
+        self._run_id = str(job.get("project_run_id") or f"adhoc-{_uuid.uuid4()}")
+        self._holder = f"{self._run_id}:{job.get('model_label')}"
+        self._project_id = project_id
+        self._holder_ctx: Any = None
+
+    def __enter__(self) -> bool:
+        if self._own_run:
+            # A deploy outside a project run still heartbeats its leases.
+            self._rc.register_live_run(self._run_id)
+        result = self._rc.acquire_lease(
+            self._key, run_id=self._run_id, holder=self._holder, lease_type="target", project_id=self._project_id
+        )
+        if not result:
+            if self._own_run:
+                self._rc.unregister_live_run(self._run_id)
+            return False
+        self._holder_ctx = self._rc.deploy_holder(self._run_id, self._holder, self._project_id)
+        self._holder_ctx.__enter__()
+        return True
+
+    def __exit__(self, *exc: Any) -> bool:
+        if self._holder_ctx is not None:
+            self._holder_ctx.__exit__(*exc)
+            self._holder_ctx = None
+            self._rc.release_leases(holder=self._holder)
+        if self._own_run:
+            self._rc.unregister_live_run(self._run_id)
+        return False
+
+
+def _close_engine_row(repository: Any, engine: Any, exc: BaseException) -> None:
+    """The engine raised before recording its outcome: finish its runs row
+    (failed) so it is not left "running" and heartbeated forever."""
+    run_id = getattr(getattr(engine, "_context", None), "run_id", None)
+    if not run_id:
+        return
+    try:
+        repository.record_run_complete(
+            run_id=str(run_id), status="failed", final_step=0, duration_ms=0,
+            error_message=str(exc)[:2000],
+        )
+    except Exception as record_exc:  # noqa: BLE001
+        logger.debug("Could not close engine run %s: %s", run_id, record_exc)
+        from semabridge.core.run_coordination import unregister_live_run
+
+        unregister_live_run(str(run_id))
 
 
 def _target_lock_key(config: Dict[str, Any], target_view_name: str) -> str:
@@ -952,24 +1179,39 @@ def _run_parallel_jobs(
                 future_to_job[future] = job
         else:
             # Process workers get their own memory space — context vars
-            # do not propagate. They rely on account_id for isolation.
-            future_to_job = {
-                executor.submit(
-                    _run_single_job,
-                    job,
-                    engine_source_type=source_type,
-                    target_type=target_type,
-                    config=config,
-                    config_path=config_path,
-                    deploy_enabled=deploy_enabled,
-                    resolved_workspace_id=resolved_workspace_id,
-                    requested_project_id=requested_project_id,
-                    account_id=account_id,
-                    sync_mode=sync_mode,
-                    force=force,
-                ): job
-                for job in sync_jobs
-            }
+            # do not propagate. They rely on account_id for isolation. The
+            # global model slot is taken HERE (parent) before each submit and
+            # released when the child finishes, so the cap holds across
+            # processes too.
+            from semabridge.core.run_coordination import (
+                acquire_model_slot_for_child,
+                release_model_slot_for_child,
+            )
+
+            future_to_job = {}
+            for job in sync_jobs:
+                acquire_model_slot_for_child()
+                child_job = {**job, "_slot_held": True}
+                try:
+                    future = executor.submit(
+                        _run_single_job,
+                        child_job,
+                        engine_source_type=source_type,
+                        target_type=target_type,
+                        config=config,
+                        config_path=config_path,
+                        deploy_enabled=deploy_enabled,
+                        resolved_workspace_id=resolved_workspace_id,
+                        requested_project_id=requested_project_id,
+                        account_id=account_id,
+                        sync_mode=sync_mode,
+                        force=force,
+                    )
+                except BaseException:
+                    release_model_slot_for_child()
+                    raise
+                future.add_done_callback(release_model_slot_for_child)
+                future_to_job[future] = job
         for future in as_completed(future_to_job):
             job = future_to_job[future]
             try:
@@ -989,6 +1231,39 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     config_path = str(Path(_config_path).resolve()) if _config_path else ""
     requested_project_id = str(payload.get("project_id") or config.get("project_id") or "").strip() or None
     sync_jobs, source_type, target_type, source_cfg, target_cfg = _build_sync_jobs(config)
+    # Dry run of ONE model of a project: naming was computed over the whole
+    # configured model list above (exactly as the project's sync computes
+    # it); only the scoped model actually runs.
+    scope_refs = [r for r in (payload.get("scope_source_refs") or []) if str(r or "").strip()]
+    if scope_refs and payload.get("dry_run"):
+        scoped = [job for job in sync_jobs if any(job_matches_source_ref(job, ref) for ref in scope_refs)]
+        if not scoped:
+            raise ValidationError(f"Dry-run scope {scope_refs} matches none of the configured models.")
+        sync_jobs = scoped
+    # Retry of failed models (run_service.retry_failed_models_compat): only
+    # the listed models run; naming was computed over all of them above.
+    scope_models = [
+        str(m) for m in (payload.get("scope_models") or config.get("sync_scope_models") or [])
+        if str(m or "").strip()
+    ]
+    if scope_models:
+        wanted = {m.casefold() for m in scope_models}
+        scoped = [
+            job for job in sync_jobs
+            if str(job.get("model_label") or "").casefold() in wanted
+            or any(job_matches_source_ref(job, ref) for ref in scope_models)
+        ]
+        if not scoped:
+            raise ValidationError(f"Retry scope {scope_models} matches none of the configured models.")
+        sync_jobs = scoped
+    plans_by_label = {
+        str(job["model_label"]): {
+            **model_plan_for_job(job, target_type),
+            "config_hash": model_config_fingerprint(config, job, target_type),
+            "overrides_hash": model_overrides_fingerprint(config, job),
+        }
+        for job in sync_jobs
+    }
     # Per-model log files are keyed by the PROJECT run id (set by run_service
     # for real runs; absent for dry runs and direct calls -> no log files).
     project_run_id = str(payload.get("project_run_id") or "").strip() or None
@@ -1074,6 +1349,10 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
 
     job_order = {str(job["model_label"]): index for index, job in enumerate(sync_jobs)}
     per_model_results.sort(key=lambda item: job_order.get(str(item.get("model") or ""), 0))
+    for result in per_model_results:
+        plan = plans_by_label.get(str(result.get("model") or ""))
+        if plan is not None:
+            result.setdefault("model_plan", plan)
 
     succeeded = [result for result in per_model_results if result["status"] == "success"]
     if len(succeeded) == len(per_model_results):

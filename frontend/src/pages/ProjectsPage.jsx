@@ -1675,7 +1675,7 @@ const ProjectCard = React.memo(function ProjectCard({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <div className={status === 'Running' ? 'animate-pulse' : ''}>
-            <StatusBadge status={status || 'draft'} size="sm" />
+            <StatusBadge status={status || 'draft'} size="sm" trueStatus={!myRun && project.demo_masked ? project.true_status : undefined} />
           </div>
           {(() => {
             const mode = resolveProjectSyncMode(project);

@@ -42,6 +42,7 @@ from semabridge.api.routers.governance_router import router as governance_router
 from semabridge.api.routers.fabric_cloud_router import router as fabric_cloud_router
 from semabridge.api.routers.security_router import router as security_router
 from semabridge.api.routers.databricks_metric_router import router as databricks_metric_router
+from semabridge.api.routers.maintenance_router import router as maintenance_router
 from semabridge.api.routers.drift_router import router as drift_router
 from semabridge.api.routers.reverse_sync_router import router as reverse_sync_router
 from semabridge.api.routers.bi_truth_router import router as bi_truth_router
@@ -108,6 +109,7 @@ for router in [
     reverse_sync_router,
     bi_truth_router,
     cross_platform_router,
+    maintenance_router,
 ]:
     app.include_router(router)
 

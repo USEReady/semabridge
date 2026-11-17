@@ -43,8 +43,13 @@ def get_target_deployment_name(display_name: str, platform: str = "") -> str:
 
 class TargetLockManager:
     """
-    Thread-safe per-target view lock manager to prevent concurrent deployments
-    to the same target semantic view across requests and threads.
+    Thread-safe per-target view lock manager (in-process only).
+
+    Superseded for deploys by the DB-backed leases in
+    ``semabridge.core.run_coordination`` (valid across worker processes and
+    the process executor, keyed db.schema.object for the semantic view and
+    every physical/enriched object a model writes). Kept for callers that
+    only need an in-process guard.
     """
 
     def __init__(self) -> None:

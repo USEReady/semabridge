@@ -137,9 +137,25 @@ class SemanticSearchIndex:
         self.inverted_index.clear()
         self.doc_lengths.clear()
 
+        # Index every domain's own items: same-named concepts/metrics of two
+        # domains (e.g. two models of one project) are separate documents, so
+        # neither is hidden behind a "first wins" merge. Item ids stay
+        # ``metric:<name>`` unless the name is declared by several domains.
+        concept_entries, metric_entries = self._domain_entries(ontology)
+        c_counts: Dict[str, int] = {}
+        for concept, _dom in concept_entries:
+            c_counts[concept.name.casefold()] = c_counts.get(concept.name.casefold(), 0) + 1
+        m_counts: Dict[str, int] = {}
+        for metric, _dom in metric_entries:
+            m_counts[metric.name.casefold()] = m_counts.get(metric.name.casefold(), 0) + 1
+
+        def _scoped(prefix: str, name: str, dom_key: Optional[str], counts: Dict[str, int]) -> str:
+            base = f"{prefix}:{name.casefold()}"
+            return f"{prefix}:{dom_key}:{name.casefold()}" if counts.get(name.casefold(), 0) > 1 and dom_key else base
+
         # 1. Index Concepts
-        for concept in ontology.concepts.values():
-            doc_id = f"concept:{concept.name.casefold()}"
+        for concept, dom_name in concept_entries:
+            doc_id = _scoped("concept", concept.name, (dom_name or "").casefold(), c_counts)
             corpus_text = f"{concept.name} {concept.label or ''} {concept.description or ''} {' '.join(concept.synonyms)} {' '.join(concept.business_rules)} {' '.join(concept.tags)}"
             for attr in concept.attributes:
                 corpus_text += f" {attr.name} {attr.description or ''} {' '.join(attr.synonyms)}"
@@ -148,7 +164,7 @@ class SemanticSearchIndex:
                 doc_id=doc_id,
                 name=concept.name,
                 item_type="CONCEPT",
-                domain=concept.domain,
+                domain=dom_name or concept.domain,
                 description=concept.description,
                 corpus_text=corpus_text,
                 synonyms=concept.synonyms,
@@ -160,8 +176,8 @@ class SemanticSearchIndex:
         # 2. Index Metrics
         # Note: sql_expression is intentionally omitted from corpus_text to prevent SQL keywords
         # (e.g. 'CASE WHEN', 'SUM', 'COUNT') or table names inside formulas from creating false positive BM25 hits.
-        for metric in ontology.metrics.values():
-            doc_id = f"metric:{metric.name.casefold()}"
+        for metric, dom_name in metric_entries:
+            doc_id = _scoped("metric", metric.name, (dom_name or "").casefold(), m_counts)
             corpus_text = f"{metric.name} {metric.label or ''} {metric.concept or ''} {metric.description or ''} {' '.join(metric.synonyms)} {' '.join(metric.business_rules)} {' '.join(metric.tags)}"
             # Display the real label when one exists; otherwise the raw metric name.
             # Never synthesise a title-cased label ("CASES_MOMPCT" -> "Cases Mompct"):
@@ -172,7 +188,7 @@ class SemanticSearchIndex:
                 name=metric.name,
                 label=display_name,
                 item_type="METRIC",
-                domain=metric.domain,
+                domain=dom_name or metric.domain,
                 description=metric.description,
                 corpus_text=corpus_text,
                 sql_expression=metric.sql_expression,
@@ -184,15 +200,19 @@ class SemanticSearchIndex:
 
         # 3. Index Attributes (Columns)
         # Enables dimension discovery so queries like "show case count by agent" resolve "agent" as an attribute of Cases.
-        for concept in ontology.concepts.values():
+        for concept, dom_name in concept_entries:
             for attr in concept.attributes:
-                doc_id = f"attribute:{concept.name.casefold()}:{attr.name.casefold()}"
+                base = f"attribute:{concept.name.casefold()}:{attr.name.casefold()}"
+                doc_id = (
+                    f"attribute:{(dom_name or '').casefold()}:{concept.name.casefold()}:{attr.name.casefold()}"
+                    if c_counts.get(concept.name.casefold(), 0) > 1 and dom_name else base
+                )
                 corpus_text = f"{attr.name} {attr.description or ''} {' '.join(attr.synonyms)} {concept.name}"
                 self._add_document(
                     doc_id=doc_id,
                     name=attr.name,
                     item_type="ATTRIBUTE",
-                    domain=concept.domain,
+                    domain=dom_name or concept.domain,
                     description=attr.description,
                     corpus_text=corpus_text,
                     synonyms=attr.synonyms,
@@ -204,6 +224,39 @@ class SemanticSearchIndex:
         self.avg_doc_len = (total_len / len(self.docs)) if self.docs else 1.0
         logger.info("Indexed %d documents into SemaBridge Semantic Index", len(self.docs))
         return len(self.docs)
+
+    @staticmethod
+    def _domain_entries(ontology: FederatedEnterpriseOntology):
+        """(item, owning domain name) pairs for concepts and metrics.
+
+        Uses each domain's own lists when the ontology carries domains (so
+        same-named items of different domains are all indexed); falls back to
+        the merged first-wins maps for a bare ontology.
+        """
+        concepts: List[Any] = []
+        metrics: List[Any] = []
+        domains = list((getattr(ontology, "domains", None) or {}).values())
+        if domains:
+            for dom in domains:
+                seen_c: Set[str] = set()
+                for c in getattr(dom, "concepts", None) or []:
+                    if c.name.casefold() not in seen_c:
+                        seen_c.add(c.name.casefold())
+                        concepts.append((c, dom.domain))
+                seen_m: Set[str] = set()
+                for m in getattr(dom, "metrics", None) or []:
+                    if m.name.casefold() not in seen_m:
+                        seen_m.add(m.name.casefold())
+                        metrics.append((m, dom.domain))
+            # Items only present in the merged maps (none in practice) are kept too.
+            have_c = {id(c) for c, _ in concepts}
+            have_m = {id(m) for m, _ in metrics}
+            concepts += [(c, c.domain) for c in ontology.concepts.values() if id(c) not in have_c]
+            metrics += [(m, m.domain) for m in ontology.metrics.values() if id(m) not in have_m]
+        else:
+            concepts = [(c, c.domain) for c in ontology.concepts.values()]
+            metrics = [(m, m.domain) for m in ontology.metrics.values()]
+        return concepts, metrics
 
     def _add_document(
         self,

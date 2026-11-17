@@ -25,6 +25,7 @@ from semabridge.ai.nl_query_engine import QueryResolutionPlan
 from semabridge.ai.project_connection import (
     ProjectScope,
     resolve_project_scope,
+    route_scope_to_view,
     resolve_project_warehouse_config,
 )
 from semabridge.ai.semantic_search import SearchHit
@@ -381,7 +382,31 @@ def resolve_natural_language_query(req: NLQueryRequest, request: Request) -> Que
 
     dialect = _normalize_dialect(req)
     scope = _scope_for(req.project_id, explicit_view=req.semantic_view or req.view_name)
+    route_scope_to_view(req.prompt, scope)
+    if scope.candidate_views and not scope.semantic_view:
+        plan = _empty_plan(
+            req.prompt,
+            scope.routing_message or "The question matches several semantic views; choose one.",
+            ["ambiguous semantic view: " + ", ".join(scope.candidate_views)],
+        )
+        plan.answerable = False
+        plan.candidate_views = list(scope.candidate_views)
+        return plan
+    return _with_answer_source(_resolve_nl(req, engine, dialect, scope), scope)
 
+
+def _with_answer_source(plan: QueryResolutionPlan, scope: ProjectScope) -> QueryResolutionPlan:
+    """Stamp which semantic view / domain answered (shown in Ask AI)."""
+    if scope.semantic_view and not plan.answered_by_view:
+        plan.answered_by_view = scope.semantic_view
+    if not plan.answered_by_domain:
+        plan.answered_by_domain = scope.answered_by_domain or (
+            next((d for d, v in scope.domain_views.items() if v == scope.semantic_view), None)
+        )
+    return plan
+
+
+def _resolve_nl(req: NLQueryRequest, engine: Any, dialect: str, scope: ProjectScope) -> QueryResolutionPlan:
     explicit_local = (req.target or "").upper() == "LOCAL"
     if dialect == "SNOWFLAKE" and not explicit_local:
         plan, cortex_error = _try_cortex(req.prompt, scope)
@@ -633,6 +658,7 @@ def save_verified_query(req: SaveVerifiedQueryRequest, request: Request) -> Save
     _require_project_access(req.project_id, request)
     _check_certification(req)
     scope = _scope_for(req.project_id, explicit_view=req.view_name)
+    route_scope_to_view(req.question or "", scope)
     try:
         row = db_save_verified_query(
             project_id=req.project_id,

@@ -30,9 +30,10 @@ except ImportError:
 # ---------------------------------------------------------------------------
 config = context.config
 
-# Logging setup via alembic.ini
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Logging setup via alembic.ini (CLI only: the app runs migrations with an
+# in-memory Config and must keep its own logging configuration).
+if config.config_file_name is not None and not config.attributes.get("skip_logging_config"):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # ---------------------------------------------------------------------------
 # Import all ORM models so that Base.metadata is fully populated.
@@ -105,6 +106,18 @@ def run_migrations_online() -> None:
     configured we fall back to ``Base.metadata.create_all()`` which
     issues ``CREATE TABLE IF NOT EXISTS`` for every mapped model.
     """
+    # The app (repository/alembic_runner.py) passes its own connection.
+    provided = config.attributes.get("connection")
+    if provided is not None:
+        context.configure(
+            connection=provided,
+            target_metadata=target_metadata,
+            render_as_batch=True,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     url = _get_url()
 
     # DuckDB: Alembic has no DDL implementation for it (KeyError: 'duckdb').

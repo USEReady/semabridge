@@ -147,8 +147,23 @@ function HowAnswered({ plan, result, target }) {
   );
 }
 
-export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft }) {
+const viewTail = (v) => String(v || '').split('.').pop().replace(/"/g, '');
+
+/** Which deployed semantic view (one per model in multi-model projects) answered. */
+function AnsweredBy({ plan }) {
+  const view = plan?.answered_by_view;
+  if (!view) return null;
+  return (
+    <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }} title={view}>
+      Answered from semantic view <b style={{ fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)' }}>{viewTail(view)}</b>
+      {plan?.answered_by_domain ? <> · domain {plan.answered_by_domain}</> : null}
+    </div>
+  );
+}
+
+export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft, onPickView }) {
   const { status, plan, result, error, errorStage, cortexUnavailable, target, certifyState, certifyError, question } = entry;
+  const candidateViews = entry.candidateViews || [];
   const [confirming, setConfirming] = useState(false);
 
   if (status === 'loading') {
@@ -166,7 +181,11 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft }
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <AlertTriangle size={16} color="var(--color-error)" />
           <b style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
-            {errorStage === 'run' ? 'The query could not be run' : cortexUnavailable ? 'Cortex unavailable' : 'The question could not be interpreted'}
+            {errorStage === 'run'
+              ? 'The query could not be run'
+              : candidateViews.length > 0
+                ? 'Several models can answer this'
+                : cortexUnavailable ? 'Cortex unavailable' : 'The question could not be interpreted'}
           </b>
           <span style={{ flex: 1 }} />
           {cortexUnavailable && onOfflineDraft && (
@@ -183,6 +202,17 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft }
           </button>
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{error}</div>
+        {candidateViews.length > 0 && onPickView && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Ask this view:</span>
+            {candidateViews.map((v) => (
+              <button key={v} type="button" style={BTN} title={v} onClick={() => onPickView(v)}>
+                {viewTail(v)}
+              </button>
+            ))}
+          </div>
+        )}
+        <AnsweredBy plan={plan} />
         {plan?.generated_sql && <HowAnswered plan={plan} result={null} target={target} />}
       </div>
     );
@@ -233,6 +263,8 @@ export default function AnswerCard({ entry, onCertify, onRetry, onOfflineDraft }
         </div>
       )}
       {certifyError && <div style={{ fontSize: 12, color: 'var(--color-error)' }}>{certifyError}</div>}
+
+      <AnsweredBy plan={plan} />
 
       <AnswerResult columns={result?.columns} rows={result?.rows} />
 

@@ -28,15 +28,21 @@ class _FakeBackgroundTasks:
         self.calls.append((func, args, kwargs))
 
 
-def _fake_create_project_run(project_id, schedule_label="Manual"):
-    return {"id": f"run-{project_id}", "project_id": project_id}, "project_name: test\n", 0.0
+_STARTED: list = []
+
+
+def _fake_start_gated_project_run(project_id, schedule_label="Manual"):
+    # Triggers go through run_service._start_gated_project_run (same
+    # saved-name merge + dry-run gate as run-now), which starts the run.
+    _STARTED.append(project_id)
+    return {"id": f"run-{project_id}", "project_id": project_id}
 
 
 @pytest.fixture(autouse=True)
 def _wire_fakes(monkeypatch):
     monkeypatch.setattr(ss, "_compat_ensure_loaded", lambda: None)
-    monkeypatch.setattr(run_service, "_create_project_run", _fake_create_project_run)
-    monkeypatch.setattr(run_service, "_run_project_background", lambda run, cfg, started: None)
+    monkeypatch.setattr(run_service, "_start_gated_project_run", _fake_start_gated_project_run)
+    _STARTED.clear()
 
 
 @pytest.mark.asyncio
@@ -52,7 +58,7 @@ async def test_no_project_id_and_nothing_scheduled_is_a_clear_noop(monkeypatch):
     assert result == {"status": "no_projects", "message": "No scheduled jobs to run.", "triggered": 0}
     # The old bug: falling back to list(_compat_projects.keys()) and
     # triggering everything. Confirm nothing was dispatched at all.
-    assert background_tasks.calls == []
+    assert _STARTED == []
 
 
 @pytest.mark.asyncio
@@ -74,7 +80,7 @@ async def test_no_project_id_triggers_only_scheduled_projects_the_user_owns(monk
     assert result["triggered"] == 1
     triggered_ids = {r["project_id"] for r in result["runs"]}
     assert triggered_ids == {"proj-scheduled-owned"}
-    assert len(background_tasks.calls) == 1
+    assert len(_STARTED) == 1
 
 
 @pytest.mark.asyncio
@@ -103,4 +109,4 @@ async def test_explicit_project_id_is_unaffected_by_scheduled_project_logic(monk
     result = await ss.trigger_job_compat({"project_id": "proj-x"}, background_tasks)
 
     assert result["project_id"] == "proj-x"
-    assert len(background_tasks.calls) == 1
+    assert len(_STARTED) == 1

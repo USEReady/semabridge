@@ -3,6 +3,7 @@
 Provides get/save/delete project schedule, trigger job, list job schedules,
 list job runs, and jobs config management.
 """
+import asyncio
 from typing import Any, Dict, List
 
 from fastapi import BackgroundTasks
@@ -31,7 +32,7 @@ async def list_job_runs_compat():
     from semabridge.api.services.run_service import get_project_runs_compat, _sweep_stale_runs
 
     _compat_ensure_loaded()
-    _sweep_stale_runs()
+    await asyncio.to_thread(_sweep_stale_runs)
 
     all_project_ids = set(_compat_projects.keys()) | set(_compat_project_runs.keys())
     try:
@@ -71,10 +72,13 @@ def _is_real_project(project_id: str) -> bool:
 
 
 def _is_project_run(run: Dict[str, Any]) -> bool:
-    """A run started for a project (manual, scheduled or restore), which gets a
-    "run-<ms>" id. The ORM `runs` table also holds one engine row per model
-    (uuid ids, no project name or duration); those are not runs to list."""
-    return str(run.get("id") or run.get("run_id") or "").startswith("run-")
+    """A run started for a project (manual, scheduled, retry or restore).
+    get_project_runs_compat lists only project runs (``runs.run_kind =
+    'project'`` plus legacy ``run-<ms>`` store records); per-model engine
+    rows and dry-run previews are never listed."""
+    if str(run.get("run_type") or "").upper() == "DRY_RUN" or run.get("run_kind") == "model":
+        return False
+    return bool(str(run.get("id") or run.get("run_id") or "").strip())
 
 
 async def get_jobs_config_compat():
@@ -167,7 +171,9 @@ async def update_jobs_config_compat(payload: dict):
 
 async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
     _compat_ensure_loaded()
-    from semabridge.api.services.run_service import _create_project_run, _run_project_background
+    # Triggered runs go through the same saved-name merge and dry-run gate
+    # as run-now (see run_service._start_gated_project_run).
+    from semabridge.api.services.run_service import _start_gated_project_run
     from semabridge.api.services.project_ownership_service import is_project_owned_by_user
 
     project_id = str((payload or {}).get("project_id") or "").strip()
@@ -175,9 +181,8 @@ async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
 
     if project_id:
         # Trigger a specific project
-        run, project_cfg, started = _create_project_run(project_id, "Manual")
+        run = _start_gated_project_run(project_id, "Manual")
         run["message"] = "Job trigger accepted."
-        background_tasks.add_task(_run_project_background, run, project_cfg, started)
         return run
 
     # No project_id — trigger every currently scheduled project. Deliberately
@@ -210,9 +215,7 @@ async def trigger_job_compat(payload: dict, background_tasks: BackgroundTasks):
             logger.warning("Skipping scheduled trigger for %s: not owned by requesting user", pid)
             continue
         try:
-            run, project_cfg, started = _create_project_run(pid, "Manual")
-            background_tasks.add_task(_run_project_background, run, project_cfg, started)
-            triggered.append(run)
+            triggered.append(_start_gated_project_run(pid, "Manual"))
         except Exception as exc:
             logger.warning("Failed to trigger project %s: %s", pid, exc)
 

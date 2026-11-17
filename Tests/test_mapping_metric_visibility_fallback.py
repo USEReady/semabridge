@@ -57,7 +57,16 @@ def test_build_project_entity_mappings_hydrates_manual_metrics(monkeypatch):
         },
     )
 
-    payload = pri._compat_build_project_entity_mappings("project-1", save_store=False, target_connector="snowflake")
+    # The user's name lives in the mapping_overrides table (the store row
+    # above is only the display cache).
+    from semabridge.api.services.project_config_store import delete_overrides, upsert_override
+
+    upsert_override("project-1", source_path="metrics.Revenue", source_name="Revenue",
+                    target_name="REV_TOTAL", entity_kind="metric", refresh=False)
+    try:
+        payload = pri._compat_build_project_entity_mappings("project-1", save_store=False, target_connector="snowflake")
+    finally:
+        delete_overrides("project-1", refresh=False)
 
     metric_rows = [row for row in payload.get("mappings", []) if str(row.get("entity_kind") or "") == "metric"]
     assert metric_rows

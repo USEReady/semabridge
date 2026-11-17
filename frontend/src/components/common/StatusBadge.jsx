@@ -4,6 +4,8 @@
  *   status  : 'active' | 'success' | 'warning' | 'error' | 'draft' | 'running' | 'failed' | string
  *   label   : override display text (defaults to capitalised status)
  *   size    : 'sm' | 'md'  (default 'md')
+ *   trueStatus : the real status when demo mode shows a masked one; adds a
+ *             "demo" marker and a tooltip with the real status.
  *   wrap    : when true, allows the label to wrap onto multiple lines instead
  *             of forcing single-line nowrap — for long labels (e.g. the
  *             dry-run risk-tier text) rendered inside a fixed-width column,
@@ -17,7 +19,10 @@ const CONFIG = {
   warning: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Warning' },
   error:   { bg: 'var(--color-error-muted)',    text: 'var(--color-error)',    dot: 'var(--color-error)',    label: 'Error' },
   failed:  { bg: 'var(--color-error-muted)',    text: 'var(--color-error)',    dot: 'var(--color-error)',    label: 'Failed' },
-  partial: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Partial' },
+  partial: { bg: 'var(--color-warning-muted)',  text: 'var(--color-warning)',  dot: 'var(--color-warning)',  label: 'Partly failed' },
+  interrupted: { bg: 'var(--color-error-muted)', text: 'var(--color-error)',   dot: 'var(--color-error)',    label: 'Interrupted' },
+  queued:  { bg: 'var(--bg-surface-raised)',    text: 'var(--text-secondary)', dot: 'var(--text-tertiary)',  label: 'Queued' },
+  skipped: { bg: 'var(--bg-surface-raised)',    text: 'var(--text-tertiary)',  dot: 'var(--text-tertiary)',  label: 'Skipped' },
   draft:   { bg: 'var(--bg-surface-raised)',    text: 'var(--text-tertiary)',  dot: 'var(--text-tertiary)',  label: 'Draft' },
   pending: { bg: 'var(--bg-surface-raised)',    text: 'var(--text-tertiary)',  dot: 'var(--text-tertiary)',  label: 'Pending' },
   running: { bg: 'rgba(59, 130, 246, 0.12)',  text: '#3B82F6',  dot: '#3B82F6',  label: 'Running' },
@@ -26,7 +31,7 @@ const CONFIG = {
   disconnected: { bg: 'var(--color-error-muted)', text: 'var(--color-error)', dot: 'var(--color-error)', label: 'Disconnected' },
 };
 
-export default function StatusBadge({ status = 'draft', label, size = 'md', wrap = false }) {
+export default function StatusBadge({ status = 'draft', label, size = 'md', wrap = false, trueStatus }) {
   const key = (status || 'draft').toLowerCase();
   const cfg = CONFIG[key] ?? {
     bg: 'var(--bg-surface-raised)',
@@ -36,12 +41,17 @@ export default function StatusBadge({ status = 'draft', label, size = 'md', wrap
   };
 
   const display = label ?? cfg.label;
+  const realCfg = trueStatus ? CONFIG[String(trueStatus).toLowerCase()] : null;
+  const demoTitle = trueStatus
+    ? `Demo mode: shown as ${display}. Real status: ${realCfg?.label ?? trueStatus}`
+    : undefined;
   const px = size === 'sm' ? '6px 8px' : '4px 10px';
   const fontSize = size === 'sm' ? '10px' : '11px';
 
   return (
     <span
       className="inline-flex rounded-full font-semibold"
+      title={demoTitle}
       style={{
         background: cfg.bg,
         color: cfg.text,
@@ -83,6 +93,7 @@ export default function StatusBadge({ status = 'draft', label, size = 'md', wrap
         />
       )}
       {display}
+      {trueStatus && <span style={{ opacity: 0.75 }}>· demo</span>}
     </span>
   );
 }

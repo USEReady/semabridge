@@ -8,7 +8,54 @@ export function shortDeterministicHash(value) {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function sanitizeMappingName(value) {
+// ── Snowflake identifier rules ─────────────────────────────────────────────
+// Exact mirror of the backend's IdentifierSanitizer.to_alias
+// (src/semabridge/utils/identifiers.py) -- the function the Snowflake emitter,
+// the mapping engine and config overrides all apply. A name picked here is
+// therefore deployed verbatim (no second sanitization renames it).
+// collisionResolution.test.js pins this against backend outputs.
+export const SNOWFLAKE_RESERVED_WORDS = new Set([
+  'account', 'all', 'alter', 'and', 'any', 'as', 'avg', 'between', 'boolean', 'by', 'case', 'cast',
+  'check', 'column', 'connect', 'connection', 'constraint', 'count', 'create', 'cross', 'current',
+  'current_date', 'current_time', 'current_timestamp', 'current_user', 'database', 'date', 'default',
+  'delete', 'distinct', 'drop', 'else', 'end', 'except', 'exists', 'false', 'float', 'following', 'for',
+  'foreign', 'from', 'full', 'grant', 'group', 'gscluster', 'having', 'ilike', 'in', 'increment', 'index',
+  'inner', 'insert', 'integer', 'intersect', 'into', 'is', 'issue', 'join', 'key', 'lateral', 'left',
+  'like', 'limit', 'localtime', 'localtimestamp', 'max', 'min', 'minus', 'natural', 'not', 'null',
+  'number', 'of', 'offset', 'on', 'or', 'order', 'organization', 'over', 'partition', 'pipe', 'primary',
+  'qualify', 'range', 'references', 'regexp', 'revoke', 'right', 'rlike', 'role', 'row', 'rows', 'sample',
+  'schema', 'select', 'sequence', 'session', 'set', 'some', 'stage', 'start', 'stream', 'string', 'sum',
+  'table', 'tablesample', 'task', 'then', 'timestamp', 'to', 'trigger', 'true', 'try_cast', 'union',
+  'unique', 'update', 'user', 'using', 'value', 'values', 'varchar', 'view', 'warehouse', 'when',
+  'whenever', 'where', 'with',
+]);
+
+// Same order as the backend's replacement table.
+const SNOWFLAKE_CHAR_REPLACEMENTS = [
+  ['%', 'PCT'], ['$', 'DOL'], ['@', 'AT'], ['#', 'NUM'], ['&', 'AND'], ['*', 'STAR'], ['+', 'PLUS'],
+  ['=', 'EQ'], ['?', 'Q'], ['!', 'EXCL'], ['<', 'LT'], ['>', 'GT'], ['{', '_'], ['}', '_'], ['|', '_'],
+  [';', '_'], [':', '_'], [',', '_'], ['.', '_'], ['/', '_'], ['\\', '_'], ['(', '_'], [')', '_'],
+  ['[', '_'], [']', '_'], [' ', '_'], ['-', '_'], ["'", ''], ['"', ''],
+];
+
+/** Backend IdentifierSanitizer.to_alias, character for character. */
+export function toSnowflakeAlias(value) {
+  let name = String(value ?? '');
+  if (!name) return '';
+  SNOWFLAKE_CHAR_REPLACEMENTS.forEach(([from, to]) => { name = name.split(from).join(to); });
+  let clean = name
+    .replace(/[^A-Za-z0-9_$]/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!clean) return 'COLUMN_UNKNOWN';
+  if (/^[0-9]/.test(clean)) clean = `_${clean}`;
+  let result = clean.toUpperCase();
+  if (SNOWFLAKE_RESERVED_WORDS.has(result.toLowerCase())) result = `COL_${result}`;
+  return result;
+}
+
+/** Generic identifier rules (non-Snowflake targets): backend sanitize_identifier. */
+export function toGenericIdentifier(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
   const cleaned = raw
@@ -18,6 +65,43 @@ export function sanitizeMappingName(value) {
     .replace(/^_+|_+$/g, '');
   if (!cleaned) return '';
   return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
+}
+
+/**
+ * Target-name sanitizer used across the mapping UI. Defaults to the
+ * Snowflake emitter's rules (to_alias): "% Margin" -> PCT_MARGIN,
+ * "Order" -> COL_ORDER, "2024 Sales" -> _2024_SALES.
+ */
+export function sanitizeMappingName(value, targetType = 'snowflake') {
+  if (!String(value ?? '').trim()) return '';
+  return String(targetType || 'snowflake').toLowerCase() === 'snowflake'
+    ? toSnowflakeAlias(value)
+    : toGenericIdentifier(value);
+}
+
+/**
+ * Keystroke-friendly normalisation for a name being typed: upper-cases and
+ * turns illegal characters into "_" but keeps a trailing "_" (so SALES_AMT
+ * can be typed) and does not apply reserved-word prefixes yet. The final
+ * name is sanitizeMappingName(typed) -- see finalizeTypedName.
+ */
+export function normalizeTypedName(value) {
+  return String(value ?? '').toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+}
+
+export function finalizeTypedName(value, targetType = 'snowflake') {
+  return sanitizeMappingName(value, targetType);
+}
+
+/** The namespace a row's target name must be unique in: its logical table
+ * for columns (Snowflake semantic views qualify names by table), the model
+ * for measures. Uses the backend's mapping_scope when present. */
+export function rowNamespace(row) {
+  const scope = String(row?.mapping_scope || '').trim();
+  if (scope) return scope;
+  const kind = String(row?.field_type || row?.entity_kind || '').toLowerCase();
+  if (kind === 'measure' || kind === 'metric') return 'metric';
+  return `column::${String(resolveColumnSourceTable(row) || row?.parent_source_path || '').toLowerCase()}`;
 }
 
 export function parseDatasetFromPath(pathValue) {
@@ -110,68 +194,63 @@ export function applyHashDeduplication(mappings) {
 
 /**
  * Given a collision row and the full flat list of rows, return:
- *  - peers: the other rows that share the same target name (what we're colliding with)
- *  - suggestions: ordered list of rename options, best-first
+ *  - peers: the other rows of the SAME namespace that share its target name
+ *  - suggestions: ordered list of rename options, best-first. The backend's
+ *    resolution_suggestions (computed with the emitter's own rules, first =
+ *    recommended, unique in the namespace) come first; local options are
+ *    only a fallback when the backend sent none.
  */
 export function suggestCollisionResolutions(row, allRows) {
-  const baseTarget = sanitizeMappingName(row?.target_field || row?.source_field || '');
-  const tbl        = sanitizeMappingName(
-    resolveColumnSourceTable(row) || row?.source_table_name || ''
-  );
-  const field      = sanitizeMappingName(row?.source_field || '');
-
+  const baseTarget = sanitizeMappingName(row?.target_field || row?.target_name || row?.source_field || '');
+  const namespace = rowNamespace(row);
   const peers = (allRows || []).filter(
     r => r.id !== row.id &&
-         sanitizeMappingName(r.target_field || r.source_field || '') === baseTarget
+         rowNamespace(r) === namespace &&
+         sanitizeMappingName(r.target_field || r.target_name || r.source_field || '') === baseTarget
   );
 
   const suggestions = [];
-
-  if (Array.isArray(row?.resolution_suggestions) && row.resolution_suggestions.length > 0) {
-    row.resolution_suggestions.forEach((item, idx) => {
+  const backend = Array.isArray(row?.resolution_suggestions) ? row.resolution_suggestions : [];
+  backend.forEach((item, idx) => {
+    const label = sanitizeMappingName(item);
+    if (label && !suggestions.some(s => s.label === label)) {
       suggestions.push({
-        id: `backend_${idx}`,
-        label: sanitizeMappingName(item),
-        description: `Backend resolution option`,
-      });
-    });
-  } else {
-    // Option A: table_prefix — SALES_AMOUNT (most readable, preferred)
-    if (tbl && tbl !== baseTarget) {
-      suggestions.push({
-        id: 'table_prefix',
-        label: `${tbl}_${field}`,
-        description: `Prefix with source table "${tbl}"`,
+        id: idx === 0 ? 'recommended' : `backend_${idx}`,
+        label,
+        description: idx === 0 ? 'Recommended' : 'Alternative',
       });
     }
+  });
+  if (suggestions.length > 0) return { suggestions, peers };
 
-    // Option B: kind_prefix — COL_AMOUNT or MSR_AMOUNT
-    const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
-    const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
-    const kindLabel = `${kindPrefix}_${field}`;
-    if (kindLabel !== suggestions[0]?.label) {
-      suggestions.push({
-        id: 'kind_prefix',
-        label: kindLabel,
-        description: `Prefix with entity type (${kindPrefix})`,
-      });
-    }
-
-    // Option C: short hash fallback — always last
-    const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
+  const tbl = resolveColumnSourceTable(row) || row?.source_table_name || '';
+  const field = row?.source_field || row?.target_field || '';
+  if (tbl && sanitizeMappingName(tbl) !== baseTarget) {
     suggestions.push({
-      id: 'hash',
-      label: `${baseTarget}_${hash}`,
-      description: 'Append short unique hash (last resort)',
+      id: 'table_prefix',
+      label: sanitizeMappingName(`${tbl}_${field}`),
+      description: `Prefix with source table "${tbl}"`,
     });
   }
-
+  const kind = String(row?.entity_kind || row?.field_type || 'col').toUpperCase();
+  const kindPrefix = kind === 'MEASURE' || kind === 'METRIC' ? 'MSR' : 'COL';
+  const kindLabel = sanitizeMappingName(`${kindPrefix}_${baseTarget}`);
+  if (!suggestions.some(s => s.label === kindLabel)) {
+    suggestions.push({ id: 'kind_prefix', label: kindLabel, description: `Prefix with entity type (${kindPrefix})` });
+  }
+  const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6);
+  suggestions.push({
+    id: 'hash',
+    label: sanitizeMappingName(`${baseTarget}_${hash}`),
+    description: 'Append short unique hash (last resort)',
+  });
   return { suggestions, peers };
 }
 
 /**
- * Resolves all collisions in a rows list by generating unique, collision-free names.
- * Returns a mapping of row.id -> candidateName.
+ * Resolves all collisions in a rows list by generating unique, collision-free
+ * names (unique within each row's namespace). Uses each row's backend
+ * suggestions first. Returns a mapping of row.id -> candidateName.
  */
 export function resolveCollisionsForRows(rows) {
   const mappings = Array.isArray(rows) ? rows : [];
@@ -180,43 +259,36 @@ export function resolveCollisionsForRows(rows) {
   );
   if (!collisionRows.length) return {};
 
+  const assigned = new Map(); // namespace -> Set(upper-case names)
+  const taken = (row) => {
+    const ns = rowNamespace(row);
+    if (!assigned.has(ns)) assigned.set(ns, new Set());
+    return assigned.get(ns);
+  };
+  mappings
+    .filter(r => String(r?.status || '').toLowerCase() !== 'collision')
+    .forEach((r) => {
+      const name = String(r?.target_field || r?.target_name || '').trim().toUpperCase();
+      if (name) taken(r).add(name);
+    });
+
   const resolvedMap = {};
-  const assignedNames = new Set(
-    mappings
-      .filter(r => String(r?.status || '').toLowerCase() !== 'collision')
-      .map(r => String(r?.target_field || r?.target_name || '').trim().toUpperCase())
-      .filter(Boolean)
-  );
-
   collisionRows.forEach(row => {
+    const used = taken(row);
     const { suggestions } = suggestCollisionResolutions(row, mappings);
-    let candidate = '';
-    let suggestionIdx = 0;
-
-    if (suggestions.length > 0) {
-      candidate = suggestions[0].label;
-      while (assignedNames.has(candidate.toUpperCase()) && suggestionIdx < suggestions.length - 1) {
-        suggestionIdx += 1;
-        candidate = suggestions[suggestionIdx].label;
-      }
-    } else {
-      candidate = row.target_field || row.source_field || '';
-    }
-
-    if (assignedNames.has(candidate.toUpperCase())) {
-      const base = candidate;
+    let candidate = suggestions.map(s => s.label).find(label => label && !used.has(label.toUpperCase()));
+    if (!candidate) {
+      const base = suggestions[0]?.label || sanitizeMappingName(row.target_field || row.source_field || '') || 'FIELD';
       const hash = shortDeterministicHash(buildSourceFingerprint({}, row)).slice(0, 6).toUpperCase();
-      candidate = `${base}_${hash}`;
-
+      candidate = sanitizeMappingName(`${base}_${hash}`);
       let counter = 2;
-      while (assignedNames.has(candidate.toUpperCase())) {
-        candidate = `${base}_${hash}_${counter}`;
+      while (used.has(candidate.toUpperCase())) {
+        candidate = sanitizeMappingName(`${base}_${hash}_${counter}`);
         counter += 1;
       }
     }
-
     resolvedMap[row.id] = candidate;
-    assignedNames.add(candidate.toUpperCase());
+    used.add(candidate.toUpperCase());
   });
 
   return resolvedMap;

@@ -117,9 +117,40 @@ def _ensure_schema() -> None:
             DryRunJob.__table__.create(bind=engine, checkfirst=True)
             DryRunJobFile.__table__.create(bind=engine, checkfirst=True)
             ensure_dry_run_job_columns(engine)
+            _ensure_plan_hash_columns(engine)
             _schema_checked_engines.add(key)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Dry-run job schema check failed (continuing): %s", exc)
+
+
+# Dry-run plan fingerprints on dry_run_job_files (see DryRunJobFile). Added
+# here with the same hand-written, idempotent ALTER TABLE pattern as
+# db_migrations.ensure_dry_run_job_columns (create_all never adds columns).
+_PLAN_HASH_COLUMNS = ("content_hash", "config_hash", "overrides_hash")
+
+
+def _ensure_plan_hash_columns(engine) -> List[str]:
+    from sqlalchemy import text
+
+    from semabridge.api.bootstrap.db_migrations import _get_column_names, _table_exists
+
+    table = "dry_run_job_files"
+    if not _table_exists(engine, table):
+        return []
+    existing = _get_column_names(engine, table)
+    if not existing:
+        return []
+    applied = [
+        f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(64)"
+        for column in _PLAN_HASH_COLUMNS
+        if column not in existing
+    ]
+    if applied:
+        with engine.begin() as conn:
+            for ddl in applied:
+                conn.execute(text(ddl))
+        logger.info("Applied dry-run plan hash columns: %s", ", ".join(applied))
+    return applied
 
 
 def _source_label(source_type: str, source_ref: str) -> str:
@@ -269,6 +300,7 @@ def _run_one_file_sync(
     source_config: Dict[str, Any],
     target_config: Dict[str, Any],
     pbix_path: str,
+    all_sources: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Runs _run_dry_run_pipeline() for exactly one source (``pbix_path`` is
     the generic per-file source reference -- a .pbix path or a model name;
@@ -294,6 +326,9 @@ def _run_one_file_sync(
         source_config=scoped_source_config,
         target_config=target_config,
         selected_sources=[pbix_path],
+        # Every model of this job: a new (wizard) multi-model project's dry
+        # run names each model exactly as project creation will.
+        all_sources=list(all_sources or []),
     )
 
 
@@ -382,6 +417,9 @@ def _record_file_outcome(
             logger.info("Dry-run job %s file %s: discarding superseded result", job_id, file_id)
             return
         job_file.completed_at = _utcnow()
+        job_file.content_hash = None
+        job_file.config_hash = None
+        job_file.overrides_hash = None
         if error is not None:
             job_file.status = "failed"
             job_file.error_message = error
@@ -395,6 +433,11 @@ def _record_file_outcome(
             if result.get("success") and not result.get("extraction_failed"):
                 job_file.status = "success"
                 job_file.error_message = None
+                # What this dry run validated -- the sync gate requires the
+                # same file content and deploy plan.
+                job_file.content_hash = _hash_or_none(result.get("content_hash"))
+                job_file.config_hash = _hash_or_none(result.get("config_hash"))
+                job_file.overrides_hash = _hash_or_none(result.get("overrides_hash"))
             else:
                 job_file.status = "failed"
                 job_file.error_message = str(
@@ -410,6 +453,11 @@ def _record_file_outcome(
             job_file.preview_project_id = expected_preview_id
 
     _refresh_job_status(job_id)
+
+
+def _hash_or_none(value: Any) -> Optional[str]:
+    text = str(value or "").strip().lower()
+    return text if len(text) == 64 else None
 
 
 def _decorate_result(result: Dict[str, Any], job_file: DryRunJobFile) -> Dict[str, Any]:
@@ -478,6 +526,7 @@ def run_dry_run_job(job_id: str) -> None:
             options = {}
         project_id = job.project_id
         requested_by_user_id = job.requested_by_user_id
+        all_sources = [f.source_ref or f.pbix_path for f in job.files if (f.source_ref or f.pbix_path)]
 
     claimed = _claim_pending_files(job_id)
     if not claimed:
@@ -495,6 +544,7 @@ def run_dry_run_job(job_id: str) -> None:
                 source_config=source_config,
                 target_config=target_config,
                 pbix_path=claim["source_ref"],
+                all_sources=all_sources,
             ): claim
             for claim in claimed
         }
@@ -734,6 +784,9 @@ def reset_dry_run_job_file_for_rerun(job_id: str, file_id: str) -> Dict[str, Any
                 started_at=None,
                 completed_at=None,
                 queued_at=now,
+                content_hash=None,
+                config_hash=None,
+                overrides_hash=None,
             )
         )
         if (result.rowcount or 0) != 1:
@@ -748,202 +801,293 @@ def reset_dry_run_job_file_for_rerun(job_id: str, file_id: str) -> Dict[str, Any
     return {"job_id": job_id, "file_id": file_id, "filename": filename, "label": label, "status": "pending"}
 
 
+def _load_project_sync_config(project_id: str, source_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """The config the project's SYNC runs with (saved config + mapping-store
+    edits merged into mappings_overrides, as run_service._prepare_sync_config
+    builds it), with ``source_cfg`` as its source. Read-only."""
+    config: Dict[str, Any] = {}
+    try:
+        import yaml
+
+        import semabridge.api.services.project_shared as project_shared
+        from semabridge.api.services.mapping_service import _compat_apply_manual_mapping_overrides_to_cfg
+
+        project_shared._compat_ensure_loaded()
+        bundle = project_shared._compat_load_modular_project(project_id) or {}
+        base = str(bundle.get("config_yaml") or "") or str(project_shared._compat_project_configs.get(project_id) or "")
+        if base:
+            merged = _compat_apply_manual_mapping_overrides_to_cfg(base, project_id) or base
+            parsed = yaml.safe_load(merged) if isinstance(merged, str) else merged
+            if isinstance(parsed, dict):
+                config = parsed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Dry-run gate: config of project %s unavailable (%s); using its source only.", project_id, exc)
+    return {**config, "source": dict(source_cfg or {})}
+
+
+def _gate_jobs(config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], str]:
+    """The sync jobs (with their deploy naming) the sync of ``config`` runs:
+    sync_execution_service._build_sync_jobs itself. When the files cannot
+    all be resolved (the sync itself would then fail per model), fall back
+    to the same naming over the configured entries."""
+    from semabridge.api.services.sync_execution_service import (
+        _assign_project_mode_naming,
+        _build_sync_jobs,
+        _normalize_connector_type,
+        _resolve_target_config,
+    )
+    from semabridge.utils.identifiers import clean_pbix_model_name
+    from semabridge.utils.name_translator import make_unique_labels
+    from semabridge.utils.project_models import model_entry_key
+
+    try:
+        jobs, _source_type, target_type, _s, _t = _build_sync_jobs(config)
+        return jobs, target_type
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Dry-run gate: sync jobs not resolvable (%s); naming configured entries directly.", exc)
+    source_cfg = config.get("source") or {}
+    source_type = _normalize_connector_type(source_cfg.get("type", "pbix"), "pbix")
+    target_type = _normalize_connector_type((_resolve_target_config(config) or {}).get("type"), "snowflake")
+    entries = [model_entry_key(m) for m in (source_cfg.get("models") or [])]
+    entries = [e for e in entries if e] or ([str(source_cfg["pbix_path"])] if source_cfg.get("pbix_path") else [])
+    jobs = []
+    for entry in entries:
+        is_file = source_type == "pbix" or entry.lower().endswith(".pbix")
+        jobs.append({
+            "dataset_id": None if is_file else entry,
+            "pbix_path": entry if is_file else None,
+            "model_label": (clean_pbix_model_name(entry) if is_file else entry) or "model",
+            "source_ref": entry,
+        })
+    for job, label in zip(jobs, make_unique_labels([str(j["model_label"]) for j in jobs])):
+        job["model_label"] = label
+    _assign_project_mode_naming(jobs, source_cfg)
+    return jobs, target_type
+
+
+def _name_keys(*values: Any) -> set:
+    """Name-based identity keys of a model reference (legacy matching)."""
+    from semabridge.utils.identifiers import clean_pbix_model_name
+
+    keys = set()
+    for value in values:
+        if not value:
+            continue
+        text = str(value).strip().lower()
+        norm = text.replace("\\", "/")
+        keys.update({text, norm, PurePath(norm).stem.lower()})
+        cleaned = (clean_pbix_model_name(norm) or "").strip().lower()
+        if cleaned:
+            keys.add(cleaned)
+    keys.discard("")
+    return keys
+
+
+def _row_scope(row: Dict[str, Any]) -> str:
+    scope = str(row.get("mapping_scope") or "").strip()
+    if scope:
+        return scope
+    kind = str(row.get("entity_kind") or "").lower()
+    if kind in ("measure", "metric"):
+        return "metric"
+    return f"column::{str(row.get('parent_source_path') or row.get('source_table') or '').strip().lower()}"
+
+
+def _plan_blockers(result: Dict[str, Any], overrides: List[Dict[str, Any]], target_type: str) -> List[str]:
+    """Blocking issues of one stored dry-run result, re-validated against the
+    overrides the sync will apply now: unresolved mapping blockers (minus
+    rows the user has since renamed), names that collide AFTER applying the
+    current overrides, and ontology blocking conflicts."""
+    from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers
+
+    issues: List[str] = []
+    override_names: Dict[str, str] = {}
+    for row in overrides or []:
+        if isinstance(row, dict) and str(row.get("source_path") or "").strip() and str(row.get("target_name") or "").strip():
+            name = str(row["target_name"]).strip()
+            if str(target_type or "").lower() == "snowflake":
+                from semabridge.api.services.project_mapping_engine import _SNOWFLAKE_SANITIZER
+
+                name = _SNOWFLAKE_SANITIZER.to_alias(name)
+            override_names[str(row["source_path"]).strip().lower()] = name
+
+    rows = [r for r in (result.get("entity_mappings") or []) if isinstance(r, dict)]
+    blockers = _compat_collect_dry_run_blockers(result)
+    open_blockers = [
+        b for b in blockers
+        if (b.get("source_path") or "").strip().lower() not in override_names
+        and (b.get("id") or "").strip().lower() not in override_names
+    ]
+    if open_blockers:
+        issues.append(f"{len(open_blockers)} unresolved dry-run blocker(s)")
+
+    # The renamed names must still be unique in their namespace.
+    seen: Dict[tuple, str] = {}
+    duplicates: List[str] = []
+    for row in rows:
+        if row.get("sync_enabled") is False:
+            continue
+        path = str(row.get("source_path") or "").strip().lower()
+        name = (override_names.get(path) or str(row.get("target_name") or "")).strip().upper()
+        if not name:
+            continue
+        key = (_row_scope(row), name)
+        if key in seen and seen[key] != path:
+            duplicates.append(name)
+        else:
+            seen[key] = path
+    if duplicates:
+        shown = ", ".join(sorted(set(duplicates))[:5])
+        issues.append(f"{len(set(duplicates))} duplicate target name(s) after your edits ({shown})")
+
+    conflicts = result.get("blocking_conflicts")
+    if conflicts is None:
+        conflicts = (result.get("ontology_changes") or {}).get("blocking_conflicts")
+    if conflicts:
+        issues.append(f"{len(conflicts)} ontology blocking conflict(s)")
+    return issues
+
+
 def validate_multi_model_dry_run_readiness(
     project_id: str,
     source_cfg: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Server-side gate: refuses a multi-mode project sync/run unless every
-    model's latest dry run succeeded with no unresolved collisions or blockers.
+    """Server-side gate: refuses a multi-mode project sync unless EVERY model
+    the sync will deploy has a successful dry run of the SAME content and the
+    SAME deploy plan, with no blocker left open.
+
+    Per configured model (the sync's own jobs, see _gate_jobs):
+      * the newest dry-run file of this project whose content_hash equals the
+        sha256 of the file the sync will read (any upload copy of the same
+        bytes matches) must have succeeded, and its config_hash (view name,
+        physical prefix, target -- model_config_fingerprint) must equal the
+        sync's; otherwise "model X changed since its dry run";
+      * its stored result must have no unresolved blockers once the current
+        mapping overrides are applied, no duplicate names after them, and no
+        ontology blocking conflicts.
+    Legacy dry runs (stored before hashes existed) are matched by name and
+    still allowed, with a logged warning.
+
+    Only dry-run jobs of THIS project count (wizard jobs are linked to the
+    project at save time by link_dry_run_job_to_project, owner-checked).
+    Read-only: nothing is modified here.
     """
     _ensure_schema()
+    from semabridge.api.services.sync_execution_service import (
+        _config_with_model_scoped_overrides,
+        file_content_sha256,
+        model_config_fingerprint,
+    )
     from semabridge.repository.orm.session_factory import db_manager
-    from semabridge.repository.orm.dry_run_job_models import DryRunJob
-    from semabridge.api.services.mapping_service import _compat_collect_dry_run_blockers
-    from semabridge.utils.project_models import model_entry_key
 
-    models = source_cfg.get("models") or []
-    expected_models = [model_entry_key(m) for m in models if model_entry_key(m)]
-    if not expected_models:
-        explicit_pbix = str(source_cfg.get("pbix_path") or "").strip()
-        if explicit_pbix:
-            expected_models = [explicit_pbix]
-
-    if not expected_models:
+    effective = dict(config) if isinstance(config, dict) else _load_project_sync_config(project_id, source_cfg)
+    effective["source"] = dict(source_cfg or effective.get("source") or {})
+    if not (effective["source"].get("models") or effective["source"].get("pbix_path")):
+        return
+    jobs, target_type = _gate_jobs(effective)
+    if not jobs:
         return
 
-    from semabridge.utils.identifiers import clean_pbix_model_name
-
     with db_manager.get_session() as session:
-        job = session.query(DryRunJob).filter(
-            DryRunJob.project_id == project_id
-        ).order_by(DryRunJob.created_at.desc()).first()
+        rows = (
+            session.query(DryRunJobFile, DryRunJob)
+            .join(DryRunJob, DryRunJobFile.job_id == DryRunJob.job_id)
+            .filter(DryRunJob.project_id == project_id)
+            .order_by(DryRunJob.created_at.desc(), DryRunJobFile.file_index)
+            .limit(500)
+            .all()
+        )
+        files = []
+        for f, job in rows:
+            files.append({
+                "status": f.status,
+                "error": f.error_message,
+                "label": f.label or f.display_name,
+                "result_json": f.result_json,
+                "content_hash": f.content_hash,
+                "config_hash": f.config_hash,
+                "keys": _name_keys(f.source_ref, f.pbix_path, f.label, f.display_name),
+                "order": _as_aware(f.completed_at or f.started_at or f.queued_at or job.created_at),
+                "job_created": _as_aware(job.created_at),
+            })
+    if not files:
+        raise ValidationError(
+            f"Multi-model project '{project_id}' cannot be synced: "
+            "no dry-run job found for this project. Every model must have a completed, "
+            "successful dry run with no unresolved blockers before deployment."
+        )
+    # Newest first: the job's creation, then the file's own completion.
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    files.sort(key=lambda f: (f["job_created"] or epoch, f["order"] or epoch), reverse=True)
 
-        if not job:
-            preview_jobs = (
-                session.query(DryRunJob)
-                .filter(DryRunJob.project_id.like("preview%"))
-                .order_by(DryRunJob.created_at.desc())
-                .limit(10)
-                .all()
-            )
-            for cand in preview_jobs:
-                cand_files = list(cand.files)
-                if not cand_files:
-                    continue
-                cand_refs = set()
-                for f in cand_files:
-                    for k in (f.source_ref, f.pbix_path, f.label, f.display_name):
-                        if k:
-                            k_str = str(k).strip().lower()
-                            cand_refs.add(k_str)
-                            cand_refs.add(k_str.replace("\\", "/"))
-                            cand_refs.add(PurePath(k_str.replace("\\", "/")).stem.lower())
-                            cleaned = (clean_pbix_model_name(k_str) or "").strip().lower()
-                            if cleaned:
-                                cand_refs.add(cleaned)
-                all_match = True
-                for exp in expected_models:
-                    exp_key = str(exp).strip().lower()
-                    exp_norm = exp_key.replace("\\", "/")
-                    exp_stem = PurePath(exp_norm).stem.lower()
-                    exp_clean = (clean_pbix_model_name(exp_norm) or "").strip().lower()
-                    if (
-                        exp_key not in cand_refs
-                        and exp_norm not in cand_refs
-                        and exp_stem not in cand_refs
-                        and exp_clean not in cand_refs
-                    ):
-                        all_match = False
-                        break
-                if all_match:
-                    cand.project_id = project_id
-                    job = cand
-                    break
-
-        if not job:
+    for job in jobs:
+        label = str(job.get("source_ref") or job.get("model_label"))
+        display = str(job.get("model_label") or label)
+        job_keys = _name_keys(job.get("source_ref"), job.get("pbix_path"), job.get("model_label"))
+        by_name = [f for f in files if f["keys"] & job_keys]
+        if by_name and by_name[0]["status"] in ("running", "pending"):
             raise ValidationError(
                 f"Multi-model project '{project_id}' cannot be synced: "
-                "no dry-run job found for this project. Every model must have a completed, "
-                "successful dry run with no unresolved blockers before deployment."
+                f"a dry run of model '{display}' is currently in progress. Wait for it to complete."
             )
+        content_hash = file_content_sha256(job.get("pbix_path") or job.get("source_ref"))
+        config_hash = model_config_fingerprint(effective, job, target_type)
 
-        if job.status in ("running", "pending"):
-            raise ValidationError(
-                f"Multi-model project '{project_id}' cannot be synced: "
-                "a dry-run job is currently in progress. Wait for it to complete."
+        candidate = None
+        if content_hash:
+            hashed = [f for f in files if f["content_hash"] == content_hash and f["status"] not in ("running", "pending")]
+            candidate = hashed[0] if hashed else None
+        if candidate is None and not content_hash:
+            # No file content to compare (Fabric model): the newest dry run of
+            # this model by name, whose plan must still match below.
+            candidate = next((f for f in by_name if f["status"] not in ("running", "pending")), None)
+        if candidate is None:
+            legacy = next(
+                (f for f in by_name if not f["content_hash"] and f["status"] not in ("running", "pending")),
+                None,
             )
-
-        files = list(job.files)
-        if not files:
-            raise ValidationError(
-                f"Multi-model project '{project_id}' cannot be synced: "
-                "dry-run job has no model entries."
-            )
-
-        files_by_ref = {}
-        for f in files:
-            for k in (f.source_ref, f.pbix_path, f.label, f.display_name):
-                if k:
-                    k_str = str(k).strip()
-                    files_by_ref[k_str.lower()] = f
-                    files_by_ref[k_str.replace("\\", "/").lower()] = f
-                    files_by_ref[PurePath(k_str.replace("\\", "/")).stem.lower()] = f
-                    cleaned = (clean_pbix_model_name(k_str) or "").strip().lower()
-                    if cleaned:
-                        files_by_ref[cleaned] = f
-
-        for exp in expected_models:
-            exp_key = str(exp).strip().lower()
-            exp_norm = exp_key.replace("\\", "/")
-            exp_stem = PurePath(exp_norm).stem.lower()
-            exp_clean = (clean_pbix_model_name(exp_norm) or "").strip().lower()
-
-            matched_file = (
-                files_by_ref.get(exp_key)
-                or files_by_ref.get(exp_norm)
-                or files_by_ref.get(exp_stem)
-                or files_by_ref.get(exp_clean)
-            )
-
-            if not matched_file:
+            if by_name and any(f["content_hash"] for f in by_name):
                 raise ValidationError(
                     f"Multi-model project '{project_id}' cannot be synced: "
-                    f"model '{exp}' has not been dry-run in the latest dry-run job."
+                    f"model '{display}' changed since its dry run — re-run the dry run."
                 )
-
-            if matched_file.status != "success":
-                err = matched_file.error_message or f"status is '{matched_file.status}'"
+            if legacy is None:
                 raise ValidationError(
                     f"Multi-model project '{project_id}' cannot be synced: "
-                    f"dry run for model '{matched_file.label or exp}' failed ({err}). "
-                    "Retry the dry run for this model."
+                    f"model '{label}' has not been dry-run in the latest dry-run job."
                 )
+            logger.warning(
+                "Dry-run gate: project %s model '%s' only has a legacy dry run (no content hash); "
+                "allowing it without checking the file content or deploy plan. Re-run the dry run "
+                "to enable change detection.",
+                project_id, display,
+            )
+            candidate = legacy
 
-            if matched_file.result_json:
-                try:
-                    result_data = json.loads(matched_file.result_json)
-                except Exception:
-                    result_data = {}
-                blockers = _compat_collect_dry_run_blockers(result_data)
-                if blockers:
-                    resolved_paths = _load_project_override_paths(project_id, exp)
-                    blockers = [
-                        b for b in blockers
-                        if (b.get("source_path") or "").strip().lower() not in resolved_paths
-                        and (b.get("id") or "").strip().lower() not in resolved_paths
-                    ]
-                if blockers:
-                    raise ValidationError(
-                        f"Multi-model project '{project_id}' cannot be synced: "
-                        f"model '{matched_file.label or exp}' has {len(blockers)} unresolved dry-run blocker(s). "
-                        "Resolve all collisions and blockers before syncing."
-                    )
-
-
-def _load_project_override_paths(project_id: str, model_ref: str) -> set[str]:
-    """Return lowercased source_path/id keys already resolved in project mappings_overrides."""
-    overrides: list = []
-    try:
-        from semabridge.api.services.project_shared import _compat_ensure_loaded, _compat_projects
-
-        _compat_ensure_loaded()
-        meta = _compat_projects.get(project_id)
-        if isinstance(meta, dict):
-            overrides = list(meta.get("mappings_overrides") or [])
-    except Exception:
-        pass
-    if not overrides:
-        try:
-            import yaml
-            from pathlib import Path
-
-            p = Path("config/projects") / f"{project_id}.yaml"
-            if p.exists():
-                data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-                overrides = list(data.get("mappings_overrides") or [])
-        except Exception:
-            pass
-
-    from semabridge.utils.identifiers import clean_pbix_model_name
-
-    model_norm = str(model_ref or "").replace("\\", "/").strip().lower()
-    model_stem = PurePath(model_norm).stem.lower() if model_norm else ""
-    # Upload copies of one file differ only by their 32-hex prefix (the dry
-    # run re-uploads), so compare prefix-free names too.
-    model_clean = (clean_pbix_model_name(model_norm) or "").strip().lower() if model_norm else ""
-    out: set[str] = set()
-    for ov in overrides:
-        if not isinstance(ov, dict) or not ov.get("target_name"):
-            continue
-        ov_model = str(ov.get("model") or "").replace("\\", "/").strip().lower()
-        if (
-            ov_model and model_norm and ov_model != model_norm
-            and PurePath(ov_model).stem.lower() != model_stem
-            and (clean_pbix_model_name(ov_model) or "").strip().lower() != model_clean
-        ):
-            continue
-        for k in (ov.get("source_path"), ov.get("id")):
-            if k:
-                out.add(str(k).strip().lower())
-    return out
-
+        if candidate["status"] != "success":
+            err = candidate["error"] or f"status is '{candidate['status']}'"
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                f"dry run for model '{candidate['label'] or display}' failed ({err}). "
+                "Retry the dry run for this model."
+            )
+        if candidate["config_hash"] and candidate["config_hash"] != config_hash:
+            raise ValidationError(
+                f"Multi-model project '{project_id}' cannot be synced: "
+                f"model '{display}' changed since its dry run (its view name, table prefix or target "
+                "differs from what the dry run showed) — re-run the dry run."
+            )
+        if candidate["result_json"]:
+            try:
+                result_data = json.loads(candidate["result_json"]) or {}
+            except Exception:  # noqa: BLE001
+                result_data = {}
+            overrides = _config_with_model_scoped_overrides(effective, job).get("mappings_overrides") or []
+            issues = _plan_blockers(result_data, overrides, target_type)
+            if issues:
+                raise ValidationError(
+                    f"Multi-model project '{project_id}' cannot be synced: "
+                    f"model '{candidate['label'] or display}' has {'; '.join(issues)}. "
+                    "Resolve all collisions and blockers before syncing."
+                )

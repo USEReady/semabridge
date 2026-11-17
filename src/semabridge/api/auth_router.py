@@ -50,6 +50,7 @@ from semabridge.auth.tokens import (
     hash_refresh_token,
 )
 from semabridge.auth.email_service import send_password_reset_email
+from semabridge.auth.flags import auth_enabled, dev_auto_login_allowed
 from semabridge.repository.orm.models import PasswordResetToken, RefreshToken, User, UserCredential
 from semabridge.utils.logger import get_logger
 
@@ -132,12 +133,25 @@ def auto_login(
 ) -> TokenResponse:
     """Auto-create a dev user and issue a JWT — no credentials needed.
 
-    Used during development to bypass the login page. In production,
-    disable by removing this route or checking an env flag.
+    Availability (see :func:`semabridge.auth.flags.dev_auto_login_allowed`):
+
+    - ``AUTH_ENABLED=false`` (single-user dev mode): always available; the
+      dev user is an admin, exactly as before.
+    - ``AUTH_ENABLED=true``: returns 404 unless ``SEMABRIDGE_DEV_AUTO_LOGIN=true``
+      is explicitly set, and even then the dev user is never an admin
+      (an existing admin ``dev`` account is demoted to ``viewer``), so the
+      unauthenticated endpoint can't be used to obtain admin rights.
 
     Creates a default user ``dev`` on first call; reuses it on subsequent calls.
     """
     import uuid
+
+    if not dev_auto_login_allowed():
+        # Indistinguishable from a missing route in production.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    grant_admin = not auth_enabled()
+    dev_role = "admin" if grant_admin else "viewer"
 
     # Find or create default dev user
     dev_user = db.execute(
@@ -150,12 +164,21 @@ def auto_login(
             username="dev",
             email=f"dev-{uuid.uuid4().hex[:8]}@semabridge.local",
             password_hash=_hash(uuid.uuid4().hex),  # random pw, never used
-            role="admin",
+            role=dev_role,
         )
         db.add(dev_user)
         db.commit()
         db.refresh(dev_user)
-        logger.info("Auto-created dev user (id=%s)", dev_user.id)
+        logger.info("Auto-created dev user (id=%s, role=%s)", dev_user.id, dev_role)
+    elif not grant_admin and dev_user.role == "admin":
+        logger.warning(
+            "[Auth] SEMABRIDGE_DEV_AUTO_LOGIN with AUTH_ENABLED=true: demoting dev user "
+            "(id=%s) from admin to viewer — auto-login never grants admin when auth is enabled.",
+            dev_user.id,
+        )
+        dev_user.role = "viewer"
+        db.commit()
+        db.refresh(dev_user)
 
     # Issue tokens
     access_token, raw_refresh = create_token_pair(dev_user.id, dev_user.username, dev_user.role)
@@ -557,7 +580,7 @@ def dev_promote_admin(
     Only available when AUTH_ENABLED is not 'true'.
     Requires username + current password to prevent accidental misuse.
     """
-    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+    if auth_enabled():
         raise HTTPException(status_code=404)
 
     user = db.execute(

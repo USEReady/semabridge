@@ -160,16 +160,32 @@ def resolve_db_config(
         )
         return cfg
 
-    # --- Step 5: ultimate fallback → DuckDB at ~/.semabridge/ ------------
+    # --- Step 5: local DuckDB only when explicitly allowed ----------------
+    # Silently switching to a local DuckDB file when the Postgres URL is
+    # missing (e.g. a broken .env) made the app run on an empty, different
+    # database. Fail fast instead, unless SEMABRIDGE_ALLOW_LOCAL_DB=true.
+    if not local_db_allowed():
+        raise DatabaseNotConfiguredError(
+            "SEMABRIDGE_DATABASE_URL is not set. Configure the PostgreSQL URL, or set "
+            "SEMABRIDGE_ALLOW_LOCAL_DB=true to use a local DuckDB file at ~/.semabridge/semabridge_state.db."
+        )
     sema_dir = Path.home() / ".semabridge"
     sema_dir.mkdir(parents=True, exist_ok=True)
     fallback_path = sema_dir / "semabridge_state.db"
     fallback_url = f"duckdb:///{fallback_path}"
     logger.warning(
-        "No SEMABRIDGE_DATABASE_URL set; falling back to %s", fallback_url
+        "No SEMABRIDGE_DATABASE_URL set; SEMABRIDGE_ALLOW_LOCAL_DB=true -> using %s", fallback_url
     )
     cfg = _build_config(fallback_url, env_name=None, cache=True)
     return cfg
+
+
+class DatabaseNotConfiguredError(ValueError):
+    """No database URL configured and the local DuckDB fallback is not allowed."""
+
+
+def local_db_allowed() -> bool:
+    return str(os.environ.get("SEMABRIDGE_ALLOW_LOCAL_DB") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_config(

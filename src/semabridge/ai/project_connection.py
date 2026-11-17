@@ -26,6 +26,16 @@ class ProjectScope:
     deploy_error: Optional[str] = None
     allowed_domains: Optional[List[str]] = None
     domain_names: List[str] = field(default_factory=list)
+    # domain display name -> fully-qualified semantic view built from it
+    domain_views: Dict[str, str] = field(default_factory=dict)
+    # True when the caller named the view (never re-routed)
+    explicit_view: bool = False
+    # Set by route_scope_to_view: the domain whose metric/concept picked the view
+    answered_by_domain: Optional[str] = None
+    # Set by route_scope_to_view when the question matches several views
+    candidate_views: List[str] = field(default_factory=list)
+    routing_message: Optional[str] = None
+    routing_matches: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def _project_meta(project_id: str) -> Dict[str, Any]:
@@ -173,41 +183,164 @@ def _build_from_account(account_id: str, connector: str, base, meta: Dict[str, A
     return None
 
 
+def _view_tail(view: Optional[str]) -> str:
+    return str(view or "").strip().split(".")[-1].strip('"').casefold()
+
+
 def resolve_project_scope(project_id: Optional[str], explicit_view: Optional[str] = None) -> ProjectScope:
-    """Resolve the deployed view and the attached domains for a project.
+    """Resolve the deployed view(s) and the domains for a project.
 
     Without a project id the scope is unrestricted (``allowed_domains=None``).
-    With a project id only that project's attached domains — or, if none are
-    attached, the domains generated from it — are allowed; an empty list means
-    the project has no ontology yet.
+    With a project id only that project's domains (``ontology_store.domains_for``)
+    are allowed; an empty list means the project has no ontology yet.
+
+    A multi-model project has one domain (and one semantic view) per model:
+    when its domains name more than one view, ``semantic_view`` is left unset
+    here and :func:`route_scope_to_view` picks the view that owns the metric
+    asked about. A caller-supplied ``explicit_view`` always wins.
     """
     pid = (project_id or "").strip() or None
     scope = ProjectScope(project_id=pid, semantic_view=(explicit_view or "").strip() or None)
+    scope.explicit_view = bool(scope.semantic_view)
     if not pid:
         return scope
 
+    info: Dict[str, Any] = {}
     try:
         from semabridge.repository.model_repository import ModelRepository
 
-        info = ModelRepository().get_project_deployment_info(pid)
+        info = ModelRepository().get_project_deployment_info(pid) or {}
         scope.model_name = info.get("model_name")
         scope.deploy_error = info.get("deploy_error")
-        scope.semantic_view = scope.semantic_view or info.get("semantic_view")
     except Exception as exc:
         logger.debug("Deployment info unavailable for project %s: %s", pid, exc)
 
     from semabridge.ontology.store import ontology_store
 
-    domains = list(ontology_store.get_project_domains(pid) or [])
-    if not domains:
-        fed = ontology_store.get_federated_ontology()
-        domains = [d for d in fed.domains.values() if getattr(d, "source_project_id", None) == pid]
+    domains = list(ontology_store.domains_for(pid))
     scope.domain_names = [d.domain for d in domains]
     scope.allowed_domains = [d.domain for d in domains] + [d.id for d in domains if getattr(d, "id", None)]
-    if not scope.semantic_view:
-        scope.semantic_view = next(
-            (d.semantic_view_name for d in domains if getattr(d, "semantic_view_name", None)),
-            None,
-        )
+    scope.domain_views = {
+        d.domain: d.semantic_view_name for d in domains if getattr(d, "semantic_view_name", None)
+    }
+    distinct = _distinct_views(scope.domain_views.values())
+
+    if scope.explicit_view:
+        # Restrict the ontology to the named view's domains (+ view-less shared ones).
+        tail = _view_tail(scope.semantic_view)
+        owners = [dn for dn, v in scope.domain_views.items() if _view_tail(v) == tail]
+        if owners:
+            _restrict_to(scope, domains, owners)
+        return scope
+
+    if len(distinct) >= 2:
+        # Several models -> several views: pick per question (route_scope_to_view).
+        scope.semantic_view = None
+        return scope
+    scope.semantic_view = info.get("semantic_view") or (distinct[0] if distinct else None)
     return scope
 
+
+def _distinct_views(views: Any) -> List[str]:
+    out: List[str] = []
+    seen: set = set()
+    for v in views:
+        tail = _view_tail(v)
+        if tail and tail not in seen:
+            seen.add(tail)
+            out.append(str(v))
+    return out
+
+
+def _restrict_to(scope: ProjectScope, domains: List[Any], owner_names: List[str]) -> None:
+    """Keep the owners' domains plus project-wide domains that have no view of their own."""
+    keep = [d for d in domains if d.domain in owner_names or not getattr(d, "semantic_view_name", None)]
+    scope.allowed_domains = [d.domain for d in keep] + [d.id for d in keep if getattr(d, "id", None)]
+    scope.domain_names = [d.domain for d in keep]
+
+
+def _norm_text(text: str) -> str:
+    import re
+
+    return " " + " ".join(re.findall(r"[a-z0-9%]+", str(text or "").replace("_", " ").casefold())) + " "
+
+
+def _domain_terms(dom: Any) -> Dict[str, List[str]]:
+    """Normalised metric and concept terms (names, labels, synonyms) of one domain."""
+    metric_terms: List[str] = []
+    concept_terms: List[str] = []
+    for m in getattr(dom, "metrics", None) or []:
+        for t in [m.name, getattr(m, "label", None), getattr(m, "logical_name", None), *(m.synonyms or [])]:
+            nt = _norm_text(t or "").strip()
+            if nt and nt not in metric_terms:
+                metric_terms.append(nt)
+    for c in getattr(dom, "concepts", None) or []:
+        for t in [c.name, getattr(c, "label", None), *(c.synonyms or [])]:
+            nt = _norm_text(t or "").strip()
+            if nt and nt not in concept_terms:
+                concept_terms.append(nt)
+    return {"metric": metric_terms, "concept": concept_terms}
+
+
+def route_scope_to_view(prompt: str, scope: ProjectScope) -> ProjectScope:
+    """Point ``scope`` at the semantic view of the domain that owns the question's metric.
+
+    Only acts on multi-view projects without an explicit view. The longest
+    metric term (name / label / synonym) found in the question decides; when no
+    metric matches, concept terms decide. A tie across views (or no match at
+    all) does NOT guess: ``candidate_views`` and ``routing_message`` are set and
+    ``semantic_view`` stays ``None``.
+    """
+    if scope.explicit_view or not scope.project_id:
+        return scope
+    distinct = _distinct_views(scope.domain_views.values())
+    if len(distinct) < 2:
+        return scope
+
+    from semabridge.ontology.store import ontology_store
+
+    domains = [d for d in ontology_store.domains_for(scope.project_id) if d.domain in scope.domain_views]
+    all_domains = list(ontology_store.domains_for(scope.project_id))
+    text = _norm_text(prompt)
+
+    best: Dict[str, tuple] = {}  # view tail -> (rank, length, domain, term)
+    matches: Dict[str, List[str]] = {}
+    for dom in domains:
+        view = scope.domain_views[dom.domain]
+        tail = _view_tail(view)
+        terms = _domain_terms(dom)
+        for rank, kind in ((2, "metric"), (1, "concept")):
+            for term in terms[kind]:
+                if f" {term} " in text:
+                    matches.setdefault(view, [])
+                    if term not in matches[view]:
+                        matches[view].append(term)
+                    cand = (rank, len(term.split()), dom.domain, term)
+                    if tail not in best or cand[:2] > best[tail][:2]:
+                        best[tail] = cand
+    scope.routing_matches = matches
+
+    if best:
+        top = max(v[:2] for v in best.values())
+        winners = [t for t, v in best.items() if v[:2] == top]
+        if len(winners) == 1:
+            rank, _n, dom_name, term = best[winners[0]]
+            scope.semantic_view = scope.domain_views[dom_name]
+            scope.answered_by_domain = dom_name
+            _restrict_to(scope, all_domains, [n for n, v in scope.domain_views.items() if _view_tail(v) == winners[0]])
+            return scope
+        scope.candidate_views = [v for v in distinct if _view_tail(v) in winners]
+        found = ", ".join(sorted({best[t][3] for t in winners}))
+        scope.routing_message = (
+            f"'{found}' exists in {len(scope.candidate_views)} semantic views of this project: "
+            + "; ".join(scope.candidate_views)
+            + ". Choose the view (model) to ask, or name the metric more precisely."
+        )
+        return scope
+
+    scope.candidate_views = distinct
+    scope.routing_message = (
+        "This project has one semantic view per model and the question did not name a metric or "
+        "concept of any of them. Choose the view (model) to ask: " + "; ".join(distinct) + "."
+    )
+    return scope

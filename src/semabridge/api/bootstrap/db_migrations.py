@@ -68,6 +68,11 @@ _DRY_RUN_JOB_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("dry_run_job_files", "label", "VARCHAR(255)"),
     ("dry_run_job_files", "preview_project_id", "VARCHAR(255)"),
     ("dry_run_job_files", "queued_at", "__TS__"),
+    # Content-bound gate: a sync requires a dry run of the same file bytes
+    # and the same deploy plan (see dry_run_job_service).
+    ("dry_run_job_files", "content_hash", "VARCHAR(64)"),
+    ("dry_run_job_files", "config_hash", "VARCHAR(64)"),
+    ("dry_run_job_files", "overrides_hash", "VARCHAR(64)"),
 )
 
 
@@ -384,7 +389,9 @@ def _apply_rls_policies() -> None:
 
 def _assign_orphaned_accounts_to_dev_user() -> None:
     """Assign accounts with NULL owner_id to the first active user."""
-    if os.environ.get("AUTH_ENABLED", "").lower() == "true":
+    from semabridge.auth.flags import auth_enabled
+
+    if auth_enabled():
         return  # Skip in production — admin must assign explicitly.
 
     from sqlalchemy import select, update

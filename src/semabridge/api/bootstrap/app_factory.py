@@ -139,6 +139,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as fix_exc:
             logger.error('Schema compatibility fix failed: %s', fix_exc, exc_info=True)
         try:
+            # Versioned schema changes (PostgreSQL): stamp a pre-Alembic DB at
+            # the baseline, then upgrade to head. create_all above still
+            # covers brand-new DBs and SQLite/DuckDB; the hand-written
+            # idempotent column adds keep running for older databases.
+            from semabridge.repository.alembic_runner import upgrade_database
+            from semabridge.repository.orm.session_factory import get_engine as _get_engine
+
+            _report = await asyncio.to_thread(upgrade_database, _get_engine())
+            logger.info('Alembic: %s', _report)
+        except Exception as mig_exc:
+            logger.error('Alembic upgrade failed: %s', mig_exc, exc_info=True)
+        try:
             _migrate_credentials_table()
         except Exception as cred_exc:
             logger.error('Credentials table migration failed: %s', cred_exc, exc_info=True)
@@ -154,7 +166,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error('ORM table setup failed: %s', exc)
 
     # Phase 3: Log multi-tenant enforcement status at startup.
-    auth_enabled = os.environ.get("AUTH_ENABLED", "").lower() == "true"
+    from semabridge.auth.flags import auth_enabled as _auth_enabled
+    from semabridge.auth.encryption import ensure_encryption_key_available
+
+    auth_enabled = _auth_enabled()
+    # Fail at startup (not on first credential use) when auth is on and no
+    # encryption key is configured or persisted.
+    ensure_encryption_key_available()
     if auth_enabled:
         logger.info(
             "AUTH_ENABLED=true — multi-tenant credential isolation ENFORCED. "
@@ -195,6 +213,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # scheduled project runs reuse the same execution path as manual runs.
         scheduler_service.configure(_execute_project_run, _compat_clear_project_schedule)
         scheduler_service.start()
+        # Leader election for scheduled jobs (PostgreSQL advisory lock): every
+        # worker keeps the schedules, only the leader fires them.
+        try:
+            from semabridge.core.run_coordination import scheduler_leadership
+
+            _leader = await asyncio.to_thread(scheduler_leadership.is_leader)
+            logger.info('Scheduler leader: %s', 'this process' if _leader else 'another process')
+        except Exception as leader_exc:
+            logger.warning('Scheduler leadership check skipped: %s', leader_exc)
+        # Runs left "running" by a previous process whose heartbeat has
+        # expired are marked "interrupted" now (not failed).
+        try:
+            from semabridge.core.run_coordination import sweep_stale_runs
+
+            await asyncio.to_thread(sweep_stale_runs)
+        except Exception as sweep_exc:
+            logger.debug('Startup stale-run sweep skipped: %s', sweep_exc)
         _compat_ensure_loaded()
         for project_id, schedule_payload in list(_compat_project_schedules.items()):
             try:
@@ -222,12 +257,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except Exception as exc:
                 logger.error('Poll session cleanup error: %s', exc)
 
+    async def _sweep_stale_runs_periodically() -> None:
+        # Heartbeat-based: a run whose process died (crash/restart, any
+        # worker) is marked "interrupted" within ~one lease of its last beat.
+        from semabridge.core.run_coordination import lease_seconds, sweep_stale_runs
+
+        while True:
+            await asyncio.sleep(max(30, lease_seconds() // 2))
+            try:
+                await asyncio.to_thread(sweep_stale_runs)
+            except Exception as exc:
+                logger.debug('Periodic stale-run sweep failed: %s', exc)
+
     cleanup_task = asyncio.create_task(_cleanup_poll_sessions())
+    sweep_task = asyncio.create_task(_sweep_stale_runs_periodically())
     logger.info('SemaBridge API startup complete; application is ready')
     yield
-    cleanup_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await cleanup_task
+    for _task in (cleanup_task, sweep_task):
+        _task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _task
 
     from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
 

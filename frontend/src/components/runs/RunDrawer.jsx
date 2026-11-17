@@ -17,7 +17,7 @@ import { cleanPbixLabel } from '../../utils/pbixLabel';
 import { isInternalAutoTable } from '../../utils/placeholderMetric';
 import {
   formatDuration, formatDateTime, normStatus, statusPill, syncModeWords,
-  parseStages, formatStageTook,
+  parseStages, formatStageTook, isActiveStatus, isRetryableStatus, demoMaskTitle,
 } from './runsFormat';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -36,9 +36,15 @@ export function Pill({ children, color = 'var(--text-secondary)', bg = 'var(--bg
   );
 }
 
-export function StatusPill({ status }) {
+export function StatusPill({ status, run }) {
   const p = statusPill(status);
-  return <Pill color={p.color} bg={p.bg}>{p.label}</Pill>;
+  const demoTitle = demoMaskTitle(run);
+  return (
+    <Pill color={p.color} bg={p.bg} title={demoTitle || undefined}>
+      {p.label}
+      {demoTitle && <span style={{ fontWeight: 700, opacity: 0.75 }}>· demo</span>}
+    </Pill>
+  );
 }
 
 function SectionLabel({ children }) {
@@ -96,7 +102,7 @@ function useModelLogs(run, entries) {
   const [logs, setLogs] = useState({});
   const rid = run?.id;
   const pid = run?.project_id;
-  const running = normStatus(run?.status) === 'running';
+  const running = isActiveStatus(run?.status);
   const models = entries.filter(e => e.hasResult && e.model).map(e => e.model);
   const modelKey = models.join('\u0001');
 
@@ -209,6 +215,7 @@ function LogsModal({ open, onClose, run, sources }) {
 
 export default function RunDrawer({
   runId, run, runNumber, liveManifest, counts, onClose, onOpenReport, onDownload, onOpenDropped, modalOpen = false,
+  onRetryStarted,
 }) {
   const [logsOpen, setLogsOpen] = useState(false);
   const [openModels, setOpenModels] = useState({});
@@ -221,7 +228,20 @@ export default function RunDrawer({
   }, [onClose, modalOpen, logsOpen]);
 
   const status = normStatus(run?.status);
-  const running = status === 'running';
+  const running = isActiveStatus(run?.status);
+  const [retry, setRetry] = useState({ busy: false, error: '', started: null });
+  const realStatus = run?.demo_masked ? normStatus(run?.true_status) : status;
+  const canRetry = Boolean(run?.project_id && isRetryableStatus(realStatus) && !running);
+  const handleRetry = async () => {
+    setRetry({ busy: true, error: '', started: null });
+    try {
+      const res = await api.retryFailedModels(run.project_id, run.id || run.run_id);
+      setRetry({ busy: false, error: '', started: res });
+      if (onRetryStarted) onRetryStarted(res);
+    } catch (err) {
+      setRetry({ busy: false, error: err?.message || 'Could not start the retry.', started: null });
+    }
+  };
   const effectiveRun = useMemo(
     () => (run && liveManifest && running ? { ...run, results: liveManifest } : run),
     [run, liveManifest, running],
@@ -294,7 +314,7 @@ export default function RunDrawer({
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <StatusPill status={run.status} />
+              <StatusPill status={run.status} run={run} />
               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {syncModeWords(run.sync_mode)}{run.duration_ms ? ` · ${formatDuration(run.duration_ms)}` : ''}
               </span>
@@ -304,9 +324,33 @@ export default function RunDrawer({
               {run.total_models ? ` · ${run.models_synced ?? 0} of ${run.total_models} model${run.total_models === 1 ? '' : 's'} synced` : ''}
             </div>
 
-            {status === 'failed' && (run.error || run.message) && (
-              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: 'var(--color-error-bg)', color: 'var(--color-error)', fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
-                {run.error || run.message}
+            {['failed', 'interrupted', 'partial', 'skipped'].includes(status) && (run.error || run.message) && (
+              <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: status === 'skipped' ? 'var(--bg-surface-raised)' : 'var(--color-error-bg)', color: status === 'skipped' ? 'var(--text-secondary)' : 'var(--color-error)', fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+                {run.message || run.error}
+              </div>
+            )}
+            {status === 'queued' && (
+              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                {run.message || 'Queued: waiting for a free execution slot.'}
+              </div>
+            )}
+            {run.demo_masked && (
+              <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'var(--bg-surface-raised)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5 }}>
+                {demoMaskTitle(run)}
+              </div>
+            )}
+            {canRetry && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" onClick={handleRetry} disabled={retry.busy} style={{ ...btn, opacity: retry.busy ? 0.6 : 1 }}>
+                  <RefreshCw size={13} className={retry.busy ? 'animate-spin' : undefined} />
+                  {realStatus === 'partial' ? 'Retry failed models' : 'Retry run'}
+                </button>
+                {retry.started && (
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Retry started for {(retry.started.models || []).length || 'the failed'} model(s).
+                  </span>
+                )}
+                {retry.error && <span style={{ fontSize: 12, color: 'var(--color-error)' }}>{retry.error}</span>}
               </div>
             )}
 

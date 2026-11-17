@@ -1012,6 +1012,9 @@ _STATUS_LABELS: Dict[str, Tuple[str, str]] = {
     "success": ("Completed successfully", "✅"),
     "warning": ("Completed — a few items need your attention", "⚠️"),
     "failed": ("Did not complete successfully", "❌"),
+    "partial": ("Partly completed — some models failed and can be retried", "⚠️"),
+    "interrupted": ("Interrupted — the server stopped during this run", "❌"),
+    "skipped": ("Skipped — another sync of this project was already running", "⏭️"),
 }
 
 

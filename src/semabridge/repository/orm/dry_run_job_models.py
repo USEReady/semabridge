@@ -114,6 +114,16 @@ class DryRunJobFile(Base):
     result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    # sha256 of the dry-run file's bytes (PBIX; None for Fabric models) and
+    # of the model's deploy plan (view name, physical prefix, target -- see
+    # sync_execution_service.model_config_fingerprint) / applicable mapping
+    # overrides at dry-run time. The sync gate requires a successful dry run
+    # whose hashes equal those of what it is about to deploy. Nullable:
+    # rows written before these columns existed are "legacy" (allowed, with
+    # a logged warning).
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    config_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    overrides_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     job: Mapped["DryRunJob"] = relationship(back_populates="files")
 

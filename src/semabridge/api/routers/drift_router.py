@@ -76,9 +76,26 @@ def delete_drift_events(project_id: Optional[str] = None) -> Dict[str, Any]:
 
 
 @router.post("/events/seed-mock", response_model=Dict[str, Any])
-def seed_mock_events(project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
-    events = seed_mock_drift_events(project_id or "proj-comp")
-    return {"success": True, "count": len(events), "events": events}
+def seed_mock_events(request: Request, project_id: Optional[str] = "proj-comp") -> Dict[str, Any]:
+    """"Refresh drift logs": always runs real drift detection for the
+    project; demo events are layered on top only when demo/mock-drift mode
+    is enabled (SEMABRIDGE_DEMO_MODE / SEMABRIDGE_MOCK_DRIFT). Demo events
+    never replace or delete real ones."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed as is_demo_mode_enabled
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
+    pid = project_id or "proj-comp"
+    uid = getattr(request.state, "user_id", None)
+    check: Dict[str, Any] = {}
+    try:
+        check = run_drift_check(project_id=pid, owner_id=str(uid) if uid else None)
+    except Exception as exc:
+        check = {"error": str(exc)}
+    demo = is_mock_drift_enabled() or is_demo_mode_enabled()
+    if demo:
+        seed_mock_drift_events(pid)
+    events = list_drift_events(project_id=pid)
+    return {"success": True, "count": len(events), "events": events, "demo_events": demo, "check": check}
 
 
 @router.post("/simulate-change", response_model=Dict[str, Any])

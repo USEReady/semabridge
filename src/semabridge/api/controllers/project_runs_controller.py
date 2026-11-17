@@ -3,8 +3,9 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Request
 
 from semabridge.api.services.project_ownership_service import (
-    auth_is_enabled,
-    is_project_owned_by_user,
+    assert_project_access,
+    auth_is_enabled,  # noqa: F401  (kept as a module attribute for callers/tests)
+    is_project_owned_by_user,  # noqa: F401
     require_request_user_id,
 )
 from semabridge.api.services.project_domain_service import (
@@ -28,8 +29,8 @@ router = APIRouter()
 
 
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
-    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix="ProjectRunAuth"):
-        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
+    """Synchronous access guard (shared implementation in project_ownership_service)."""
+    assert_project_access(project_id, user_id, log_prefix="ProjectRunAuth")
 
 
 @router.get("/api/projects/{project_id}/runs")
@@ -164,6 +165,26 @@ async def run_project_now_with_user_context(
     if user_id:
         body["user_id"] = user_id
     return await run_project_now_compat(project_id, background_tasks, body)
+
+
+@router.post("/api/projects/{project_id}/runs/{run_id}/retry")
+async def retry_failed_models(
+    project_id: str,
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    payload: Optional[Dict[str, Any]] = Body(None),
+):
+    """Start a new run of only the models that failed in ``run_id`` (same
+    gate as run-now: 409 already running / blocked / duplicate)."""
+    from semabridge.api.services.run_service import retry_failed_models_compat
+
+    user_id = require_request_user_id(request)
+    _assert_project_access(project_id, user_id)
+    body: Dict[str, Any] = dict(payload or {})
+    if user_id:
+        body["user_id"] = user_id
+    return await retry_failed_models_compat(project_id, run_id, background_tasks, body)
 
 
 @router.post("/api/runs/{run_id}/resolve")

@@ -31,7 +31,7 @@ function postJson(url, body) {
  * Compile a question into governed SQL, then run it. Throws an Error with a
  * `stage` ('compile' | 'run') so the UI can say which step failed.
  */
-export async function askQuestion({ question, target, projectId, allowOfflineDraft = false }) {
+export async function askQuestion({ question, target, projectId, allowOfflineDraft = false, semanticView = null }) {
   let plan;
   try {
     const res = await postJson('/api/ai/nl-query', {
@@ -39,6 +39,8 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
       dialect: target,
       target,
       project_id: projectId || undefined,
+      // Multi-model projects: the view the user picked after an ambiguous question.
+      semantic_view: semanticView || undefined,
       allow_offline_draft: Boolean(allowOfflineDraft),
     });
     if (!res.ok) throw new Error(await readError(res, 'Could not interpret the question'));
@@ -55,6 +57,9 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
     err.stage = 'compile';
     err.plan = plan;
     err.cortexUnavailable = isCortexUnavailable;
+    // The question matched metrics in several semantic views (one per model).
+    err.candidateViews = Array.isArray(plan?.candidate_views) ? plan.candidate_views : [];
+    if (err.candidateViews.length) err.message = plan?.explanation || err.message;
     throw err;
   }
 
@@ -65,6 +70,7 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
       target,
       project_id: projectId || undefined,
       question,
+      view_name: plan.answered_by_view || undefined,
       limit: 25,
     });
     if (!res.ok) throw new Error(await readError(res, 'Query execution failed'));
@@ -80,12 +86,13 @@ export async function askQuestion({ question, target, projectId, allowOfflineDra
 }
 
 /** Save the question + SQL as a verified query after real execution and user confirmation. */
-export async function certifyAnswer({ question, sql, target, projectId }) {
+export async function certifyAnswer({ question, sql, target, projectId, viewName = null }) {
   const res = await postJson('/api/ai/save-verified-query', {
     question,
     sql,
     target,
     project_id: projectId || undefined,
+    view_name: viewName || undefined,
     confirmed: true,
   });
   if (!res.ok) throw new Error(await readError(res, 'Could not certify this answer'));
@@ -130,10 +137,12 @@ export async function fetchDynamicSuggestedQuestions(projectId) {
       if (!dRes.ok) return [];
       const dData = await dRes.json();
       const allDoms = dData?.domains || [];
+      const projKey = (v) => String(v || '').trim().toLowerCase().replace(/^proj-/, '');
+      // A project's own domains only; never another project's terms.
       const matching = projectId
-        ? allDoms.filter((d) => d.source_project_id === projectId)
+        ? allDoms.filter((d) => projKey(d.source_project_id) === projKey(projectId))
         : allDoms;
-      targetDomainNames = (matching.length ? matching : allDoms).slice(0, 3).map((d) => d.domain);
+      targetDomainNames = matching.slice(0, 3).map((d) => d.domain);
     }
 
     const suggestions = [];

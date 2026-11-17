@@ -89,7 +89,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         # CSRF is only meaningful when auth (and cookies) are active.
         # In single-user / dev mode (AUTH_ENABLED != "true"), skip enforcement.
-        auth_enabled = os.environ.get("AUTH_ENABLED", "").lower() == "true"
+        from semabridge.auth.flags import auth_enabled as _auth_enabled
+
+        auth_enabled = _auth_enabled()
 
         # Always pass through safe methods and public paths without CSRF check.
         if auth_enabled and method not in _CSRF_SAFE_METHODS and path not in _CSRF_PUBLIC_PATHS:

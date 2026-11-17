@@ -135,6 +135,9 @@ class DeployIsolationMixin:
         except Exception as exc:
             logger.warning("Text-date coercion skipped: could not read column types (%s)", exc)
             return list(ddls)
+        _staged = getattr(self, "_staged", None)
+        if _staged is not None:
+            _staged.alias_columns(column_types)
         out, wrapped = coerce_ddls(ddls, column_types)
         if wrapped:
             cols = ", ".join(f"{a}.{c}" for a, c in wrapped)
@@ -310,6 +313,10 @@ class DeployIsolationMixin:
         table_columns = self._fetch_information_schema_columns(cur)
         if table_columns is None:
             return list(ddls)
+        _staged = getattr(self, "_staged", None)
+        if _staged is not None:
+            # Staged enriched views are listed under their staging names.
+            _staged.alias_columns(table_columns)
         out: List[str] = []
         total = 0
         for ddl in ddls:

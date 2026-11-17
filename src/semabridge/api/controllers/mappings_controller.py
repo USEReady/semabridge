@@ -70,8 +70,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 def _assert_project_access(project_id: str, user_id: str | None) -> None:
-    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix="ProjectMappingAuth"):
-        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
+    # One shared guard for every controller (same auth flag + ownership rules).
+    from semabridge.api.services.project_ownership_service import assert_project_access
+
+    assert_project_access(project_id, user_id, log_prefix="ProjectMappingAuth")
 
 
 @router.get('/api/mappings')
@@ -89,11 +91,13 @@ async def list_mappings(request: Request, project_id: Optional[str] = None):
 async def delete_mappings(request: Request, project_id: Optional[str] = None):
     user_id = require_request_user_id(request)
     pid = str(project_id or "").strip()
+    # Always scoped to one project -- with auth disabled an unscoped call used
+    # to clear every project's mappings.
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required")
     if auth_is_enabled():
-        if not pid:
-            raise HTTPException(status_code=400, detail="project_id is required")
         _assert_project_access(pid, user_id)
-    return await delete_mappings_compat(pid or None)
+    return await delete_mappings_compat(pid)
 
 
 # Source types whose selected_sources entries are each an independent model
@@ -265,6 +269,189 @@ def _build_config_yaml_from_request(
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=False)
 
 
+# Keys of a saved project config that only describe the project record (or a
+# previous run) and must not leak into a dry run's preview config.
+_DRY_RUN_DROPPED_CONFIG_KEYS = (
+    "project_id",
+    "delta_baseline_project_id",
+    "delta_preview_overrides",
+    "binding_project_id",
+)
+
+
+def _source_model_entries(source_cfg: Dict[str, Any]) -> List[Any]:
+    models = source_cfg.get("models")
+    if isinstance(models, list) and models:
+        return list(models)
+    for key in ("pbix_path", "dataset_id", "model"):
+        value = source_cfg.get(key)
+        if isinstance(value, str) and value.strip():
+            return [value]
+    return []
+
+
+def _matching_model_index(entries: List[Any], ref: str, source_type: str) -> Optional[int]:
+    """Index of the configured model ``ref`` is a copy of: exact entry first,
+    then (PBIX) the upload-prefix-free file name when exactly one entry has it."""
+    from semabridge.api.services.sync_execution_service import _model_identity_key, _model_match_key
+    from semabridge.utils.project_models import model_entry_key
+
+    keys = [model_entry_key(e) for e in entries]
+    norm = lambda v: str(v or "").strip().replace("\\", "/").lower()  # noqa: E731
+    for i, key in enumerate(keys):
+        if norm(key) == norm(ref):
+            return i
+    exact = [i for i, key in enumerate(keys) if _model_identity_key(key) == _model_identity_key(ref)]
+    if len(exact) == 1:
+        return exact[0]
+    if source_type == "pbix":
+        matches = [i for i, key in enumerate(keys) if _model_match_key(key) and _model_match_key(key) == _model_match_key(ref)]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
+def _dry_run_config(
+    *,
+    project_cfg: Dict[str, Any],
+    source_config: Dict[str, Any],
+    target_config: Dict[str, Any],
+    selected_sources: List[str],
+    all_sources: Optional[List[str]] = None,
+    keep_saved_target: bool = False,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """(config, scope_source_refs) for one dry-run pipeline call.
+
+    Existing project (saved config with the same source type): the project's
+    OWN config -- same mode, model_views, overrides, target, options -- with
+    only the dry-run file substituted for the configured model it is a copy
+    of (or appended when it is a new model). Naming is then computed over
+    the project's full model list by the sync's own _build_sync_jobs, and
+    ``scope_source_refs`` restricts execution to the dry-run model.
+
+    New project (wizard): the request's config; when the job dry-runs
+    several models (or the request says mode: multiple) the config is
+    multi-mode with every model of the job, so names/prefixes are the ones
+    project creation will save (assign_model_view_names, same order).
+    """
+    import copy as _copy
+
+    from semabridge.utils.project_models import (
+        PROJECT_MODE_MULTIPLE,
+        assign_model_view_names,
+        is_multi_mode,
+        model_entry_key,
+    )
+
+    request_type = str((source_config or {}).get("type") or "").strip().lower()
+    refs = [str(s).strip() for s in (selected_sources or []) if str(s or "").strip()]
+    saved_source = (project_cfg or {}).get("source") if isinstance((project_cfg or {}).get("source"), dict) else {}
+    saved_type = str(saved_source.get("type") or "").strip().lower()
+    saved_entries = _source_model_entries(saved_source) if saved_source else []
+
+    if saved_source and saved_entries and saved_type == request_type and len(refs) == 1:
+        cfg = _copy.deepcopy(project_cfg)
+        for key in _DRY_RUN_DROPPED_CONFIG_KEYS:
+            cfg.pop(key, None)
+        source = cfg["source"]
+        # The wizard may point the dry run at a different workspace/identity.
+        for key in ("workspace_id", "identity_id"):
+            if (source_config or {}).get(key):
+                source[key] = source_config[key]
+        ref = refs[0]
+        entries = list(saved_entries)
+        idx = _matching_model_index(entries, ref, request_type)
+        if idx is None and not is_multi_mode(source) and len(entries) == 1:
+            idx = 0
+        views = dict(source.get("model_views") or {}) if isinstance(source.get("model_views"), dict) else {}
+        if idx is None:
+            entries.append(ref)
+        else:
+            old_key = model_entry_key(entries[idx])
+            entries[idx] = ref
+            if old_key in views and old_key != ref:
+                views[ref] = views.pop(old_key)
+        if request_type == "pbix" or source.get("models") or len(entries) > 1:
+            source["models"] = entries
+            if request_type == "pbix":
+                source.pop("pbix_path", None)
+        elif source.get("dataset_id"):
+            source["dataset_id"] = ref
+        else:
+            source["models"] = entries
+        if is_multi_mode(source):
+            source["model_views"] = views
+            source["model_views"] = assign_model_view_names(source)
+        if target_config and not keep_saved_target:
+            cfg["targets"] = [dict(target_config)]
+            cfg.pop("target", None)
+        return cfg, [ref]
+
+    cfg = yaml.safe_load(
+        _build_config_yaml_from_request(
+            source_config=source_config,
+            target_config=target_config,
+            selected_sources=refs,
+            project_name="dry-run-preview",
+        )
+    )
+    siblings = [str(s).strip() for s in (all_sources or []) if str(s or "").strip()]
+    multi = (
+        str((source_config or {}).get("mode") or "").strip().lower() == PROJECT_MODE_MULTIPLE
+        or len(siblings) > 1
+    )
+    if multi and refs:
+        source = cfg["source"]
+        models = siblings or list(refs)
+        for ref in refs:
+            if ref not in models:
+                models.append(ref)
+        source["models"] = models
+        source.pop("pbix_path", None)
+        source["mode"] = PROJECT_MODE_MULTIPLE
+        if isinstance((source_config or {}).get("model_views"), dict):
+            source["model_views"] = dict(source_config["model_views"])
+        source["model_views"] = assign_model_view_names(source)
+        return cfg, list(refs)
+    return cfg, []
+
+
+def _SNOWFLAKE_ALIAS(name: str) -> str:
+    """The Snowflake emitter's identifier rules (IdentifierSanitizer.to_alias)."""
+    from semabridge.api.services.project_mapping_engine import _SNOWFLAKE_SANITIZER
+
+    return _SNOWFLAKE_SANITIZER.to_alias(name)
+
+
+def _restore_engine_collision_verdicts(
+    serialized: List[Dict[str, Any]],
+    engine_rows: List[Dict[str, Any]],
+) -> None:
+    """The auto-map serializer re-checks duplicates over ONE flat namespace
+    (every table, columns and measures together), flagging e.g.
+    ``Customer.Name`` vs ``Product.Name`` -- which a Snowflake semantic view
+    accepts (names are qualified by their logical table). The mapping
+    engine's verdict, computed per namespace, is authoritative: undo a
+    serializer-only duplicate flag on rows the engine found unique."""
+    by_id = {str(r.get("id") or ""): r for r in engine_rows or [] if isinstance(r, dict)}
+    for row in serialized or []:
+        engine_row = by_id.get(str(row.get("id") or ""))
+        if not engine_row:
+            continue
+        if engine_row.get("mapping_scope"):
+            row["mapping_scope"] = engine_row.get("mapping_scope")
+        if engine_row.get("collision_detected"):
+            continue
+        if str(row.get("validation_code") or "").upper() == "COLLISION":
+            row["collision_detected"] = False
+            row["validation_status"] = engine_row.get("validation_status") or "valid"
+            row["validation_code"] = engine_row.get("validation_code") or "OK"
+            row["validation_message"] = (
+                "" if row["validation_code"] == "OK" else engine_row.get("validation_message") or ""
+            )
+            row["suggested_target_name"] = engine_row.get("suggested_target_name") or row.get("target_name")
+
+
 def _saved_project_target(project_cfg: Dict[str, Any], requested: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The saved project target matching the requested target type, or None
     when the project has no saved configuration (new project wizard)."""
@@ -372,6 +559,7 @@ async def _run_dry_run_pipeline(
     target_config: Dict[str, Any],
     selected_sources: List[str],
     sync_mode_override: Optional[str] = None,
+    all_sources: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """The actual dry-run pipeline: builds a preview project, runs the real
     extraction -> OSI -> SML pipeline with dry_run=True, builds entity
@@ -462,13 +650,20 @@ async def _run_dry_run_pipeline(
     if saved_target is not None:
         target_config = saved_target
 
-    # ── 2. Build a real config YAML from the wizard's source/target config ─
-    config_yaml = _build_config_yaml_from_request(
+    # ── 2. Build the dry-run config: the project's OWN saved config (mode,
+    # model_views, overrides, target) with only this file substituted, or
+    # the wizard's request for a new project -- see _dry_run_config. The
+    # per-model plan (view name, physical prefix) is then computed by the
+    # sync's own _build_sync_jobs over the full model list.
+    dry_run_cfg, scope_source_refs = _dry_run_config(
+        project_cfg=project_cfg,
         source_config=source_config,
         target_config=target_config,
         selected_sources=selected_sources,
-        project_name="dry-run-preview",
+        all_sources=all_sources,
+        keep_saved_target=saved_target is not None,
     )
+    config_yaml = yaml.safe_dump(dry_run_cfg, sort_keys=False, allow_unicode=False)
     with project_shared.compat_store_lock():
         project_shared._compat_project_configs[preview_project_id] = config_yaml
 
@@ -494,6 +689,8 @@ async def _run_dry_run_pipeline(
         "delta_preview_overrides": delta_preview_overrides,
         # Table-binding preview reads the real project's saved bindings.
         "binding_project_id": project_id,
+        # Run only the dry-run model; naming is computed over every model.
+        "scope_source_refs": scope_source_refs,
         # Pass account_id and user_id so credential scoping works for the
         # transient preview project (not in ORM, so sync_models can't resolve
         # account_id automatically via the DB lookup).
@@ -523,8 +720,24 @@ async def _run_dry_run_pipeline(
     # Step 8 of the engine dry run built the target DDL against the live
     # schema; its drops/placeholders are what the sync would report.
     target_ddl_drops: List[Dict[str, Any]] = []
+    # The engine's own verdict: the dry run succeeds only when every model's
+    # engine run did (a real sync of a FAILED/PARTIAL model fails too).
+    engine_errors: List[str] = []
+    model_plan: Optional[Dict[str, Any]] = None
     for r in results:
         summary = r.get("summary") or {}
+        if model_plan is None and isinstance(r.get("model_plan"), dict):
+            model_plan = r.get("model_plan")
+        result_status = str(r.get("status") or "").strip().lower()
+        if result_status and result_status != "success":
+            messages = [
+                str(e.get("message") or "").strip()
+                for e in (summary.get("errors") or [])
+                if isinstance(e, dict) and str(e.get("message") or "").strip()
+            ]
+            engine_errors.extend(messages or [
+                f"Model '{r.get('model')}' finished with status {summary.get('status') or r.get('status')}."
+            ])
         if ontology_report is None and isinstance(summary.get("ontology_report"), dict):
             ontology_report = summary.get("ontology_report")
         live_schema_error = next(
@@ -626,7 +839,6 @@ async def _run_dry_run_pipeline(
     # Target DDL drops come from the engine dry run's live-schema Step 8 —
     # never from a schema-less build (it would drop live-only columns and
     # turn time-intelligence metrics into placeholders).
-    trial_sml = None
     if sml_blob and target_connector == "snowflake":
         dropped_entities.extend(target_ddl_drops)
 
@@ -638,22 +850,8 @@ async def _run_dry_run_pipeline(
     # override above, closed the same way. Mutates built["mappings"]
     # in place, so every downstream consumer (entity_mappings below,
     # filtered_mappings, auto_count) sees the corrected status.
-    from semabridge.api.services.project_mapping_engine import (
-        reconcile_predicted_failures_with_drops,
-        reconcile_enrichment_unverifiable_advisories,
-    )
+    from semabridge.api.services.project_mapping_engine import reconcile_predicted_failures_with_drops
     reconcile_predicted_failures_with_drops(built.get("mappings", []), dropped_entities)
-    # ── Reconcile the OTHER direction: the trial pass can also
-    # RESCUE a metric (tag it "cannot verify offline" instead of
-    # dropping it — metrics_clause_builder.py's enrichment-flag-column
-    # handling). That advisory only exists on trial_sml's live metric
-    # objects, mutated after build_entity_mappings already built its
-    # rows from the pre-trial-pass model snapshot — merge it back the
-    # same way, by structural identity, not by re-deriving it here.
-    if trial_sml is not None:
-        reconcile_enrichment_unverifiable_advisories(
-            built.get("mappings", []), getattr(trial_sml, "metrics", None)
-        )
 
     data = {
         "project_id": preview_project_id,
@@ -668,6 +866,7 @@ async def _run_dry_run_pipeline(
         data.get("mappings", []),
         target_connector=target_connector,
     )
+    _restore_engine_collision_verdicts(entity_mappings, data.get("mappings", []))
 
     # ── 5. Filter to field-level only (columns + measures, no table rows) ────
     # entity_kind values from the mapping engine: "column", "metric" (measures), "table"
@@ -681,7 +880,11 @@ async def _run_dry_run_pipeline(
     model_name = str((sml_blob or {}).get("unique_name") or (sml_blob or {}).get("label") or fallback_model_name)
     source_label = _dry_run_source_label(source_type, selected_sources, source_config, model_name)
     from semabridge.utils.synonyms import load_synonym_overrides, lookup_synonym_override
-    synonym_overrides = load_synonym_overrides(preview_project_id)
+    # Synonym edits belong to the real project once it exists; a wizard
+    # (preview) dry run reads the preview id they are stored under until save.
+    synonym_overrides = load_synonym_overrides(
+        preview_project_id if _is_preview_project_id(project_id) else project_id
+    )
     for m in entity_mappings:
         if not isinstance(m, dict):
             continue
@@ -711,6 +914,12 @@ async def _run_dry_run_pipeline(
             "status": m.get("status", "auto"),
             "suggested_target_name": m.get("suggested_target_name", ""),
             "collision_detected": bool(m.get("collision_detected")),
+            # Backend-computed renames (to_alias rules, first = recommended,
+            # unique within the row's namespace) -- the UI's Resolve /
+            # Resolve All use these before any local fallback.
+            "resolution_suggestions": list(m.get("resolution_suggestions") or []),
+            "mapping_scope": m.get("mapping_scope") or "",
+            "parent_source_path": m.get("parent_source_path") or "",
             "validation_status": m.get("validation_status", "valid"),
             "validation_code": m.get("validation_code", "OK"),
             "validation_message": m.get("validation_message", ""),
@@ -780,8 +989,24 @@ async def _run_dry_run_pipeline(
 
     ontology_blockers = list((ontology_report or {}).get("blocking_conflicts") or [])
 
+    dry_run_ok = not engine_errors and not extraction_failed
+    file_ref = selected_sources[0] if len(selected_sources or []) == 1 else None
+    from semabridge.api.services.sync_execution_service import file_content_sha256
+
     return {
-        "success": True,
+        "success": dry_run_ok,
+        "error": None if dry_run_ok else (
+            engine_errors[0] if engine_errors
+            else "Extraction failed — no semantic model could be built from this file."
+        ),
+        "errors": engine_errors,
+        # What the sync will deploy for this model (same function as the
+        # sync: sync_execution_service._build_sync_jobs) and the fingerprints
+        # the sync gate compares against.
+        "model_plan": model_plan,
+        "content_hash": file_content_sha256(file_ref) if source_type == "pbix" else None,
+        "config_hash": (model_plan or {}).get("config_hash"),
+        "overrides_hash": (model_plan or {}).get("overrides_hash"),
         "project_id": preview_project_id,
         "model_name": model_name,
         # Per-model section identity for the UI (multi-model dry-run jobs
@@ -1049,7 +1274,8 @@ async def deploy_mappings(
         source_name = str(mapping.get("source_name") or "").strip()
         target_name = str(mapping.get("target_name") or "").strip()
         if target_connector_type == "snowflake" and target_name:
-            target_name = sanitize_identifier(target_name).upper()
+            # Same rules the Snowflake emitter (and config overrides) use.
+            target_name = _SNOWFLAKE_ALIAS(target_name)
         mapping_id = str(mapping.get("id") or "").strip()
         if not mapping_id:
             seed = source_path or source_name or f"row-{idx}"
@@ -1068,8 +1294,13 @@ async def deploy_mappings(
         if target_name:
             merged["status"] = "manual"
             merged["is_user_edited"] = True
-        project_shared._compat_mappings[mapping_id] = merged
+            # The override table is what the sync reads.
+            from semabridge.api.services.mapping_service import _compat_record_manual_mapping
+            _compat_record_manual_mapping(actual_project_id, merged, user_id=request_user_id)
+        with project_shared.compat_store_lock():
+            project_shared._compat_mappings[mapping_id] = merged
     project_shared._compat_save_store()
+    project_shared._compat_raise_if_store_failed()
 
     # ── 3. Trigger the full semantic sync pipeline (SYNC run) ─────────────────
     try:

@@ -69,6 +69,12 @@ class QueryResolutionPlan(BaseModel):
     # True when generated_sql reads physical tables directly (no deployed
     # semantic view): an offline draft, not a governed query.
     is_draft: bool = False
+    # Which deployed semantic view / ontology domain answered (multi-model
+    # projects have one view per model), and -- when the question matched
+    # several views -- the views to choose from instead of a guess.
+    answered_by_view: Optional[str] = None
+    answered_by_domain: Optional[str] = None
+    candidate_views: List[str] = Field(default_factory=list)
 
 
 class NLQueryEngine:

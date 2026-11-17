@@ -288,6 +288,16 @@ def _do_snowflake_deploy(self, context: RunContext, sf_cfg) -> None:
             ]
             context.cortex_validation_results = list(getattr(emitter, "cortex_validation_results", None) or [])
             context.deployed_ddl_text = getattr(emitter, "_last_deployed_ddl_text", None)
+            # Journal of the warehouse objects this deploy staged, promoted,
+            # dropped and cleaned up (connectors/staged_deploy.py).
+            from semabridge.connectors.staged_deploy import persist_deploy_events
+
+            persist_deploy_events(
+                list(getattr(emitter, "deploy_events", None) or []),
+                run_id=getattr(context, "run_id", None),
+                project_id=getattr(context, "project_id", None),
+                model=getattr(context, "project_name", None),
+            )
             from semabridge.core.drop_ledger import DropStage as _DropStage
             _emitter_ledger = getattr(emitter, "drop_ledger", None)
             for _rec in getattr(_emitter_ledger, "records", None) or []:
@@ -481,6 +491,10 @@ def _sync_fabric_measures(self, context: RunContext, emitter) -> None:
 def _update_snowflake_view_metadata_on_failure(self, context: RunContext, sf_cfg, error_msg: str) -> bool:
     """
     Update Snowflake view's LAST_ALTERED timestamp on deployment failure.
+
+    NOT called by the run path any more (see deployment/base.py): a failed
+    deploy leaves the live view untouched and records the attempt in
+    ``run_deploy_events`` instead. Kept only for explicit, manual use.
     
     This is a silent, non-destructive operation that:
     1. Keeps the existing view definition completely unchanged

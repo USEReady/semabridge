@@ -129,21 +129,24 @@ export default function AskAiPage() {
 
   const patch = (id, changes) => setThread((t) => t.map((e) => (e.id === id ? { ...e, ...changes } : e)));
 
-  const runEntry = useCallback(async (id, question, engine, project, allowOfflineDraft = false) => {
+  const runEntry = useCallback(async (id, question, engine, project, allowOfflineDraft = false, semanticView = null) => {
     try {
       const { plan, result } = await askQuestion({
         question,
         target: engine,
         projectId: project,
         allowOfflineDraft,
+        semanticView,
       });
-      patch(id, { status: 'done', plan, result, cortexUnavailable: false });
+      patch(id, { status: 'done', plan, result, cortexUnavailable: false, candidateViews: [], semanticView });
     } catch (err) {
       patch(id, {
         status: 'error',
         error: err?.message || String(err),
         errorStage: err?.stage || 'compile',
         cortexUnavailable: Boolean(err?.cortexUnavailable),
+        candidateViews: err?.candidateViews || [],
+        semanticView,
         plan: err?.plan || null,
       });
     }
@@ -171,9 +174,9 @@ export default function AskAiPage() {
     setSearchParams(next, { replace: true });
   }, [urlQuestion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const retry = (entry, allowOfflineDraft = false) => {
-    patch(entry.id, { projectId, target, status: 'loading', error: null, plan: null, result: null, cortexUnavailable: false });
-    runEntry(entry.id, entry.question, target, projectId, allowOfflineDraft);
+  const retry = (entry, allowOfflineDraft = false, semanticView = entry.semanticView || null) => {
+    patch(entry.id, { projectId, target, status: 'loading', error: null, plan: null, result: null, cortexUnavailable: false, candidateViews: [] });
+    runEntry(entry.id, entry.question, target, projectId, allowOfflineDraft, semanticView);
   };
 
   const certify = async (entry) => {
@@ -184,6 +187,7 @@ export default function AskAiPage() {
         sql: entry.plan?.generated_sql,
         target: entry.target,
         projectId: entry.projectId,
+        viewName: entry.plan?.answered_by_view || entry.semanticView || null,
       });
       patch(entry.id, { certifyState: 'done' });
       setCertified((c) => [{ question: entry.question, target: entry.target }, ...c.filter((x) => x.question !== entry.question)]);
@@ -324,6 +328,7 @@ export default function AskAiPage() {
                       onCertify={() => certify(entry)}
                       onRetry={() => retry(entry, false)}
                       onOfflineDraft={() => retry(entry, true)}
+                      onPickView={(view) => retry(entry, false, view)}
                     />
                   </React.Fragment>
                 ))

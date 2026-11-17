@@ -13,9 +13,18 @@ async def import_pbix(payload: Dict[str, Any]):
     from semabridge.connectors.local_pbix_connector import LocalPBIXConnector
     from semabridge.core.exceptions import PBIXParsingError
 
+    from semabridge.auth.file_access import resolve_allowed_path
+
     pbix_path = payload.get("pbix_path", "")
     if not pbix_path:
         raise ValidationError("pbix_path is required")
+    # Only files under the upload root / configured local folders / models
+    # path / Examples may be read (symlinks + traversal resolved first).
+    pbix_path = str(
+        await asyncio.to_thread(
+            resolve_allowed_path, pbix_path, expect="file", allowed_suffixes={".pbix", ".pbit"}
+        )
+    )
 
     try:
         connector = LocalPBIXConnector({"pbix_path": pbix_path})
@@ -40,28 +49,67 @@ async def import_pbix(payload: Dict[str, Any]):
         logger.exception(f"PBIX import failed: {e}")
         raise InternalError(str(e))
 
+_BROWSE_SKIP_DIRS = frozenset({"node_modules", "__pycache__", ".git", ".venv", "venv", ".mypy_cache", ".pytest_cache"})
+
+
+def _browse_result_cap() -> int:
+    try:
+        return max(1, int(os.environ.get("SEMABRIDGE_PBIX_BROWSE_LIMIT", "1000")))
+    except ValueError:
+        return 1000
+
+
+def _scan_pbix_files(scan_dir: Path, limit: int) -> Dict[str, Any]:
+    """Walk ``scan_dir`` for .pbix files (no symlink following, hidden and
+    dependency dirs skipped), stopping after ``limit`` results."""
+    files: List[Dict[str, Any]] = []
+    truncated = False
+    for dirpath, dirnames, filenames in os.walk(scan_dir, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in _BROWSE_SKIP_DIRS]
+        for filename in filenames:
+            if not filename.lower().endswith(".pbix"):
+                continue
+            candidate = Path(dirpath) / filename
+            try:
+                if candidate.is_symlink():
+                    continue
+                stat = candidate.stat()
+            except OSError:
+                continue
+            files.append(
+                {
+                    "name": candidate.name,
+                    "path": str(candidate.resolve()),
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                }
+            )
+            if len(files) >= limit:
+                truncated = True
+                return {"files": files, "truncated": truncated}
+    return {"files": files, "truncated": truncated}
+
+
 async def browse_pbix_files(directory: str = ""):
     """List .pbix files in a directory for the file picker.
 
     Args:
         directory: Directory to scan. Defaults to configured local_models_path.
+            Must resolve under an allowed root (see
+            ``semabridge.auth.file_access``).
 
     Returns:
-        List of .pbix file paths found.
+        List of .pbix file paths found (capped by SEMABRIDGE_PBIX_BROWSE_LIMIT,
+        default 1000; ``truncated`` is true when the cap was hit).
     """
-    scan_dir = Path(directory) if directory else _resolve_models_path()
-    if not scan_dir.exists():
-        return {"files": [], "directory": str(scan_dir)}
+    from semabridge.auth.file_access import resolve_allowed_path
 
-    pbix_files = [
-        {
-            "name": f.name,
-            "path": str(f.resolve()),
-            "size_bytes": f.stat().st_size,
-            "modified": f.stat().st_mtime,
-        }
-        for f in scan_dir.rglob("*.pbix")
-    ]
+    if directory:
+        scan_dir = await asyncio.to_thread(resolve_allowed_path, directory, expect="any")
+    else:
+        scan_dir = _resolve_models_path()
+    if not scan_dir.is_dir():
+        return {"files": [], "directory": str(scan_dir), "truncated": False}
 
-    return {"files": pbix_files, "directory": str(scan_dir)}
-
+    result = await asyncio.to_thread(_scan_pbix_files, scan_dir, _browse_result_cap())
+    return {"files": result["files"], "directory": str(scan_dir), "truncated": result["truncated"]}

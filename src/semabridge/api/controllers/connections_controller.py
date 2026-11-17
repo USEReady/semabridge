@@ -1,17 +1,23 @@
 """Connections controller — user-scoped credential management endpoints.
 
 Each endpoint resolves the authenticated user and passes ``user_id`` to the
-service layer.  When no authenticated user is found (dev mode or CLI), the
-request falls back to ``user_id=0`` (the global/system sentinel), preserving
-full backward compatibility.
+service layer.
+
+- ``AUTH_ENABLED=false`` (single-user dev mode): when no user can be resolved
+  the request falls back to ``user_id=0`` (the global/system sentinel),
+  preserving full backward compatibility.
+- ``AUTH_ENABLED=true``: an authenticated user is required (401 otherwise)
+  and credentials are only ever read from / written to that user's scope --
+  never the global ``0`` scope.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from semabridge.auth.flags import auth_enabled
 from semabridge.api.services.connections_service import (
     delete_connection,
     get_connections_status,
@@ -29,14 +35,8 @@ def _resolve_db(request: Request) -> Optional[Session]:
     return getattr(request.state, "db", None)
 
 
-def _resolve_user_id(request: Request) -> int:
-    """Resolve the authenticated user's ID from the request.
-
-    Returns the user's integer ID when authenticated, or ``0`` (the
-    global/system sentinel) when running in dev mode or without a token.
-    ``0`` means credentials are read from / written to the global scope,
-    which is backward-compatible with the old single-tenant behaviour.
-    """
+def _lookup_user_id(request: Request) -> int:
+    """Return the resolved user's id, or 0 when none can be resolved."""
     try:
         from semabridge.api.deps import get_current_user_optional
         db = _resolve_db(request)
@@ -50,6 +50,25 @@ def _resolve_user_id(request: Request) -> int:
         return user.id if user else 0
     except Exception:
         return 0
+
+
+def _resolve_user_id(request: Request) -> int:
+    """Resolve the authenticated user's ID from the request.
+
+    Auth disabled: returns the user's id, or ``0`` (the global/system
+    sentinel) when no user is found -- the old single-tenant behaviour.
+
+    Auth enabled: returns the authenticated user's id; raises 401 when no
+    user can be resolved, so nothing ever falls through to the global scope.
+    """
+    user_id = _lookup_user_id(request)
+    if auth_enabled() and not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user_id
 
 
 # ---------------------------------------------------------------------------
@@ -107,5 +126,7 @@ async def _test_connection(service: str, request: Request):
 
 @router.post('/api/connections/snowflake/oauth-test')
 async def _snowflake_oauth_test(request: Request):
+    # Requires a logged-in user when auth is enabled (raises 401 otherwise).
+    _resolve_user_id(request)
     body = await request.json()
     return await snowflake_oauth_test(body)

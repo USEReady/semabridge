@@ -16,7 +16,7 @@ import RunReportModal from '../components/runs/RunReportModal';
 import { defaultReportModel, downloadRunMarkdown } from '../components/runs/runReportActions';
 import SchedulesTab from '../components/runs/SchedulesTab';
 import useRunReportCounts, { clearRunCounts } from '../components/runs/useRunReportCounts';
-import { formatAgo, formatDateTime, formatDuration, normStatus, parseIso, shortMessage } from '../components/runs/runsFormat';
+import { formatAgo, formatDateTime, formatDuration, isActiveStatus, normStatus, parseIso, shortMessage } from '../components/runs/runsFormat';
 
 const REFRESH_INTERVAL_MS = 4000;
 const PAGE_SIZE = 50;
@@ -25,7 +25,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'running', label: 'Running' },
+  { key: 'queued', label: 'Queued' },
   { key: 'failed', label: 'Failed' },
+  { key: 'partial', label: 'Partly failed' },
   { key: 'success', label: 'Succeeded' },
 ];
 
@@ -103,7 +105,7 @@ export default function ProjectJobsPage() {
 
   // While the open run is running, poll its per-model manifest.
   const openRunObj = runs.find(r => r.id === openRunId);
-  const openRunIsRunning = normStatus(openRunObj?.status) === 'running';
+  const openRunIsRunning = isActiveStatus(openRunObj?.status);
   const openRunProject = openRunObj?.project_id;
   useEffect(() => {
     if (!openRunId || !openRunIsRunning || !openRunProject) return undefined;
@@ -172,7 +174,7 @@ export default function ProjectJobsPage() {
 
   const addStartedRun = (result) => {
     if (!result) return;
-    const nextRun = { ...result, id: result.id ?? result.run_id, status: 'running' };
+    const nextRun = { ...result, id: result.id ?? result.run_id, status: result.status || 'queued' };
     if (nextRun.id) saveRunLogs(nextRun.id, buildMockRunLogs(nextRun));
     setRuns(prev => [nextRun, ...prev.filter(r => r.id !== nextRun.id)]);
     if (nextRun.id) openRun(nextRun.id);
@@ -338,10 +340,11 @@ export default function ProjectJobsPage() {
   const renderResult = (run) => {
     const st = normStatus(run.status);
     if (st === 'running') return <span style={{ color: 'var(--text-tertiary)' }}>running…</span>;
+    if (st === 'queued') return <span style={{ color: 'var(--text-tertiary)' }}>waiting for a slot…</span>;
     const c = countsByRun[run.id];
     if (c?.counts) return <div style={{ width: 150 }}><ConversionBar counts={c.counts} /></div>;
-    if (st === 'failed') {
-      const msg = run.error || run.message;
+    if (['failed', 'interrupted', 'skipped', 'partial'].includes(st)) {
+      const msg = run.message || run.error;
       return <span title={msg} style={{ color: 'var(--text-secondary)' }}>{shortMessage(msg, 48) || 'Failed'}</span>;
     }
     return <span style={{ color: 'var(--text-tertiary)' }}>{c ? '—' : ''}</span>;
@@ -507,7 +510,7 @@ export default function ProjectJobsPage() {
                         <td style={{ ...td, whiteSpace: 'nowrap' }} title={formatDateTime(run.started_at)}>{formatAgo(run.started_at)}</td>
                         <td style={{ ...td, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{formatDuration(run.duration_ms)}</td>
                         <td style={{ ...td, fontSize: 12, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{renderResult(run)}</td>
-                        <td style={td}><StatusPill status={run.status} /></td>
+                        <td style={td}><StatusPill status={run.status} run={run} /></td>
                       </tr>
                     );
                   })}
@@ -537,6 +540,7 @@ export default function ProjectJobsPage() {
           onOpenReport={openReport}
           onDownload={downloadReport}
           onOpenDropped={openDroppedFieldsModal}
+          onRetryStarted={addStartedRun}
           modalOpen={Boolean(report || droppedFieldsModalRun || scheduleModalOpen)}
         />
       )}

@@ -148,11 +148,15 @@ class FromOsiRequest(BaseModel):
     domain_name: Optional[str] = None
     save_to_disk: bool = True
     sync_existing: bool = False
+    # Multi-model projects: limit the sync to one model (model id / name).
+    model_id: Optional[str] = None
 
 
 class ProjectDomainsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     domains: List[str]
+    # Replace only this model's attachments (multi-model projects).
+    model_id: Optional[str] = None
 
 
 def _summary(dom: Any) -> Dict[str, Any]:
@@ -163,6 +167,9 @@ def _summary(dom: Any) -> Dict[str, Any]:
         "version": dom.version,
         "description": dom.description,
         "source_project_id": getattr(dom, "source_project_id", None),
+        "source_model_id": getattr(dom, "source_model_id", None),
+        "source_model_name": getattr(dom, "source_model_name", None),
+        "semantic_view_name": getattr(dom, "semantic_view_name", None),
         "concept_count": len(dom.concepts),
         "metric_count": len(dom.metrics),
         "relationship_count": len(dom.relationships),
@@ -223,9 +230,13 @@ def ontology_graph(project_id: Optional[str] = None) -> Dict[str, Any]:
     from semabridge.ontology.graph import build_ontology_graph
 
     fed = ontology_store.get_federated_ontology()
+    attachments = ontology_store._read_attachments()
+    if project_id:
+        # Same resolver as everywhere else: attached + generated, all models.
+        attachments[project_id] = [d.id for d in ontology_store.domains_for(project_id) if d.id]
     return build_ontology_graph(
         fed.domains.values(),
-        attachments=ontology_store._read_attachments(),
+        attachments=attachments,
         collisions=fed.collisions,
         project_id=project_id,
     )
@@ -495,6 +506,11 @@ async def bootstrap_from_osi(req: FromOsiRequest, request: Request) -> Dict[str,
                 ),
             )
 
+    if not req.osi_model and project_id:
+        multi = await _sync_multi_model_project(req, project_id, request)
+        if multi is not None:
+            return multi
+
     if req.osi_model:
         try:
             # Use Pydantic model_validate_json to safely parse nested dictionaries and date strings
@@ -592,6 +608,80 @@ async def bootstrap_from_osi(req: FromOsiRequest, request: Request) -> Dict[str,
     }
 
 
+async def _sync_multi_model_project(req: FromOsiRequest, project_id: str, request: Request) -> Optional[Dict[str, Any]]:
+    """/from-osi for a multi-model project: one domain per model, each from its own snapshot.
+
+    Returns None for single-model projects (the classic one-domain path runs).
+    Never merges models into one domain and never marks another model's items
+    stale. ``req.model_id`` (or a ``domain_name`` naming a per-model domain)
+    limits the sync to that model.
+    """
+    import asyncio
+
+    from semabridge.ontology.per_model import sync_project_model_domains
+    from semabridge.ontology.project_models import is_multi_model, project_models
+
+    try:
+        models = await asyncio.to_thread(project_models, project_id)
+    except Exception as exc:
+        logger.warning("Models of project %s unavailable: %s", project_id, exc)
+        return None
+    with_snap = [m for m in models if m.blob]
+    if len(with_snap) < 2 and not (is_multi_model(project_id) and with_snap):
+        return None
+
+    only = req.model_id
+    if not only and req.domain_name:
+        named = ontology_store.get_domain(req.domain_name)
+        if named is not None and named.source_model_id:
+            only = named.source_model_id
+    _enforce_project_owner(project_id, request)
+    for pm in with_snap:
+        from semabridge.ontology.per_model import existing_model_domain
+
+        if only and pm.model_id != only:
+            continue
+        _enforce_domain_owner(existing_model_domain(ontology_store, project_id, pm.model_id), request)
+    actor, _roles, _admin = _request_actor(request)
+    try:
+        results = await asyncio.to_thread(
+            sync_project_model_domains,
+            project_id,
+            ontology_store,
+            only_model=only,
+            owner=actor,
+            save_to_disk=req.save_to_disk,
+            models=models,
+        )
+    except OntologyValidationError as e:
+        raise _reject(e.errors)
+    done = [r for r in results if r.get("id")]
+    if not done:
+        raise HTTPException(status_code=404, detail=f"No model snapshot found for project '{project_id}'.")
+    fed = ontology_store.get_federated_ontology()
+    first = done[0]
+    yaml_text = FederatedOntologyLoader.dump_domain_yaml(first["domain_obj"])
+    combined_report: Dict[str, List[str]] = {}
+    for r in done:
+        for k, v in (r.get("sync_report") or {}).items():
+            combined_report.setdefault(k, []).extend(f"{r['model_name']}: {x}" for x in v)
+    return {
+        "success": True,
+        "multi_model": True,
+        "domain": first["domain"],
+        "id": first["id"],
+        "domains": [{k: v for k, v in r.items() if k != "domain_obj"} for r in results],
+        "concept_count": sum(r["concept_count"] for r in done),
+        "metric_count": sum(r["metric_count"] for r in done),
+        "relationship_count": sum(r["relationship_count"] for r in done),
+        "total_domains": len(fed.domains),
+        "collisions": [c.model_dump() for c in fed.collisions],
+        "sync_report": combined_report,  # hardcoding-ok: API response field
+        "yaml_content": yaml_text,
+        "yaml": yaml_text,
+    }
+
+
 # ----------------------------------------------------------------------
 # Project attachments
 # ----------------------------------------------------------------------
@@ -608,7 +698,7 @@ def set_project_domains(project_id: str, req: ProjectDomainsRequest, request: Re
     """Attach domains (names or ids, ordered by precedence) to a project; [] detaches all."""
     _enforce_project_owner(project_id, request)
     try:
-        ontology_store.set_project_domains(project_id, req.domains)
+        ontology_store.set_project_domains(project_id, req.domains, model_id=req.model_id)
     except OntologyValidationError as e:
         raise _reject(e.errors)
     return ontology_store.describe_project_domains(project_id)
@@ -670,16 +760,20 @@ def set_project_conflict_resolution(
 
 
 @project_router.post("/{project_id}/preview", response_model=Dict[str, Any])
-async def preview_project_ontology(project_id: str) -> Dict[str, Any]:
-    """Dry-run the ontology against the project's latest OSI model: what matches, what doesn't."""
+async def preview_project_ontology(project_id: str, model_id: Optional[str] = None) -> Dict[str, Any]:
+    """Dry-run the ontology against the project's latest OSI model: what matches, what doesn't.
+
+    ``?model_id=`` previews one model of a multi-model project (its own domain
+    + the shared ones); otherwise the latest synced model is used.
+    """
     from semabridge.api.routers.export_router import _load_osi_model
     from semabridge.ontology.apply import apply_project_ontology
 
-    osi_obj = await _load_osi_model(project_id)
+    osi_obj = await (_load_osi_model(project_id, model_id=model_id) if model_id else _load_osi_model(project_id))
     if not osi_obj:
         raise HTTPException(status_code=404, detail=f"No OSI model found for project '{project_id}'.")
     model = osi_obj.model_copy(deep=True)
-    return apply_project_ontology(project_id, model, model_names=[model.unique_name, model.label])
+    return apply_project_ontology(project_id, model, model_names=[model.unique_name, model.label], model_id=model_id)
 
 
 def _project_kg_target(project_id: str) -> Dict[str, Optional[str]]:
@@ -710,6 +804,7 @@ async def export_project_knowledge_graph_sql(
     database: Optional[str] = None,
     ontology_schema: str = "_SEMABRIDGE_ONTOLOGY",
     warehouse: Optional[str] = None,
+    model_id: Optional[str] = None,
 ) -> str:
     """Snowflake knowledge-graph + Cortex Search DDL for the project's ontology.
 
@@ -723,10 +818,16 @@ async def export_project_knowledge_graph_sql(
     from semabridge.ontology.apply import apply_project_ontology
     from semabridge.utils.synonyms import load_ontology_overrides
 
-    osi_obj = await _load_osi_model(project_id)
+    osi_obj = await (_load_osi_model(project_id, model_id=model_id) if model_id else _load_osi_model(project_id))
     if not osi_obj:
         raise HTTPException(status_code=404, detail=f"No OSI model found for project '{project_id}'.")
     target = _project_kg_target(project_id)
+    if model_id:
+        # The model's own view, not the project's latest deploy.
+        own = next((d.semantic_view_name for d in ontology_store.domains_for(project_id, model_id)
+                    if d.semantic_view_name and d.source_model_id), None)
+        if own:
+            target["semantic_view"] = own
     database = (database or "").strip() or target.get("database")
     warehouse = (warehouse or "").strip() or target.get("warehouse")
     missing = [n for n, v in (("database", database), ("warehouse", warehouse)) if not v]
@@ -742,7 +843,7 @@ async def export_project_knowledge_graph_sql(
     model = osi_obj.model_copy(deep=True)
     overrides = load_ontology_overrides(project_id)
     report = apply_project_ontology(
-        project_id, model, model_names=[model.unique_name, model.label], overrides=overrides
+        project_id, model, model_names=[model.unique_name, model.label], overrides=overrides, model_id=model_id
     )
     emitter = OntologyEmitter(
         target_database=database,
@@ -761,18 +862,8 @@ async def export_project_knowledge_graph_sql(
 
 
 def _domains_for_project(project_id: str, fed: Any) -> List[Any]:
-    """Domains attached to the project, plus domains bootstrapped from it."""
-    out: List[Any] = []
-    seen: set = set()
-    for dom in ontology_store.get_project_domains(project_id):
-        if dom.id not in seen:
-            seen.add(dom.id)
-            out.append(dom)
-    for dom in fed.domains.values():
-        if getattr(dom, "source_project_id", None) == project_id and dom.id not in seen:
-            seen.add(dom.id)
-            out.append(dom)
-    return out
+    """Domains attached to the project, plus domains bootstrapped from it (all models)."""
+    return list(ontology_store.domains_for(project_id))
 
 
 @project_router.get("/health", response_model=Dict[str, Any])
@@ -832,12 +923,14 @@ class ReviewApplyRequest(BaseModel):
 
 
 def _find_project_domain(project_id: Optional[str]) -> Any:
-    """Return the domain whose ``source_project_id`` matches ``project_id`` (case-insensitive)."""
-    pid = str(project_id or "").strip().casefold()
+    """The domain generated from ``project_id`` (single-model project; ``proj-`` prefix optional)."""
+    from semabridge.ontology.models import project_key
+
+    pid = project_key(project_id)
     if not pid:
         return None
-    for d in ontology_store.get_federated_ontology().domains.values():
-        if (getattr(d, "source_project_id", None) or "").strip().casefold() == pid:
+    for d in ontology_store.domains_for(project_id):
+        if project_key(getattr(d, "source_project_id", None)) == pid and not getattr(d, "source_model_id", None):
             return d
     return None
 
@@ -894,18 +987,6 @@ async def apply_review(req: ReviewApplyRequest, request: Request) -> Dict[str, A
     if not name:
         raise _reject(["Domain name is required."])
     real_project = bool(req.project_id and req.project_id != "preview")
-    # One domain per project (same rule as /from-osi): when the project already
-    # owns a domain, the review is merged into it instead of creating a second
-    # domain under a different name.
-    existing_for_project = _find_project_domain(req.project_id) if real_project else None
-    if existing_for_project is not None:
-        name = existing_for_project.domain
-        _enforce_domain_owner(existing_for_project, request)
-    elif ontology_store.get_domain(name) is not None:
-        raise _reject(
-            [f"Domain '{name}' already exists. Choose another name, or attach the existing domain to the project."],
-            status=409,
-        )
 
     models = cache_get(req.analysis_id)
     if models is None:
@@ -917,6 +998,23 @@ async def apply_review(req: ReviewApplyRequest, request: Request) -> Dict[str, A
             raise _reject([str(exc)])
         if not models:
             raise _reject(["None of the selected models could be read."])
+
+    if len(models) > 1:
+        # Several models: one domain per model, never merged across models.
+        return _apply_review_per_model(req, request, models, name, real_project)
+
+    # One domain per (single-model) project, same rule as /from-osi: when the
+    # project already owns a domain, the review is merged into it instead of
+    # creating a second domain under a different name.
+    existing_for_project = _find_project_domain(req.project_id) if real_project else None
+    if existing_for_project is not None:
+        name = existing_for_project.domain
+        _enforce_domain_owner(existing_for_project, request)
+    elif ontology_store.get_domain(name) is not None:
+        raise _reject(
+            [f"Domain '{name}' already exists. Choose another name, or attach the existing domain to the project."],
+            status=409,
+        )
 
     try:
         draft, report = build_reviewed_domain(
@@ -955,6 +1053,91 @@ async def apply_review(req: ReviewApplyRequest, request: Request) -> Dict[str, A
         "concept_count": len(draft.concepts),
         "report": report,
         "collisions": [c.model_dump() for c in fed.collisions if draft.domain in c.conflicting_domains],
+    }
+
+
+def _apply_review_per_model(
+    req: "ReviewApplyRequest", request: Request, models: List[Any], name: str, real_project: bool
+) -> Dict[str, Any]:
+    """Review of several models: one domain per model (no cross-model merging)."""
+    from semabridge.api.services.ontology_review_service import build_reviewed_domains, review_model_id
+    from semabridge.ontology.models import DomainOntology
+    from semabridge.ontology.per_model import existing_model_domain
+
+    existing_by_model: Dict[str, Any] = {}
+    if real_project:
+        for model in models:
+            mid = review_model_id(model)
+            dom = existing_model_domain(ontology_store, req.project_id, mid) if mid else None
+            if dom is not None:
+                _enforce_domain_owner(dom, request)
+                existing_by_model[mid] = dom
+    try:
+        built = build_reviewed_domains(
+            models,
+            domain_name=name,
+            owner=req.owner,
+            merges=[m.model_dump() for m in req.merges],
+            conflicts=[c.model_dump() for c in req.conflicts],
+            descriptions=req.descriptions,
+            project_id=req.project_id if real_project else None,
+            existing_by_model=existing_by_model,
+        )
+        drafts = []
+        for draft, _rep, mid, _mname in built:
+            draft = DomainOntology.model_validate(draft.model_dump())
+            if real_project:
+                draft.source_project_id = req.project_id
+            existing = existing_by_model.get(mid)
+            if existing is None and ontology_store.get_domain(draft.domain) is not None:
+                raise OntologyValidationError(
+                    [f"Domain '{draft.domain}' already exists. Choose another name, or attach the existing domain to the project."]
+                )
+            drafts.append((draft, existing))
+        batch = [d for d, _e in drafts]
+        fed = None
+        for draft, existing in drafts:
+            fed = ontology_store.add_or_update_domain(
+                draft, save_to_disk=True, original=existing.domain if existing is not None else None, batch=batch
+            )
+            if real_project:
+                ontology_store.attach_model_domain(req.project_id, draft.source_model_id, str(draft.id))
+    except OntologyValidationError as exc:
+        raise _reject(exc.errors, status=409 if any("already exists" in e for e in exc.errors) else 422)
+    except ValueError as exc:
+        raise _reject([str(exc)])
+
+    names = {d.domain for d, _e in drafts}
+    combined: Dict[str, List[str]] = {}
+    for (draft, rep, _mid, mname) in built:
+        for k, v in rep.items():
+            combined.setdefault(k, []).extend(f"{mname}: {x}" for x in v)
+    first = drafts[0][0]
+    return {
+        "success": True,
+        "multi_model": True,
+        "domain": first.domain,
+        "id": first.id,
+        "domains": [
+            {
+                "domain": d.domain,
+                "id": d.id,
+                "model_id": d.source_model_id,
+                "model_name": d.source_model_name,
+                "metric_count": len(d.metrics),
+                "concept_count": len(d.concepts),
+                "synced_existing": e is not None,
+            }
+            for d, e in drafts
+        ],
+        "synced_existing": any(e is not None for _d, e in drafts),
+        "requested_domain_name": req.domain_name.strip(),
+        "metric_count": sum(len(d.metrics) for d, _e in drafts),
+        "concept_count": sum(len(d.concepts) for d, _e in drafts),
+        "report": combined,
+        "collisions": [
+            c.model_dump() for c in (fed.collisions if fed is not None else []) if names & set(c.conflicting_domains)
+        ],
     }
 
 

@@ -17,14 +17,16 @@ The following paths are **always** accessible without a token:
 Toggle
 ------
 Set ``AUTH_ENABLED=false`` to bypass enforcement entirely (single-user / dev mode).
-Auth is **enabled by default** (``AUTH_ENABLED`` defaults to ``"true"``).
-This allows the existing frontend to keep working while auth is
-integrated progressively.
+Auth is **enabled by default**: parsing is centralised in
+:func:`semabridge.auth.flags.auth_enabled` and fails closed (anything other
+than an explicit false-like value means enabled).
+
+``/auth/auto-login`` is listed as public, but the route itself refuses to
+issue tokens when auth is enabled unless ``SEMABRIDGE_DEV_AUTO_LOGIN=true``.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Set
 
 from fastapi import Request, status
@@ -33,6 +35,7 @@ from jose import JWTError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+from semabridge.auth.flags import auth_enabled
 from semabridge.auth.tokens import decode_access_token
 from semabridge.utils.logger import get_logger
 
@@ -56,12 +59,20 @@ PUBLIC_PATHS: Set[str] = {
     "/openapi.json",
 }
 
+# Connector OAuth endpoints that are reached by a browser *redirect* from the
+# identity provider (no Authorization header) and therefore must stay public.
+# They are validated by the OAuth ``state`` parameter instead. Everything else
+# under /api/connections (save / delete / test credentials, device-code
+# login + poll, status) requires a valid token when auth is enabled.
+PUBLIC_PATHS |= {
+    "/api/connections/databricks/callback",
+}
+
 # Path prefixes that never require authentication
 PUBLIC_PREFIXES = (
     "/ws",       # WebSocket endpoints
     "/static",   # Static files
     "/health",    # Health and diagnostics
-    "/api/connections",  # Connector OAuth flows (device code, callbacks)
 )
 
 
@@ -75,7 +86,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         # Feature flag — on by default; set AUTH_ENABLED=false explicitly for dev/single-user mode
-        if os.environ.get("AUTH_ENABLED", "true").lower() != "true":
+        if not auth_enabled():
             # Still populate request.state so get_current_user deps don't fail.
             # Try to resolve from Bearer token; fall back to dev user id=1.
             token = None

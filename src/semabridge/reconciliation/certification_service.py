@@ -168,9 +168,13 @@ def get_latest_certifications(
             if dom:
                 q = q.filter(MetricCertification.domain == dom)
             rows = q.order_by(desc(MetricCertification.certified_at)).all()
-            latest: Dict[tuple[str, str], Dict[str, Any]] = {}
+            latest: Dict[tuple[str, str, str], Dict[str, Any]] = {}
             for row in rows:
-                key = ((row.project_id or "").casefold(), _norm_metric_key(row.metric_name))
+                # Per model/view: two models of one project can each define a
+                # metric with the same name. Rows without a domain fall back
+                # to their view, else form a legacy group of their own.
+                scope = (row.domain or "").casefold() or str(row.view_metric or "").rsplit(".", 1)[0].casefold()
+                key = ((row.project_id or "").casefold(), scope, _norm_metric_key(row.metric_name))
                 if key not in latest:
                     latest[key] = _row_to_dict(row)
             return sorted(latest.values(), key=lambda r: r["metric_name"].casefold())

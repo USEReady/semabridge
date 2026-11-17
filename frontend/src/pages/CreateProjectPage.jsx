@@ -131,87 +131,6 @@ function shortDeterministicHash(value) {
   return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 4);
 }
 
-function sanitizeMappingName(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  const cleaned = raw
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  if (!cleaned) return '';
-  return /^\d/.test(cleaned) ? `N_${cleaned}` : cleaned;
-}
-
-function resolveSourceTableName(column, tableSource = '') {
-  const fromColumn = String(column?.source_table_name || column?.parent_table || '').trim();
-  if (fromColumn) return fromColumn;
-  const path = String(column?.source_path || column?.parent_source_path || '').trim();
-  const direct = /^datasets\.([^.]+)/i.exec(path);
-  if (direct?.[1]) return direct[1];
-  return String(tableSource || '').trim();
-}
-
-function normalizeTargetStatus(item) {
-  if (item?.collision_detected) return 'collision';
-  const explicit = String(item?.status || '').toLowerCase();
-  if (!String(item?.target || item?.target_name || item?.target_field || '').trim()) return 'unmapped';
-  if (explicit === 'manual') return 'manual';
-  return 'auto';
-}
-
-function buildSourceFingerprint(mapping, column) {
-  return [
-    mapping?.source_schema,
-    mapping?.schema,
-    mapping?.source,
-    column?.source_table_name,
-    column?.parent_table,
-    column?.source_path,
-    column?.source,
-  ].map(part => String(part || '').trim()).filter(Boolean).join('.');
-}
-
-function applyHashDeduplication(mappings) {
-  return (mappings || []).map((mapping) => {
-    const columns = Array.isArray(mapping?.columns) ? mapping.columns : [];
-    if (columns.length === 0) return mapping;
-
-    const grouped = new Map();
-    columns.forEach((column) => {
-      const key = sanitizeMappingName(column?.target || column?.source || '');
-      if (!key) return;
-      grouped.set(key, [...(grouped.get(key) || []), column]);
-    });
-
-    const nextColumns = columns.map((column) => {
-      const baseTarget = sanitizeMappingName(column?.target || column?.source || '');
-      const duplicates = grouped.get(baseTarget) || [];
-      if (duplicates.length < 2) {
-        return { ...column, status: normalizeTargetStatus(column), collision_detected: false };
-      }
-      const hash = shortDeterministicHash(buildSourceFingerprint(mapping, column));
-      const resolved = `${baseTarget}_${hash}`;
-      return {
-        ...column,
-        target: resolved,
-        suggested_target_name: resolved,
-        original_target_name: baseTarget,
-        status: 'manual',
-        auto_resolved: true,
-        collision_detected: false,
-      };
-    });
-
-    return {
-      ...mapping,
-      columns: nextColumns,
-      status: String(mapping?.status || 'auto').toLowerCase(),
-      collision_detected: false,
-    };
-  });
-}
-
 function TypeBadge({ type }) {
   const label = String(type || 'unknown');
   const normalized = label.toLowerCase();
@@ -1982,6 +1901,13 @@ export default function CreateProjectPage({ editMode = false, initialData = null
       setDeployError('Resolve all collisions before deploying.');
       return;
     }
+    // Ontology conflicts block the sync server-side too (same rule as the
+    // multi-model gate), so stop here with the reason instead of a 409 later.
+    const ontologyBlockers = Array.isArray(dryRunData?.blocking_conflicts) ? dryRunData.blocking_conflicts : [];
+    if (ontologyBlockers.length > 0) {
+      setDeployError(`Resolve ${ontologyBlockers.length} ontology conflict(s) before deploying.`);
+      return;
+    }
 
     setIsDeploying(true);
     setDeployError('');
@@ -2017,7 +1943,7 @@ export default function CreateProjectPage({ editMode = false, initialData = null
     } finally {
       setIsDeploying(false);
     }
-  }, [detectedMappings, createdProject]);
+  }, [detectedMappings, createdProject, dryRunData]);
 
   const goNext = async () => {
     if (step === 6) { handleFinish(); return; }

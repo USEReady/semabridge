@@ -1,8 +1,16 @@
 {
-  "proj-multi_sync": [
-    "multi_sync"
-  ],
-  "proj-transport_pbix": [
-    "transport_pbix"
-  ]
+  "proj-multi_sync": {
+    "models": {
+      "competitive_marketing_analysis": [
+        "multi_sync__competitive_marketing_analysis"
+      ],
+      "continent": [
+        "multi_sync__continent"
+      ],
+      "core_finance_v1": [
+        "multi_sync__core_finance_v1"
+      ]
+    },
+    "shared": []
+  }
 }

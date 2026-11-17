@@ -21,6 +21,8 @@ WITH SYNONYMS and the Cortex Analyst YAML renderer as description / synonyms.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -691,9 +693,17 @@ def apply_project_ontology(
     overrides: Optional[Dict[Tuple[str, str, str], Dict[str, Any]]] = None,
     conflict_resolution: Optional[str] = None,
     domain_priority: Optional[Iterable[str]] = None,
+    model_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Load the project's overrides + attached domains and apply them to ``model``
     (and, identically, to every model in ``extra_models``, e.g. the OSI model).
+
+    Only the domains of THIS model are applied: the model's own domain(s) plus
+    the project's shared domains (``store.domains_for(project, model_id)``).
+    ``model_id`` defaults to the project model matching ``model_names`` /
+    ``model.unique_name``; when the project has per-model domains and the model
+    can't be identified, only the shared domains are applied (never another
+    model's domain).
 
     ``conflict_resolution`` ('priority' | 'namespace') falls back to the choice
     saved for the project; ``domain_priority`` (names/ids) reorders the attached
@@ -705,7 +715,18 @@ def apply_project_ontology(
         from semabridge.utils.synonyms import load_ontology_overrides
 
         overrides = load_ontology_overrides(project_id)
-    domains = store.get_project_domains(project_id) if project_id else []
+    resolved_model_id = None
+    if project_id and hasattr(store, "domains_for"):
+        resolved_model_id = resolve_project_model_id(
+            store, project_id, model_id,
+            [*(model_names or []), getattr(model, "unique_name", None), getattr(model, "label", None)],
+        )
+        domains = (
+            store.domains_for(project_id, resolved_model_id, attached_only=True)
+            if resolved_model_id else _shared_only(store, project_id)
+        )
+    else:
+        domains = store.get_project_domains(project_id) if project_id else []
     attach_info = store.describe_project_domains(project_id) if project_id else {"missing_domain_ids": []}
     if _norm_resolution(conflict_resolution) is None and project_id and hasattr(store, "get_conflict_resolution"):
         conflict_resolution = store.get_conflict_resolution(project_id)
@@ -732,7 +753,49 @@ def apply_project_ontology(
             f"BLOCKER: {blk['message']} Choose a namespace or domain priority order before deploying."
         )
     report["project_id"] = project_id
+    report["model_id"] = resolved_model_id
+    report["applied_domains"] = [getattr(d, "domain", str(d)) for d in domains]
     return report
+
+
+def resolve_project_model_id(
+    store: Any, project_id: Optional[str], model_id: Optional[str], names: Iterable[Optional[str]]
+) -> Optional[str]:
+    """The project's model id for ``model_id`` / any of ``names`` (None when unknown)."""
+    from semabridge.ontology.models import model_key
+
+    if model_id and model_key(model_id):
+        return model_key(model_id)
+    grouped = (
+        store.project_model_domains(project_id, attached_only=True)
+        if hasattr(store, "project_model_domains") else {"models": {}}
+    )
+    known = set(grouped.get("models") or {})
+    if not known:
+        return None
+    # Names may be a model id, the model's display name or its view base name
+    # (with or without the _SEMANTIC suffix / DB.SCHEMA qualification).
+    for raw in names:
+        if not raw:
+            continue
+        text = str(raw).strip().strip('"').split(".")[-1].strip('"')
+        for cand in (text, re.sub(r"_SEMANTIC$", "", text, flags=re.I)):
+            key = model_key(cand)
+            if key in known:
+                return key
+    for mid, doms in (grouped.get("models") or {}).items():
+        views = {model_key(str(getattr(d, "semantic_view_name", "") or "").split(".")[-1].strip('"')) for d in doms}
+        for raw in names:
+            if raw and model_key(str(raw).split(".")[-1].strip('"')) in views:
+                return mid
+    return None
+
+
+def _shared_only(store: Any, project_id: str) -> List[Any]:
+    """Project-wide (shared) domains only; used when the model can't be identified."""
+    if not hasattr(store, "project_model_domains"):
+        return store.get_project_domains(project_id)
+    return list(store.project_model_domains(project_id, attached_only=True).get("shared") or [])
 
 
 def _attach_project_verified_queries(project_id: Optional[str], *models: Any) -> int:
@@ -775,9 +838,13 @@ def apply_ontology_for_run(engine: Any, context: Any) -> None:
             getattr(context, "resolved_pbix_display_name", None),
             getattr(context, "semantic_view_name_override", None),
         ]
+        # The model file THIS job was extracted from identifies the project
+        # model, so only that model's domain (+ shared ones) is applied.
+        pbix_path = getattr(context, "pbix_path", None)
         report = apply_project_ontology(
             effective_project_id, sml,
-            extra_models=[osi], model_names=[n for n in names if n],
+            extra_models=[osi], model_names=[n for n in [*names, pbix_path] if n],
+            model_id=payload.get("ontology_model_id") or payload.get("model_id"),
             conflict_resolution=resolution,
             domain_priority=priority,
         )

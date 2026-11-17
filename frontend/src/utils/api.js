@@ -1,5 +1,6 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
+import { isDuplicateSyncError, requestDuplicateSyncConfirmation } from './duplicateSyncPrompt';
 import {
     buildRunReportUrl,
     buildRunModelReportUrl,
@@ -1999,12 +2000,38 @@ export const api = {
 
     async runProjectNow(projectId, payload = null) {
         invalidateApiCache('jobs:runs:');
-        const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
-            method: 'POST',
-            headers: payload ? { 'Content-Type': 'application/json' } : undefined,
-            body: payload ? JSON.stringify(payload) : undefined,
-            timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
-        });
+        const send = async (body) => {
+            const res = await authFetch(`${API_BASE_URL}/projects/${projectId}/run`, {
+                method: 'POST',
+                headers: body ? { 'Content-Type': 'application/json' } : undefined,
+                body: body ? JSON.stringify(body) : undefined,
+                timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS,
+            });
+            return handleResponse(res);
+        };
+        try {
+            return await send(payload);
+        } catch (err) {
+            // Pre-sync duplicate check: a model is already synced by another
+            // project. Ask the user; only a confirmed retry deploys.
+            if (!isDuplicateSyncError(err)) throw err;
+            const confirmed = await requestDuplicateSyncConfirmation(err.payload.detail);
+            if (!confirmed) {
+                const cancelled = new Error('Sync cancelled: model already synced by another project.');
+                cancelled.cancelled = true;
+                throw cancelled;
+            }
+            return send({ ...(payload || {}), acknowledge_duplicates: true });
+        }
+    },
+
+    /** Re-run only the models that failed in runId (same checks as Run now). */
+    async retryFailedModels(projectId, runId) {
+        invalidateApiCache('jobs:runs:');
+        const res = await authFetch(
+            `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/retry`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS },
+        );
         return handleResponse(res);
     },
 

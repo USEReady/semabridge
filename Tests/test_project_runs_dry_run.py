@@ -173,7 +173,8 @@ async def test_run_project_now_starts_run_when_dry_run_has_no_blockers(monkeypat
     background_tasks = DummyBackgroundTasks()
     result = await pri.run_project_now_compat("project-1", background_tasks, payload={"dry_run": False})
 
-    assert result["status"] == "running"
+    # A new run is "queued" until its first model gets an execution slot.
+    assert result["status"] == "queued"
     assert result["run_id"] == "run-1"
     assert len(background_tasks.calls) == 1
     assert background_tasks.calls[0][0] is fake_run_project_background
@@ -347,10 +348,10 @@ def test_scope_model_for_dry_run_keeps_metrics_for_selected_dataset():
     scoped = pri._compat_scope_model_for_dry_run(latest_model, ["Sales"])
     metric_names = {str(m.get("unique_name")) for m in scoped.get("metrics", []) if isinstance(m, dict)}
 
-    assert len(scoped.get("datasets", [])) == 1
-    assert scoped["datasets"][0]["unique_name"] == "Sales"
-    assert "SalesAmount" in metric_names
-    assert "InventoryCount" not in metric_names
+    # Each selected model is its own dry run: the WHOLE model is previewed
+    # (a dataset named like the model no longer narrows it to one table).
+    assert len(scoped.get("datasets", [])) == 2
+    assert {"SalesAmount", "InventoryCount"} <= metric_names
 
 
 def test_preferred_snapshot_id_from_sync_result_prefers_selected_model():

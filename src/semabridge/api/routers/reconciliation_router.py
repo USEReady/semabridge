@@ -173,37 +173,17 @@ _FORBIDDEN_SQL_STMT_RE = re.compile(
 
 
 def _get_project_domains_for_validation(project_id: Optional[str]) -> List[Any]:
+    """The project's domains (``ontology_store.domains_for``); ``[]`` when none -- never all domains."""
     pid = (project_id or "").strip()
     if not pid:
         return []
     try:
         from semabridge.ontology.store import ontology_store
 
-        p_domains = ontology_store.get_project_domains(pid)
-        if p_domains:
-            return list(p_domains)
-        pid_cf = pid.casefold()
-        fed = ontology_store.get_federated_ontology()
-        matched = [
-            d
-            for d in fed.domains.values()
-            if (getattr(d, "source_project_id", None) or "").strip().casefold() == pid_cf
-            or (getattr(d, "id", None) or "").strip().casefold() == pid_cf
-            or d.domain.strip().casefold() == pid_cf
-        ]
-        if matched:
-            return matched
-        try:
-            from semabridge.repository.model_repository import ModelRepository
-
-            model_name = (ModelRepository().get_project_deployment_info(pid).get("model_name") or "").strip()
-            if model_name:
-                return [d for d in fed.domains.values() if d.domain.strip().casefold() == model_name.casefold()]
-        except Exception:
-            pass
-    except Exception:
+        return list(ontology_store.domains_for(pid))
+    except Exception as exc:
+        logger.warning("Could not resolve domains of project %s: %s", pid, exc)
         return []
-    return []
 
 
 def _validate_generate_queries_request(req: GenerateQueriesRequest, resolved_kind: Optional[str]) -> None:
@@ -843,10 +823,14 @@ def update_metric_sql_expression(req: UpdateMetricSqlRequest) -> Dict[str, Any]:
             domains_to_check.append(d)
     if req.project_id:
         p_doms = _get_project_domains_for_validation(req.project_id)
+        if req.domain:
+            # The named domain must belong to the project (one domain per model).
+            allowed_ids = {d.id for d in p_doms}
+            domains_to_check = [d for d in domains_to_check if d.id in allowed_ids]
         domains_to_check.extend(p_doms)
-
-    fed = ontology_store.get_federated_ontology()
-    domains_to_check.extend(list(fed.domains.values()))
+    else:
+        fed = ontology_store.get_federated_ontology()
+        domains_to_check.extend(list(fed.domains.values()))
 
     seen_doms = set()
     for dom in domains_to_check:
@@ -906,11 +890,14 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
         except Exception:
             dep_info = {}
 
-    view_name = dep_info.get("semantic_view") or dep_info.get("view_name") or ""
-    domains = _get_project_domains_for_validation(project_id)
-    if not domains:
-        fed = ontology_store.get_federated_ontology()
-        domains = list(fed.domains.values())
+    domains = _get_project_domains_for_validation(project_id) if project_id else list(
+        ontology_store.get_federated_ontology().domains.values()
+    )
+    # A domain without its own view only inherits the project's deployed view
+    # when the project has a single view (multi-model: one view per model).
+    own_views = {str(getattr(d, "semantic_view_name", "") or "").split(".")[-1].casefold() for d in domains}
+    own_views.discard("")
+    view_name = "" if len(own_views) > 1 else (dep_info.get("semantic_view") or dep_info.get("view_name") or "")
 
     metrics_list = []
     seen = set()
@@ -922,9 +909,11 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
 
         sv_dom = getattr(dom, "semantic_view_name", None) or view_name
         for m in getattr(dom, "metrics", []):
-            if m.name in seen:
+            # Same-named metrics of different models (views) are separate rows.
+            seen_key = (sv_dom.split(".")[-1].casefold() if sv_dom else dom.domain, m.name)
+            if seen_key in seen:
                 continue
-            seen.add(m.name)
+            seen.add(seen_key)
             c = concept_map.get(m.concept)
             dims = []
             if c:
@@ -941,6 +930,8 @@ def get_project_reconciliation_metrics(project_id: Optional[str] = None) -> Dict
                 "logical_name": m.logical_name or m.name,
                 "label": m.label or m.name,
                 "domain": dom.domain,
+                "domain_id": dom.id,
+                "model_id": getattr(dom, "source_model_id", None),
                 "dax_expression": m.dax_expression or "",
                 "sql_expression": m.sql_expression or "",
                 "target_table_or_view": target_view,

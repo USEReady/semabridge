@@ -277,7 +277,10 @@ def find_project_snapshot(project_id: str, snapshot_id: str) -> Optional[Dict[st
 
 
 def _compat_now_iso() -> str:
-    return datetime.utcnow().isoformat()
+    """Current UTC time as ISO-8601 with an explicit ``Z`` (never naive)."""
+    from datetime import timezone as _tz
+
+    return datetime.now(_tz.utc).isoformat().replace("+00:00", "Z")
 
 def _compat_store_write_path() -> Path:
     """Stable, per-user location for the compat write-through cache.
@@ -513,18 +516,20 @@ def _compat_assembled_project_config(project_id: str, project_cfg: Dict[str, Any
 
 
 def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
-    project_file = _compat_projects_dir() / f"{project_id}.yaml"
-    if not project_file.exists():
-        yml_variant = _compat_projects_dir() / f"{project_id}.yml"
-        if yml_variant.exists():
-            project_file = yml_variant
-        else:
-            return None
+    """The project's live config (from the authoritative store -- database,
+    cached; see project_config_store.get_project_config_text), assembled with
+    its mapping profile when it names one. None when it has no config."""
+    from semabridge.api.services.project_config_store import get_project_config_text
+
+    project_file = _compat_project_yaml_path(project_id)
+    config_text = get_project_config_text(project_id)
+    if not str(config_text or "").strip():
+        return None
 
     try:
-        project_cfg = yaml.safe_load(project_file.read_text(encoding="utf-8")) or {}
+        project_cfg = yaml.safe_load(config_text) or {}
     except Exception as exc:
-        logger.warning("Failed to parse modular project %s: %s", project_file, exc)
+        logger.warning("Failed to parse config of project %s: %s", project_id, exc)
         return None
     if not isinstance(project_cfg, dict):
         return None
@@ -544,8 +549,7 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
             except Exception as exc:
                 logger.warning("Failed to parse mapping profile %s: %s", profile_file, exc)
 
-    # Self-contained project files (no mapping_profile) should be used as-is.
-    # This preserves mappings_overrides authored directly in Config/projects/<id>.yaml.
+    # Self-contained project configs (no mapping_profile) are used as-is.
     if not profile_name:
         assembled = dict(project_cfg)
     else:
@@ -556,7 +560,10 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
         if isinstance(project_cfg.get("mappings"), list):
             assembled["mappings"] = project_cfg.get("mappings") or []
 
-    config_yaml = yaml.safe_dump(assembled, sort_keys=False, allow_unicode=False)
+    config_yaml = (
+        config_text if not profile_name
+        else yaml.safe_dump(assembled, sort_keys=False, allow_unicode=False)
+    )
     return {
         "project_id": project_id,
         "project_file": project_file,
@@ -568,15 +575,51 @@ def _compat_load_modular_project(project_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def _compat_bootstrap_projects_from_modular_configs() -> None:
-    seen: set[str] = set()
-    for projects_dir in _compat_projects_dirs():
-        if not projects_dir.exists():
-            continue
+# Report of the last startup import of Config/projects/*.yaml into the
+# project_configs table (see project_config_store.import_project_config_files).
+_compat_config_import_report: Dict[str, Any] = {}
+# Real-project configs found in a legacy JSON store: imported into the
+# database once (when the project has neither a DB version nor a file), never
+# used as a live copy.
+_compat_legacy_store_configs: Dict[str, str] = {}
 
-        for path in sorted(projects_dir.glob("*.y*ml")):
-            project_id = path.stem.strip()
-            if not project_id or project_id in seen or project_id in _compat_deleted_project_ids:
+
+def _compat_bootstrap_projects_from_modular_configs() -> None:
+    """Import config files into the database, load every project's live
+    config into the cache and register a project entry for each of them."""
+    from semabridge.api.services import project_config_store
+
+    try:
+        report = project_config_store.import_project_config_files(_compat_legacy_store_configs)
+        _compat_config_import_report.clear()
+        _compat_config_import_report.update(report)
+        if report.get("imported") or report.get("file_edits") or report.get("imported_from_store"):
+            logger.info(
+                "Project config import: %d imported, %d hand-edited file(s) imported, %d from legacy store, %d error(s)",
+                len(report.get("imported") or []), len(report.get("file_edits") or []),
+                len(report.get("imported_from_store") or []), len(report.get("errors") or []),
+            )
+        project_ids = list(project_config_store.load_all_configs_into_cache() or [])
+    except Exception as exc:
+        logger.error("Project configs could not be loaded from the database: %s", exc)
+        project_ids = []
+    # A project file whose import failed (errors are reported, not raised)
+    # must still be visible: add every project YAML not already listed. Its
+    # config is then read from the file by _compat_load_modular_project.
+    file_ids = sorted(
+        path.stem.strip()
+        for projects_dir in _compat_projects_dirs() if projects_dir.exists()
+        for path in projects_dir.glob("*.y*ml")
+    )
+    project_ids = list(dict.fromkeys([*project_ids, *file_ids]))
+
+    seen: set[str] = set()
+    if True:
+        for project_id in project_ids:
+            if (
+                not project_id or project_id in seen or project_id in _compat_deleted_project_ids
+                or project_id == "preview" or project_id.startswith("preview-")
+            ):
                 continue
             bundle = _compat_load_modular_project(project_id)
             if not bundle:
@@ -635,10 +678,11 @@ def _compat_bootstrap_projects_from_modular_configs() -> None:
                 "mapping_profile": assembled.get("mapping_profile") or "",
                 "config_source": "modular",
                 "created_at": existing.get("created_at") or _compat_now_iso(),
-                "updated_at": _compat_now_iso(),
+                "updated_at": existing.get("updated_at") or _compat_now_iso(),
             }
-            _compat_projects[project_id] = project
-            _compat_project_configs[project_id] = str(bundle.get("config_yaml") or "").strip()
+            # Keep metadata only the cache carries (sync_mode, notification
+            # email, pbix path, ...); config-derived fields win.
+            _compat_projects[project_id] = {**existing, **project}
             _compat_project_runs.setdefault(project_id, [])
             _compat_project_snapshots.setdefault(project_id, [])
             _compat_snapshot_groups.setdefault(project_id, [])
@@ -675,7 +719,12 @@ def _compat_snapshot_container(value: Any) -> Any:
 def _compat_build_store_payload() -> Dict[str, Any]:
     return {
         "projects": _compat_snapshot_container(_compat_projects),
-        "project_configs": dict(_compat_project_configs),
+        # Real projects' configs are persisted in the project_configs table;
+        # only transient dry-run preview configs are kept here.
+        "project_configs": {
+            pid: cfg for pid, cfg in list(_compat_project_configs.items())
+            if str(pid).startswith("preview")
+        },
         # Strip large run detail blobs (summary/results/logs) — only needed
         # for run detail views, not the list.
         "project_runs": _strip_run_blobs(_compat_snapshot_container(_compat_project_runs)),
@@ -721,28 +770,96 @@ def _compat_atomic_write_text(path: Path, text: str) -> None:
             pass
 
 
-def _compat_save_store() -> None:
+from semabridge.domain.exceptions import InternalError as _InternalError
+
+
+class CompatStorePersistenceError(_InternalError):
+    """The compat JSON store could not be written (HTTP 500 with the reason)."""
+
+
+_compat_store_dirty: bool = False
+_compat_store_flush_timer: Optional[threading.Timer] = None
+_compat_store_last_error: Optional[str] = None
+
+
+def _compat_raise_if_store_failed() -> None:
+    """Raise CompatStorePersistenceError when the latest store save failed.
+    Call right after _compat_save_store() in code paths a user action
+    triggered, so the request reports the failure."""
+    if _compat_store_dirty and _compat_store_last_error:
+        raise CompatStorePersistenceError(f"Local state could not be saved: {_compat_store_last_error}")
+
+
+def _compat_save_store(raise_on_error: bool = False) -> bool:
+    """Serialize the compat cache to the JSON store file (atomic replace).
+
+    Holds the store lock for the snapshot + write. A failure is logged at
+    ERROR, the store is marked dirty and a background retry is scheduled; it
+    is raised (CompatStorePersistenceError) when ``raise_on_error`` -- pass
+    that from code paths a user action triggered, so the action reports the
+    failure instead of silently "succeeding". Returns True when written.
+    """
+    global _compat_store_dirty, _compat_store_last_error
     try:
         with _compat_store_lock:
-            # Snapshot + serialize under the lock so concurrent savers can't
-            # interleave writes, and a mutation racing the snapshot (from a
-            # caller not holding the lock) is retried instead of crashing.
             text = None
-            for _attempt in range(3):
+            last_exc: Optional[BaseException] = None
+            for _attempt in range(8):
                 try:
                     payload = _compat_build_store_payload()
                     text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
                     break
-                except RuntimeError:
-                    # "dictionary changed size during iteration" from an
-                    # unlocked mutator on another thread — retry.
-                    continue
+                except RuntimeError as exc:
+                    # "dictionary changed size during iteration": a mutator on
+                    # another thread did not hold the lock -- retry, never drop.
+                    last_exc = exc
+                    time.sleep(0.01 * (_attempt + 1))
             if text is None:
-                logger.warning("Failed to persist compat store: store mutated concurrently during serialization")
-                return
+                raise CompatStorePersistenceError(
+                    f"store mutated concurrently during serialization: {last_exc}"
+                )
             _compat_atomic_write_text(_compat_store_write_path(), text)
+            _compat_store_dirty = False
+            _compat_store_last_error = None
+            return True
     except Exception as exc:
-        logger.warning("Failed to persist compat store: %s", exc)
+        _compat_store_dirty = True
+        _compat_store_last_error = str(exc)
+        logger.error("Failed to persist compat store: %s", exc)
+        _compat_schedule_store_flush(delay=5.0)
+        if raise_on_error:
+            if isinstance(exc, CompatStorePersistenceError):
+                raise
+            raise CompatStorePersistenceError(f"Local state could not be saved: {exc}") from exc
+        return False
+
+
+def _compat_schedule_store_flush(delay: float = 1.0) -> None:
+    """Coalesced deferred save: used by read (GET) paths that refresh cached
+    state, so a read never rewrites the whole store file synchronously."""
+    global _compat_store_dirty, _compat_store_flush_timer
+    _compat_store_dirty = True
+    with _compat_store_lock:
+        timer = _compat_store_flush_timer
+        if timer is not None and timer.is_alive():
+            return
+
+        def _flush() -> None:
+            global _compat_store_flush_timer
+            with _compat_store_lock:
+                _compat_store_flush_timer = None
+            if _compat_store_dirty:
+                _compat_save_store()
+
+        timer = threading.Timer(delay, _flush)
+        timer.daemon = True
+        _compat_store_flush_timer = timer
+        timer.start()
+
+
+def _compat_mark_store_dirty() -> None:
+    """Record that the cache changed without writing the file now."""
+    _compat_schedule_store_flush()
 
 
 def _compat_clear_project_schedule(project_id: str) -> None:
@@ -817,7 +934,14 @@ def _compat_load_store() -> None:
         if isinstance(data.get("projects"), dict):
             _compat_projects.update(data.get("projects") or {})
         if isinstance(data.get("project_configs"), dict):
-            _compat_project_configs.update(data.get("project_configs") or {})
+            # Only transient preview configs live in the store. A real
+            # project's config is owned by the project_configs table; one
+            # found here (older store) is an import candidate, never a copy.
+            for _pid, _cfg in (data.get("project_configs") or {}).items():
+                if str(_pid).startswith("preview"):
+                    _compat_project_configs[_pid] = _cfg
+                elif isinstance(_cfg, str):
+                    _compat_legacy_store_configs[str(_pid)] = _cfg
         if isinstance(data.get("project_runs"), dict):
             _compat_project_runs.update(
                 _strip_run_blobs(data.get("project_runs") or {})
@@ -911,46 +1035,84 @@ def _compat_refresh_project_statuses_from_runs() -> None:
         logger.debug("Could not refresh project statuses from runs: %s", exc)
 
 
-def _compat_bootstrap_projects_from_orm() -> None:
-    """Seed compatibility project cache from persisted ORM projects when memory is empty."""
-    if _compat_projects:
-        return
+def _compat_project_entry_from_orm_row(row: Any) -> Dict[str, Any]:
+    pid = str(row.project_id or "").strip()
+    return {
+        "id": pid,
+        "project_id": pid,
+        "name": _compat_clean_project_name(row.name, f"Project {pid[-6:]}"),
+        "description": "",
+        "source": row.adapter or "fabric",
+        "adapter": row.adapter or "fabric",
+        "workspace_id": row.workspace_id or "",
+        "account_id": row.account_id or None,
+        "connection_tag": row.connection_tag or None,
+        "target_type": "snowflake",
+        "folder_id": None,
+        "status": "draft",
+        "created_at": row.last_updated.isoformat() if row.last_updated else _compat_now_iso(),
+        "updated_at": row.last_updated.isoformat() if row.last_updated else _compat_now_iso(),
+        "notification_email": row.notification_email or None,
+    }
 
+
+def _compat_db_project_ids() -> Optional[List[str]]:
+    """Real (non-preview) project ids known to Postgres: the projects table
+    plus every project that has a saved config version. None when the
+    database cannot be read."""
     try:
         from semabridge.repository.orm.models import Project
+        from semabridge.repository.orm.session_factory import db_manager as _orm_db_manager
+        from semabridge.api.services.project_config_store import project_ids_with_config
         from sqlalchemy import select
 
-        with db_manager.get_session() as session:
-            rows = session.execute(
-                select(Project).order_by(Project.last_updated.desc().nullslast()).limit(500)
-            ).scalars().all()
+        with _orm_db_manager.get_session() as session:
+            ids = {str(r[0]).strip() for r in session.execute(select(Project.project_id)).all() if r[0]}
+        ids.update(project_ids_with_config())
+    except Exception as exc:
+        logger.error("Project list could not be read from the database: %s", exc)
+        return None
+    return sorted(
+        pid for pid in ids
+        if pid and pid != "preview" and not pid.startswith("preview-") and pid not in _compat_deleted_project_ids
+    )
 
-        for row in rows:
-            pid = str(row.project_id or "").strip()
-            if not pid or pid in _compat_deleted_project_ids:
+
+def _compat_bootstrap_projects_from_orm() -> None:
+    """Register every real project of the Postgres projects table in the
+    cache (entries already present -- from a config version or the store --
+    keep their richer metadata)."""
+    try:
+        from semabridge.repository.orm.models import Project
+        from semabridge.repository.orm.session_factory import db_manager as _orm_db_manager
+        from sqlalchemy import select
+
+        with _orm_db_manager.get_session() as session:
+            rows = session.execute(
+                select(Project).order_by(Project.last_updated.desc().nullslast())
+            ).scalars().all()
+            entries = [
+                _compat_project_entry_from_orm_row(row) for row in rows
+                if str(row.project_id or "").strip()
+                and not str(row.project_id).startswith("preview")
+            ]
+
+        for entry in entries:
+            pid = entry["id"]
+            if pid in _compat_deleted_project_ids:
                 continue
-            project = {
-                "id": pid,
-                "project_id": pid,
-                "name": _compat_clean_project_name(row.name, f"Project {pid[-6:]}"),
-                "description": "",
-                "source": row.adapter or "fabric",
-                "adapter": row.adapter or "fabric",
-                "workspace_id": row.workspace_id or "",
-                "target_type": "snowflake",
-                "folder_id": None,
-                "status": "draft",
-                "created_at": _compat_now_iso(),
-                "updated_at": _compat_now_iso(),
-                "notification_email": row.notification_email or None,
-            }
-            _compat_projects[pid] = project
-            _compat_project_configs.setdefault(pid, _compat_load_repo_yaml_text() or _compat_default_project_yaml(project))
+            existing = _compat_projects.get(pid)
+            if isinstance(existing, dict):
+                for key in ("notification_email", "connection_tag", "account_id"):
+                    if entry.get(key) and not existing.get(key):
+                        existing[key] = entry[key]
+                continue
+            _compat_projects[pid] = entry
             _compat_project_runs.setdefault(pid, [])
             _compat_project_snapshots.setdefault(pid, [])
             _compat_snapshot_groups.setdefault(pid, [])
     except Exception as exc:
-        logger.debug("ORM project bootstrap skipped: %s", exc)
+        logger.error("ORM project bootstrap failed: %s", exc)
 
 
 def _compat_bootstrap_project_from_repo_yaml() -> None:
@@ -991,7 +1153,13 @@ def _compat_bootstrap_project_from_repo_yaml() -> None:
         "updated_at": _compat_now_iso(),
     }
     _compat_projects[project_id] = project
-    _compat_project_configs[project_id] = yaml_text
+    try:
+        from semabridge.api.services.project_config_store import save_project_config
+
+        save_project_config(project_id, yaml_text, reason="import_repo_yaml", export=False)
+    except Exception as exc:
+        logger.error("Repo YAML project %s could not be saved to the database: %s", project_id, exc)
+        _compat_project_configs[project_id] = yaml_text
     _compat_project_runs.setdefault(project_id, [])
     _compat_project_snapshots.setdefault(project_id, [])
     _compat_snapshot_groups.setdefault(project_id, [])

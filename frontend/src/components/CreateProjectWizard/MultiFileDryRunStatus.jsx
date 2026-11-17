@@ -50,6 +50,18 @@ function SectionCounts({ section }) {
       <span style={{ color: section.blockingCount > 0 ? 'var(--color-error)' : 'var(--color-success)', fontWeight: 700 }}>
         {section.blockingCount > 0 ? `${section.blockingCount} blocking` : 'no blocking issues'}
       </span>
+      {section.ontologyBlockingCount > 0 && (
+        <span style={{ color: 'var(--color-error)' }}>
+          {` (${pluralize(section.ontologyBlockingCount, 'ontology conflict')})`}
+        </span>
+      )}
+      {section.plan?.view_name && (
+        <span title="Where the sync will deploy this model">
+          {' · deploys as '}
+          <code>{section.plan.view_name}</code>
+          {section.plan.physical_namespace ? <> (tables prefixed <code>{section.plan.physical_namespace}_</code>)</> : null}
+        </span>
+      )}
     </span>
   );
 }

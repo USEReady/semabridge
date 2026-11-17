@@ -118,6 +118,14 @@ export function normalizeRows(data) {
         validation_message: String(row?.validation_message || ''),
         suggested_target_name: String(row?.suggested_target_name || ''),
         collision_detected: Boolean(row?.collision_detected),
+        // Backend rename options for a collision (emitter's to_alias rules,
+        // first = recommended, unique in the row's namespace) and that
+        // namespace (columns: per logical table) -- Resolve / Resolve All
+        // use these before any local fallback.
+        resolution_suggestions: Array.isArray(row?.resolution_suggestions)
+          ? row.resolution_suggestions.map(String).filter(Boolean)
+          : [],
+        mapping_scope: String(row?.mapping_scope || ''),
         target_expression: row?.target_expression || '',
         sync_enabled: row?.sync_enabled === false || (isMeasure && Boolean((row?.source_expression || row?.measure_expression || row?.expression || '').trim()) && !Boolean(String(row?.target_expression || '').trim())) ? false : true,
         sync_failure_reason: row?.sync_failure_reason || (isMeasure && Boolean((row?.source_expression || row?.measure_expression || row?.expression || '').trim()) && !Boolean(String(row?.target_expression || '').trim()) ? 'DAX translation unavailable: no SQL expression produced' : ''),

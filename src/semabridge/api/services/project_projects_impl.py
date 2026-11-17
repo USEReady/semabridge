@@ -36,6 +36,19 @@ from semabridge.api.services.project_shared import (
     db_manager,
     logger,
 )
+from semabridge.api.services import project_config_store
+from semabridge.api.services.project_config_store import (
+    ConfigPersistenceError,
+    get_project_config_text,
+    save_project_config,
+)
+
+def _raise_if_store_failed() -> None:
+    from semabridge.api.services.project_shared import _compat_raise_if_store_failed
+
+    _compat_raise_if_store_failed()
+
+
 from semabridge.domain.exceptions import NotFoundError, ValidationError
 
 def _resolve_project_account_id(payload: dict) -> str | None:
@@ -55,7 +68,12 @@ def _resolve_project_account_id(payload: dict) -> str | None:
     token = str(account_id or "").strip()
     return token or None
 
-def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: dict) -> None:
+def _upsert_project_in_orm(
+    project_id: str, project: Dict[str, Any], payload: dict, *, only_if_changed: bool = False
+) -> None:
+    """Create/update the projects row. ``only_if_changed`` (read paths): an
+    existing row whose fields already match is left untouched -- no write,
+    no ``last_updated`` bump."""
     pid = str(project_id or "").strip()
     if not pid:
         return
@@ -79,6 +97,19 @@ def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: di
 
         with orm_db_manager.get_session() as session:
             existing = session.get(Project, pid)
+            notification_email = str(project.get("notification_email") or "").strip() or None
+            touches_email = notification_email is not None or "notification_email" in (payload or {})
+            if existing is not None and only_if_changed:
+                unchanged = (
+                    existing.name == project_name
+                    and existing.workspace_id == workspace_id
+                    and existing.adapter == adapter
+                    and existing.account_id == account_id
+                    and existing.connection_tag == connection_tag
+                    and (not touches_email or existing.notification_email == notification_email)
+                )
+                if unchanged:
+                    return
             if existing is None:
                 existing = Project(
                     project_id=pid,
@@ -91,9 +122,9 @@ def _upsert_project_in_orm(project_id: str, project: Dict[str, Any], payload: di
             existing.adapter = adapter
             existing.account_id = account_id
             existing.connection_tag = connection_tag
-            existing.last_updated = datetime.utcnow()
-            notification_email = str(project.get("notification_email") or "").strip() or None
-            if notification_email is not None or "notification_email" in (payload or {}):
+            from datetime import timezone as _tz
+            existing.last_updated = datetime.now(_tz.utc)
+            if touches_email:
                 existing.notification_email = notification_email
             session.commit()
     except Exception as exc:
@@ -104,7 +135,7 @@ def _backfill_project_metadata(project_id: str, project: Dict[str, Any]) -> None
     if not pid or not isinstance(project, dict):
         return
 
-    raw_yaml = str(_compat_project_configs.get(pid) or _compat_load_project_yaml_text(pid) or "").strip()
+    raw_yaml = str(get_project_config_text(pid) or "").strip()
     parsed = {}
     if raw_yaml:
         try:
@@ -165,7 +196,9 @@ def _backfill_project_metadata(project_id: str, project: Dict[str, Any]) -> None
 
     if changed:
         _compat_projects[pid] = project
-        _compat_save_store()
+        # Called from GET handlers: never rewrite the store synchronously.
+        from semabridge.api.services.project_shared import _compat_mark_store_dirty
+        _compat_mark_store_dirty()
 
     orm_payload = {
         "account_id": account_id,
@@ -174,7 +207,9 @@ def _backfill_project_metadata(project_id: str, project: Dict[str, Any]) -> None
         "target": target_cfg or project.get("target") or {},
         "targets": targets_cfg or project.get("targets") or [],
     }
-    _upsert_project_in_orm(pid, project, orm_payload)
+    # Read path (GET project): write the projects row only when a field
+    # actually differs from what is stored.
+    _upsert_project_in_orm(pid, project, orm_payload, only_if_changed=True)
 
 def _clear_project_mapping_cache(project_id: str) -> None:
     """Clear compat mapping cache entries for a project after config creation/save."""
@@ -512,6 +547,11 @@ def _project_id_exists_anywhere(project_id: str) -> bool:
         return False
     if pid in _compat_projects or pid in _compat_project_configs:
         return True
+    try:
+        if project_config_store.latest_config_row(pid) is not None:
+            return True
+    except Exception:
+        pass
     if str(_compat_load_project_yaml_text(pid) or "").strip():
         return True
     return any(path.exists() for path in _compat_project_yaml_paths(pid))
@@ -557,6 +597,42 @@ async def list_project_discovery_compat():
                 logger.warning("Failed to load project discovery entry %s: %s", file_path, exc)
     return entries
 
+def _project_entry_from_db(project_id: str) -> Dict[str, Any] | None:
+    """A cache entry for a project that exists in Postgres but not (yet) in
+    this process's cache (e.g. created by another process)."""
+    from semabridge.api.services.project_shared import (
+        _compat_project_entry_from_orm_row,
+    )
+    try:
+        from semabridge.repository.orm.models import Project
+        from semabridge.repository.orm.session_factory import db_manager as orm_db_manager
+
+        with orm_db_manager.get_session() as session:
+            row = session.get(Project, project_id)
+            entry = _compat_project_entry_from_orm_row(row) if row is not None else None
+    except Exception as exc:
+        logger.error("Project %s could not be read from the database: %s", project_id, exc)
+        entry = None
+    config_text = get_project_config_text(project_id)
+    if entry is None and not config_text:
+        return None
+    if entry is None:
+        try:
+            parsed = yaml.safe_load(config_text) or {}
+        except Exception:
+            parsed = {}
+        parsed = parsed if isinstance(parsed, dict) else {}
+        entry = _compat_project_payload(project_id, {
+            "name": _project_display_name_from_cfg(parsed, project_id),
+            "source": parsed.get("source") if isinstance(parsed.get("source"), dict) else {},
+            "target": parsed.get("target") if isinstance(parsed.get("target"), dict) else {},
+            "targets": parsed.get("targets") if isinstance(parsed.get("targets"), list) else [],
+            "user_id": parsed.get("owner_user_id"),
+        })
+    _compat_projects[project_id] = entry
+    _compat_project_runs.setdefault(project_id, [])
+    return entry
+
 async def list_projects_compat(limit: int = 200, offset: int = 0):
     """Compatibility: newfrontend expects a projects collection.
 
@@ -566,67 +642,42 @@ async def list_projects_compat(limit: int = 200, offset: int = 0):
     """
     await asyncio.to_thread(_compat_ensure_loaded)
     deduped: Dict[str, Dict[str, Any]] = {}
-    
-    # Load modular projects from Config/projects (or config/projects)
-    for projects_dir in _compat_projects_dirs():
-        if not projects_dir.exists() or not projects_dir.is_dir():
-            continue
-        for file_path in sorted(projects_dir.glob("*.y*ml")):
-            pid = file_path.stem.strip()
-            if (
-                not pid
-                or pid in _compat_deleted_project_ids
-                or pid == "preview"
-                or pid.startswith("preview-")
-            ):
-                continue
-            if pid in deduped:
-                logger.warning(
-                    "Duplicate project_id '%s' found across project directories; "
-                    "keeping the already-loaded entry and skipping %s",
-                    pid, file_path,
-                )
-                continue
-            try:
-                # Cache parsed discovery headers by (mtime_ns, size) using CSafeLoader to eliminate repeated YAML parsing latency
-                cache = globals().setdefault("_DISCOVERY_FILE_CACHE", {})
-                stat = file_path.stat()
-                sig = (getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)), stat.st_size)
-                cached = cache.get(str(file_path))
-                if cached and cached[0] == sig:
-                    deduped[pid] = dict(cached[1])
-                    continue
-                file_text = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
-                yaml_loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-                project_cfg = await asyncio.to_thread(yaml.load, file_text, yaml_loader) or {}
-                if not isinstance(project_cfg, dict):
-                    continue
-                entry = _project_discovery_entry(pid, file_path, project_cfg)
-                cache[str(file_path)] = (sig, dict(entry))
-                deduped[pid] = entry
-            except Exception as e:
-                logger.warning(f"Failed to load project config {file_path}: {e}")
 
-    for p in _compat_projects.values():
-        pid = str(p.get("id") or p.get("project_id") or "").strip()
-        if not pid:
-            continue
-        if p.get("is_transient_preview") or pid == "preview" or pid.startswith("preview-"):
-            continue
+    # The project list comes from Postgres: the projects table merged with
+    # every project that has a saved config version. The in-memory cache only
+    # supplies the richer per-project metadata (status, folder, owner, ...).
+    from semabridge.api.services.project_shared import _compat_db_project_ids
 
-        current = deduped.get(pid)
-        if not current:
-            deduped[pid] = p
+    db_ids = await asyncio.to_thread(_compat_db_project_ids)
+    # Never hide a project the server has loaded but the database does not
+    # list yet (e.g. a config whose import failed, or a YAML added since
+    # startup): list the union, database order first.
+    cache_ids = [
+        str(p.get("id") or p.get("project_id") or "").strip()
+        for p in _compat_projects.values()
+        if isinstance(p, dict) and not p.get("is_transient_preview")
+    ]
+    db_ids = list(dict.fromkeys([*(db_ids or []), *cache_ids]))
+    for pid in db_ids:
+        if not pid or pid in _compat_deleted_project_ids or pid == "preview" or pid.startswith("preview-"):
             continue
-        cur_ts = str(current.get("updated_at") or current.get("created_at") or "")
-        new_ts = str(p.get("updated_at") or p.get("created_at") or "")
-        if new_ts >= cur_ts:
-            deduped[pid] = p
+        entry = _compat_projects.get(pid)
+        if not isinstance(entry, dict):
+            entry = await asyncio.to_thread(_project_entry_from_db, pid)
+            if not entry:
+                continue
+        if entry.get("is_transient_preview"):
+            continue
+        deduped[pid] = entry
 
     # Slice paginated projects BEFORE calling _project_with_semantic_models so only the requested page is hydrated
     paged_projects = list(deduped.values())[offset: offset + limit]
+    from semabridge.core.run_helpers import mask_project_for_display
+
     return [
-        _project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or ""))
+        mask_project_for_display(
+            _project_with_semantic_models(project, str(project.get("id") or project.get("project_id") or ""))
+        )
         for project in paged_projects
     ]
 
@@ -684,37 +735,32 @@ async def create_project_compat(request: dict):
 
     config_yaml = payload.get("config_yaml")
     if isinstance(config_yaml, str) and config_yaml.strip():
-        normalized_yaml = normalize_config_yaml(
-            project_id,
-            config_yaml,
-            project.get("name") or project_id,
-            project.get("owner_user_id"),
-        )
-        _compat_project_configs[project_id] = normalized_yaml
-        try:
-            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
-            _clear_project_mapping_cache(project_id)
-        except Exception as exc:
-            logger.warning("Failed to persist project config for %s: %s", project_id, exc)
+        selected_yaml = config_yaml
+        reason = "create"
     else:
-        project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
+        project_yaml = await asyncio.to_thread(get_project_config_text, project_id)
         repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         selected_yaml = project_yaml or repo_yaml or _compat_default_project_yaml(project)
-        normalized_yaml = normalize_config_yaml(
-            project_id,
-            selected_yaml,
-            project.get("name") or project_id,
-            project.get("owner_user_id"),
-        )
-        _compat_project_configs.setdefault(project_id, normalized_yaml)
-        try:
-            await asyncio.to_thread(_compat_save_project_yaml_text, project_id, normalized_yaml)
-            _clear_project_mapping_cache(project_id)
-        except Exception as exc:
-            logger.warning("Failed to initialize project config file for %s: %s", project_id, exc)
+        reason = "create_default"
+    normalized_yaml = normalize_config_yaml(
+        project_id,
+        selected_yaml,
+        project.get("name") or project_id,
+        project.get("owner_user_id"),
+    )
+    # Database first: a create whose config could not be saved fails loudly.
+    await asyncio.to_thread(
+        save_project_config,
+        project_id,
+        normalized_yaml,
+        reason=reason,
+        user_id=project.get("owner_user_id"),
+    )
+    _clear_project_mapping_cache(project_id)
 
     _compat_project_runs.setdefault(project_id, [])
     await asyncio.to_thread(_compat_save_store)
+    _raise_if_store_failed()
     return project
 
 async def get_project_compat(project_id: str):
@@ -802,6 +848,7 @@ async def patch_project_compat(project_id: str, payload: dict):
     _compat_projects[project_id] = project
     await asyncio.to_thread(_upsert_project_in_orm, project_id, project, payload)
     await asyncio.to_thread(_compat_save_store)
+    _raise_if_store_failed()
     return project
 
 async def delete_project_compat(project_id: str):
@@ -809,6 +856,10 @@ async def delete_project_compat(project_id: str):
     _compat_deleted_project_ids.add(project_id)
     await asyncio.to_thread(_delete_project_config_files, project_id)
     await asyncio.to_thread(_delete_project_from_orm, project_id)
+    try:
+        await asyncio.to_thread(project_config_store.delete_project_config, project_id)
+    except Exception as exc:
+        logger.error("Config versions of deleted project %s could not be removed: %s", project_id, exc)
     _compat_projects.pop(project_id, None)
     _compat_project_configs.pop(project_id, None)
     _compat_project_runs.pop(project_id, None)
@@ -820,6 +871,7 @@ async def delete_project_compat(project_id: str):
         if isinstance(mapping, dict) and str(mapping.get("project_id") or "").strip() == project_id:
             _compat_mappings.pop(mapping_id, None)
     await asyncio.to_thread(_compat_save_store)
+    _raise_if_store_failed()
     return Response(status_code=204)
 
 async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(default=False)):
@@ -828,34 +880,42 @@ async def get_project_config_compat(project_id: str, prefer_repo: bool = Query(d
     if not project:
         raise NotFoundError("Project not found")
     await asyncio.to_thread(_backfill_project_metadata, project_id, project)
-    # IMPORTANT: default behavior prefers per-project config so "Copy Presets"
-    # can load different YAMLs for different projects. Some UI flows (for
-    # example Model Mapping) can opt into prefer_repo=True to reflect the
-    # workspace semabridge.yaml as the single source of truth.
-    repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
+    # IMPORTANT: default behavior returns the per-project config so "Copy
+    # Presets" can load different YAMLs for different projects. Some UI flows
+    # (for example Model Mapping) can opt into prefer_repo=True to reflect the
+    # workspace semabridge.yaml (display only -- it is never saved as the
+    # project's config by a read).
     prefer_repo_flag = prefer_repo if isinstance(prefer_repo, bool) else False
-    project_yaml = await asyncio.to_thread(_compat_load_project_yaml_text, project_id)
-    if prefer_repo_flag and repo_yaml:
-        yaml_text = repo_yaml
-        _compat_project_configs[project_id] = repo_yaml
+    if prefer_repo_flag:
+        repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
+        if repo_yaml:
+            return {
+                "project_id": project_id,
+                "config_yaml": repo_yaml,
+                "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\', '/'),
+            }
+    project_yaml = await asyncio.to_thread(get_project_config_text, project_id)
+    if project_yaml:
+        yaml_text = project_yaml
     else:
-        yaml_text = project_yaml or _compat_project_configs.get(project_id) or repo_yaml or _compat_default_project_yaml(project)
+        # No saved config yet: hydrate one (repo YAML or a default) and save
+        # it through the single writer so every reader sees the same text.
+        repo_yaml = await asyncio.to_thread(_compat_load_repo_yaml_text)
         yaml_text = _normalize_project_config_yaml(
             project_id,
-            yaml_text,
+            repo_yaml or _compat_default_project_yaml(project),
             project.get("name") or project_id,
             project.get("owner_user_id"),
         )
-        if not project_yaml and yaml_text:
-            try:
-                await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
-            except Exception as exc:
-                logger.warning("Failed to persist hydrated project config for %s: %s", project_id, exc)
-    _compat_project_configs[project_id] = yaml_text
+        try:
+            saved = await asyncio.to_thread(save_project_config, project_id, yaml_text, reason="hydrate")
+            yaml_text = saved["config_yaml"]
+        except ConfigPersistenceError as exc:
+            logger.error("Hydrated config for %s could not be saved: %s", project_id, exc)
     return {
         "project_id": project_id,
         "config_yaml": yaml_text,
-        "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\\\', '/'),
+        "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\', '/'),
     }
 
 async def save_project_config_compat(project_id: str, payload: dict):
@@ -872,19 +932,25 @@ async def save_project_config_compat(project_id: str, payload: dict):
         project.get("name") or project_id,
         project.get("owner_user_id"),
     )
-    _compat_project_configs[project_id] = yaml_text
+    # The single writer: new version row in Postgres (raises if it cannot be
+    # saved), override table synced from mappings_overrides, cache + export.
+    saved = await asyncio.to_thread(
+        save_project_config,
+        project_id,
+        yaml_text,
+        reason=str((payload or {}).get("reason") or "save"),
+        user_id=(payload or {}).get("user_id") or project.get("owner_user_id"),
+    )
+    _clear_project_mapping_cache(project_id)
     project["semantic_name"] = _project_semantic_name(project, project_id)
-    try:
-        await asyncio.to_thread(_compat_save_project_yaml_text, project_id, yaml_text)
-        _clear_project_mapping_cache(project_id)
-    except Exception as exc:
-        logger.warning("Failed to persist project config for %s: %s", project_id, exc)
     project["updated_at"] = _compat_now_iso()
     await asyncio.to_thread(_compat_save_store)
+    _raise_if_store_failed()
     return {
         "status": "saved",
         "project_id": project_id,
-        "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\\\', '/'),
+        "version": saved.get("version"),
+        "yaml_path": str(_compat_project_yaml_path(project_id).resolve()).replace('\\', '/'),
         "warnings": [],
     }
 

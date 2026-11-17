@@ -19,9 +19,13 @@ import semabridge.api.services.project_shared as project_shared
 
 @pytest.fixture(autouse=True)
 def _clean_mappings():
+    from semabridge.api.services.project_config_store import delete_overrides
+
     old_mappings = dict(project_shared._compat_mappings)
     project_shared._compat_mappings.clear()
+    delete_overrides("proj_d5_test", refresh=False)
     yield
+    delete_overrides("proj_d5_test", refresh=False)
     project_shared._compat_mappings.clear()
     project_shared._compat_mappings.update(old_mappings)
 
@@ -48,28 +52,15 @@ def test_d5_yaml_and_store_override_merged_once_and_isolated():
     }
     yaml_text = yaml.safe_dump(initial_cfg, sort_keys=False)
 
-    # 2. Add an edit to the mapping store for the same (ModelAlpha, metrics.MetricOne),
-    # plus an edit for ModelBeta
-    project_shared._compat_mappings["m1"] = {
-        "id": "m1",
-        "project_id": project_id,
-        "model": "ModelAlpha",
-        "source_path": "metrics.MetricOne",
-        "source_name": "MetricOne",
-        "target_name": "METRIC_ONE_UPDATED",
-        "is_user_edited": True,
-        "status": "manual",
-    }
-    project_shared._compat_mappings["m2"] = {
-        "id": "m2",
-        "project_id": project_id,
-        "model": "ModelBeta",
-        "source_path": "metrics.MetricTwo",
-        "source_name": "MetricTwo",
-        "target_name": "METRIC_TWO_BETA",
-        "is_user_edited": True,
-        "status": "manual",
-    }
+    # 2. Later mapping edits (saved in the mapping_overrides table, the single
+    # home of user edits) for the same (ModelAlpha, metrics.MetricOne), plus
+    # an edit for ModelBeta
+    from semabridge.api.services.project_config_store import upsert_override
+
+    upsert_override(project_id, model="ModelAlpha", source_path="metrics.MetricOne",
+                    source_name="MetricOne", target_name="METRIC_ONE_UPDATED", refresh=False)
+    upsert_override(project_id, model="ModelBeta", source_path="metrics.MetricTwo",
+                    source_name="MetricTwo", target_name="METRIC_TWO_BETA", refresh=False)
 
     # 3. Apply manual mapping overrides to config YAML
     merged_yaml = _compat_apply_manual_mapping_overrides_to_cfg(yaml_text, project_id)

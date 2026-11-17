@@ -487,7 +487,9 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
       if (res.ok) {
         setStatusMessage({
           type: 'success',
-          text: `Generated ontology domain '${data.domain}' from OSI model (${data.concept_count} concepts, ${data.metric_count} metrics)!`,
+          text: data.multi_model
+            ? `Generated one domain per model (${(data.domains || []).filter((d) => d.id).length} models, ${data.concept_count} concepts, ${data.metric_count} metrics).`
+            : `Generated ontology domain '${data.domain}' from OSI model (${data.concept_count} concepts, ${data.metric_count} metrics)!`,
         });
         setBootstrapDuplicateError(null);
         setBootstrapModalOpen(false);
@@ -1091,15 +1093,19 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
   };
 
   // Filtered domains (by project scope if selected)
+  // A project's domains = generated from it or attached to it (one per model for
+  // multi-model projects). Never falls back to every domain: a project without
+  // domains shows the empty state.
   const visibleDomains = useMemo(() => {
     const all = domainData.domains || [];
     if (!selectedProjectSlug) return all;
-    const filteredByProject = all.filter(
+    const projKey = (v) => String(v || '').trim().toLowerCase().replace(/^proj-/, '');
+    const want = projKey(selectedProjectSlug);
+    return all.filter(
       (d) =>
-        d.source_project_id === selectedProjectSlug ||
+        projKey(d.source_project_id) === want ||
         (attachedDomainIds && (attachedDomainIds.includes(d.id) || attachedDomainIds.includes(d.domain)))
     );
-    return filteredByProject.length > 0 ? filteredByProject : all;
   }, [domainData.domains, selectedProjectSlug, attachedDomainIds]);
 
   const activeMetrics = useMemo(() => {

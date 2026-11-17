@@ -145,9 +145,11 @@ async def export_pbix_via_fabric(
 # =============================================================================
 
 
-async def _load_osi_model(project_id: str, snapshot_id: Optional[str] = None):
+async def _load_osi_model(project_id: str, snapshot_id: Optional[str] = None, model_id: Optional[str] = None):
     """Load the OSI model from the project's latest successful (or a given) snapshot.
 
+    ``model_id`` (multi-model projects) loads that model's latest snapshot
+    instead of the project head, which is whichever model synced last.
     Returns None ONLY when the project has no snapshot (caller -> 404).
     Any other failure raises HTTP 500 with the real reason.
     """
@@ -156,6 +158,16 @@ async def _load_osi_model(project_id: str, snapshot_id: Optional[str] = None):
     from semabridge.repository.model_repository import ModelRepository
 
     repo = ModelRepository()
+    if model_id and not snapshot_id:
+        from semabridge.ontology.models import model_key
+        from semabridge.ontology.project_models import latest_model_snapshots
+
+        wanted = model_key(model_id)
+        snaps = latest_model_snapshots(project_id, repo=repo)
+        hit = snaps.get(wanted) or next((m for m in snaps.values() if wanted in m.aliases), None)
+        if hit is None:
+            return None
+        snapshot_id = hit.snapshot_id
     # 1. Fetch head snapshot for the project from the persistent SQLite repository
     snap = repo.get_snapshot(snapshot_id) if snapshot_id else repo.get_head(project_id)
     if snap is None or (snapshot_id and snap.project_id != project_id):

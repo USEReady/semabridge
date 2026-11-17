@@ -21,12 +21,16 @@ from semabridge.repository.orm.account_models import (
     Post,
 )
 from semabridge.repository.orm.project_models import (
+    MappingOverride,
     Project,
+    ProjectConfigVersion,
     LocalFolder,
     RetentionPolicy,
 )
 from semabridge.repository.orm.run_models import (
     Run,
+    RunDeployEvent,
+    RunLease,
     RunModelResult,
     SourceArtifact,
     SyncConflictRow,
@@ -77,10 +81,14 @@ __all__ = [
     "Post",
     # Project lifecycle
     "Project",
+    "ProjectConfigVersion",
+    "MappingOverride",
     "LocalFolder",
     "RetentionPolicy",
     # Execution runs
     "Run",
+    "RunDeployEvent",
+    "RunLease",
     "RunModelResult",
     "SourceArtifact",
     "SyncConflictRow",

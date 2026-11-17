@@ -560,9 +560,13 @@ export function StepOntologyReview({ review, setReview, sourceConnector, buildRe
         {review.saved ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-success)' }}>
             <CheckCircle2 size={14} />
-            {review.saved.synced_existing
-              ? <>This project already has domain <b>{review.saved.domain}</b>; the review was merged into it ({review.saved.metric_count} metrics). Continue to the dry run.</>
-              : <>Saved as domain <b>{review.saved.domain}</b> ({review.saved.metric_count} metrics). Continue to the dry run.</>}
+            {Array.isArray(review.saved.domains) && review.saved.domains.length > 1
+              ? <>Saved one domain per model: {review.saved.domains.map((d, i) => (
+                  <span key={d.id || d.domain}>{i > 0 ? ', ' : ''}<b>{d.model_name || d.domain}</b> ({d.metric_count} metrics)</span>
+                ))}. Continue to the dry run.</>
+              : review.saved.synced_existing
+                ? <>This project already has domain <b>{review.saved.domain}</b>; the review was merged into it ({review.saved.metric_count} metrics). Continue to the dry run.</>
+                : <>Saved as domain <b>{review.saved.domain}</b> ({review.saved.metric_count} metrics). Continue to the dry run.</>}
           </span>
         ) : (
           <button type="button" style={btn('primary')} disabled={review.saving || !review.domainName.trim()} onClick={save}>

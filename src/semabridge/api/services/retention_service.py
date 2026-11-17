@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Set, Dict, Any
 from uuid import UUID
 
@@ -161,17 +161,19 @@ def apply_retention_policy(
     elif policy.strategy == "days":
         # Prune snapshots older than max_age_days
         if policy.max_age_days:
-            cutoff = datetime.utcnow() - timedelta(days=policy.max_age_days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=policy.max_age_days)
             to_prune = [
                 s.snapshot_id for s in snapshots 
-                if s.timestamp and s.timestamp < cutoff and s.snapshot_id not in referenced_ids
+                if s.timestamp
+                and (s.timestamp if s.timestamp.tzinfo else s.timestamp.replace(tzinfo=timezone.utc)) < cutoff
+                and s.snapshot_id not in referenced_ids
             ]
     
     # Soft-delete: set deleted_at, do NOT hard-delete
     if to_prune:
         stmt = update(SnapshotRow).where(
             SnapshotRow.snapshot_id.in_(to_prune)
-        ).values(deleted_at=datetime.utcnow())
+        ).values(deleted_at=datetime.now(timezone.utc))
         session.execute(stmt)
         session.commit()
         logger.info("Pruned %d snapshots for project %s", len(to_prune), project_id)
@@ -233,7 +235,7 @@ def set_retention_policy(
         policy.max_snapshots_per_connector = max_snapshots_per_connector
         policy.max_age_days = max_age_days
         policy.prune_manual_snapshots = prune_manual_snapshots
-        policy.updated_at = datetime.utcnow()
+        policy.updated_at = datetime.now(timezone.utc)
     else:
         # Create new
         policy = RetentionPolicy(

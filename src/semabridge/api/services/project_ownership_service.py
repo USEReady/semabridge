@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Iterable, Optional
 
 import yaml
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy import select
 
 from semabridge.api.services.project_shared import (
@@ -17,11 +16,14 @@ from semabridge.api.services.project_shared import (
     logger,
 )
 from semabridge.repository.orm.session_factory import db_manager
+from semabridge.auth.flags import auth_enabled as _auth_enabled
 from semabridge.domain.exceptions import AuthenticationError, PermissionError, SemaBridgeError
 
 
 def auth_is_enabled() -> bool:
-    return os.environ.get("AUTH_ENABLED", "").lower() == "true"
+    """Whether auth is enforced. Delegates to the single shared parser
+    (:func:`semabridge.auth.flags.auth_enabled`), which fails closed."""
+    return _auth_enabled()
 
 
 def get_request_user_id(request: Request) -> str | None:
@@ -45,9 +47,11 @@ def _normalize_owner_user_id(value: Any) -> str | None:
 
 
 def _parse_project_yaml_dict(project_id: str) -> Dict[str, Any]:
+    from semabridge.api.services.project_config_store import get_project_config_text
+
     raw_yaml = str(
-        _compat_project_configs.get(project_id)
-        or _compat_load_project_yaml_text(project_id)
+        _compat_project_configs.get(project_id)  # the live-config cache
+        or get_project_config_text(project_id)
         or ""
     ).strip()
     if not raw_yaml:
@@ -162,10 +166,15 @@ def _persist_project_owner(project_id: str, project: Dict[str, Any], owner_user_
             yaml_changed = True
         if yaml_changed:
             try:
-                _compat_save_project_yaml_text(
+                from semabridge.api.services.project_config_store import save_project_config
+
+                saved = save_project_config(
                     project_id,
                     yaml.safe_dump(parsed_yaml, sort_keys=False, allow_unicode=False),
+                    reason="owner_backfill",
+                    export=False,
                 )
+                _compat_save_project_yaml_text(project_id, saved["config_yaml"])  # export
             except Exception as exc:
                 logger.warning(
                     "Failed to persist owner_user_id for %s after %s backfill: %s",
@@ -304,28 +313,24 @@ def is_project_owned_by_user(project_id: str, user_id: str | None, *, log_denied
     if owner_user_id and owner_user_id == normalized_user_id:
         return True
 
-    # Backfill: unowned or default-sentinel projects → claim for the current user
-    if context["project"] and (not owner_user_id or owner_user_id == "1"):
-        logger.info(
-            "[ProjectOwnership] dynamically backfilling owner_user_id=%s for unowned or default project_id=%s",
-            normalized_user_id,
+    # Unowned / sentinel-owned / orphaned projects are NOT silently claimed
+    # by whoever touches them first (that used to hand projects to arbitrary
+    # users). Admins already returned True above; everyone else is denied and
+    # an admin can reassign ownership explicitly.
+    if context["project"] and (
+        not owner_user_id
+        or owner_user_id == "1"
+        or not _user_exists(owner_user_id)
+    ):
+        logger.warning(
+            "[%s] deny project_id=%s user_id=%s reason=unowned_or_orphaned_project owner_user_id=%s "
+            "(only admins can access it until ownership is assigned)",
+            log_prefix,
             project_id,
-        )
-        _persist_project_owner(project_id, context["project"], normalized_user_id, "dynamic_backfill")
-        return True
-
-    # Backfill: stored owner no longer exists in DB (e.g. after re-registration)
-    # Re-assign to the current user so they're not permanently locked out.
-    if context["project"] and owner_user_id and not _user_exists(owner_user_id):
-        logger.info(
-            "[ProjectOwnership] stored owner_user_id=%s no longer exists in DB; "
-            "re-assigning project_id=%s to current user_id=%s",
+            normalized_user_id,
             owner_user_id,
-            project_id,
-            normalized_user_id,
         )
-        _persist_project_owner(project_id, context["project"], normalized_user_id, "stale_owner_reassign")
-        return True
+        return False
 
     if log_denied:
         logger.warning(
@@ -338,6 +343,17 @@ def is_project_owned_by_user(project_id: str, user_id: str | None, *, log_denied
             bool(context["project"]),
         )
     return False
+
+
+def assert_project_access(project_id: str, user_id: str | None, *, log_prefix: str = "ProjectAuth") -> None:
+    """Shared project access guard for every controller.
+
+    No-op when auth is disabled. When enabled, raises HTTP 403 unless the
+    user owns the project or is an admin. Synchronous (may hit the DB) --
+    call via ``asyncio.to_thread`` from hot async paths if needed.
+    """
+    if auth_is_enabled() and not is_project_owned_by_user(project_id, user_id, log_prefix=log_prefix):
+        raise HTTPException(status_code=403, detail="Forbidden: project access denied")
 
 
 def validate_project_connector_accounts_belong_to_user(user_id: str | None, payload: Dict[str, Any]) -> None:

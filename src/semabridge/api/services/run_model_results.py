@@ -199,6 +199,14 @@ def run_belongs_to_project(project_id: str, run_id: str) -> bool:
                 return True
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from semabridge.api.services.run_records import get_project_run
+
+        db_run = get_project_run(rid)
+        if db_run is not None:
+            return str(db_run.get("project_id") or "") == pid
+    except Exception:  # noqa: BLE001
+        pass
     if load_run_model_results(pid, rid):
         return True
     root = _reports_root() / pid

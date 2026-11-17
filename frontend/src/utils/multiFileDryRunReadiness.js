@@ -114,6 +114,10 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
     const result = loaded ? (state.result || null) : null;
     const metricCount = rows.filter(isMetricRow).length;
     const compat = typeof result?.compatibility_score === 'number' ? result.compatibility_score : null;
+    // Ontology blocking conflicts block the sync exactly like blocking rows
+    // (the server-side gate counts both).
+    const ontologyBlockingCount = Array.isArray(result?.blocking_conflicts) ? result.blocking_conflicts.length : 0;
+    const plan = result?.model_plan && typeof result.model_plan === 'object' ? result.model_plan : null;
     return {
       fileId,
       index,
@@ -130,7 +134,11 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
       result,
       columnCount: rows.length - metricCount,
       metricCount,
-      blockingCount: rows.filter(isReadinessBlockingRow).length,
+      blockingCount: rows.filter(isReadinessBlockingRow).length + ontologyBlockingCount,
+      ontologyBlockingCount,
+      // What the sync will deploy for this model (same plan the sync uses):
+      // { view_name, physical_namespace, ... } or null.
+      plan,
       compatibilityScore: compat,
       schemaConflictCount: Array.isArray(result?.schema_conflicts) ? result.schema_conflicts.length : 0,
     };

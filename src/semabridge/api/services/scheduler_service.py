@@ -50,6 +50,12 @@ class SchedulerService:
         if not self._scheduler.running:
             return
         self._scheduler.shutdown(wait=False)
+        try:
+            from semabridge.core.run_coordination import scheduler_leadership
+
+            scheduler_leadership.release()
+        except Exception:  # noqa: BLE001
+            pass
         logger.info("Project scheduler stopped")
 
     def configure(
@@ -170,6 +176,16 @@ class SchedulerService:
             return
 
         schedule_label = "Scheduled" if schedule_type == "time" else "Cron"
+        # Every worker process restores the schedules (so the API can show
+        # them), but only the scheduler leader -- the process holding the
+        # PostgreSQL advisory lock -- fires them, so a schedule runs once.
+        from semabridge.core.run_coordination import scheduler_leadership
+
+        if not await asyncio.to_thread(scheduler_leadership.is_leader):
+            logger.info("Scheduled run of %s left to the scheduler leader process", project_id)
+            if schedule_type == "time":
+                self.delete_project_schedule(project_id)
+            return
         try:
             # Project sync performs blocking connector/LLM/warehouse work. Keep it
             # off the Uvicorn event loop so lightweight API requests stay responsive.

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import { BTN, BTN_SM, BTN_PRIMARY, CARD, INPUT_STYLE, MONO, plural } from './styles';
 import { Pill, Segmented } from './ui';
+import { groupDomainsByProject, viewTail } from './domainGroups';
 
 const TH = {
   padding: '9px 14px',
@@ -23,7 +24,13 @@ function Empty({ children }) {
 
 function DomainRail({ domains, selected, onSelect, issueCountFor }) {
   const [q, setQ] = useState('');
-  const list = q.trim() ? domains.filter((d) => d.domain.toLowerCase().includes(q.toLowerCase())) : domains;
+  const ql = q.trim().toLowerCase();
+  const list = ql
+    ? domains.filter((d) =>
+        [d.domain, d.source_model_name, d.source_project_id].some((v) => String(v || '').toLowerCase().includes(ql)))
+    : domains;
+  const groups = groupDomainsByProject(list);
+  const showHeaders = groups.length > 1 || groups.some((g) => g.multiModel);
   return (
     <div style={{ borderRight: '1px solid var(--border-main)', padding: 10, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <input
@@ -33,9 +40,29 @@ function DomainRail({ domains, selected, onSelect, issueCountFor }) {
         placeholder="Filter models…"
         style={{ ...INPUT_STYLE, width: '100%', boxSizing: 'border-box', marginBottom: 6 }}
       />
-      {list.map((d) => {
+      {groups.map((g) => (
+        <React.Fragment key={g.key || '_other'}>
+          {showHeaders && (
+            <div
+              style={{
+                fontSize: 10.5,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: 'var(--text-tertiary)',
+                padding: '8px 10px 2px',
+              }}
+              title={g.multiModel ? 'One domain per model (semantic view)' : undefined}
+            >
+              {g.label}
+              {g.multiModel && <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}> · {plural(g.items.filter((d) => d.source_model_id).length, 'model')}</span>}
+            </div>
+          )}
+          {g.items.map((d) => {
         const on = d.domain === selected;
         const issues = issueCountFor(d);
+        const isModel = Boolean(d.source_model_id);
+        const title = g.multiModel ? (isModel ? d.source_model_name || d.source_model_id : 'Shared') : d.domain;
         return (
           <button
             key={d.domain}
@@ -54,17 +81,20 @@ function DomainRail({ domains, selected, onSelect, issueCountFor }) {
               gap: 2,
             }}
           >
-            <b style={{ fontSize: 13, color: on ? 'var(--accent-blue)' : 'var(--text-primary)' }}>{d.domain}</b>
+            <b style={{ fontSize: 13, color: on ? 'var(--accent-blue)' : 'var(--text-primary)' }} title={d.domain}>{title}</b>
             <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {d.owner ? `${d.owner} · ` : ''}
+                {g.multiModel && isModel && d.semantic_view_name ? `${viewTail(d.semantic_view_name)} · ` : ''}
+                {!g.multiModel && d.owner ? `${d.owner} · ` : ''}
                 {plural(d.metric_count || 0, 'metric')}
               </span>
               {issues > 0 && <Pill tone="warn" style={{ padding: '0 6px' }}>{issues}</Pill>}
             </span>
           </button>
         );
-      })}
+          })}
+        </React.Fragment>
+      ))}
       {list.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: 8 }}>No match</div>}
     </div>
   );
@@ -101,6 +131,7 @@ export default function DomainsView({
   }
 
   const info = domainDetail || domains.find((d) => d.domain === selectedDomain) || {};
+  const summary = domains.find((d) => d.domain === selectedDomain) || {};
   const counts = {
     metrics: domainDetail?.parsed?.metrics?.length ?? info.metric_count,
     concepts: domainDetail?.parsed?.concepts?.length ?? info.concept_count,
@@ -131,6 +162,16 @@ export default function DomainsView({
           }}
         >
           <b style={{ fontSize: 14 }}>{selectedDomain}</b>
+          {summary.source_model_id && (
+            <span title="This domain belongs to one model of a multi-model project">
+              <Pill tone="n">Model: {summary.source_model_name || summary.source_model_id}</Pill>
+            </span>
+          )}
+          {summary.semantic_view_name && (
+            <span style={{ fontSize: 12, color: 'var(--text-tertiary)', fontFamily: MONO }} title={summary.semantic_view_name}>
+              {viewTail(summary.semantic_view_name)}
+            </span>
+          )}
           {info.version && <Pill tone="n">v{info.version}</Pill>}
           {info.owner && <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Owner: {info.owner}</span>}
           <span style={{ flex: 1 }} />

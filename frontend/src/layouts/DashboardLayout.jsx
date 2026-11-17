@@ -10,6 +10,7 @@ import ToastContainer from '../components/ToastContainer';
 import LogsPanel from '../components/LogsPanel';
 import CommandPalette from '../components/CommandPalette';
 import LiveValidator from '../components/LiveValidator';
+import DuplicateSyncDialog from '../components/common/DuplicateSyncDialog';
 import { useLogs } from '../context/LogsContext';
 import LeftNavigation from '../components/LeftNavigation';
 
@@ -199,6 +200,7 @@ export default function DashboardLayout() {
       {/* ── Global Overlays ── */}
       <ToastContainer onOpenLogs={() => setShowLogs(true)} />
       <LiveValidator />
+      <DuplicateSyncDialog />
 
       <LogsPanel
         isOpen={showLogs}

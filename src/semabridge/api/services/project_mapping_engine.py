@@ -1,9 +1,35 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+_mapping_logger = logging.getLogger("semabridge.mapping")
+
+
+def _log_mapping_event(project_id: Any, event: Dict[str, Any]) -> None:
+    """Structured mapping/collision diagnostics at DEBUG level (replaces the
+    former stdout ``print(json.dumps(...))``), tagged with the project and,
+    inside a run, the run id and model being processed."""
+    if not _mapping_logger.isEnabledFor(logging.DEBUG):
+        return
+    import json as _json
+
+    from semabridge.core.run_model_logs import current_scope
+
+    scope = current_scope()
+    _mapping_logger.debug(
+        "mapping_event %s",
+        _json.dumps({
+            "project_id": project_id or (scope[0] if scope else None),
+            "run_id": scope[1] if scope else None,
+            "model": scope[2] if scope else None,
+            **event,
+        }, default=str),
+    )
 
 from semabridge.utils.identifiers import IdentifierSanitizer, SNOWFLAKE_RESERVED_WORDS
 from semabridge.core.drop_ledger import DropLedger, DropStage
@@ -400,13 +426,13 @@ def extract_model_entities(
             for rcol in removed_cols:
                 rcname = _column_name(rcol)
                 normalized_identifier = _default_target_identifier(rcname, normalized_target_connector)
-                print(json.dumps({
+                _log_mapping_event(None, {
                     "layer": "metadata_deduplication",
                     "dataset_name": dataset_name,
                     "removed_column_name": rcname,
                     "normalized_identifier": normalized_identifier,
                     "action": "removed_duplicate_metadata"
-                }))
+                })
                 ledger.record(
                     "column", rcname, DropStage.EXTRACTION,
                     f"Duplicate physical-column metadata for target identifier "
@@ -490,10 +516,15 @@ def extract_model_entities(
 def _scope_key(entity: Dict[str, Any]) -> str:
     kind = str(entity.get("entity_kind") or "").lower()
     if kind == "column":
-        # Use a flat column scope so columns from DIFFERENT tables compete for the
-        # same namespace — matching Snowflake's flat DIMENSIONS namespace where all
-        # columns from all tables share a single identifier space.
-        return f"column::{entity.get('model_name') or 'model'}"
+        # One namespace PER LOGICAL TABLE, exactly what a Snowflake semantic
+        # view enforces: dimensions/facts are named ``<table_alias>.<name>``,
+        # so ``CUSTOMER.NAME`` and ``PRODUCT.NAME`` coexist (Snowflake docs,
+        # "Querying semantic views": dot-notation is required when two
+        # entities define a calculation with the same name), and the emitter
+        # (dimensions_clause_builder) dedupes aliases per logical table too.
+        # A flat model-wide scope reported collisions the deploy never has.
+        parent = str(entity.get("parent_source_path") or "").strip()
+        return f"column::{entity.get('model_name') or 'model'}::{parent}"
     if kind == "table":
         return f"table::{entity.get('model_name') or 'model'}"
     if kind == "metric":
@@ -713,6 +744,66 @@ def reconcile_enrichment_unverifiable_advisories(
             row["advisory_notes"] = merged_notes
 
 
+def _row_table_name(row: Dict[str, Any]) -> str:
+    parent = str(row.get("parent_source_path") or "").strip()
+    if not parent:
+        return ""
+    return re.sub(r"^datasets\.", "", parent, flags=re.IGNORECASE).split(".")[0].strip()
+
+
+def collision_resolution_suggestions(
+    row: Dict[str, Any],
+    taken: set,
+    target_connector: Optional[str],
+) -> List[str]:
+    """Rename options for one colliding row, best first, every one of them
+    already in the target's final identifier form (Snowflake: the emitter's
+    to_alias rules, so the name the user picks is deployed verbatim) and not
+    in ``taken`` (upper-cased names already used in the row's namespace).
+    The first option is the recommended one and is always present."""
+    alias = lambda value: _default_target_identifier(value, target_connector)  # noqa: E731
+    source_name = str(row.get("source_name") or row.get("target_name") or "field")
+    base = alias(source_name)
+    table = _row_table_name(row)
+    seed = str(row.get("parent_source_path") or row.get("model_name") or "").strip()
+    digest = deterministic_hash_suffix(f"{seed}::{source_name}")
+    candidates: List[str] = []
+    if table and alias(table).upper() != base.upper():
+        candidates.append(alias(f"{table}_{source_name}"))
+    kind = str(row.get("entity_kind") or "").lower()
+    candidates.append(alias(f"{'MSR' if kind in ('metric', 'measure') else 'COL'}_{base}"))
+    candidates.append(alias(f"{base}_{digest}"))
+    out: List[str] = []
+    for candidate in candidates:
+        if candidate and candidate.upper() not in taken and candidate not in out:
+            out.append(candidate)
+    if not out:
+        n = 2
+        while alias(f"{base}_{digest}_{n}").upper() in taken:
+            n += 1
+        out.append(alias(f"{base}_{digest}_{n}"))
+    return out
+
+
+def _assign_resolution_suggestions(rows: List[Dict[str, Any]], target_connector: Optional[str]) -> None:
+    """Fill ``resolution_suggestions`` on every colliding row. Recommended
+    names (first options) are reserved as they are handed out, so applying
+    every row's first suggestion (Resolve All) yields unique names within
+    each namespace."""
+    taken_by_scope: Dict[str, set] = {}
+    for row in rows:
+        name = str(row.get("target_name") or "").strip().upper()
+        if name:
+            taken_by_scope.setdefault(row.get("mapping_scope") or "", set()).add(name)
+    for row in rows:
+        if not row.get("collision_detected"):
+            continue
+        taken = taken_by_scope.setdefault(row.get("mapping_scope") or "", set())
+        suggestions = collision_resolution_suggestions(row, taken, target_connector)
+        row["resolution_suggestions"] = suggestions
+        taken.add(suggestions[0].upper())
+
+
 def build_entity_mappings(
     *,
     project_id: str,
@@ -902,7 +993,7 @@ def build_entity_mappings(
             else:
                 reason = validation["validation_code"]
 
-            print(json.dumps({
+            _log_mapping_event(project_id, {
                 "layer": "build_entity_mappings",
                 "source_name": source_name,
                 "source_path": source_path,
@@ -912,7 +1003,7 @@ def build_entity_mappings(
                 "collision_group": collision_group_val,
                 "validation_code": validation["validation_code"],
                 "semantic_name": current_semantic
-            }))
+            })
 
         # Back-patch the first conflicting entry suggestions when a new collision is detected
         if collision_detected and prior_claim:
@@ -949,7 +1040,7 @@ def build_entity_mappings(
 
                     # Log the back-patched prior entry as well
                     import json
-                    print(json.dumps({
+                    _log_mapping_event(project_id, {
                         "layer": "build_entity_mappings",
                         "source_name": _prior_entry.get("source_name"),
                         "source_path": _prior_sp,
@@ -959,7 +1050,7 @@ def build_entity_mappings(
                         "collision_group": f"{scope}:{sanitized}",
                         "validation_code": "NAME_COLLISION",
                         "semantic_name": _semantic_name(_prior_entry.get("source_name"))
-                    }))
+                    })
 
         entity_status = _entity_status(entity, is_manual)
         static_risk_tier = _compute_static_risk_tier(entity, entity_status)
@@ -1033,25 +1124,8 @@ def build_entity_mappings(
                 else:
                     row["validation_message"] = "Name collision detected."
                 
-                # Symmetrically calculate suggestions if not already present
-                if not row.get("resolution_suggestions"):
-                    _parent_path = str(row.get("parent_source_path") or row.get("source_path") or "").strip()
-                    _table_name = ""
-                    if _parent_path:
-                        _stripped = re.sub(r"^datasets\.", "", _parent_path, flags=re.IGNORECASE).split(".")[0]
-                        _table_name = sanitize_identifier(_stripped)
-                    sanitized_name = row.get("sanitized_name") or sanitize_identifier(row.get("source_name"))
-                    
-                    _seed = str(row.get("parent_source_path") or row.get("model_name") or "").strip()
-                    _field = row.get("source_name")
-                    _hash = deterministic_hash_suffix(f"{_seed}::{_field}")
-                    
-                    _suggestions = []
-                    if _table_name and _table_name.upper() != sanitized_name.upper():
-                        _suggestions.append(f"{_table_name}_{sanitized_name}")
-                        _suggestions.append(f"{_table_name}_{sanitized_name}_{_hash}")
-                    _suggestions.append(f"{sanitized_name}_{_hash}")
-                    row["resolution_suggestions"] = _suggestions
+                # Suggestions are (re)computed below, once every name of
+                # every scope is known, so they are guaranteed unique.
             
             first_idx = indices[0]
             first_row = generated[first_idx]
@@ -1084,6 +1158,8 @@ def build_entity_mappings(
             row["validation_message"] = val["validation_message"]
             row["suggested_target_name"] = val["suggested_target_name"]
             row["resolution_suggestions"] = []
+
+    _assign_resolution_suggestions(generated, normalized_target_connector)
 
     return {
         "session_key": session,

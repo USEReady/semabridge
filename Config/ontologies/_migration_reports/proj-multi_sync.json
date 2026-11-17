@@ -1,0 +1,163 @@
+{
+  "results": [
+    {
+      "project_id": "proj-multi_sync",
+      "dry_run": false,
+      "status": "migrated",
+      "merged_domains": [
+        "multi_sync"
+      ],
+      "reports": [
+        {
+          "models": {
+            "competitive_marketing_analysis": {
+              "domain": "multi_sync \u00b7 Competitive Marketing Analysis",
+              "id": "multi_sync__competitive_marketing_analysis",
+              "semantic_view_name": "SEMABRIDGE.SEMABRIDGE_WORKSPACE.COMPETITIVE_MARKETING_ANALYSIS_SEMANTIC",
+              "concepts": 9,
+              "metrics": 51,
+              "relationships": 8,
+              "carried_concepts": 9,
+              "carried_metrics": 50
+            },
+            "continent": {
+              "domain": "multi_sync \u00b7 continent",
+              "id": "multi_sync__continent",
+              "semantic_view_name": "SEMABRIDGE.SEMABRIDGE_WORKSPACE.CONTINENT_SEMANTIC",
+              "concepts": 1,
+              "metrics": 2,
+              "relationships": 0,
+              "carried_concepts": 1,
+              "carried_metrics": 2
+            },
+            "core_finance_v1": {
+              "domain": "multi_sync \u00b7 Core_Finance_v1",
+              "id": "multi_sync__core_finance_v1",
+              "semantic_view_name": "SEMABRIDGE.SEMABRIDGE_WORKSPACE.CORE_FINANCE_V1_SEMANTIC",
+              "concepts": 65,
+              "metrics": 18,
+              "relationships": 8,
+              "carried_concepts": 65,
+              "carried_metrics": 18
+            }
+          },
+          "clashes": [
+            {
+              "kind": "concept",
+              "name": "Category",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "Date",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "Geo",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "Indicators",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "KPI",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "Manufacturer",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "Product",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "SalesFact",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "Sentiment",
+              "models": [
+                "competitive_marketing_analysis",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            },
+            {
+              "kind": "concept",
+              "name": "continent 1",
+              "models": [
+                "continent",
+                "core_finance_v1"
+              ],
+              "user_authored": false,
+              "resolution": "kept separate per model (BI-derived)"
+            }
+          ],
+          "shared": [],
+          "dropped_bi": [],
+          "skipped_models": [],
+          "merged_domain": {
+            "domain": "multi_sync",
+            "id": "multi_sync",
+            "concepts": 65,
+            "metrics": 71
+          }
+        }
+      ],
+      "pruned_attachments": [
+        "proj-transport_pbix:transport_pbix"
+      ]
+    }
+  ],
+  "load_errors": []
+}

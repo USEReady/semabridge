@@ -101,6 +101,9 @@ def _apply_mapping_overrides_from_config(
 
     renamed_columns = 0
     renamed_metrics = 0
+    # Overrides that match nothing in this model used to be skipped silently
+    # (that hid a bug where 0 of 519 saved names applied). Report them.
+    unmatched_overrides: list = []
 
     dataset_by_name: Dict[str, Any] = {}
     for dataset in sml_model.datasets:
@@ -163,6 +166,8 @@ def _apply_mapping_overrides_from_config(
                     metric_name, len(normalized_candidates), metric_lookup_normalized, len(sibling_override_names),
                 )
 
+        if matched_metric is None:
+            unmatched_overrides.append(f"metrics.{metric_name}")
         if matched_metric is not None and str(matched_metric.unique_name) != target_name:
             old_name = str(matched_metric.unique_name)
             if not getattr(matched_metric, "original_name", None):
@@ -197,6 +202,7 @@ def _apply_mapping_overrides_from_config(
             column_name = source_path[source_path.index(col_sep) + len(col_sep):]
             dataset = dataset_by_name.get(dataset_name)
             if not dataset:
+                unmatched_overrides.append(source_path)
                 continue
             for column in dataset.columns:
                 if str(column.unique_name) == column_name:
@@ -206,7 +212,20 @@ def _apply_mapping_overrides_from_config(
                         column.label = target_name
                         renamed_columns += 1
                     break
+            else:
+                unmatched_overrides.append(source_path)
 
+    if unmatched_overrides:
+        logger.warning(
+            "%d of %d saved mapping override(s) matched nothing in model '%s' and were not applied "
+            "(the field was renamed or removed in the source?): %s%s",
+            len(unmatched_overrides), len(overrides), getattr(sml_model, "unique_name", "?"),
+            ", ".join(unmatched_overrides[:10]), " ..." if len(unmatched_overrides) > 10 else "",
+        )
+    try:
+        sml_model.unmatched_mapping_overrides = list(unmatched_overrides)  # type: ignore[attr-defined]
+    except Exception:
+        pass
     if renamed_columns or renamed_metrics:
         logger.info(
             "Applied mapping overrides from config: columns=%s metrics=%s",

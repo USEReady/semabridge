@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from semabridge.api.services import project_projects_impl as ppi
+from semabridge.api.services import project_shared as _project_shared
 
 
 def _reset_compat_state() -> None:
@@ -19,10 +20,18 @@ def _reset_compat_state() -> None:
     ppi._compat_mappings.clear()
     ppi._compat_project_schedules.clear()
     ppi._compat_store_loaded = False
+    # Startup loading is guarded by its own flag; clear it so the reset
+    # state is reloaded from this test's project files.
+    _project_shared._compat_bootstrapped = False
 
 
 def test_project_discovery_returns_display_name(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    # Discovery also scans the repo's own Config/projects (CWD-independent);
+    # confine it to this test's directory so real projects never leak in.
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_config_roots", lambda: [tmp_path / "Config"])
 
     projects_dir = Path("Config/projects")
     projects_dir.mkdir(parents=True, exist_ok=True)
@@ -51,6 +60,11 @@ def test_project_discovery_returns_display_name(monkeypatch, tmp_path):
 
 def test_save_project_config_persists_yaml(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    # Discovery also scans the repo's own Config/projects (CWD-independent);
+    # confine it to this test's directory so real projects never leak in.
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_config_roots", lambda: [tmp_path / "Config"])
     _reset_compat_state()
 
     project_id = "proj-2000"
@@ -84,6 +98,11 @@ def test_save_project_config_persists_yaml(monkeypatch, tmp_path):
 
 def test_create_project_reuses_existing_semantic_name(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    # Discovery also scans the repo's own Config/projects (CWD-independent);
+    # confine it to this test's directory so real projects never leak in.
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_config_roots", lambda: [tmp_path / "Config"])
     _reset_compat_state()
 
     first = asyncio.run(
@@ -132,6 +151,11 @@ def test_list_projects_keeps_distinct_ids_sharing_same_display_name(monkeypatch,
     What this regression actually cares about — that dedup never drops
     either id — doesn't need an exact count to prove it."""
     monkeypatch.chdir(tmp_path)
+    # Discovery also scans the repo's own Config/projects (CWD-independent);
+    # confine it to this test's directory so real projects never leak in.
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_config_roots", lambda: [tmp_path / "Config"])
     _reset_compat_state()
 
     ppi._compat_projects["proj-aaa"] = {
@@ -162,6 +186,11 @@ def test_list_projects_keeps_distinct_ids_sharing_same_display_name(monkeypatch,
 
 def test_list_projects_includes_semantic_models(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    # Discovery also scans the repo's own Config/projects (CWD-independent);
+    # confine it to this test's directory so real projects never leak in.
+    monkeypatch.setattr(ppi, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_projects_dirs", lambda: [tmp_path / "Config" / "projects"])
+    monkeypatch.setattr(_project_shared, "_compat_config_roots", lambda: [tmp_path / "Config"])
 
     projects_dir = Path("Config/projects")
     projects_dir.mkdir(parents=True, exist_ok=True)

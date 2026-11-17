@@ -119,21 +119,38 @@ async def restore_project_version_compat(project_id: str, payload: Dict[str, Any
         _compat_sync_mode_for_restore_snapshot,
         _compat_apply_restore_overrides,
     )
-    from semabridge.api.services.project_shared import (
-        _compat_default_project_yaml,
-        _compat_project_configs,
-    )
+    from semabridge.api.services.project_shared import _compat_default_project_yaml
 
     snapshot_row = matches[0]
-    config_yaml = str(
-        snapshot_row.get("project_config_yaml")
-        or _compat_project_configs.get(project_id)
-        or _compat_default_project_yaml(_compat_projects[project_id])
-    )
+    from semabridge.api.services import project_config_store
+
+    # The config the snapshot was taken with: kept on the snapshot entry
+    # while it is in memory, otherwise the project_configs version that was
+    # live at the snapshot's time; the current config as the last resort.
+    config_yaml = str(snapshot_row.get("project_config_yaml") or "")
+    if not config_yaml.strip():
+        try:
+            config_yaml = project_config_store.config_text_at(project_id, snapshot_row.get("created_at"))
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).error("Config version at snapshot %s unavailable: %s", snapshot_id, exc)
+            config_yaml = ""
+    if not config_yaml.strip():
+        config_yaml = str(
+            project_config_store.get_project_config_text(project_id)
+            or _compat_default_project_yaml(_compat_projects[project_id])
+        )
     overrides = (payload or {}).get("overrides")
     if isinstance(overrides, dict) and overrides:
         config_yaml = _compat_apply_restore_overrides(config_yaml, overrides)
-    _compat_project_configs[project_id] = config_yaml
+    # Persist the restored config through the single writer (new version,
+    # reason="restore"; its mappings_overrides become the saved names again):
+    # a memory-only restore was silently reverted by the next sync or restart.
+    saved = project_config_store.save_project_config(
+        project_id, config_yaml, reason="restore", user_id=(payload or {}).get("user_id"),
+    )
+    config_yaml = saved["config_yaml"]
     _compat_projects[project_id]["updated_at"] = _compat_now_iso()
     sync_mode = _compat_sync_mode_for_restore_snapshot(project_id, snapshot_id, payload)
     restore_run, restore_cfg, restore_started = _create_project_run(

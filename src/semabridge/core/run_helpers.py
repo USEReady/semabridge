@@ -83,7 +83,8 @@ def resolve_run_status(sync_result: Dict[str, Any]) -> str:
     The sync engine reports ``"success"``, ``"partial"``, or anything else
     (treated as failure).  This helper converts that into the three-valued
     status used by the run record and the CLI summary: ``"success"``,
-    ``"warning"``, or ``"failed"``.
+    ``"partial"`` (some models failed -- distinct from a successful run
+    with warnings, and retryable per model), or ``"failed"``.
 
     Args:
         sync_result: The dict returned by ``sync_models`` or an equivalent
@@ -91,12 +92,12 @@ def resolve_run_status(sync_result: Dict[str, Any]) -> str:
                      examined.
 
     Returns:
-        One of ``"success"``, ``"warning"``, or ``"failed"``.
+        One of ``"success"``, ``"partial"``, or ``"failed"``.
 
     Example::
 
         resolve_run_status({"status": "success"})  # "success"
-        resolve_run_status({"status": "partial"})  # "warning"
+        resolve_run_status({"status": "partial"})  # "partial"
         resolve_run_status({"status": "error"})    # "failed"
         resolve_run_status({})                      # "failed"
     """
@@ -104,7 +105,7 @@ def resolve_run_status(sync_result: Dict[str, Any]) -> str:
     if overall == "success":
         return "success"
     if overall == "partial":
-        return "warning"
+        return "partial"
     return "failed"
 
 
@@ -118,22 +119,24 @@ def mask_run_for_display(run: Dict[str, Any]) -> Dict[str, Any]:
     Demo mode only ever affects what gets DISPLAYED here — it never changes
     what's stored. The caller's own dict (e.g. the same object referenced by
     the in-memory run-history cache) is never mutated; the true status,
-    error, and logs are recorded durably elsewhere (the ``runs`` DB table
-    via ``ModelRepository.record_run_complete``, plus a
-    ``DEMO_MODE_MASKED_FAILURE`` log line) and are never round-tripped back
-    into this masked dict — checking the real outcome is a deliberate,
-    out-of-band action (DB query or log grep), not something the running
-    app ever displays, even to an admin/presenter view.
+    error, and logs are recorded durably (the ``runs`` table and the
+    ``DEMO_MODE_MASKED_FAILURE`` log line). The masked dict always carries
+    ``demo_masked: True`` plus the real ``true_status`` / ``true_message``
+    so the UI can mark the badge as a demo presentation and reveal the real
+    outcome (tooltip) -- masking never hides that a run failed.
 
     A no-op (returns *run* unchanged) unless ``run["demo_mode"]`` is true
     AND the run's own status is anything other than a genuine success —
     i.e. there is nothing to mask for the overwhelming majority of runs.
     """
     true_status = str(run.get("status") or "").strip().lower()
-    if not run.get("demo_mode") or true_status in ("success", "running", ""):
+    if not run.get("demo_mode") or true_status in ("success", "running", "queued", ""):
         return run
 
     masked = dict(run)
+    masked["demo_masked"] = True
+    masked["true_status"] = true_status
+    masked["true_message"] = run.get("message") or run.get("error")
     masked["status"] = "success"
     masked["message"] = _DEMO_SUCCESS_MESSAGE
     masked.pop("error", None)
@@ -159,6 +162,9 @@ def mask_run_for_display(run: Dict[str, Any]) -> Dict[str, Any]:
                 masked_results.append(item)
                 continue
             new_item = dict(item)
+            if str(item.get("status") or "").lower() not in ("success", ""):
+                new_item["demo_masked"] = True
+                new_item["true_status"] = item.get("status")
             new_item["status"] = "success"
             new_item["error"] = None
             new_item["error_message"] = None
@@ -231,4 +237,26 @@ def mask_run_for_display(run: Dict[str, Any]) -> Dict[str, Any]:
         masked_rec.pop("errors", None)
         masked["reconciliation"] = masked_rec
 
+    return masked
+
+
+_PROJECT_MASKABLE = ("failed", "warning", "partial", "interrupted")
+
+
+def mask_project_for_display(project: Dict[str, Any]) -> Dict[str, Any]:
+    """Projects-grid counterpart of :func:`mask_run_for_display`.
+
+    The stored project status is always the true outcome of its last run;
+    when that run was a demo-mode run, the grid shows "active" but flags it
+    (``demo_masked``) and carries ``true_status`` so the badge can show a
+    demo marker and the real status. Never mutates *project*."""
+    if not isinstance(project, dict) or not project.get("last_run_demo_mode"):
+        return project
+    true_status = str(project.get("status") or "").strip().lower()
+    if true_status not in _PROJECT_MASKABLE:
+        return project
+    masked = dict(project)
+    masked["status"] = "active"
+    masked["demo_masked"] = True
+    masked["true_status"] = true_status
     return masked

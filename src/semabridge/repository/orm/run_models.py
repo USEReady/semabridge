@@ -22,6 +22,8 @@ class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (
         Index("ix_runs_project", "project_id"),
+        Index("ix_runs_parent", "parent_run_id"),
+        Index("ix_runs_kind_status", "run_kind", "status"),
     )
 
     run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -52,6 +54,21 @@ class Run(Base):
     # value.
     demo_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     demo_masked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # One run identity (sb0004): "project" = the run a user or schedule
+    # started (listed in the UI, id shared by store record, logs and report
+    # files); "model" = one engine row per model, linked by parent_run_id.
+    run_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="model", server_default="model")
+    parent_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Liveness: refreshed every few seconds while the run executes; a
+    # running row whose heartbeat is older than the lease is "interrupted".
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(_UTC_DT, nullable=True)
+    schedule_label: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Run-level fields of a project run (no per-model blobs).
+    meta_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retry_of_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="runs")
@@ -99,6 +116,50 @@ class RunModelResult(Base):
 
     def __repr__(self) -> str:
         return f"<RunModelResult(run_id={self.run_id!r}, model={self.model!r}, status={self.status!r})>"
+
+
+class RunLease(Base):
+    """DB-backed mutual exclusion valid across processes and restarts.
+
+    ``project:<id>`` -- one sync of a project at a time; ``target:<fqn>`` --
+    a Snowflake object a deploy writes. Expires unless the holding run keeps
+    heartbeating (see core/run_coordination.py).
+    """
+
+    __tablename__ = "run_leases"
+    __table_args__ = (Index("ix_run_leases_run", "run_id"),)
+
+    lease_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    lease_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    holder: Mapped[str] = mapped_column(String(255), nullable=False)
+    project_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    acquired_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    heartbeat_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
+
+
+class RunDeployEvent(Base):
+    """Journal of warehouse objects a deploy created / promoted / dropped /
+    cleaned up (staged deploy, see connectors/staged_deploy.py)."""
+
+    __tablename__ = "run_deploy_events"
+    __table_args__ = (
+        Index("ix_run_deploy_events_run", "run_id"),
+        Index("ix_run_deploy_events_project_run", "project_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    object_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    object_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_UTC_DT, nullable=False)
 
 
 class SourceArtifact(Base):

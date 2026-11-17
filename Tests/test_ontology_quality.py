@@ -247,25 +247,34 @@ def test_api_review_analyze_and_apply(client_and_store):
     res = client.post("/api/ontology/review/apply", json=apply)
     assert res.status_code == 200, res.text
     out = res.json()
-    assert out["domain"] == "Sales Pipeline"
-    dom = store.get_domain("Sales Pipeline")
-    assert {m.name for m in dom.metrics} == {"revenue", "Win Rate", "Rows"}
-    assert dom.source_project_id == "proj-1"
-    assert dom.id in store.get_project_domain_ids("proj-1")
+    # Several models -> one domain PER MODEL (no cross-model merging); the
+    # review decisions apply inside each model's domain.
+    assert out["multi_model"] is True and len(out["domains"]) == 3
+    by_model = {d["model_name"]: store.get_domain(d["id"]) for d in out["domains"]}
+    assert {m.name for m in by_model["Exec Dashboard"].metrics} == {"revenue"}
+    assert {m.name for m in by_model["Sales Ops"].metrics} == {"revenue", "Win Rate"}
+    assert {m.name for m in by_model["Regional KPIs"].metrics} == {"revenue", "Win Rate", "Rows"}
+    for dom in by_model.values():
+        assert dom.source_project_id == "proj-1" and dom.source_model_id
+        assert dom.id.startswith("proj-1__") or dom.id.startswith("1__")
+        assert dom.id in store.get_project_domain_ids("proj-1")
+        assert dom.domain.startswith("Sales Pipeline · ")
+    assert store.get_domain("Sales Pipeline") is None
 
     health = client.get("/api/ontology/projects/proj-1/health").json()
-    assert health["metric_count"] == 3 and health["score"] is not None
+    assert health["metric_count"] == 6 and health["score"] is not None
     batch = client.get("/api/ontology/projects/health", params={"project_ids": "proj-1,none"}).json()
     assert batch["projects"]["proj-1"]["score"] == health["score"]
     assert batch["projects"]["none"]["status"] == "none"
 
-    # Same project again (even under another name): merged into the project's
-    # existing domain instead of creating a second one (A2).
+    # Same project again (even under another name): each model's domain is
+    # re-synced in place instead of creating second domains.
     again = client.post("/api/ontology/review/apply", json={**apply, "domain_name": "Other Name"})
     assert again.status_code == 200, again.text
-    assert again.json()["synced_existing"] is True and again.json()["domain"] == "Sales Pipeline"
-    assert store.get_domain("Other Name") is None
-    assert store.get_project_domain_ids("proj-1") == [dom.id]
+    assert again.json()["synced_existing"] is True
+    assert {d["id"] for d in again.json()["domains"]} == {d["id"] for d in out["domains"]}
+    assert not any(d.domain.startswith("Other Name") for d in store.domains.values())
+    assert sorted(store.get_project_domain_ids("proj-1")) == sorted(d["id"] for d in out["domains"])
 
     # A different project may not reuse another project's domain name.
     clash = client.post("/api/ontology/review/apply", json={**apply, "project_id": "proj-2"})
