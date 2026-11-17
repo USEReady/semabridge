@@ -1,0 +1,93 @@
+{
+  "name": "Characterization Model",
+  "compatibilityLevel": 1550,
+  "model": {
+    "name": "Model",
+    "culture": "en-US",
+    "tables": [
+      {
+        "name": "Sales",
+        "columns": [
+          {"name": "SalesKey", "dataType": "int64", "sourceColumn": "SALES_KEY", "isHidden": true},
+          {"name": "ProductKey", "dataType": "int64", "sourceColumn": "PRODUCT_KEY", "isHidden": true},
+          {"name": "DateKey", "dataType": "int64", "sourceColumn": "DATE_KEY", "isHidden": true},
+          {"name": "GeoKey", "dataType": "int64", "sourceColumn": "GEO_KEY", "isHidden": true},
+          {"name": "Units", "dataType": "int64", "sourceColumn": "UNITS", "summarizeBy": "sum"},
+          {"name": "Revenue", "dataType": "decimal", "sourceColumn": "REVENUE", "summarizeBy": "sum"},
+          {"name": "Discount", "dataType": "decimal", "sourceColumn": "DISCOUNT", "summarizeBy": "sum"},
+          {"name": "Status", "dataType": "string", "sourceColumn": "STATUS"}
+        ],
+        "measures": [
+          {"name": "Total Units", "expression": "SUM(Sales[Units])", "formatString": "#,0"},
+          {"name": "Total Revenue", "expression": "SUM(Sales[Revenue])", "formatString": "\\$#,0.00"},
+          {"name": "Net Revenue", "expression": "[Total Revenue] - SUM(Sales[Discount])"},
+          {"name": "Margin %", "expression": "DIVIDE([Net Revenue], [Total Revenue])", "formatString": "0.00%"},
+          {"name": "VanArsdel Units", "expression": "CALCULATE([Total Units], Product[Manufacturer] = \"VanArsdel\")"},
+          {"name": "Valid Units", "expression": "CALCULATE([Total Units], NOT Sales[Status] IN {\"Cancelled\", \"Returned\"})"},
+          {"name": "Units YTD", "expression": "TOTALYTD([Total Units], 'Date'[Date])"},
+          {"name": "Product Count", "expression": "DISTINCTCOUNT(Product[ProductKey])"}
+        ],
+        "partitions": [
+          {
+            "name": "Sales",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Snowflake.Databases(\"acct.snowflakecomputing.com\", \"WH\"),",
+                "    DB = Source{[Name=\"SALES_DB\",Kind=\"Database\"]}[Data],",
+                "    SCH = DB{[Name=\"PUBLIC\",Kind=\"Schema\"]}[Data],",
+                "    T = SCH{[Name=\"SALES_FACT\",Kind=\"Table\"]}[Data]",
+                "in",
+                "    T"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Product",
+        "columns": [
+          {"name": "ProductKey", "dataType": "int64", "sourceColumn": "PRODUCT_KEY", "isHidden": true},
+          {"name": "Product", "dataType": "string", "sourceColumn": "PRODUCT"},
+          {"name": "Manufacturer", "dataType": "string", "sourceColumn": "MANUFACTURER"},
+          {"name": "Segment", "dataType": "string", "sourceColumn": "SEGMENT"},
+          {"name": "Category", "dataType": "string", "sourceColumn": "CATEGORY"}
+        ],
+        "partitions": [
+          {"name": "Product", "mode": "import", "source": {"type": "m", "expression": "let Source = Snowflake.Databases(\"acct.snowflakecomputing.com\", \"WH\"), DB = Source{[Name=\"SALES_DB\",Kind=\"Database\"]}[Data], SCH = DB{[Name=\"PUBLIC\",Kind=\"Schema\"]}[Data], T = SCH{[Name=\"PRODUCT\",Kind=\"Table\"]}[Data] in T"}}
+        ]
+      },
+      {
+        "name": "Date",
+        "dataCategory": "Time",
+        "columns": [
+          {"name": "DateKey", "dataType": "int64", "sourceColumn": "DATE_KEY", "isHidden": true},
+          {"name": "Date", "dataType": "dateTime", "sourceColumn": "DATE", "isKey": true},
+          {"name": "Year", "dataType": "int64", "sourceColumn": "YEAR"},
+          {"name": "Month", "dataType": "string", "sourceColumn": "MONTH"}
+        ],
+        "partitions": [
+          {"name": "Date", "mode": "import", "source": {"type": "m", "expression": "let Source = Snowflake.Databases(\"acct.snowflakecomputing.com\", \"WH\"), DB = Source{[Name=\"SALES_DB\",Kind=\"Database\"]}[Data], SCH = DB{[Name=\"PUBLIC\",Kind=\"Schema\"]}[Data], T = SCH{[Name=\"DATE_DIM\",Kind=\"Table\"]}[Data] in T"}}
+        ]
+      },
+      {
+        "name": "Geo",
+        "columns": [
+          {"name": "GeoKey", "dataType": "int64", "sourceColumn": "GEO_KEY", "isHidden": true},
+          {"name": "Region", "dataType": "string", "sourceColumn": "REGION"},
+          {"name": "State", "dataType": "string", "sourceColumn": "STATE"}
+        ],
+        "partitions": [
+          {"name": "Geo", "mode": "import", "source": {"type": "m", "expression": "let Source = Snowflake.Databases(\"acct.snowflakecomputing.com\", \"WH\"), DB = Source{[Name=\"SALES_DB\",Kind=\"Database\"]}[Data], SCH = DB{[Name=\"PUBLIC\",Kind=\"Schema\"]}[Data], T = SCH{[Name=\"GEO\",Kind=\"Table\"]}[Data] in T"}}
+        ]
+      }
+    ],
+    "relationships": [
+      {"name": "r_sales_product", "fromTable": "Sales", "fromColumn": "ProductKey", "toTable": "Product", "toColumn": "ProductKey"},
+      {"name": "r_sales_date", "fromTable": "Sales", "fromColumn": "DateKey", "toTable": "Date", "toColumn": "DateKey"},
+      {"name": "r_sales_geo", "fromTable": "Sales", "fromColumn": "GeoKey", "toTable": "Geo", "toColumn": "GeoKey"}
+    ]
+  }
+}

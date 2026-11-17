@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, Set
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -69,6 +70,37 @@ class RunDaxRequest(BaseModel):
     dataset_id: Optional[str] = None
     workspace: Optional[str] = None
     workspace_id: Optional[str] = None
+    # Optional: when set and the project is a Fabric project (and no backend is
+    # given), the query runs on that project's own Fabric model.
+    project_id: Optional[str] = None
+
+
+def _fabric_project_dax_target(project_id: Optional[str], backend: Optional[str], dataset_id: Optional[str]):
+    """The project's Fabric DAX target, or None to keep the existing backend selection.
+
+    An explicit backend from the caller is respected unchanged. For a Fabric
+    project with no backend, the DAX side is the project's own model; config
+    problems become a 400 with the reason instead of a local-Desktop guess.
+    """
+    if backend:
+        return None
+    from semabridge.sources.base import SourceError
+    from semabridge.sources.fabric.dax_target import resolve_fabric_dax_target
+
+    try:
+        return resolve_fabric_dax_target(project_id, dataset_id=dataset_id)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _run_fabric_project_dax(target, query: str) -> Dict[str, Any]:
+    from semabridge.sources.base import SourceError
+    from semabridge.sources.fabric.dax_target import run_fabric_dax
+
+    try:
+        return run_fabric_dax(target, query)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=f"Fabric DAX on the project's model failed: {exc}") from exc
 
 
 class CertifyMetricRequest(BaseModel):
@@ -441,6 +473,20 @@ def get_dax_backends() -> Dict[str, Any]:
 def execute_dax_endpoint(req: RunDaxRequest) -> Dict[str, Any]:
     """Execute a DAX query via pbi_desktop, rest_api, or xmla and return normalized rows."""
     from semabridge.reconciliation.mock_parity import is_mock_parity_enabled
+
+    fabric_target = _fabric_project_dax_target(req.project_id, req.backend, req.dataset_id)
+    if fabric_target is not None:
+        t0 = time.perf_counter()
+        res = _run_fabric_project_dax(fabric_target, req.query)
+        return {
+            "success": True,
+            "backend": res["backend"],
+            "columns": res["columns"],
+            "rows": res["rows"],
+            "row_count": len(res["rows"]),
+            "execution_ms": round((time.perf_counter() - t0) * 1000.0, 2),
+            "metadata": res["metadata"],  # hardcoding-ok: response key
+        }
     try:
         res = execute_dax(
             req.query,
@@ -579,9 +625,18 @@ def certify_metric_end_to_end(req: CertifyMetricRequest, request: Request) -> Di
             sql_rows.append(mapped)
 
         # 2. Obtain DAX rows via supplied export or automated run_dax backend
+        fabric_target = (
+            _fabric_project_dax_target(req.project_id, req.dax_backend, req.dax_dataset_id)
+            if req.dax_results is None
+            else None
+        )
         if req.dax_results is not None:
             dax_rows = req.dax_results
             dax_backend_used = "manual_rows"
+        elif fabric_target is not None:
+            fabric_res = _run_fabric_project_dax(fabric_target, dax_query)
+            dax_rows = fabric_res["rows"]
+            dax_backend_used = fabric_res["backend"]
         else:
             try:
                 dax_exec = execute_dax(

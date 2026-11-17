@@ -799,6 +799,74 @@ class FabricExtractor:
         
         raise FabricExtractionError("model.bim not found in definition parts")
 
+    _GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+    def _resolve_model_id_exact(self, dataset_id_or_name: str) -> str:
+        """GUID as-is; otherwise exactly one model with that display name, else raise."""
+        from semabridge.sources.base import SourceConfigError, SourceNotFoundError
+
+        ref = str(dataset_id_or_name or "").strip()
+        if not ref:
+            raise SourceConfigError("No Fabric dataset id given for the DAX query.")
+        if self._GUID_RE.match(ref):
+            return ref
+        matches = [m for m in self.list_semantic_models() if str(m.get("displayName", "")).casefold() == ref.casefold()]
+        if not matches:
+            raise SourceNotFoundError(f"Semantic model '{ref}' not found in workspace '{self.config.workspace_id}'.")
+        if len(matches) > 1:
+            raise SourceConfigError(
+                f"'{ref}' matches {len(matches)} semantic models in workspace '{self.config.workspace_id}'; "
+                f"use the dataset id ({', '.join(str(m.get('id')) for m in matches)})."
+            )
+        return str(matches[0].get("id"))
+
+    def execute_dax_query_strict(self, dataset_id: str, dax_query: str, *, timeout: int = 120) -> list[dict[str, Any]]:
+        """Run a DAX query against a semantic model in this extractor's workspace; raise on any failure.
+
+        Unlike :meth:`execute_dax_query` (kept unchanged for existing callers),
+        this uses the workspace-scoped endpoint, retries once on 401 and on
+        transient 408/429/5xx through ``_request_with_auth_retry``, and raises a
+        ``SourceError`` with the reason instead of returning ``[]``. An empty
+        list therefore always means "the query returned no rows".
+        """
+        from semabridge.sources.base import SourceAuthError, SourceConfigError, SourceNotFoundError, SourceQueryError
+
+        workspace_id = str(self.config.workspace_id or "").strip()
+        if not workspace_id:
+            raise SourceConfigError("No Fabric workspace set for the DAX query (no default workspace is assumed).")
+        ds_id = self._resolve_model_id_exact(dataset_id)
+        base = os.getenv("POWERBI_API_BASE", "https://api.powerbi.com").rstrip("/")
+        url = f"{base}/v1.0/myorg/groups/{workspace_id}/datasets/{ds_id}/executeQueries"
+        try:
+            resp = self._request_with_auth_retry(
+                "POST", url,
+                json={"queries": [{"query": dax_query}], "serializerSettings": {"includeNulls": True}},
+                timeout=timeout, transient_retries=3, retry_delay=2.0,
+            )
+        except RequestException as exc:
+            raise SourceQueryError(f"DAX request to dataset {ds_id} failed: {exc}") from exc
+
+        body_text = resp.text or ""
+        if resp.status_code in (401, 403):
+            raise SourceAuthError(f"Fabric refused the DAX query on dataset {ds_id} (HTTP {resp.status_code}): {body_text[:500]}")
+        if resp.status_code == 404:
+            raise SourceNotFoundError(f"Dataset {ds_id} not found in workspace {workspace_id} (HTTP 404).")
+        if not resp.ok:
+            raise SourceQueryError(f"DAX query failed (HTTP {resp.status_code}): {body_text[:500]}",
+                                   status=resp.status_code, body=body_text[:4000])
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise SourceQueryError(f"DAX response from dataset {ds_id} was not JSON: {body_text[:300]}",
+                                   status=resp.status_code) from exc
+        if isinstance(data, dict) and data.get("error"):
+            raise SourceQueryError(f"DAX query error: {str(data['error'])[:500]}", status=resp.status_code)
+        results = (data or {}).get("results") or []
+        if results and isinstance(results[0], dict) and results[0].get("error"):
+            raise SourceQueryError(f"DAX query error: {str(results[0]['error'])[:500]}", status=resp.status_code)
+        tables = (results[0].get("tables") if results else None) or []
+        return list(tables[0].get("rows") or []) if tables else []
+
     def execute_dax_query(self, dataset_id: str, dax_query: str, silent: bool = False) -> list[dict[str, Any]]:
         """
         Execute a DAX query against a semantic model.
@@ -944,9 +1012,13 @@ class FabricExtractor:
         group_by_dimensions: list[str],
         filters: Optional[dict[str, Any]] = None,
         use_fallback_pattern: bool = False,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Execute a DAX query specifically for syncing a measure to Snowflake.
+
+        ``strict=True`` runs through :meth:`execute_dax_query_strict` (raises on
+        failure); the default keeps the original lenient behaviour.
         
         Constructs a proper EVALUATE statement with dimension context to avoid
         context transition errors common with SUMMARIZECOLUMNS.
@@ -1033,6 +1105,8 @@ SUMMARIZECOLUMNS(
                     )
         
         logger.debug(f"Executing measure sync DAX: {dax[:300]}...")
+        if strict:
+            return self.execute_dax_query_strict(dataset_id, dax)
         return self.execute_dax_query(dataset_id, dax)
     
     def execute_paginated_measure_sync(
@@ -1044,9 +1118,13 @@ SUMMARIZECOLUMNS(
         partition_values: list[Any],
         parallel: bool = False,
         max_workers: int = 5,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Execute measure sync with pagination to avoid 100k row limit.
+
+        ``strict=True`` makes each partition query raise on failure, which is
+        what the context-transition fallback below relies on.
         
         Partitions the query by a dimension (typically Date or Year) and
         combines results. Automatically switches to fallback pattern on
@@ -1075,16 +1153,18 @@ SUMMARIZECOLUMNS(
                 partition_column=partition_column,
                 partition_values=partition_values,
                 max_workers=max_workers,
+                strict=strict,
             )
-        
+
         return self._execute_partitions_sequential(
             dataset_id=dataset_id,
             measure_name=measure_name,
             group_by_dimensions=group_by_dimensions,
             partition_column=partition_column,
             partition_values=partition_values,
+            strict=strict,
         )
-    
+
     def _execute_partitions_sequential(
         self,
         dataset_id: str,
@@ -1092,6 +1172,7 @@ SUMMARIZECOLUMNS(
         group_by_dimensions: list[str],
         partition_column: str,
         partition_values: list[Any],
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """Execute partition queries sequentially (legacy behavior)."""
         all_results = []
@@ -1107,6 +1188,7 @@ SUMMARIZECOLUMNS(
                     group_by_dimensions=group_by_dimensions,
                     filters=filters,
                     use_fallback_pattern=use_fallback,
+                    strict=strict,
                 )
                 all_results.extend(rows)
                 logger.debug(f"Partition {partition_val}: {len(rows)} rows")
@@ -1126,6 +1208,7 @@ SUMMARIZECOLUMNS(
                             group_by_dimensions=group_by_dimensions,
                             filters=filters,
                             use_fallback_pattern=True,
+                            strict=strict,
                         )
                         all_results.extend(rows)
                     else:
@@ -1146,6 +1229,7 @@ SUMMARIZECOLUMNS(
         partition_column: str,
         partition_values: list[Any],
         max_workers: int = 5,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """Execute partition queries concurrently via TracedThreadPoolExecutor.
         
@@ -1173,6 +1257,7 @@ SUMMARIZECOLUMNS(
                     group_by_dimensions=group_by_dimensions,
                     filters=filters,
                     use_fallback_pattern=False,
+                    strict=strict,
                 )
                 logger.debug(f"Partition {partition_val}: {len(rows)} rows")
                 return rows
@@ -1187,6 +1272,7 @@ SUMMARIZECOLUMNS(
                         group_by_dimensions=group_by_dimensions,
                         filters=filters,
                         use_fallback_pattern=True,
+                        strict=strict,
                     )
                     return rows
                 raise

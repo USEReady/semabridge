@@ -430,32 +430,27 @@ def _sync_fabric_measures(self, context: RunContext, emitter) -> None:
     if context.source_format:
         ws_id = getattr(context.source_format, "workspace_id", None)
 
-    if ws_id and config.fabric.workspace_id != ws_id:
+    if not ws_id:
+        # No default workspace: measures are read from the workspace the model
+        # was extracted from, never from the server's stored/default one.
+        raise DeploymentError(
+            "Fabric measure sync needs the workspace the model was extracted from, "
+            "but none was recorded on this run's source format."
+        )
+    if config.fabric.workspace_id != ws_id:
         config.fabric.workspace_id = ws_id
 
-    interactive_token: Optional[str] = None
+    # Same credentials as extraction: the project's identity / the run's
+    # account token, never the server-wide interactive login by default.
+    from semabridge.sources.base import SourceAuthError
+    from semabridge.sources.fabric.credentials import apply_to_extractor, credentials_for_context
+
     try:
-        from semabridge.repository.credential_manager import CredentialManager
-
-        cm = CredentialManager()
-
-        stored_fabric = cm.get_credentials("fabric", mask_secrets=False)
-        stored_workspace_id = (stored_fabric.get("workspace_id") or "").strip()
-        if stored_workspace_id and not ws_id:
-            config.fabric.workspace_id = stored_workspace_id
-
-        token_data = cm.get_msal_token()
-        if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
-            interactive_token = token_data.get("access_token")
-            logger.debug("sync_to_fabric: injecting interactive token from credential store")
-    except Exception as exc:
-        logger.warning("sync_to_fabric: credential lookup failed, falling back to env auth: %s", exc)
-
-    # Initialize Fabric extractor
-    fabric_extractor = FabricExtractor(config.fabric)
-    if interactive_token:
-        fabric_extractor._access_token = interactive_token
-        fabric_extractor._token_expires_at = time.time() + 1800
+        fabric_creds = credentials_for_context(context)
+    except SourceAuthError as exc:
+        raise DeploymentError(f"Fabric measure sync: {exc}") from exc
+    logger.debug("_sync_fabric_measures: Fabric credentials origin=%s", fabric_creds.origin)
+    fabric_extractor = apply_to_extractor(FabricExtractor(config.fabric), fabric_creds)
 
     # Get dataset ID from source format metadata
     dataset_id = None
@@ -482,6 +477,9 @@ def _sync_fabric_measures(self, context: RunContext, emitter) -> None:
 
         success_count = sum(1 for r in results.values() if r.get("status") == "success")
         logger.info(f"Measure sync complete: {success_count}/{len(results)} measures synced")
+        failed = {k: r.get("error", "") for k, r in results.items() if r.get("status") == "failed"}
+        if failed:
+            logger.error("Fabric measure sync failed for %d measure(s): %s", len(failed), failed)
 
     except Exception as e:
         logger.error(f"Measure sync failed: {e}")
