@@ -6,9 +6,18 @@ Pure logic — no I/O. The engine loads the baseline snapshot (see
 and :func:`merge_upsert`, and skips the deploy when the delta has no
 added/modified items.
 
-Items are matched by normalized name (case-, underscore- and
-space-insensitive), so ``Total Units`` / ``TOTAL_UNITS`` / ``total_units``
-are the same item and never produce a duplicate.
+Items are matched by normalized name: case-insensitive, and a run of
+whitespace is the same as one underscore, so ``Total Units`` /
+``TOTAL_UNITS`` / ``total_units`` are the same item. Underscores and word
+boundaries stay significant: ``RunningMonths`` and ``Running Months``
+(RUNNINGMONTHS / RUNNING_MONTHS) are different items -- both occur in one
+real model, and collapsing them lost one of them on upsert.
+
+Two items of ONE model that still map to the same key would deploy under
+the same Snowflake name, so only one of them can exist in the target. They
+are reported in the delta (``identity_collisions``) instead of being dropped
+silently; they do not force a redeploy (the collision is in the model
+itself, so it would otherwise redeploy on every sync).
 """
 
 from __future__ import annotations
@@ -49,8 +58,15 @@ _SUMMARY_NAME_LIMIT = 5
 
 
 def normalize_name(value: Any) -> str:
-    """Case/underscore/space-insensitive identity key for an SML item."""
-    return re.sub(r"[\s_]+", "", str(value or "")).casefold()
+    """Identity key for an SML item: case-insensitive; whitespace runs and
+    underscores are equivalent separators, but separators are significant
+    (``RUNNINGMONTHS`` != ``RUNNING_MONTHS``)."""
+    text = str(value or "").strip()
+    return re.sub(r"[\s_]+", "_", text).strip("_").casefold()
+
+
+def _item_name(item: Any) -> str:
+    return str(_get(item, "unique_name") or _get(item, "name") or _get(item, "question") or "")
 
 
 def normalize_model_name(value: Any) -> str:
@@ -159,13 +175,22 @@ def _signature(kind: str, item: Any) -> Dict[str, Any]:
     }
 
 
-def _index(items: Iterable[Any]) -> Dict[str, Any]:
-    """Normalized name -> item. First occurrence wins (never duplicates)."""
+def _index(items: Iterable[Any], collisions: Optional[List[Dict[str, Any]]] = None,
+           *, kind: str = "", side: str = "") -> Dict[str, Any]:
+    """Normalized name -> item. First occurrence wins for the index, but every
+    later item with the same key is reported in ``collisions`` (never dropped
+    silently)."""
     indexed: Dict[str, Any] = {}
     for item in items or []:
-        key = normalize_name(_get(item, "unique_name") or _get(item, "name") or _get(item, "question"))
-        if key and key not in indexed:
+        name = _item_name(item)
+        key = normalize_name(name)
+        if not key:
+            continue
+        if key not in indexed:
             indexed[key] = item
+        elif collisions is not None:
+            collisions.append({"kind": kind, "side": side, "key": key,
+                               "kept": _item_name(indexed[key]), "other": name})
     return indexed
 
 
@@ -245,9 +270,10 @@ def compute_delta(
     this model was never deployed (everything is then "added").
     """
     kinds: Dict[str, Dict[str, Any]] = {}
+    identity_collisions: List[Dict[str, Any]] = []
     for kind, attr in DELTA_KINDS:
-        new_items = _index(getattr(new_model, attr, []) or [])
-        old_items = _index((baseline or {}).get(attr) or [])
+        new_items = _index(getattr(new_model, attr, []) or [], identity_collisions, kind=kind, side="new")
+        old_items = _index((baseline or {}).get(attr) or [], identity_collisions, kind=kind, side="baseline")
         added: List[Dict[str, Any]] = []
         modified: List[Dict[str, Any]] = []
         unchanged = 0
@@ -314,8 +340,11 @@ def compute_delta(
         "baseline_snapshot_id": baseline_snapshot_id,
         "baseline_timestamp": baseline_timestamp,
         # Removed items are kept in the target (upsert), so only added or
-        # modified items change what gets deployed.
+        # modified items change what gets deployed. Identity collisions are
+        # reported, not a change: they live in the model itself, so counting
+        # them would redeploy the model on every sync.
         "has_changes": bool(added_total or modified_total),
+        "identity_collisions": identity_collisions,
         "metadata_changed": bool(metadata_changed_items),
         "ontology_changes": ontology_changes,
         "totals": {
@@ -370,6 +399,9 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
 
     Source definitions win for matched items; baseline-only items (and
     baseline-only columns/attributes of matched tables/dimensions) are kept.
+    At most one item per identity key ends up in the result: equal keys
+    deploy under the same Snowflake name, so a second one would be a
+    duplicate identifier in the DDL.
     """
     merged = new_model.model_copy(deep=True)
     if not baseline:
@@ -378,11 +410,11 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
     for kind, attr in DELTA_KINDS:
         cls = _ITEM_CLASSES[kind]
         current: List[Any] = getattr(merged, attr, [])
-        current_keys = {normalize_name(_get(i, "unique_name") or _get(i, "name") or _get(i, "question")) for i in current}
+        current_keys = {normalize_name(_item_name(i)) for i in current}
         old_items = _index(baseline.get(attr) or [])
         for key, old_item in old_items.items():
             if key in current_keys:
-                continue
+                continue  # present in the source (any equivalent spelling): source wins
             if cls is dict:
                 current.append(old_item if isinstance(old_item, dict) else old_item.model_dump())
             else:
@@ -399,7 +431,7 @@ def merge_upsert(new_model: SMLModel, baseline: Optional[Dict[str, Any]]) -> SML
                 child_keys = {normalize_name(c.unique_name) for c in children}
                 for old_child in (old_item.get(child_attr) or []):
                     child_key = normalize_name(_get(old_child, "unique_name"))
-                    if child_key in child_keys:
+                    if not child_key or child_key in child_keys:
                         continue
                     children.append(child_cls.model_validate(old_child))
                     child_keys.add(child_key)
