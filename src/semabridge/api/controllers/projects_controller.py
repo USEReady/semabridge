@@ -11,7 +11,19 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from semabridge.api.services.pbix_source_validation import validate_pbix_model_list
+from semabridge.api.services.pbix_source_validation import require_source_type, validate_pbix_model_list
+
+
+def _yaml_source_type(config_yaml) -> str:
+    """source.type from a project YAML ('' when absent or unparsable -> caller's validation error)."""
+    import yaml as _yaml
+
+    try:
+        parsed = _yaml.safe_load(str(config_yaml or "")) or {}
+    except _yaml.YAMLError:
+        return ""
+    source = parsed.get("source") if isinstance(parsed, dict) else None
+    return str((source or {}).get("type") or "") if isinstance(source, dict) else ""
 
 
 class CreateProjectRequest(BaseModel):
@@ -336,7 +348,9 @@ async def create_project(request: Request, payload: CreateProjectRequest):
     user_id = require_request_user_id(request)
     payload_dict = payload.model_dump(exclude_none=False)
     src_for_validation = payload_dict.get("source") if isinstance(payload_dict.get("source"), dict) else {}
-    validation_source_type = str(src_for_validation.get("type") or "")
+    if not src_for_validation.get("type") and payload_dict.get("config_yaml"):
+        src_for_validation = {**src_for_validation, "type": _yaml_source_type(payload_dict.get("config_yaml"))}
+    validation_source_type = require_source_type(src_for_validation, where="new project")
     validate_pbix_model_list(src_for_validation.get("models"), source_type=validation_source_type)
     if user_id:
         payload_dict["user_id"] = str(user_id)
@@ -398,6 +412,8 @@ async def save_project_config(project_id: str, payload: SaveProjectConfigRequest
     user_id = require_request_user_id(request)
     await asyncio.to_thread(_assert_project_access, project_id, user_id)
     payload_dict = payload.model_dump(exclude_none=False)
+    if payload_dict.get("config_yaml"):
+        require_source_type({"type": _yaml_source_type(payload_dict.get("config_yaml"))}, where="project config")
     migration_fields = _pop_preview_migration_fields(payload_dict)
     response = await save_project_config_compat(project_id, payload_dict)
     await asyncio.to_thread(_link_preview_dry_runs, project_id, migration_fields, user_id)

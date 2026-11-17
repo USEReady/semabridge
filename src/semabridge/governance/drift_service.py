@@ -136,6 +136,22 @@ def run_drift_check(
     # domains); without a project every domain is checked.
     candidates = ontology_store.domains_for(project_id) if project_id else list(fed.domains.values())
     target_domains = [d for d in candidates if not domain or d.domain.lower() == domain.lower() or (d.id or "").lower() == domain.lower()]
+    if project_id and not target_domains:
+        # Never widen to other projects' domains: no events, and say why.
+        warning = (
+            f"Drift check: project '{project_id}' has no matching ontology domain"
+            + (f" '{domain}'" if domain else "")
+            + "; nothing was checked. Sync the project or attach a domain first."
+        )
+        logger.warning(warning)
+        return {
+            "checked_metrics": 0,
+            "snowflake_connected": False,
+            "drift_detected": 0,
+            "events": [],
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "warnings": [warning],
+        }
 
     # Snowflake metrics per semantic view: {VIEW_TAIL: {METRIC: entry}} -- each
     # domain is compared against ITS OWN view only (multi-model projects have
