@@ -251,6 +251,9 @@ def test_two_models_resolving_to_same_file_error_for_the_duplicate(tmp_path):
 
 
 def test_duplicate_model_labels_are_made_unique(tmp_path):
+    # Fabric batch 2 behaviour change: the SAME model listed twice is synced
+    # once (as PBIX already does for a file selected twice) instead of twice
+    # into "Sales" and "Sales_2" views of one dataset.
     jobs, *_ = ses._build_sync_jobs({"source": {"type": "fabric", "models": ["Sales", "Sales"]}, "targets": [{"type": "snowflake"}]})
-    assert [j["model_label"] for j in jobs] == ["Sales", "Sales_2"]
-    assert [j["dataset_id"] for j in jobs] == ["Sales", "Sales"]
+    assert [j["model_label"] for j in jobs] == ["Sales"]
+    assert [j["dataset_id"] for j in jobs] == ["Sales"]
