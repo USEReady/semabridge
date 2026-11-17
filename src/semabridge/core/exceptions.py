@@ -332,6 +332,32 @@ class PBIXParsingError(SemaBridgeError):
         self.pbix_path = pbix_path
 
 
+class PBIXLiveConnectionError(PBIXParsingError):
+    """
+    The PBIX is a thin report: it has no data model of its own and connects
+    live to a published semantic model (Power BI / Fabric / Analysis Services).
+
+    Subclass of PBIXParsingError so existing callers keep failing safely; callers
+    that understand it can classify the file as LIVE_CONNECTION (no tables, so no
+    semantic view) instead of reporting an extraction failure.
+
+    Attributes:
+        model_reference: Published dataset id/name the report connects to, if found.
+        reason_code: Always "LIVE_CONNECTION".
+    """
+
+    reason_code = "LIVE_CONNECTION"
+
+    def __init__(self, message: str, pbix_path: Optional[str] = None,
+                 model_reference: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
+        full_details = dict(details or {})
+        full_details["reason_code"] = self.reason_code
+        if model_reference:
+            full_details["model_reference"] = model_reference
+        super().__init__(message, pbix_path=pbix_path, details=full_details)
+        self.model_reference = model_reference
+
+
 class RateLimitError(ConnectorError):
     """
     HTTP 429 Too Many Requests from Microsoft Fabric API.

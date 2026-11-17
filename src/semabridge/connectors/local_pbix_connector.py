@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from semabridge.core.drop_ledger import DropLedger, DropStage
-from semabridge.core.exceptions import ConnectorError, PBIXParsingError
+from semabridge.core.exceptions import ConnectorError, PBIXLiveConnectionError, PBIXParsingError
 from semabridge.core.interfaces import BaseConnector
 from semabridge.utils.identifiers import clean_pbix_model_name
 from semabridge.utils.logger import get_logger
@@ -105,6 +105,14 @@ class LocalPBIXConnector(BaseConnector):
         try:
             schema = self._extract_data_model_schema()
             if not schema:
+                live_ref = self._live_connection_reference()
+                if live_ref is not None:
+                    raise PBIXLiveConnectionError(
+                        "PBIX is a thin report with a live connection to a published semantic model "
+                        f"('{live_ref or 'unknown'}'); it has no tables of its own, so no semantic view is created",
+                        pbix_path=str(self._pbix_path),
+                        model_reference=live_ref or None,
+                    )
                 raise PBIXParsingError(
                     "PBIX archive does not contain a readable DataModel/DataModelSchema payload",
                     pbix_path=str(self._pbix_path),
@@ -243,6 +251,20 @@ class LocalPBIXConnector(BaseConnector):
                 self._close_archive()
                 raise schema_parse_error
 
+        # 1b. Thin report: no data model, live connection to a published model.
+        # Classified here (not raised) so callers can skip it with a reason
+        # instead of building an empty semantic view.
+        if not result.get("tables") and not result.get("raw_model"):
+            live_ref = self._live_connection_reference()
+            if live_ref is not None:
+                result["metadata"]["reason_code"] = PBIXLiveConnectionError.reason_code
+                result["metadata"]["model_reference"] = live_ref or None
+                logger.warning(
+                    "PBIX '%s' is a thin report (live connection to '%s'); it has no tables, "
+                    "so no semantic view will be created for it",
+                    self._pbix_path, live_ref or "unknown",
+                )
+
         # 2. Extract Connections.json for composite model references
         connections = self._extract_connections()
         if connections:
@@ -365,6 +387,38 @@ class LocalPBIXConnector(BaseConnector):
     # -------------------------------------------------------------------
     # Internal: Archive I/O
     # -------------------------------------------------------------------
+
+    def _live_connection_reference(self) -> Optional[str]:
+        """For a PBIX without a data model: the published model it connects to.
+
+        Returns the dataset id/name ("" if a live connection exists but names no
+        model), or None when the file has no live connection (a real failure).
+        Only reads the archive's Connections part; never raises.
+        """
+        if not self._archive:
+            return None
+        try:
+            names = set(self._archive.namelist())
+            if "DataModel" in names or "DataModelSchema" in names or "Connections" not in names:
+                return None
+            raw = self._archive.read("Connections").decode("utf-8-sig", "ignore")
+            payload = json.loads(raw)
+        except Exception:  # noqa: BLE001 - inconclusive -> treat as a real failure
+            return None
+        connections = payload.get("Connections") if isinstance(payload, dict) else None
+        if not isinstance(connections, list) or not connections:
+            return None
+        for conn in connections:
+            if not isinstance(conn, dict):
+                continue
+            for key in ("PbiModelDatabaseName", "PbiServiceModelId"):
+                if conn.get(key):
+                    return str(conn[key])
+            for part in str(conn.get("ConnectionString") or "").split(";"):
+                k, _, v = part.partition("=")
+                if k.strip().lower() == "initial catalog" and v.strip():
+                    return v.strip()
+        return ""
 
     def _open_archive(self) -> None:
         """Open the .pbix ZIP archive for reading."""
