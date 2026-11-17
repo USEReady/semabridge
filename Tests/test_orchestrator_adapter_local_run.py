@@ -27,6 +27,13 @@ def test_adapter_local_path_completes_on_fixture(monkeypatch):
     from semabridge.connectors.snowflake_emitter import SnowflakeEmitter
     from semabridge.orchestration.orchestrator_adapter import run_sync
 
+    # The run persists its snapshot: make sure the (in-memory test) schema exists
+    # on this worker, as other persistence tests do.
+    from semabridge.repository.orm.base import Base
+    from semabridge.repository.orm.session_factory import db_manager
+
+    Base.metadata.create_all(bind=db_manager.get_engine(), checkfirst=True)
+
     project_id = f"adapter-fixture-{uuid.uuid4().hex[:8]}"
     monkeypatch.setattr(dt, "load_project_config", lambda pid: {
         "project_id": pid, "source": {"type": "fabric", "identity_id": "acct-1", "workspace_id": WS}})
