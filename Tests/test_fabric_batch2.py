@@ -19,14 +19,15 @@ def test_fabric_jobs_conflict_dedupe_and_cap():
     from semabridge.domain.exceptions import ValidationError
 
     base = {"target": {"type": "snowflake"}}
+    kw = {"model_resolver": _echo_resolver}
     with pytest.raises(ValidationError, match=r"Clear source\.dataset_id .* or clear source\.models"):
-        _build_sync_jobs({**base, "source": {"type": "fabric", "dataset_id": "old-ds", "models": ["Sales", "Finance"]}})
-    jobs = _build_sync_jobs({**base, "source": {"type": "fabric", "models": ["Sales", "sales", {"id": DS}, "Finance"]}})[0]
+        _build_sync_jobs({**base, "source": {"type": "fabric", "workspace_id": "ws-1", "dataset_id": "old-ds", "models": ["Sales", "Finance"]}}, **kw)
+    jobs = _build_sync_jobs({**base, "source": {"type": "fabric", "workspace_id": "ws-1", "models": ["Sales", "sales", {"id": DS}, "Finance"]}}, **kw)[0]
     assert [j["dataset_id"] for j in jobs] == ["Sales", DS, "Finance"]
-    same = _build_sync_jobs({**base, "source": {"type": "fabric", "dataset_id": DS, "models": [DS]}})[0]
+    same = _build_sync_jobs({**base, "source": {"type": "fabric", "workspace_id": "ws-1", "dataset_id": DS, "models": [DS]}}, **kw)[0]
     assert [j["dataset_id"] for j in same] == [DS]  # consistent config is not a conflict
     with pytest.raises(ValidationError, match=f"at most {MAX_BATCH_MODELS}"):
-        _build_sync_jobs({**base, "source": {"type": "fabric", "models": [f"M{i}" for i in range(MAX_BATCH_MODELS + 1)]}})
+        _build_sync_jobs({**base, "source": {"type": "fabric", "workspace_id": "ws-1", "models": [f"M{i}" for i in range(MAX_BATCH_MODELS + 1)]}}, **kw)
 
 
 # ── 2. Fabric source workspace: never "default"; .env fallback only when not strict ──
@@ -190,3 +191,17 @@ def test_fabric_upsert_preview_reconverts_instead_of_copying():
     out = _upsert_delta_preview_model(engine, ctx, {"mappings_overrides": [{"source_path": "metrics.A", "target_name": "B"}]})
     assert out is converted and calls["fabric"] == [{"source_path": "metrics.A", "target_name": "B"}]
     assert engine._summary == "S"  # restored
+
+
+def _echo_resolver(refs, workspace_id, identity_id):
+    """Test resolver (no network): every ref is its own model id."""
+    from semabridge.sources.base import ModelIdentity
+    from semabridge.sources.fabric.validation import FabricModelCheck
+
+    by_ref, ids = {}, []
+    for r in refs:
+        ident = next((i for i in ids if i.model_id.lower() == r.lower()), None) or ModelIdentity("fabric", r, r, workspace_id)
+        if ident not in ids:
+            ids.append(ident)
+        by_ref[r] = ident
+    return FabricModelCheck(ids, [], by_ref)

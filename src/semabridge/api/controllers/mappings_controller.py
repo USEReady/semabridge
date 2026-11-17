@@ -191,6 +191,13 @@ def _dry_run_preview_project_id(
         f"{(source_config or {}).get('workspace_id','')}-"
         f"{'|'.join(sorted(selected_sources or []))}"
     )
+    if str((source_config or {}).get("type") or "").strip().lower() == "fabric":
+        # Fabric: the model is only identified together with the credentials
+        # that see it, so two accounts previewing the same workspace/model get
+        # separate preview projects. PBIX seeds are unchanged.
+        identity = str((source_config or {}).get("identity_id") or "").strip()
+        if identity:
+            seed += f"-identity:{identity}"
     return f"preview-{uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]}"
 
 

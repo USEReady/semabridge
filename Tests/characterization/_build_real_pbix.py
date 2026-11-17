@@ -91,6 +91,11 @@ if __name__ == "__main__":
     reason = pbixray_available()
     if reason:
         sys.exit(reason)
+    import semabridge
+
+    # Provenance: CI generates these from the BASE commit's src/ (PYTHONPATH),
+    # so print which semabridge produced them.
+    print(f"semabridge loaded from: {Path(semabridge.__file__).resolve().parent}")
     paths = write(missing_only="--missing" in sys.argv)
     print(f"{len(paths)} snapshot file(s) written to {SNAPSHOT_DIR}")
     for p in paths:
