@@ -13,6 +13,8 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import Modal from './common/Modal';
 import { validateTargetName } from '../utils/validateTargetName';
+import { renameImpactNote } from '../utils/nameChanges';
+import RenameImpactNote from './common/RenameImpactNote';
 
 // Common data type options used across the project
 const DATA_TYPE_OPTIONS = [
@@ -353,6 +355,8 @@ export default function FieldMappingEditor({
                 <span>Looks good</span>
               </div>
             )}
+            {/* What the rename does and does not change downstream. */}
+            <RenameImpactNote text={renameImpactNote(row, targetName)} />
           </div>
 
           {/* target_data_type */}

@@ -19,6 +19,8 @@ import { api } from '../utils/api';
 import SynonymEditModal from './SynonymEditModal';
 import { suggestCollisionResolutions, resolveCollisionsForRows } from '../utils/projectHelpers';
 import { normalizeTypedName, finalizeTypedName } from '../utils/collisionResolution';
+import { collectNameChanges, renameImpactNote } from '../utils/nameChanges';
+import RenameImpactNote from './common/RenameImpactNote';
 import {
   groupRowsByFieldType,
   normalizeFieldTypeKey,
@@ -1103,11 +1105,115 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
           Will be deployed as <code>{finalizeTypedName(pendingRename)}</code> (Snowflake identifier rules).
         </div>
       )}
+      {pendingRename && inputValid && renameImpactNote(row, finalizeTypedName(pendingRename)) && (
+        <RenameImpactNote text={renameImpactNote(row, finalizeTypedName(pendingRename))} />
+      )}
     </div>
   );
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
+const PANEL = {
+  border: '1px solid var(--border-main)',
+  borderRadius: 10,
+  background: 'var(--bg-surface)',
+  marginBottom: 12,
+  overflow: 'hidden',
+};
+const PANEL_HEADER = {
+  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+  padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer',
+  color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, textAlign: 'left',
+};
+const CHANGE_TONE = {
+  naming_rules: 'var(--text-tertiary)',
+  renamed_by_you: 'var(--accent-blue)',
+  clash_resolved: '#fbbf24',
+};
+
+/**
+ * NameChangesPanel — collapsed by default. Lists every field whose deployed
+ * name differs from its source name (naming rules, resolved clashes, user
+ * renames), why, and an Edit action that opens the normal field editor.
+ */
+function NameChangesPanel({ rows, onEdit }) {
+  const [open, setOpen] = useState(false);
+  const changes = useMemo(() => collectNameChanges(rows), [rows]);
+  if (changes.length === 0) return null;
+  return (
+    <div style={PANEL}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} style={PANEL_HEADER}>
+        <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+        Name changes ({changes.length})
+        <span style={{ fontWeight: 400, color: 'var(--text-tertiary)', fontSize: 12 }}>
+          — fields that will appear under a different name in Snowflake. Any of them can be edited.
+        </span>
+      </button>
+      {open && (
+        <div style={{ borderTop: '1px solid var(--border-subtle)', maxHeight: 320, overflowY: 'auto' }}>
+          {changes.map(({ row, reason }) => (
+            <div
+              key={row.id}
+              style={{
+                display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.6fr) auto',
+                gap: 12, alignItems: 'center', padding: '8px 14px', fontSize: 12,
+                borderBottom: '1px solid var(--border-subtle)',
+              }}
+            >
+              <span style={{ overflowWrap: 'anywhere', color: 'var(--text-secondary)' }}>
+                {row.source_table_name ? `${row.source_table_name}.` : ''}{row.renamed_from || row.source_field}
+              </span>
+              <code style={{ overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>{row.target_field}</code>
+              <span style={{ overflowWrap: 'anywhere', color: 'var(--text-tertiary)' }} title={reason.detail}>
+                <span style={{ fontWeight: 600, color: CHANGE_TONE[reason.kind] }}>{reason.label}</span>
+                {' — '}{reason.detail}
+              </span>
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(row.id)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 6,
+                    border: '1px solid var(--border-main)', background: 'var(--bg-surface-raised)',
+                    color: 'var(--text-secondary)', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  <Edit2 size={11} /> Edit
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One line for the cross-table shared names (never blocking). */
+function SharedNamesNote({ rows }) {
+  const names = useMemo(() => {
+    const seen = new Map();
+    (rows || []).forEach((row) => {
+      if (Array.isArray(row.shared_name_tables) && row.shared_name_tables.length > 1) {
+        seen.set(String(row.target_field || '').toUpperCase(), row.shared_name_tables);
+      }
+    });
+    return [...seen.entries()];
+  }, [rows]);
+  if (names.length === 0) return null;
+  const sample = names.slice(0, 3).map(([name, tables]) => `${name} (${tables.join(', ')})`).join('; ');
+  return (
+    <div style={{ ...PANEL, padding: '10px 14px', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 8 }}>
+      <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: 'var(--text-tertiary)' }} />
+      <span>
+        {names.length} column name{names.length > 1 ? 's are' : ' is'} used in more than one table: {sample}
+        {names.length > 3 ? ` and ${names.length - 3} more` : ''}. They deploy fine as TABLE.NAME; rename one
+        (Edit) only if people query the view by the bare name.
+      </span>
+    </div>
+  );
+}
+
 export default function DryRunMappingTable({
   mappings = [],
   onEdit,
@@ -1635,6 +1741,13 @@ export default function DryRunMappingTable({
       {Array.isArray(droppedEntities) && droppedEntities.length > 0 && (
         <DroppedFieldsPanel entries={droppedEntities} />
       )}
+
+      {/* ── Every name that will deploy differently from the source (even
+          when nothing needed fixing), with the reason and an Edit action. ── */}
+      <NameChangesPanel rows={mappings} onEdit={onEdit} />
+
+      {/* ── Same column name in several tables (info only). ── */}
+      <SharedNamesNote rows={mappings} />
 
       {/* ── Columns table ────────────────────────────────────────────────────── */}
       {mappings.length === 0 ? (

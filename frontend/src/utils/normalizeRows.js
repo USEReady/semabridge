@@ -166,6 +166,9 @@ export function normalizeRows(data) {
         // Tables that have a column with this same name (info only; see
         // project_mapping_engine._flag_hidden_collisions).
         shared_name_tables: Array.isArray(row?.shared_name_tables) ? row.shared_name_tables : [],
+        // Original source name when conversion renamed the column because
+        // another column of its table becomes the same Snowflake name.
+        renamed_from: row?.renamed_from ? String(row.renamed_from) : '',
         complexity_tier: row?.complexity_tier ?? null,
         isDirty: false,
       };
