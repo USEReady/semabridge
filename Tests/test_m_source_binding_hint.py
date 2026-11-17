@@ -120,3 +120,70 @@ def test_binding_resolver_m_source_flag():
     )
     assert res_fallback == "ORDERS"
 
+
+def test_hint_case_insensitive_unquoted_matching():
+    from semabridge.connectors.table_binding_resolver import (
+        identifier_matches,
+        match_hint_to_live_table,
+    )
+
+    # Unquoted identifiers match case-insensitively (uppercase semantics)
+    assert identifier_matches("orders", "ORDERS") is True
+    assert identifier_matches("Sales_Fact", "SALES_FACT") is True
+    assert identifier_matches("SALES_FACT", "sales_fact") is True
+
+    # Multi-part matching
+    hint = {"database": "sales_db", "schema": "public", "table": "orders"}
+    assert match_hint_to_live_table(hint, "ORDERS") is True
+    assert match_hint_to_live_table(hint, "orders") is True
+    assert match_hint_to_live_table(hint, "PUBLIC.ORDERS") is True
+    assert match_hint_to_live_table(hint, "SALES_DB.PUBLIC.ORDERS") is True
+
+    # Live schema binding resolution with unquoted lower-case hint
+    live_meta = LiveSchemaMetadata({
+        "PHYSICAL_FACT_ORDERS": {"ORDER_ID", "AMOUNT"},
+    })
+    res = resolve_dataset_to_physical_table(
+        "Orders",
+        ["ORDER_ID", "AMOUNT"],
+        live_meta,
+        source_hint={"database": "sales_db", "schema": "public", "table": "physical_fact_orders"},
+        bind_from_m_source=True,
+    )
+    assert res == "PHYSICAL_FACT_ORDERS"
+
+
+def test_hint_exact_case_quoted_matching():
+    from semabridge.connectors.table_binding_resolver import (
+        identifier_matches,
+        match_hint_to_live_table,
+    )
+
+    # Quoted identifier requires exact case
+    assert identifier_matches('"Special_Orders"', "Special_Orders") is True
+    assert identifier_matches('"Special_Orders"', "SPECIAL_ORDERS") is False
+    assert identifier_matches('"Special_Orders"', "special_orders") is False
+
+    hint_quoted = {"schema": '"Audit"', "table": '"Special_Events"'}
+    assert match_hint_to_live_table(hint_quoted, '"Audit"."Special_Events"') is True
+    assert match_hint_to_live_table(hint_quoted, 'Audit.Special_Events') is True
+    # Different case on quoted table fails
+    assert match_hint_to_live_table(hint_quoted, 'Audit.SPECIAL_EVENTS') is False
+    # Different schema fails
+    assert match_hint_to_live_table(hint_quoted, 'PUBLIC.Special_Events') is False
+
+    # Resolution in live schema: distinguishes exact case quoted identifier
+    live_meta = LiveSchemaMetadata({
+        "Special_Orders": {"ID"},
+        "SPECIAL_ORDERS": {"ID"},
+    })
+    res = resolve_dataset_to_physical_table(
+        "MyOrders",
+        ["ID"],
+        live_meta,
+        source_hint={"table": '"Special_Orders"'},
+        bind_from_m_source=True,
+    )
+    assert res == "Special_Orders"
+
+

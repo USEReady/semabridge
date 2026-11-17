@@ -473,6 +473,97 @@ def _log_binding(live_schema_metadata: Any, dataset_name: str, table: str, match
 
 
 
+def identifier_matches(hint_id: Optional[str], live_id: Optional[str]) -> bool:
+    """Check if a hinted Snowflake identifier matches a live schema identifier.
+
+    - Unquoted identifiers match case-insensitively (both converted to uppercase).
+    - Quoted identifiers (enclosed in double quotes) require exact case match.
+    """
+    if hint_id is None or live_id is None:
+        return False
+    h_str = str(hint_id).strip()
+    l_str = str(live_id).strip()
+    if not h_str or not l_str:
+        return False
+
+    h_quoted = h_str.startswith('"') and h_str.endswith('"') and len(h_str) >= 2
+    l_quoted = l_str.startswith('"') and l_str.endswith('"') and len(l_str) >= 2
+    h_clean = h_str[1:-1] if h_quoted else h_str
+    l_clean = l_str[1:-1] if l_quoted else l_str
+
+    if h_quoted or l_quoted:
+        return h_clean == l_clean
+    return h_clean.upper() == l_clean.upper()
+
+
+def split_snowflake_path(path: str) -> List[str]:
+    """Split a Snowflake object path (e.g. DB.SCHEMA.TABLE) respecting quotes."""
+    parts: List[str] = []
+    current: List[str] = []
+    in_quotes = False
+    for char in path.strip():
+        if char == '"':
+            in_quotes = not in_quotes
+            current.append(char)
+        elif char == '.' and not in_quotes:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def match_hint_to_live_table(
+    hint: Dict[str, Any],
+    candidate_table: str,
+    live_schema_metadata: Any = None,
+) -> bool:
+    """Match a hinted database/schema/table against a live schema candidate table.
+
+    Unquoted identifiers match case-insensitively; quoted identifiers match exact case.
+    """
+    if not hint or not isinstance(hint, dict) or not candidate_table:
+        return False
+
+    hint_tbl = hint.get("table")
+    if not hint_tbl:
+        return False
+
+    cand_parts = split_snowflake_path(candidate_table)
+    if not cand_parts:
+        return False
+
+    # Check table name (last segment)
+    cand_tbl = cand_parts[-1]
+    if not identifier_matches(hint_tbl, cand_tbl):
+        return False
+
+    # Check schema name if specified in candidate
+    if len(cand_parts) >= 2:
+        cand_schema = cand_parts[-2]
+        if hint.get("schema") and not identifier_matches(hint.get("schema"), cand_schema):
+            return False
+
+    # Check database name if specified in candidate
+    if len(cand_parts) >= 3:
+        cand_db = cand_parts[-3]
+        if hint.get("database") and not identifier_matches(hint.get("database"), cand_db):
+            return False
+
+    # If candidate is a simple name, verify against live_schema_metadata attributes if present
+    if len(cand_parts) == 1 and live_schema_metadata:
+        live_schema = getattr(live_schema_metadata, "current_schema", None) or getattr(live_schema_metadata, "schema", None)
+        if live_schema and hint.get("schema") and not identifier_matches(hint.get("schema"), live_schema):
+            return False
+        live_db = getattr(live_schema_metadata, "current_database", None) or getattr(live_schema_metadata, "database", None)
+        if live_db and hint.get("database") and not identifier_matches(hint.get("database"), live_db):
+            return False
+
+    return True
+
+
 def resolve_dataset_to_physical_table(
 
     dataset_name: str,
@@ -553,11 +644,10 @@ def resolve_dataset_to_physical_table(
             if not hint and hasattr(live_schema_metadata, "dataset_hints"):
                 hint = getattr(live_schema_metadata, "dataset_hints", {}).get(str(dataset_name).upper())
         if hint and isinstance(hint, dict) and hint.get("table"):
-            hinted_name = str(hint["table"]).strip()
-            matched_live = next((t for t in live_schema_metadata if t.upper() == hinted_name.upper()), None)
-            if matched_live:
-                _log_binding(live_schema_metadata, dataset_name, matched_live, "m_source_hint")
-                return matched_live
+            for cand in live_schema_metadata:
+                if match_hint_to_live_table(hint, cand, live_schema_metadata):
+                    _log_binding(live_schema_metadata, dataset_name, cand, "m_source_hint")
+                    return cand
 
     candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata, model_name=model_name)
 
