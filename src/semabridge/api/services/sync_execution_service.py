@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import copy
 from semabridge.core.execution_engine import ExecutionEngine
+from semabridge.core.engine.exceptions import is_no_source_tables_summary
 from semabridge.core.settings import get_settings, reload_settings
 from semabridge.repository.model_repository import ModelRepository
 from semabridge.domain.exceptions import NotFoundError, ValidationError
@@ -816,7 +817,14 @@ def _run_single_job_impl(
                 except Exception as version_error:
                     logger.warning("Version row write failed for %s: %s", model_label, version_error)
 
-            status = "success" if job_ok else "failed"
+            if job_ok:
+                status = "success"
+            elif is_no_source_tables_summary(summary_data):
+                # No tables (e.g. a thin report): nothing to deploy for this
+                # model. Skipped, not failed, so the other models still count.
+                status = "skipped"
+            else:
+                status = "failed"
             return {
                 "model": model_label,
                 "status": status,
@@ -1355,7 +1363,10 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
             result.setdefault("model_plan", plan)
 
     succeeded = [result for result in per_model_results if result["status"] == "success"]
-    if len(succeeded) == len(per_model_results):
+    skipped = [result for result in per_model_results if result["status"] == "skipped"]
+    if succeeded and len(succeeded) + len(skipped) == len(per_model_results):
+        # Skipped models (no tables) do not make a run partial: retrying
+        # them cannot help. A run where nothing deployed is never a success.
         overall_status = "success"
     elif succeeded:
         overall_status = "partial"
@@ -1381,6 +1392,7 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     return {
         "status": overall_status,
         "models_synced": len(succeeded),
+        "models_skipped": [str(result.get("model") or "") for result in skipped],
         "total_models": len(per_model_results),
         "results": per_model_results,
         "summary": last_summary or {},

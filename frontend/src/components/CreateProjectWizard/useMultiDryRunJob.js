@@ -209,7 +209,8 @@ export function useMultiDryRunJob({ projectId, job }) {
       if (!prev) return prev;
       const remaining = (prev.files || []).filter((f) => f.file_id !== fileId);
       const anyFailed = remaining.some((f) => normalizeFileStatus(f.status) === 'failed');
-      const allSuccess = remaining.length > 0 && remaining.every((f) => normalizeFileStatus(f.status) === 'success');
+      const allSuccess = remaining.some((f) => normalizeFileStatus(f.status) === 'success')
+        && remaining.every((f) => ['success', 'skipped'].includes(normalizeFileStatus(f.status)));
       return {
         ...prev,
         status: allSuccess ? 'success' : (anyFailed ? 'partial' : prev.status),

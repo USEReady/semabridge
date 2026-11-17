@@ -337,9 +337,11 @@ def _aggregate_job_status(file_statuses: List[str]) -> str:
         return "failed"
     if any(s in ("pending", "running") for s in file_statuses):
         return "running"
-    if all(s == "success" for s in file_statuses):
-        return "success"
-    if all(s == "failed" for s in file_statuses):
+    # "skipped" = a model with no tables: fine next to deployable models, but
+    # a job with nothing deployable did not succeed.
+    if all(s in ("success", "skipped") for s in file_statuses):
+        return "success" if "success" in file_statuses else "failed"
+    if all(s in ("failed", "skipped") for s in file_statuses):
         return "failed"
     return "partial"
 
@@ -438,6 +440,13 @@ def _record_file_outcome(
                 job_file.content_hash = _hash_or_none(result.get("content_hash"))
                 job_file.config_hash = _hash_or_none(result.get("config_hash"))
                 job_file.overrides_hash = _hash_or_none(result.get("overrides_hash"))
+            elif result.get("skipped_no_tables"):
+                # Nothing to deploy (no tables, e.g. a thin report). Hashes
+                # are kept so the gate still notices if the file changes.
+                job_file.status = "skipped"
+                job_file.error_message = str(result.get("skip_reason") or "This model has no tables.")
+                job_file.content_hash = _hash_or_none(result.get("content_hash"))
+                job_file.config_hash = _hash_or_none(result.get("config_hash"))
             else:
                 job_file.status = "failed"
                 job_file.error_message = str(
@@ -775,7 +784,7 @@ def reset_dry_run_job_file_for_rerun(job_id: str, file_id: str) -> Dict[str, Any
             .where(
                 DryRunJobFile.file_id == file_id,
                 DryRunJobFile.job_id == job_id,
-                DryRunJobFile.status.in_(("success", "failed")),
+                DryRunJobFile.status.in_(("success", "failed", "skipped")),
             )
             .values(
                 status="pending",
@@ -1021,6 +1030,8 @@ def validate_multi_model_dry_run_readiness(
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     files.sort(key=lambda f: (f["job_created"] or epoch, f["order"] or epoch), reverse=True)
 
+    skipped_models: List[str] = []
+    deployable_models = 0
     for job in jobs:
         label = str(job.get("source_ref") or job.get("model_label"))
         display = str(job.get("model_label") or label)
@@ -1065,6 +1076,13 @@ def validate_multi_model_dry_run_readiness(
             )
             candidate = legacy
 
+        if candidate["status"] == "skipped":
+            # No tables (e.g. a thin report): the sync skips this model too.
+            # The same-content check above already ran (a changed file needs
+            # a new dry run); there is no plan to compare.
+            skipped_models.append(display)
+            continue
+        deployable_models += 1
         if candidate["status"] != "success":
             err = candidate["error"] or f"status is '{candidate['status']}'"
             raise ValidationError(
@@ -1091,3 +1109,14 @@ def validate_multi_model_dry_run_readiness(
                     f"model '{candidate['label'] or display}' has {'; '.join(issues)}. "
                     "Resolve all collisions and blockers before syncing."
                 )
+
+    if skipped_models and deployable_models == 0:
+        raise ValidationError(
+            f"Multi-model project '{project_id}' cannot be synced: no model has tables to deploy "
+            f"({', '.join(skipped_models)} {'was' if len(skipped_models) == 1 else 'were'} skipped)."
+        )
+    if skipped_models:
+        logger.info(
+            "Dry-run gate: project %s will skip %d model(s) with no tables: %s",
+            project_id, len(skipped_models), ", ".join(skipped_models),
+        )

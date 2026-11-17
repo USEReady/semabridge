@@ -286,6 +286,11 @@ export default function MultiFileDryRunStatus({
                     {errorText}
                   </div>
                 )}
+                {section.status === 'skipped' && (
+                  <div title={section.error} style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                    Will be skipped: {section.error || 'this model has no tables.'} The other models still sync.
+                  </div>
+                )}
               </div>
               <SectionCounts section={section} />
               <StatusBadge status={badgeStatus} size="sm" />

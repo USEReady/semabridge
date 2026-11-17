@@ -724,11 +724,21 @@ async def _run_dry_run_pipeline(
     # engine run did (a real sync of a FAILED/PARTIAL model fails too).
     engine_errors: List[str] = []
     model_plan: Optional[Dict[str, Any]] = None
+    from semabridge.core.engine.exceptions import is_no_source_tables_summary
+
+    # A model with no tables (e.g. a thin report) is "skipped", not failed:
+    # the multi-model sync gate lets its siblings deploy without it.
+    no_tables_reason: Optional[str] = None
     for r in results:
         summary = r.get("summary") or {}
         if model_plan is None and isinstance(r.get("model_plan"), dict):
             model_plan = r.get("model_plan")
         result_status = str(r.get("status") or "").strip().lower()
+        if result_status == "skipped" or (result_status != "success" and is_no_source_tables_summary(summary)):
+            no_tables_reason = no_tables_reason or next(
+                (str(e.get("message") or "") for e in (summary.get("errors") or []) if isinstance(e, dict)),
+                "This model has no tables.",
+            )
         if result_status and result_status != "success":
             messages = [
                 str(e.get("message") or "").strip()
@@ -1017,6 +1027,10 @@ async def _run_dry_run_pipeline(
         "source_ref": (selected_sources[0] if len(selected_sources or []) == 1 else None),
         "entity_mappings": filtered_mappings,
         "extraction_failed": extraction_failed,
+        # Set when the only problem is that the model has no tables; the
+        # dry-run job records the file as "skipped" with this reason.
+        "skipped_no_tables": bool(no_tables_reason) and len(results) == 1,
+        "skip_reason": no_tables_reason,
         "dropped_entities": data.get("dropped_entities", []),
         "unresolved_report_field_references": unresolved_report_field_references,
         "ambiguous_report_aliases": ambiguous_report_aliases,

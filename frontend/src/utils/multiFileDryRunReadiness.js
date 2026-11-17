@@ -38,18 +38,23 @@ export function resolveMultiFileDryRunReadiness(jobStatus) {
 /** Minimum compatibility score a model may have and still allow Proceed (same as the single-model gate). */
 export const MIN_PROCEED_COMPAT_SCORE = 70;
 
-/** Normalizes a backend per-file status into pending | running | success | failed. */
+/**
+ * Normalizes a backend per-file status into pending | running | success |
+ * failed | skipped. "skipped" = the model has no tables (e.g. a thin report):
+ * nothing to deploy, and the sync skips it too.
+ */
 export function normalizeFileStatus(status) {
   const s = String(status || '').trim().toLowerCase();
   if (s === 'success' || s === 'succeeded' || s === 'completed' || s === 'complete' || s === 'done') return 'success';
   if (s === 'failed' || s === 'error' || s === 'errored' || s === 'cancelled' || s === 'canceled') return 'failed';
+  if (s === 'skipped') return 'skipped';
   if (s === 'running' || s === 'in_progress' || s === 'started') return 'running';
   return 'pending';
 }
 
 export function isTerminalFileStatus(status) {
   const s = normalizeFileStatus(status);
-  return s === 'success' || s === 'failed';
+  return s === 'success' || s === 'failed' || s === 'skipped';
 }
 
 /** True once every file in the job reached a terminal state (polling can stop). */
@@ -146,9 +151,11 @@ export function buildMultiModelSections(jobStatus, fileStates = {}) {
 }
 
 /**
- * resolveMultiModelReadiness — Proceed is enabled only when EVERY model's dry
- * run succeeded, every model's result is loaded, and no model has unresolved
- * blocking rows or a compatibility score under the single-model threshold.
+ * resolveMultiModelReadiness — Proceed is enabled only when every model's dry
+ * run succeeded (or was skipped for having no tables, with at least one model
+ * left to deploy), every succeeded model's result is loaded, and no model has
+ * unresolved blocking rows or a compatibility score under the single-model
+ * threshold. A failed model always blocks.
  */
 export function resolveMultiModelReadiness(sections = [], { minCompat = MIN_PROCEED_COMPAT_SCORE } = {}) {
   const list = Array.isArray(sections) ? sections : [];
@@ -157,6 +164,7 @@ export function resolveMultiModelReadiness(sections = [], { minCompat = MIN_PROC
   const failedCount = list.filter((s) => s.status === 'failed' || Boolean(s.loadError)).length;
   const loadingCount = list.filter((s) => s.loading).length;
   const succeededCount = list.filter((s) => s.status === 'success' && s.loaded).length;
+  const skippedModels = list.filter((s) => s.status === 'skipped').map((s) => s.label);
   const totalBlocking = list.reduce((sum, s) => sum + (s.blockingCount || 0), 0);
   const totalSchemaConflicts = list.reduce((sum, s) => sum + (s.schemaConflictCount || 0), 0);
   const scores = list.map((s) => s.compatibilityScore).filter((v) => typeof v === 'number');
@@ -167,13 +175,18 @@ export function resolveMultiModelReadiness(sections = [], { minCompat = MIN_PROC
     .map((s) => s.label);
 
   const running = total === 0 || pendingCount > 0 || loadingCount > 0;
-  const allSucceeded = total > 0 && succeededCount === total;
+  // Every model either succeeded or was skipped for having no tables, and at
+  // least one model has something to deploy (same rule as the server gate).
+  // A FAILED model always blocks.
+  const allSucceeded = total > 0 && succeededCount > 0 && succeededCount + skippedModels.length === total;
   const ready = allSucceeded && totalBlocking === 0 && lowCompatModels.length === 0;
 
   return {
     total,
     running,
     allSucceeded,
+    skippedModels,
+    skippedCount: skippedModels.length,
     hasFailures: failedCount > 0,
     ready,
     pendingCount,

@@ -39,6 +39,7 @@ from semabridge.core.engine.exceptions import (
     ConfigValidationError,
     AuthenticationError,
     ExtractionError,
+    NoSourceTablesError,
     SourceFormatError,
     ConversionError,
     PersistenceError,
@@ -74,6 +75,10 @@ def _step4_extract(
         else:
             raise ExtractionError(f"Unknown source type: {context.source_type}")
 
+    except NoSourceTablesError as e:
+        # Keep the type: callers skip (not fail) a model with no tables.
+        self._record_step(4, StepStatus.FAILED, str(e))
+        raise
     except Exception as e:
         self._record_step(4, StepStatus.FAILED, str(e))
         raise ExtractionError(f"Extraction failed: {e}") from e

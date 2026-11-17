@@ -805,11 +805,21 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
 
         _failed_models = [
             str(r.get("model")) for r in _model_results
-            if str(r.get("status") or "").lower() != "success" and r.get("model")
+            if str(r.get("status") or "").lower() not in ("success", "skipped") and r.get("model")
+        ]
+        _skipped_models = [
+            str(r.get("model")) for r in _model_results
+            if str(r.get("status") or "").lower() == "skipped" and r.get("model")
         ]
         run["failed_models"] = _failed_models
+        run["skipped_models"] = _skipped_models
         run["message"] = (
-            "Execution completed successfully."
+            (
+                f"Execution completed successfully. Skipped {len(_skipped_models)} model(s) with no tables "
+                f"({', '.join(_skipped_models[:5])}{'...' if len(_skipped_models) > 5 else ''})."
+            )
+            if run["status"] == "success" and _skipped_models
+            else "Execution completed successfully."
             if run["status"] == "success"
             else "Execution completed with warnings."
             if run["status"] == "warning"
@@ -1468,7 +1478,8 @@ def _failed_models_of_run(project_id: str, run_id: str) -> Tuple[Optional[Dict[s
 
         results = load_run_model_results(project_id, run_id)
     for entry in results or []:
-        if isinstance(entry, dict) and entry.get("model") and str(entry.get("status") or "").lower() != "success":
+        # "skipped" = no tables: retrying cannot help, so it is not retried.
+        if isinstance(entry, dict) and entry.get("model") and str(entry.get("status") or "").lower() not in ("success", "skipped"):
             failed.append(str(entry["model"]))
     if not failed:
         failed = [str(m) for m in (run.get("failed_models") or []) if m]

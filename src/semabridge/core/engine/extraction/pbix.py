@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 import yaml
 from pydantic import Field
 from semabridge.connectors.snowflake_emitter import MissingSourceTableWarning
@@ -39,6 +39,7 @@ from semabridge.core.engine.exceptions import (
     ConfigValidationError,
     AuthenticationError,
     ExtractionError,
+    NoSourceTablesError,
     SourceFormatError,
     ConversionError,
     PersistenceError,
@@ -120,7 +121,8 @@ def _extract_pbix(
         # A model with no tables can only deploy an empty semantic view; the
         # dry run used to report it as "success" with 0 fields. Typical cause:
         # a thin report connected to a dataset in the Power BI service.
-        raise ExtractionError(_empty_pbix_model_message(pbix_path))
+        message, reason_code = _empty_pbix_model_message(pbix_path)
+        raise NoSourceTablesError(message, reason_code=reason_code)
 
     logger.debug(
         "PBIX -> TMSL transition complete for %s (%s tables)",
@@ -161,9 +163,31 @@ def _extract_pbix(
     return source_format
 
 
-def _empty_pbix_model_message(pbix_path: str) -> str:
-    """Explain why a PBIX yielded no tables, naming the service dataset when
-    the file is a thin report (Connections -> RemoteArtifacts)."""
+def _live_connection_targets(connections: Dict[str, Any]) -> List[str]:
+    """Published model(s) a thin report connects to, from its Connections
+    part. Power BI writes this in several shapes: RemoteArtifacts[].DatasetId,
+    Connections[].PbiModelDatabaseName / PbiServiceModelId, or an
+    "Initial Catalog=" in Connections[].ConnectionString."""
+    found: List[str] = []
+    for item in connections.get("RemoteArtifacts") or []:
+        if isinstance(item, dict) and item.get("DatasetId"):
+            found.append(str(item["DatasetId"]))
+    for conn in connections.get("Connections") or []:
+        if not isinstance(conn, dict):
+            continue
+        for key in ("PbiModelDatabaseName", "PbiServiceModelId"):
+            if conn.get(key):
+                found.append(str(conn[key]))
+        for part in str(conn.get("ConnectionString") or "").split(";"):
+            k, _, v = part.partition("=")
+            if k.strip().lower() == "initial catalog" and v.strip():
+                found.append(v.strip())
+    return list(dict.fromkeys(found))
+
+
+def _empty_pbix_model_message(pbix_path: str) -> Tuple[str, str]:
+    """(message, reason_code) for a PBIX that yielded no tables. Names the
+    published dataset when the file is a thin report (LIVE_CONNECTION)."""
     import json
     import zipfile
 
@@ -172,17 +196,17 @@ def _empty_pbix_model_message(pbix_path: str) -> str:
         with zipfile.ZipFile(pbix_path) as archive:
             if "Connections" in archive.namelist():
                 connections = json.loads(archive.read("Connections").decode("utf-8-sig") or "{}")
-                remote = [
-                    str(item.get("DatasetId"))
-                    for item in (connections.get("RemoteArtifacts") or [])
-                    if isinstance(item, dict) and item.get("DatasetId")
-                ]
+                remote = _live_connection_targets(connections) if isinstance(connections, dict) else []
                 if remote:
                     return (
                         f"'{name}' contains no tables: it is a thin report connected to Power BI service "
                         f"dataset {', '.join(remote)}. Add that dataset through a Fabric/Power BI source, "
-                        "or export the report with its data model."
+                        "or export the report with its data model.",
+                        "LIVE_CONNECTION",
                     )
-    except Exception:
-        pass
-    return f"'{name}' contains no tables, so there is nothing to sync. Check that the file includes its data model."
+    except (OSError, ValueError, zipfile.BadZipFile) as exc:
+        logger.debug("Could not read Connections from %s: %s", pbix_path, exc)
+    return (
+        f"'{name}' contains no tables, so there is nothing to sync. Check that the file includes its data model.",
+        "NO_TABLES",
+    )

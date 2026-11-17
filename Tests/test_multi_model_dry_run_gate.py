@@ -292,3 +292,33 @@ def test_gate_never_adopts_an_unlinked_preview_job():
     with db_manager.get_session() as session:
         assert session.get(DryRunJob, "dryrun-preview-random-id").project_id == "preview-random-id"
 
+
+
+def test_gate_passes_when_a_model_was_skipped_for_having_no_tables():
+    # A thin report next to a real model: the real one deploys, the thin one
+    # is skipped (it has nothing to deploy) instead of blocking the project.
+    source_cfg = {"mode": "multiple", "models": ["models/ModelA.pbix", "models/Thin.pbix"]}
+    _populate_job(
+        "proj_gate_skip_1",
+        [
+            {"source_ref": "models/ModelA.pbix", "status": "success",
+             "result": {"entity_mappings": [{"id": "r1", "source_name": "F", "target_name": "F", "status": "valid"}]}},
+            {"source_ref": "models/Thin.pbix", "status": "skipped",
+             "error_message": "'Thin.pbix' contains no tables: it is a thin report connected to ..."},
+        ],
+    )
+    validate_multi_model_dry_run_readiness("proj_gate_skip_1", source_cfg)
+
+
+def test_gate_rejects_when_every_model_was_skipped():
+    source_cfg = {"mode": "multiple", "models": ["models/Thin1.pbix", "models/Thin2.pbix"]}
+    _populate_job(
+        "proj_gate_skip_2",
+        [
+            {"source_ref": "models/Thin1.pbix", "status": "skipped", "error_message": "no tables"},
+            {"source_ref": "models/Thin2.pbix", "status": "skipped", "error_message": "no tables"},
+        ],
+        status="failed",
+    )
+    with pytest.raises(ValidationError, match="no model has tables to deploy"):
+        validate_multi_model_dry_run_readiness("proj_gate_skip_2", source_cfg)
