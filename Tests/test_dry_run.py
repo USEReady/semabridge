@@ -124,7 +124,7 @@ def test_build_config_yaml_from_request_preserves_fabric_identity_id():
 #      Validates: Requirements 1.1
 # ===========================================================================
 
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 # Strategy: generate a list of entity_mapping dicts with mixed entity_kind values
@@ -148,7 +148,9 @@ _mapping_st = st.fixed_dictionaries(
 
 
 @given(entity_mappings=st.lists(_mapping_st, min_size=0, max_size=30))
-@settings(max_examples=200)
+# Same 200 examples; only the timing checks are relaxed for this test, which
+# generates large dicts and tripped HealthCheck.too_slow under parallel CPU load.
+@settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 def test_property1_field_only_invariant(entity_mappings):
     """
     **Validates: Requirements 1.1**
