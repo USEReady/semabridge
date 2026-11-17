@@ -68,6 +68,7 @@ async def run_sync(
     mode: Optional[str] = None,
     project_id: str = "",
     fabric_identity_id: str = "",
+    deploy: bool = True,
 ) -> SyncResult:
     """
     Dispatch a single model sync to the configured orchestrator.
@@ -106,6 +107,8 @@ async def run_sync(
             schema=schema,
             fabric_workspace_id=fabric_workspace_id,
             fabric_identity_id=fabric_identity_id,
+            project_id=project_id,
+            deploy=deploy,
         )
 
 
@@ -197,54 +200,70 @@ async def _run_local(
     schema: str,
     fabric_workspace_id: str = "",
     fabric_identity_id: str = "",
+    project_id: str = "",
+    deploy: bool = True,
 ) -> SyncResult:
     """
-    Run the sync using the existing in-process ``SyncOrchestrator``.
+    Run the sync in-process with the current ``ExecutionEngine`` -- the same
+    constructor and ``execute(...)`` call the main project sync uses
+    (api/services/sync_execution_service.py).
 
-    This shim wraps the synchronous orchestrator in an asyncio executor
-    so the adapter interface stays consistently async.
+    The run config is the project's saved config when ``project_id`` is given
+    (so its behavior/options apply, like a project sync), with the job's Fabric
+    identity/workspace/model and the Snowflake target layered on top.
+    ``deploy=False`` runs the full pipeline without deploying (dry run).
+    The engine call runs in an executor so the adapter stays async.
     """
     import asyncio
-    from semabridge.core.sync_orchestrator import (
-        SyncReport,
-        ModelStatus,
-    )
+    import copy
 
     def _sync() -> SyncResult:
-        # The legacy orchestrator is invoked through the existing CLI plumbing.
-        # We import lazily to keep the adapter lightweight when Temporal is used.
+        from semabridge.core.engine import ExecutionEngine
+        from semabridge.core.run_summary import RunStatus
+
+        cfg: Dict[str, Any] = {}
+        if project_id:
+            from semabridge.sources.fabric.dax_target import load_project_config
+
+            cfg = copy.deepcopy(load_project_config(project_id) or {})
+        run_project_id = str(cfg.get("project_id") or project_id or f"adapter-{tenant_id}-{model_id}")
+        cfg["project_id"] = run_project_id
+        source = dict(cfg.get("source") or {}) if isinstance(cfg.get("source"), dict) else {}
+        source.update({"type": "fabric", "workspace_id": fabric_workspace_id, "identity_id": fabric_identity_id,
+                       "models": [model_id]})
+        source.pop("dataset_id", None)
+        cfg["source"] = source
+        if database or schema:
+            cfg["targets"] = [{"type": "snowflake", "database": database, "schema": schema}]
+
+        error = ""
         try:
-            from semabridge.core.engine import SemaBridgeEngine
-            from semabridge.core.project import ProjectConfig, SourceConfig, TargetType, TargetConfig
-
-            config = ProjectConfig(
-                name=f"Sync {model_id}",
-                source=SourceConfig(
-                    type="fabric", model=model_id,
-                    workspace_id=fabric_workspace_id or None, identity_id=fabric_identity_id or None,
-                ),
-                targets=[TargetConfig(type=TargetType.SNOWFLAKE, database=database, schema_name=schema)]
+            summary = ExecutionEngine().execute(
+                source="fabric",
+                target="snowflake",
+                project_id=run_project_id,
+                project_name=model_id,
+                config_dict=cfg,
+                dataset_id=model_id,
+                workspace_id=fabric_workspace_id,
+                deploy=deploy,
+                dry_run=not deploy,
+                sync_mode="copy",
             )
-
-            # v4.3: Legacy path uses default COPY mode
-            engine = SemaBridgeEngine(config, sync_mode="copy")
-            result = engine.execute()
-
-            deployed = result.targets_succeeded > 0
-            status = "completed" if result.success else "failed"
-            error = "; ".join(result.errors) if result.errors else ""
-        except Exception as exc:
-            deployed = False
-            status = "failed"
-            error = str(exc)
-            result = None
+            run_status = getattr(summary, "status", None)
+            ok = run_status in (RunStatus.SUCCESS, RunStatus.PARTIAL)
+            status = "completed" if ok else "failed"
+            deployed = bool(deploy and run_status == RunStatus.SUCCESS)
+            error = "; ".join(getattr(e, "message", str(e)) for e in (getattr(summary, "errors", None) or []))
+        except Exception as exc:  # reported on the result with its reason
+            status, deployed, error = "failed", False, f"{type(exc).__name__}: {exc}"
 
         return SyncResult(
             run_id=str(uuid.uuid4())[:12],
             tenant_id=tenant_id,
             model_id=model_id,
             status=status,
-            changes_detected=-1,  # legacy doesn't expose change count
+            changes_detected=-1,  # the engine doesn't expose a change count
             deployed=deployed,
             error=error,
         )

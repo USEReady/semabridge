@@ -76,19 +76,20 @@ def test_adapter_local_path_sets_identity_from_project_config(monkeypatch, proje
     from semabridge.orchestration import orchestrator_adapter as oa
     from semabridge.sources.base import SourceConfigError
 
+    from semabridge.core.run_summary import RunStatus
+
     seen = {}
 
-    class _Engine:
-        def __init__(self, config, sync_mode=None):
-            seen["source"] = config.source
+    class _Engine:  # the local path uses ExecutionEngine().execute(...), like the main sync
+        def execute(self, **kw):
+            seen.update(kw)
+            return SimpleNamespace(status=RunStatus.SUCCESS, errors=[])
 
-        def execute(self):
-            return SimpleNamespace(targets_succeeded=1, success=True, errors=[])
-
-    monkeypatch.setattr(ce, "SemaBridgeEngine", _Engine)
+    monkeypatch.setattr(ce, "ExecutionEngine", _Engine)
     res = asyncio.run(oa.run_sync("t", "Sales", "DB", "SCH", mode="local", project_id="proj-1"))
-    assert res.status == "completed"
-    assert (seen["source"].identity_id, seen["source"].workspace_id) == ("acct-proj", "ws-proj")
+    assert res.status == "completed" and res.deployed is True
+    src = seen["config_dict"]["source"]
+    assert (src["identity_id"], src["workspace_id"], seen["workspace_id"]) == ("acct-proj", "ws-proj", "ws-proj")
 
     with pytest.raises(SourceConfigError, match="fabric_identity_id"):
         asyncio.run(oa.run_sync("t", "Sales", "DB", "SCH", mode="local", fabric_workspace_id="ws-1"))
