@@ -814,7 +814,21 @@ class FabricExtractor:
                         raise FabricExtractionError(f"Failed to decode model.bim: {e}")
                 else:
                     raise FabricExtractionError(f"Unsupported payload type: {payload_type}")
-        
+
+        tmdl_parts = sorted(
+            str(p.get("path") or "") for p in parts
+            if str(p.get("path") or "").lower().endswith(".tmdl")
+        )
+        if tmdl_parts:
+            # Fabric returned the model in TMDL (definition/*.tmdl) instead of
+            # TMSL (model.bim). There is no TMDL reader yet, so say so plainly.
+            shown = ", ".join(tmdl_parts[:5]) + (f" (+{len(tmdl_parts) - 5} more)" if len(tmdl_parts) > 5 else "")
+            raise FabricExtractionError(
+                "Fabric returned the semantic model definition in TMDL format "
+                f"({len(tmdl_parts)} .tmdl part(s): {shown}) and no model.bim (TMSL). "
+                "SemaBridge cannot read TMDL yet; request the definition with format=TMSL "
+                "or save the model so the service can export it as TMSL."
+            )
         raise FabricExtractionError("model.bim not found in definition parts")
 
     _GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
