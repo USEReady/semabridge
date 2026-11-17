@@ -49,9 +49,10 @@ def sample_rsa_key_pair():
 def _setup_test_db(monkeypatch, tmp_path):
     key_file = tmp_path / "walkthrough.key"
     key_file.write_text("walkthrough-secret-fernet-key-32chars!", encoding="utf-8")
+    db_file = tmp_path / "walkthrough.db"
 
     monkeypatch.setenv("AUTH_ENABLED", "false")
-    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", "sqlite:///file::memory:?cache=shared&uri=true")
+    monkeypatch.setenv("SEMABRIDGE_DATABASE_URL", f"sqlite:///{db_file}")
     monkeypatch.setenv("SEMABRIDGE_DB_BACKEND", "orm")
     monkeypatch.setenv("SEMABRIDGE_ENCRYPTION_KEY_FILE", str(key_file))
     monkeypatch.delenv("SEMABRIDGE_ENCRYPTION_KEY", raising=False)
