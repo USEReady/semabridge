@@ -45,6 +45,7 @@ from semabridge.api.bootstrap.db_migrations import (
     _apply_schema_compatibility_fixes,
     _assign_orphaned_accounts_to_dev_user,
     _migrate_credentials_table,
+    migrate_credentials_encryption,
 )
 from semabridge.api.bootstrap.middleware import (
     ContentSizeLimitMiddleware,
@@ -152,6 +153,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.error('Alembic upgrade failed: %s', mig_exc, exc_info=True)
         try:
             _migrate_credentials_table()
+            migrate_credentials_encryption()
         except Exception as cred_exc:
             logger.error('Credentials table migration failed: %s', cred_exc, exc_info=True)
         try:

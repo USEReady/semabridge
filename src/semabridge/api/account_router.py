@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -87,6 +88,9 @@ class AccountResponse(BaseModel):
     identity_email: Optional[str]
     status: str
     is_default: bool
+    auth_type: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    token_status: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -126,13 +130,15 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
                 connector = body.connector_type.upper()
                 safe_token = None
                 resolved_auth_type = None
+                token_exp = None
+                ref_token = None
 
-                if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS"):
+                if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS", "FABRIC"):
                     import json
 
                     clean_creds = _merge_credential_bundle(existing.encrypted_token, body.credentials)
                     safe_token = encrypt_token(json.dumps(clean_creds))
-                    resolved_auth_type = clean_creds.get("auth_type")
+                    resolved_auth_type = clean_creds.get("auth_type", "service_principal" if connector == "FABRIC" else None)
                     logger.info(
                         "Refreshed stored credential bundle for %s account %s (%d keys)",
                         connector,
@@ -144,14 +150,18 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
                     if connector == "FABRIC":
                         try:
                             import json
-                            from semabridge.repository.credential_manager import CredentialManager
+                            from semabridge.api.services.connection_domain_service import get_and_consume_pending_fabric_login
 
-                            cm = CredentialManager()
-                            full_token = cm.get_msal_token()
-                            if full_token and full_token.get("access_token") == payload_str:
-                                payload_str = json.dumps(full_token)
+                            pending = get_and_consume_pending_fabric_login(payload_str)
+                            if pending:
+                                payload_str = json.dumps(pending)
+                                resolved_auth_type = pending.get("auth_method", "interactive")
+                                if pending.get("expires_at"):
+                                    token_exp = datetime.fromtimestamp(int(pending["expires_at"]), tz=timezone.utc)
+                                if pending.get("refresh_token"):
+                                    ref_token = encrypt_token(pending["refresh_token"])
                         except Exception as e:
-                            logger.warning(f"Could not merge full MSAL payload for account {body.tag}: {e}")
+                            logger.warning(f"Could not consume pending Fabric login for account {body.tag}: {e}")
 
                     safe_token = encrypt_token(payload_str)
 
@@ -160,6 +170,10 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
                     existing.encrypted_token = safe_token
                 if resolved_auth_type is not None:
                     existing.auth_type = resolved_auth_type
+                if token_exp is not None:
+                    existing.token_expires_at = token_exp
+                if ref_token is not None:
+                    existing.refresh_token = ref_token
                 existing.status = "Active"
                 db.commit()
                 logger.info(
@@ -180,8 +194,10 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
         safe_token = None
         connector = body.connector_type.upper()
         resolved_auth_type = None
+        token_exp = None
+        ref_token = None
 
-        if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS"):
+        if body.credentials and connector in ("SNOWFLAKE", "DATABRICKS", "FABRIC"):
             # New path: full credential bundle as JSON
             import json
             # No prior row exists for this tag — merge is a no-op beyond
@@ -189,7 +205,7 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
             clean_creds = _merge_credential_bundle(None, body.credentials)
             payload_str = json.dumps(clean_creds)
             safe_token = encrypt_token(payload_str)
-            resolved_auth_type = clean_creds.get("auth_type")
+            resolved_auth_type = clean_creds.get("auth_type", "service_principal" if connector == "FABRIC" else None)
             logger.info(
                 "Stored full credential bundle for %s account %s (%d keys)",
                 connector, body.tag, len(clean_creds),
@@ -199,13 +215,18 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
             if connector == "FABRIC":
                 try:
                     import json
-                    from semabridge.repository.credential_manager import CredentialManager
-                    cm = CredentialManager()
-                    full_token = cm.get_msal_token()
-                    if full_token and full_token.get("access_token") == payload_str:
-                        payload_str = json.dumps(full_token)
+                    from semabridge.api.services.connection_domain_service import get_and_consume_pending_fabric_login
+
+                    pending = get_and_consume_pending_fabric_login(payload_str)
+                    if pending:
+                        payload_str = json.dumps(pending)
+                        resolved_auth_type = pending.get("auth_method", "interactive")
+                        if pending.get("expires_at"):
+                            token_exp = datetime.fromtimestamp(int(pending["expires_at"]), tz=timezone.utc)
+                        if pending.get("refresh_token"):
+                            ref_token = encrypt_token(pending["refresh_token"])
                 except Exception as e:
-                    logger.warning(f"Could not merge full MSAL payload for account {body.tag}: {e}")
+                    logger.warning(f"Could not consume pending Fabric login for account {body.tag}: {e}")
             
             safe_token = encrypt_token(payload_str)
 
@@ -215,6 +236,8 @@ def create_account(request: Request, body: AccountCreate, db: Session = Depends(
             tag=body.tag,
             identity_email=body.identity_email,
             encrypted_token=safe_token,
+            refresh_token=ref_token,
+            token_expires_at=token_exp,
             auth_type=resolved_auth_type,
             status="Active",
             is_default=False,
@@ -254,7 +277,52 @@ def get_accounts(
         stmt = stmt.where(Account.connector_type == connector_type.upper())
     
     accounts = db.execute(stmt).scalars().all()
-    return accounts
+    now = datetime.now(tz=timezone.utc)
+    res = []
+    for acct in accounts:
+        auth_type = acct.auth_type
+        expires_at = acct.token_expires_at
+        token_status = "valid"
+        if acct.connector_type == "FABRIC":
+            if auth_type == "service_principal":
+                token_status = "valid"
+            elif expires_at:
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                token_status = "expired" if now >= expires_at else "valid"
+            elif acct.encrypted_token:
+                try:
+                    dec = decrypt_token(acct.encrypted_token)
+                    import json
+
+                    b = json.loads(dec)
+                    if isinstance(b, dict):
+                        if b.get("auth_type") == "service_principal":
+                            auth_type = "service_principal"
+                            token_status = "valid"
+                        elif b.get("expires_at"):
+                            exp_dt = datetime.fromtimestamp(int(b["expires_at"]), tz=timezone.utc)
+                            expires_at = exp_dt
+                            token_status = "expired" if now >= exp_dt else "valid"
+                except Exception:
+                    token_status = "reauth_required"
+            else:
+                token_status = "reauth_required"
+
+        res.append(
+            AccountResponse(
+                id=acct.id,
+                connector_type=acct.connector_type,
+                tag=acct.tag,
+                identity_email=acct.identity_email,
+                status=acct.status,
+                is_default=acct.is_default,
+                auth_type=auth_type,
+                token_expires_at=expires_at,
+                token_status=token_status,
+            )
+        )
+    return res
 
 
 @router.patch("/project/{project_id}/link-account")
@@ -409,6 +477,104 @@ def update_account_tag(request: Request, account_id: str, body: AccountTagUpdate
     
     # Return updated list
     return get_accounts(request=request, connector_type=connector_type, db=db)
+
+
+class AccountUpdate(BaseModel):
+    tag: Optional[str] = None
+    identity_email: Optional[str] = None
+    credentials: Optional[dict] = None
+
+
+@router.patch("/{account_id}", response_model=List[AccountResponse])
+@router.put("/{account_id}", response_model=List[AccountResponse])
+def update_account(
+    request: Request,
+    account_id: str,
+    body: AccountUpdate,
+    db: Session = Depends(get_db),
+):
+    """Edit account in-place (tag, identity, or credentials) and return updated list."""
+    user = _try_get_user(request, db)
+    account = db.execute(select(Account).where(Account.id == account_id)).scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if user and account.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Account not found or access denied")
+
+    if body.tag and body.tag != account.tag:
+        stmt = select(Account).where(Account.tag == body.tag)
+        if user:
+            stmt = stmt.where(Account.owner_id == user.id)
+        existing = db.execute(stmt).scalar_one_or_none()
+        if existing and existing.id != account_id:
+            raise HTTPException(status_code=400, detail=f"Tag '{body.tag}' is already in use.")
+        account.tag = body.tag
+
+    if body.identity_email is not None:
+        account.identity_email = body.identity_email
+
+    if body.credentials:
+        import json
+
+        clean_creds = _merge_credential_bundle(account.encrypted_token, body.credentials)
+        account.encrypted_token = encrypt_token(json.dumps(clean_creds))
+        if clean_creds.get("auth_type"):
+            account.auth_type = clean_creds["auth_type"]
+
+    db.commit()
+    logger.info(f"Updated Account {account_id} ({account.tag})")
+    return get_accounts(request=request, connector_type=account.connector_type, db=db)
+
+
+@router.post("/{account_id}/test")
+def test_account(request: Request, account_id: str, db: Session = Depends(get_db)):
+    """Test connection for a specific account."""
+    user = _try_get_user(request, db)
+    stmt = select(Account).where(Account.id == account_id)
+    if user:
+        stmt = stmt.where(Account.owner_id == user.id)
+    account = db.execute(stmt).scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    connector = account.connector_type.upper()
+    if connector == "FABRIC":
+        try:
+            from semabridge.auth.token_resolver import resolve_fabric_access_token
+
+            token = resolve_fabric_access_token(None, identity_id=account.id)
+            if not token:
+                return {"status": "failed", "message": "Failed to resolve Fabric access token"}
+            return {"status": "success", "message": "Fabric authentication successful"}
+        except Exception as exc:
+            return {"status": "failed", "message": f"Fabric authentication failed: {exc}"}
+    elif connector == "SNOWFLAKE":
+        try:
+            import json
+            import snowflake.connector
+            from semabridge.auth.encryption import decrypt_token
+
+            if not account.encrypted_token:
+                return {"status": "failed", "message": "No credentials stored for Snowflake account"}
+            creds = json.loads(decrypt_token(account.encrypted_token))
+            conn_kwargs = {
+                "account": creds.get("account"),
+                "user": creds.get("user"),
+                "warehouse": creds.get("warehouse"),
+                "database": creds.get("database"),
+                "schema": creds.get("schema_name"),
+            }
+            if creds.get("password"):
+                conn_kwargs["password"] = creds["password"]
+            conn = snowflake.connector.connect(**conn_kwargs)
+            conn.cursor().execute("SELECT CURRENT_VERSION()")
+            conn.close()
+            return {"status": "success", "message": "Snowflake connection successful"}
+        except Exception as exc:
+            return {"status": "failed", "message": f"Snowflake connection failed: {exc}"}
+    return {"status": "failed", "message": f"Testing not supported for connector '{connector}'"}
 
 
 

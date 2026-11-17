@@ -734,6 +734,23 @@ export const api = {
         return handleResponse(res);
     },
 
+    async updateAccount(accountId, payload) {
+        invalidateApiCache('accounts:');
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        return handleResponse(res);
+    },
+
+    async testAccount(accountId) {
+        const res = await authFetch(`${API_BASE_URL}/accounts/${accountId}/test`, {
+            method: 'POST',
+        });
+        return handleResponse(res);
+    },
+
     async linkProjectAccount(projectId, payload) {
         invalidateApiCache('accounts:');
         const res = await authFetch(`${API_BASE_URL}/accounts/project/${projectId}/link-account`, {

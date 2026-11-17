@@ -365,6 +365,66 @@ def _migrate_credentials_table() -> None:
         logger.warning("semabridge_credentials migration failed (may already be migrated): %s", exc)
 
 
+def migrate_credentials_encryption(engine=None) -> int:
+    """Encrypt plain-text secret rows in semabridge_credentials using Fernet.
+
+    Safe to run repeatedly (idempotent). Rows already encrypted with Fernet
+    are left untouched.
+    """
+    from sqlalchemy import text
+
+    if engine is None:
+        from semabridge.repository.orm.session_factory import get_engine
+
+        engine = get_engine()
+
+    if not _table_exists(engine, "semabridge_credentials"):
+        return 0
+
+    from semabridge.auth.encryption import _get_fernet, _legacy_fernet, encrypt_token
+
+    migrated = 0
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT owner_id, service, key, value, is_secret "
+                    "FROM semabridge_credentials WHERE is_secret = 1 OR is_secret = true"
+                )
+            ).all()
+            for row in rows:
+                owner_id, service, key, value, is_secret = row[0], row[1], row[2], row[3], row[4]
+                if not value or not isinstance(value, str):
+                    continue
+                already_encrypted = False
+                if value.startswith("gAAAAA"):
+                    try:
+                        _get_fernet().decrypt(value.encode("utf-8"))
+                        already_encrypted = True
+                    except Exception:
+                        try:
+                            _legacy_fernet().decrypt(value.encode("utf-8"))
+                            already_encrypted = True
+                        except Exception:
+                            pass
+                if already_encrypted:
+                    continue
+                encrypted_val = encrypt_token(value)
+                conn.execute(
+                    text(
+                        "UPDATE semabridge_credentials SET value = :new_val "
+                        "WHERE owner_id = :owner_id AND service = :service AND key = :key"
+                    ),
+                    {"new_val": encrypted_val, "owner_id": owner_id, "service": service, "key": key},
+                )
+                migrated += 1
+        if migrated:
+            logger.info("Migrated %d plain-text secret rows in semabridge_credentials to Fernet encryption", migrated)
+    except Exception as exc:
+        logger.warning("semabridge_credentials encryption migration skipped or failed: %s", exc)
+    return migrated
+
+
 def _apply_rls_policies() -> None:
     """Apply PostgreSQL Row Level Security policies on tenant-scoped tables."""
     from sqlalchemy import text
