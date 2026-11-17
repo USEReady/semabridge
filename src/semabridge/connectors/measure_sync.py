@@ -458,7 +458,7 @@ class MeasureSynchronizer:
         # ── Step 3: Execute & write ─────────────────────────────────────────
         if batch_query:
             try:
-                data = fabric_extractor.execute_dax_query(dataset_id, batch_query)
+                data = fabric_extractor.execute_dax_query_strict(dataset_id, batch_query)
 
                 if data:
                     model_base = sml.unique_name or sml.label or "SEMABRIDGE"
@@ -540,18 +540,21 @@ class MeasureSynchronizer:
                             group_by_dimensions=dimensions,
                             partition_column=partition_col,
                             partition_values=partition_vals,
+                            strict=True,
                         )
                     else:
                         data = fabric_extractor.execute_measure_sync_query(
                             dataset_id=dataset_id,
                             measure_name=f"[{metric.unique_name}]",
                             group_by_dimensions=dimensions,
+                            strict=True,
                         )
                 else:
                     data = fabric_extractor.execute_measure_sync_query(
                         dataset_id=dataset_id,
                         measure_name=f"[{metric.unique_name}]",
                         group_by_dimensions=dimensions,
+                        strict=True,
                     )
 
                 if data:
@@ -636,7 +639,7 @@ class MeasureSynchronizer:
         # ── Step 3: Execute & write ─────────────────────────────────────────
         if batch_query:
             try:
-                data = fabric_extractor.execute_dax_query(dataset_id, batch_query)
+                data = fabric_extractor.execute_dax_query_strict(dataset_id, batch_query)
 
                 if data:
                     model_base = osi.unique_name or osi.label or "SEMABRIDGE"
@@ -717,18 +720,21 @@ class MeasureSynchronizer:
                             group_by_dimensions=dimensions,
                             partition_column=partition_col,
                             partition_values=partition_vals,
+                            strict=True,
                         )
                     else:
                         data = fabric_extractor.execute_measure_sync_query(
                             dataset_id=dataset_id,
                             measure_name=f"[{metric.unique_name}]",
                             group_by_dimensions=dimensions,
+                            strict=True,
                         )
                 else:
                     data = fabric_extractor.execute_measure_sync_query(
                         dataset_id=dataset_id,
                         measure_name=f"[{metric.unique_name}]",
                         group_by_dimensions=dimensions,
+                        strict=True,
                     )
 
                 if data:

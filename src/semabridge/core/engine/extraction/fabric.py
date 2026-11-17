@@ -57,12 +57,9 @@ def _extract_fabric(
     from semabridge.connectors.fabric_extractor import FabricExtractor
 
     config = context.config
-    source_config = getattr(config, "source", None)
     fabric_cfg = config.fabric
     ws_id = workspace_id or fabric_cfg.workspace_id
-    interactive_token: Optional[str] = None
     stored_workspace_id: str = ""
-    identity_id: str = str(getattr(source_config, "identity_id", "") or "").strip()
 
     if context.behavior.features.offline_mode:
         offline_path = Path(context.behavior.features.offline_fabric_model_path)
@@ -108,44 +105,20 @@ def _extract_fabric(
         configured_workspace_id = str(getattr(fabric_cfg, "workspace_id", "") or "").strip()
         if not workspace_id and not configured_workspace_id and stored_workspace_id:
             ws_id = stored_workspace_id
-
-        if identity_id:
-            try:
-                from semabridge.auth.token_resolver import resolve_fabric_access_token
-
-                interactive_token = resolve_fabric_access_token(None, identity_id)
-                logger.debug("_extract_fabric: injecting identity-scoped interactive token for %s", identity_id)
-            except Exception as identity_exc:
-                logger.warning(
-                    "_extract_fabric: failed to resolve token for identity %s: %s",
-                    identity_id,
-                    identity_exc,
-                )
-                raise ExtractionError(
-                    f"Could not resolve Fabric token for identity '{identity_id}'. "
-                    f"Please re-authenticate this account in the Connections panel."
-                ) from identity_exc
-
-        if not interactive_token and not identity_id:
-            account_scoped_token = getattr(context, "fabric_access_token", None)
-            if account_scoped_token:
-                # Resolved at Step 3 from context.account_id (see engine.py) into
-                # an isolated, thread-local value — not os.environ — so concurrent
-                # batch-sync jobs for different accounts can't bleed into each other.
-                interactive_token = account_scoped_token
-                logger.debug("_extract_fabric: using account-scoped Fabric token from context (thread-safe)")
-            else:
-                # Only fall back to global credential store when NO identity_id/account
-                # token is specified. This prevents cross-account contamination in
-                # multi-account scenarios.
-                token_data = cm.get_msal_token()
-                if cm.get_fabric_auth_method() == "interactive" and cm.has_valid_token() and token_data:
-                    interactive_token = token_data.get("access_token")
-                    logger.debug("_extract_fabric: injecting interactive token from credential store (no identity_id)")
-    except ExtractionError:
-        raise
     except Exception as exc:
-        logger.warning("_extract_fabric: credential lookup failed, falling back to env auth: %s", exc)
+        logger.warning("_extract_fabric: stored Fabric workspace lookup failed: %s", exc)
+
+    # One resolver for every Fabric stage (identity > run account token >
+    # interactive store > extractor's own configured auth). Resolved here, at
+    # Stage 4, so a long-queued scheduled run still gets a fresh identity token.
+    from semabridge.sources.base import SourceAuthError
+    from semabridge.sources.fabric.credentials import apply_to_extractor, credentials_for_context
+
+    try:
+        fabric_creds = credentials_for_context(context)
+    except SourceAuthError as exc:
+        raise ExtractionError(str(exc)) from exc
+    logger.debug("_extract_fabric: Fabric credentials origin=%s", fabric_creds.origin)
 
     if not dataset_id:
         raise ExtractionError("dataset_id is required for Fabric source")
@@ -183,40 +156,7 @@ def _extract_fabric(
         fabric_cfg.workspace_id = ws_id
 
 
-    # Refresh token just-in-time at Stage 4 for the source identity.
-    # context.scoped_fabric_token was resolved at Stage 3. In long-queued
-    # batch runs (e.g. scheduled jobs) that token may have expired by the
-    # time Stage 4 executes. Re-resolving here mirrors the Stage 9 pattern
-    # and guarantees freshness for the Fabric extraction API call.
-    if identity_id:
-        try:
-            from semabridge.auth.token_resolver import resolve_fabric_access_token
-            jit_token = resolve_fabric_access_token(None, identity_id)
-            if jit_token:
-                interactive_token = jit_token
-                logger.info(
-                    "_extract_fabric: resolved JIT fresh token for source identity %s",
-                    identity_id,
-                )
-        except Exception as exc:
-            if interactive_token:
-                logger.info(
-                    "_extract_fabric: JIT token resolution failed for %s; "
-                    "continuing with Stage 3 scoped token (%s)",
-                    identity_id, exc,
-                )
-            else:
-                logger.warning(
-                    "_extract_fabric: JIT token resolution failed for %s and no "
-                    "Stage 3 scoped token is available: %s",
-                    identity_id, exc,
-                )
-
-    extractor = FabricExtractor(fabric_cfg)
-
-    if interactive_token:
-        extractor._access_token = interactive_token
-        extractor._token_expires_at = time.time() + 1800
+    extractor = apply_to_extractor(FabricExtractor(fabric_cfg), fabric_creds)
 
     resolved_dataset_id = extractor.resolve_model_id(dataset_id)
 
