@@ -67,7 +67,7 @@ export function DriftView({ projectId = '' }) {
   const [msg, setMsg] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
 
-  // Blast Radius Modal state & simulation in mock mode for Drift Monitoring
+  // Blast Radius Modal state for Drift Monitoring
   const [blastModalOpen, setBlastModalOpen] = useState(false);
   const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
   const [blastType, setBlastType] = useState('METRIC');
@@ -92,7 +92,6 @@ export function DriftView({ projectId = '' }) {
           target_type: tType,
           change_type: cType,
           project_id: projectId || undefined,
-          mock_mode: true,
         }),
       });
       const data = await res.json();

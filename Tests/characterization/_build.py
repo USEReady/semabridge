@@ -23,7 +23,9 @@ from typing import Any, Dict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_DIR = Path(__file__).resolve().parent / "snapshots"
 FIXTURE_TMSL = Path(__file__).resolve().parent / "fixtures" / "model.tmsl.json"
-PBIX_SAMPLE = REPO_ROOT / "Examples" / "characterization_model.pbix"  # logical path only; never opened
+# Logical path only (never opened). Relative and POSIX so snapshots are
+# identical on Windows and Linux CI.
+PBIX_SAMPLE = "Examples/characterization_model.pbix"
 
 _VOLATILE_KEY = re.compile(r"(timestamp|_at$|^run_id$|^created|^updated|^extracted)", re.I)
 PROJECT_ID = "characterization"

@@ -261,6 +261,12 @@ def seed_mock_drift_events(project_id: str = "proj-comp") -> List[Dict[str, Any]
     Only previously seeded demo events of that project are replaced: real
     drift events -- of this or any other project -- are never touched, and a
     real event for a metric always wins over a demo one."""
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
+    if not (demo_mode_globally_armed() or is_mock_drift_enabled()):
+        return []
+
     state = _load_state()
     events = list(state.get("events") or [])
     pid = project_id or "proj-comp"
@@ -736,7 +742,13 @@ def run_drift_check(
 
 
 def list_drift_events(project_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    from semabridge.core.demo_mode import demo_mode_globally_armed
+    from semabridge.reconciliation.mock_parity import is_mock_drift_enabled
+
     events = _load_state()["events"]
+    # With demo flag off, every path is real (no mock rows, no demo events)
+    if not (demo_mode_globally_armed() or is_mock_drift_enabled()):
+        events = [e for e in events if not e.get("mock")]
     if project_id:
         p_clean = project_id.lower().removeprefix("proj-").strip()
         events = [

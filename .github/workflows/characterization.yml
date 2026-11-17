@@ -1,0 +1,89 @@
+name: Characterization (golden snapshots)
+
+# PBIX / Fabric / Snowflake-source conversion + DDL output is pinned by
+# Tests/characterization. The real sample reports (Examples/**/*.pbix) need
+# pbixray's native decoder, so they are generated and checked here on Linux.
+#
+#  bootstrap : on a push to a feature branch, generates snapshots for any
+#              sample that has none yet and commits them back to the branch.
+#              It never overwrites an existing snapshot.
+#  check     : on every PR (and push), runs Tests/characterization with
+#              SEMABRIDGE_REQUIRE_REAL_PBIX=1 -> a skip, a missing snapshot or
+#              any output difference fails the job.
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: characterization-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: "Generate missing real-PBIX snapshots"
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt
+
+      - name: Generate snapshots that do not exist yet
+        env:
+          PYTHONHASHSEED: "0"
+        run: python Tests/characterization/_build_real_pbix.py --missing
+
+      - name: Commit new snapshots
+        run: |
+          git add Tests/characterization/snapshots/real_pbix
+          if git diff --cached --quiet; then
+            echo "No new snapshots."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "characterization: real-PBIX snapshots generated on Linux CI"
+          git push
+
+  check:
+    name: "Golden gate (fixture + real PBIX)"
+    needs: [bootstrap]
+    if: always() && (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt
+
+      - name: Characterization snapshots
+        env:
+          PYTHONHASHSEED: "0"
+          SEMABRIDGE_REQUIRE_REAL_PBIX: "1"
+        run: python -m pytest Tests/characterization -v -o addopts="--import-mode=importlib"

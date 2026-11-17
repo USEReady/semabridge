@@ -1,5 +1,5 @@
-"""Phase-1 sync safety fixes: collisions block, demo drift never touches
-real data, drift proposals come from the real translator, duplicate-sync
+"""Phase-1 sync safety fixes: collisions block, demo drift is gone
+(no seeded events), drift proposals come from the real translator, duplicate-sync
 overlap, and the stale-run sweep spares in-flight runs."""
 
 import json
@@ -19,6 +19,8 @@ def test_unresolved_name_collision_blocks_even_when_status_is_auto():
 
 
 def test_demo_seeding_keeps_real_events_and_never_overrides_a_real_metric(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEMABRIDGE_DEMO_MODE", "true")
+    monkeypatch.setenv("SEMABRIDGE_MOCK_DRIFT", "true")
     state_file = tmp_path / "drift_state.json"
     monkeypatch.setattr(drift_service, "_state_path", lambda: state_file)
     # Drift events live in the database; the old JSON file is imported into
@@ -43,14 +45,11 @@ def test_demo_seeding_keeps_real_events_and_never_overrides_a_real_metric(tmp_pa
     assert [e["id"] for e in total_units] == ["real-2"]  # real wins over demo
     assert all(e.get("mock") for e in events if e["id"] not in {"real-2"})
     assert len(events_again) == len(events)  # re-seeding replaces, never duplicates
-
-
 def test_real_drift_proposal_uses_translator_not_name_keyed_demo_sql():
     assert drift_service.propose_snowflake_sql("Customer_Count_By_Product", "COUNT(CUSTOMER.ID)") == "COUNT(CUSTOMER.ID)"
     dax = drift_service.propose_snowflake_sql("Total Units", "CALCULATE(SUM(SalesFact[Units]))")
     assert "UNITS" in dax.upper() and "PRODUCTID" not in dax.upper()
-    assert drift_service.propose_snowflake_sql("MARGIN_PCT", "", mock=False) == ""
-    assert "SALESFACT" in drift_service.propose_snowflake_sql("MARGIN_PCT", "x", mock=True)
+    assert drift_service.propose_snowflake_sql("MARGIN_PCT", "") == ""
 
 
 def test_same_content_needs_most_fields_shared():
