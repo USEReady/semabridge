@@ -254,6 +254,20 @@ def test_duplicate_model_labels_are_made_unique(tmp_path):
     # Fabric batch 2 behaviour change: the SAME model listed twice is synced
     # once (as PBIX already does for a file selected twice) instead of twice
     # into "Sales" and "Sales_2" views of one dataset.
-    jobs, *_ = ses._build_sync_jobs({"source": {"type": "fabric", "models": ["Sales", "Sales"]}, "targets": [{"type": "snowflake"}]})
+    jobs, *_ = ses._build_sync_jobs({"source": {"type": "fabric", "workspace_id": "ws-1", "models": ["Sales", "Sales"]}, "targets": [{"type": "snowflake"}]}, model_resolver=_echo_resolver)
     assert [j["model_label"] for j in jobs] == ["Sales"]
     assert [j["dataset_id"] for j in jobs] == ["Sales"]
+
+
+def _echo_resolver(refs, workspace_id, identity_id):
+    """Test resolver (no network): every ref is its own model id."""
+    from semabridge.sources.base import ModelIdentity
+    from semabridge.sources.fabric.validation import FabricModelCheck
+
+    by_ref, ids = {}, []
+    for r in refs:
+        ident = next((i for i in ids if i.model_id.lower() == r.lower()), None) or ModelIdentity("fabric", r, r, workspace_id)
+        if ident not in ids:
+            ids.append(ident)
+        by_ref[r] = ident
+    return FabricModelCheck(ids, [], by_ref)

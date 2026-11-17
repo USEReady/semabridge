@@ -14,6 +14,31 @@ from pydantic import BaseModel
 from semabridge.api.services.pbix_source_validation import require_source_type, validate_pbix_model_list
 
 
+def _validate_fabric_models_on_save(config: Dict[str, Any], account_id: Any = None) -> None:
+    """Fabric only: when models are configured, check them against the workspace
+    now (same pre-flight a sync runs), so save fails early naming the workspace
+    and model. PBIX / Snowflake sources and Fabric projects with no model yet
+    are not touched."""
+    source = config.get("source") if isinstance(config.get("source"), dict) else {}
+    if str(source.get("type") or "").strip().lower() != "fabric":
+        return
+    if not (source.get("models") or source.get("dataset_id") or source.get("model")):
+        return
+    from semabridge.api.services.sync_execution_service import _build_sync_jobs
+
+    _build_sync_jobs(config, account_id=str(account_id) if account_id else None)
+
+
+def _yaml_mapping(config_yaml) -> Dict[str, Any]:
+    import yaml as _yaml
+
+    try:
+        parsed = _yaml.safe_load(str(config_yaml or "")) or {}
+    except _yaml.YAMLError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _yaml_source_type(config_yaml) -> str:
     """source.type from a project YAML ('' when absent or unparsable -> caller's validation error)."""
     import yaml as _yaml
@@ -352,6 +377,10 @@ async def create_project(request: Request, payload: CreateProjectRequest):
         src_for_validation = {**src_for_validation, "type": _yaml_source_type(payload_dict.get("config_yaml"))}
     validation_source_type = require_source_type(src_for_validation, where="new project")
     validate_pbix_model_list(src_for_validation.get("models"), source_type=validation_source_type)
+    if validation_source_type == "fabric":
+        _cfg = dict(_yaml_mapping(payload_dict.get("config_yaml")))
+        _cfg["source"] = {**(_cfg.get("source") or {}), **(payload_dict.get("source") or {})}
+        await asyncio.to_thread(_validate_fabric_models_on_save, _cfg, payload_dict.get("account_id"))
     if user_id:
         payload_dict["user_id"] = str(user_id)
         validate_project_connector_accounts_belong_to_user(user_id, payload_dict)
@@ -414,6 +443,7 @@ async def save_project_config(project_id: str, payload: SaveProjectConfigRequest
     payload_dict = payload.model_dump(exclude_none=False)
     if payload_dict.get("config_yaml"):
         require_source_type({"type": _yaml_source_type(payload_dict.get("config_yaml"))}, where="project config")
+        await asyncio.to_thread(_validate_fabric_models_on_save, _yaml_mapping(payload_dict.get("config_yaml")))
     migration_fields = _pop_preview_migration_fields(payload_dict)
     response = await save_project_config_compat(project_id, payload_dict)
     await asyncio.to_thread(_link_preview_dry_runs, project_id, migration_fields, user_id)

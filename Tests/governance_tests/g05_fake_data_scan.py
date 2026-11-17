@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from common import Report  # noqa: E402
+from mock_rules import literal_row_lines, prefilled_input_defaults, scenario_switch_lines  # noqa: E402
 
 rep = Report("G05 fake data scan")
 root = Path.cwd()
@@ -35,17 +36,14 @@ for f in files:
     txt = f.read_text(encoding="utf-8", errors="ignore")
     rel = f.relative_to(root)
     lines = txt.splitlines()
-    # F1 literal rows: object literals that contain a number value, inside an array
-    lit_rows = [i + 1 for i, l in enumerate(lines)
-                if re.search(r"\{\s*[\[\w'\"]+[\]'\"]?\s*:\s*['\"][^'\"]+['\"]\s*,\s*\w+\s*:\s*-?\d[\d_.]*\s*\}", l)]
+    # F1 literal rows: object literals that contain a number value, inside an array.
+    # A JSX inline style object (style={{ color: 'x', marginTop: 2 }}) is styling,
+    # not a result row, so a match that directly follows `style={` is not counted.
+    lit_rows = literal_row_lines(lines)
     rep.check(not lit_rows, f"F1 {rel}: no literal result rows", f"{len(lit_rows)} rows at lines {lit_rows[:6]}")
-    # F2 scenario switches
-    scen = [i + 1 for i, l in enumerate(lines) if re.search(r"scenario|['\"]drift['\"]|Intentional", l, re.I)]
+    scen = scenario_switch_lines(lines)
     rep.check(not scen, f"F2 {rel}: no outcome-deciding scenario switch", f"lines {scen[:6]}")
-    # F3 non-empty defaults for recon/blast inputs
-    defaults = [(i + 1, m.group(1), m.group(2)) for i, l in enumerate(lines)
-                for m in [re.search(r"const\s*\[\s*(recon\w*|blast\w*|lint\w*)\s*,.*useState\(\s*'([^']+)'\s*\)", l)] if m]
-    fixed = [d for d in defaults if not re.fullmatch(r"[A-Z_]+", d[2])]  # enum-like defaults (METRIC, DROP) are fine
+    fixed = prefilled_input_defaults(lines)
     rep.check(not fixed, f"F3 {rel}: user inputs start empty", "; ".join(f"line {d[0]} {d[1]}='{d[2]}'" for d in fixed[:5]))
     # F4 random / simulated
     rnd = [i + 1 for i, l in enumerate(lines)
