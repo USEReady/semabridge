@@ -539,6 +539,20 @@ def resolve_dataset_to_physical_table(
                     len(tied), dataset_name, ", ".join(tied),
                 )
                 return dataset_name
+            if model_name and best["name_score"] < 85:
+                # Only partial-name matches (e.g. 'Date' vs CORE_FINANCE_V1_DATE,
+                # SPEND_DATE): other models' namespaced tables in the shared
+                # schema, none of them this model's. Picking one would tie
+                # this model to another model's table, and failing stops a
+                # brand-new model's dry run whenever two models share a table
+                # name. Treat it as missing: the model gets its own
+                # <NAMESPACE>_<TABLE> (plan_source_tables "create").
+                logger.info(
+                    "No table of model '%s' for '%s'; %d other models' tables match only partially (%s). "
+                    "Treating it as missing so this model gets its own table.",
+                    model_name, dataset_name, len(tied), ", ".join(tied),
+                )
+                return dataset_name
             raise TableBindingAmbiguityError(dataset_name, tied)
 
         matched_by = "model namespace" if best.get("name_score") == 85 else "columns"

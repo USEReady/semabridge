@@ -223,3 +223,21 @@ def test_exact_name_beats_a_larger_column_match():
         "Business Area", ["Business Area", "Business Area ID"],
         LiveSchemaMetadata({**meta, "SPEND_FACT": {"BUSINESS_AREA", "BUSINESS_AREA_ID", "VALUE"}}),
     ) == "BUSINESS_AREA"
+
+
+def test_new_model_is_not_bound_to_other_models_namespaced_tables():
+    # A new model 'Corporate Spend' has a Date table; the shared schema only
+    # holds OTHER models' Date tables. Picking one would tie this model to
+    # another model's table, and failing stopped the whole dry run.
+    date_cols = ["Date", "Year", "Month"]
+    meta = LiveSchemaMetadata({
+        "CORE_FINANCE_V1_DATE": {"DATE", "YEAR", "MONTH"},
+        "EMPLOYEE_HIRING_AND_HISTORY_DATE": {"DATE", "YEAR", "MONTH"},
+        "SPEND_DATE": {"DATE", "YEAR", "MONTH"},
+    })
+    model = "62a7005cf6b5460ab0af1e2826be4411_Corporate Spend"
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "Date"  # missing -> own table
+    assert "DATE" not in meta.binding_log
+    # Once its own table exists, it binds to it.
+    meta["CORPORATE_SPEND_DATE"] = {"DATE", "YEAR", "MONTH"}
+    assert resolve_dataset_to_physical_table("Date", date_cols, meta, model_name=model) == "CORPORATE_SPEND_DATE"
