@@ -118,16 +118,21 @@ class FabricExtractor:
 
             if response.status_code in retry_statuses and attempt < transient_retries:
                 attempt += 1
+                wait_time = retry_delay
+                if response.status_code == 429:
+                    from semabridge.sources.fabric.http_client import parse_retry_after
+                    wait_time = parse_retry_after(response.headers.get("Retry-After"), default_delay=retry_delay)
                 logger.warning(
-                    "Fabric API transient HTTP %s for %s %s (attempt %d/%d)",
+                    "Fabric API transient HTTP %s for %s %s (attempt %d/%d, waiting %0.2fs)",
                     response.status_code,
                     method,
                     url,
                     attempt,
                     transient_retries + 1,
+                    wait_time,
                 )
-                if retry_delay > 0:
-                    time.sleep(retry_delay)
+                if wait_time > 0:
+                    time.sleep(wait_time)
                 continue
 
             return response

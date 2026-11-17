@@ -654,6 +654,47 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         # Scheduled run drift guard: When drift is detected on scheduled run, show drift approval and do not directly upsert
         schedule_label = str(run.get("schedule") or run.get("run_type") or "Manual")
         is_scheduled = "scheduled" in schedule_label.lower() or "cron" in schedule_label.lower()
+
+        parsed_pcfg = _compat_parse_project_cfg_dict(project_cfg)
+        features = ((parsed_pcfg.get("behavior") or {}).get("features") or {}) if isinstance(parsed_pcfg.get("behavior"), dict) else {}
+        skip_unchanged = bool(features.get("skip_unchanged_sources"))
+        current_fingerprint = None
+        source_cfg = parsed_pcfg.get("source") if isinstance(parsed_pcfg.get("source"), dict) else {}
+        stype = str(source_cfg.get("type") or "fabric").lower()
+
+        try:
+            from semabridge.sources.fabric.fingerprint import compute_source_fingerprint
+            if stype in ("pbix", "local_pbix", "powerbi"):
+                pbix_path = source_cfg.get("pbix_path") or source_cfg.get("path")
+                if pbix_path and os.path.exists(str(pbix_path)):
+                    current_fingerprint = compute_source_fingerprint(stype, pbix_path)
+            elif stype == "fabric":
+                model_payload = source_cfg.get("model_payload") or source_cfg.get("lastModifiedDateTime")
+                if model_payload:
+                    current_fingerprint = compute_source_fingerprint(stype, model_payload)
+        except Exception as fp_err:
+            logger.debug("[%s] Fingerprint computation skipped: %s", project_id, fp_err)
+
+        if is_scheduled and skip_unchanged and current_fingerprint:
+            try:
+                past_runs = list_project_runs(project_id) or []
+                last_success = next(
+                    (r for r in past_runs if str(r.get("status", "")).lower() == "success" and r.get("source_fingerprint")),
+                    None,
+                )
+                if last_success and last_success.get("source_fingerprint") == current_fingerprint:
+                    logger.info("[%s] Scheduled run skipped: source fingerprint unchanged (%s)", project_id, current_fingerprint)
+                    run["duration_ms"] = elapsed_ms(started)
+                    run["completed_at"] = _compat_now_iso()
+                    run["status"] = "skipped"
+                    run["message"] = "skipped, unchanged"
+                    run["source_fingerprint"] = current_fingerprint
+                    run["logs"] = [*run.get("logs", []), "skipped, unchanged"]
+                    _persist_run(run)
+                    return run
+            except Exception as skip_err:
+                logger.warning("[%s] Failed checking unchanged source fingerprint: %s", project_id, skip_err)
+
         if is_scheduled:
             try:
                 from semabridge.governance.drift_service import run_drift_check, list_drift_events
@@ -774,6 +815,8 @@ async def _perform_project_run_impl(run: dict, project_cfg: str, started: float)
         run["total_models"] = int((sync_result or {}).get("total_models") or 0)
         run["logs"] = _build_run_logs(sync_result or {})
         run["stage_states"] = _build_stage_states(sync_result or {})
+        if current_fingerprint:
+            run["source_fingerprint"] = current_fingerprint
 
         # Post-deploy reconciliation: verify every Stage 6 snapshot metric is
         # either live in the deployed semantic view or already recorded in

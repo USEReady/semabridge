@@ -1,0 +1,45 @@
+name: Golden Gate (Snowflake live values)
+
+on:
+  push:
+    branches:
+      - fabric/batch-4-ontology
+  workflow_dispatch:
+
+concurrency:
+  group: golden-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  golden-gate:
+    name: "Golden Gate (Snowflake live values)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt
+
+      - name: Run Golden Gate
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE || 'SEMABRIDGE' }}
+          SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA || 'SEMABRIDGE_WORKSPACE' }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE || 'DI_OTH_POC_WH' }}
+          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE || 'SEMABRIDGE_DEVELOPER' }}
+        run: |
+          python Scripts/golden_gate.py
+

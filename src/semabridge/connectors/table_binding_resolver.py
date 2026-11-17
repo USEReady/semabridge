@@ -485,6 +485,10 @@ def resolve_dataset_to_physical_table(
 
     model_name: Optional[str] = None,
 
+    source_hint: Optional[Dict[str, Any]] = None,
+
+    bind_from_m_source: Optional[bool] = None,
+
 ) -> str:
 
     """Resolve a dataset to its canonical live physical table dynamically.
@@ -493,11 +497,13 @@ def resolve_dataset_to_physical_table(
 
     Order: explicit mapping, then the binding saved by an earlier sync of
 
-    this project/model (if that table still exists), then the table named
+    this project/model (if that table still exists), then the M-source hint
 
-    exactly like the dataset (if its columns match), then the best existing
+    (if features.bind_from_m_source is enabled and table exists in live schema),
 
-    table by columns (>= 0.8). Otherwise the table counts
+    then the table named exactly like the dataset (if its columns match),
+
+    then the best existing table by columns (>= 0.8). Otherwise the table counts
 
     as missing. Raises TableBindingAmbiguityError when the best match is tied.
 
@@ -532,6 +538,26 @@ def resolve_dataset_to_physical_table(
         return pinned
 
 
+
+    import os
+    use_m_hint = bind_from_m_source
+    if use_m_hint is None:
+        use_m_hint = bool(getattr(live_schema_metadata, "bind_from_m_source", False)) or (
+            os.getenv("SEMABRIDGE_BIND_FROM_M_SOURCE", "0").lower() in ("1", "true")
+        )
+
+    if use_m_hint:
+        hint = source_hint
+        if not hint and hasattr(live_schema_metadata, "dataset_hints"):
+            hint = getattr(live_schema_metadata, "dataset_hints", {}).get(clean_ident(dataset_name))
+            if not hint and hasattr(live_schema_metadata, "dataset_hints"):
+                hint = getattr(live_schema_metadata, "dataset_hints", {}).get(str(dataset_name).upper())
+        if hint and isinstance(hint, dict) and hint.get("table"):
+            hinted_name = str(hint["table"]).strip()
+            matched_live = next((t for t in live_schema_metadata if t.upper() == hinted_name.upper()), None)
+            if matched_live:
+                _log_binding(live_schema_metadata, dataset_name, matched_live, "m_source_hint")
+                return matched_live
 
     candidates = rank_table_candidates(dataset_name, dataset_columns, live_schema_metadata, model_name=model_name)
 
