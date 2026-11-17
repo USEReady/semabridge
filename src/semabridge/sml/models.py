@@ -165,6 +165,14 @@ class SMLColumn(BaseModel):
     expression: Optional[str] = Field(default=None, description="DAX expression of a calculated column")
     data_category: Optional[str] = Field(default=None, description="Source dataCategory (e.g. 'City', 'Years')")
     sort_by_column: Optional[str] = Field(default=None, description="Column this column is sorted by in the source model")
+    renamed_from: Optional[str] = Field(
+        default=None,
+        description=(
+            "Original source name when conversion renamed this column (e.g. 'Order-Date' -> "
+            "'Order-Date_2') because another column of the same table becomes the same "
+            "Snowflake identifier. The dry run shows it as a collision so the user picks the name."
+        ),
+    )
     precompute_aggregation: Optional[str] = Field(
         default=None,
         description=(

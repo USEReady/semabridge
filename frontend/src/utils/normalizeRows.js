@@ -163,6 +163,9 @@ export function normalizeRows(data) {
         // mappingFilterUtils.rowSourceFileName.
         source_file: row?.source_file || data?.source_file || null,
         advisory_notes: Array.isArray(row?.advisory_notes) ? row.advisory_notes : [],
+        // Tables that have a column with this same name (info only; see
+        // project_mapping_engine._flag_hidden_collisions).
+        shared_name_tables: Array.isArray(row?.shared_name_tables) ? row.shared_name_tables : [],
         complexity_tier: row?.complexity_tier ?? null,
         isDirty: false,
       };

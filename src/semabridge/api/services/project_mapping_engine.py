@@ -4,7 +4,7 @@ import hashlib
 import logging
 import re
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 
 _mapping_logger = logging.getLogger("semabridge.mapping")
@@ -469,6 +469,10 @@ def extract_model_entities(
                 "synonym_sources": dict(column.get("synonym_sources") or {}),
                 "has_report_alias": bool(column.get("has_report_alias")),
                 "source_file": column.get("source_file"),
+                # Set when conversion renamed this column (e.g. 'Order-Date'
+                # -> 'Order-Date_2') because it clashes with another column
+                # of the same table in Snowflake.
+                "renamed_from": column.get("renamed_from"),
             })
 
     for metric_index, metric in enumerate(_iter_metrics(model), start=1):
@@ -508,6 +512,9 @@ def extract_model_entities(
             "validation_notes": list(metric.get("validation_notes") or []),
             "llm_self_reported_confidence": metric.get("llm_self_reported_confidence"),
             "source_file": metric.get("source_file"),
+            # Table the metric is emitted under (SALES."TOTAL"): a column of
+            # that table with the same Snowflake name would be dropped.
+            "home_dataset": metric.get("dataset"),
         })
 
     return entities
@@ -744,11 +751,16 @@ def reconcile_enrichment_unverifiable_advisories(
             row["advisory_notes"] = merged_notes
 
 
-def _row_table_name(row: Dict[str, Any]) -> str:
-    parent = str(row.get("parent_source_path") or "").strip()
+def _table_label(parent_source_path: Any) -> str:
+    """'datasets.Product' / 'datasets.Product.columns.x' -> 'Product'."""
+    parent = str(parent_source_path or "").strip()
     if not parent:
         return ""
     return re.sub(r"^datasets\.", "", parent, flags=re.IGNORECASE).split(".")[0].strip()
+
+
+def _row_table_name(row: Dict[str, Any]) -> str:
+    return _table_label(row.get("parent_source_path"))
 
 
 def collision_resolution_suggestions(
@@ -762,16 +774,28 @@ def collision_resolution_suggestions(
     in ``taken`` (upper-cased names already used in the row's namespace).
     The first option is the recommended one and is always present."""
     alias = lambda value: _default_target_identifier(value, target_connector)  # noqa: E731
-    source_name = str(row.get("source_name") or row.get("target_name") or "field")
+    # A column renamed during conversion ('Order-Date' -> 'Order-Date_2') is
+    # suggested from its real name, not the generated one.
+    source_name = str(row.get("renamed_from") or row.get("source_name") or row.get("target_name") or "field")
     base = alias(source_name)
     table = _row_table_name(row)
     seed = str(row.get("parent_source_path") or row.get("model_name") or "").strip()
-    digest = deterministic_hash_suffix(f"{seed}::{source_name}")
+    digest = deterministic_hash_suffix(f"{seed}::{row.get('source_name') or source_name}")
     candidates: List[str] = []
-    if table and alias(table).upper() != base.upper():
+    table_alias = alias(table).upper() if table else ""
+    # Table prefix, unless the name already starts with the table name
+    # (metric 'Sales %' on Sales: SALES_PCT, not SALES_SALES_PCT).
+    if table_alias and base.upper() != table_alias and not base.upper().startswith(f"{table_alias}_"):
         candidates.append(alias(f"{table}_{source_name}"))
     kind = str(row.get("entity_kind") or "").lower()
     candidates.append(alias(f"{'MSR' if kind in ('metric', 'measure') else 'COL'}_{base}"))
+    # Readable numbered option before the hash fallback (SALES_PCT_2).
+    numbered = next(
+        (alias(f"{base}_{n}") for n in range(2, 10) if alias(f"{base}_{n}").upper() not in taken),
+        None,
+    )
+    if numbered:
+        candidates.append(numbered)
     candidates.append(alias(f"{base}_{digest}"))
     out: List[str] = []
     for candidate in candidates:
@@ -785,21 +809,117 @@ def collision_resolution_suggestions(
     return out
 
 
+def _mark_collision(row: Dict[str, Any], message: str) -> None:
+    """Turn a row into a blocking NAME_COLLISION (Resolve All fixes it)."""
+    row["collision_detected"] = True
+    row["collision_group"] = f"{row.get('mapping_scope') or ''}:{row.get('target_name')}"
+    row["validation_status"] = "collision"
+    row["validation_code"] = "NAME_COLLISION"
+    row["validation_message"] = message
+
+
+def _flag_hidden_collisions(rows: List[Dict[str, Any]], target_connector: Optional[str]) -> None:
+    """Name clashes the per-namespace check cannot see, because they were
+    already "fixed" silently before or after it:
+
+    1. Two columns of ONE table that become the same Snowflake name
+       ('Order Date' / 'Order-Date'): conversion renamed the second one to
+       ``<name>_2``. Shown as a collision so the user picks the name.
+    2. A metric named like a column of its own table (SALES."REGION" metric
+       vs SALES."REGION" column): the emitter keeps the metric and DROPS the
+       column. The metric is flagged so it can be renamed.
+    3. The same column name in several tables (CUSTOMER.NAME, PRODUCT.NAME)
+       deploys fine (names are per table) but a bare NAME is ambiguous when
+       the view is queried without the table name. Advisory only, never
+       blocking.
+
+    Rows the user already named (a saved override) are left alone: their
+    target name no longer equals the automatic one.
+    """
+    columns_by_table: Dict[Tuple[str, str], Set[str]] = {}
+    for row in rows:
+        if str(row.get("entity_kind") or "").lower() == "column":
+            key = (str(row.get("model_name") or ""), str(row.get("parent_source_path") or ""))
+            columns_by_table.setdefault(key, set()).add(str(row.get("target_name") or "").strip().upper())
+
+    for row in rows:
+        if row.get("collision_detected"):
+            continue
+        kind = str(row.get("entity_kind") or "").lower()
+        target = str(row.get("target_name") or "").strip().upper()
+        if not target:
+            continue
+        automatic = str(row.get("sanitized_name") or "").strip().upper()
+
+        # 1. Renamed during conversion and still carrying the automatic name.
+        if kind == "column" and row.get("renamed_from") and target == automatic:
+            original = str(row["renamed_from"])
+            clean = _default_target_identifier(original, target_connector)
+            _mark_collision(
+                row,
+                f"'{original}' and another column of {_table_label(row.get('parent_source_path'))} both become "
+                f"{clean} in Snowflake, so this one was renamed to {target} automatically. "
+                "Pick a name (or Resolve All).",
+            )
+            continue
+
+        # 2. Metric that would hide a column of its own table.
+        if kind == "metric" and row.get("home_dataset"):
+            home = (str(row.get("model_name") or ""), f"datasets.{row['home_dataset']}")
+            if target in columns_by_table.get(home, set()):
+                _mark_collision(
+                    row,
+                    f"Metric and column of {row['home_dataset']} are both named {target} in Snowflake; "
+                    "the column would be left out of the semantic view. Rename the metric (or Resolve All).",
+                )
+
+    # 3. Same column name in several tables: advisory only.
+    tables_by_name: Dict[Tuple[str, str], Set[str]] = {}
+    for (model_name, parent), names in columns_by_table.items():
+        for name in names:
+            if name:
+                tables_by_name.setdefault((model_name, name), set()).add(_table_label(parent))
+    for row in rows:
+        if str(row.get("entity_kind") or "").lower() != "column":
+            continue
+        name = str(row.get("target_name") or "").strip().upper()
+        tables = sorted(tables_by_name.get((str(row.get("model_name") or ""), name), set()))
+        if len(tables) > 1:
+            row["shared_name_tables"] = tables
+            note = (
+                f"{name} also exists in {', '.join(t for t in tables if t != _table_label(row.get('parent_source_path')))}. "
+                f"It deploys fine as {_table_label(row.get('parent_source_path')).upper()}.{name}, but a bare {name} "
+                "is ambiguous when the view is queried without the table name."
+            )
+            notes = row.setdefault("advisory_notes", [])
+            if note not in notes:
+                notes.append(note)
+
+
 def _assign_resolution_suggestions(rows: List[Dict[str, Any]], target_connector: Optional[str]) -> None:
     """Fill ``resolution_suggestions`` on every colliding row. Recommended
     names (first options) are reserved as they are handed out, so applying
     every row's first suggestion (Resolve All) yields unique names within
     each namespace."""
     taken_by_scope: Dict[str, set] = {}
+    columns_by_table: Dict[Tuple[str, str], set] = {}
     for row in rows:
         name = str(row.get("target_name") or "").strip().upper()
         if name:
             taken_by_scope.setdefault(row.get("mapping_scope") or "", set()).add(name)
+            if str(row.get("entity_kind") or "").lower() == "column":
+                key = (str(row.get("model_name") or ""), str(row.get("parent_source_path") or ""))
+                columns_by_table.setdefault(key, set()).add(name)
     for row in rows:
         if not row.get("collision_detected"):
             continue
         taken = taken_by_scope.setdefault(row.get("mapping_scope") or "", set())
-        suggestions = collision_resolution_suggestions(row, taken, target_connector)
+        avoid = taken
+        if str(row.get("entity_kind") or "").lower() == "metric" and row.get("home_dataset"):
+            # A metric must not take a column name of its own table either.
+            home = (str(row.get("model_name") or ""), f"datasets.{row['home_dataset']}")
+            avoid = taken | columns_by_table.get(home, set())
+        suggestions = collision_resolution_suggestions(row, avoid, target_connector)
         row["resolution_suggestions"] = suggestions
         taken.add(suggestions[0].upper())
 
@@ -1099,6 +1219,8 @@ def build_entity_mappings(
             "has_report_alias": bool(entity.get("has_report_alias")),
             "complexity_tier": entity.get("complexity_tier"),
             "source_file": entity.get("source_file"),
+            "renamed_from": entity.get("renamed_from"),
+            "home_dataset": entity.get("home_dataset"),
         })
 
     # Pass 2: Declarative Validation (Option B)
@@ -1159,6 +1281,7 @@ def build_entity_mappings(
             row["suggested_target_name"] = val["suggested_target_name"]
             row["resolution_suggestions"] = []
 
+    _flag_hidden_collisions(generated, normalized_target_connector)
     _assign_resolution_suggestions(generated, normalized_target_connector)
 
     return {

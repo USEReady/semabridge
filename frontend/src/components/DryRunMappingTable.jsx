@@ -144,6 +144,9 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
   const staticRiskBadge = getStaticRiskBadge(row);
   const selfReportedEstimateText = getSelfReportedEstimateText(row);
   const enrichmentUnverifiableCaveat = getEnrichmentUnverifiableCaveat(row);
+  const sharedNameNote = Array.isArray(row.shared_name_tables) && row.shared_name_tables.length > 1
+    ? ((row.advisory_notes || []).find(n => String(n).includes('ambiguous')) || `Also named this in: ${row.shared_name_tables.join(', ')}`)
+    : '';
   const isMeasure = String(row.field_type || row.entity_kind || '').toLowerCase() === 'measure';
   const allSynonyms = Array.isArray(row.synonyms) ? row.synonyms : [];
   const hasDetails = isMeasure || allSynonyms.length > 0;
@@ -443,6 +446,28 @@ function MappingRow({ row, onEdit, onSynonymEdit, expandedCollision, setExpanded
             }}
           >
             Enrichment unverifiable
+            <Info size={10} style={{ flexShrink: 0 }} />
+          </span>
+        )}
+        {/* Same column name in several tables: deploys fine as TABLE.NAME,
+            but a bare NAME is ambiguous when queried. Info only, never
+            blocks; the full sentence is in the tooltip. */}
+        {sharedNameNote && (
+          <span
+            title={sharedNameNote}
+            tabIndex={0}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              fontSize: 10,
+              fontWeight: 500,
+              color: 'var(--text-tertiary)',
+              whiteSpace: 'nowrap',
+              cursor: 'help',
+            }}
+          >
+            Also in {row.shared_name_tables.length - 1} other table{row.shared_name_tables.length > 2 ? 's' : ''}
             <Info size={10} style={{ flexShrink: 0 }} />
           </span>
         )}
@@ -967,13 +992,23 @@ function CollisionPanel({ row, allRows, pendingRename, onRenameChange, onApply, 
       gap: 12,
     }}>
       {/* ── Why is this a collision? ── */}
-      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-        <span style={{ fontWeight: 700, color: '#fbbf24' }}>Naming conflict</span>
-        {' '}— <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.25)', padding: '1px 5px', borderRadius: 3 }}>{row.target_field || row.source_field}</code>
-        {' '}is also claimed by{' '}
-        <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{peerLabel}</span>.
-        {' '}Choose a unique target name for this field:
-      </div>
+      {peers.length === 0 && row.validation_message && !/^name collision/i.test(row.validation_message) ? (
+        // Clashes with no peer row of the same kind (a column renamed during
+        // conversion, a metric hiding a column of its table): the backend
+        // explains it.
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span style={{ fontWeight: 700, color: '#fbbf24' }}>Naming conflict</span>
+          {' '}— {row.validation_message}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span style={{ fontWeight: 700, color: '#fbbf24' }}>Naming conflict</span>
+          {' '}— <code style={{ fontSize: 11, background: 'rgba(0,0,0,0.25)', padding: '1px 5px', borderRadius: 3 }}>{row.target_field || row.source_field}</code>
+          {' '}is also claimed by{' '}
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{peerLabel}</span>.
+          {' '}Choose a unique target name for this field:
+        </div>
+      )}
 
       {/* ── Suggestion chips ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

@@ -427,6 +427,7 @@ class OSIToSMLConverter(BaseConverter):
             taken[ident(candidate)] = candidate
             original = col.unique_name
             col.unique_name = candidate
+            col.renamed_from = original
             if original not in renames and original != taken[key]:
                 renames[original] = candidate
             self.drop_ledger.record(
