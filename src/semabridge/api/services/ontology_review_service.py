@@ -117,6 +117,21 @@ async def read_source_models(
         return models, errors
 
     if project_id and project_id not in ("preview", ""):
+        # Multi-model project: review EVERY model's latest snapshot. The project
+        # head is only whichever model synced last, which would hide the other
+        # models and every cross-model conflict.
+        from semabridge.ontology.project_models import osi_from_blob, project_models
+
+        per_model = [m for m in await asyncio.to_thread(project_models, project_id) if m.blob]
+        if len(per_model) >= 2:
+            for m in per_model:
+                try:
+                    models.append(osi_from_blob(m.blob))
+                except Exception as exc:  # one bad snapshot must not hide the others
+                    logger.warning("Ontology review: snapshot of model %s unreadable: %s", m.model_name, exc)
+                    errors.append({"source": m.model_name, "error": str(exc)})
+            return models, errors
+
         from semabridge.api.routers.export_router import _load_osi_model
 
         osi = await _load_osi_model(project_id)

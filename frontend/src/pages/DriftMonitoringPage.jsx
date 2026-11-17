@@ -81,7 +81,7 @@ export default function DriftMonitoringPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [checkMsg, setCheckMsg] = useState('');
 
-  // Blast Radius Modal state & simulation in mock mode
+  // Blast Radius Modal state
   const [blastModalOpen, setBlastModalOpen] = useState(false);
   const [blastTarget, setBlastTarget] = useState('TOTAL_UNITS');
   const [blastType, setBlastType] = useState('METRIC');
@@ -106,7 +106,6 @@ export default function DriftMonitoringPage() {
           target_type: tType,
           change_type: cType,
           project_id: selectedProjectId || undefined,
-          mock_mode: true,
         }),
       });
       const data = await res.json();
@@ -143,10 +142,9 @@ export default function DriftMonitoringPage() {
         const urlPid = searchParams.get('project');
         if (urlPid) {
           setSelectedProjectId(urlPid);
-        } else if (list.length > 0) {
-          // Default to proj-comp if available, otherwise first project
-          const comp = list.find((p) => (p.id || '').includes('comp') || (p.name || '').toLowerCase().includes('comp'));
-          setSelectedProjectId(comp?.id || list[0].id || list[0].name);
+        } else if (list.length === 1) {
+          // Only preselect when there is exactly one project; never guess by name.
+          setSelectedProjectId(list[0].id || list[0].name);
         }
       })
       .catch(() => setProjects([]))
@@ -232,17 +230,23 @@ export default function DriftMonitoringPage() {
     }
   };
 
-  // Refresh drift logs
-  const handleSeedMock = async () => {
+  // Refresh drift logs: runs the real drift check for the selected project
+  const handleRefreshDrift = async () => {
+    if (!selectedProjectId) {
+      setCheckMsg('Select a project to refresh its drift logs.');
+      return;
+    }
     try {
-      const pid = selectedProjectId || 'proj-comp';
-      const res = await authFetch(`/api/drift/events/seed-mock?project_id=${encodeURIComponent(pid)}`, { method: 'POST' });
-      if (res.ok) {
-        setCheckMsg('Drift logs refreshed for project.');
-        await refreshEvents();
+      const res = await authFetch(`/api/drift/events/refresh?project_id=${encodeURIComponent(selectedProjectId)}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCheckMsg(`Refresh failed: ${data.detail || res.status}`);
+        return;
       }
+      setCheckMsg('Drift logs refreshed for project.');
+      await refreshEvents();
     } catch (err) {
-      alert(`Failed to refresh drift logs: ${err}`);
+      setCheckMsg(`Failed to refresh drift logs: ${err}`);
     }
   };
 
@@ -476,7 +480,7 @@ export default function DriftMonitoringPage() {
               <button
                 type="button"
                 style={BTN}
-                onClick={handleSeedMock}
+                onClick={handleRefreshDrift}
                 title="Refresh drift logs from warehouse and semantic models"
               >
                 <RefreshCw size={13} /> Refresh
@@ -599,7 +603,7 @@ export default function DriftMonitoringPage() {
                 <button
                   type="button"
                   style={{ ...BTN, marginTop: 8 }}
-                  onClick={handleSeedMock}
+                  onClick={handleRefreshDrift}
                 >
                   <RefreshCw size={13} /> Refresh Logs
                 </button>

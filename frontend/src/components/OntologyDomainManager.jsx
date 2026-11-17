@@ -580,7 +580,6 @@ export default function OntologyDomainManager({ projectId: propProjectId = null,
         change_type: changeType,
         table_context: tableCtx || undefined,
         project_id: effectiveGovProjectId || undefined,
-        mock_mode: true,
       }),
     });
     const data = await res.json();

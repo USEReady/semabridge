@@ -58,4 +58,17 @@ for f in back:
     hits = [(i + 1, l.strip()[:80]) for i, l in enumerate(txt.splitlines())
             if re.search(r"['\"][^'\"]*(" + BUSINESS + r")[^'\"]*['\"]", l, re.I) and not l.strip().startswith(("#", chr(34) * 3, chr(39) * 3)) and "e.g." not in l]
     rep.check(not hits, f"F5 {f.relative_to(root)}: no business words in literals", f"{hits[:3]}")
+
+# F6 switchable mocks anywhere in production code: env-switched mock data
+# (SEMABRIDGE_MOCK_* and the like), mock/fake producers, and frontend
+# requests for mock data. Production must never be able to return mock rows.
+from mock_rules import backend_hits, frontend_hits  # noqa: E402
+
+f6 = []
+for f in sorted((root / "src" / "semabridge").rglob("*.py")):
+    f6 += [(f.relative_to(root), *h) for h in backend_hits(f.read_text(encoding="utf-8", errors="ignore"))]
+for f in front:
+    f6 += [(f.relative_to(root), *h) for h in frontend_hits(f.read_text(encoding="utf-8", errors="ignore"))]
+rep.check(not f6, "F6 no switchable mock data in src/ or frontend/",
+          "; ".join(f"{p}:{no} {rule} {snip}" for p, no, rule, snip in f6[:8]))
 sys.exit(rep.done())
