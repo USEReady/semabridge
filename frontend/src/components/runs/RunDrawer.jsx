@@ -239,7 +239,8 @@ export default function RunDrawer({
       setRetry({ busy: false, error: '', started: res });
       if (onRetryStarted) onRetryStarted(res);
     } catch (err) {
-      setRetry({ busy: false, error: err?.message || 'Could not start the retry.', started: null });
+      // A refused start was already explained in the sync dialog.
+      setRetry({ busy: false, error: err?.handled ? '' : (err?.message || 'Could not start the retry.'), started: null });
     }
   };
   const effectiveRun = useMemo(

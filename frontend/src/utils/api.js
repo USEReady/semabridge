@@ -1,6 +1,6 @@
 // ...existing code...
 // (Removed duplicate export of api. Only export once at the end of the file, with getDatabricksSources included as a method.)
-import { isDuplicateSyncError, requestDuplicateSyncConfirmation } from './duplicateSyncPrompt';
+import { requestSyncConflictDecision, syncConflictDetail, syncConflictKind } from './duplicateSyncPrompt';
 import {
     buildRunReportUrl,
     buildRunModelReportUrl,
@@ -466,6 +466,35 @@ export async function tryRefreshToken() {
  */
 export function resetRefreshCooldown() {
     _lastRefreshFailureAt = 0;
+}
+
+/**
+ * Start a sync and turn a refused start (409 duplicate / already running /
+ * dry-run blocked, 503 readiness timeout) into the SyncConflict dialog
+ * instead of a raw error. A confirmed duplicate is re-sent with
+ * acknowledge_duplicates. Any other choice throws an Error with
+ * `handled = true` (the dialog already told the user), so callers can skip
+ * their own alert/toast.
+ */
+async function sendWithSyncConflictPrompt(projectId, payload, send) {
+    try {
+        return await send(payload);
+    } catch (err) {
+        const kind = syncConflictKind(err);
+        if (!kind) throw err;
+        const detail = syncConflictDetail(err);
+        const choice = await requestSyncConflictDecision(kind, projectId, detail);
+        if (kind === 'duplicate' && choice === 'confirm') {
+            return send({ ...(payload || {}), acknowledge_duplicates: true });
+        }
+        const handled = new Error(detail?.message || 'Sync not started.');
+        handled.status = err.status;
+        handled.payload = err.payload;
+        handled.conflict = kind;
+        handled.handled = true;
+        handled.cancelled = true;
+        throw handled;
+    }
 }
 
 async function handleResponse(res) {
@@ -2009,30 +2038,20 @@ export const api = {
             });
             return handleResponse(res);
         };
-        try {
-            return await send(payload);
-        } catch (err) {
-            // Pre-sync duplicate check: a model is already synced by another
-            // project. Ask the user; only a confirmed retry deploys.
-            if (!isDuplicateSyncError(err)) throw err;
-            const confirmed = await requestDuplicateSyncConfirmation(err.payload.detail);
-            if (!confirmed) {
-                const cancelled = new Error('Sync cancelled: model already synced by another project.');
-                cancelled.cancelled = true;
-                throw cancelled;
-            }
-            return send({ ...(payload || {}), acknowledge_duplicates: true });
-        }
+        return sendWithSyncConflictPrompt(projectId, payload, send);
     },
 
     /** Re-run only the models that failed in runId (same checks as Run now). */
     async retryFailedModels(projectId, runId) {
         invalidateApiCache('jobs:runs:');
-        const res = await authFetch(
-            `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/retry`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS },
-        );
-        return handleResponse(res);
+        const send = async (body) => {
+            const res = await authFetch(
+                `${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/retry`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}), timeoutMs: PROJECT_RUN_REQUEST_TIMEOUT_MS },
+            );
+            return handleResponse(res);
+        };
+        return sendWithSyncConflictPrompt(projectId, null, send);
     },
 
     async getRunPreview(projectId) {

@@ -200,6 +200,7 @@ export default function ProjectJobsPage() {
     try {
       addStartedRun(await api.runProjectNow(projectId, { schedule: 'Scheduled' }));
     } catch (err) {
+      if (err?.handled) return; // shown in the sync dialog
       console.error('Trigger project run failed:', err);
       alert(`Trigger run failed: ${err.message || 'Unknown error'}`);
     } finally {

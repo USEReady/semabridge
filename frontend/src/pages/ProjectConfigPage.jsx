@@ -1315,8 +1315,9 @@ export default function ProjectConfigPage({ embedded = false } = {}) {
       return;
     } catch (err) {
       const msg = err?.message || 'Sync failed due to unexpected error.';
-      addLog('error', 'Sync', msg);
-      setSaveInfo(`Sync failed: ${msg}`);
+      addLog(err?.handled ? 'warning' : 'error', 'Sync', msg);
+      // A refused start was already explained in the sync dialog.
+      setSaveInfo(err?.handled ? `Sync not started: ${msg}` : `Sync failed: ${msg}`);
     } finally {
       setSyncing(false);
     }

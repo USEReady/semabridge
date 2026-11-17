@@ -678,6 +678,9 @@ export default function ProjectsPage() {
       }
       return result;
     } catch (err) {
+      // A refused start (duplicate / already running / dry-run blocked) was
+      // already shown in the sync dialog with its options.
+      if (err?.handled) return null;
       console.error('Run project failed:', err);
       alert(`Run failed: ${err.message || 'Unknown error'}`);
       throw err;
