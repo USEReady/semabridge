@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from semabridge.sync.models import (
@@ -37,6 +37,25 @@ from semabridge.sync.artifact_exporter import ArtifactExportService
 logger = logging.getLogger("semabridge.api.sync")
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+def _legacy_sync_guard(request: Request, response: Response) -> str:
+    """DEPRECATED /sync/jobs + /sync/conflicts: an authenticated user is required
+    (even when app-wide auth is off), and every response says it is deprecated.
+    Use the project sync API (/api/projects/{id}/run) instead."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</api/projects/{project_id}/run>; rel="successor-version"'
+    user_id = str(getattr(request.state, "user_id", "") or "").strip()
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="The legacy /sync/jobs API is deprecated and requires an authenticated user.",
+        )
+    logger.warning("Deprecated legacy sync endpoint %s %s called by user %s", request.method, request.url.path, user_id)
+    return user_id
+
+
+_LEGACY = {"dependencies": [Depends(_legacy_sync_guard)], "deprecated": True}
 
 # Lazy-initialised singleton
 _repo: Optional[SyncRepository] = None
@@ -82,6 +101,8 @@ class StartSyncRequest(BaseModel):
     incremental: bool = True
     include_data: bool = False
     max_data_rows: int = Field(default=10_000, ge=0)
+    # Fabric directions: the caller's Fabric identity (no server-wide FABRIC_* fallback).
+    fabric_identity_id: Optional[str] = None
 
 
 class ResolveConflictRequest(BaseModel):
@@ -137,7 +158,7 @@ def _validated_path(raw: Optional[str], *, expect: str, field: str) -> Optional[
         raise HTTPException(status_code=400, detail=f"{field}: {exc}") from exc
 
 
-@router.post("/jobs")
+@router.post("/jobs", **_LEGACY)
 def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
     """Start a new synchronization job."""
     pbix_folder = _validated_path(request.pbix_folder, expect="dir", field="pbix_folder")
@@ -154,6 +175,7 @@ def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
         snowflake_database=request.snowflake_database,
         snowflake_schema=request.snowflake_schema or request.target_snowflake_schema,
         fabric_workspace_id=request.fabric_workspace_id,
+        fabric_identity_id=request.fabric_identity_id,
         max_workers=request.max_workers,
         enable_parallel=request.enable_parallel,
         incremental=request.incremental,
@@ -177,7 +199,7 @@ def start_sync_job(request: StartSyncRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/jobs")
+@router.get("/jobs", **_LEGACY)
 def list_sync_jobs(
     status: Optional[str] = None,
     limit: int = 50,
@@ -201,7 +223,7 @@ def list_sync_jobs(
     ]
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", **_LEGACY)
 def get_sync_job(job_id: str) -> Dict[str, Any]:
     """Get detailed status of a sync job."""
     try:
@@ -211,7 +233,7 @@ def get_sync_job(job_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/jobs/{job_id}/cancel")
+@router.post("/jobs/{job_id}/cancel", **_LEGACY)
 def cancel_sync_job(job_id: str) -> Dict[str, Any]:
     """Cancel a running or paused sync job."""
     try:
@@ -222,7 +244,7 @@ def cancel_sync_job(job_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/jobs/{job_id}/resume")
+@router.post("/jobs/{job_id}/resume", **_LEGACY)
 def resume_sync_job(
     job_id: str, request: ResumeJobRequest
 ) -> Dict[str, Any]:
@@ -248,7 +270,7 @@ def resume_sync_job(
 # =============================================================================
 
 
-@router.get("/jobs/{job_id}/conflicts")
+@router.get("/jobs/{job_id}/conflicts", **_LEGACY)
 def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
     """Get all conflicts for a sync job."""
     repo = _get_repo()
@@ -256,7 +278,7 @@ def get_conflicts(job_id: str) -> List[Dict[str, Any]]:
     return [c.model_dump() for c in conflicts]
 
 
-@router.post("/conflicts/{conflict_id}/resolve")
+@router.post("/conflicts/{conflict_id}/resolve", **_LEGACY)
 def resolve_conflict(
     conflict_id: str, request: ResolveConflictRequest
 ) -> Dict[str, str]:
@@ -271,7 +293,7 @@ def resolve_conflict(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.patch("/jobs/{job_id}/conflicts/{conflict_id}")
+@router.patch("/jobs/{job_id}/conflicts/{conflict_id}", **_LEGACY)
 def patch_conflict(
     job_id: str,
     conflict_id: str,

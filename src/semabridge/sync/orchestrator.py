@@ -434,11 +434,10 @@ class SyncOrchestrator:
         ``FabricExtractor.list_semantic_models()``.  Optionally filters
         by ``config.fabric_model_names`` if provided.
         """
-        from semabridge.connectors.fabric_extractor import FabricExtractor
-        from semabridge.core.settings import get_settings
+        from semabridge.sources.fabric.legacy_sync import fabric_extractor_for_sync
 
-        settings = get_settings()
-        extractor = FabricExtractor(settings.fabric)
+        # The job's own workspace + identity (never the server-wide FABRIC_* env).
+        extractor = fabric_extractor_for_sync(config.fabric_workspace_id, config.fabric_identity_id)
         models = extractor.list_semantic_models()
 
         # Optional name filter
@@ -463,7 +462,7 @@ class SyncOrchestrator:
 
         logger.info(
             f"Discovered {len(items)} Fabric semantic model(s) "
-            f"in workspace {settings.fabric.workspace_id}"
+            f"in workspace {config.fabric_workspace_id}"
         )
         return items
 
@@ -734,7 +733,7 @@ class SyncOrchestrator:
             SyncDirection.FABRIC_TO_SNOWFLAKE,
             SyncDirection.FABRIC_SNOWFLAKE_BIDIRECTIONAL,
         ):
-            return self._extract_fabric_to_osi(item)
+            return self._extract_fabric_to_osi(item, config)
         elif config.direction in (
             SyncDirection.SNOWFLAKE_TO_FABRIC,
         ):
@@ -772,19 +771,17 @@ class SyncOrchestrator:
         )
         return osi_model
 
-    def _extract_fabric_to_osi(self, item: SyncJobItem) -> OSIModel:
+    def _extract_fabric_to_osi(self, item: SyncJobItem, config: SyncConfig) -> OSIModel:
         """
         Extract a Fabric semantic model definition and convert to OSI.
 
         Uses ``FabricExtractor.get_model_definition()`` (TMSL JSON) and
         pipes it through the existing ``TMSLToOSIConverter``.
         """
-        from semabridge.connectors.fabric_extractor import FabricExtractor
         from semabridge.converter.tmsl_to_osi import TMSLToOSIConverter
-        from semabridge.core.settings import get_settings
+        from semabridge.sources.fabric.legacy_sync import fabric_extractor_for_sync
 
-        settings = get_settings()
-        extractor = FabricExtractor(settings.fabric)
+        extractor = fabric_extractor_for_sync(config.fabric_workspace_id, config.fabric_identity_id)
         # item.source_path holds the Fabric dataset GUID
         dataset_id: str = item.source_path or item.model_name
         tmsl_data = extractor.get_model_definition(dataset_id)
@@ -793,7 +790,7 @@ class SyncOrchestrator:
         osi_model = converter.to_osi(
             {
                 "tmsl": tmsl_data,
-                "workspace_id": settings.fabric.workspace_id,
+                "workspace_id": config.fabric_workspace_id,
                 "dataset_id": item.model_name,
             }
         )
@@ -990,7 +987,9 @@ class SyncOrchestrator:
 
         from semabridge.connectors.fabric_publisher import FabricPublisher
 
-        publisher = FabricPublisher(config=settings.fabric)
+        from semabridge.sources.fabric.legacy_sync import fabric_publisher_for_sync
+
+        publisher = fabric_publisher_for_sync(config.fabric_workspace_id, config.fabric_identity_id)
         result = publisher.publish(
             sml_model=sml_model,
             model_name=osi_model.unique_name,
@@ -998,7 +997,7 @@ class SyncOrchestrator:
             overwrite=True,
         )
 
-        target_id = config.fabric_workspace_id or settings.fabric.workspace_id
+        target_id = config.fabric_workspace_id
         logger.info(f"Published '{osi_model.unique_name}' to Fabric workspace {target_id}")
         return target_id
 
