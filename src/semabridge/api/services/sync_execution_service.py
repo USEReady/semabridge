@@ -1422,9 +1422,10 @@ def execute_sync_request(payload: Dict[str, Any], normalize_yaml_windows_path_fi
     # Feature 1 Step 1: Store last_source_content_hash and deployed_ddl_hash on every successful/warning sync
     if overall_status in ("success", "WARNING") and requested_project_id:
         try:
+            from datetime import datetime, timezone
+            import hashlib
             from semabridge.api.services.project_shared import compat_store_lock, _compat_projects, _compat_save_store
             from semabridge.core.project_resync import compute_source_content_hash
-            import hashlib
 
             src_hash = compute_source_content_hash(source_cfg)
             deployed_views = [r.get("view_name") for r in per_model_results if r.get("view_name")]
